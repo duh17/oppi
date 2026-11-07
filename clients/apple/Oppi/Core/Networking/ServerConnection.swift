@@ -1377,7 +1377,6 @@ final class ServerConnection {
         closeSessionStreamContinuations(sessionId)
         messageQueueStore.clear(sessionId: sessionId)
         sessionUsageMetrics.forget(sessionId: sessionId)
-        screenAwakeController.clearSessionActivity(sessionId: sessionId)
     }
 
     /// Resolve the workspace needed to bind a session stream during deep-link or notification re-entry.
@@ -2055,6 +2054,8 @@ final class ServerConnection {
         appEventStreamConnectedAt = nil
         appEventStreamCoordinator.disconnect()
         appEventStreamTransportState = .disconnected
+        // Rows stop updating here; the reconnect's list refresh holds again what still runs.
+        screenAwakeController.reconcileSessionActivity(sessionIds: [], owner: ObjectIdentifier(self))
     }
 
     func setAppEventStreamTransportState(_ state: ServerHealth.TransportState) {

@@ -1077,6 +1077,19 @@ struct ConnectionCoordinatorTests {
         #expect(BackgroundKeepAlive.hasActiveAgent(in: coordinator.connections.values))
     }
 
+    /// A stopping session still has an agent winding down server-side; keep-alive must hold
+    /// for it too, not just busy/starting.
+    @Test func backgroundActivityIncludesAStoppingSession() async {
+        let (coordinator, _) = makeCoordinator()
+        let server = makeServer(id: "sha256:bg-stopping", name: "A")
+        coordinator.serverStore.addOrUpdate(server)
+        await coordinator.switchToTestServer(server)
+        coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "winding-down", status: .stopping))
+
+        #expect(coordinator.hasActiveAgentTransport)
+        #expect(BackgroundKeepAlive.hasActiveAgent(in: coordinator.connections.values))
+    }
+
     @Test func backgroundActivityIsFalseWhenAllServersIdle() async {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:bg-idle-a", name: "A")

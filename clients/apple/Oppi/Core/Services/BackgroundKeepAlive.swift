@@ -27,12 +27,13 @@ struct UIApplicationBackgroundTasks: AppBackgroundTasks {
 /// Keeps the app process alive while agents are actively working.
 ///
 /// Uses a background task to prevent iOS from suspending the process when
-/// agents are in `busy` or `starting` status. This keeps the WebSocket alive
+/// agents are `starting`, `busy`, or `stopping` (a runtime still winding down,
+/// including a durable abort that lands before `agent_start`). This keeps the WebSocket alive
 /// so status updates arrive promptly and session re-entry doesn't require a
 /// multi-second TLS reconnect.
 ///
 /// The task ends when:
-/// - All sessions leave busy/starting state (observed via polling). The sockets
+/// - All sessions leave those states (observed via polling). The sockets
 ///   then close as in the no-agents background path.
 /// - The app returns to foreground (`end()` called)
 /// - iOS expires the background task (~30s, but often longer on modern devices).
@@ -73,7 +74,7 @@ final class BackgroundKeepAlive {
     static func hasActiveAgent(in connections: some Sequence<ServerConnection>) -> Bool {
         connections.contains { connection in
             connection.sessionStore.sessions.contains {
-                $0.status == .busy || $0.status == .starting
+                $0.status == .starting || $0.status.isRunning
             }
         }
     }

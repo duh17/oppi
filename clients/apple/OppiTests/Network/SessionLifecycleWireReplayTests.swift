@@ -33,9 +33,6 @@ struct SessionLifecycleWireReplayTests {
 
     // MARK: - Named disagreements
 
-    /// One activity rule (status, replica and local stop intent) feeds keep-alive and screen-awake.
-    static let oneActivityRule = "one session activity rule"
-
     /// Every difference between the client row and the server, by name. `matches` sees the path,
     /// the frame type and every differing field at that frame; the first rule that lists the field
     /// and matches claims it.
@@ -57,9 +54,10 @@ struct SessionLifecycleWireReplayTests {
             closedBy: "none: the state frame that always follows it catches it up",
             reason: "stop_requested carries no status, and the client takes status only from the "
                 + "server's state and summaries. The row keeps its prior value for that one frame, "
-                + "until the state/session_summary that follows it on the wire.",
-            fields: [.status],
-            expectedFires: 30
+                + "until the state/session_summary that follows it on the wire. keepAlive, derived "
+                + "from status, lags the same beat when the stop starts from an idle row.",
+            fields: [.status, .keepAlive],
+            expectedFires: 39
         ) { _, frame, diff in
             frame == "stop_requested" && diff[.status] != nil
         },
@@ -81,9 +79,9 @@ struct SessionLifecycleWireReplayTests {
             reason: "The mirror relays agent_start from the bridge's raw event feed, separate from "
                 + "the state push that carries status. When no busy state preceded it — an abort "
                 + "with no earlier bridge busy report — the row lags one frame at agent_start, until "
-                + "the state or summary that follows.",
-            fields: [.status, .program, .awake],
-            expectedFires: 6
+                + "the state or summary that follows. keepAlive lags the same beat.",
+            fields: [.status, .program, .awake, .keepAlive],
+            expectedFires: 8
         ) { path, frame, diff in
             path != .app && frame == "agent_start" && diff[.status] == LifecycleDifference("ready", "busy")
         },
@@ -94,44 +92,9 @@ struct SessionLifecycleWireReplayTests {
                 + "precedes it outside a stop: the row lags busy or stopping one frame until the "
                 + "state or summary that follows.",
             fields: [.status, .keepAlive, .awake],
-            expectedFires: 10
+            expectedFires: 12
         ) { _, frame, diff in
             frame == "agent_settled" && diff[.status] != nil
-        },
-        .init(
-            name: "keepAliveIgnoresStopping",
-            closedBy: Self.oneActivityRule,
-            reason: "BackgroundKeepAlive.hasActiveAgent counts busy and starting rows. A stopping "
-                + "session has an agent still winding down, so the server-implied answer is true. "
-                + "That includes a durable abort that lands before agent_start, and the mirror engine.",
-            fields: [.keepAlive],
-            expectedFires: 122
-        ) { _, _, diff in
-            diff[.keepAlive] == LifecycleDifference("false", "true")
-        },
-        .init(
-            name: "appEventsDoNotDriveAwake",
-            closedBy: Self.oneActivityRule,
-            reason: "The screen-awake reason follows state frames and summaries on the session "
-                + "stream only; app-event summaries never set it, so on the app-event channel a "
-                + "running session holds no screen-awake reason. That includes the durable run released after an abort that landed before its agent_start, and the mirror engine.",
-            fields: [.awake],
-            expectedFires: 79
-        ) { path, _, diff in
-            path == .app && diff[.awake] == LifecycleDifference("false", "true")
-        },
-        .init(
-            name: "stopFromIdleDoesNotSetAwake",
-            closedBy: Self.oneActivityRule,
-            reason: "A terminate of an idle session, or a durable abort that lands before agent_start "
-                + "while the row is still ready, moves the server to stopping. On the stream paths only "
-                + "a running state or summary sets the screen-awake reason, so the "
-                + "client holds none at stop_requested. If the activity rule decides an idle stop "
-                + "holds nothing, the server-implied answer changes instead.",
-            fields: [.awake],
-            expectedFires: 6
-        ) { path, frame, diff in
-            path != .app && frame == "stop_requested" && diff[.awake] == LifecycleDifference("false", "true")
         },
     ]
 
@@ -226,14 +189,33 @@ struct SessionLifecycleWireReplayTests {
         #expect(focused[9].client.status == "stopped" && focused[9].server.status == "stopped")
     }
 
-    /// Keep-alive still ignores `stopping` once the row catches up to it: the session_summary
-    /// right after stop_requested shows the server's winding-down verdict, but
-    /// BackgroundKeepAlive.hasActiveAgent only counts busy and starting.
-    @Test func keepAliveIgnoresStoppingOnceTheRowCatchesUp() async throws {
+    /// Keep-alive holds through `stopping` once the row catches up to it: the session_summary
+    /// right after stop_requested shows the server's winding-down verdict, and
+    /// BackgroundKeepAlive.hasActiveAgent counts it alongside busy and starting.
+    @Test func keepAliveHoldsThroughStoppingOnceTheRowCatchesUp() async throws {
         let abort = try await observe("classic.abort_mid_turn", .app)
         #expect(abort[2].frameType == "session_summary")
         #expect(abort[2].client.status == "stopping" && abort[2].server.status == "stopping")
-        #expect(abort[2].client.keepAlive == false && abort[2].server.keepAlive == true)
+        #expect(abort[2].client.keepAlive == true && abort[2].server.keepAlive == true)
+    }
+
+    /// Terminating an idle session never held a turn, so it does not keep the screen on at
+    /// any point of the stop.
+    @Test func terminateOfAnIdleSessionNeverHoldsScreenAwake() async throws {
+        let terminate = try await observe("classic.terminate_idle", .focused)
+        #expect(!terminate.isEmpty)
+        #expect(terminate.allSatisfy { !$0.client.awake && !$0.server.awake })
+    }
+
+    /// A terminate of a busy durable session holds the screen awake through the turn's
+    /// winding-down and through its final quiet stretch once settled (program status `done`):
+    /// `currentTurnStartedAt` stays sticky through `stopping` until the row actually leaves it.
+    @Test func terminateOfABusySessionHoldsScreenAwakeThroughItsFinalQuietStretch() async throws {
+        let terminate = try await observe("durable.terminate_busy", .focused)
+        let windingDown = try #require(terminate.first { $0.client.status == "stopping" && $0.client.program == "working" })
+        #expect(windingDown.client.awake, "a terminate's stopping phase still holds awake while its turn winds down")
+        let settled = try #require(terminate.first { $0.client.status == "stopping" && $0.client.program == "done" })
+        #expect(settled.client.awake, "the turn's own timestamp outlives its settle, so a terminate still holds awake until it reaches stopped")
     }
 
     private func observe(_ id: String, _ path: LifecycleReplayPath) async throws -> [LifecycleObservation] {
@@ -305,8 +287,9 @@ struct LifecycleReading: Equatable {
     /// `BackgroundKeepAlive.hasActiveAgent` for the client. For the server, starting, busy or
     /// stopping: an agent that is launching, running or winding down needs the app alive.
     var keepAlive: Bool
-    /// A screen-awake session reason for the client. For the server, busy or stopping
-    /// (`SessionStatus.isRunning`), the rule the client already applies to summaries.
+    /// A screen-awake session reason for the client. For the server, running outright, or
+    /// stopping a turn that started (`Session.holdsScreenAwake`): a terminate of an idle
+    /// session holds nothing.
     var awake: Bool
 }
 
@@ -401,7 +384,17 @@ enum LifecycleReplay {
 
         var observations: [LifecycleObservation] = []
         let frames = scenario.frames.filter { $0.channel == path.channel }
+        // Mirrors `Session.holdsScreenAwake`'s signal: the server sets `currentTurnStartedAt`
+        // on a turn's first busy frame, and the client's own store keeps it sticky through
+        // `stopping` (a "working" status there) until the row actually leaves busy/starting/
+        // stopping — so a stop that never saw `busy` (an idle terminate) never has one.
+        var hadTurnInFlight = scenario.seedStatus == .busy
         for (index, frame) in frames.enumerated() {
+            switch frame.serverStatus {
+            case .busy: hadTurnInFlight = true
+            case .starting, .stopping: break
+            case .ready, .stopped, .error: hadTurnInFlight = false
+            }
             switch path {
             case .focused:
                 let message = try JSONDecoder().decode(ServerMessage.self, from: frame.json)
@@ -430,7 +423,7 @@ enum LifecycleReplay {
                     status: frame.serverStatus.rawValue,
                     program: frame.serverProgram,
                     keepAlive: [.starting, .busy, .stopping].contains(frame.serverStatus),
-                    awake: frame.serverStatus.isRunning
+                    awake: hadTurnInFlight && [.busy, .stopping].contains(frame.serverStatus)
                 )
             ))
         }

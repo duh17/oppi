@@ -5,6 +5,7 @@ import Testing
 @Suite("ScreenAwakeController", .serialized)
 @MainActor
 struct ScreenAwakeControllerTests {
+    private let owner = ObjectIdentifier(ScreenAwakeControllerTests.self)
 
     @Test("active session immediately prevents sleep")
     func activeSessionDisablesIdleTimer() {
@@ -16,7 +17,7 @@ struct ScreenAwakeControllerTests {
             sleepFunction: { _ in }
         )
 
-        controller.setSessionActivity(true, sessionId: "s1")
+        controller.reconcileSessionActivity(sessionIds: ["s1"], owner: owner)
 
         #expect(controller.isPreventingSleep)
         #expect(idleTimerUpdates.last == true)
@@ -31,8 +32,8 @@ struct ScreenAwakeControllerTests {
             idleTimerSetter: { idleTimerUpdates.append($0) }
         )
 
-        controller.setSessionActivity(true, sessionId: "s1")
-        controller.setSessionActivity(false, sessionId: "s1")
+        controller.reconcileSessionActivity(sessionIds: ["s1"], owner: owner)
+        controller.reconcileSessionActivity(sessionIds: [], owner: owner)
 
         let released = await waitForTestCondition(timeout: .milliseconds(300), poll: .milliseconds(10)) {
             await MainActor.run { !controller.isPreventingSleep }
@@ -52,8 +53,8 @@ struct ScreenAwakeControllerTests {
             idleTimerSetter: { idleTimerUpdates.append($0) }
         )
 
-        controller.setSessionActivity(true, sessionId: "s1")
-        controller.setSessionActivity(false, sessionId: "s1")
+        controller.reconcileSessionActivity(sessionIds: ["s1"], owner: owner)
+        controller.reconcileSessionActivity(sessionIds: [], owner: owner)
 
         #expect(!controller.isPreventingSleep)
         #expect(idleTimerUpdates == [true, false])
@@ -122,45 +123,24 @@ struct ScreenAwakeControllerTests {
         )
 
         controller.setVoiceInputActive(true)
-        controller.setSessionActivity(true, sessionId: "s1")
+        controller.reconcileSessionActivity(sessionIds: ["s1"], owner: owner)
         controller.setVoiceInputActive(false)
         #expect(controller.isPreventingSleep)
         #expect(idleTimerUpdates == [true])
 
-        controller.setSessionActivity(false, sessionId: "s1")
+        controller.reconcileSessionActivity(sessionIds: [], owner: owner)
         #expect(!controller.isPreventingSleep)
         #expect(idleTimerUpdates == [true, false])
 
-        controller.setSessionActivity(true, sessionId: "s1")
+        controller.reconcileSessionActivity(sessionIds: ["s1"], owner: owner)
         controller.setVoiceInputActive(true)
-        controller.setSessionActivity(false, sessionId: "s1")
+        controller.reconcileSessionActivity(sessionIds: [], owner: owner)
         #expect(controller.isPreventingSleep)
         #expect(idleTimerUpdates == [true, false, true])
 
         controller.setVoiceInputActive(false)
         #expect(!controller.isPreventingSleep)
         #expect(idleTimerUpdates == [true, false, true, false])
-    }
-
-    @Test("voice reason is not a session id")
-    func voiceReasonIsNotASessionId() {
-        var idleTimerUpdates: [Bool] = []
-
-        let controller = ScreenAwakeController(
-            timeoutProvider: { nil },
-            idleTimerSetter: { idleTimerUpdates.append($0) }
-        )
-
-        controller.setVoiceInputActive(true)
-        controller.clearSessionActivity(sessionId: "voice-input")
-        controller.setSessionActivity(false, sessionId: "voice-input")
-
-        #expect(controller.isPreventingSleep)
-        #expect(idleTimerUpdates == [true])
-
-        controller.setVoiceInputActive(false)
-        #expect(!controller.isPreventingSleep)
-        #expect(idleTimerUpdates == [true, false])
     }
 
     @Test("updates that change no reason never wake an idle screen")
@@ -173,8 +153,7 @@ struct ScreenAwakeControllerTests {
             sleepFunction: { _ in try await Task.sleep(for: .seconds(3600)) }
         )
 
-        controller.setSessionActivity(false, sessionId: "idle")
-        controller.clearSessionActivity(sessionId: "idle")
+        controller.reconcileSessionActivity(sessionIds: [], owner: owner)
         controller.setVoiceInputActive(false)
         controller.setSetupInstallActive(false)
         controller.refreshFromPreferences()
@@ -189,19 +168,33 @@ struct ScreenAwakeControllerTests {
             timeoutProvider: { .milliseconds(40) },
             idleTimerSetter: { _ in }
         )
+        let otherOwner = ObjectIdentifier(Int.self)
 
-        controller.setSessionActivity(true, sessionId: "s1")
-        controller.setSessionActivity(false, sessionId: "s1")
+        controller.reconcileSessionActivity(sessionIds: ["s1"], owner: owner)
+        controller.reconcileSessionActivity(sessionIds: [], owner: owner)
 
         // Idle sessions keep reporting more often than the timeout.
         var released = false
         for _ in 0..<30 where !released {
-            controller.setSessionActivity(false, sessionId: "idle")
-            controller.clearSessionActivity(sessionId: "idle")
+            controller.reconcileSessionActivity(sessionIds: [], owner: otherOwner)
+            controller.setVoiceInputActive(false)
             try? await Task.sleep(for: .milliseconds(10))
             released = !controller.isPreventingSleep
         }
 
         #expect(released)
+    }
+
+    @Test("one owner's idle report does not release another owner's running session")
+    func ownersReportIndependently() {
+        let controller = ScreenAwakeController(timeoutProvider: { nil }, idleTimerSetter: { _ in })
+        let otherOwner = ObjectIdentifier(Int.self)
+
+        controller.reconcileSessionActivity(sessionIds: ["s1"], owner: owner)
+        controller.reconcileSessionActivity(sessionIds: [], owner: otherOwner)
+        #expect(controller.isPreventingSleep)
+
+        controller.reconcileSessionActivity(sessionIds: [], owner: owner)
+        #expect(!controller.isPreventingSleep)
     }
 }

@@ -56,6 +56,17 @@ struct ScreenAwakeIntegrationTests {
         StreamMessage(sessionId: sessionId, seq: nil, currentSeq: nil, message: message)
     }
 
+    /// A stop of a session whose turn was still running when the stop began (an abort, or a
+    /// terminate of a busy session) — distinct from a terminate of an already-idle session,
+    /// which never holds the screen awake.
+    func stoppingSessionWithTurnInFlight(id: String) -> Session {
+        makeTestSession(
+            id: id,
+            status: .stopping,
+            currentTurnStartedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+    }
+
     // MARK: - Active-session: busy / ready state
 
     @Test("a busy state frame on the active session prevents sleep immediately")
@@ -105,9 +116,9 @@ struct ScreenAwakeIntegrationTests {
     func stopConfirmedReleasesIdleTimer() async {
         let (ctrl, updates) = makeImmediateReleaseController()
         let (conn, pipe) = await makeConnection(sessionId: "s1", screenAwakeController: ctrl)
-        conn.sessionStore.upsert(makeTestSession(id: "s1", status: .stopping))
+        conn.sessionStore.upsert(stoppingSessionWithTurnInFlight(id: "s1"))
 
-        pipe.handle(.state(session: makeTestSession(id: "s1", status: .stopping)), sessionId: "s1")
+        pipe.handle(.state(session: stoppingSessionWithTurnInFlight(id: "s1")), sessionId: "s1")
         #expect(ctrl.isPreventingSleep)
 
         pipe.handle(.stopConfirmed(source: .user, reason: nil), sessionId: "s1")
@@ -123,13 +134,45 @@ struct ScreenAwakeIntegrationTests {
     func stopFailedKeepsIdleTimerActive() async {
         let (ctrl, _) = makeController()
         let (conn, pipe) = await makeConnection(sessionId: "s1", screenAwakeController: ctrl)
-        conn.sessionStore.upsert(makeTestSession(id: "s1", status: .stopping))
+        conn.sessionStore.upsert(stoppingSessionWithTurnInFlight(id: "s1"))
 
-        pipe.handle(.state(session: makeTestSession(id: "s1", status: .stopping)), sessionId: "s1")
+        pipe.handle(.state(session: stoppingSessionWithTurnInFlight(id: "s1")), sessionId: "s1")
         pipe.handle(.stopFailed(source: .user, reason: "busy"), sessionId: "s1")
 
         // stopFailed means the agent is still running — screen must stay awake
         #expect(ctrl.isPreventingSleep)
+    }
+
+    /// Terminating an idle session never held a turn, so it must not hold the screen
+    /// awake, even while the server's status briefly reads `stopping`.
+    @Test("terminating an idle session never holds the idle timer")
+    func terminatingAnIdleSessionNeverHoldsIdleTimer() async {
+        let (ctrl, updates) = makeImmediateReleaseController()
+        let (conn, pipe) = await makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        conn.sessionStore.upsert(makeTestSession(id: "s1", status: .ready))
+
+        pipe.handle(.state(session: makeTestSession(id: "s1", status: .stopping)), sessionId: "s1")
+
+        #expect(!ctrl.isPreventingSleep)
+        #expect(updates().isEmpty)
+    }
+
+    /// A session running in the background, seen only through app events, holds it too.
+    @Test("a busy session reported only through an app-event summary holds the idle timer")
+    func appEventSummaryDrivesIdleTimer() async {
+        let (ctrl, updates) = makeController()
+        let (conn, _) = await makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        conn.sessionStore.upsert(makeTestSession(id: "s2", status: .ready))
+
+        conn.handleAppEvent(.sessionSummary(
+            sessionId: "s2",
+            workspaceId: "w1",
+            emittedAt: 1,
+            summary: SessionSummary(from: makeTestSession(id: "s2", workspaceId: "w1", status: .busy))
+        ))
+
+        #expect(ctrl.isPreventingSleep)
+        #expect(updates().last == true)
     }
 
     // MARK: - Active-session: sessionEnded
@@ -173,18 +216,24 @@ struct ScreenAwakeIntegrationTests {
         #expect(updates().isEmpty)
     }
 
-    // MARK: - disconnectSession cleanup
+    // MARK: - disconnectSession
 
-    @Test("disconnectSession clears screen-awake for active session")
-    func disconnectSessionClearsActivity() async {
+    @Test("leaving a running chat keeps the screen awake until the session settles")
+    func disconnectSessionKeepsARunningSessionAwake() async {
         let (ctrl, updates) = makeImmediateReleaseController()
         let (conn, pipe) = await makeConnection(sessionId: "s1", screenAwakeController: ctrl)
-        conn.sessionStore.upsert(makeTestSession(id: "s1", status: .busy))
+        conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1", status: .busy))
 
-        pipe.handle(.state(session: makeTestSession(id: "s1", status: .busy)), sessionId: "s1")
+        pipe.handle(.state(session: makeTestSession(id: "s1", workspaceId: "w1", status: .busy)), sessionId: "s1")
+        conn.disconnectSession()
         #expect(ctrl.isPreventingSleep)
 
-        conn.disconnectSession()
+        conn.handleAppEvent(.sessionSummary(
+            sessionId: "s1",
+            workspaceId: "w1",
+            emittedAt: 1,
+            summary: SessionSummary(from: makeTestSession(id: "s1", workspaceId: "w1", status: .ready))
+        ))
         #expect(!ctrl.isPreventingSleep)
         #expect(updates().last == false)
     }
@@ -234,9 +283,9 @@ struct ScreenAwakeIntegrationTests {
     func crossSessionStopConfirmedReleasesIdleTimer() async {
         let (ctrl, updates) = makeImmediateReleaseController()
         let (conn, pipe) = await makeConnection(sessionId: "s1", screenAwakeController: ctrl)
-        conn.sessionStore.upsert(makeTestSession(id: "s2", status: .stopping))
+        conn.sessionStore.upsert(stoppingSessionWithTurnInFlight(id: "s2"))
 
-        conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .state(session: makeTestSession(id: "s2", status: .stopping))))
+        conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .state(session: stoppingSessionWithTurnInFlight(id: "s2"))))
         conn.routeStreamMessage(
             streamMsg(sessionId: "s2", message: .stopConfirmed(source: .user, reason: nil))
         )
@@ -295,23 +344,81 @@ struct ScreenAwakeIntegrationTests {
         #expect(!ctrl.isPreventingSleep, "no active sessions — should release")
     }
 
-    @Test("active session disconnect does not clear cross-session tracking")
-    func activeDisconnectDoesNotClearCrossSession() async {
-        let (ctrl, _) = makeImmediateReleaseController()
-        let (conn, pipe) = await makeConnection(sessionId: "s1", screenAwakeController: ctrl)
-        conn.sessionStore.upsert(makeTestSession(id: "s1", status: .ready))
-        conn.sessionStore.upsert(makeTestSession(id: "s2", status: .ready))
+    // MARK: - List refresh
 
-        pipe.handle(.state(session: makeTestSession(id: "s1", status: .busy)), sessionId: "s1")
-        conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .state(session: makeTestSession(id: "s2", status: .busy))))
+    /// A connection whose `/sessions/recent` answers with `listed`, or fails when nil.
+    func makeListedConnection(
+        _ listed: [Session]?,
+        cached: [Session] = [],
+        screenAwakeController: ScreenAwakeController
+    ) async throws -> (ServerConnection, URL) {
+        let base = FileManager.default.temporaryDirectory.appending(path: "screen-awake-list-\(UUID().uuidString)")
+        let cache = TimelineCache(rootURL: base)
+        let serverId = "sha256:screen-awake"
+        if !cached.isEmpty { await cache.saveSessionList(cached, serverId: serverId) }
 
-        // Disconnect active session s1 — s2 still tracked
-        conn.disconnectSession()
-        #expect(ctrl.isPreventingSleep, "s2 still active after s1 disconnected")
+        let connection = ServerConnection()
+        #expect(await configureTestConnection(connection, credentials: ServerCredentials(
+            host: "127.0.0.1", port: 7749, token: "sk_test", name: "Studio", serverFingerprint: serverId
+        )))
+        connection.sessionStore.switchServer(to: serverId)
+        connection.workspaceStore.switchServer(to: serverId)
+        connection.workspaceStore.workspaces = [makeTestWorkspace(id: "w1", name: "One")]
+        connection.workspaceStore.isLoaded = true
+        connection._cacheForTesting = cache
+        connection.setAPIClientForTesting(makeTestURLProtocolClient(host: "127.0.0.1", scheme: "http"))
+        connection.screenAwakeController = screenAwakeController
+        TestURLProtocol.handler = { request in
+            guard request.url?.path == "/sessions/recent", let listed else {
+                throw URLError(.notConnectedToInternet)
+            }
+            return try mockJSONResponse(encoding: ["sessions": listed], for: request)
+        }
+        return (connection, base)
+    }
 
-        // s2 settles — now both gone
-        conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .state(session: makeTestSession(id: "s2", status: .ready))))
+    @Test("a list refresh releases a session whose ready summary was missed")
+    func listRefreshReleasesAMissedSettle() async throws {
+        defer { TestURLProtocol.handler = nil }
+        let (ctrl, updates) = makeImmediateReleaseController()
+        let settled = makeTestSession(
+            id: "s2", workspaceId: "w1", status: .ready, lastActivity: Date(timeIntervalSince1970: 1_700_000_100)
+        )
+        let (conn, base) = try await makeListedConnection([settled], screenAwakeController: ctrl)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        conn.handleAppEvent(.sessionSummary(
+            sessionId: "s2",
+            workspaceId: "w1",
+            emittedAt: 1,
+            summary: SessionSummary(from: makeTestSession(id: "s2", workspaceId: "w1", status: .busy))
+        ))
+        #expect(ctrl.isPreventingSleep)
+
+        // The app-event socket dropped through the settle; the reconnect refreshes the list.
+        await conn.refreshSessionList(force: true)
+
+        #expect(conn.sessionStore.session(id: "s2")?.status == .ready)
         #expect(!ctrl.isPreventingSleep)
+        #expect(updates().last == false)
+    }
+
+    @Test("a cached busy row does not hold the screen while the server is unreachable")
+    func cachedBusyRowDoesNotHoldTheScreen() async throws {
+        defer { TestURLProtocol.handler = nil }
+        let (ctrl, updates) = makeController()
+        let (conn, base) = try await makeListedConnection(
+            nil,
+            cached: [makeTestSession(id: "s2", workspaceId: "w1", status: .busy)],
+            screenAwakeController: ctrl
+        )
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        await conn.refreshSessionList(force: false)
+
+        #expect(conn.sessionStore.session(id: "s2")?.status == .busy)
+        #expect(!ctrl.isPreventingSleep)
+        #expect(updates().isEmpty)
     }
 
     // MARK: - handleState recovery

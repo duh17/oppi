@@ -153,6 +153,7 @@ extension ServerConnection {
         if previous?.status.isRunning == true, normalized.session.status.isTerminal {
             notePushDiscoveryMoment()
         }
+        syncScreenAwake()
         if let previousWorkspaceId, previousWorkspaceId != normalized.workspaceId {
             syncWorkspaceSummary(workspaceId: previousWorkspaceId)
         }
@@ -177,7 +178,7 @@ extension ServerConnection {
         if let resolvedWorkspaceId = sessionStore.session(id: sessionId)?.workspaceId ?? workspaceId {
             syncWorkspaceSummary(workspaceId: resolvedWorkspaceId)
         }
-        screenAwakeController.clearSessionActivity(sessionId: sessionId)
+        syncScreenAwake()
         syncLiveActivityState()
     }
 
@@ -189,6 +190,7 @@ extension ServerConnection {
         let resolvedWorkspaceId = workspaceId ?? sessionStore.workspaceId(for: sessionId)
         sessionStore.remove(id: sessionId)
         clearSessionScopedAppEventState(for: event, sessionId: sessionId)
+        syncScreenAwake()
         if let resolvedWorkspaceId {
             syncWorkspaceSummary(workspaceId: resolvedWorkspaceId)
         }
@@ -197,7 +199,6 @@ extension ServerConnection {
 
     private func clearSessionScopedAppEventState(for event: AppEventMessage, sessionId: String) {
         applyCleanupEffects(ServerMessageEffects.cleanupEffects(for: event))
-        screenAwakeController.clearSessionActivity(sessionId: sessionId)
         sessionUsageMetrics.forget(sessionId: sessionId)
     }
 

@@ -79,7 +79,7 @@ extension ServerConnection {
             if let workspaceId {
                 syncWorkspaceSummary(workspaceId: workspaceId)
             }
-            screenAwakeController.clearSessionActivity(sessionId: sessionId)
+            syncScreenAwake()
             syncLiveActivityState()
             return StoreUpdateResult()
 
@@ -93,7 +93,7 @@ extension ServerConnection {
                 syncWorkspaceSummary(workspaceId: workspaceId)
             }
             sessionUsageMetrics.forget(sessionId: deletedId)
-            screenAwakeController.clearSessionActivity(sessionId: deletedId)
+            syncScreenAwake()
             syncLiveActivityState()
             return StoreUpdateResult()
 
@@ -138,15 +138,24 @@ extension ServerConnection {
             syncWorkspaceSummary(workspaceId: currentWorkspaceId)
         }
 
-        if currentSession.status.isRunning {
-            screenAwakeController.setSessionActivity(true, sessionId: currentSession.id)
-        } else if stateContext.didTransitionOutOfRunning {
-            screenAwakeController.setSessionActivity(false, sessionId: currentSession.id)
+        if stateContext.didTransitionOutOfRunning {
             notePushDiscoveryMoment()
         }
 
+        syncScreenAwake()
         syncLiveActivityState()
         return StoreUpdateResult(stateContext: stateContext)
+    }
+
+    /// Screen-awake follows this connection's stored rows, recomputed whole after each live
+    /// store apply: a summary missed while a socket was down, or a row a resync dropped, is
+    /// corrected by the next apply instead of holding its reason. Cached list loads do not
+    /// call this, so a stale busy row cannot hold the screen while the server is unreachable.
+    func syncScreenAwake() {
+        screenAwakeController.reconcileSessionActivity(
+            sessionIds: Set(sessionStore.sessions.lazy.filter(\.holdsScreenAwake).map(\.id)),
+            owner: ObjectIdentifier(self)
+        )
     }
 
     func attentionWorkspaceId(explicitWorkspaceId: String?, sessionId: String?) -> String? {

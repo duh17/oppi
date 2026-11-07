@@ -3,9 +3,9 @@ import UIKit
 
 /// Controls `UIApplication.isIdleTimerDisabled` for chat activity.
 ///
-/// Sole iOS writer of the idle timer. Reasons are voice capture (not a session
-/// id), Install & Start on Set Up a Computer, and `session::<id>` for running
-/// agents.
+/// Sole iOS writer of the idle timer. Reasons are voice capture, Install & Start
+/// on Set Up a Computer, and each connection's running sessions
+/// (`Session.holdsScreenAwake`).
 ///
 /// Behavior:
 /// - While voice capture is active or any tracked session is running, screen
@@ -26,13 +26,13 @@ final class ScreenAwakeController {
 
     private static let voiceInputReason = "voice-input"
     private static let setupInstallReason = "setup-install"
-    private static let sessionReasonPrefix = "session::"
 
     private let timeoutProvider: TimeoutProvider
     private let idleTimerSetter: IdleTimerSetter
     private let sleepFunction: SleepFunction
 
     private var activeReasons: Set<String> = []
+    private var runningSessionsByOwner: [ObjectIdentifier: Set<String>] = [:]
     private var releaseTask: Task<Void, Never>?
 
     private(set) var isPreventingSleep = false
@@ -42,7 +42,7 @@ final class ScreenAwakeController {
     }
 
     var hasRunningSession: Bool {
-        activeReasons.contains { $0.hasPrefix(Self.sessionReasonPrefix) }
+        !runningSessionsByOwner.isEmpty
     }
 
     init(
@@ -67,12 +67,12 @@ final class ScreenAwakeController {
         setReason(Self.setupInstallReason, isActive: isActive)
     }
 
-    func setSessionActivity(_ isActive: Bool, sessionId: String) {
-        setReason(sessionReason(for: sessionId), isActive: isActive)
-    }
-
-    func clearSessionActivity(sessionId: String) {
-        setReason(sessionReason(for: sessionId), isActive: false)
+    /// Replaces the running sessions one owner (a `ServerConnection`) reports, so a
+    /// session that left that owner's store can never keep a reason held.
+    func reconcileSessionActivity(sessionIds: Set<String>, owner: ObjectIdentifier) {
+        guard runningSessionsByOwner[owner, default: []] != sessionIds else { return }
+        runningSessionsByOwner[owner] = sessionIds.isEmpty ? nil : sessionIds
+        reevaluateLockState()
     }
 
     func refreshFromPreferences() {
@@ -86,15 +86,11 @@ final class ScreenAwakeController {
         if changed { reevaluateLockState() }
     }
 
-    private func sessionReason(for sessionId: String) -> String {
-        "\(Self.sessionReasonPrefix)\(sessionId)"
-    }
-
     private func reevaluateLockState() {
         releaseTask?.cancel()
         releaseTask = nil
 
-        if !activeReasons.isEmpty {
+        if !activeReasons.isEmpty || hasRunningSession {
             applyIdleTimerDisabled(true)
             return
         }
@@ -127,5 +123,15 @@ final class ScreenAwakeController {
         guard isPreventingSleep != disabled else { return }
         isPreventingSleep = disabled
         idleTimerSetter(disabled)
+    }
+}
+
+extension Session {
+    /// A turn is in flight: busy, or stopping one that started. Terminating an idle
+    /// session reads `stopping` too but never had a turn, so it does not hold the screen.
+    /// `SessionStore`'s merge keeps `currentTurnStartedAt` through `stopping` when a
+    /// later summary omits it, and the row's next ready/stopped status releases it.
+    var holdsScreenAwake: Bool {
+        status == .busy || (status == .stopping && currentTurnStartedAt != nil)
     }
 }

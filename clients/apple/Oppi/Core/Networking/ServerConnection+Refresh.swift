@@ -215,6 +215,7 @@ extension ServerConnection {
                 self.syncAllWorkspaceSummariesFromLocalState()
                 guard let syncToken,
                       self.sessionStore.markSyncSucceeded(ifOwned: syncToken) else { return }
+                self.syncScreenAwake()
                 self.syncLiveActivityState()
                 let cachedSessions = self.sessionStore.listProjectionSessions
                 if let serverId = self.currentServerId {

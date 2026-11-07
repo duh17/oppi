@@ -208,7 +208,7 @@ struct AppEventRoutingTests {
         // Forgotten: the seeded snapshot and a changed one inside the debounce both emit again.
         #expect(usageMetricsWouldEmit(connection, sessionId: "s2", messageCount: 3))
         #expect(usageMetricsWouldEmit(connection, sessionId: "s2", messageCount: 4))
-        #expect(!connection.screenAwakeController.isPreventingSleep)
+        #expect(connection.screenAwakeController.isPreventingSleep == cleanupCase.screenStaysAwake)
         cleanupCase.assertStore(connection)
     }
 
@@ -374,6 +374,16 @@ enum AppEventSessionCleanupCase: CaseIterable {
         }
     }
 
+    /// Screen-awake follows the stored row. Ending or deleting the session releases it;
+    /// `stopConfirmed` and a fatal error carry no status, so the turn still in flight on the
+    /// row holds it until the server's next summary.
+    var screenStaysAwake: Bool {
+        switch self {
+        case .stopConfirmed, .fatalError: true
+        case .sessionEnded, .sessionDeleted: false
+        }
+    }
+
     var event: AppEventMessage {
         switch self {
         case .stopConfirmed:
@@ -437,7 +447,12 @@ private func appEventBadgeCount(_ connection: ServerConnection, sessionId: Strin
 private func makeAppEventCleanupConnection(status: SessionStatus) -> ServerConnection {
     let connection = ServerConnection()
     connection._setActiveSessionIdForTesting("focused")
-    connection.sessionStore.upsert(makeTestSession(id: "s2", workspaceId: "w1", status: status))
+    connection.sessionStore.upsert(makeTestSession(
+        id: "s2",
+        workspaceId: "w1",
+        status: status,
+        currentTurnStartedAt: Date(timeIntervalSince1970: 1_700_000_000)
+    ))
     connection.screenAwakeController = ScreenAwakeController(
         timeoutProvider: { nil },
         idleTimerSetter: { _ in },
@@ -449,7 +464,7 @@ private func makeAppEventCleanupConnection(status: SessionStatus) -> ServerConne
 @MainActor
 private func seedAppEventSessionScopedState(_ connection: ServerConnection) {
     seedSessionScopedState(connection, sessionId: "s2")
-    connection.screenAwakeController.setSessionActivity(true, sessionId: "s2")
+    connection.syncScreenAwake()
     #expect(connection.screenAwakeController.isPreventingSleep)
 }
 
