@@ -1142,7 +1142,9 @@ struct AssistantTimelineRowContentViewTests {
         """
 
         let markdownView = AssistantMarkdownContentView()
-        let container = UIView(frame: CGRect(x: 0, y: 0, width: 360, height: 1_600))
+        // Wide enough that the table stays one clip text view instead of being
+        // fit to the width as a grid: that text view is what must stay pinned.
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 600, height: 1_600))
         markdownView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(markdownView)
         NSLayoutConstraint.activate([
@@ -1160,6 +1162,9 @@ struct AssistantTimelineRowContentViewTests {
         container.layoutIfNeeded()
 
         let tableView = try #require(timelineFirstView(ofType: NativeTableBlockView.self, in: markdownView))
+        let tableTextViews = timelineAllTextViews(in: tableView).filter { !$0.isHidden }
+        let tableTextView = try #require(tableTextViews.first)
+
         let initialText = timelineRenderedTableText(in: tableView)
         #expect(initialText.contains("Selection menu"))
         #expect(initialText.contains("WKWebView support"))
@@ -1189,6 +1194,7 @@ struct AssistantTimelineRowContentViewTests {
             )
         }
         // Keep a named binding so the clip-mode path stays exercised too.
+        _ = tableTextView
     }
 
     @MainActor

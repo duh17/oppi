@@ -129,7 +129,8 @@ struct MarkdownTablePerfBench {
     private static func streamTicks(
         content: String,
         chunk: Int,
-        capSeconds: Double
+        capSeconds: Double,
+        mode: ContentRenderingMode
     ) -> (ticks: [Double], completed: Bool) {
         let utf8 = Array(content.utf8)
         let (markdown, window) = hosted()
@@ -143,16 +144,19 @@ struct MarkdownTablePerfBench {
             while end < utf8.count, (utf8[end] & 0xC0) == 0x80 { end += 1 }
             let prefix = String(decoding: utf8[0 ..< end], as: UTF8.self)
             let tickStart = now()
-            markdown.apply(configuration: .make(content: prefix, isStreaming: true, themeID: .dark))
+            markdown.apply(configuration: .make(content: prefix, isStreaming: true, themeID: .dark, renderingMode: mode))
             fitLayoutCommit(markdown, window: window)
             ticks.append(ms(now() - tickStart))
         }
         return (ticks, true)
     }
 
-    private func reportStream(shape: Shape, name: String) {
+    /// Chat folds a table past 20 rows, so after row 20 a chat tick only updates
+    /// "Show all N rows". `.staticReader` never folds: it streams every row, which
+    /// keeps the per-row cost of a long table measured.
+    private func reportStream(shape: Shape, name: String, mode: ContentRenderingMode = .staticReader) {
         let content = Self.message(rows: 200, columns: 8, shape: shape, tag: "stream-\(name)")
-        let (ticks, completed) = Self.streamTicks(content: content, chunk: 64, capSeconds: 60)
+        let (ticks, completed) = Self.streamTicks(content: content, chunk: 64, capSeconds: 60, mode: mode)
         let tenth = max(1, ticks.count / 10)
         let late = ticks.suffix(tenth)
         let lateMean = late.reduce(0, +) / Double(late.count)
@@ -163,6 +167,7 @@ struct MarkdownTablePerfBench {
         print("METRIC table_stream_\(name)_200x8_late_mean_ms=\(Self.fmt(lateMean))")
         print("METRIC table_stream_\(name)_200x8_late_max_ms=\(Self.fmt(late.max() ?? 0))")
         print("METRIC table_stream_\(name)_200x8_total_ms=\(Self.fmt(ticks.reduce(0, +)))")
+        print("METRIC table_stream_\(name)_200x8_max_ms=\(Self.fmt(sorted.last ?? 0))")
         #expect(completed, "the \(name) stream should finish inside the cap")
         // Target: no late tick over 50 ms.
         #expect((late.max() ?? 0) < 50, "no late \(name) tick should take 50 ms")
@@ -170,6 +175,8 @@ struct MarkdownTablePerfBench {
 
     @Test func streamedClip200x8() { reportStream(shape: .clip, name: "clip") }
     @Test func streamedGrid200x8() { reportStream(shape: .grid, name: "grid") }
+    @Test func streamedClip200x8InChat() { reportStream(shape: .clip, name: "chat_clip", mode: .live) }
+    @Test func streamedGrid200x8InChat() { reportStream(shape: .grid, name: "chat_grid", mode: .live) }
 
     // MARK: - Reader
 

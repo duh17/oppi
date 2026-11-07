@@ -1086,5 +1086,7 @@ struct NativeTableFitAndChromeTests {
         host.table.apply(headers: [[.text("Item")]], rows: rows(25), palette: palette)
         host.layout(at: 390)
         #expect(footer.accessibilityLabel == "Show all 25 rows")
+        // Copy takes every row, the hidden ones included.
+        #expect(host.table.tableText(.tsv).split(separator: "\n").count == 26)
     }
 }
