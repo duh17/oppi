@@ -411,15 +411,17 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
 
     /// The trailing column's divider: a moderate drag resizes within the
     /// panel's own range, a decisive drag the rest of the way to the chat's
-    /// edge commits to the full window with the chat collapsed, dragging the
+    /// edge commits to the full window, the chat covered but a grab edge, dragging the
     /// grab edge back returns to the remembered width, and a decisive drag
     /// the other way closes the panel like its own Done control.
     func testTrailingColumnDividerDragsResizesExpandsAndCloses() {
         launch()
+        // The divider exists only in the trailing column (regular width).
+        // Decided before rotating: a landscape phone is wide but compact.
+        guard !usesSheets else { return }
         // The column's own width is largest, and most natural to drag, in
         // landscape, where an iPad shows it beside the chat.
         XCUIDevice.shared.orientation = .landscapeLeft
-        guard !usesSheets else { return } // the divider exists only in the trailing column (regular width)
         app.buttons["chat.toolbar.files"].tap()
         let files = app.navigationBars["Files"]
         XCTAssertTrue(files.waitUntilExists(timeout: 5), "Files panel did not open")
@@ -440,7 +442,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("trailing-column-after-drag")
 
         // A decisive drag the rest of the way to the chat's own edge commits
-        // to the full window, the chat collapsed.
+        // to the full window, the chat covered but a grab edge.
         drag(app.descendants(matching: .any)["trailingColumn.resizeHandle"], by: -(windowWidth + 100))
         XCTAssertTrue(waitFor(files.frame.width > windowWidth - 80), "Dragging past the threshold did not expand to the full window")
         attachScreenshot("trailing-column-full-window")
@@ -820,7 +822,10 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         fullScreen.tap()
         let back = app.buttons["extension.surfaceReader.back.surface-background_2djobs"]
         XCTAssertTrue(back.waitUntilExists(timeout: 5), "The drawer's full-screen button opens the surface reader")
-        let stop = app.buttons["extension.surface.background_2djobs.jobs.stop_3abash_2d72"]
+        // At regular width the reader sits in the column beside the chat, whose
+        // drawer keeps its own Stop with the same identifier: ask the reader's.
+        let stop = app.scrollViews["extension.surfaceReader.scroll.surface-background_2djobs"]
+            .buttons["extension.surface.background_2djobs.jobs.stop_3abash_2d72"]
         XCTAssertTrue(stop.waitUntilExists(timeout: 5), "The reader draws the job's Stop button")
         XCTAssertTrue(stop.isHittable, "Stop is in reach without scrolling the reader")
         attachScreenshot("jobs-surface-full-screen")
@@ -1394,7 +1399,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// Compact width presents chat panels as sheets; regular width puts them
-    /// in the trailing column, and Share full screen.
+    /// in the trailing column, Share included.
     private var usesSheets: Bool {
         app.windows.firstMatch.frame.width < 700
     }
