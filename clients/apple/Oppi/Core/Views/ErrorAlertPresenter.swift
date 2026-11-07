@@ -147,8 +147,7 @@ final class ErrorAlertPresenter {
         // What is presented over the controller that holds the screen. A dismissal
         // in flight still blocks presenting; an unrelated sheet means the screen
         // is under it, not in front.
-        var top = screen
-        while let parent = top.parent { top = parent }
+        var top = Self.holder(of: screen)
         if top.isBeingPresented {
             retry(after: top.transitionCoordinator)
             return
@@ -188,6 +187,26 @@ final class ErrorAlertPresenter {
         shown = alert
         shownEntry = entry
         top.present(alert, animated: true)
+    }
+
+    /// The controller that holds `screen` in its window: the window's root or a
+    /// presented controller, at the top of `screen`'s parents. A trailing
+    /// column's panel has no parent (`TrailingColumnController` embeds its
+    /// navigation controller by view), so the walk goes on from the controller
+    /// whose view the panel sits in; presenting from the detached panel itself
+    /// would ignore a sheet over its host, and UIKit does not support it.
+    private static func holder(of screen: UIViewController) -> UIViewController {
+        var top = screen
+        while true {
+            while let parent = top.parent { top = parent }
+            guard top.presentingViewController == nil,
+                  let view = top.viewIfLoaded, top !== view.window?.rootViewController,
+                  let superview = view.superview,
+                  let embedding = sequence(first: superview as UIResponder, next: { $0.next })
+                      .lazy.compactMap({ $0 as? UIViewController }).first
+            else { return top }
+            top = embedding
+        }
     }
 
     /// Tries again when `coordinator`'s transition ends, or shortly, bounded.

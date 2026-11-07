@@ -286,14 +286,17 @@ extension TrailingColumnResizeHandle: UIPointerInteractionDelegate {
 /// is one UIKit screen at the root of the column's own navigation controller,
 /// shown in a `TrailingColumnOverlayView` on top of the navigation controller
 /// that holds the screen (the screen's top ancestor outside one). The panel's
-/// navigation controller joins no parent: it is embedded by its view alone,
-/// and the column forwards its appearance itself. Making it a child of the
-/// host navigation controller stopped that controller sending the popped
-/// screen its disappearance callbacks (`viewWillDisappear`,
-/// `viewDidDisappear`), so Back left the screen's own teardown and this
-/// column's unrun and the host's trailing inset stuck at the panel's width;
-/// a child of any other controller raises, as its view sits outside that
-/// controller's. It attaches while the screen is on screen, so a page
+/// navigation controller has no parent: it is embedded by its view alone, and
+/// the column forwards its appearance itself. UIKit accepts a controller
+/// whose view sits in a navigation controller's view only as that navigation
+/// controller's child (any other parent raises), and every child of a
+/// navigation controller is on its stack: as one, the panel was the stack's
+/// top, a popped screen got no disappearance callbacks, and Back left the
+/// host's trailing inset at the panel's width. Detached, a presentation from
+/// inside the panel (its search, a popover from one of its screens) is one
+/// UIKit logs as unsupported. App code presents from
+/// `Router.topPresenter(from:)`, and `ErrorAlertPresenter` finds the host
+/// through the panel's view. It attaches while the screen is on screen, so a page
 /// pushed above the screen, or a full-screen modal over it, never shows it,
 /// and the panel's own pushed pages survive until the screen returns.
 final class TrailingColumnController: UIViewController {
@@ -403,9 +406,9 @@ final class TrailingColumnController: UIViewController {
     /// Runs `body` once no panel is mounted: now when none is, otherwise
     /// after the one being removed has slid out and left the host. Close
     /// the panel (`show(nil, root:)`) first. A push onto the host's stack
-    /// waits for this: the close animates the host's layout and removes
-    /// the column's view, which under a running push transition left the screen's
-    /// view out of the window after Back.
+    /// waits for this: the close animates the host's layout and removes the
+    /// column's view, which under a running push transition left the
+    /// screen's view out of the window after Back.
     func whenClosed(_ body: @escaping () -> Void) {
         guard container != nil || isRemoving else {
             body()
