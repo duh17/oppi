@@ -52,6 +52,9 @@ final class LifecycleSceneStressE2ETests: E2ETestCase {
                 recordLifecycleCycleFailure(scenario: "busy", cycle: cycle, message: "Tool row did not appear before Home")
                 return
             }
+            // Scroll only before Home, so a foreground that moves the timeline
+            // away from its tail fails below instead of being scrolled back.
+            revealAboveComposer(toolRow)
 
             lifecycle = try backgroundAndActivate(after: lifecycle, scenario: "busy", cycle: cycle) {
                 let outputResponse = try sendE2EHarnessMessage(sessionId: sessionId, [
@@ -86,6 +89,14 @@ final class LifecycleSceneStressE2ETests: E2ETestCase {
                 return
             }
 
+            guard toolRowHeaderIsAboveComposer(toolRow) else {
+                recordLifecycleCycleFailure(
+                    scenario: "busy",
+                    cycle: cycle,
+                    message: "Tool row moved under the composer after foreground activation"
+                )
+                return
+            }
             tapToolRowChrome(toolRow)
             guard waitForTimelineTextContaining(marker, timeout: 10) else {
                 recordLifecycleCycleFailure(
@@ -189,11 +200,17 @@ final class LifecycleSceneStressE2ETests: E2ETestCase {
 
     /// Taps the row header from the row's top edge. An expanded row is much taller
     /// than a folded one, so a fraction of its height lands on the composer when
-    /// the row starts near the bottom of the viewport.
+    /// the row starts near the bottom of the viewport. Any cell tap outside an
+    /// interactive subview toggles the row, and the top 8 pt sit above the
+    /// expanded body at every text size.
     private func tapToolRowChrome(_ row: XCUIElement) {
-        revealAboveComposer(row)
         row.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 100, dy: 8)).tap()
         RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+    }
+
+    private func toolRowHeaderIsAboveComposer(_ row: XCUIElement) -> Bool {
+        let input = app.textViews["chat.input"]
+        return row.exists && input.exists && row.frame.minY + 8 < input.frame.minY
     }
 
     /// Expanding a row keeps its header fixed and grows it downward. Once the
