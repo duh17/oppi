@@ -2523,6 +2523,23 @@ describe("SessionLifecycleCoordinator.resetIdleTimer", () => {
     expect(deps.stopSession).toHaveBeenCalledWith("session-1");
   });
 
+  it("stops a running turn that sends no event for two hours", async () => {
+    const active = makeLifecycleActiveSession({ status: "busy" });
+    Object.defineProperty(active.sdkBackend, "isStreaming", { get: () => true });
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+    await vi.advanceTimersByTimeAsync(90 * 60_000);
+    // An event restarts the quiet clock.
+    coordinator.resetIdleTimer("key");
+    await vi.advanceTimersByTimeAsync(115 * 60_000);
+    expect(deps.stopSession).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+  });
+
   it("still stops a session marked busy whose backend runs no turn", async () => {
     const active = makeLifecycleActiveSession({ status: "busy" });
     Object.defineProperty(active.sdkBackend, "isStreaming", { get: () => false });

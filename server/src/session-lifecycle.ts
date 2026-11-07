@@ -47,12 +47,21 @@ export interface AutoStopGuard {
 
 const log = createLogger({ base: { component: "session_lifecycle" } });
 
+/**
+ * How long a running turn may go without a single event before the idle timeout stops it
+ * anyway. A quiet tool or MCP call is live work, but a turn this quiet is almost surely wedged (a
+ * hung provider stream or tool); unbounded, it would hold the session and its sandbox VM forever.
+ */
+const QUIET_RUNNING_TURN_LIMIT_MS = 2 * 60 * 60_000;
+
 export class SessionLifecycleCoordinator {
   private idleTimers: Map<string, NodeJS.Timeout> = new Map();
   /** Keys pending idle-timeout stop — consumed in handleSessionEnd to tag the metric. */
   private pendingIdleTimeoutKeys: Set<string> = new Set();
   /** The newest auto-stop decision per session; a newer settle or the session's end replaces it. */
   private autoStopChecks: Map<string, object> = new Map();
+  /** When each session's running turn last sent an event, while the idle timeout holds for it. */
+  private quietTurnSince: Map<string, number> = new Map();
 
   constructor(private readonly deps: SessionLifecycleCoordinatorDeps) {}
 
@@ -263,7 +272,11 @@ export class SessionLifecycleCoordinator {
 
   resetIdleTimer(key: string): void {
     this.clearIdleTimer(key);
+    this.armIdleTimer(key);
+  }
 
+  /** Arm the timer and keep `quietTurnSince`; only `resetIdleTimer` and `clearIdleTimer` clear it. */
+  private armIdleTimer(key: string): void {
     const timeoutMs = this.deps.getSessionIdleTimeoutMs();
     const timer = setTimeout(() => {
       void this.expireIdle(key, timer, timeoutMs);
@@ -291,17 +304,32 @@ export class SessionLifecycleCoordinator {
     // "Idle" here only means no events for the timeout; a turn can be busy and quiet (a long
     // tool or MCP call). Stopping then would kill live work. The backend must agree the turn
     // runs: a `busy` status with no live run or compaction is stale (a missed settle), and
-    // that session still expires.
+    // that session still expires. So does a turn quiet past QUIET_RUNNING_TURN_LIMIT_MS.
     if (
       idleActive.session.status === "busy" &&
       (idleActive.sdkBackend.isStreaming || idleActive.sdkBackend.isCompacting)
     ) {
-      log.info("session_lifecycle.idle_timeout.held_for_running_turn", {
+      const now = Date.now();
+      const quietSince = this.quietTurnSince.get(key) ?? now - timeoutMs;
+      const quietMs = now - quietSince;
+      if (quietMs < QUIET_RUNNING_TURN_LIMIT_MS) {
+        log.info("session_lifecycle.idle_timeout.held_for_running_turn", {
+          sessionId: idleActive.session.id,
+          key,
+          timeoutMs,
+          quietMs,
+        });
+        this.quietTurnSince.set(key, quietSince);
+        this.armIdleTimer(key);
+        return;
+      }
+      log.warn("session_lifecycle.idle_timeout.quiet_turn_limit", {
         sessionId: idleActive.session.id,
         key,
-        timeoutMs,
+        quietMs,
+        limitMs: QUIET_RUNNING_TURN_LIMIT_MS,
       });
-      this.resetIdleTimer(key);
+      this.expire(key, idleActive);
       return;
     }
 
@@ -336,12 +364,18 @@ export class SessionLifecycleCoordinator {
       key,
       timeoutMs,
     });
+    this.expire(key, idleActive);
+  }
+
+  private expire(key: string, active: SessionLifecycleSessionState): void {
     this.idleTimers.delete(key);
+    this.quietTurnSince.delete(key);
     this.pendingIdleTimeoutKeys.add(key);
-    this.stopSessionObserved(idleActive.session.id);
+    this.stopSessionObserved(active.session.id);
   }
 
   clearIdleTimer(key: string): void {
+    this.quietTurnSince.delete(key);
     const timer = this.idleTimers.get(key);
     if (timer) {
       clearTimeout(timer);
