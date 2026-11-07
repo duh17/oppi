@@ -70,12 +70,13 @@ private func tag(_ character: Character) -> String {
 
 @MainActor
 private final class Harness {
-    let identity = WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: "wt-1", path: "notes.md")
+    let identity: WorkspaceFileEditIdentity
     let store: WorkspaceFileDraftStore
     let scripted = ScriptedEditTransport()
     var buffer: String
 
-    init(initial: String = "hello", draftDirectory: URL? = nil) {
+    init(initial: String = "hello", draftDirectory: URL? = nil, path: String = "notes.md") {
+        identity = WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: "wt-1", path: path)
         store = WorkspaceFileDraftStore(
             directory: draftDirectory ?? FileManager.default.temporaryDirectory
                 .appendingPathComponent("edit-tests-\(UUID().uuidString)", isDirectory: true)
@@ -422,6 +423,35 @@ struct WorkspaceFileEditSessionTests {
         tasks.expire()
         try? await Task.sleep(for: .milliseconds(30))
         #expect(tasks.endedIDs == [tasks.identifier])
+    }
+
+    /// Background, foreground, edit another file, background again while the
+    /// first write is still in flight: the second file's write keeps
+    /// background time after the first one lands.
+    @Test func aSecondBackgroundEntryKeepsTimeForItsOwnWrites() async {
+        let first = Harness()
+        let second = Harness(path: "other.md")
+        let tasks = FakeBackgroundTasks()
+        let registry = WorkspaceFileEditSessionRegistry(observesBackground: false, backgroundTasks: tasks)
+        let firstSession = first.open()
+        let secondSession = second.open()
+        registry.register(firstSession)
+        registry.register(secondSession)
+
+        first.type(" one", into: firstSession)
+        registry.flushAllForBackground()
+        #expect(await eventually { first.scripted.pending.count == 1 })
+        second.type(" two", into: secondSession)
+        registry.flushAllForBackground()
+        #expect(await eventually { second.scripted.pending.count == 1 })
+
+        first.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { firstSession.status == .saved && tasks.endedCount == 1 })
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(tasks.endedCount < tasks.began, "the second write still has background time")
+
+        second.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { tasks.endedCount == tasks.began })
     }
 
     // MARK: Conflict, deletion, and refusal

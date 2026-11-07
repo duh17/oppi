@@ -2294,6 +2294,7 @@
 		E02ADE5599CCDFC9897D081B /* AppOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = B18C77A867A3E3FDBD62CE49 /* AppOpener.swift */; };
 		E0619212C187E184C561D14E /* ServerStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 888DF2FC37263AD54D8168EA /* ServerStats.swift */; };
 		E07E4E3F8719B7B0EEFDD774 /* TimelineReducerCanonicalIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28E66ACBD6D7AF7A15737C9C /* TimelineReducerCanonicalIdentityTests.swift */; };
+		E090E04950C8C67E14D6E2D2 /* BackgroundTaskWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64F0936F31C0CD404D4F3456 /* BackgroundTaskWindowTests.swift */; };
 		E09128A1527E1294D213F222 /* FileShareService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD7ADD0C6492EF1E8C9DA32E /* FileShareService.swift */; };
 		E0A4890B095EB7606C7F8463 /* TimelineCopyFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = 092FC69A0DFD4B5496F54F5B /* TimelineCopyFeedback.swift */; };
 		E0B83DCB6DBB32347D163BCC /* QuickSessionControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 132682218D7EF18B477FF353 /* QuickSessionControl.swift */; };
@@ -2304,6 +2305,7 @@
 		E11B250DF8FDD63501F3B03D /* MermaidClassRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E14A4BC931984D4A4464CDB /* MermaidClassRenderer.swift */; };
 		E11C67A039413ECABDC267EB /* doom-getting-started.org in Resources */ = {isa = PBXBuildFile; fileRef = 16DD759C437D7636C8340B79 /* doom-getting-started.org */; };
 		E1299B7317A9397B361D6009 /* ClientLogUploadModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A416BBF704B084E8F76ED3 /* ClientLogUploadModels.swift */; };
+		E12F65A7E317502CCFDCDE07 /* BackgroundTaskWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEF336D5BD877528D4C6C4B1 /* BackgroundTaskWindow.swift */; };
 		E139F70C66EB1E438C46C256 /* Workspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4CF2DCA9F90102E5D75300B /* Workspace.swift */; };
 		E13FE62BA7E19B798CDDD78C /* BottomOverlapScrollGapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27806A6C72201BADCF5532F9 /* BottomOverlapScrollGapTests.swift */; };
 		E1677AEB78E3CA8303AB5CCC /* FreshnessStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A8D3D2D8061C577E399968E /* FreshnessStateTests.swift */; };
@@ -3584,6 +3586,7 @@
 		6471110914491DDC6F7DE2D2 /* LiveVoiceCallControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceCallControllerTests.swift; sourceTree = "<group>"; };
 		647313DD05F5684F1E9F54C9 /* SSHTerminalProgressTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalProgressTests.swift; sourceTree = "<group>"; };
 		64AF3E296F82DF19DF4FDD9E /* SSHInstall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHInstall.swift; sourceTree = "<group>"; };
+		64F0936F31C0CD404D4F3456 /* BackgroundTaskWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskWindowTests.swift; sourceTree = "<group>"; };
 		64FE028F519687D9B5E6E9A8 /* ExtensionDialogQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDialogQueue.swift; sourceTree = "<group>"; };
 		6542F0F690C9AE040DBC39D7 /* SSHTerminalExperimentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalExperimentsTests.swift; sourceTree = "<group>"; };
 		6555571A8BEC13631255650C /* MacSessionCommandPendingChangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionCommandPendingChangeTests.swift; sourceTree = "<group>"; };
@@ -4668,6 +4671,7 @@
 		DE6ACF5399927DE32ADADB9F /* SSHPreflightClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHPreflightClient.swift; sourceTree = "<group>"; };
 		DE6FE3F7C44BC33737FF9335 /* MacDictationStreamClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacDictationStreamClient.swift; sourceTree = "<group>"; };
 		DE73B02AAEBCF087359D89F2 /* ReaderBody.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderBody.swift; sourceTree = "<group>"; };
+		DEF336D5BD877528D4C6C4B1 /* BackgroundTaskWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskWindow.swift; sourceTree = "<group>"; };
 		DF0280B176773345D539FB17 /* SettingsStore+Live.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SettingsStore+Live.swift"; sourceTree = "<group>"; };
 		DF03665268A048733CEF65E5 /* AudioPlayerSpeechTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerSpeechTests.swift; sourceTree = "<group>"; };
 		DF04223A83F6622128025E72 /* FileBrowserViewOptionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileBrowserViewOptionsTests.swift; sourceTree = "<group>"; };
@@ -5124,6 +5128,7 @@
 				AACEB6B71CABF21B0B2784DC /* AskSilenceWatchdogTests.swift */,
 				4B32F3B43376D45ED8E41E07 /* AuthDeviceAPIClientTests.swift */,
 				A62F1D29853F66CA5E208ABF /* AuthenticatedMediaSourceShareTests.swift */,
+				64F0936F31C0CD404D4F3456 /* BackgroundTaskWindowTests.swift */,
 				E0810899A998B9790DBBE476 /* CommandMetricClassificationTests.swift */,
 				01FE1A70EFDB7FE1616DFC8A /* ConnectionCoordinatorTests.swift */,
 				2B61DBD050A10DC08149C612 /* DeltaCoalescerTests.swift */,
@@ -5948,6 +5953,7 @@
 				A3B9106745D6171B057B5DA5 /* AudioPlayerService.swift */,
 				8E4C816AC23F26FED06464C9 /* AudioPlayerService+SystemControls.swift */,
 				A2F279BD3C0388350AEE583E /* BackgroundKeepAlive.swift */,
+				DEF336D5BD877528D4C6C4B1 /* BackgroundTaskWindow.swift */,
 				9DFA524D3904C59BF1A061DA /* BiometricService.swift */,
 				666B9AE5A3DE54A801B555BE /* CacheFootprint.swift */,
 				8BC9A9B9229497D47A8A4919 /* ClientLogBuffer.swift */,
@@ -9942,6 +9948,7 @@
 				8C4AF8F7A1DE91ECEC8D3501 /* AuthenticatedMediaPlaybackProbeTests.swift in Sources */,
 				ACA598551439BAF2701CE60E /* AuthenticatedMediaSourceShareTests.swift in Sources */,
 				8885D8E42BC436B48F5C8AD6 /* AuthenticatedRangeHTTPServer.swift in Sources */,
+				E090E04950C8C67E14D6E2D2 /* BackgroundTaskWindowTests.swift in Sources */,
 				7BC2CF416A45D6BE510A9C6C /* BashEmbeddedLanguageDetectorTests.swift in Sources */,
 				05E91AA578210F3782F37870 /* BashToolRowViewTests.swift in Sources */,
 				3E40E8E4A5BD17F1B4BF14E0 /* BiometricServiceTests.swift in Sources */,
@@ -10664,6 +10671,7 @@
 				06D1F9A08B7BC03A0C1670F7 /* AuthenticatedMediaPlayback.swift in Sources */,
 				04F45D1B6E21214794125144 /* AuthenticatedMediaSource.swift in Sources */,
 				A2BA7C2EE178A7814D65AFBF /* BackgroundKeepAlive.swift in Sources */,
+				E12F65A7E317502CCFDCDE07 /* BackgroundTaskWindow.swift in Sources */,
 				6C2BFF96253E749D74AD6E79 /* BarLayout.swift in Sources */,
 				5064180EA6B83E269172BF80 /* Base64URL.swift in Sources */,
 				34751F05C0637D7B1F59B09D /* BaselineSafeTextView.swift in Sources */,

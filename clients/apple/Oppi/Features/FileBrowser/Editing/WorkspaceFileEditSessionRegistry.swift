@@ -45,42 +45,16 @@ final class WorkspaceFileEditSessionRegistry {
         let pending = sessions.values.filter { $0.hasUnsavedChanges }
         guard !pending.isEmpty else { return }
         for session in pending { session.flush() }
-        let saveTask = SaveTask(backgroundTasks)
-        saveTask.identifier = backgroundTasks.begin {
+        // One window per background entry: an earlier entry's window waits
+        // only for its own writes, not ones started since.
+        let window = BackgroundTaskWindow(backgroundTasks: backgroundTasks)
+        guard let epoch = window.begin(onExpired: {
             // Out of time: keep each latest draft for the next launch.
             for session in pending { session.checkpoint() }
-            saveTask.finish()
-        }
-        if saveTask.over {
-            // The expiration handler already ran inside `begin`.
-            saveTask.finish()
-            return
-        }
+        }) else { return }
         Task { @MainActor in
             for session in pending { await session.waitForInFlightWrite() }
-            saveTask.finish()
-        }
-    }
-
-    /// The background task kept for in-flight writes. Expiration or the
-    /// finished writes, whichever comes first, ends it; the other does nothing.
-    /// iOS may call the expiration handler before `begin` returns.
-    @MainActor
-    private final class SaveTask {
-        private let backgroundTasks: any AppBackgroundTasks
-        var identifier: UIBackgroundTaskIdentifier?
-        private(set) var over = false
-        private var ended = false
-
-        init(_ backgroundTasks: any AppBackgroundTasks) {
-            self.backgroundTasks = backgroundTasks
-        }
-
-        func finish() {
-            over = true
-            guard let identifier, !ended else { return }
-            ended = true
-            backgroundTasks.end(identifier)
+            window.end(epoch)
         }
     }
 }

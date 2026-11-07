@@ -87,30 +87,19 @@ final class SSHTerminalRegistry {
         let ended: @MainActor () -> Void
     }
 
-    /// One background task and its grace timer. A class: the expiration
-    /// handler may run before `begin` returns, and a stale handler must
-    /// recognize it is not the current grace.
-    private final class Grace {
-        var identifier: UIBackgroundTaskIdentifier?
-        var timer: Task<Void, Never>?
-        /// The grace is finished; its background task is ended once its identifier is known.
-        var over = false
-        var taskEnded = false
-    }
-
     private var terminals: [SSHTerminalIdentity: Terminal] = [:]
     @ObservationIgnored private var attempts: [UUID: Attempt] = [:]
     @ObservationIgnored private var inBackground = false
-    @ObservationIgnored private var grace: Grace?
     /// Keeps live terminals running for the grace period.
-    @ObservationIgnored private let backgroundTasks: any AppBackgroundTasks
+    @ObservationIgnored private let window: BackgroundTaskWindow
+    @ObservationIgnored private var timer: Task<Void, Never>?
     @ObservationIgnored private let sleep: @Sendable (Duration) async throws -> Void
 
     init(
         backgroundTasks: any AppBackgroundTasks = UIApplicationBackgroundTasks(name: "oppi.ssh.terminal.grace"),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
-        self.backgroundTasks = backgroundTasks
+        self.window = BackgroundTaskWindow(backgroundTasks: backgroundTasks)
         self.sleep = sleep
     }
 
@@ -195,7 +184,7 @@ final class SSHTerminalRegistry {
         rexPane: RexPaneTarget? = nil,
         queue: SSHTerminalEventQueue
     ) -> Bool {
-        guard !inBackground || grace != nil else {
+        guard !inBackground || window.isActive else {
             queue.finish()
             channel.closeForBackground()
             return false
@@ -287,48 +276,40 @@ final class SSHTerminalRegistry {
             attempt.task.cancel()
             attempt.ended()
         }
-        guard grace == nil, terminals.values.contains(where: { $0.channel.connected }) else { return }
-        // Set before `begin`: iOS may call the expiration handler before it returns.
-        let current = Grace()
-        grace = current
-        guard let identifier = backgroundTasks.begin(expiration: { [weak self] in self?.graceExpired(current) }) else {
+        guard !window.isActive, terminals.values.contains(where: { $0.channel.connected }) else { return }
+        guard let epoch = window.begin(onExpired: { [weak self] in self?.graceExpired() }) else {
             // Without a background task there is no grace: close before suspension.
-            grace = nil
             closeAllForBackground()
             return
         }
-        current.identifier = identifier
-        if current.over {
-            // The expiration handler already ran inside `begin`.
-            finish(current)
-            return
-        }
-        current.timer = Task { [weak self, sleep] in
+        timer = Task { [weak self, sleep] in
             do { try await sleep(Self.backgroundGrace) } catch { return }
-            await self?.graceElapsed(current)
+            await self?.graceElapsed(epoch)
         }
     }
 
     /// Oppi is active again. Within the grace nothing closed, so nothing reconnects.
     func appDidBecomeActive() {
         inBackground = false
-        if let current = grace { finish(current) }
+        timer?.cancel()
+        timer = nil
+        window.endCurrent()
     }
 
     /// The grace ran out while iOS still allows the process to run: let the
     /// connections finish closing before the background task ends.
-    private func graceElapsed(_ current: Grace) async {
-        guard grace === current else { return }
+    private func graceElapsed(_ epoch: Int) async {
+        guard window.isCurrent(epoch) else { return }
         for task in closeAllForBackground() { await task.value }
-        finish(current)
+        window.end(epoch)
     }
 
-    /// iOS is about to suspend: close now, on the wire, and end the task. The
-    /// handler cannot wait. A handler for a grace that is over does nothing
-    /// to the terminals; it only makes sure its own task ended.
-    private func graceExpired(_ current: Grace) {
-        if grace === current { closeAllForBackground() }
-        finish(current)
+    /// iOS is about to suspend: close now, on the wire; the window then ends
+    /// the task. The handler cannot wait.
+    private func graceExpired() {
+        timer?.cancel()
+        timer = nil
+        closeAllForBackground()
     }
 
     @discardableResult
@@ -341,17 +322,5 @@ final class SSHTerminalRegistry {
             if let teardown = terminal.channel.teardown { teardowns.append(teardown) }
         }
         return teardowns
-    }
-
-    /// Ends this grace's background task exactly once. Before `begin` returned
-    /// the identifier is unknown; `appDidEnterBackground` ends it then.
-    private func finish(_ current: Grace) {
-        if grace === current { grace = nil }
-        current.timer?.cancel()
-        current.over = true
-        if let identifier = current.identifier, !current.taskEnded {
-            current.taskEnded = true
-            backgroundTasks.end(identifier)
-        }
     }
 }

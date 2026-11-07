@@ -1,29 +1,6 @@
 import os
 import UIKit
 
-/// Starts and ends one UIKit background task. `UIApplication` in the app; a fake in tests.
-@MainActor
-protocol AppBackgroundTasks {
-    /// Nil when iOS refuses. `expiration` runs on the main actor when iOS is
-    /// about to suspend the process; the task must be ended by then.
-    func begin(expiration: @escaping @MainActor () -> Void) -> UIBackgroundTaskIdentifier?
-    func end(_ task: UIBackgroundTaskIdentifier)
-}
-
-@MainActor
-struct UIApplicationBackgroundTasks: AppBackgroundTasks {
-    let name: String
-
-    func begin(expiration: @escaping @MainActor () -> Void) -> UIBackgroundTaskIdentifier? {
-        let task = UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expiration)
-        return task == .invalid ? nil : task
-    }
-
-    func end(_ task: UIBackgroundTaskIdentifier) {
-        UIApplication.shared.endBackgroundTask(task)
-    }
-}
-
 /// Keeps the app process alive while agents are actively working.
 ///
 /// Uses a background task to prevent iOS from suspending the process when
@@ -45,26 +22,15 @@ final class BackgroundKeepAlive {
     private static let log = Logger(subsystem: AppIdentifiers.subsystem, category: "BackgroundKeepAlive")
     private static let pollInterval: Duration = .seconds(5)
 
-    /// One keep-alive window. A class: iOS may call the expiration handler
-    /// before `begin` returns, and a stale handler must recognize it is not
-    /// the current window.
-    private final class Window {
-        var identifier: UIBackgroundTaskIdentifier?
-        var polling: Task<Void, Never>?
-        /// The window is finished; its task is ended once its identifier is known.
-        var over = false
-        var taskEnded = false
-    }
-
-    private let backgroundTasks: any AppBackgroundTasks
+    private let window: BackgroundTaskWindow
     private let sleep: @Sendable (Duration) async throws -> Void
-    private var window: Window?
+    private var polling: Task<Void, Never>?
 
     init(
         backgroundTasks: any AppBackgroundTasks = UIApplicationBackgroundTasks(name: "agent-keep-alive"),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
-        self.backgroundTasks = backgroundTasks
+        self.window = BackgroundTaskWindow(backgroundTasks: backgroundTasks)
         self.sleep = sleep
     }
 
@@ -81,26 +47,13 @@ final class BackgroundKeepAlive {
 
     /// Begin background execution if any agent on any connection is active.
     func begin(coordinator: ConnectionCoordinator) {
-        guard window == nil else { return }
-
-        // Set before `begin`: iOS may call the expiration handler before it returns.
-        let current = Window()
-        window = current
-        let identifier = backgroundTasks.begin { [weak self, weak coordinator] in
+        guard !window.isActive else { return }
+        guard let epoch = window.begin(onExpired: { [weak self, weak coordinator] in
             Self.log.error("Background task expired by OS")
-            guard let self else { return }
-            if self.window === current { coordinator?.prepareAllForBackground() }
-            self.finish(current)
-        }
-        guard let identifier else {
-            window = nil
-            Self.log.warning("OS denied background task request")
-            return
-        }
-        current.identifier = identifier
-        if current.over {
-            // The expiration handler already ran inside `begin`.
-            finish(current)
+            coordinator?.prepareAllForBackground()
+            self?.stopPolling()
+        }) else {
+            Self.log.warning("OS denied or already expired the background task")
             return
         }
 
@@ -109,7 +62,7 @@ final class BackgroundKeepAlive {
         Self.log.warning("Background keep-alive started (remaining: \(remainingDesc))")
 
         // Poll session status — end when no agents are busy.
-        current.polling = Task { [weak self, weak coordinator, sleep] in
+        polling = Task { [weak self, weak coordinator, sleep] in
             while true {
                 do { try await sleep(Self.pollInterval) } catch { return }
                 guard !Task.isCancelled else { return }
@@ -118,10 +71,11 @@ final class BackgroundKeepAlive {
                     // The process now suspends with nothing keeping it alive: close the
                     // sockets as the no-agents background path does, unless live audio
                     // still drains over them. Foreground `end()` cancels this poll first.
-                    if let coordinator, self?.window === current, !coordinator.hasActiveAudioTransportPlayback {
+                    if let coordinator, !coordinator.hasActiveAudioTransportPlayback {
                         coordinator.prepareAllForBackground()
                     }
-                    self?.finish(current)
+                    self?.stopPolling()
+                    self?.window.end(epoch)
                     return
                 }
 
@@ -134,18 +88,14 @@ final class BackgroundKeepAlive {
 
     /// End background execution (called on foreground or when no longer needed).
     func end() {
-        if let window { finish(window) }
+        stopPolling()
+        window.endCurrent()
     }
 
-    /// Ends this window's background task exactly once. Before `begin` returned
-    /// the identifier is unknown; `begin` ends it then.
-    private func finish(_ current: Window) {
-        if window === current { window = nil }
-        current.polling?.cancel()
-        current.over = true
-        if let identifier = current.identifier, !current.taskEnded {
-            current.taskEnded = true
-            backgroundTasks.end(identifier)
-        }
+    /// Every path that ends a window stops its poll first, so `polling` is
+    /// never a newer window's.
+    private func stopPolling() {
+        polling?.cancel()
+        polling = nil
     }
 }
