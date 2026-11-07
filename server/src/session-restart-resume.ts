@@ -37,12 +37,7 @@ import {
   canResumeAfterServerRestart as canResumeAfterRestart,
   type SessionLifecycleService,
 } from "./session-lifecycle-service.js";
-import {
-  applyLifecycle,
-  lifecyclePhase,
-  phaseOfStoredStatus,
-  type LifecyclePhase,
-} from "./session-lifecycle-state.js";
+import { applyLifecycle, lifecyclePhase, type LifecyclePhase } from "./session-lifecycle-state.js";
 import type { Storage } from "./storage.js";
 import type { RestartResumeEntry } from "./storage/session-sqlite-store.js";
 import type { Session } from "./types.js";
@@ -76,11 +71,11 @@ type RestartStorage = Pick<
  */
 function restartEntry(
   session: Session,
-  phase: LifecyclePhase,
+  phase: LifecyclePhase["name"],
   losesWork: ReadonlySet<string> = new Set(),
 ): RestartResumeEntry | undefined {
-  if (phase.name === "terminating" || !canResumeAfterRestart(session)) return undefined;
-  return { sessionId: session.id, wasBusy: phase.name === "running" || losesWork.has(session.id) };
+  if (phase === "terminating" || !canResumeAfterRestart(session)) return undefined;
+  return { sessionId: session.id, wasBusy: phase === "running" || losesWork.has(session.id) };
 }
 
 /**
@@ -109,7 +104,7 @@ export function recordLiveSessionsForRestart(
   nowMs: number = Date.now(),
 ): RestartResumeEntry[] {
   const entries = liveSessions.flatMap(
-    (session) => restartEntry(session, lifecyclePhase(session), losesWork) ?? [],
+    (session) => restartEntry(session, lifecyclePhase(session).name, losesWork) ?? [],
   );
   storage.queueRestartResume(entries, nowMs);
   if (entries.length > 0) {
@@ -151,11 +146,18 @@ export function queueOrphanedSessionsForRestart(
   const orphaned = storage.listRuntimeLive().flatMap(({ sessionId, phase }) => {
     const session = storage.getSession(sessionId);
     if (session && session.status !== "stopped" && session.status !== "error")
-      return [{ session, phase: phaseOfStoredStatus(session.status, phase) }];
+      return [{ session, terminating: phase === "terminating" }];
     storage.clearRuntimeLive(sessionId);
     return [];
   });
-  const entries = orphaned.flatMap(({ session, phase }) => restartEntry(session, phase) ?? []);
+  // A live runtime saved `stopping` was aborting a turn: it comes back idle.
+  const entries = orphaned.flatMap(
+    ({ session, terminating }) =>
+      restartEntry(
+        session,
+        terminating ? "terminating" : session.status === "busy" ? "running" : "idle",
+      ) ?? [],
+  );
   // Queue before marking stopped: saving a row stopped drops its live record, the only
   // evidence. A crash in between leaves the record, and the next start queues again.
   storage.queueRestartResume(entries, nowMs);

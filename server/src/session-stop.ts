@@ -25,7 +25,6 @@ const DEFAULT_STOP_TIMERS: SessionStopTimers = {
 export interface PendingStop {
   mode: "abort" | "terminate";
   source: StopRequestSource;
-  requestedAt: number;
   timeoutHandle?: NodeJS.Timeout;
   completionPromise?: Promise<void>;
   completionResolve?: () => void;
@@ -104,7 +103,7 @@ export class SessionStopCoordinator {
       return false;
     }
 
-    active.pendingStop = { mode, source, requestedAt: Date.now() };
+    active.pendingStop = { mode, source };
     this.applyStopRequest(active.session, mode);
     active.session.lastActivity = Date.now();
     this.deps.persistSessionNow(key, active.session);
@@ -182,7 +181,7 @@ export class SessionStopCoordinator {
   confirmAbortWithoutRun(key: string, active: StopSessionState): void {
     const pending = active.pendingStop;
     const phase = lifecyclePhase(active.session);
-    if (pending?.mode !== "abort" || phase.name !== "aborting" || phase.run) return;
+    if (pending?.mode !== "abort" || phase.name !== "aborting" || phase.back === "running") return;
     if (active.sdkBackend.isStreaming || active.sdkBackend.isCompacting) return;
     this.clearPendingStop(active);
     this.deps.broadcast(key, { type: "stop_confirmed", source: pending.source });

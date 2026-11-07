@@ -1,55 +1,48 @@
 /**
- * The lifecycle of a session's runtime, and the only writer of `Session.status`
- * (`check-architecture-boundaries` rejects an assignment anywhere else).
+ * The only writer of `Session.status`; the `session-status-writer` architecture rule rejects any
+ * other assignment. The status is the phase's wire value: Build 57 and older decode six values as
+ * a closed enum, so abort and terminate both show `stopping`. The phase is kept per Session object.
+ * A row with no runtime, or a status the e2e UI harness set, is read from its status. An event
+ * the phase does not allow is logged and ignored, because engines, timers and clients race.
  *
- * The wire `status` projects the phase onto the six values Build 57 and older decode as a
- * closed enum, so abort and terminate share `stopping`. The phase belongs to the Session object
- * a runtime holds; a row with no runtime, or a status set outside this module (a new row, the
- * e2e UI harness), stands for its own phase. An event the phase does not allow is logged and
- * ignored, never thrown: engines, timers and clients send events in any order.
- *
- * `session_runtime_live` (Storage) records live runtimes, so a crash restart resumes those only
- * and tells an abort from a terminate. This writes it when a runtime begins and when a terminate
- * begins or fails; saving a row stopped or failed deletes it. So the record exists before a row
- * says live and outlives it until the row says otherwise.
+ * `session_runtime_live` names the runtimes a crash restart resumes: `start_begun` records one
+ * `live`, `terminate_requested` records it `terminating` (a failed terminate records it `live`
+ * again), and saving the row stopped deletes it.
  */
 
 import type { AgentBackend } from "./agent-backend.js";
 import { createLogger } from "./logger.js";
-import type { RuntimeLivePhase, Storage } from "./storage.js";
+import type { Storage } from "./storage.js";
 import type { Session } from "./types.js";
 
 const log = createLogger({ base: { component: "session_lifecycle" } });
 
+/** Phases a runtime holds between stops. */
+type SettledPhase = "idle" | "running" | "failed";
+
 export type LifecyclePhase =
-  | { name: "starting" }
-  | { name: "idle" }
-  | { name: "running" }
+  | { name: "starting" | SettledPhase | "stopped" }
   /**
-   * `run`: a turn is open, from its agent_start to its agent_settled. An abort or terminate
-   * of a compaction, or of a durable run whose agent_start has not arrived, opens none.
+   * `back` is where a failed stop returns: `running` while a turn is open (agent_start to
+   * agent_settled). An abort of a compaction, or of a durable run whose agent_start has not
+   * arrived, opens none.
    */
-  | { name: "aborting"; run: boolean }
-  | { name: "terminating"; run: boolean }
-  | { name: "stopped" }
-  | { name: "failed" };
+  | { name: "aborting" | "terminating"; back: SettledPhase };
 
 export type LifecycleEvent =
-  /** A runtime is being created for the session (a start, a mirror's hello). */
+  /** A runtime is being created: a start, or a mirror's hello. */
   | "start_begun"
-  /** The runtime registered and idles. */
   | "start_registered"
   /** The start ended without a runtime. */
   | "start_failed"
   /** agent_start, a busy mirror bridge, or a start-time snapshot that streams. */
   | "run_started"
-  /** agent_settled, an idle mirror bridge, or a confirmed abort of a run-less compaction. */
+  /** agent_settled, an idle mirror bridge, or a confirmed abort of work that opened no turn. */
   | "run_settled"
   | "abort_requested"
   | "terminate_requested"
-  /** A stop gave up; the session goes back to what it was doing. */
   | "stop_failed"
-  /** The runtime is gone: its end, a crash, or a stop of a row that had none. */
+  /** The runtime is gone, or a row without one is stored stopped. */
   | "runtime_ended"
   /** Launch or start configuration failed: the row shows `error`. */
   | "launch_failed";
@@ -58,12 +51,6 @@ export type LifecycleEvent =
 type MarkerEvent = "start_begun" | "terminate_requested" | "stop_failed";
 
 export type RuntimeLiveMarkers = Pick<Storage, "markRuntimeLive">;
-
-const STARTING: LifecyclePhase = { name: "starting" };
-const IDLE: LifecyclePhase = { name: "idle" };
-const RUNNING: LifecyclePhase = { name: "running" };
-const STOPPED: LifecyclePhase = { name: "stopped" };
-const FAILED: LifecyclePhase = { name: "failed" };
 
 const WIRE_STATUS: Record<LifecyclePhase["name"], Session["status"]> = {
   starting: "starting",
@@ -75,78 +62,52 @@ const WIRE_STATUS: Record<LifecyclePhase["name"], Session["status"]> = {
   failed: "error",
 };
 
+const PHASE_OF_STATUS: Record<Session["status"], LifecyclePhase> = {
+  starting: { name: "starting" },
+  ready: { name: "idle" },
+  busy: { name: "running" },
+  stopping: { name: "terminating", back: "running" },
+  stopped: { name: "stopped" },
+  error: { name: "failed" },
+};
+
+/** A settled turn leaves its runtime idle; an error outlives the turn that settles after it. */
+const settled = (phase: SettledPhase): SettledPhase => (phase === "running" ? "idle" : phase);
+
 /** The next phase, or undefined when `event` is not allowed in `phase`. */
 export function nextLifecyclePhase(
   phase: LifecyclePhase,
   event: LifecycleEvent,
 ): LifecyclePhase | undefined {
+  const { name } = phase;
+  const between = name === "idle" || name === "running" || name === "failed" ? name : undefined;
+  const stopping = "back" in phase ? phase : undefined;
   switch (event) {
     case "start_begun":
-      return STARTING;
+      return { name: "starting" };
     case "start_registered":
-      return phase.name === "starting" ? IDLE : undefined;
+      return name === "starting" ? { name: "idle" } : undefined;
     case "start_failed":
-      return phase.name === "starting" ? STOPPED : undefined;
+      return name === "starting" ? { name: "stopped" } : undefined;
     case "run_started":
-      if (phase.name === "aborting" || phase.name === "terminating") return { ...phase, run: true };
-      return phase.name === "idle" || phase.name === "running" || phase.name === "failed"
-        ? RUNNING
-        : undefined;
+      if (stopping) return { ...stopping, back: "running" };
+      return between ? { name: "running" } : undefined;
     case "run_settled":
-      if (phase.name === "terminating") return { name: "terminating", run: false };
-      return phase.name === "idle" || phase.name === "running" || phase.name === "aborting"
-        ? IDLE
-        : undefined;
+      if (stopping?.name === "terminating") return { ...stopping, back: settled(stopping.back) };
+      if (stopping) return { name: settled(stopping.back) };
+      return between ? { name: settled(between) } : undefined;
     case "abort_requested":
-      if (phase.name === "running") return { name: "aborting", run: true };
-      return phase.name === "idle" || phase.name === "failed"
-        ? { name: "aborting", run: false }
-        : undefined;
+      return between ? { name: "aborting", back: between } : undefined;
     case "terminate_requested":
-      switch (phase.name) {
-        case "starting":
-        case "idle":
-        case "failed":
-          return { name: "terminating", run: false };
-        case "running":
-          return { name: "terminating", run: true };
-        case "aborting":
-        case "terminating":
-          return { name: "terminating", run: phase.run };
-        default:
-          return undefined;
-      }
+      if (stopping) return { name: "terminating", back: stopping.back };
+      if (name === "starting") return { name: "terminating", back: "idle" };
+      return between ? { name: "terminating", back: between } : undefined;
     case "stop_failed":
-      if (phase.name !== "aborting" && phase.name !== "terminating") return undefined;
-      return phase.run ? RUNNING : IDLE;
+      return stopping ? { name: stopping.back } : undefined;
     case "runtime_ended":
-      return STOPPED;
+      return { name: "stopped" };
     case "launch_failed":
-      return FAILED;
-  }
-}
-
-/**
- * The phase a stored status stands for. `stopping` is read as a terminate unless the live
- * record says the runtime was only aborting a turn.
- */
-export function phaseOfStoredStatus(
-  status: Session["status"],
-  live?: RuntimeLivePhase,
-): LifecyclePhase {
-  switch (status) {
-    case "starting":
-      return STARTING;
-    case "ready":
-      return IDLE;
-    case "busy":
-      return RUNNING;
-    case "stopping":
-      return live === "live" ? { name: "aborting", run: true } : { name: "terminating", run: true };
-    case "stopped":
-      return STOPPED;
-    case "error":
-      return FAILED;
+      return { name: "failed" };
   }
 }
 
@@ -156,13 +117,10 @@ export function lifecyclePhase(session: Session): LifecyclePhase {
   const phase = phases.get(session);
   return phase && WIRE_STATUS[phase.name] === session.status
     ? phase
-    : phaseOfStoredStatus(session.status);
+    : PHASE_OF_STATUS[session.status];
 }
 
-/**
- * Move `session` through `event` and set its status to the new phase's wire value. True when
- * the status changed, which is when a caller persists and broadcasts it.
- */
+/** Move `session` through `event`. True when its status changed: persist and broadcast it. */
 export function applyLifecycle(
   session: Session,
   event: MarkerEvent,
@@ -200,9 +158,8 @@ export function applyLifecycle(
 }
 
 /**
- * Whether a turn runs: the lifecycle says so (until an abort settles), or the engine does. The
- * engine read covers a durable store that committed a run before its agent_start reached the
- * session, and a compaction that runs without a turn.
+ * Whether a turn runs: the phase says so until an abort settles, or the engine streams or
+ * compacts. The engine read covers a durable run committed before its agent_start arrived.
  */
 export function turnRunning(active: {
   session: Session;
