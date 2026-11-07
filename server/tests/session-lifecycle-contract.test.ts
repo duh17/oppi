@@ -25,10 +25,10 @@ import {
 } from "./session-lifecycle-wire.js";
 
 // Characterisation of the session lifecycle as a client and the CLI see it today, across the
-// classic, durable, and mirror engines. It pins observed behaviour, including behaviour a later
-// slice of the simplified-architecture plan changes on purpose: those rows say so, and the slice
-// that changes one edits its expectation here. Nothing in this file asserts what the lifecycle
-// should be.
+// classic, durable, and mirror engines. It pins observed behaviour, including behaviour a decided
+// change alters on purpose: those rows carry the change's tag (`PlannedChange` in
+// `session-lifecycle-wire.ts`), and the change that lands edits the expectation here. Nothing in
+// this file asserts what the lifecycle should be.
 //
 // Every scenario runs against the real SessionManager, storage, app-event mux, and CLI wait loop;
 // only the Pi runtime is replaced (a stub backend for classic, a faux provider for durable, a fake
@@ -130,7 +130,7 @@ function steps(found: LifecycleScenario): string[] {
 
 // What a client receives, per scenario. `ws` is the focused session stream, `app` the app-event
 // stream, `steps` the server's own standing (row, program status, CLI wait, saves) after each step.
-// A row says what happens today; a comment says where a planned slice will change it.
+// A row says what happens today; a comment says where a planned change will alter it.
 const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }> = {
   "classic.prompt_settle": {
     ws: [
@@ -434,10 +434,10 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "compaction_end: ready/done wait:idle",
     ],
   },
-  // S5 DELIBERATELY CHANGES the `agent_settled` step of this row. A session idle and waiting on a
-  // background job shows Done today (ready/done) while the CLI wait says it is not idle. The owner
-  // decided S5 shows Working there instead, so ready/done becomes ready/working in the frames and the
-  // steps below, and the wait answer is unchanged.
+  // `waiting-shows-working` DELIBERATELY CHANGES the `agent_settled` step of this row. A session
+  // idle and waiting on a background job shows Done today (ready/done) while the CLI wait says it
+  // is not idle. Working was chosen over Done, so ready/done becomes ready/working in the frames
+  // and the steps below, and the wait answer is unchanged.
   "classic.wake_hold": {
     ws: [
       "state ready/idle",
@@ -503,8 +503,8 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "goodbye: stopped/done wait:idle saved:stopped",
     ],
   },
-  // S3 DELIBERATELY CHANGES this row: the mirror's abort sends the bridge command and nothing
-  // else today. No stop_requested, no stopping, no stop_confirmed.
+  // `explicit-stop-states` DELIBERATELY CHANGES this row: the mirror's abort sends the bridge
+  // command and nothing else today. No stop_requested, no stopping, no stop_confirmed.
   "mirror.abort_mid_turn": {
     ws: [
       "state ready/idle",
@@ -599,8 +599,8 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
   },
   // The store committed the prompt and its run is going, but the session has not seen agent_start:
   // the row is ready, the CLI wait holds (the pending-work read), and an abort answers that the
-  // session is idle while the run continues. S1's single turnRunning predicate changes that abort
-  // answer; the wait and the frames after the release stay.
+  // session is idle while the run continues. `single-status-owner` (one predicate for a running
+  // turn) changes that abort answer; the wait and the frames after the release stay.
   "durable.commit_before_agent_start": {
     ws: [
       "state ready/idle",
@@ -643,18 +643,18 @@ describe("recorded fixture", () => {
     expect(wire.scenarios.map((found) => found.id).sort()).toEqual(Object.keys(EXPECTED).sort());
   });
 
-  it("names the rows a planned slice changes on purpose, and only those", () => {
+  it("names the rows a planned change alters on purpose, and only those", () => {
     const planned = Object.fromEntries(
       wire.scenarios
         .filter((found) => found.plannedChange)
-        .map((found) => [found.id, found.plannedChange?.slice]),
+        .map((found) => [found.id, found.plannedChange]),
     );
     expect(planned).toEqual({
-      "classic.stop_during_start": "S2",
-      "classic.wake_hold": "S5",
-      "mirror.busy_idle_stop": "S3",
-      "mirror.abort_mid_turn": "S3",
-      "durable.commit_before_agent_start": "S1",
+      "classic.stop_during_start": "start-phase-owns-stop",
+      "classic.wake_hold": "waiting-shows-working",
+      "mirror.busy_idle_stop": "explicit-stop-states",
+      "mirror.abort_mid_turn": "explicit-stop-states",
+      "durable.commit_before_agent_start": "single-status-owner",
     });
   });
 
@@ -698,8 +698,9 @@ describe("session lifecycle on the wire", () => {
 // ─── Input admission: what each input gets at each point of a turn ───
 //
 // Today five predicates decide whether a turn runs (row status, Pi's streaming and compacting
-// flags, in different combinations); S1 replaces them with one `turnRunning`. This table is what a
-// client gets for each input at each point, so a slice that moves one cell has to say so.
+// flags, in different combinations); `single-status-owner` replaces them with one predicate for a
+// running turn. This table is what a client gets for each input at each point, so a change that
+// moves one cell has to say so.
 
 const ADMISSION_POINTS: Record<string, (world: ClassicWorld) => Promise<void>> = {
   idle: async () => {},
@@ -826,8 +827,9 @@ const EXPECTED_ADMISSION: Record<string, Record<AdmissionInput, string>> = {
     abort: "stopping",
   },
   // The row says stopping, but stop_confirmed has gone out and Pi is idle, so a prompt is
-  // admitted and a second abort hears "already idle". S1 CHANGES this row: `turnRunning` holds
-  // through `aborting`, so the prompt is refused and the steer and follow-up are accepted.
+  // admitted and a second abort hears "already idle". `single-status-owner` CHANGES this row: a
+  // turn counts as running until its abort settles, so the prompt is refused and the steer and
+  // follow-up are accepted.
   aborting_after_agent_end: {
     prompt: "accepted",
     steer: IDLE_STEER,
@@ -836,7 +838,8 @@ const EXPECTED_ADMISSION: Record<string, Record<AdmissionInput, string>> = {
     abort: "confirmed: Session already idle",
   },
   // Steer and follow-up count a compaction as a running turn; abort reads only the row and
-  // answers idle. S1 CHANGES the abort cell: one `turnRunning` makes abort agree with admission.
+  // answers idle. `single-status-owner` CHANGES the abort cell: one predicate for a running turn
+  // makes abort agree with admission.
   compacting: {
     prompt: BUSY_PROMPT,
     steer: "accepted",
@@ -1140,10 +1143,11 @@ describe("a restart after a crash", () => {
       busy: { status: savedStatus("classic.prompt_settle", "agent_start") },
       idle: { status: savedStatus("classic.prompt_settle", "agent_settled") },
       starting: { status: savedStatus("classic.stop_during_start", "start_begun") },
-      // S1 DELIBERATELY CHANGES this row: a crash during an abort resumes the session, because the
-      // live marker knows the abort was not a terminate. Today a stopping row is never resumed.
+      // `single-status-owner` DELIBERATELY CHANGES this row: a crash during an abort resumes the
+      // session, because a record of which runtimes were live tells an abort from a terminate.
+      // Today a stopping row is never resumed.
       aborting: { status: savedStatus("classic.abort_mid_turn", "abort") },
-      // A terminate was on its way out; it stays unresumed after S1 too.
+      // A terminate was on its way out; it stays unresumed after that change too.
       terminating: { status: savedStatus("classic.terminate_busy", "stop_requested") },
     });
 
@@ -1166,8 +1170,8 @@ describe("a restart after a crash", () => {
   });
 
   it("does not resume a create-only row that never ran, and stores it stopped", () => {
-    // S1 DELIBERATELY CHANGES the stored status: a dormant row stays ready, because a client
-    // treats a stopped session as history-only and could not open it.
+    // `single-status-owner` DELIBERATELY CHANGES the stored status: a dormant row stays ready,
+    // because a client treats a stopped session as history-only and could not open it.
     const storage = recoveredStore({
       shell: { status: "ready", piSessionFile: undefined },
     });

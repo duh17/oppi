@@ -62,12 +62,29 @@ export interface LifecycleCheckpoint {
   pendingWake: boolean;
 }
 
+/**
+ * A decided lifecycle change that alters a row on purpose. The change that lands updates the
+ * row's expectation and drops its tag.
+ * - `single-status-owner`: one owner assigns a session's status, and one predicate says whether
+ *   a turn runs, so abort and input admission agree with the engine.
+ * - `start-phase-owns-stop`: a stop during a start ends that start before it registers a runtime.
+ * - `explicit-stop-states`: every engine's abort and stop, the mirror's included, go through the
+ *   same stop states and broadcast the same stop frames.
+ * - `waiting-shows-working`: program status says working while a background job will wake the
+ *   session, matching the CLI wait.
+ */
+export type PlannedChange =
+  | "single-status-owner"
+  | "start-phase-owns-stop"
+  | "explicit-stop-states"
+  | "waiting-shows-working";
+
 export interface LifecycleScenario {
   id: string;
   engine: LifecycleEngine;
   description: string;
-  /** Set where a planned architecture slice changes this row on purpose. */
-  plannedChange?: { slice: string; note: string };
+  /** Set where a planned change alters this row on purpose. */
+  plannedChange?: PlannedChange;
   frames: RecordedFrame[];
   checkpoints: LifecycleCheckpoint[];
 }
@@ -719,12 +736,9 @@ export const CLASSIC_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         engine: "classic",
         description:
           "Stop while the session is still starting wins: the start finishes, nothing stays live, and the row ends stopped.",
-        // S2's starting phase ends such a start without registering a runtime, so the row is no
-        // longer saved ready on its way to stopped, and the stop frames of a live session go.
-        plannedChange: {
-          slice: "S2",
-          note: "the start ends stopped without registering, so ready is never saved and the stop frames change",
-        },
+        // Once the start owns the stop, such a start ends without registering a runtime: the row
+        // is no longer saved ready on its way to stopped, and the stop frames of a live session go.
+        plannedChange: "start-phase-owns-stop",
         row: { status: "stopped" },
         holdCreate: true,
       },
@@ -822,12 +836,10 @@ export const CLASSIC_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         engine: "classic",
         description:
           "A settled session with a background job still pending: ready on the wire and Done in program status, while the CLI wait says it is not idle. The wake's turn then settles it.",
-        // S5 derives Working from the pending wake. The owner chose Working over Done, so that
-        // one row, and the program status in the checkpoints that hold the wake, change there.
-        plannedChange: {
-          slice: "S5",
-          note: "programStatus becomes working while a wake is pending; today it is done",
-        },
+        // Program status will say working while the wake is pending, as the CLI wait already
+        // does; Working was chosen over Done. That settle's summary, and the program status in
+        // the checkpoints that hold the wake, change with it.
+        plannedChange: "waiting-shows-working",
       },
       async (world) => {
         await startAndAttach(world);
@@ -962,12 +974,9 @@ export const MIRROR_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         engine: "mirror",
         description:
           "A terminal session: busy from the bridge's state, a run's events, idle again, then stopped from the terminal side.",
-        // S3 routes the mirror's stop through the shared stop phases: the stop will broadcast
+        // Once the mirror stops through the shared stop states, its stop will broadcast
         // stop_requested, stopping and stop_confirmed before the session ends.
-        plannedChange: {
-          slice: "S3",
-          note: "the mirror's stop will broadcast stop_requested, stopping and stop_confirmed",
-        },
+        plannedChange: "explicit-stop-states",
       },
       async (world) => {
         await connectMirror(world);
@@ -996,12 +1005,9 @@ export const MIRROR_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         engine: "mirror",
         description:
           "Abort a terminal run: the bridge command goes out and no stop frame or stopping status appears; the row follows the bridge's busy and idle.",
-        // S3 routes the mirror's stop through the shared stop phases, so it will start
-        // broadcasting stop_requested and stopping.
-        plannedChange: {
-          slice: "S3",
-          note: "the mirror's abort will broadcast stop_requested and stopping",
-        },
+        // Once the mirror aborts through the shared stop states, its abort will broadcast
+        // stop_requested and stopping like the other engines'.
+        plannedChange: "explicit-stop-states",
       },
       async (world) => {
         await connectMirror(world);
@@ -1226,11 +1232,9 @@ export const DURABLE_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         engine: "durable",
         description:
           "A prompt the store committed whose agent_start the session has not seen yet: the row is still ready while the backend runs. The CLI wait is not idle, and an abort answers that the session is idle.",
-        // S1's one turnRunning predicate makes abort and admission agree with the backend.
-        plannedChange: {
-          slice: "S1",
-          note: "an abort in this gap will stop the run instead of answering already idle",
-        },
+        // With one predicate for a running turn, abort agrees with admission and the backend: an
+        // abort in this gap will stop the run instead of answering that the session is idle.
+        plannedChange: "single-status-owner",
       },
       [fauxAssistantMessage(LONG_ANSWER)],
       async (world) => {
