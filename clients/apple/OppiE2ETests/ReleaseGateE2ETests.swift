@@ -179,9 +179,10 @@ final class ReleaseGateE2ETests: E2ETestCase {
 
         XCTAssertTrue(waitForElementToExist(stopButton, timeout: 10), "Stop button never appeared after harness busy state")
         tap(stopButton, named: "stop response button", timeout: 1)
-        // The server ends a stopped run with agent_end, then agent_settled; the app
-        // leaves busy only on agent_settled. The harness busy state has no real run
-        // to stop, so it sends both, as the server would.
+        // The harness agent_start moved the server session's real lifecycle to busy, so the
+        // tap goes through the real stop path, and the app takes busy/ready from the server's
+        // state. A real stopped run ends with agent_end, then agent_settled; the harness has
+        // no real run behind it, so it sends both to close the busy state it opened.
         try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_end"])
         try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_settled"])
 

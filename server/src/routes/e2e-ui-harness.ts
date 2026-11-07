@@ -22,6 +22,7 @@ import { safeErrorMessage } from "../log-utils.js";
 import { hasToolMediaDetails } from "../session-agent-event-media.js";
 import { splitCanonicalModelId } from "../model-resolution.js";
 import { materializeToolMediaDetails } from "../session-attachments.js";
+import { applyLifecycle } from "../session-lifecycle-state.js";
 import type { AskQuestion, IconChoice, ServerMessage, Session, StyledSegment } from "../types.js";
 import type { RouteDispatcher, RouteHelpers, RouteContext } from "./types.js";
 
@@ -793,8 +794,28 @@ async function handleHarnessMessage(
     subscriberCount = ctx.sessions.injectExtensionUIRequest(sessionId, message);
   } else {
     subscriberCount = ctx.sessions.broadcastSessionMessage(sessionId, message);
+    moveLiveSessionLifecycle(ctx, sessionId, message);
   }
   helpers.json(res, { ok: true, subscriberCount, message });
+}
+
+/**
+ * The client takes busy/ready only from the server's `state` or `session_summary`. A relayed
+ * agent_start / agent_settled applies the same `applyLifecycle` event the Pi event path applies to
+ * the live session, then broadcasts `state` as the stop path does. A stop on that session then
+ * runs the real stop path.
+ */
+function moveLiveSessionLifecycle(
+  ctx: RouteContext,
+  sessionId: string,
+  message: ServerMessage,
+): void {
+  if (message.type !== "agent_start" && message.type !== "agent_settled") return;
+  const live = ctx.sessions.getActiveSession(sessionId);
+  if (!live) return;
+  const event = message.type === "agent_start" ? "run_started" : "run_settled";
+  if (!applyLifecycle(live, event)) return;
+  ctx.sessions.broadcastSessionMessage(sessionId, { type: "state", session: live });
 }
 
 function materializeHarnessToolMedia(

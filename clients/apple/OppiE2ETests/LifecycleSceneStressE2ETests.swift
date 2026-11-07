@@ -113,9 +113,9 @@ final class LifecycleSceneStressE2ETests: E2ETestCase {
             ])
             foldToolRow(toolRow)
 
-            // The harness does not persist synthetic agent status in the server
-            // session snapshot. Reassert its busy event after the foreground
-            // refresh so every next cycle starts from the busy chat UI.
+            // The harness agent_start moved the server session to busy, so the
+            // foreground refresh reads busy back. Reassert the busy event anyway
+            // so every next cycle starts from the busy chat UI.
             try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_start"])
             guard waitForElementToExist(stopButton, timeout: 10) else {
                 recordLifecycleCycleFailure(scenario: "busy", cycle: cycle, message: "Busy chat controls did not recover")

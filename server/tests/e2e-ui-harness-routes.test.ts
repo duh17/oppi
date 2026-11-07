@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createRouteHelpers } from "../src/routes/http.js";
 import { Storage } from "../src/storage.js";
+import type { Session } from "../src/types.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { createE2EUIHarnessRoutes } from "../src/routes/e2e-ui-harness.js";
 import { getSessionAttachment } from "../src/session-attachments.js";
@@ -325,6 +326,54 @@ describe("E2E UI harness routes", () => {
     }
   });
 
+  it("moves the live session's status with a harness agent_start and agent_settled", async () => {
+    process.env.OPPI_E2E_UI_HARNESS = "1";
+    const sessionId = "session-lifecycle-harness";
+    const broadcasted: Array<{ type: string; session?: { status: string } }> = [];
+    const live = {
+      id: sessionId,
+      status: "ready",
+      createdAt: 0,
+      lastActivity: 0,
+      messageCount: 0,
+    } as Session;
+    const dispatch = createE2EUIHarnessRoutes(
+      makeContext("/tmp", sessionId, broadcasted, undefined, undefined, live),
+      createRouteHelpers(),
+    );
+    const send = async (type: string) => {
+      const res = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: `/e2e/ui/sessions/${sessionId}/message`,
+        url: new URL(`http://localhost/e2e/ui/sessions/${sessionId}/message`),
+        req: makeRequest({ type }),
+        res: res as never,
+      });
+      expect(res.statusCode).toBe(200);
+    };
+
+    await send("agent_start");
+    expect(live.status).toBe("busy");
+    expect(broadcasted.map((m) => [m.type, m.session?.status])).toEqual([
+      ["agent_start", undefined],
+      ["state", "busy"],
+    ]);
+
+    broadcasted.length = 0;
+    await send("agent_end");
+    expect(live.status).toBe("busy");
+    expect(broadcasted.map((m) => m.type)).toEqual(["agent_end"]);
+
+    await send("agent_settled");
+    expect(live.status).toBe("ready");
+    expect(broadcasted.map((m) => [m.type, m.session?.status])).toEqual([
+      ["agent_end", undefined],
+      ["agent_settled", undefined],
+      ["state", "ready"],
+    ]);
+  });
+
   it("broadcasts deterministic assistant message completion", async () => {
     process.env.OPPI_E2E_UI_HARNESS = "1";
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-e2e-message-end-route-"));
@@ -422,6 +471,7 @@ function makeContext(
   broadcasted: unknown[] = [],
   fixtureSessions?: Array<Record<string, unknown>>,
   persistedAssistantMessages?: Array<{ sessionId: string; content: string }>,
+  liveSession?: Session,
 ): RouteContext {
   return {
     storage: {
@@ -456,8 +506,10 @@ function makeContext(
     },
     sessions: {
       isActive: (id: string) => id === sessionId,
+      getActiveSession: (id: string) => (id === sessionId ? liveSession : undefined),
       broadcastSessionMessage: (_id: string, message: unknown) => {
-        broadcasted.push(message);
+        // The server serializes at broadcast time; a later status change must not rewrite a frame.
+        broadcasted.push(structuredClone(message));
         return 1;
       },
       appendE2EAssistantMessage: (id: string, content: string) => {
