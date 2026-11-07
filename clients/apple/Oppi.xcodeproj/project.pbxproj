@@ -1360,6 +1360,7 @@
 		85E45C9A07BE83DD32F564C5 /* ServerConnectionModelCommandsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E32650EFD98AE8E1B704FD6 /* ServerConnectionModelCommandsTests.swift */; };
 		85F814797633890EF841906B /* SSHTerminalArrowControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491FE68E4FDCD214D7D60AFD /* SSHTerminalArrowControl.swift */; };
 		86054DA4A537E946C1AA83DD /* DebugHarnessLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 428FABE3E5883B665F725C7A /* DebugHarnessLaunch.swift */; };
+		8626682A41EE844F81B29D14 /* PersistentWebSocketTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D42BB5B4538CAA3486AEF404 /* PersistentWebSocketTransport.swift */; };
 		8645F3E12C2043CED4E632A0 /* TreeSitterRuby in Frameworks */ = {isa = PBXBuildFile; productRef = A1856583C1919A7C8630A02C /* TreeSitterRuby */; };
 		864A2FD525B778BA31346F5C /* ToolExpandedMarkdownSurfaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EB75B91FCFD93C1DF484009 /* ToolExpandedMarkdownSurfaceTests.swift */; };
 		866907193FF505D1A83D6F04 /* MermaidPieRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AAA171971789277768C06B0 /* MermaidPieRenderer.swift */; };
@@ -4567,6 +4568,7 @@
 		D3A9CA3F5DC07B0BA156677C /* AppEventListRepairTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEventListRepairTests.swift; sourceTree = "<group>"; };
 		D3AF836E2BB78F47E7435F98 /* MermaidKanbanConformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidKanbanConformanceTests.swift; sourceTree = "<group>"; };
 		D3CBB909743CE96E890BD3FE /* SSHTerminalBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalBar.swift; sourceTree = "<group>"; };
+		D42BB5B4538CAA3486AEF404 /* PersistentWebSocketTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistentWebSocketTransport.swift; sourceTree = "<group>"; };
 		D430CEE01DE50740BF7C94EC /* SpinnerStyleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpinnerStyleTests.swift; sourceTree = "<group>"; };
 		D45C82E55D60BBDCD27F8401 /* MacMarkdownVideoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMarkdownVideoView.swift; sourceTree = "<group>"; };
 		D4608403F218D90CBEFE78F5 /* ToolTimelineRowFullScreenActivationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolTimelineRowFullScreenActivationTests.swift; sourceTree = "<group>"; };
@@ -6668,6 +6670,7 @@
 				798A4FA283A530A34D954D31 /* MessageSender.swift */,
 				8B01425F686C0A0C54AE7DD6 /* NetworkPathTelemetry.swift */,
 				8ED87BF5B72C9862C6403E27 /* PairingApprovalList.swift */,
+				D42BB5B4538CAA3486AEF404 /* PersistentWebSocketTransport.swift */,
 				CE5460DA8E5696A189E4A488 /* RexDirectStore.swift */,
 				A86DA7C2BCB9EFEF702C2CE4 /* ServerConnection.swift */,
 				DE0698969FEFDBEE2E8A488D /* ServerConnection+AppEvents.swift */,
@@ -11109,6 +11112,7 @@
 				182AB1BD951E5B43523EA1DD /* PendingAttachmentUploader.swift in Sources */,
 				F671045E81A913EFC81609EF /* PendingFileReference.swift in Sources */,
 				46E8C2E728BDF9AC2C2D838F /* PendingImage.swift in Sources */,
+				8626682A41EE844F81B29D14 /* PersistentWebSocketTransport.swift in Sources */,
 				1B7CB0EA3B7EB615FA95E60B /* PhotoLibraryMediaImporter.swift in Sources */,
 				4C305F7DEAC45CB6FE31DCA6 /* PhotoLibraryPicker.swift in Sources */,
 				1C58FB5DB5DD636289A0C70D /* PhotoLibrarySaver.swift in Sources */,

@@ -3,50 +3,6 @@ import OSLog
 
 private let dictationStreamLogger = Logger(subsystem: AppIdentifiers.subsystem, category: "DictationStream")
 
-/// Narrow transport seam for deterministic dictation reconnect tests.
-/// Production still delegates every operation to `URLSessionWebSocketTask`.
-@MainActor
-struct DictationWebSocketTransport {
-    typealias Message = URLSessionWebSocketTask.Message
-    typealias CloseCode = URLSessionWebSocketTask.CloseCode
-
-    let identity: ObjectIdentifier
-    let resume: () -> Void
-    let receive: () async throws -> Message
-    let send: (Message) async throws -> Void
-    let cancel: (CloseCode, Data?) -> Void
-    let response: () -> URLResponse?
-    let closeCode: () -> CloseCode
-
-    init(task: URLSessionWebSocketTask) {
-        identity = ObjectIdentifier(task)
-        resume = { task.resume() }
-        receive = { try await task.receive() }
-        send = { message in try await task.send(message) }
-        cancel = { code, reason in task.cancel(with: code, reason: reason) }
-        response = { task.response }
-        closeCode = { task.closeCode }
-    }
-
-    init(
-        identity: AnyObject,
-        resume: @escaping () -> Void,
-        receive: @escaping () async throws -> Message,
-        send: @escaping (Message) async throws -> Void,
-        cancel: @escaping (CloseCode, Data?) -> Void,
-        response: @escaping () -> URLResponse?,
-        closeCode: @escaping () -> CloseCode
-    ) {
-        self.identity = ObjectIdentifier(identity)
-        self.resume = resume
-        self.receive = receive
-        self.send = send
-        self.cancel = cancel
-        self.response = response
-        self.closeCode = closeCode
-    }
-}
-
 @MainActor
 final class DictationStreamClient: DictationTransport {
     enum Status: Equatable {
@@ -65,8 +21,8 @@ final class DictationStreamClient: DictationTransport {
     /// or the stream has no device auth session.
     private let authRenewer: StreamAuthRenewer?
     private let urlSession: URLSession
-    private let webSocketFactory: (URLRequest) -> DictationWebSocketTransport
-    private var task: DictationWebSocketTransport?
+    private let webSocketFactory: (URLRequest) -> PersistentWebSocketTransport
+    private var task: PersistentWebSocketTransport?
     private var receiveTask: Task<Void, Never>?
     private var continuation: AsyncStream<ServerMessage>.Continuation?
     /// Queued until the current socket is writable, then replayed after a 401
@@ -92,7 +48,7 @@ final class DictationStreamClient: DictationTransport {
         currentTokenProvider: (@Sendable () async throws -> String)? = nil,
         refreshTokenProvider: (@Sendable () async throws -> String)? = nil,
         authRenewer: StreamAuthRenewer? = nil,
-        webSocketFactory: ((URLRequest) -> DictationWebSocketTransport)? = nil
+        webSocketFactory: ((URLRequest) -> PersistentWebSocketTransport)? = nil
     ) {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             return nil
@@ -117,7 +73,7 @@ final class DictationStreamClient: DictationTransport {
             delegateQueue: nil
         )
         self.webSocketFactory = webSocketFactory ?? { [urlSession] request in
-            DictationWebSocketTransport(task: urlSession.webSocketTask(with: request))
+            PersistentWebSocketTransport(task: urlSession.webSocketTask(with: request))
         }
     }
 
@@ -270,7 +226,7 @@ final class DictationStreamClient: DictationTransport {
         }
     }
 
-    private func sendEncoded(_ message: ClientMessage, on task: DictationWebSocketTransport) async throws {
+    private func sendEncoded(_ message: ClientMessage, on task: PersistentWebSocketTransport) async throws {
         let data = try JSONEncoder().encode(message)
         guard let text = String(data: data, encoding: .utf8) else {
             throw WebSocketError.encodingFailed
@@ -342,7 +298,7 @@ final class DictationStreamClient: DictationTransport {
     /// Hand a decoded frame on: renewal answers go to the renewer, the rest to the take.
     /// A read that returns after its socket was replaced or closed is dropped: only the
     /// current socket's frames may promote the status or reach the renewer and the take.
-    private func deliver(_ message: ServerMessage, from socket: DictationWebSocketTransport) {
+    private func deliver(_ message: ServerMessage, from socket: PersistentWebSocketTransport) {
         guard self.task?.identity == socket.identity else { return }
         if status == .connecting { status = .connected }
         if case .authRenewResult(let result) = message {
@@ -353,7 +309,7 @@ final class DictationStreamClient: DictationTransport {
         continuation?.yield(message)
     }
 
-    private func receiveLoop(task: DictationWebSocketTransport) async {
+    private func receiveLoop(task: PersistentWebSocketTransport) async {
         while !Task.isCancelled {
             do {
                 let message = try await task.receive()
@@ -380,47 +336,35 @@ final class DictationStreamClient: DictationTransport {
                         break
                     }
                     isRecoveringFromAuthFailure = true
-                    do {
-                        if let currentTokenProvider {
-                            let current = try await currentTokenProvider()
-                            if !current.isEmpty, current != token {
-                                guard !Task.isCancelled,
-                                      self.task?.identity == task.identity,
-                                      continuation != nil,
-                                      status != .disconnected else {
-                                    isRecoveringFromAuthFailure = false
-                                    dictationStreamLogger.info("Dictation disconnected during 401 refresh — not reopening")
-                                    return
-                                }
-                                token = current
-                                openSocket()
-                                await replayPendingDictationStart()
-                                isRecoveringFromAuthFailure = false
-                                return
-                            }
-                        }
-                        let refreshed = try await refreshTokenProvider()
-                        if !refreshed.isEmpty {
-                            // Re-check socket identity, cancellation, continuation,
-                            // and connection state AFTER the await. A disconnect
-                            // during the refresh must not resurrect a new unowned
-                            // socket and receive loop.
-                            guard !Task.isCancelled,
-                                  self.task?.identity == task.identity,
-                                  continuation != nil,
-                                  status != .disconnected else {
-                                isRecoveringFromAuthFailure = false
-                                dictationStreamLogger.info("Dictation disconnected during 401 refresh — not reopening")
-                                return
-                            }
-                            token = refreshed
-                            didForceRefreshForConnection = true
-                            openSocket()
-                            await replayPendingDictationStart()
+                    let outcome = await PersistentStreamAuthRefresh.resolve(
+                        appliedToken: { [weak self] in self?.token ?? "" },
+                        currentTokenProvider: currentTokenProvider,
+                        refreshTokenProvider: refreshTokenProvider
+                    )
+                    switch outcome {
+                    case .token(let newToken, let forcedRefresh):
+                        // Re-check socket identity, cancellation, continuation, and
+                        // connection state AFTER the await. A disconnect during the
+                        // refresh must not resurrect a new unowned socket and receive loop.
+                        guard !Task.isCancelled,
+                              self.task?.identity == task.identity,
+                              continuation != nil,
+                              status != .disconnected else {
                             isRecoveringFromAuthFailure = false
+                            dictationStreamLogger.info("Dictation disconnected during 401 refresh — not reopening")
                             return
                         }
-                    } catch {
+                        token = newToken
+                        if forcedRefresh {
+                            didForceRefreshForConnection = true
+                        }
+                        openSocket()
+                        await replayPendingDictationStart()
+                        isRecoveringFromAuthFailure = false
+                        return
+                    case .socketReplaced, .emptyRefresh:
+                        break
+                    case .refreshThrew(let error):
                         dictationStreamLogger.error("Device-key refresh failed on 401: \(String(describing: error), privacy: .public)")
                     }
                     isRecoveringFromAuthFailure = false

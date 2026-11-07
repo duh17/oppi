@@ -286,7 +286,7 @@ final class ServerConnection {
 
     /// Test seam: observe app-event stream start without opening a real socket.
     var _startAppEventStreamForTesting: ((URL) -> Void)?
-    var _appEventWebSocketFactoryForTesting: ((URLRequest) -> AppEventWebSocketTransport)?
+    var _appEventWebSocketFactoryForTesting: ((URLRequest) -> PersistentWebSocketTransport)?
 
     /// Test seam: override the cache actor used by list refresh paths.
     var _cacheForTesting: TimelineCache?
@@ -2017,7 +2017,7 @@ final class ServerConnection {
         #if DEBUG
         let webSocketFactory = _appEventWebSocketFactoryForTesting
         #else
-        let webSocketFactory: ((URLRequest) -> AppEventWebSocketTransport)? = nil
+        let webSocketFactory: ((URLRequest) -> PersistentWebSocketTransport)? = nil
         #endif
         let client = AppEventStreamClient(
             url: streamURL,

@@ -1387,7 +1387,7 @@ private final class ScriptedAppEventSocketFactory {
     private(set) var sockets: [ScriptedAppEventSocket] = []
     var pingBehavior: ScriptedPingBehavior = .succeed
 
-    func makeTransport(for request: URLRequest) -> AppEventWebSocketTransport {
+    func makeTransport(for request: URLRequest) -> PersistentWebSocketTransport {
         let socket = ScriptedAppEventSocket(pingBehavior: pingBehavior)
         requests.append(request)
         sockets.append(socket)
@@ -1415,7 +1415,7 @@ private final class ScriptedAppEventSocket {
         taskState == .canceling
     }
 
-    lazy var transport = AppEventWebSocketTransport(
+    lazy var transport = PersistentWebSocketTransport(
         identity: self,
         resume: { [weak self] in self?.taskState = .running },
         receive: { [weak self] in

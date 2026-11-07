@@ -3,59 +3,6 @@ import OSLog
 
 private let appEventClientLogger = Logger(subsystem: AppIdentifiers.subsystem, category: "AppEventStreamClient")
 
-/// Narrow transport seam for deterministic app-event reconnect tests.
-/// Production still delegates every operation to `URLSessionWebSocketTask`.
-@MainActor
-struct AppEventWebSocketTransport {
-    typealias Message = URLSessionWebSocketTask.Message
-    typealias CloseCode = URLSessionWebSocketTask.CloseCode
-
-    let identity: ObjectIdentifier
-    let resume: () -> Void
-    let receive: () async throws -> Message
-    /// The stream's one client frame is `auth_renew`.
-    let send: (Message) async throws -> Void
-    let sendPing: (@escaping @Sendable (Error?) -> Void) -> Void
-    let cancel: (CloseCode, Data?) -> Void
-    let state: () -> URLSessionTask.State
-    let response: () -> URLResponse?
-    let closeCode: () -> CloseCode
-
-    init(task: URLSessionWebSocketTask) {
-        identity = ObjectIdentifier(task)
-        resume = { task.resume() }
-        receive = { try await task.receive() }
-        send = { message in try await task.send(message) }
-        sendPing = { handler in task.sendPing(pongReceiveHandler: handler) }
-        cancel = { code, reason in task.cancel(with: code, reason: reason) }
-        state = { task.state }
-        response = { task.response }
-        closeCode = { task.closeCode }
-    }
-
-    init(
-        identity: AnyObject,
-        resume: @escaping () -> Void,
-        receive: @escaping () async throws -> Message,
-        send: @escaping (Message) async throws -> Void = { _ in },
-        sendPing: @escaping (@escaping @Sendable (Error?) -> Void) -> Void,
-        cancel: @escaping (CloseCode, Data?) -> Void,
-        state: @escaping () -> URLSessionTask.State,
-        response: @escaping () -> URLResponse?,
-        closeCode: @escaping () -> CloseCode
-    ) {
-        self.identity = ObjectIdentifier(identity)
-        self.resume = resume
-        self.receive = receive
-        self.send = send
-        self.sendPing = sendPing
-        self.cancel = cancel
-        self.state = state
-        self.response = response
-        self.closeCode = closeCode
-    }
-}
-
 /// One frame on the app-event socket: an app event, or the answer to this socket's
 /// `auth_renew`, which is not one. Decoded in one pass.
 enum AppEventStreamFrame: Decodable {
@@ -105,7 +52,7 @@ final class AppEventStreamClient {
     private let trustDelegate: PinnedServerTrustDelegate
     private let urlSession: URLSession
     private let reconnectDelay: @Sendable (Int) -> TimeInterval
-    private let webSocketFactory: (URLRequest) -> AppEventWebSocketTransport
+    private let webSocketFactory: (URLRequest) -> PersistentWebSocketTransport
     private let diagnosticRemoteIdentity: String?
     private let pingInterval: Duration
     private let pingTimeout: Duration
@@ -114,7 +61,7 @@ final class AppEventStreamClient {
     private let authRenewer: StreamAuthRenewer?
     var onTransportHealthFailure: (@MainActor @Sendable (PersistentStreamHealthFailure) async -> Void)?
 
-    private var webSocket: AppEventWebSocketTransport?
+    private var webSocket: PersistentWebSocketTransport?
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
@@ -151,7 +98,7 @@ final class AppEventStreamClient {
         pingTimeout: Duration = WebSocketRecoveryPolicy.pingTimeout,
         reconnectDelay: @escaping @Sendable (Int) -> TimeInterval = WebSocketRecoveryPolicy.reconnectDelay,
         onTransportHealthFailure: (@MainActor @Sendable (PersistentStreamHealthFailure) async -> Void)? = nil,
-        webSocketFactory: ((URLRequest) -> AppEventWebSocketTransport)? = nil
+        webSocketFactory: ((URLRequest) -> PersistentWebSocketTransport)? = nil
     ) {
         self.url = url
         let route = tailnetRoute ?? .forHost(url.host)
@@ -176,7 +123,7 @@ final class AppEventStreamClient {
         let urlSession = URLSession(configuration: config, delegate: trustDelegate, delegateQueue: nil)
         self.urlSession = urlSession
         self.webSocketFactory = webSocketFactory ?? { request in
-            AppEventWebSocketTransport(task: urlSession.webSocketTask(with: request))
+            PersistentWebSocketTransport(task: urlSession.webSocketTask(with: request))
         }
     }
 
@@ -321,7 +268,7 @@ final class AppEventStreamClient {
     }
 
     private func startReceiveLoop(
-        ws: AppEventWebSocketTransport,
+        ws: PersistentWebSocketTransport,
         continuation: AsyncStream<AppEventMessage>.Continuation
     ) {
         receiveTask = Task { [weak self] in
@@ -444,7 +391,7 @@ final class AppEventStreamClient {
         }
     }
 
-    private func startPingTimer(ws: AppEventWebSocketTransport) {
+    private func startPingTimer(ws: PersistentWebSocketTransport) {
         pingTask = Task { [weak self] in
             var consecutiveFailures = 0
             while !Task.isCancelled {
@@ -573,35 +520,38 @@ final class AppEventStreamClient {
     /// 401 (already refreshed this connection) disconnects terminally.
     /// Returns `true` when the socket has been replaced (the caller must stop
     /// touching the old loop); `false` when the caller should disconnect.
-    private func handleAuthFailure(ws: AppEventWebSocketTransport) async -> Bool {
+    private func handleAuthFailure(ws: PersistentWebSocketTransport) async -> Bool {
         guard let refreshTokenProvider else { return false }
         guard webSocket?.identity == ws.identity, status != .disconnected else { return true }
         guard !didForceRefreshForConnection else {
             appEventClientLogger.error("Repeated 401 after forced refresh — disconnecting")
             return false
         }
-        do {
-            if let currentTokenProvider {
-                let current = try await currentTokenProvider()
-                guard webSocket?.identity == ws.identity, status != .disconnected else { return true }
-                if !current.isEmpty, current != token {
-                    // Sibling already minted. Reconnect without spending the one mint.
-                    token = current
-                    attemptReconnect(reason: .authCurrentToken)
-                    return true
-                }
+        let outcome = await PersistentStreamAuthRefresh.resolve(
+            appliedToken: { [weak self] in self?.token ?? "" },
+            currentTokenProvider: currentTokenProvider,
+            refreshTokenProvider: refreshTokenProvider,
+            stillOwnsSocket: { [weak self] in
+                guard let self else { return false }
+                return self.webSocket?.identity == ws.identity && self.status != .disconnected
             }
-            let refreshed = try await refreshTokenProvider()
-            guard webSocket?.identity == ws.identity, status != .disconnected else { return true }
-            guard !refreshed.isEmpty else {
-                appEventClientLogger.error("Refresh returned an empty access token — disconnecting")
-                return false
+        )
+        switch outcome {
+        case .token(let newToken, let forcedRefresh):
+            // Sibling-minted or freshly refreshed: either way, reconnect. A sibling
+            // mint spends none of this connection's one forced refresh.
+            token = newToken
+            if forcedRefresh {
+                didForceRefreshForConnection = true
             }
-            token = refreshed
-            didForceRefreshForConnection = true
-            attemptReconnect(reason: .authRefresh)
+            attemptReconnect(reason: forcedRefresh ? .authRefresh : .authCurrentToken)
             return true
-        } catch {
+        case .socketReplaced:
+            return true
+        case .emptyRefresh:
+            appEventClientLogger.error("Refresh returned an empty access token — disconnecting")
+            return false
+        case .refreshThrew(let error):
             logStreamError(
                 "Device-key refresh failed on 401",
                 error: error

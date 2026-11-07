@@ -44,7 +44,7 @@ final class ScriptedFocusedWebSocketFactory {
     private(set) var requests: [URLRequest] = []
     private(set) var sockets: [ScriptedFocusedWebSocket] = []
 
-    func makeTransport(for request: URLRequest) -> FocusedWebSocketTransport {
+    func makeTransport(for request: URLRequest) -> PersistentWebSocketTransport {
         let socket = ScriptedFocusedWebSocket()
         requests.append(request)
         sockets.append(socket)
@@ -62,14 +62,14 @@ final class ScriptedFocusedWebSocket {
     private var taskResponse: URLResponse?
     private var taskCloseCode: URLSessionWebSocketTask.CloseCode = .invalid
 
-    lazy var transport = FocusedWebSocketTransport(
+    lazy var transport = PersistentWebSocketTransport(
         identity: self,
         resume: { [weak self] in self?.taskState = .running },
         receive: { [weak self] in
             guard let self else { throw CancellationError() }
             return try await self.receive()
         },
-        send: { _, handler in handler(nil) },
+        send: { _ in },
         sendPing: { handler in handler(nil) },
         cancel: { [weak self] code, _ in self?.cancel(code: code) },
         state: { [weak self] in self?.taskState ?? .completed },
@@ -510,7 +510,7 @@ private final class ScriptedDictationSocket {
         sentTexts.filter { $0.contains("\"type\":\"dictation_start\"") }.count
     }
 
-    lazy var transport = DictationWebSocketTransport(
+    lazy var transport = PersistentWebSocketTransport(
         identity: self,
         resume: {},
         receive: { [weak self] in
@@ -603,7 +603,7 @@ private final class ScriptedDictationFactory {
     private(set) var requests: [URLRequest] = []
     private(set) var sockets: [ScriptedDictationSocket] = []
 
-    func make(_ request: URLRequest) -> DictationWebSocketTransport {
+    func make(_ request: URLRequest) -> PersistentWebSocketTransport {
         let socket = ScriptedDictationSocket()
         requests.append(request)
         sockets.append(socket)

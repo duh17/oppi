@@ -359,7 +359,7 @@ struct LANFirstConnectionPolicyTests {
         let proxy = TailnetSOCKSProxy(host: "127.0.0.1", port: 1080, credential: "fixture")
         TailnetTransportRoute.publish(proxy, generation: 11)
         connection._appEventWebSocketFactoryForTesting = { _ in
-            AppEventWebSocketTransport(
+            PersistentWebSocketTransport(
                 identity: connection,
                 resume: {}, receive: { throw CancellationError() },
                 sendPing: { $0(nil) }, cancel: { _, _ in },

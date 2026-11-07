@@ -1841,7 +1841,7 @@ struct ConnectionCoordinatorTests {
         let connection = coordinator.activatePairedServerShell(server)
         connection.route.prepareTailnetProxy = { }
         connection._appEventWebSocketFactoryForTesting = { _ in
-            AppEventWebSocketTransport(
+            PersistentWebSocketTransport(
                 identity: connection,
                 resume: {}, receive: { throw CancellationError() },
                 sendPing: { $0(nil) }, cancel: { _, _ in },

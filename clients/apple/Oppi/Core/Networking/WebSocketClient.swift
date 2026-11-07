@@ -3,58 +3,6 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "WebSocket")
 
-/// Narrow transport seam for deterministic focused-session reconnect tests.
-/// Production still delegates every operation to `URLSessionWebSocketTask`.
-@MainActor
-struct FocusedWebSocketTransport {
-    typealias Message = URLSessionWebSocketTask.Message
-    typealias CloseCode = URLSessionWebSocketTask.CloseCode
-
-    let identity: ObjectIdentifier
-    let resume: () -> Void
-    let receive: () async throws -> Message
-    let send: (Message, @escaping @Sendable (Error?) -> Void) -> Void
-    let sendPing: (@escaping @Sendable (Error?) -> Void) -> Void
-    let cancel: (CloseCode, Data?) -> Void
-    let state: () -> URLSessionTask.State
-    let response: () -> URLResponse?
-    let closeCode: () -> CloseCode
-
-    init(task: URLSessionWebSocketTask) {
-        identity = ObjectIdentifier(task)
-        resume = { task.resume() }
-        receive = { try await task.receive() }
-        send = { message, handler in task.send(message, completionHandler: handler) }
-        sendPing = { handler in task.sendPing(pongReceiveHandler: handler) }
-        cancel = { code, reason in task.cancel(with: code, reason: reason) }
-        state = { task.state }
-        response = { task.response }
-        closeCode = { task.closeCode }
-    }
-
-    init(
-        identity: AnyObject,
-        resume: @escaping () -> Void,
-        receive: @escaping () async throws -> Message,
-        send: @escaping (Message, @escaping @Sendable (Error?) -> Void) -> Void,
-        sendPing: @escaping (@escaping @Sendable (Error?) -> Void) -> Void,
-        cancel: @escaping (CloseCode, Data?) -> Void,
-        state: @escaping () -> URLSessionTask.State,
-        response: @escaping () -> URLResponse?,
-        closeCode: @escaping () -> CloseCode
-    ) {
-        self.identity = ObjectIdentifier(identity)
-        self.resume = resume
-        self.receive = receive
-        self.send = send
-        self.sendPing = sendPing
-        self.cancel = cancel
-        self.state = state
-        self.response = response
-        self.closeCode = closeCode
-    }
-}
-
 /// WebSocket client for the active focused-session stream endpoint.
 ///
 /// Returns an `AsyncStream<StreamFrameEvent>` from `connect()`.
@@ -89,7 +37,7 @@ final class WebSocketClient {
 
     typealias InboundMeta = InboundStreamMeta
 
-    private var webSocket: FocusedWebSocketTransport?
+    private var webSocket: PersistentWebSocketTransport?
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
@@ -125,7 +73,7 @@ final class WebSocketClient {
     private let diagnosticRemoteIdentity: String?
     private let urlSession: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
-    private let webSocketFactory: (URLRequest) -> FocusedWebSocketTransport
+    private let webSocketFactory: (URLRequest) -> PersistentWebSocketTransport
 
     private let pingInterval: Duration
     private let pingTimeout: Duration
@@ -159,7 +107,7 @@ final class WebSocketClient {
         pingTimeout: Duration = WebSocketRecoveryPolicy.pingTimeout,
         waitForConnectionTimeout: Duration = .seconds(3),
         sendTimeout: Duration = .seconds(5),
-        webSocketFactory: ((URLRequest) -> FocusedWebSocketTransport)? = nil
+        webSocketFactory: ((URLRequest) -> PersistentWebSocketTransport)? = nil
     ) {
         self.tailnetRoute = tailnetRoute ?? .forHost(preferredEndpoint?.baseURL.host ?? credentials.host)
         self.credentials = credentials
@@ -193,7 +141,7 @@ final class WebSocketClient {
             // limit closes the socket with 1009 and the reconnect gets the same snapshot again.
             // Match the server's own payload limit (`WS_MAX_PAYLOAD_BYTES`).
             task.maximumMessageSize = Self.maximumMessageSize
-            return FocusedWebSocketTransport(task: task)
+            return PersistentWebSocketTransport(task: task)
         }
     }
 
@@ -342,15 +290,7 @@ final class WebSocketClient {
         guard let ws = webSocket, status == .connected else {
             throw WebSocketError.notConnected
         }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            ws.send(.data(data)) { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume()
-                }
-            }
-        }
+        try await ws.send(.data(data))
     }
 
     private func requireMatchingBoundSession(_ requestedSessionId: String?) throws {
@@ -368,7 +308,7 @@ final class WebSocketClient {
     /// Send payload with a hard timeout that cannot be wedged by a stuck async send.
     private func sendWithTimeout(
         payload: String,
-        over ws: FocusedWebSocketTransport,
+        over ws: PersistentWebSocketTransport,
         timeout: Duration
     ) async throws {
         let timeoutMs = Self.durationMilliseconds(timeout)
@@ -389,12 +329,14 @@ final class WebSocketClient {
                 execute: timeoutWorkItem
             )
 
-            Self.sendPayload(
-                payload,
-                over: ws,
-                baseMetadata: baseMetadata,
-                resolver: resolver
-            )
+            Task {
+                await Self.sendPayload(
+                    payload,
+                    over: ws,
+                    baseMetadata: baseMetadata,
+                    resolver: resolver
+                )
+            }
         }
     }
 
@@ -416,22 +358,21 @@ final class WebSocketClient {
 
     private static func sendPayload(
         _ payload: String,
-        over ws: FocusedWebSocketTransport,
+        over ws: PersistentWebSocketTransport,
         baseMetadata: [String: String],
         resolver: SendResolver
-    ) {
-        ws.send(.string(payload)) { error in
-            if let error {
-                logger.error("WS send callback error: \(String(describing: error), privacy: .public)")
-                ClientLog.error(
-                    "WebSocket",
-                    "WS send callback error",
-                    metadata: Self.mergeMetadata(baseMetadata, extra: ClientLog.networkErrorMetadata(error))
-                )
-                resolver.resolve(.failure(error))
-            } else {
-                resolver.resolve(.success(()))
-            }
+    ) async {
+        do {
+            try await ws.send(.string(payload))
+            resolver.resolve(.success(()))
+        } catch {
+            logger.error("WS send callback error: \(String(describing: error), privacy: .public)")
+            ClientLog.error(
+                "WebSocket",
+                "WS send callback error",
+                metadata: Self.mergeMetadata(baseMetadata, extra: ClientLog.networkErrorMetadata(error))
+            )
+            resolver.resolve(.failure(error))
         }
     }
 
@@ -638,7 +579,7 @@ final class WebSocketClient {
         wsLogInfo("Suppressed recoverable WebSocket receive errors", metadata: metadata)
     }
 
-    private func receiveFailureMetadata(for ws: FocusedWebSocketTransport, error: Error) -> [String: String] {
+    private func receiveFailureMetadata(for ws: PersistentWebSocketTransport, error: Error) -> [String: String] {
         var metadata = ClientLog.networkErrorMetadata(error)
         if let statusCode = (ws.response() as? HTTPURLResponse)?.statusCode {
             metadata["httpStatusCode"] = String(statusCode)
@@ -651,7 +592,7 @@ final class WebSocketClient {
         WebSocketRecoveryPolicy.isNonRetryableHandshakeStatus(statusCode)
     }
 
-    private func isRecoverableReceiveError(_ error: Error, ws: FocusedWebSocketTransport) -> Bool {
+    private func isRecoverableReceiveError(_ error: Error, ws: PersistentWebSocketTransport) -> Bool {
         WebSocketRecoveryPolicy.isRecoverableReceiveError(error, closeCode: ws.closeCode())
     }
 
@@ -726,7 +667,7 @@ final class WebSocketClient {
         startPingTimer(ws: ws)
         authRenewer?.start(
             token: token,
-            send: { text in try await Self.sendText(text, over: ws) },
+            send: { text in try await ws.send(.string(text)) },
             onRenewed: { [weak self] renewed in
                 guard let self, self.webSocket?.identity == ws.identity else { return }
                 self.appliedAccessToken = renewed
@@ -734,24 +675,12 @@ final class WebSocketClient {
         )
     }
 
-    private static func sendText(_ text: String, over ws: FocusedWebSocketTransport) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            ws.send(.string(text)) { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume()
-                }
-            }
-        }
-    }
-
     /// Handle an auth 401 on `ws`: force-refresh exactly once via the device-key
     /// session, then reconnect exactly once on success. A failed refresh
     /// (revoked/unknown device), an empty token, or a repeated 401 disconnects
     /// terminally. Returns `true` when the socket was replaced (the caller must
     /// stop touching the old loop); `false` when the caller should disconnect.
-    private func handleAuthFailure(ws: FocusedWebSocketTransport) async -> Bool {
+    private func handleAuthFailure(ws: PersistentWebSocketTransport) async -> Bool {
         guard let authSession else { return false }
         guard webSocket?.identity == ws.identity, status != .disconnected else { return true }
         guard !didForceRefreshForConnection else {
@@ -761,29 +690,35 @@ final class WebSocketClient {
             )
             return false
         }
-        do {
-            let current = try await authSession.currentAccessToken()
-            guard webSocket?.identity == ws.identity, status != .disconnected else { return true }
-            if !current.isEmpty, current != appliedAccessToken {
-                // Sibling already minted. Reconnect without spending the one mint.
-                attemptReconnect()
-                return true
+        let outcome = await PersistentStreamAuthRefresh.resolve(
+            appliedToken: { [weak self] in self?.appliedAccessToken ?? "" },
+            currentTokenProvider: { try await authSession.currentAccessToken() },
+            refreshTokenProvider: { [weak self] in
+                try await authSession.refreshAccessToken(replacing: self?.appliedAccessToken ?? "")
+            },
+            stillOwnsSocket: { [weak self] in
+                guard let self else { return false }
+                return self.webSocket?.identity == ws.identity && self.status != .disconnected
             }
-            let refreshed = try await authSession.refreshAccessToken(
-                replacing: appliedAccessToken
-            )
-            guard webSocket?.identity == ws.identity, status != .disconnected else { return true }
-            guard !refreshed.isEmpty else {
-                wsLogError(
-                    "Refresh returned an empty access token",
-                    metadata: ["reason": "empty"]
-                )
-                return false
+        )
+        switch outcome {
+        case .token(_, let forcedRefresh):
+            // Sibling-minted or freshly refreshed: either way, reconnect. A sibling
+            // mint spends none of this connection's one forced refresh.
+            if forcedRefresh {
+                didForceRefreshForConnection = true
             }
-            didForceRefreshForConnection = true
             attemptReconnect()
             return true
-        } catch {
+        case .socketReplaced:
+            return true
+        case .emptyRefresh:
+            wsLogError(
+                "Refresh returned an empty access token",
+                metadata: ["reason": "empty"]
+            )
+            return false
+        case .refreshThrew(let error):
             wsLogError(
                 "Device-key refresh failed on 401",
                 metadata: ["error": String(describing: error)]
@@ -792,7 +727,7 @@ final class WebSocketClient {
         }
     }
 
-    private func startReceiveLoop(ws: FocusedWebSocketTransport, continuation: AsyncStream<StreamFrameEvent>.Continuation) {
+    private func startReceiveLoop(ws: PersistentWebSocketTransport, continuation: AsyncStream<StreamFrameEvent>.Continuation) {
         receiveTask = Task { [weak self] in
             var shouldAttemptReconnect = true
             while !Task.isCancelled {
@@ -953,7 +888,7 @@ final class WebSocketClient {
         }
     }
 
-    private func startPingTimer(ws: FocusedWebSocketTransport) {
+    private func startPingTimer(ws: PersistentWebSocketTransport) {
         pingTask = Task { [weak self] in
             var consecutiveFailures = 0
             while !Task.isCancelled {
