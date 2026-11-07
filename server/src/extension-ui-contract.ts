@@ -66,8 +66,10 @@ export const EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY = "extension-native-ui:v2
  */
 export const EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY = "extension-native-ui:v2:blocks";
 /**
- * v2 elapsed: the client ticks an `elapsed` node itself. A blocks client without it decodes the
- * node as unsupported, so it is sent each one as static text of the span at send time.
+ * v2 elapsed: the client ticks an `elapsed` node itself, and draws a pill's text at the strip's
+ * size (`headline` as a strip pill's title, `caption` as its secondary line). A blocks client
+ * without it decodes the node as unsupported, so it is sent each one as static text of the span at
+ * send time; it draws a pill's `headline` at a card title's size, so it is sent `caption` instead.
  */
 export const EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY = "extension-native-ui:v2:elapsed";
 export const EXTENSION_NATIVE_UI_SERVER_CAPABILITIES = [

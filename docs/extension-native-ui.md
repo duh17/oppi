@@ -400,6 +400,8 @@ A server plugin can publish a composable surface: a pill in the strip above or b
 
 A pill holds only `text`, `badge`, `icon`, `elapsed`, and `progress` nodes, and none of them can have an `action`. The pill's own `tap` is `"drawer"` (the default), which opens the drawer, or an action.
 
+In a pill, text draws at the size of the strip's other pills. Use `headline` for the pill's title, which draws like the title of a pill made from a header. Use `caption` for secondary words, which draw like that pill's subtitle.
+
 ### Elapsed
 
 An `elapsed` node shows the time since `since`, in epoch milliseconds. The client advances it once a second while it is on screen, so a running timer needs no republish and costs no server traffic. A `since` in the future shows zero.
@@ -425,9 +427,9 @@ The server advertises these capability levels and clients must support at least 
 | `extension-native-ui:v1:osc8-links` | OSC 8 hyperlinks in terminal fallback as tappable links |
 | `extension-native-ui:v2:composites` | Composable surfaces with the closed composites, and their actions |
 | `extension-native-ui:v2:blocks` | `blocks` sections and composed pills |
-| `extension-native-ui:v2:elapsed` | The `elapsed` node, ticked by the client |
+| `extension-native-ui:v2:elapsed` | The `elapsed` node, ticked by the client, and pill text at the strip's size |
 
-A client names the version 2 capabilities it draws in a `client_capabilities` message on its session stream, and the server sends each client the shape it can draw. A client without `composites` gets the version 1 projection of every composable surface. A client without `blocks` gets the projection of a surface that has a `blocks` section or a pill. A client without `elapsed` gets each `elapsed` node as static text.
+A client names the version 2 capabilities it draws in a `client_capabilities` message on its session stream, and the server sends each client the shape it can draw. A client without `composites` gets the version 1 projection of every composable surface. A client without `blocks` gets the projection of a surface that has a `blocks` section or a pill. A client without `elapsed` gets each `elapsed` node as static text, and a pill's `headline` text as `caption`, because it draws `headline` too large for the strip.
 
 Terminal fallback is part of the contract:
 

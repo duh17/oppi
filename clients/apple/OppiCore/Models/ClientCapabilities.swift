@@ -23,8 +23,10 @@ enum ClientCapability {
     /// projection of any surface that uses a tree, because one frame cannot mix the two shapes.
     static let extensionNativeUIBlocks = "extension-native-ui:v2:blocks"
 
-    /// `extension-native-ui:v2:elapsed`: this build ticks an `elapsed` node itself. A client that
-    /// names `blocks` without it is sent each elapsed node as static text, because a build that
-    /// predates the node draws it as unsupported.
+    /// `extension-native-ui:v2:elapsed`: this build ticks an `elapsed` node itself and draws a
+    /// pill's text at the strip's size (`ExtensionSurfaceBlockMetrics.font`). A client that names
+    /// `blocks` without it is sent each elapsed node as static text, because a build that predates
+    /// the node draws it as unsupported, and a pill's `headline` as `caption`, because it draws a
+    /// pill's `headline` at a card title's size.
     static let extensionNativeUIElapsed = "extension-native-ui:v2:elapsed"
 }

@@ -67,6 +67,33 @@ export function withStaticElapsed(surface: ExtensionUISurface, now: number): Ext
   };
 }
 
+function isPillHeadline(
+  node: ExtensionUISurfacePillNode,
+): node is Extract<ExtensionUISurfacePillNode, { type: "text" | "elapsed" }> {
+  return (node.type === "text" || node.type === "elapsed") && node.style === "headline";
+}
+
+/** Does the pill hold a `headline` text or elapsed node? */
+export function extensionUISurfacePillUsesHeadline(surface: ExtensionUISurface): boolean {
+  return surface.pill?.content.children.some(isPillHeadline) ?? false;
+}
+
+/**
+ * The surface for a client that draws trees but declared no `v2:elapsed`: a pill's `headline` words
+ * become `caption`. Those builds draw a pill's `headline` at a card title's size, which makes the
+ * pill taller than the strip's others and pushes it off the strip's edge; every build that declares
+ * `elapsed` draws it at the size of a strip pill's title. Call only when
+ * `extensionUISurfacePillUsesHeadline`.
+ */
+export function withPillHeadlinesAsCaption(surface: ExtensionUISurface): ExtensionUISurface {
+  const pill = surface.pill;
+  if (pill === undefined) return surface;
+  const children = pill.content.children.map((node): ExtensionUISurfacePillNode =>
+    isPillHeadline(node) ? { ...node, style: "caption" } : node,
+  );
+  return { ...surface, pill: { ...pill, content: { ...pill.content, children } } };
+}
+
 function elapsedAsText(
   node: ExtensionUISurfaceElapsedNode,
   now: number,

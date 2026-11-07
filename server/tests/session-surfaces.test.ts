@@ -270,6 +270,54 @@ describe("SessionSurfaces", () => {
     expect(section.body.children[1]).toMatchObject({ type: "text", text: "2m" });
   });
 
+  it("sends a pill's headline as caption only to a client that would draw it too large", async () => {
+    const h = harness();
+    const value = JSON.parse(JSON.stringify(fixtures["blocks-panel.json"]));
+    value.pill.content.children[1].style = "headline";
+    const read = readExtensionUISurface(value);
+    if ("problem" in read) throw new Error(read.problem);
+    h.surfaces.declare("new-phone", [
+      EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+      EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+      EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+    ]);
+    h.surfaces.declare("old-phone", [
+      EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+      EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+    ]);
+    // The answer writes a headline into the pill: a client that holds the caption copy must not
+    // apply that patch as it is.
+    h.surfaces.publisher.publish(read.surface, async () => ({
+      patch: {
+        "pill.content.children.1": { type: "text", text: "web → staging", style: "headline" },
+      },
+    }));
+
+    const pillText = (surface: ExtensionUISurface | undefined) =>
+      surface?.pill?.content.children[1];
+    const forNew = h.of("extension_ui_surface", "elapsed")[0]?.surface;
+    const forOld = h.of("extension_ui_surface", "blocks")[0]?.surface;
+    expect(pillText(forNew)).toMatchObject({ text: "web → prod", style: "headline" });
+    expect(pillText(forOld)).toMatchObject({ text: "web → prod", style: "caption" });
+    // Only the pill's words change: the old client draws the same drawer.
+    expect(forOld?.sections).toEqual(forNew?.sections);
+    // A client that joins later is handed the caption copy too.
+    const handed = h.surfaces
+      .messages("old-phone")
+      .find((message) => message.type === "extension_ui_surface");
+    expect(pillText(handed?.surface)).toMatchObject({ style: "caption" });
+
+    await h.surfaces.act(
+      tap({ surfaceId: "blocks-panel", compositeId: "panel", actionId: "refresh", revision: 7 }),
+      "new-phone",
+    );
+    expect(h.of("extension_ui_patch", "elapsed")).toHaveLength(1);
+    expect(h.of("extension_ui_patch", "blocks")).toEqual([]);
+    const resent = h.of("extension_ui_surface", "blocks").at(-1);
+    expect(resent?.surface.revision).toBe(forOld!.revision + 1);
+    expect(pillText(resent?.surface)).toMatchObject({ text: "web → staging", style: "caption" });
+  });
+
   it("keeps the shape a client already draws", () => {
     const h = harness();
     h.surfaces.publisher.publish(surfaceOf(), undefined);

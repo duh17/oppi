@@ -19,7 +19,9 @@ import {
   EXTENSION_UI_SURFACE_PILL_COMPOSITE_ID,
 } from "./extension-surface.js";
 import {
+  extensionUISurfacePillUsesHeadline,
   extensionUISurfaceUsesElapsed,
+  withPillHeadlinesAsCaption,
   withStaticElapsed,
 } from "./extension-surface-projection.js";
 import type {
@@ -47,7 +49,8 @@ import type {
 
 /**
  * What a client draws, named by the newest capability it declared. `elapsed` draws every node
- * kind; `blocks` draws a tree but predates the elapsed node, so it is sent each one as static text
+ * kind; `blocks` draws a tree but predates the elapsed node and the strip's pill type sizes, so it
+ * is sent each elapsed node as static text and a pill's `headline` as `caption`
  * (`surfaceForAudience`); `composites` draws only the closed set, so it gets the v1 projection of
  * a surface that uses a tree; and a client that has said nothing draws v1 widgets, as every client
  * did before surfaces existed.
@@ -61,18 +64,26 @@ export function audienceDrawsTrees(audience: ExtensionUISurfaceAudience): boolea
   return TREE_AUDIENCES.includes(audience);
 }
 
+/** Whether a `blocks` client is sent a rewritten copy of this surface. */
+function rewritesForBlocks(surface: ExtensionUISurface): boolean {
+  return extensionUISurfaceUsesElapsed(surface) || extensionUISurfacePillUsesHeadline(surface);
+}
+
 /**
- * A surface in the node kinds this audience draws. Only `blocks` needs a copy: a node kind newer
- * than its build becomes the static shape it can draw, formatted at `now`.
+ * A surface in the shape this audience draws. Only `blocks` needs a copy: a node kind newer than
+ * its build becomes the static shape it can draw, formatted at `now`, and a pill's `headline`
+ * becomes the `caption` it draws at the strip's size. Any other surface is returned as it is.
  */
 export function surfaceForAudience(
   surface: ExtensionUISurface,
   audience: ExtensionUISurfaceAudience,
   now: number,
 ): ExtensionUISurface {
-  return audience === "blocks" && extensionUISurfaceUsesElapsed(surface)
-    ? withStaticElapsed(surface, now)
-    : surface;
+  if (audience !== "blocks") return surface;
+  let shaped = surface;
+  if (extensionUISurfaceUsesElapsed(shaped)) shaped = withStaticElapsed(shaped, now);
+  if (extensionUISurfacePillUsesHeadline(shaped)) shaped = withPillHeadlinesAsCaption(shaped);
+  return shaped;
 }
 
 export const EXTENSION_UI_SURFACE_COALESCE_MS = 250;
@@ -524,9 +535,10 @@ export class ExtensionSurfaceRuntime {
   }
 
   /**
-   * Whether a patch can reach this audience as it is. A client that holds an elapsed node as
-   * static text cannot apply a patch written against the node: its `since` would land on a text
-   * node and change nothing. Such a client is sent the whole surface again instead.
+   * Whether a patch can reach this audience as it is. A client that holds a rewritten copy cannot
+   * apply a patch written against the original: an elapsed node's `since` would land on a text
+   * node and change nothing, and a patch can write a pill `headline` back in. Such a client is
+   * sent the whole surface again instead.
    */
   private patchReaches(
     audience: ExtensionUISurfaceAudience,
@@ -534,10 +546,7 @@ export class ExtensionSurfaceRuntime {
     next: ExtensionUISurface,
   ): boolean {
     if (audience !== "blocks") return true;
-    return !(
-      extensionUISurfaceUsesElapsed(next) ||
-      (previous !== undefined && extensionUISurfaceUsesElapsed(previous))
-    );
+    return !(rewritesForBlocks(next) || (previous !== undefined && rewritesForBlocks(previous)));
   }
 
   /**

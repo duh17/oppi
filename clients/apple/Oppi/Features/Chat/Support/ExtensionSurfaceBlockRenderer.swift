@@ -154,7 +154,8 @@ enum ExtensionSurfaceBlockMetrics {
     /// A text style's face. The ramp is the system list's: `headline` is the row title (body,
     /// semibold) and `caption` its secondary line (footnote). Inside a strip pill the same three
     /// steps drop to the strip's own labels, so a composed pill reads like the ones the host
-    /// derives from a header.
+    /// derives from a header: `headline` its title, `caption` its subtitle. Declaring
+    /// `ClientCapability.extensionNativeUIElapsed` tells the server this build sizes pill text so.
     static func font(_ raw: String?, inline: Bool = false, monospacedDigits: Bool = false) -> UIFont {
         switch (raw ?? "").lowercased() {
         case "headline":
