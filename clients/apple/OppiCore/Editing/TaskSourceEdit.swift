@@ -372,7 +372,8 @@ enum TaskSourceEdit {
         guard i < line.endIndex else { return nil }
         let marker = line[i]
         var markerEnd: String.Index
-        if marker == "-" || marker == "+" || (dialect == .markdown && marker == "*") {
+        // An Org `*` bullet is indented: in column 0 it starts a headline.
+        if marker == "-" || marker == "+" || (marker == "*" && (dialect == .markdown || indent > 0)) {
             markerEnd = line.index(after: i)
         } else if marker.isASCII, marker.isNumber {
             markerEnd = i
@@ -529,7 +530,8 @@ enum TaskSourceEdit {
         }
     }
 
-    /// Rows inside a fenced code block (Markdown) or `#+begin_src` (Org), the
+    /// Rows inside a fenced code block (Markdown) or an Org block whose body
+    /// is not Org (every `#+begin_NAME` but `quote` and `center`), the
     /// delimiters included: their `- [ ]` lines are text, not tasks.
     private static func verbatimRows(_ lines: Lines, dialect: Dialect) -> [Bool] {
         var mask = [Bool](repeating: false, count: lines.rows.count)
@@ -549,13 +551,16 @@ enum TaskSourceEdit {
                     fence = trimmed.prefix(3)
                 }
             case .org:
+                guard trimmed.hasPrefix("#+") || fence != nil else { continue }
                 let upper = trimmed.uppercased()
-                if fence != nil {
+                if let open = fence {
                     mask[index] = true
-                    if upper.hasPrefix("#+END_SRC") { fence = nil }
-                } else if upper.hasPrefix("#+BEGIN_SRC") {
+                    if upper.hasPrefix(open) { fence = nil }
+                } else if upper.hasPrefix("#+BEGIN_") {
+                    let name = upper.dropFirst("#+BEGIN_".count).prefix(while: { $0 != " " && $0 != "\t" })
+                    guard !name.isEmpty, name != "QUOTE", name != "CENTER" else { continue }
                     mask[index] = true
-                    fence = trimmed.prefix(1)
+                    fence = Substring("#+END_" + name)
                 }
             }
         }

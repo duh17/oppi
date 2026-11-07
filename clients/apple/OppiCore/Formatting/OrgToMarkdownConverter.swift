@@ -27,11 +27,12 @@ enum OrgToMarkdownConverter {
         let ids: Set<String>
         /// Whether a heading without a state carries an undrawn state control.
         let offersStateControl: Bool
-        /// Whether a task item carries its Org source line as a marker, for a
-        /// reader that can save the file. False for a plain `convert(_:)` call
-        /// (export, chat previews): nothing there reads the marker, and it
-        /// would otherwise leak into the rendered text as a stray HTML tag.
-        let includesSourceLines: Bool
+        /// Whether a task item carries its markers: its Org source line, for a
+        /// reader that can save the file, and `[-]`. False for `convert(_:)`,
+        /// which takes blocks without their lines, and inside a quote, where
+        /// cmark-gfm makes no task list of `> - [ ]`: a marker there would
+        /// show as raw text beside the literal box.
+        var marksTaskItems: Bool
     }
 
     /// Convert org blocks to markdown blocks.
@@ -48,7 +49,7 @@ enum OrgToMarkdownConverter {
             orgBlocks,
             lines: nil,
             context: makeContext(
-                orgBlocks, documentPath: documentPath, clock: clock, offersStateControl: false, includesSourceLines: false
+                orgBlocks, documentPath: documentPath, clock: clock, offersStateControl: false, marksTaskItems: false
             )
         )
     }
@@ -72,7 +73,7 @@ enum OrgToMarkdownConverter {
                 documentPath: documentPath,
                 clock: clock,
                 offersStateControl: offersStateControl,
-                includesSourceLines: true
+                marksTaskItems: true
             )
         )
     }
@@ -82,7 +83,7 @@ enum OrgToMarkdownConverter {
         documentPath: String?,
         clock: OrgBadges.Clock,
         offersStateControl: Bool,
-        includesSourceLines: Bool
+        marksTaskItems: Bool
     ) -> Context {
         var titles = Set<String>()
         var ids = Set<String>()
@@ -108,7 +109,7 @@ enum OrgToMarkdownConverter {
             headingTitles: titles,
             ids: ids,
             offersStateControl: offersStateControl,
-            includesSourceLines: includesSourceLines
+            marksTaskItems: marksTaskItems
         )
     }
 
@@ -237,43 +238,34 @@ enum OrgToMarkdownConverter {
                 result.append(.paragraph(convertInlines(orgInlines, context: context)))
 
             case .list(let kind, let items):
-                switch kind {
-                case .unordered:
-                    // Check if any item has a checkbox → task list.
-                    if items.contains(where: { $0.checkbox != nil }) {
-                        let taskItems = items.map { item -> MarkdownBlock.TaskItem in
-                            let checked = item.checkbox == .checked
-                            let isPartial = item.checkbox == .partial
-                            var blocks = listItemBlocks(item, context: context)
-                            if case .paragraph(var inlines) = blocks[0] {
-                                // The item's line travels as a marker at the start of
-                                // its first paragraph: the Markdown this becomes is
-                                // parsed again, and its own line numbers are not the
-                                // Org file's. A plain item in a list that has tasks is
-                                // marked line 0: it has no box, and the Markdown's own
-                                // line must not stand in for the Org's.
-                                if context.includesSourceLines {
-                                    let markerLine = item.checkbox == nil ? 0 : (item.line ?? 0)
-                                    inlines.insert(.html(MarkdownSourceLineMarker.markup(line: markerLine)), at: 0)
-                                }
-                                // The partial marker travels independently of source
-                                // lines: even a plain export needs to tell `[-]` apart
-                                // from `[ ]`, not only a reader that can save the file.
-                                if isPartial {
-                                    inlines.insert(.html(MarkdownPartialTaskMarker.markup), at: 0)
-                                }
-                                blocks[0] = .paragraph(inlines)
+                // Any item with a checkbox makes a task list, numbered or not:
+                // the reader draws no numbers on a task list, but dropping the
+                // boxes would lose each item's state and its toggle.
+                if items.contains(where: { $0.checkbox != nil }) {
+                    let taskItems = items.map { item -> MarkdownBlock.TaskItem in
+                        let checked = item.checkbox == .checked
+                        let isPartial = item.checkbox == .partial
+                        var blocks = listItemBlocks(item, context: context)
+                        if context.marksTaskItems, case .paragraph(var inlines) = blocks[0] {
+                            // The item's line travels as a marker at the start of
+                            // its first paragraph: the Markdown this becomes is
+                            // parsed again, and its own line numbers are not the
+                            // Org file's. A plain item in a list that has tasks is
+                            // marked line 0: it has no box, and the Markdown's own
+                            // line must not stand in for the Org's.
+                            let markerLine = item.checkbox == nil ? 0 : (item.line ?? 0)
+                            inlines.insert(.html(MarkdownSourceLineMarker.markup(line: markerLine)), at: 0)
+                            if isPartial {
+                                inlines.insert(.html(MarkdownPartialTaskMarker.markup), at: 0)
                             }
-                            return MarkdownBlock.TaskItem(checked: checked, content: blocks, isPartial: isPartial)
+                            blocks[0] = .paragraph(inlines)
                         }
-                        result.append(.taskList(taskItems))
-                    } else {
-                        let mdItems = items.map { item in listItemBlocks(item, context: context) }
-                        result.append(.unorderedList(mdItems))
+                        return MarkdownBlock.TaskItem(checked: checked, content: blocks, isPartial: isPartial)
                     }
-                case .ordered:
+                    result.append(.taskList(taskItems))
+                } else {
                     let mdItems = items.map { item in listItemBlocks(item, context: context) }
-                    result.append(.orderedList(start: 1, mdItems))
+                    result.append(kind == .ordered ? .orderedList(start: 1, mdItems) : .unorderedList(mdItems))
                 }
 
             case .verse(let verseLines):
@@ -288,8 +280,9 @@ enum OrgToMarkdownConverter {
                 result.append(.codeBlock(language: language, code: code))
 
             case .quote(let children):
-                let converted = convert(children, lines: nil, context: context)
-                result.append(.blockQuote(converted))
+                var quoted = context
+                quoted.marksTaskItems = false
+                result.append(.blockQuote(convert(children, lines: nil, context: quoted)))
 
             case .keyword(let key, let value):
                 let upper = key.uppercased()

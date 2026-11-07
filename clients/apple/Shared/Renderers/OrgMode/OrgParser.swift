@@ -39,6 +39,84 @@ struct OrgParser: DocumentParser, Sendable {
         stripped(s[...])
     }
 
+    /// The document's lines. A nested parse (a quote's body) gets a slice of
+    /// the same array, so every index, and every line number derived from
+    /// one, stays the file's own.
+    private typealias Lines = ArraySlice<Substring>
+
+    /// Whether `text` equals `upper` (an ASCII uppercase marker such as
+    /// `#+END_SRC`) ignoring ASCII case, without allocating an uppercased copy
+    /// of every line a block or drawer scan passes over.
+    @inline(__always)
+    private static func equalsIgnoringASCIICase(_ text: Substring, _ upper: String) -> Bool {
+        let lhs = text.utf8
+        let rhs = upper.utf8
+        var left = lhs.startIndex
+        var right = rhs.startIndex
+        while left < lhs.endIndex, right < rhs.endIndex {
+            let byte = lhs[left]
+            guard (byte >= 0x61 && byte <= 0x7A ? byte - 0x20 : byte) == rhs[right] else { return false }
+            lhs.formIndex(after: &left)
+            rhs.formIndex(after: &right)
+        }
+        return left == lhs.endIndex && right == rhs.endIndex
+    }
+
+    /// Whether `line` is a headline: stars from column 0, then a space.
+    @inline(__always)
+    private static func isHeadline(_ line: Substring) -> Bool {
+        let utf8 = line.utf8
+        var index = utf8.startIndex
+        guard index < utf8.endIndex, utf8[index] == 0x2A else { return false }
+        while index < utf8.endIndex, utf8[index] == 0x2A { utf8.formIndex(after: &index) }
+        return index < utf8.endIndex && utf8[index] == 0x20
+    }
+
+    /// The line closing the block or drawer opened at `start`: the first later
+    /// line equal to `endMarker` (`#+END_SRC`, `:END:`), ignoring case and
+    /// surrounding whitespace. Otherwise, `sectionEnd` is where the search
+    /// stopped: the next headline, or the end of `lines`. Org ends every block
+    /// and drawer with its section, so neither an opener never closed nor a
+    /// later section's closer ever runs one on over the rest of the file.
+    private static func closingLine(
+        in lines: Lines,
+        after start: Int,
+        endMarker: String
+    ) -> (closer: Int?, sectionEnd: Int) {
+        var cursor = start + 1
+        while cursor < lines.endIndex {
+            let line = lines[cursor]
+            if isHeadline(line) { break }
+            if equalsIgnoringASCIICase(stripped(line), endMarker) { return (cursor, cursor) }
+            cursor += 1
+        }
+        return (nil, cursor)
+    }
+
+    /// `#+begin_NAME params` split into its name and parameters; nil when
+    /// `trimmed` is no block opener.
+    private static func blockOpener(_ trimmed: Substring) -> (name: Substring, parameters: Substring)? {
+        let prefix = "#+BEGIN_"
+        guard trimmed.utf8.count > prefix.utf8.count,
+              equalsIgnoringASCIICase(trimmed.prefix(prefix.count), prefix) else { return nil }
+        let afterPrefix = trimmed.dropFirst(prefix.count)
+        let nameEnd = afterPrefix.firstIndex(where: { $0 == " " || $0 == "\t" }) ?? afterPrefix.endIndex
+        let name = afterPrefix[..<nameEnd]
+        let parameters = nameEnd < afterPrefix.endIndex ? stripped(afterPrefix[afterPrefix.index(after: nameEnd)...]) : afterPrefix[nameEnd...]
+        return (name, parameters)
+    }
+
+    /// The block `start` opens: its body runs to its closing line, or, when
+    /// it is never closed, to the end of its section. Org itself reads an
+    /// unclosed opener as text; running it to the section's end instead keeps
+    /// a file cut off mid-block (truncated tool output) readable as the code
+    /// it was, while a headline still ends it. `next` is the line after it.
+    private static func block(in lines: Lines, at start: Int) -> (name: Substring, parameters: Substring, bodyEnd: Int, next: Int)? {
+        guard let opener = blockOpener(stripped(lines[start])) else { return nil }
+        let end = closingLine(in: lines, after: start, endMarker: "#+END_" + opener.name.uppercased())
+        return (opener.name, opener.parameters, end.sectionEnd, end.closer.map { $0 + 1 } ?? end.sectionEnd)
+    }
+
     nonisolated func parse(_ source: String) -> [OrgBlock] {
         parseLocated(source).map(\.block)
     }
@@ -59,35 +137,32 @@ struct OrgParser: DocumentParser, Sendable {
     /// The top-level blocks with the 1-based source line each starts on, for
     /// readers that edit the lines a block came from.
     nonisolated func parseLocated(_ source: String) -> [LocatedOrgBlock] {
-        let lines = Self.normalizedLineEndings(source).split(separator: "\n", omittingEmptySubsequences: false)
+        let lines = Self.normalizedLineEndings(source).split(separator: "\n", omittingEmptySubsequences: false)[...]
         return parseBlocks(lines: lines, todoKeywords: scanTodoKeywords(lines))
     }
 
     /// The keywords `parse` classifies headings with: the file's `#+TODO:`
     /// declarations, or the defaults.
     nonisolated func todoKeywords(in source: String) -> OrgTodoKeywords {
-        scanTodoKeywords(Self.normalizedLineEndings(source).split(separator: "\n", omittingEmptySubsequences: false))
+        scanTodoKeywords(Self.normalizedLineEndings(source).split(separator: "\n", omittingEmptySubsequences: false)[...])
     }
 
     /// Org applies `#+TODO:` to the whole file wherever the line sits, so the
     /// declarations are read before any heading is classified. A declaration
     /// quoted inside any `#+begin_NAME … #+end_NAME` block — not just `src` —
     /// is text or code, not a setting.
-    private func scanTodoKeywords(_ lines: [Substring]) -> OrgTodoKeywords {
+    private func scanTodoKeywords(_ lines: Lines) -> OrgTodoKeywords {
         var declarations: [OrgBlock] = []
-        var blockEndMarker: String?
-        for line in lines {
+        var cursor = lines.startIndex
+        while cursor < lines.endIndex {
+            let line = lines[cursor]
+            cursor += 1
             guard let first = line.utf8.first, first == 0x23 || first == 0x20 || first == 0x09 else { continue }
             let trimmed = Self.stripped(line)
             guard trimmed.hasPrefix("#+") else { continue }
-            let upper = trimmed.uppercased()
-            if let endMarker = blockEndMarker {
-                if upper == endMarker { blockEndMarker = nil }
-                continue
-            }
-            if upper.hasPrefix("#+BEGIN_") {
-                let name = upper.dropFirst("#+BEGIN_".count).split(separator: " ").first.map(String.init) ?? ""
-                blockEndMarker = "#+END_\(name)"
+            // Skips exactly the lines `parseBlocks` reads as a block's body.
+            if let block = Self.block(in: lines, at: cursor - 1) {
+                cursor = block.next
                 continue
             }
             guard let keyword = parseKeyword(line),
@@ -98,8 +173,8 @@ struct OrgParser: DocumentParser, Sendable {
         return declarations.isEmpty ? .standard : OrgTodoKeywords.declared(in: declarations)
     }
 
-    private func parseBlocks(lines: [Substring], todoKeywords: OrgTodoKeywords) -> [LocatedOrgBlock] {
-        var cursor = 0
+    private func parseBlocks(lines: Lines, todoKeywords: OrgTodoKeywords) -> [LocatedOrgBlock] {
+        var cursor = lines.startIndex
         var blocks: [LocatedOrgBlock] = []
         func add(_ block: OrgBlock) {
             blocks.append(LocatedOrgBlock(block: block, line: cursor + 1))
@@ -107,7 +182,7 @@ struct OrgParser: DocumentParser, Sendable {
         // Line a planning line may sit on: directly under a heading.
         var planningCursor = -1
 
-        while cursor < lines.count {
+        while cursor < lines.endIndex {
             let line = lines[cursor]
 
             if cursor == planningCursor, let planning = parsePlanning(line) {
@@ -133,84 +208,32 @@ struct OrgParser: DocumentParser, Sendable {
                     planningCursor = cursor
                     continue
                 }
-                // Not a heading — fall through to paragraph
-
-            case "#":
-                // # → comment, #+ → keyword or block delimiter
-                let trimmed = Self.stripped(line)
-                if trimmed.hasPrefix("#+") {
-                    // Any `#+begin_NAME … #+end_NAME` block — `src`, `quote`,
-                    // `example`, `verse`, `center`, `export`, `comment`, and
-                    // names Org does not define — takes priority over a keyword.
-                    if trimmed.uppercased().hasPrefix("#+BEGIN_") {
-                        let (block, newCursor) = parseGenericBlock(
-                            lines: lines, startCursor: cursor, todoKeywords: todoKeywords
-                        )
-                        add(block)
-                        cursor = newCursor
-                        continue
-                    }
-                    if let keyword = parseKeyword(line) {
-                        add(keyword)
-                        cursor += 1
-                        continue
-                    }
-                }
-                if let comment = parseComment(line) {
-                    add(comment)
-                    cursor += 1
-                    continue
-                }
-                // Not a comment or keyword — fall through to paragraph
-
-            case "-":
-                // - followed by space → list item; 5+ dashes → horizontal rule
+                // Not a heading — an indented `*` bullet, or a paragraph
                 if isListItemStart(line) {
-                    let (list, newCursor) = parseList(lines: lines, startCursor: cursor)
-                    add(list)
-                    cursor = newCursor
-                    continue
-                }
-                if isHorizontalRule(line) {
-                    add(.horizontalRule)
-                    cursor += 1
-                    continue
-                }
-                // Not list or rule — fall through to paragraph
-
-            case "+":
-                if isListItemStart(line) {
-                    let (list, newCursor) = parseList(lines: lines, startCursor: cursor)
+                    let (list, newCursor) = parseList(lines: lines, startCursor: cursor, todoKeywords: todoKeywords)
                     add(list)
                     cursor = newCursor
                     continue
                 }
 
-            case "|":
-                let (block, newCursor) = parseTable(lines: lines, startCursor: cursor)
-                add(block)
-                cursor = newCursor
-                continue
-
-            case ":":
-                let trimmed = Self.stripped(line)
-                if isDrawerStart(trimmed[...]), drawerHasEnd(lines: lines, startCursor: cursor) {
-                    let (block, newCursor) = parseDrawer(lines: lines, startCursor: cursor)
-                    add(block)
-                    cursor = newCursor
-                    continue
-                }
-
-            case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
+            case "-", "+", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
                 if isListItemStart(line) {
-                    let (list, newCursor) = parseList(lines: lines, startCursor: cursor)
+                    let (list, newCursor) = parseList(lines: lines, startCursor: cursor, todoKeywords: todoKeywords)
                     add(list)
                     cursor = newCursor
                     continue
                 }
 
             default:
-                break // Fall through to paragraph
+                break
+            }
+
+            if let (block, newCursor) = parseLeafBlock(
+                lines: lines, at: cursor, firstNonWS: firstNonWS, todoKeywords: todoKeywords
+            ) {
+                add(block)
+                cursor = newCursor
+                continue
             }
 
             // Default: paragraph — collect contiguous non-blank, non-structural lines
@@ -221,6 +244,58 @@ struct OrgParser: DocumentParser, Sendable {
         }
 
         return blocks
+    }
+
+    /// A block that is not a heading, list or paragraph, starting at
+    /// `cursor`: a `#+begin_NAME` block closed in its section, a keyword or
+    /// comment line, a horizontal rule, a table, or a drawer closed in its
+    /// section. A list item's own indented lines go through here too, so a
+    /// block nested under an item is the same block it would be anywhere.
+    /// nil when the line starts none of them.
+    private func parseLeafBlock(
+        lines: Lines,
+        at cursor: Int,
+        firstNonWS: Character,
+        todoKeywords: OrgTodoKeywords
+    ) -> (OrgBlock, Int)? {
+        let line = lines[cursor]
+        switch firstNonWS {
+        case "#":
+            // # → comment, #+ → keyword or block delimiter
+            let trimmed = Self.stripped(line)
+            if trimmed.hasPrefix("#+") {
+                // Any `#+begin_NAME … #+end_NAME` block — `src`, `quote`,
+                // `example`, `verse`, `center`, `export`, `comment`, and
+                // names Org does not define — takes priority over a keyword.
+                if let block = Self.block(in: lines, at: cursor) {
+                    let parsed = parseGenericBlock(
+                        name: block.name,
+                        parameters: block.parameters,
+                        body: lines[(cursor + 1)..<block.bodyEnd],
+                        todoKeywords: todoKeywords
+                    )
+                    return (parsed, block.next)
+                }
+                if let keyword = parseKeyword(line) { return (keyword, cursor + 1) }
+            }
+            if let comment = parseComment(line) { return (comment, cursor + 1) }
+            return nil
+
+        case "-":
+            return isHorizontalRule(line) ? (.horizontalRule, cursor + 1) : nil
+
+        case "|":
+            return parseTable(lines: lines, startCursor: cursor)
+
+        case ":":
+            // A drawer never closed in its section is text, as Org reads it.
+            guard isDrawerStart(Self.stripped(line)),
+                  let end = Self.closingLine(in: lines, after: cursor, endMarker: ":END:").closer else { return nil }
+            return (parseDrawer(lines: lines[cursor..<end]), end + 1)
+
+        default:
+            return nil
+        }
     }
 
     // MARK: - Heading
@@ -382,59 +457,27 @@ struct OrgParser: DocumentParser, Sendable {
     /// matched (`#+END_NAME` closes `#+BEGIN_NAME` whatever case either uses).
     /// `src` and `quote` keep their own richer meaning (a language, recursed
     /// blocks); every other name — `example`, `verse`, `center`, `export`,
-    /// `comment`, a dynamic block, or one Org does not define — goes through
-    /// `buildBlock` from its raw lines. An unterminated block reads to EOF, as
-    /// Org itself does: unlike a drawer, Org has no "not really a block" rule
-    /// for this case.
+    /// `comment`, or a name Org does not define — is read from its body lines
+    /// here too. Callers find where the body ends first (`block(in:at:)`).
     private func parseGenericBlock(
-        lines: [Substring],
-        startCursor: Int,
-        todoKeywords: OrgTodoKeywords
-    ) -> (OrgBlock, Int) {
-        let startLine = Self.stripped(lines[startCursor])
-        let prefixLen = "#+begin_".count
-        let afterPrefix = startLine.count > prefixLen ? Self.stripped(startLine.dropFirst(prefixLen)) : Substring()
-        let nameEnd = afterPrefix.firstIndex(where: { $0 == " " || $0 == "\t" }) ?? afterPrefix.endIndex
-        let name = String(afterPrefix[..<nameEnd])
-        let parameters = nameEnd < afterPrefix.endIndex
-            ? String(Self.stripped(afterPrefix[afterPrefix.index(after: nameEnd)...]))
-            : ""
-        let endMarker = "#+END_\(name.uppercased())"
-
-        var bodyLines: [Substring] = []
-        var cursor = startCursor + 1
-        while cursor < lines.count {
-            if Self.stripped(lines[cursor]).uppercased() == endMarker {
-                cursor += 1
-                break
-            }
-            bodyLines.append(lines[cursor])
-            cursor += 1
-        }
-
-        let block = buildGenericBlock(name: name, parameters: parameters, bodyLines: bodyLines, todoKeywords: todoKeywords)
-        return (block, cursor)
-    }
-
-    private func buildGenericBlock(
-        name: String,
-        parameters: String,
-        bodyLines: [Substring],
+        name: Substring,
+        parameters: Substring,
+        body bodyLines: Lines,
         todoKeywords: OrgTodoKeywords
     ) -> OrgBlock {
         switch name.uppercased() {
         case "SRC":
             let language = parameters.split(separator: " ").first.map(String.init)
-            return .codeBlock(language: language, code: bodyLines.joined(separator: "\n"))
+            return .codeBlock(language: language, code: Self.codeText(bodyLines))
         case "QUOTE":
             let inner = parseBlocks(lines: bodyLines, todoKeywords: todoKeywords).map(\.block)
             return .quote(inner)
         case "EXAMPLE":
             // Shown verbatim, never reparsed as Org prose: a `*not bold*` or a
             // URL inside an example block stays literal, as Org exports it.
-            return .codeBlock(language: nil, code: bodyLines.joined(separator: "\n"))
+            return .codeBlock(language: nil, code: Self.codeText(bodyLines))
         case "VERSE":
-            return .verse(bodyLines.map { parseInlines(String(Self.stripped($0))) })
+            return .verse(verseLines(bodyLines))
         case "CENTER":
             let joined = bodyLines.map { String(Self.stripped($0)) }.joined(separator: " ")
             return .paragraph(parseInlines(joined))
@@ -442,22 +485,74 @@ struct OrgParser: DocumentParser, Sendable {
             // The export target (`html`, `latex`, …) labels the box; its
             // contents are shown, never rendered as that target.
             let language = parameters.split(separator: " ").first.map(String.init)
-            return .codeBlock(language: language, code: bodyLines.joined(separator: "\n"))
+            return .codeBlock(language: language, code: Self.codeText(bodyLines))
         case "COMMENT":
             // Hidden downstream the same way a `# line` comment is.
             return .comment(bodyLines.map { String(Self.stripped($0)) }.joined(separator: "\n"))
         default:
             // An unknown or dynamic block (`clocktable`, …): a labelled box
             // naming it, not raw `#+begin_…` text.
-            return .codeBlock(language: name.lowercased(), code: bodyLines.joined(separator: "\n"))
+            return .codeBlock(language: name.lowercased(), code: Self.codeText(bodyLines))
+        }
+    }
+
+    /// A verbatim block's text as Org reads it: the indentation every line
+    /// shares removed (a block nested in a list item is indented with it),
+    /// and the comma Org writes before a line starting `*` or `#+` inside a
+    /// block, so it is not read as a headline or keyword, removed again.
+    private static func codeText(_ lines: Lines) -> String {
+        var common: Substring?
+        for line in lines where !stripped(line).isEmpty {
+            let indent = line.prefix(while: { $0 == " " || $0 == "\t" })
+            guard let shared = common else {
+                common = indent
+                continue
+            }
+            common = shared.prefix(zip(shared.utf8, indent.utf8).prefix(while: { $0 == $1 }).count)
+            if common?.isEmpty == true { break }
+        }
+        let dropCount = common?.utf8.count ?? 0
+        // `,*`, `,#+`, and one comma fewer before any further commas there.
+        func escapeComma(_ body: Substring) -> Substring.Index? {
+            let content = body.drop(while: { $0 == " " || $0 == "\t" })
+            guard content.first == "," else { return nil }
+            let rest = content.drop(while: { $0 == "," })
+            return rest.hasPrefix("*") || rest.hasPrefix("#+") ? content.startIndex : nil
+        }
+        guard dropCount > 0 || lines.contains(where: { escapeComma($0) != nil }) else {
+            return lines.joined(separator: "\n")
+        }
+        return lines.lazy.map { line -> String in
+            var body = stripped(line).isEmpty ? line[line.endIndex...] : line.dropFirst(dropCount)
+            if let comma = escapeComma(body) { body.remove(at: comma) }
+            return String(body)
+        }.joined(separator: "\n")
+    }
+
+    /// A verse block's lines, each with its own inline markup and the
+    /// indentation it has past the block's least indented line, which a verse
+    /// keeps as written. That indentation becomes NO-BREAK SPACEs: ordinary
+    /// leading spaces vanish once the Markdown is parsed again.
+    private func verseLines(_ lines: Lines) -> [[OrgInline]] {
+        let common = lines.lazy.filter { !Self.stripped($0).isEmpty }.map(indentOf).min() ?? 0
+        return lines.map { line in
+            let text = Self.stripped(line)
+            var inlines = parseInlines(String(text))
+            let extra = text.isEmpty ? 0 : indentOf(line) - common
+            if extra > 0 { inlines.insert(.text(String(repeating: "\u{00A0}", count: extra)), at: 0) }
+            return inlines
         }
     }
 
     // MARK: - List
 
+    /// Whether `line` starts a list item: `-`, `+`, or `*` and a space, or a
+    /// counter (`1.`, `1)`) and a space. A `*` bullet must be indented: in
+    /// column 0 it starts a headline.
     private func isListItemStart(_ line: Substring) -> Bool {
         let trimmed = Self.stripped(line)
         if trimmed.hasPrefix("- ") || trimmed.hasPrefix("+ ") { return true }
+        if trimmed.hasPrefix("* ") { return line.first != "*" }
         return matchesOrderedBullet(trimmed[...])
     }
 
@@ -482,6 +577,9 @@ struct OrgParser: DocumentParser, Sendable {
         if trimmed.hasPrefix("+ ") {
             return (bullet: "+", isOrdered: false, content: String(trimmed.dropFirst(2)))
         }
+        if trimmed.hasPrefix("* "), line.first != "*" {
+            return (bullet: "*", isOrdered: false, content: String(trimmed.dropFirst(2)))
+        }
 
         // Ordered: `1. text` or `1) text`
         var idx = trimmed.startIndex
@@ -497,14 +595,20 @@ struct OrgParser: DocumentParser, Sendable {
         return (bullet: bullet, isOrdered: true, content: content)
     }
 
-    /// Columns of leading space/tab before a line's first character (a tab
-    /// counts as one column): how a list tells a nested item or continuation
-    /// line from a sibling at the same level.
+    /// Columns of leading space/tab before a line's first character, a tab
+    /// advancing to the next multiple of 8 as Emacs counts it: how a list
+    /// tells a nested item or continuation line from a sibling, whether the
+    /// file indents with tabs, spaces or both.
     private func indentOf(_ line: Substring) -> Int {
         var columns = 0
-        for ch in line {
-            guard ch == " " || ch == "\t" else { break }
-            columns += 1
+        for byte in line.utf8 {
+            if byte == 0x20 {
+                columns += 1
+            } else if byte == 0x09 {
+                columns = (columns / 8 + 1) * 8
+            } else {
+                break
+            }
         }
         return columns
     }
@@ -516,25 +620,20 @@ struct OrgParser: DocumentParser, Sendable {
         return (String(content[content.startIndex..<range.lowerBound]), String(content[range.upperBound...]))
     }
 
-    /// Parses a plain list at exactly `indent` columns (the first item's own
-    /// indent, when the caller does not already know it). The list's kind
-    /// comes from its first item, never its last: a bullet of the other kind
-    /// at this same indent starts a new, sibling list instead of silently
-    /// flipping this one's kind. A line indented deeper than the item that
-    /// precedes it is that item's own region — a nested list, a continuation
-    /// line, or both — parsed by `parseListRegion`.
-    private func parseList(lines: [Substring], startCursor: Int, indent: Int? = nil) -> (OrgBlock, Int) {
-        let indent = indent ?? indentOf(lines[startCursor])
+    /// Parses a plain list whose items sit at its first item's indent. The
+    /// list's kind comes from that first item, as Org's does: a later item at
+    /// the same indent with the other kind of bullet is still this list's next
+    /// item, never a flip of the whole list's kind. Lines indented past an
+    /// item's bullet belong to that item (`parseItemBody`).
+    private func parseList(lines: Lines, startCursor: Int, todoKeywords: OrgTodoKeywords) -> (OrgBlock, Int) {
+        let indent = indentOf(lines[startCursor])
         var items: [OrgListItem] = []
         var cursor = startCursor
         var isOrdered: Bool?
 
-        while cursor < lines.count {
+        while cursor < lines.endIndex {
             let line = lines[cursor]
-            if line.allSatisfy(\.isWhitespace) { break }
-            guard indentOf(line) == indent else { break }
-            guard let parsed = parseListItemLine(line) else { break }
-            if let isOrdered, parsed.isOrdered != isOrdered { break }
+            guard indentOf(line) == indent, let parsed = parseListItemLine(line) else { break }
             if isOrdered == nil { isOrdered = parsed.isOrdered }
 
             var content = parsed.content
@@ -550,25 +649,19 @@ struct OrgParser: DocumentParser, Sendable {
                 content = String(content.dropFirst(4))
             }
 
+            // Org reads `term :: description` only in an unordered list.
             var term: [OrgInline]?
-            if let split = splitDescriptionTerm(content) {
+            if !parsed.isOrdered, let split = splitDescriptionTerm(content) {
                 term = parseInlines(split.term)
                 content = split.description
             }
 
             let inlines = parseInlines(content)
             let itemLine = cursor + 1
-            cursor += 1
-
-            var children: [OrgBlock] = []
-            if cursor < lines.count, !lines[cursor].allSatisfy(\.isWhitespace) {
-                let childIndent = indentOf(lines[cursor])
-                if childIndent > indent {
-                    let (kids, newCursor) = parseListRegion(lines: lines, startCursor: cursor, indent: childIndent)
-                    children = kids
-                    cursor = newCursor
-                }
-            }
+            let (children, newCursor) = parseItemBody(
+                lines: lines, startCursor: cursor + 1, bulletIndent: indent, todoKeywords: todoKeywords
+            )
+            cursor = newCursor
 
             items.append(OrgListItem(
                 bullet: parsed.bullet, checkbox: checkbox, content: inlines,
@@ -580,72 +673,79 @@ struct OrgParser: DocumentParser, Sendable {
         return (.list(kind: kind, items: items), cursor)
     }
 
-    /// The indented region under one list item: at exactly `indent`, a line
-    /// that starts a bullet becomes a nested list, and a run of lines that do
-    /// not becomes one continuation paragraph, in whatever order the source
-    /// has them. Stops at a blank line, a dedent below `indent`, or a line
-    /// indented past `indent` (its own further-nested item is that block's
-    /// problem, not this region's).
-    private func parseListRegion(lines: [Substring], startCursor: Int, indent: Int) -> ([OrgBlock], Int) {
+    /// The blocks under one list item: the lines after its bullet line that
+    /// are indented past the bullet, up to a blank line or one that is not. A
+    /// bullet there starts a nested list at its own indent; a block
+    /// (`#+begin_…`, a table, a drawer, a keyword or comment line) is read as
+    /// it would be anywhere; any other run of lines is a continuation
+    /// paragraph.
+    private func parseItemBody(
+        lines: Lines,
+        startCursor: Int,
+        bulletIndent: Int,
+        todoKeywords: OrgTodoKeywords
+    ) -> ([OrgBlock], Int) {
         var blocks: [OrgBlock] = []
         var cursor = startCursor
-        while cursor < lines.count {
+        while cursor < lines.endIndex {
             let line = lines[cursor]
-            if line.allSatisfy(\.isWhitespace) { break }
-            guard indentOf(line) == indent else { break }
+            guard let firstNonWS = line.first(where: { !$0.isWhitespace }),
+                  indentOf(line) > bulletIndent else { break }
             if isListItemStart(line) {
-                let (list, newCursor) = parseList(lines: lines, startCursor: cursor, indent: indent)
+                let (list, newCursor) = parseList(lines: lines, startCursor: cursor, todoKeywords: todoKeywords)
                 blocks.append(list)
                 cursor = newCursor
-            } else {
-                let (paragraph, newCursor) = parseContinuationParagraph(lines: lines, startCursor: cursor, indent: indent)
-                blocks.append(paragraph)
+            } else if let (block, newCursor) = parseLeafBlock(
+                lines: lines, at: cursor, firstNonWS: firstNonWS, todoKeywords: todoKeywords
+            ) {
+                blocks.append(block)
                 cursor = newCursor
+            } else {
+                var end = cursor + 1
+                while end < lines.endIndex {
+                    let next = lines[end]
+                    guard !next.allSatisfy(\.isWhitespace), indentOf(next) > bulletIndent,
+                          !isStructuralLine(next, lines: lines, cursor: end) else { break }
+                    end += 1
+                }
+                blocks.append(.paragraph(parseInlines(Self.paragraphText(lines[cursor..<end]))))
+                cursor = end
             }
         }
         return (blocks, cursor)
     }
 
-    /// A continuation line (or contiguous run of them) at exactly `indent`,
-    /// joined with spaces the same way an ordinary paragraph joins its lines.
-    private func parseContinuationParagraph(lines: [Substring], startCursor: Int, indent: Int) -> (OrgBlock, Int) {
-        var cursor = startCursor
-        while cursor < lines.count {
-            let line = lines[cursor]
-            if line.allSatisfy(\.isWhitespace) { break }
-            guard indentOf(line) == indent, !isListItemStart(line) else { break }
-            cursor += 1
-        }
-        let text = lines[startCursor..<cursor].map { String(Self.stripped($0)) }.joined(separator: " ")
-        return (.paragraph(parseInlines(text)), cursor)
-    }
-
     // MARK: - Paragraph
 
-    private func parseParagraph(lines: [Substring], startCursor: Int) -> (OrgBlock, Int) {
-        var cursor = startCursor
-        let firstLine = cursor
-
-        while cursor < lines.count {
+    private func parseParagraph(lines: Lines, startCursor: Int) -> (OrgBlock, Int) {
+        // The first line is this paragraph's whatever it starts with: nothing
+        // else took it (a block opener never closed, say), and it must not
+        // vanish.
+        var cursor = startCursor + 1
+        while cursor < lines.endIndex {
             let line = lines[cursor]
             if line.allSatisfy(\.isWhitespace) { break }
             if isStructuralLine(line, lines: lines, cursor: cursor) { break }
             cursor += 1
         }
+        return (.paragraph(parseInlines(Self.paragraphText(lines[startCursor..<cursor]))), cursor)
+    }
 
-        // Single-line fast path: skip join allocation. Each line is stripped of
-        // its own leading indentation first: `org-adapt-indentation` aligns
-        // body text under a heading with spaces that carry no meaning here, and
-        // left in place, 4 or more of them would read as a Markdown indented
-        // code block once this paragraph is serialized.
-        let text: String
-        if cursor - firstLine == 1 {
-            text = String(Self.stripped(lines[firstLine]))
-        } else {
-            text = lines[firstLine..<cursor].map { String(Self.stripped($0)) }.joined(separator: " ")
+    /// Paragraph lines joined with spaces, each stripped of its own
+    /// indentation first: `org-adapt-indentation` aligns body text under a
+    /// heading with spaces that carry no meaning here, and left in place, 4 or
+    /// more of them would read as a Markdown indented code block once this
+    /// paragraph is serialized.
+    private static func paragraphText(_ lines: Lines) -> String {
+        // Single-line fast path: skip the join.
+        if lines.count == 1 { return String(stripped(lines[lines.startIndex])) }
+        var text = ""
+        text.reserveCapacity(lines.reduce(lines.count) { $0 + $1.utf8.count })
+        for index in lines.indices {
+            if index > lines.startIndex { text += " " }
+            text += stripped(lines[index])
         }
-        let inlines = parseInlines(text)
-        return (.paragraph(inlines), cursor)
+        return text
     }
 
     /// Check if a line starts a new structural element.
@@ -653,7 +753,7 @@ struct OrgParser: DocumentParser, Sendable {
     /// trimmingCharacters allocation for the vast majority of paragraph lines.
     /// `lines`/`cursor` let a `:NAME:` line check for its own `:END:` before it
     /// is allowed to end the paragraph as a drawer would.
-    private func isStructuralLine(_ line: Substring, lines: [Substring], cursor: Int) -> Bool {
+    private func isStructuralLine(_ line: Substring, lines: Lines, cursor: Int) -> Bool {
         // Fast scan for first non-whitespace byte
         var firstByte: UInt8 = 0
         for b in line.utf8 {
@@ -670,9 +770,9 @@ struct OrgParser: DocumentParser, Sendable {
 
         switch firstByte {
         case 0x2A: // *
-            // A heading starts in column 0 — an indented star line never ends
-            // a paragraph as a heading would.
-            guard line.first == "*" else { return false }
+            // A heading starts in column 0; an indented star line can only be
+            // a `*` bullet.
+            guard line.first == "*" else { return isListItemStart(line) }
             let trimmed = Self.stripped(line)
             guard let firstNonStar = trimmed.firstIndex(where: { $0 != "*" }) else { return false }
             return firstNonStar > trimmed.startIndex
@@ -688,7 +788,8 @@ struct OrgParser: DocumentParser, Sendable {
         case 0x7C: // |
             return true
         case 0x3A: // :
-            return isDrawerStart(Self.stripped(line)) && drawerHasEnd(lines: lines, startCursor: cursor)
+            return isDrawerStart(Self.stripped(line))
+                && Self.closingLine(in: lines, after: cursor, endMarker: ":END:").closer != nil
         case 0x30...0x39: // 0-9
             return isListItemStart(line)
         default:
@@ -708,12 +809,12 @@ struct OrgParser: DocumentParser, Sendable {
     /// ```
     /// The separator row (`|---+---|`) divides headers from data rows.
     /// If no separator, the first row is treated as the header.
-    private func parseTable(lines: [Substring], startCursor: Int) -> (OrgBlock, Int) {
+    private func parseTable(lines: Lines, startCursor: Int) -> (OrgBlock, Int) {
         var cursor = startCursor
         var dataRows: [[String]] = []
         var separatorIndex: Int? = nil
 
-        while cursor < lines.count {
+        while cursor < lines.endIndex {
             let trimmed = Self.stripped(lines[cursor])
             guard trimmed.hasPrefix("|") else { break }
 
@@ -773,34 +874,15 @@ struct OrgParser: DocumentParser, Sendable {
         return name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" }
     }
 
-    /// Whether some later line is `:END:`: an unterminated drawer is not a
-    /// drawer at all, as Org treats it, so the rest of the file is never
-    /// swallowed looking for a close that never comes.
-    private func drawerHasEnd(lines: [Substring], startCursor: Int) -> Bool {
-        var cursor = startCursor + 1
-        while cursor < lines.count {
-            if Self.stripped(lines[cursor]).uppercased() == ":END:" { return true }
-            cursor += 1
-        }
-        return false
-    }
-
-    /// Parse a drawer from `:NAME:` to `:END:`. Callers check `drawerHasEnd`
-    /// first.
-    private func parseDrawer(lines: [Substring], startCursor: Int) -> (OrgBlock, Int) {
-        let headerTrimmed = Self.stripped(lines[startCursor])
+    /// Parse a drawer: `lines` runs from its `:NAME:` line up to, not
+    /// including, its `:END:` (which callers find first, `closingLine`).
+    private func parseDrawer(lines: Lines) -> OrgBlock {
+        let headerTrimmed = Self.stripped(lines[lines.startIndex])
         let name = String(headerTrimmed.dropFirst().dropLast())
-        var cursor = startCursor + 1
         var properties: [OrgDrawerProperty] = []
 
-        while cursor < lines.count {
-            let line = Self.stripped(lines[cursor])
-
-            // End of drawer
-            if line.uppercased() == ":END:" {
-                cursor += 1
-                break
-            }
+        for raw in lines.dropFirst() {
+            let line = Self.stripped(raw)
 
             // Property line: `:KEY: VALUE`
             if line.hasPrefix(":"), let colonIdx = line.dropFirst().firstIndex(of: ":") {
@@ -811,10 +893,9 @@ struct OrgParser: DocumentParser, Sendable {
                     properties.append(OrgDrawerProperty(key: key, value: value))
                 }
             }
-            cursor += 1
         }
 
-        return (.drawer(name: name, properties: properties), cursor)
+        return .drawer(name: name, properties: properties)
     }
 
     // MARK: - Inline Parsing

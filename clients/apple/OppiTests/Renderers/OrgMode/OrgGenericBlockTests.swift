@@ -147,6 +147,57 @@ struct OrgGenericBlockTests {
         #expect(blocks == [.codeBlock(language: "swift", code: "let x = 1")])
     }
 
+    @Test func unclosedBlockEndsWithItsSection() {
+        // A headline ends a block never closed; the later section's
+        // `#+end_src` must not close this one and swallow what lies between.
+        let blocks = parser.parse("""
+        * One
+        #+begin_src sh
+        never closed
+        * Two
+        #+TODO: OPEN | SHUT
+        #+begin_src sh
+        echo two
+        #+end_src
+        * SHUT Three
+        """)
+        #expect(blocks.filter { if case .heading = $0 { return true }; return false } == [
+            .heading(level: 1, keyword: nil, priority: nil, title: [.text("One")], tags: []),
+            .heading(level: 1, keyword: nil, priority: nil, title: [.text("Two")], tags: []),
+            .heading(level: 1, keyword: "SHUT", priority: nil, title: [.text("Three")], tags: []),
+        ])
+        #expect(blocks[1] == .codeBlock(language: "sh", code: "never closed"))
+        #expect(blocks.contains(.codeBlock(language: "sh", code: "echo two")))
+    }
+
+    @Test func blocksNestInsideAQuote() {
+        let blocks = parser.parse("""
+        #+begin_quote
+        Said:
+        #+begin_example
+        *literal*
+        #+end_example
+        #+end_quote
+        """)
+        #expect(blocks == [.quote([.paragraph([.text("Said:")]), .codeBlock(language: nil, code: "*literal*")])])
+    }
+
+    @Test func verbatimBlocksDropSharedIndentAndOrgCommaEscapes() {
+        let blocks = parser.parse("""
+          #+begin_src org
+          ,* A heading in code
+            ,#+TITLE: kept
+          ,,* one comma fewer
+          #+end_src
+        """)
+        #expect(blocks == [.codeBlock(language: "org", code: "* A heading in code\n  #+TITLE: kept\n,* one comma fewer")])
+    }
+
+    @Test func verseKeepsIndentationPastItsLeastIndentedLine() {
+        let blocks = parser.parse("#+begin_verse\n  Verse keeps\n    its indent\n#+end_verse")
+        #expect(blocks == [.verse([[.text("Verse keeps")], [.text("\u{00A0}\u{00A0}"), .text("its indent")]])])
+    }
+
     @Test func todoDeclarationQuotedInsideAnyBlockIsNotASetting() {
         let blocks = parser.parse("#+BEGIN_EXAMPLE\n#+TODO: A | B\n#+END_EXAMPLE\n* A x\n* TODO y")
         let keywords = blocks.compactMap { block -> String? in

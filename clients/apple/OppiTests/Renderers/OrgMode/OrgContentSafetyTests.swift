@@ -26,6 +26,24 @@ struct OrgContentSafetyTests {
         #expect(blocks.contains { if case .paragraph(let inlines) = $0 { return inlines == [.text("Body text.")] }; return false })
     }
 
+    @Test func unclosedDrawerIsNotClosedByALaterSectionsEnd() {
+        let blocks = parser.parse("""
+        * One
+        :LOGBOOK:
+        - a note
+        * Two
+        :PROPERTIES:
+        :ID: abc
+        :END:
+        """)
+        #expect(blocks.count == 5, "got \(blocks)")
+        #expect(blocks[1] == .paragraph([.text(":LOGBOOK:")]))
+        guard case .list = blocks[2], case .heading = blocks[3], case .drawer("PROPERTIES", _) = blocks[4] else {
+            Issue.record("Expected the note, the second heading and its drawer, got \(blocks)")
+            return
+        }
+    }
+
     @Test func drawerWithAnEndStillParsesAsADrawer() {
         let blocks = parser.parse("""
         :PROPERTIES:
@@ -50,26 +68,23 @@ struct OrgContentSafetyTests {
         #expect(!blocks.contains { if case .heading = $0 { return true }; return false })
     }
 
-    @Test func indentedStarAtTopLevelStaysAParagraph() {
-        let blocks = parser.parse("  * item")
-        #expect(blocks.count == 1)
-        guard case .paragraph = blocks[0] else {
-            Issue.record("Expected a paragraph, got \(blocks[0])")
+    @Test func indentedStarAtTopLevelIsABullet() {
+        // Org reads an indented `*` as a list bullet.
+        let parsed = parseCommonMark(DocumentRenderPipeline.orgToMarkdown("  * item"))
+        guard case .unorderedList(let items)? = parsed.first, case .paragraph(let inlines)? = items.first?.first else {
+            Issue.record("Expected a one-item list, got \(parsed)")
             return
         }
+        #expect(plainText(from: inlines) == "item")
     }
 
-    @Test func indentedStarSurvivesTheMarkdownRoundTripAsPlainTextNotABullet() {
-        // The paragraph it falls back to still starts with a literal "* ",
-        // which Markdown reads as its own bullet marker unless escaped.
-        let markdown = DocumentRenderPipeline.orgToMarkdown("  * item")
-        let parsed = parseCommonMark(markdown)
-        #expect(!parsed.contains { if case .unorderedList = $0 { return true }; return false }, "got \(parsed)")
+    @Test func literalStarInProseStaysText() {
+        let parsed = parseCommonMark(DocumentRenderPipeline.orgToMarkdown("2 * 3 * 4 and a*b*c"))
         guard case .paragraph(let inlines)? = parsed.first else {
             Issue.record("Expected a paragraph, got \(parsed)")
             return
         }
-        #expect(plainText(from: inlines).contains("* item"))
+        #expect(inlines == [.text("2 * 3 * 4 and a*b*c")])
     }
 
     @Test func columnZeroStarIsStillAHeading() {

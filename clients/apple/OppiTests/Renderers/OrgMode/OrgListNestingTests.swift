@@ -143,20 +143,82 @@ struct OrgListNestingTests {
     // MARK: - List kind comes from the first item
 
     @Test func listKindComesFromTheFirstItemNotTheLast() {
-        let blocks = parser.parse("""
-        - first unordered
-        - second unordered
-        1. then ordered
-        """)
-        #expect(blocks.count == 2, "a bullet of the other kind starts a new, sibling list")
-        guard case let .list(firstKind, firstItems) = blocks[0], case let .list(secondKind, secondItems) = blocks[1] else {
-            Issue.record("Expected two lists, got \(blocks)")
+        // As in Org, items at one indent are one list whatever their bullets.
+        for (source, kind) in [
+            ("- first unordered\n- second unordered\n1. then ordered", OrgListKind.unordered),
+            ("1. first ordered\n2) second ordered\n- then a dash", OrgListKind.ordered),
+        ] {
+            let blocks = parser.parse(source)
+            guard blocks.count == 1, case let .list(listKind, items) = blocks[0] else {
+                Issue.record("Expected one list, got \(blocks)")
+                continue
+            }
+            #expect(listKind == kind)
+            #expect(items.count == 3)
+        }
+    }
+
+    // MARK: - Indentation
+
+    @Test func tabsNestAtEmacsTabStops() {
+        // A tab reaches column 8, past the two-space child's bullet, so the
+        // tab-indented item is that child's child, not a dedent out of it.
+        let blocks = parser.parse("- parent\n  - two-space child\n\t- tab grandchild\n- sibling")
+        guard blocks.count == 1, case let .list(_, items) = blocks[0], items.count == 2,
+              case let .list(_, children)? = items[0].children.first, children.count == 1,
+              case let .list(_, grandchildren)? = children[0].children.first else {
+            Issue.record("Expected parent > child > grandchild, got \(blocks)")
             return
         }
-        #expect(firstKind == .unordered)
-        #expect(firstItems.count == 2)
-        #expect(secondKind == .ordered)
-        #expect(secondItems.count == 1)
+        #expect(grandchildren.map(\.content) == [[.text("tab grandchild")]])
+    }
+
+    @Test func indentedStarIsABulletAndTogglesLikeOne() {
+        let source = "- [ ] parent\n  * [ ] star child\n* Heading"
+        let blocks = parser.parse(source)
+        guard case let .list(_, items) = blocks[0], case let .list(_, children)? = items[0].children.first else {
+            Issue.record("Expected a nested star list, got \(blocks)")
+            return
+        }
+        #expect(children.map(\.bullet) == ["*"])
+        #expect(children[0].checkbox == .unchecked)
+        #expect(blocks.count == 2, "the column-0 star is still a heading")
+        #expect(TaskSourceEdit.toggleCheckbox(in: source, line: 2, dialect: .org) == "- [ ] parent\n  * [X] star child\n* Heading")
+    }
+
+    // MARK: - Blocks inside an item
+
+    @Test func blocksInsideAnItemStayBlocksAndTheItemsStayOneList() {
+        let blocks = parser.parse("""
+        - item one
+          #+begin_src sh
+          echo *hi*
+
+          echo [x](y)
+          #+end_src
+        - item two
+          | a | b |
+        - item three
+        """)
+        guard blocks.count == 1, case let .list(_, items) = blocks[0], items.count == 3 else {
+            Issue.record("Expected one three-item list, got \(blocks)")
+            return
+        }
+        #expect(items[0].children == [.codeBlock(language: "sh", code: "echo *hi*\n\necho [x](y)")])
+        guard case .table? = items[1].children.first else {
+            Issue.record("Expected a table under item two, got \(items[1].children)")
+            return
+        }
+    }
+
+    @Test func checkboxesInANumberedListKeepTheirStateAndLine() {
+        let parsed = parseCommonMark(DocumentRenderPipeline.orgToMarkdown("1. [X] done\n2. [ ] open"))
+        guard case .taskList(let items)? = parsed.first else {
+            Issue.record("Expected a task list, got \(parsed)")
+            return
+        }
+        #expect(items.map(\.checked) == [true, false])
+        #expect(items.map(\.sourceLine) == [1, 2])
     }
 
     @Test func orderedListStaysOrderedWithBothMarkerStyles() {
@@ -204,6 +266,24 @@ struct OrgListNestingTests {
           - [X] Child one
           - [X] Child two
         """)
+    }
+
+    @Test func checkboxInsideAQuoteShowsNoReaderMarkup() {
+        // cmark-gfm makes no task list inside a block quote, so the quoted box
+        // stays literal text and must carry no line or partial marker.
+        let parsed = parseCommonMark(DocumentRenderPipeline.orgToMarkdown("""
+        - [ ] outside
+        #+begin_quote
+        - [-] quoted
+        #+end_quote
+        """))
+        guard case .blockQuote(let inner)? = parsed.last, case .unorderedList(let items)? = inner.first,
+              case .paragraph(let inlines)? = items.first?.first else {
+            Issue.record("Expected a quoted list, got \(parsed)")
+            return
+        }
+        #expect(plainText(from: inlines) == "[ ] quoted")
+        #expect(!inlines.contains { if case .html = $0 { return true }; return false }, "\(inlines)")
     }
 
     @Test func multiLineItemCheckboxStillToggles() {
