@@ -2101,7 +2101,6 @@ private func expectSelectableNonScrollableTableCellsRejectVerticalPan(
     #expect(!cells.isEmpty)
     for cell in cells {
         #expect(cell.isSelectable)
-        #expect(!cell.isScrollEnabled)
         #expect(
             cell.gestureRecognizerShouldBegin(cell.panGestureRecognizer) == false,
             "Selectable non-scrollable table cells must reject vertical pan"

@@ -69,10 +69,17 @@ final class BaselineSafeTextView: UITextView, ReviewCommentSourceLineRangeResolv
         reviewCommentSourceLineRangeResolver?(range)
     }
 
+    /// Scrolling is on only so the view has no intrinsic size (its owner sizes
+    /// it); it never scrolls, and keeps its text at the top like a view with
+    /// scrolling off.
+    var isScrollingOnlyForSizing = false
+
+    private var holdsTextAtTop: Bool { !isScrollEnabled || isScrollingOnlyForSizing }
+
     override func layoutSubviews() {
         super.layoutSubviews()
 
-        if !isScrollEnabled {
+        if holdsTextAtTop {
             let desiredOffset = CGPoint(
                 x: -adjustedContentInset.left,
                 y: -adjustedContentInset.top
@@ -94,7 +101,7 @@ final class BaselineSafeTextView: UITextView, ReviewCommentSourceLineRangeResolv
     /// pan recognizer. Reject that pan so the outer timeline owns vertical drags,
     /// matching user-row `VerticalPanPassthroughTextView`.
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        if gestureRecognizer === panGestureRecognizer, !isScrollEnabled {
+        if gestureRecognizer === panGestureRecognizer, holdsTextAtTop {
             return false
         }
 

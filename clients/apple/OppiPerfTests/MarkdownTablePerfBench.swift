@@ -164,11 +164,8 @@ struct MarkdownTablePerfBench {
         print("METRIC table_stream_\(name)_200x8_late_max_ms=\(Self.fmt(late.max() ?? 0))")
         print("METRIC table_stream_\(name)_200x8_total_ms=\(Self.fmt(ticks.reduce(0, +)))")
         #expect(completed, "the \(name) stream should finish inside the cap")
-        // Target: no late tick over 50 ms. A clip table's text view still lays
-        // out the whole table per appended row (about 40 ms of a late tick), so
-        // its bound leaves room for a busy machine; the grid has no such floor.
-        let bound: Double = shape == .grid ? 50 : 120
-        #expect((late.max() ?? 0) < bound, "no late \(name) tick should take \(Int(bound)) ms")
+        // Target: no late tick over 50 ms.
+        #expect((late.max() ?? 0) < 50, "no late \(name) tick should take 50 ms")
     }
 
     @Test func streamedClip200x8() { reportStream(shape: .clip, name: "clip") }

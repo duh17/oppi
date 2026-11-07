@@ -810,7 +810,16 @@ final class NativeTableBlockView: UIView {
         // table again on every append.
         let tv = BaselineSafeTextView(usingTextLayoutManager: false)
         tv.isEditable = false
-        tv.isScrollEnabled = false
+        // Scrolling on, but never scrolled: a text view that does not scroll has
+        // an intrinsic size, and every fit of the chat row measures it, which
+        // lays out the whole table each streaming tick. The table sizes the
+        // label from `MarkdownTableClipText` instead.
+        tv.isScrollEnabled = true
+        tv.isScrollingOnlyForSizing = true
+        tv.showsVerticalScrollIndicator = false
+        tv.showsHorizontalScrollIndicator = false
+        tv.scrollsToTop = false
+        tv.bounces = false
         tv.isSelectable = false
         tv.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         tv.textContainer.lineFragmentPadding = 0
@@ -1008,10 +1017,8 @@ final class NativeTableBlockView: UIView {
             return max(1, ceil(gridView.layout?.contentHeight ?? 0))
         }
 
-        if clipTextHeight > 0 {
-            return max(1, clipTextHeight + tableLabel.textContainerInset.top + tableLabel.textContainerInset.bottom)
-        }
-        return max(1, tableLabel.intrinsicContentSize.height)
+        // The label scrolls, so it has no intrinsic height to fall back on.
+        return max(1, clipTextHeight + tableLabel.textContainerInset.top + tableLabel.textContainerInset.bottom)
     }
 
     /// Card width is min(contentWidth, bounds.width) in both clip and grid mode.
