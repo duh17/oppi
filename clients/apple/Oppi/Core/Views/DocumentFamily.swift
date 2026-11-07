@@ -154,6 +154,7 @@ enum DocumentFamily: Equatable {
                 palette: palette
             )
             view.applyReaderPreferences(readerPreferences)
+            view.allowsCellDetail = true
             view.accessibilityIdentifier = "full-screen.delimited-table.body"
             return view
 

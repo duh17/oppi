@@ -1,7 +1,10 @@
 import UIKit
 
 /// Read-only CSV/TSV grid. Cells are clipped to the parser bounds; source bytes stay elsewhere.
-final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, ReaderBody {
+///
+/// The grid lays out only the cells in view and pins the header row while it
+/// scrolls. In the full-screen viewer a tap opens a cell's whole text.
+final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, UICollectionViewDelegate, ReaderBody {
     private let plan: DelimitedTableViewerPlan
     private let themeID: ThemeID
     private let summaryLabel = UILabel()
@@ -10,6 +13,10 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, Reader
     private let emptyLabel = UILabel()
     private var palette: ThemePalette
     private var textScale: CGFloat = 1
+
+    /// A tap on a cell opens its full text. Set only where the grid owns taps:
+    /// the full-screen viewer. Inline in a tool row, a tap opens that viewer.
+    var allowsCellDetail = false
 
     init(plan: DelimitedTableViewerPlan, palette: ThemePalette? = nil) {
         self.plan = plan
@@ -24,6 +31,28 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, Reader
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    /// The displayed table as copied text.
+    func copyText(_ format: TableCopyFormat) -> String { plan.table.copyText(format) }
+
+    /// Copy as TSV or Markdown, for the viewer's Copy button. `didCopy` gets the
+    /// text; the viewer puts it on the pasteboard and flashes its confirmation.
+    func makeCopyMenu(didCopy: @escaping (String) -> Void) -> UIMenu {
+        // The parser may have dropped rows, columns, or characters: say so.
+        let table = plan.table
+        let partial = table.truncatedRows || table.truncatedColumns || table.truncatedCells
+        let note = partial ? " (" + String(localized: "displayed part only") + ")" : ""
+        return UIMenu(children: [
+            UIAction(title: String(localized: "Copy as TSV") + note, image: UIImage(systemName: "tablecells")) { [weak self] _ in
+                guard let self else { return }
+                didCopy(copyText(.tsv))
+            },
+            UIAction(title: String(localized: "Copy as Markdown") + note, image: UIImage(systemName: "text.alignleft")) { [weak self] _ in
+                guard let self else { return }
+                didCopy(copyText(.markdown))
+            },
+        ])
     }
 
     func displays(_ other: DelimitedTableViewerPlan) -> Bool {
@@ -69,6 +98,7 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, Reader
         backgroundColor = palette.ui.bgDark
         collectionView.backgroundColor = .clear
         collectionView.dataSource = self
+        collectionView.delegate = self
         collectionView.register(DelimitedTableCell.self, forCellWithReuseIdentifier: DelimitedTableCell.reuseID)
         collectionView.alwaysBounceVertical = false
         collectionView.alwaysBounceHorizontal = true
@@ -186,10 +216,36 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, Reader
         let columnTitle = item.header.isEmpty ? "Column \(indexPath.item % max(plan.table.columnCount, 1) + 1)" : item.header
         if item.isHeader {
             cell.accessibilityLabel = columnTitle
+            cell.accessibilityTraits = .header
         } else {
             cell.accessibilityLabel = "\(columnTitle), row \(item.row), \(item.text)"
+            cell.accessibilityTraits = allowsCellDetail ? .button : .staticText
         }
         return cell
+    }
+
+    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
+        guard allowsCellDetail else { return false }
+        return !cellContent(at: indexPath.item).text.isEmpty
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        collectionView.deselectItem(at: indexPath, animated: true)
+        guard allowsCellDetail else { return }
+        let item = cellContent(at: indexPath.item)
+        var responder: UIResponder? = self
+        while let current = responder, !(current is UIViewController) {
+            responder = current.next
+        }
+        guard let presenter = responder as? UIViewController else { return }
+        let title = item.header.isEmpty
+            ? String(localized: "Column \(indexPath.item % max(plan.table.columnCount, 1) + 1)")
+            : item.header
+        presenter.present(TableCellDetailViewController.makeNavigationController(
+            title: title,
+            text: item.text,
+            palette: palette
+        ), animated: true)
     }
 }
 
@@ -232,12 +288,16 @@ private final class DelimitedTableCell: UICollectionViewCell {
     }
 }
 
+/// Row-major grid: item `row * columns + column`, row 0 the header. Attributes are
+/// computed for the visible rows and columns only, so scrolling a 500-row table
+/// costs the cells on screen. The header row stays at the top of the viewport.
 private final class DelimitedTableGridLayout: UICollectionViewLayout {
     var columnWidths: [CGFloat] = []
     var rowHeight: CGFloat = 30
     var headerHeight: CGFloat = 34
 
-    private var attributes: [UICollectionViewLayoutAttributes] = []
+    private var xOffsets: [CGFloat] = []
+    private var rowCount = 0
     private var cachedSize: CGSize = .zero
 
     override var collectionViewContentSize: CGSize { cachedSize }
@@ -247,43 +307,79 @@ private final class DelimitedTableGridLayout: UICollectionViewLayout {
         let columns = columnWidths.count
         let itemCount = collectionView.numberOfItems(inSection: 0)
         guard columns > 0, itemCount > 0 else {
-            attributes = []
+            xOffsets = []
+            rowCount = 0
             cachedSize = .zero
             return
         }
-
-        var xOffsets: [CGFloat] = []
         var x: CGFloat = 0
-        xOffsets.reserveCapacity(columns)
-        for width in columnWidths {
-            xOffsets.append(x)
-            x += width
+        xOffsets = columnWidths.map { width in
+            defer { x += width }
+            return x
         }
+        rowCount = itemCount / columns
+        cachedSize = CGSize(
+            width: x,
+            height: headerHeight + CGFloat(max(0, rowCount - 1)) * rowHeight
+        )
+    }
 
-        var nextAttributes: [UICollectionViewLayoutAttributes] = []
-        nextAttributes.reserveCapacity(itemCount)
-        for item in 0..<itemCount {
-            let row = item / columns
-            let column = item % columns
-            let indexPath = IndexPath(item: item, section: 0)
-            let attribute = UICollectionViewLayoutAttributes(forCellWith: indexPath)
-            let height = row == 0 ? headerHeight : rowHeight
-            let y = row == 0 ? 0 : headerHeight + CGFloat(row - 1) * rowHeight
-            attribute.frame = CGRect(x: xOffsets[column], y: y, width: columnWidths[column], height: height)
-            nextAttributes.append(attribute)
+    /// The pinned header follows the vertical scroll; nothing else depends on it.
+    override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool {
+        guard let collectionView else { return false }
+        return newBounds.origin.y != collectionView.bounds.origin.y
+            || newBounds.size != collectionView.bounds.size
+    }
+
+    /// Top of the viewport below any bar, where the header row sits.
+    private var pinnedHeaderY: CGFloat {
+        guard let collectionView else { return 0 }
+        return max(0, collectionView.contentOffset.y + collectionView.adjustedContentInset.top)
+    }
+
+    private func attributes(row: Int, column: Int) -> UICollectionViewLayoutAttributes {
+        let attribute = UICollectionViewLayoutAttributes(
+            forCellWith: IndexPath(item: row * columnWidths.count + column, section: 0)
+        )
+        if row == 0 {
+            attribute.frame = CGRect(x: xOffsets[column], y: pinnedHeaderY, width: columnWidths[column], height: headerHeight)
+            attribute.zIndex = 1
+        } else {
+            attribute.frame = CGRect(
+                x: xOffsets[column],
+                y: headerHeight + CGFloat(row - 1) * rowHeight,
+                width: columnWidths[column],
+                height: rowHeight
+            )
         }
-        attributes = nextAttributes
-        let rowCount = itemCount / columns
-        let height = headerHeight + CGFloat(max(0, rowCount - 1)) * rowHeight
-        cachedSize = CGSize(width: x, height: height)
+        return attribute
     }
 
     override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
-        attributes.filter { $0.frame.intersects(rect) }
+        guard !xOffsets.isEmpty, rowCount > 0 else { return [] }
+        let columns = (0 ..< xOffsets.count).filter {
+            xOffsets[$0] < rect.maxX && xOffsets[$0] + columnWidths[$0] > rect.minX
+        }
+        guard !columns.isEmpty else { return [] }
+
+        var result = columns.map { attributes(row: 0, column: $0) }
+        if rowCount > 1, rect.maxY > headerHeight {
+            let first = max(1, 1 + Int(floor((rect.minY - headerHeight) / rowHeight)))
+            let last = min(rowCount - 1, 1 + Int(floor((rect.maxY - headerHeight) / rowHeight)))
+            if first <= last {
+                for row in first ... last {
+                    for column in columns {
+                        result.append(attributes(row: row, column: column))
+                    }
+                }
+            }
+        }
+        return result
     }
 
     override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
-        guard attributes.indices.contains(indexPath.item) else { return nil }
-        return attributes[indexPath.item]
+        let columns = columnWidths.count
+        guard columns > 0, indexPath.item >= 0, indexPath.item / columns < rowCount else { return nil }
+        return attributes(row: indexPath.item / columns, column: indexPath.item % columns)
     }
 }

@@ -632,12 +632,11 @@ final class FullScreenCodeViewController: UIViewController {
         let sideRail = SystemVerticalBar.isActive(viewController)
         var rightItems = editItems
 
-        let copy = UIBarButtonItem(
-            image: UIImage(systemName: "doc.on.doc"),
-            style: .plain,
-            target: self,
-            action: #selector(copyTapped)
-        )
+        let copyImage = UIImage(systemName: "doc.on.doc")
+        let copy = (installedBodyView as? DelimitedTableRenderView).map { table in
+            // A table copies as TSV or Markdown, so Copy asks which.
+            UIBarButtonItem(image: copyImage, menu: table.makeCopyMenu { [weak self] in self?.finishCopy($0) })
+        } ?? UIBarButtonItem(image: copyImage, style: .plain, target: self, action: #selector(copyTapped))
         copy.tintColor = palette.ui.fgDim
         copy.accessibilityIdentifier = "fullscreen-code.copy"
         copyButton = copy
