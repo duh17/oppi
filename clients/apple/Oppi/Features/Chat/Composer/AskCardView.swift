@@ -53,7 +53,7 @@ struct AskCardViewState {
 /// through, and its frame stays put while its rows scroll, so the scrolling
 /// content always meets a clean rounded edge.
 @MainActor
-final class AskCardView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+final class AskCardView: UIView, UIScrollViewDelegate {
     var onOptionTap: ((AskOption, AskQuestion) -> Void)?
     var onIgnore: (() -> Void)?
     var onSend: (() -> Void)?
@@ -236,8 +236,10 @@ final class AskCardView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelega
 
     /// The question with the collapse and expand controls in the card's
     /// top-trailing corner. Each control's 44 pt square reaches into the card
-    /// padding so its glyph centers on the title's first line. A tap anywhere
-    /// else on the header collapses the card too.
+    /// padding so its glyph centers on the title's first line (`hitTest` gives
+    /// them that padding). A tap on the title collapses the card too; the
+    /// Markdown body below it stays inert, so a tap meant to read more never
+    /// folds the card.
     private func buildQuestionRow() {
         questionPreview.translatesAutoresizingMaskIntoConstraints = false
 
@@ -254,11 +256,10 @@ final class AskCardView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelega
         collapseButton.accessibilityIdentifier = AskCard.collapseAccessibilityIdentifier
         collapseButton.addAction(UIAction { [weak self] _ in self?.onToggleCollapse?() }, for: .touchUpInside)
         collapseButton.translatesAutoresizingMaskIntoConstraints = false
-        questionRow.addSubview(collapseButton)
 
-        let headerTap = UITapGestureRecognizer(target: self, action: #selector(headerTapped))
-        headerTap.delegate = self
-        questionRow.addGestureRecognizer(headerTap)
+        questionPreview.titleRow.addGestureRecognizer(
+            UITapGestureRecognizer(target: self, action: #selector(headerTapped))
+        )
 
         var config = UIButton.Configuration.plain()
         config.image = UIImage(
@@ -274,7 +275,12 @@ final class AskCardView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelega
         expandButton.translatesAutoresizingMaskIntoConstraints = false
 
         questionRow.addSubview(questionPreview)
+        questionRow.addSubview(collapseButton)
         questionRow.addSubview(expandButton)
+        // Past this size the two glyphs outgrow their side-by-side squares and touch.
+        for button in [collapseButton, expandButton] {
+            button.maximumContentSizeCategory = .accessibilityLarge
+        }
         let side = AskCard.quietControlMinimumHitSize
         NSLayoutConstraint.activate([
             questionPreview.leadingAnchor.constraint(equalTo: questionRow.leadingAnchor),
@@ -296,14 +302,18 @@ final class AskCardView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelega
         onToggleCollapse?()
     }
 
-    /// A tap on a control keeps its own meaning; the header takes the rest.
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        var view = touch.view
-        while let current = view, current !== questionRow {
-            if current is UIControl { return false }
-            view = current.superview
+    /// The header controls' 44 pt squares reach 12 pt above their row, into the
+    /// card's padding, where their row cannot hit-test them. A touch anywhere in
+    /// the visible part of a square is that control's.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if isUserInteractionEnabled, !isHidden, alpha > 0.01, collapsedBar.isHidden,
+           scrollView.point(inside: convert(point, to: scrollView), with: event),
+           !tipHost.point(inside: convert(point, to: tipHost), with: event) {
+            for control in [collapseButton, expandButton] where !control.isHidden && control.isEnabled {
+                if control.point(inside: convert(point, to: control), with: event) { return control }
+            }
         }
-        return true
+        return super.hitTest(point, with: event)
     }
 
     /// The folded bar: one native button holding the icon, the question on one
@@ -569,6 +579,9 @@ final class AskCardView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelega
         }
         if collapsedBar.isHidden == collapsed { collapsedBar.isHidden = !collapsed }
         collapseButton.configuration?.baseForegroundColor = colors.comment
+        // Set here, not left to the label's own Dynamic Type update, so the
+        // height below measures the current text size during a size change.
+        collapsedLabel.font = UIFont.scaled(.subheadline, .medium)
 
         let title = state.question.map {
             AskCard.collapsedTitle(for: $0, encoding: state.request.responseEncoding)
@@ -823,6 +836,8 @@ final class AskCardViewController: UIViewController {
     private var submittedRequestID: String?
     private var responseFailed = false
     private var isCollapsed = false
+    /// The last render showed a failed answer; a new failure opens a folded card.
+    private var renderedFailure = false
     private var colors = ComposerThemeColors.placeholder
     private var reduceMotion = false
     private var presentedAtNs: UInt64 = 0
@@ -975,12 +990,20 @@ final class AskCardViewController: UIViewController {
 
     private func render() {
         guard let request else { return }
+        let failed = responseFailed || submission.phase == .failed(request.id)
+        // The failure message and Retry live in the open card, so a failure
+        // opens a folded card once; the person may fold it again.
+        if failed, !renderedFailure, isCollapsed {
+            isCollapsed = false
+            onCollapsedChange?(false)
+        }
+        renderedFailure = failed
         card.apply(AskCardViewState(
             request: request,
             page: currentPage,
             answers: answers,
             isSubmitted: isAskSubmitted,
-            responseFailed: responseFailed || submission.phase == .failed(request.id),
+            responseFailed: failed,
             colors: colors,
             reduceMotion: reduceMotion,
             isCollapsed: isCollapsed

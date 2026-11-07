@@ -2224,6 +2224,54 @@ struct AskCardCollapseTests {
         mounted.window.rootViewController = nil
     }
 
+    @Test("A typed answer that fails while folded opens the card on its Retry, and it folds again")
+    func failedAnswerWhileFoldedOpensTheCard() throws {
+        let mounted = Self.mount(Self.request())
+        mounted.host.holdsAskCompletions = true
+        let bar = mounted.bar
+        try Self.tap("ask.collapse", in: mounted)
+        mounted.host.text = "A and C"
+        #expect(bar.handleAskComposerSendIfNeeded())
+        #expect(mounted.host.askDeliveries.count == 1)
+        bar.apply()
+        Self.settle(mounted)
+        #expect(bar.askClearing.isCollapsed, "an answer in flight leaves the fold alone")
+
+        mounted.host.heldAskCompletions.removeFirst()(.retryableFailure)
+        bar.apply()
+        Self.settle(mounted)
+        #expect(!bar.askClearing.isCollapsed, "the failure and its Retry live in the open card")
+        let send = try #require(Self.shown("ask.send", in: mounted) as? UIButton)
+        #expect(send.configuration?.title == "Retry")
+
+        try Self.tap("ask.collapse", in: mounted)
+        bar.apply()
+        Self.settle(mounted)
+        #expect(bar.askClearing.isCollapsed, "the person can fold a failed answer away again")
+        #expect(Self.shown("ask.collapsedBar", in: mounted) != nil)
+        hideTestWindow(mounted.window)
+        mounted.window.rootViewController = nil
+    }
+
+    @Test("The header controls take a touch anywhere in their 44 pt squares")
+    func headerControlsOwnTheirWholeTarget() throws {
+        let mounted = Self.mount(Self.request())
+        for identifier in ["ask.collapse", "ask.expand"] {
+            let control = try #require(Self.shown(identifier, in: mounted))
+            let frame = control.convert(control.bounds, to: mounted.window)
+            for point in [
+                CGPoint(x: frame.midX, y: frame.minY + 2),
+                CGPoint(x: frame.midX, y: frame.midY),
+                CGPoint(x: frame.minX + 2, y: frame.maxY - 2),
+            ] {
+                let hit = mounted.window.hitTest(point, with: nil)
+                #expect(hit?.isDescendant(of: control) == true, "\(identifier) at \(point) hit \(String(describing: hit))")
+            }
+        }
+        hideTestWindow(mounted.window)
+        mounted.window.rootViewController = nil
+    }
+
     @Test("The bar's line is the title of any dialog, never a name-specific rule")
     func collapsedTitleReadsEveryDialogTheSame() throws {
         let select = try #require(ExtensionUIRequest(

@@ -25,7 +25,9 @@ final class AskQuestionPreviewView: UIView {
         spacing: .compact
     )
 
-    private let titleRow = UIView()
+    /// The title line, the card's tappable header; hidden when the question
+    /// has no title.
+    let titleRow = UIView()
     private let titleLabel = UILabel()
     private let bodyClip = FadingClipView()
     private let markdownView = AssistantMarkdownContentView()
