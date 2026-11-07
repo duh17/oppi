@@ -256,6 +256,7 @@ describe("Pi-native session identity cutover", () => {
         },
         getDataDir: () => "/tmp/mirror-data",
         getConfig: () => ({ dataDir: "/tmp/mirror-data" }),
+        markRuntimeLive: () => {},
       } as unknown as Storage;
 
       const runtime = new PiTuiMirrorRuntime(storage, {

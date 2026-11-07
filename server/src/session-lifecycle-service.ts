@@ -36,6 +36,7 @@ import {
   DEFAULT_SESSION_JSONL_META_READ_BYTES,
   readSessionJsonlMeta,
 } from "./session-jsonl-meta.js";
+import { applyLifecycle } from "./session-lifecycle-state.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import { durableStoreId, requireDurableStoreId } from "./session-runtime-capabilities.js";
 import type { Storage } from "./storage.js";
@@ -399,7 +400,7 @@ export class SessionLifecycleService {
       // SessionManager resolves sendPrompt only after authoritative preflight
       // acceptance. Errors here are therefore safe to persist as retryable.
       const failed = this.liveRow(session);
-      if (isRequiredModelUnavailableError(error)) failed.status = "error";
+      if (isRequiredModelUnavailableError(error)) applyLifecycle(failed, "launch_failed");
       failed.launch = {
         ...launch,
         status: "failed",
@@ -633,7 +634,8 @@ export class SessionLifecycleService {
     session.piSessionFile = validation.path;
     session.piSessionFiles = [validation.path];
     session.runtime = "pi-tui";
-    session.status = "stopped";
+    // A terminal's Pi session: no runtime here until its bridge says hello.
+    applyLifecycle(session, "runtime_ended");
     session.mirror = { status: "disconnected" };
     if (modelSelection.source === "request" && modelSelection.model) {
       session.model = modelSelection.model;
@@ -808,7 +810,7 @@ export class SessionLifecycleService {
         this.deps.storage.getSession(session.id) ?? session,
       );
       const stoppedAt = Date.now();
-      hydratedSession.status = "stopped";
+      applyLifecycle(hydratedSession, "runtime_ended");
       hydratedSession.currentTurnStartedAt = undefined;
       hydratedSession.lastActivity = stoppedAt;
       if (hydratedSession.runtime === "pi-tui") {
@@ -934,7 +936,7 @@ export class SessionLifecycleService {
         // that row and its trace metadata intact; only pre-start launch checks
         // may discard a never-announced shell.
         this.persistStartFailure(session, (target) => {
-          target.status = "error";
+          applyLifecycle(target, "launch_failed");
           if (target.launch) {
             target.launch = {
               ...target.launch,
@@ -955,9 +957,7 @@ export class SessionLifecycleService {
       const message = error instanceof Error ? error.message : String(error);
       // Preserve the immutable launch receipt on restart failures. In particular, do not
       // rewrite a previously delivered prompt as not_sent or make model outages sticky.
-      this.persistStartFailure(session, (target) => {
-        target.status = "error";
-      });
+      this.persistStartFailure(session, (target) => applyLifecycle(target, "launch_failed"));
       throw new SessionLifecycleError(message, 409);
     }
   }

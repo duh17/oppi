@@ -27,7 +27,7 @@ import {
   type TranslationContext,
 } from "./session-protocol.js";
 import { extractQueuedUserText } from "./session-queue-utils.js";
-import type { PendingStop } from "./session-stop.js";
+import { applyLifecycle } from "./session-lifecycle-state.js";
 import { sessionMetricRuntime } from "./session-runtime-capabilities.js";
 import type { Storage } from "./storage.js";
 import { isThinkingLevel } from "./thinking-levels.js";
@@ -122,7 +122,6 @@ export interface EventProcessorSessionState extends ExtensionUIState {
   toolOutputSnapshots: ToolOutputSnapshots;
   streamedAssistantText: string;
   currentThinkingContentIndex?: number;
-  pendingStop?: PendingStop;
   /** Tool names per toolCallId — tracked for terminal-kind routing. */
   toolNames: Map<string, string>;
   /** Tool call arguments per toolCallId, retained until the final tool result. */
@@ -204,14 +203,11 @@ export class SessionEventProcessor {
   ): void {
     const session = active.session;
     let shouldFlushNow = false;
-    const pendingStopMode = active.pendingStop?.mode;
     const metrics = this.deps.metrics;
 
     switch (event.type) {
       case "agent_start": {
-        if (session.status !== "stopping") {
-          session.status = "busy";
-        }
+        applyLifecycle(session, "run_started");
         const now = Date.now();
         session.currentTurnStartedAt = now;
         active.turnStartedAt = now;
@@ -238,7 +234,7 @@ export class SessionEventProcessor {
         break;
 
       case "agent_settled":
-        session.status = pendingStopMode === "terminate" ? "stopping" : "ready";
+        applyLifecycle(session, "run_settled");
         session.currentTurnStartedAt = undefined;
         shouldFlushNow = true;
         break;

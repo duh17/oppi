@@ -53,6 +53,7 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
     getSession: vi.fn(() => session),
     listSessions: vi.fn(() => [session]),
     getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
+    markRuntimeLive: vi.fn(),
     getMobileOutputGuideSettings: vi.fn((): RevisionedEnabled => ({
       enabled: false,
       revision: 0,

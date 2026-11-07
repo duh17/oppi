@@ -21,6 +21,7 @@ import {
 } from "./session-runtime-state.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
+import { applyLifecycle } from "./session-lifecycle-state.js";
 import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { Storage } from "./storage.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
@@ -74,9 +75,9 @@ export class SessionStartCoordinator {
     }
 
     const identity = this.buildWorkspaceIdentity(session, workspace);
-    // No runtime exists before a start succeeds, so a failed start leaves the row stopped: a
-    // stored `ready` claims a live session and is resumed after the next restart.
-    const failedStartStatus: Session["status"] = session.status === "error" ? "error" : "stopped";
+    // No runtime exists before a start succeeds, so a failed start leaves the row stopped, or
+    // failed when it showed a launch failure already.
+    const failedStart = session.status === "error" ? "launch_failed" : "start_failed";
     const assertOpen = (): void => {
       if (this.deps.isClosed?.()) throw new Error("Server is stopping; session not started");
     };
@@ -84,7 +85,7 @@ export class SessionStartCoordinator {
     return this.deps.runtimeManager.withWorkspaceLock(identity.workspaceId, async () => {
       assertOpen();
       this.deps.runtimeManager.reserveSessionStart(identity);
-      session.status = "starting";
+      applyLifecycle(session, "start_begun", this.deps.storage);
       session.lastActivity = Date.now();
       this.deps.persistSessionNow(key, session);
 
@@ -205,7 +206,7 @@ export class SessionStartCoordinator {
           registered = true;
           this.deps.runtimeManager.markSessionReady(identity);
 
-          session.status = "ready";
+          applyLifecycle(session, "start_registered");
           session.currentTurnStartedAt = undefined;
           session.lastActivity = Date.now();
           this.deps.persistSessionNow(key, session);
@@ -242,7 +243,7 @@ export class SessionStartCoordinator {
           }
         }
         if (!abandoned && !registered) {
-          session.status = failedStartStatus;
+          applyLifecycle(session, failedStart);
           session.currentTurnStartedAt = undefined;
           session.lastActivity = Date.now();
           this.deps.persistSessionNow(key, session);

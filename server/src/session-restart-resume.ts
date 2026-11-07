@@ -6,8 +6,9 @@
  * session-state.db):
  * - A graceful stop records every live managed session before stopping it,
  *   because the stop flow then persists `stopped` and erases that evidence.
- * - After a crash or SIGKILL, startup finds sessions still stored as running
- *   and queues them while marking them stopped.
+ * - After a crash or SIGKILL, startup finds the sessions the record of live
+ *   runtimes (`session_runtime_live`) still names, and queues them while
+ *   marking them stopped.
  *
  * Startup then resumes each queued session once. A session that was mid-turn
  * gets a continuation prompt so the agent picks the work back up. So does an
@@ -36,6 +37,12 @@ import {
   canResumeAfterServerRestart as canResumeAfterRestart,
   type SessionLifecycleService,
 } from "./session-lifecycle-service.js";
+import {
+  applyLifecycle,
+  lifecyclePhase,
+  phaseOfStoredStatus,
+  type LifecyclePhase,
+} from "./session-lifecycle-state.js";
 import type { Storage } from "./storage.js";
 import type { RestartResumeEntry } from "./storage/session-sqlite-store.js";
 import type { Session } from "./types.js";
@@ -46,6 +53,9 @@ export const RESTART_CONTINUE_PROMPT =
   "The Oppi server restarted while you were working, which interrupted your last step. " +
   "Running tool calls and background jobs were stopped. Continue the task from where " +
   "you left off, and re-check anything that was in progress before relying on it.";
+
+/** The first start that records live runtimes has none from the process before it. */
+const RUNTIME_LIVE_MIGRATION = "session_runtime_live_v1";
 
 type RestartStorage = Pick<
   Storage,
@@ -59,22 +69,25 @@ type RestartStorage = Pick<
 >;
 
 /**
- * A session caught mid-stop was on its way out; do not bring it back. An idle session
+ * A session being terminated was on its way out; do not bring it back. One whose turn was
+ * being aborted comes back idle: its user ended the turn, not the session. An idle session
  * waiting on work the restart kills (a background job in the server process) counts as
  * busy, so it gets the continuation prompt instead of waiting for a wake that never comes.
  */
 function restartEntry(
   session: Session,
+  phase: LifecyclePhase,
   losesWork: ReadonlySet<string> = new Set(),
 ): RestartResumeEntry | undefined {
-  if (session.status === "stopping" || !canResumeAfterRestart(session)) return undefined;
-  return { sessionId: session.id, wasBusy: session.status === "busy" || losesWork.has(session.id) };
+  if (phase.name === "terminating" || !canResumeAfterRestart(session)) return undefined;
+  return { sessionId: session.id, wasBusy: phase.name === "running" || losesWork.has(session.id) };
 }
 
 /**
  * A stored `ready` row that never had a runtime: a create-only shell nobody opened. A started
  * session records its Pi session file (classic) or conversation (durable) before it can idle,
  * so a `ready` row with neither has nothing to resume. A control row is always launched at once.
+ * Only the migration below needs this: a runtime records itself live when it starts.
  */
 function neverStarted(session: Session): boolean {
   return (
@@ -95,7 +108,9 @@ export function recordLiveSessionsForRestart(
   losesWork: ReadonlySet<string> = new Set(),
   nowMs: number = Date.now(),
 ): RestartResumeEntry[] {
-  const entries = liveSessions.flatMap((session) => restartEntry(session, losesWork) ?? []);
+  const entries = liveSessions.flatMap(
+    (session) => restartEntry(session, lifecyclePhase(session), losesWork) ?? [],
+  );
   storage.queueRestartResume(entries, nowMs);
   if (entries.length > 0) {
     log.info("session_restart.recorded", { source: "shutdown", sessions: entries });
@@ -104,26 +119,48 @@ export function recordLiveSessionsForRestart(
 }
 
 /**
- * Startup after a crash: sessions still stored as running were live when the
- * previous process died. Queue the resumable ones and mark every one stopped.
+ * Startup after a crash: sessions the live-runtime record still names were live when the
+ * previous process died. Queue the resumable ones and mark every one stopped. A row nothing
+ * ran (a create-only `ready` shell) is not live and keeps its status.
  * Must run only after this process owns the data directory.
  */
 export function queueOrphanedSessionsForRestart(
-  storage: Pick<Storage, "listSessions" | "queueRestartResume" | "saveSession">,
+  storage: Pick<
+    Storage,
+    | "clearRuntimeLive"
+    | "getSession"
+    | "listRuntimeLive"
+    | "listSessions"
+    | "markRuntimeLive"
+    | "queueRestartResume"
+    | "runMigrationOnceSync"
+    | "saveSession"
+  >,
   nowMs: number = Date.now(),
 ): RestartResumeEntry[] {
-  const orphaned = storage
-    .listSessions()
-    .filter((session) => session.status !== "stopped" && session.status !== "error");
-  // A shell that never started is still marked stopped below, but it is not brought back.
-  const entries = orphaned.flatMap((session) =>
-    neverStarted(session) ? [] : (restartEntry(session) ?? []),
-  );
-  // Queue before marking stopped: the running status is the only evidence.
-  // A crash in between leaves them running, and the next start queues again.
+  storage.runMigrationOnceSync(RUNTIME_LIVE_MIGRATION, () => {
+    // The process before kept no record: a running status was the only evidence.
+    const recorded = new Set(storage.listRuntimeLive().map((live) => live.sessionId));
+    for (const session of storage.listSessions()) {
+      if (session.status === "stopped" || session.status === "error") continue;
+      if (recorded.has(session.id) || neverStarted(session)) continue;
+      storage.markRuntimeLive(session.id, session.status === "stopping" ? "terminating" : "live");
+    }
+    return true;
+  });
+  const orphaned = storage.listRuntimeLive().flatMap(({ sessionId, phase }) => {
+    const session = storage.getSession(sessionId);
+    if (session && session.status !== "stopped" && session.status !== "error")
+      return [{ session, phase: phaseOfStoredStatus(session.status, phase) }];
+    storage.clearRuntimeLive(sessionId);
+    return [];
+  });
+  const entries = orphaned.flatMap(({ session, phase }) => restartEntry(session, phase) ?? []);
+  // Queue before marking stopped: saving a row stopped drops its live record, the only
+  // evidence. A crash in between leaves the record, and the next start queues again.
   storage.queueRestartResume(entries, nowMs);
-  for (const session of orphaned) {
-    session.status = "stopped";
+  for (const { session } of orphaned) {
+    applyLifecycle(session, "runtime_ended");
     session.currentTurnStartedAt = undefined;
     // A run the crash cut short has no outcome; a finished one keeps done/error.
     syncProgramStatus({ session }, nowMs);

@@ -91,8 +91,15 @@ describe("control conversation marker gates", () => {
 
     const stored = [controlRow({ status: "ready" })];
     const crashQueue: unknown[] = [];
+    // A store the previous process wrote before it recorded live runtimes.
+    const live: Array<{ sessionId: string; phase: "live" | "terminating" }> = [];
     const crashed = queueOrphanedSessionsForRestart({
       listSessions: () => stored,
+      getSession: (id) => stored.find((session) => session.id === id),
+      runMigrationOnceSync: (_key, run) => run(),
+      markRuntimeLive: (sessionId, phase) => live.push({ sessionId, phase }),
+      listRuntimeLive: () => live,
+      clearRuntimeLive: () => {},
       queueRestartResume: (e) => crashQueue.push(...e),
       saveSession: () => {},
     });

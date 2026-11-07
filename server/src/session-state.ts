@@ -1,5 +1,6 @@
 import type { PiStateSnapshot } from "./pi-events.js";
 import type { AgentBackend } from "./agent-backend.js";
+import { applyLifecycle, lifecyclePhase } from "./session-lifecycle-state.js";
 import type { Storage } from "./storage.js";
 import type { Session } from "./types.js";
 
@@ -24,10 +25,6 @@ export interface SessionStateCoordinatorDeps {
  */
 export function composeModelId(provider: string, modelId: string): string {
   return modelId.startsWith(`${provider}/`) ? modelId : `${provider}/${modelId}`;
-}
-
-function isTerminalSessionStatus(status: Session["status"]): boolean {
-  return status === "stopped" || status === "error";
 }
 
 export class SessionStateCoordinator {
@@ -70,7 +67,8 @@ export class SessionStateCoordinator {
    *
    * Lifecycle status belongs to the event stream, so reads (trace, history, `get_state`) leave
    * it alone: Pi reports idle between `agent_end` and `agent_settled`, where the event path
-   * holds busy for a possible auto-retry. Only `syncStatus` (the start-time seed) applies it.
+   * holds busy for a possible auto-retry. Only `syncStatus` (the start-time seed) applies it, and
+   * only to raise an idle session to running: a turn an extension began at startup.
    */
   applyPiStateSnapshot(
     session: Session,
@@ -166,21 +164,14 @@ export class SessionStateCoordinator {
     // the current value on Session only so clients can render the toolbar.
 
     const runtimeBusy = state.isStreaming === true || state.isCompacting === true;
-    const runtimeIdle = state.isStreaming === false && state.isCompacting === false;
     if (
       options.syncStatus === true &&
-      !isTerminalSessionStatus(session.status) &&
-      session.status !== "stopping"
+      runtimeBusy &&
+      lifecyclePhase(session).name === "idle" &&
+      applyLifecycle(session, "run_started")
     ) {
-      if (runtimeBusy && session.status !== "busy") {
-        session.status = "busy";
-        session.currentTurnStartedAt = session.currentTurnStartedAt ?? Date.now();
-        changed = true;
-      } else if (runtimeIdle && session.status === "busy") {
-        session.status = "ready";
-        session.currentTurnStartedAt = undefined;
-        changed = true;
-      }
+      session.currentTurnStartedAt = session.currentTurnStartedAt ?? Date.now();
+      changed = true;
     }
 
     return changed;

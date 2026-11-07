@@ -77,6 +77,7 @@ import {
 } from "./session-runtime-state.js";
 import { hostFolderClaimsHome } from "./host.js";
 import { expandHome, isPathWithinRoot } from "./path-utils.js";
+import { applyLifecycle } from "./session-lifecycle-state.js";
 import type { Storage } from "./storage.js";
 import { resolveWorkspaceWorktreeForPath } from "./worktrees.js";
 import type {
@@ -1504,7 +1505,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       terminal,
     };
     if (isTerminalStoppedReason(options.reason)) {
-      active.session.status = "stopped";
+      applyLifecycle(active.session, "runtime_ended");
       active.session.currentTurnStartedAt = undefined;
       active.session.lastActivity = disconnectedAt;
     }
@@ -1780,7 +1781,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const session = existing ?? this.storage.createSession(sessionName, model, { id: piSessionId });
     session.workspaceId = workspace.id;
     session.runtime = "pi-tui";
-    session.status = state.isIdle === false ? "busy" : "ready";
+    // The terminal's Pi is this session's runtime from its hello on.
+    applyLifecycle(session, "start_begun", this.storage);
+    applyLifecycle(session, "start_registered");
+    if (state.isIdle === false) applyLifecycle(session, "run_started");
     const nextName = meaningfulSessionName(state.sessionName, session.id);
     if (nextName) session.name = nextName;
     else if (meaningfulSessionName(session.name, session.id) === undefined) delete session.name;
@@ -1933,15 +1937,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       );
     }
     this.applyContextUsage(session, state.contextUsage);
-    if (
-      state.isIdle !== undefined &&
-      session.status !== "stopping" &&
-      session.status !== "stopped"
-    ) {
-      session.status = state.isIdle ? "ready" : "busy";
-      session.currentTurnStartedAt = state.isIdle
-        ? undefined
-        : (session.currentTurnStartedAt ?? now);
+    if (state.isIdle !== undefined) {
+      applyLifecycle(session, state.isIdle ? "run_settled" : "run_started");
+      session.currentTurnStartedAt =
+        session.status === "busy" ? (session.currentTurnStartedAt ?? now) : undefined;
     }
     this.syncProgramStatus(active);
 

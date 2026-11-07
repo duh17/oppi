@@ -9,6 +9,7 @@ import {
   isRequiredModelUnavailableError,
   isRequiredModelUnavailableMessage,
 } from "./model-resolution.js";
+import { applyLifecycle } from "./session-lifecycle-state.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import type { Storage } from "./storage.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
@@ -558,7 +559,7 @@ export class AgentLaunchService {
   }
 
   private markLaunchFailed(session: Session, failure: AgentConfigurationFailure): void {
-    session.status = "error";
+    applyLifecycle(session, "launch_failed");
     if (session.launch) {
       session.launch = {
         ...session.launch,
@@ -657,7 +658,7 @@ export class AgentLaunchService {
   ): void {
     if (session.launch) {
       const { promptError: _previousPromptError, ...launch } = session.launch;
-      if (promptError && requiredModelUnavailable) session.status = "error";
+      if (promptError && requiredModelUnavailable) applyLifecycle(session, "launch_failed");
       session.launch = {
         ...launch,
         status: promptDispatch === "delivered" || !promptError ? "accepted" : "failed",

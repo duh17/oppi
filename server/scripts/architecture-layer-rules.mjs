@@ -49,6 +49,22 @@ const SERVER_MIRROR_RESUME_IMPORT_ALLOWED_FILES = new Set([
 const SERVER_CONFIG_UPDATE_ALLOWED_PREFIXES = ["server/src/storage/", "server/src/settings/"];
 const SERVER_CONFIG_UPDATE_CALL = /\.\s*updateConfig\s*\(/g;
 
+// `session-lifecycle-state.ts` is the only writer of `Session.status`. The match is textual: any
+// `.status =` assignment, comments ignored, so files that own a different `status` field are
+// listed by name. New rows set their status in an object literal, which this does not match.
+const SERVER_SESSION_STATUS_ASSIGNMENT = /\.\s*status\s*=(?![=>])/g;
+const SERVER_SESSION_STATUS_WRITER_ALLOWED_FILES = new Set([
+  "server/src/session-lifecycle-state.ts",
+  // Seeds sessions in a chosen state for UI tests.
+  "server/src/routes/e2e-ui-harness.ts",
+  // Not a Session: the update installer, a speech provider, a provider sign-in flow.
+  "server/src/server-update.ts",
+  "server/src/stt-provider.ts",
+  "server/src/provider-auth/flow-store.ts",
+]);
+// Not a Session: CLI errors and the CLI's own watch state; SQL over stored rows.
+const SERVER_SESSION_STATUS_WRITER_ALLOWED_PREFIXES = ["server/src/cli/", "server/src/storage/"];
+
 const SERVER_PI_TUI_RUNTIME_CHECK_ALLOWED_FILES = new Set([
   "server/src/session-lifecycle-service.ts",
   "server/src/runtime-router.ts",
@@ -733,6 +749,27 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
             "Return semantic capabilities or typed results from SessionLifecycleService instead of branching on session.runtime in this module.",
         }),
       );
+    }
+
+    if (
+      !SERVER_SESSION_STATUS_WRITER_ALLOWED_FILES.has(importer) &&
+      !SERVER_SESSION_STATUS_WRITER_ALLOWED_PREFIXES.some((prefix) => importer.startsWith(prefix))
+    ) {
+      for (const assignment of strippedSource.matchAll(SERVER_SESSION_STATUS_ASSIGNMENT)) {
+        const location = lineAndColumnForIndex(strippedSource, assignment.index);
+        violations.push(
+          makeServerViolation({
+            rule: "session-status-writer",
+            importer,
+            target: "Session.status",
+            line: location.line,
+            column: location.column,
+            reason: "Only session-lifecycle-state.ts assigns a session's status.",
+            remediation:
+              "Apply a lifecycle event with applyLifecycle(session, event). If this `status` is not a Session's, add the file to SERVER_SESSION_STATUS_WRITER_ALLOWED_FILES.",
+          }),
+        );
+      }
     }
 
     if (!SERVER_CONFIG_UPDATE_ALLOWED_PREFIXES.some((prefix) => importer.startsWith(prefix))) {

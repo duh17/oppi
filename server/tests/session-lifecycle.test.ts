@@ -100,6 +100,7 @@ function makeManagerHarness(
     getSession: vi.fn((id: string) => (sessionRef && sessionRef.id === id ? sessionRef : null)),
     clearRestartResume: vi.fn(),
     clearHeldInputs: vi.fn(() => 0),
+    markRuntimeLive: vi.fn(),
   } as unknown as Storage;
 
   const manager = new SessionManager(storage);
@@ -191,6 +192,7 @@ describe("SessionManager startSession", () => {
       saveSession: vi.fn(),
       clearRestartResume: vi.fn(),
       clearHeldInputs: vi.fn(() => 0),
+      markRuntimeLive: vi.fn(),
     } as unknown as Storage;
     const { sdkBackend } = makeSdkBackendStub();
     const createSpy = vi.spyOn(SdkBackend, "create").mockResolvedValue(sdkBackend);

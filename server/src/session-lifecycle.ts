@@ -9,6 +9,7 @@ type SessionEndReason = EventTags<"server.session_end">["reason"];
 import { isPendingUserReplyRequest } from "./session-attention.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
+import { applyLifecycle } from "./session-lifecycle-state.js";
 import { safeErrorMessage } from "./log-utils.js";
 
 export interface SessionLifecycleSessionState extends ExtensionUIState {
@@ -101,12 +102,11 @@ export class SessionLifecycleCoordinator {
       });
     };
 
-    active.session.status = "stopped";
+    applyLifecycle(active.session, "runtime_ended");
     active.session.currentTurnStartedAt = undefined;
     try {
-      // A terminate request persists `stopping` before backend cleanup. If this
-      // final write fails, that durable marker remains retryable while runtime
-      // ownership is still detached below.
+      // The live-runtime record outlives a failed final write, so the next start still finds
+      // the session; a terminate under way keeps it from being resumed.
       this.deps.persistSessionNow(key, active.session);
     } catch (error) {
       recordFailure("final_persistence", error);

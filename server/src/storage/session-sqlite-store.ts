@@ -93,6 +93,12 @@ export interface RestartResumeEntry {
 }
 
 /**
+ * A session with a live runtime: `live` from the start of its runtime, `terminating` once a
+ * stop that ends it began. A restart after a crash resumes the `live` ones.
+ */
+export type RuntimeLivePhase = "live" | "terminating";
+
+/**
  * A message a session received while the server drained for a restart. It is delivered to the
  * session after the restart (or when the drain is cancelled), oldest first.
  */
@@ -142,6 +148,7 @@ export class SessionSqliteStore {
   private stmtFindDurable!: SqliteStatement;
   private stmtListDurableStore!: SqliteStatement;
   private stmtDelete!: SqliteStatement;
+  private stmtClearRuntimeLive!: SqliteStatement;
 
   constructor(dataDir: string, dbPathOrOptions?: string | SessionSqliteStoreOptions) {
     if (!existsSync(dataDir)) {
@@ -194,6 +201,10 @@ export class SessionSqliteStore {
   upsertSession(session: Session): void {
     const normalized = normalizeDeclaredSession(session);
     this.stmtUpsert.run(normalized.id, ...sessionRowValues(normalized));
+    // A row saved stopped or failed has no runtime: its live record goes once the row says so.
+    if (normalized.status === "stopped" || normalized.status === "error") {
+      this.clearRuntimeLive(normalized.id);
+    }
     this.cache?.set(normalized.id, normalized);
   }
 
@@ -375,6 +386,7 @@ export class SessionSqliteStore {
 
   deleteSession(sessionId: string): boolean {
     this.clearHeldInputs(sessionId);
+    this.clearRuntimeLive(sessionId);
     const result = this.stmtDelete.run(sessionId) as { changes?: number };
     this.cache?.delete(sessionId);
     return (result.changes ?? 0) > 0;
@@ -435,6 +447,26 @@ export class SessionSqliteStore {
 
   clearRestartResume(sessionId: string): void {
     this.db.prepare("DELETE FROM session_restart_resume WHERE session_id = ?").run(sessionId);
+  }
+
+  markRuntimeLive(sessionId: string, phase: RuntimeLivePhase): void {
+    this.db
+      .prepare(
+        `INSERT INTO session_runtime_live (session_id, phase) VALUES (?, ?)
+         ON CONFLICT(session_id) DO UPDATE SET phase = excluded.phase`,
+      )
+      .run(sessionId, phase);
+  }
+
+  listRuntimeLive(): Array<{ sessionId: string; phase: RuntimeLivePhase }> {
+    const rows = this.db
+      .prepare("SELECT session_id, phase FROM session_runtime_live ORDER BY session_id ASC")
+      .all() as Array<{ session_id: string; phase: RuntimeLivePhase }>;
+    return rows.map((row) => ({ sessionId: row.session_id, phase: row.phase }));
+  }
+
+  clearRuntimeLive(sessionId: string): void {
+    this.stmtClearRuntimeLive.run(sessionId);
   }
 
   /** Hold one input for after the restart. False when this turn id is already held. */
@@ -530,6 +562,11 @@ export class SessionSqliteStore {
         recorded_at INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS session_runtime_live (
+        session_id TEXT PRIMARY KEY,
+        phase TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS session_held_input (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL,
@@ -614,6 +651,9 @@ export class SessionSqliteStore {
       WHERE durable_store_id = ? AND durable_conversation_id IS NOT NULL
     `);
     this.stmtDelete = this.db.prepare("DELETE FROM session_state_sessions WHERE id = ?");
+    this.stmtClearRuntimeLive = this.db.prepare(
+      "DELETE FROM session_runtime_live WHERE session_id = ?",
+    );
   }
 
   findSessionByLaunchIdempotencyKey(idempotencyKey: string): Session | undefined {

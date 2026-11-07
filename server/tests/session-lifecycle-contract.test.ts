@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { queueOrphanedSessionsForRestart } from "../src/session-restart-resume.js";
-import { Storage } from "../src/storage.js";
+import { Storage, type RuntimeLivePhase } from "../src/storage.js";
 import type { ServerMessage, Session } from "../src/types.js";
 import {
   assistantEnd,
@@ -1100,9 +1100,10 @@ describe("auto-stop", () => {
 
 // ─── Crash recovery: which rows a restart resumes ───
 //
-// A crash leaves each row as the dying process last saved it. The statuses below are read from the
-// recorded scenarios, at the step where a process would have died, so the matrix follows what the
-// lifecycle really saves instead of what a test assumes.
+// A crash leaves each row as the dying process last saved it, and the record of which runtimes
+// were live. The statuses below are read from the recorded scenarios, at the step where a process
+// would have died, and the records are the ones the first test below sees the lifecycle write, so
+// the matrix follows what the lifecycle really saves instead of what a test assumes.
 
 const savedStatus = (id: string, step: string): Session["status"] => {
   const checkpoint = scenario(id).checkpoints.find((candidate) => candidate.step === step);
@@ -1116,12 +1117,14 @@ describe("a restart after a crash", () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  function recoveredStore(rows: Record<string, Partial<Session> & Pick<Session, "status">>) {
+  function recoveredStore(
+    rows: Record<string, Partial<Session> & Pick<Session, "status"> & { live?: RuntimeLivePhase }>,
+  ) {
     const dir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-crash-"));
     dirs.push(dir);
     const storage = new Storage(dir);
     const workspace = storage.createWorkspace({ name: "project", hostMount: dir });
-    for (const [id, fields] of Object.entries(rows)) {
+    for (const [id, { live, ...fields }] of Object.entries(rows)) {
       storage.saveSession({
         id,
         workspaceId: workspace.id,
@@ -1134,21 +1137,54 @@ describe("a restart after a crash", () => {
         piSessionFile: join(dir, `${id}.jsonl`),
         ...fields,
       });
+      if (live) storage.markRuntimeLive(id, live);
     }
     return storage;
   }
 
-  it("resumes a session that was busy, idle, or starting, and leaves one stopping, as saved", () => {
+  it("records a runtime as live from its start until it ends, and as terminating once a stop begins", async () => {
+    const world = await classicWorld({ id: "live", engine: "classic", description: "live" });
+    try {
+      const recorded = () => world.storage.listRuntimeLive().map((live) => live.phase);
+      expect(recorded()).toEqual([]);
+      await world.manager.startSession(SESSION_ID, world.workspace);
+      expect(recorded()).toEqual(["live"]);
+
+      setStreaming(world, true);
+      world.emit({ type: "agent_start" });
+      await world.manager.sendAbort(SESSION_ID);
+      await flush();
+      expect(recorded()).toEqual(["live"]);
+      world.emit({ type: "agent_end", messages: [] });
+      world.emit({ type: "agent_settled" });
+
+      world.emit({ type: "agent_start" });
+      const stopped = world.manager.stopSession(SESSION_ID);
+      await flush();
+      expect(recorded()).toEqual(["terminating"]);
+
+      setStreaming(world, false);
+      world.emit({ type: "agent_end", messages: [] });
+      await stopped;
+      expect(world.storage.getSession(SESSION_ID)?.status).toBe("stopped");
+      expect(recorded()).toEqual([]);
+    } finally {
+      await world.dispose();
+    }
+  });
+
+  it("resumes a session that was busy, idle, starting, or aborting a turn, and not one being stopped", () => {
     const storage = recoveredStore({
-      busy: { status: savedStatus("classic.prompt_settle", "agent_start") },
-      idle: { status: savedStatus("classic.prompt_settle", "agent_settled") },
-      starting: { status: savedStatus("classic.stop_during_start", "start_begun") },
-      // `single-status-owner` DELIBERATELY CHANGES this row: a crash during an abort resumes the
-      // session, because a record of which runtimes were live tells an abort from a terminate.
-      // Today a stopping row is never resumed.
-      aborting: { status: savedStatus("classic.abort_mid_turn", "abort") },
-      // A terminate was on its way out; it stays unresumed after that change too.
-      terminating: { status: savedStatus("classic.terminate_busy", "stop_requested") },
+      busy: { status: savedStatus("classic.prompt_settle", "agent_start"), live: "live" },
+      idle: { status: savedStatus("classic.prompt_settle", "agent_settled"), live: "live" },
+      starting: { status: savedStatus("classic.stop_during_start", "start_begun"), live: "live" },
+      // Saved stopping, like a terminate, but its runtime was live: it comes back idle, since
+      // its user ended the turn, not the session.
+      aborting: { status: savedStatus("classic.abort_mid_turn", "abort"), live: "live" },
+      terminating: {
+        status: savedStatus("classic.terminate_busy", "stop_requested"),
+        live: "terminating",
+      },
     });
 
     const queued = queueOrphanedSessionsForRestart(storage);
@@ -1158,26 +1194,28 @@ describe("a restart after a crash", () => {
         { sessionId: "busy", wasBusy: true },
         { sessionId: "idle", wasBusy: false },
         { sessionId: "starting", wasBusy: false },
+        { sessionId: "aborting", wasBusy: false },
       ]),
     );
-    expect(queued).toHaveLength(3);
+    expect(queued).toHaveLength(4);
     // Every row the dead process left running is stored stopped afterwards; a run the crash cut
     // short has no outcome.
     for (const id of ["busy", "idle", "starting", "aborting", "terminating"]) {
       expect(storage.getSession(id)?.status, id).toBe("stopped");
     }
     expect(storage.getSession("busy")?.programStatus?.state).toBe("idle");
+    expect(storage.listRuntimeLive()).toEqual([]);
   });
 
-  it("does not resume a create-only row that never ran, and stores it stopped", () => {
-    // `single-status-owner` DELIBERATELY CHANGES the stored status: a dormant row stays ready,
-    // because a client treats a stopped session as history-only and could not open it.
+  it("does not resume a create-only row that never ran, and leaves it ready", () => {
+    // A client treats a stopped session as history-only and could not open a dormant row
+    // stored stopped.
     const storage = recoveredStore({
       shell: { status: "ready", piSessionFile: undefined },
     });
 
     expect(queueOrphanedSessionsForRestart(storage)).toEqual([]);
-    expect(storage.getSession("shell")?.status).toBe("stopped");
+    expect(storage.getSession("shell")?.status).toBe("ready");
   });
 
   it("leaves stopped and error rows as they are", () => {

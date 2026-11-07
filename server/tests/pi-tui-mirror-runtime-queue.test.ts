@@ -133,6 +133,7 @@ function makeRuntime(
     },
     getConfig: () => ({ dataDir: options.dataDir ?? "/tmp/oppi-mirror-test-config" }),
     getDataDir: () => options.dataDir ?? "/tmp/oppi-mirror-test-config",
+    markRuntimeLive: () => {},
   } as unknown as Storage;
 
   return {

@@ -38,6 +38,7 @@ import {
   SessionSqliteStore,
   type HeldInput,
   type RestartResumeEntry,
+  type RuntimeLivePhase,
 } from "./storage/session-sqlite-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
 import { readConfigSetting, type RevisionedEnabled } from "./settings/config-settings.js";
@@ -53,7 +54,7 @@ import type {
   Workspace,
 } from "./types.js";
 
-export type { ConfigValidationResult };
+export type { ConfigValidationResult, RuntimeLivePhase };
 
 export class Storage {
   private readonly configStore: ConfigStore;
@@ -107,6 +108,11 @@ export class Storage {
   /** Runs `run` once per data directory, recorded in the migration ledger of session-state.db. */
   runMigrationOnce(key: string, run: () => Promise<void>): Promise<boolean> {
     return this.sessionStore.runMigrationOnce(key, run);
+  }
+
+  /** Synchronous `runMigrationOnce`: `run` returns false when it did not finish. */
+  runMigrationOnceSync(key: string, run: () => boolean): boolean {
+    return this.sessionStore.runMigrationOnceSync(key, run);
   }
 
   // ─── Config ───
@@ -421,6 +427,19 @@ export class Storage {
 
   clearRestartResume(sessionId: string): void {
     this.sessionStore.clearRestartResume(sessionId);
+  }
+
+  /** Record that `sessionId` has a live runtime (`session-lifecycle-state.ts` writes it). */
+  markRuntimeLive(sessionId: string, phase: RuntimeLivePhase): void {
+    this.sessionStore.markRuntimeLive(sessionId, phase);
+  }
+
+  listRuntimeLive(): Array<{ sessionId: string; phase: RuntimeLivePhase }> {
+    return this.sessionStore.listRuntimeLive();
+  }
+
+  clearRuntimeLive(sessionId: string): void {
+    this.sessionStore.clearRuntimeLive(sessionId);
   }
 
   holdInput(input: Omit<HeldInput, "id">): boolean {

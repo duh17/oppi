@@ -131,6 +131,7 @@ export function createSessionCoordinatorBundle(
     {
       getActiveSession: (key) => deps.active.get(key),
       persistSessionNow: (key, session) => broadcaster.persistSessionNow(key, session),
+      markers: deps.storage,
       broadcast: (key, message) => broadcaster.broadcast(key, message),
       handleSessionEnd: (key, reason, stopConfirmationReason) =>
         deps.onSessionEnd(key, reason, stopConfirmationReason),

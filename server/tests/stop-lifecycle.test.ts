@@ -317,6 +317,7 @@ function makeManagerHarness(status: Session["status"] = "busy", stopTimers?: Ses
     getWorkspace: vi.fn(() => undefined),
     clearRestartResume: vi.fn(),
     clearHeldInputs: vi.fn(() => 0),
+    markRuntimeLive: vi.fn(),
   } as unknown as Storage;
 
   const manager = new SessionManager(storage, undefined, stopTimers);

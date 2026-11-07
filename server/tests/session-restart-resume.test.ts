@@ -96,7 +96,9 @@ describe("session restart resume", () => {
     expect(deps.sendPrompt).not.toHaveBeenCalled();
     expect(deps.sendFollowUp).not.toHaveBeenCalled();
   });
-  it("queues sessions left running by a crash and marks every running one stopped", () => {
+  // These rows predate the live-runtime record: the first start that keeps one reads it from a
+  // running status, once.
+  it("queues sessions an older server left running by a crash and marks every running one stopped", () => {
     const { storage, workspace } = makeStorage();
     const ws = { workspaceId: workspace.id };
     saveSession(storage, "busy", { ...ws, status: "busy", currentTurnStartedAt: 5 });
@@ -135,7 +137,6 @@ describe("session restart resume", () => {
       "busy",
       "idle",
       "durable-idle",
-      "shell",
       "starting",
       "stopping",
       "incognito",
@@ -146,6 +147,9 @@ describe("session restart resume", () => {
     }
     expect(storage.getSession("busy")?.currentTurnStartedAt).toBeUndefined();
     expect(storage.getSession("failed")?.status).toBe("error");
+    // Nothing ran it, so it stays ready: a client cannot open a stopped session.
+    expect(storage.getSession("shell")?.status).toBe("ready");
+    expect(storage.listRuntimeLive()).toEqual([]);
   });
 
   describe("program status across a restart", () => {
@@ -155,6 +159,7 @@ describe("session restart resume", () => {
       saveSession(storage, "finished", {
         ...ws,
         status: "ready",
+        piSessionFile: "/tmp/finished.jsonl",
         programStatus: { state: "done", message: "Fix login", since: 111 },
       });
       saveSession(storage, "failed-run", {
@@ -238,15 +243,11 @@ describe("session restart resume", () => {
       status: "ready",
       piSessionFile: "/tmp/b.jsonl",
     });
-    const failing = {
-      listSessions: () => storage.listSessions(),
-      queueRestartResume: storage.queueRestartResume.bind(storage),
-      saveSession: () => {
-        throw new Error("disk full");
-      },
-    };
+    vi.spyOn(storage, "saveSession").mockImplementation(() => {
+      throw new Error("disk full");
+    });
 
-    expect(() => queueOrphanedSessionsForRestart(failing)).toThrow("disk full");
+    expect(() => queueOrphanedSessionsForRestart(storage)).toThrow("disk full");
 
     expect(storage.listRestartResume()).toEqual(
       expect.arrayContaining([
@@ -254,6 +255,8 @@ describe("session restart resume", () => {
         { sessionId: "b", wasBusy: false },
       ]),
     );
+    // The next start finds them again.
+    expect(storage.listRuntimeLive().map((live) => live.sessionId)).toEqual(["a", "b"]);
   });
 
   it("does not record a session that was being stopped at shutdown", () => {

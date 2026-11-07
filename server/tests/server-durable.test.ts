@@ -5018,6 +5018,7 @@ describe("server durable managed runtime", () => {
       {
         getActiveSession: () => active,
         persistSessionNow: () => {},
+        markers: f.storage,
         broadcast,
         handleSessionEnd: ended,
       },

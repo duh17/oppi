@@ -596,6 +596,34 @@ describe("architecture layer rule helpers", () => {
     }
   });
 
+  it("flags a session status assignment outside the lifecycle owner", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-status-writer-"));
+
+    try {
+      const assignment =
+        'export const end = (s: { status: string }) => { s.status = "stopped"; };\n';
+      write(join(repoRoot, "server/src/session-random.ts"), assignment);
+      write(join(repoRoot, "server/src/session-lifecycle-state.ts"), assignment);
+      write(
+        join(repoRoot, "server/src/session-reader.ts"),
+        [
+          'export const busy = (s: { status: string }) => s.status === "busy" || s.status !== "ready";',
+          'const created = { status: "ready" };',
+          '// s.status = "stopped" was removed',
+          "",
+        ].join("\n"),
+      );
+
+      const flagged = findServerLayerViolations(repoRoot)
+        .filter((violation) => violation.rule === "session-status-writer")
+        .map((violation) => violation.file);
+
+      expect(flagged).toEqual(["server/src/session-random.ts"]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("flags Pi TUI runtime ownership checks outside approved modules", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-pi-tui-check-"));
 

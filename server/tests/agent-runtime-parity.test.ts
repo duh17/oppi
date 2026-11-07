@@ -121,6 +121,7 @@ async function makeMirrorHarness(mobileRenderers: MobileRendererRegistry): Promi
     }),
     getConfig: vi.fn(() => ({ dataDir: "/tmp/oppi-runtime-parity-config" })),
     getDataDir: vi.fn(() => "/tmp/oppi-runtime-parity-config"),
+    markRuntimeLive: vi.fn(),
   } as unknown as Storage;
   const runtime = new PiTuiMirrorRuntime(storage, { mobileRenderers });
   const ws = new FakeBridgeWebSocket();
