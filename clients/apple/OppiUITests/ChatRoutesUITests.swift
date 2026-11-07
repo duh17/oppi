@@ -409,6 +409,59 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// The trailing column's divider: a moderate drag resizes within the
+    /// panel's own range, a decisive drag the rest of the way to the chat's
+    /// edge commits to the full window with the chat collapsed, dragging the
+    /// grab edge back returns to the remembered width, and a decisive drag
+    /// the other way closes the panel like its own Done control.
+    func testTrailingColumnDividerDragsResizesExpandsAndCloses() {
+        launch()
+        // The column's own width is largest, and most natural to drag, in
+        // landscape, where an iPad shows it beside the chat.
+        XCUIDevice.shared.orientation = .landscapeLeft
+        guard !usesSheets else { return } // the divider exists only in the trailing column (regular width)
+        app.buttons["chat.toolbar.files"].tap()
+        let files = app.navigationBars["Files"]
+        XCTAssertTrue(files.waitUntilExists(timeout: 5), "Files panel did not open")
+        let handle = app.descendants(matching: .any)["trailingColumn.resizeHandle"]
+        XCTAssertTrue(handle.waitUntilExists(timeout: 5), "The resize handle did not appear")
+        // Proportional to the window, not a fixed point count, so the same
+        // drags cross the same commit thresholds in portrait and landscape,
+        // on an iPhone split, and on an iPad whichever width Stage Manager
+        // gives the window.
+        let windowWidth = app.windows.firstMatch.frame.width
+        let openWidth = files.frame.width
+        attachScreenshot("trailing-column-before-drag")
+
+        // A moderate drag toward the chat widens the column.
+        drag(handle, by: -(windowWidth * 0.15))
+        XCTAssertTrue(waitFor(files.frame.width > openWidth + 100), "Dragging the divider did not widen the panel")
+        let resizedWidth = files.frame.width
+        attachScreenshot("trailing-column-after-drag")
+
+        // A decisive drag the rest of the way to the chat's own edge commits
+        // to the full window, the chat collapsed.
+        drag(app.descendants(matching: .any)["trailingColumn.resizeHandle"], by: -(windowWidth + 100))
+        XCTAssertTrue(waitFor(files.frame.width > windowWidth - 80), "Dragging past the threshold did not expand to the full window")
+        attachScreenshot("trailing-column-full-window")
+
+        // Dragging the grab edge back past the expand threshold returns to
+        // the remembered width, not wherever the pull-back stopped: drag far
+        // enough, from the full window, to land back at that remembered
+        // width itself.
+        drag(app.descendants(matching: .any)["trailingColumn.resizeHandle"], by: windowWidth - resizedWidth)
+        XCTAssertTrue(
+            waitFor(abs(files.frame.width - resizedWidth) < 60),
+            "Dragging back did not return to the remembered width: \(files.frame.width) vs \(resizedWidth)"
+        )
+        attachScreenshot("trailing-column-restored")
+
+        // A decisive drag toward the far edge closes the panel, same as Done.
+        drag(app.descendants(matching: .any)["trailingColumn.resizeHandle"], by: resizedWidth + 100)
+        XCTAssertTrue(files.waitUntilGone(timeout: 5), "A decisive drag toward the far edge did not close the panel")
+        assertRunning()
+    }
+
     func testContextOpensAndCloses() {
         launch()
         app.buttons["chat.toolbar.context"].tap()
@@ -921,6 +974,15 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         launch()
         openShareSheet()
         let share = app.navigationBars["Share Session"]
+        // Regular width now mounts Share in the same trailing column as
+        // every other panel, the resize handle included, instead of the
+        // full-screen cover it used to be: the chat stays reachable beside it.
+        if !usesSheets {
+            XCTAssertTrue(
+                app.descendants(matching: .any)["trailingColumn.resizeHandle"].waitUntilExists(timeout: 5),
+                "Share must open in the trailing column, not a full-screen cover"
+            )
+        }
         // Without a server the preflight fails after the scan starts. Its
         // error shows only if the open sheet reads chat's share model live.
         XCTAssertTrue(
@@ -1357,6 +1419,13 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         let bottom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98))
         start.press(forDuration: 0.1, thenDragTo: bottom, withVelocity: .fast, thenHoldForDuration: 0)
+    }
+
+    /// Drags `element` horizontally by `dx` points: negative widens the
+    /// trailing column (toward the chat), positive narrows or closes it.
+    private func drag(_ element: XCUIElement, by dx: CGFloat) {
+        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: dx, dy: 0)))
     }
 
     /// Scrolls the Context list until all of `element` shows above the list's
