@@ -1,8 +1,8 @@
 import UIKit
 
 /// When auxiliary side content opens as a trailing column instead of a sheet:
-/// chat's side panels (Outline, Files, Context), a commit's diff, and a
-/// review's file list. Regular width gets the column, with or without a
+/// chat's side panels (Outline, Files, Context, the reader), a commit's diff,
+/// and a review's file list. Regular width gets the column, with or without a
 /// vertical toolbar rail: iPad and the Duo's inner portrait are regular
 /// without one, and a rotation must not turn an open column into a sheet.
 /// Compact, including the Duo's cover display, keeps the sheet or stack so a
@@ -22,26 +22,241 @@ protocol TrailingColumnKeyboardScreen: UIViewController {
     var followsKeyboard: Bool { get set }
 }
 
+// MARK: - Width policy, rubber banding, and snapping
+
+/// A trailing column's width range at its current bounds: the ordinary
+/// resize range (`minimum`...`maximum`), and the overlay's own width, the
+/// hard ceiling the pane can be dragged or flung all the way open to.
+struct TrailingColumnWidthPolicy: Equatable {
+    let minimum: CGFloat
+    /// The width a panel opens at when nothing is remembered yet.
+    let ideal: CGFloat
+    /// The soft ceiling of ordinary dragging; past it the divider rubber-bands
+    /// toward `full` instead of resizing freely.
+    let maximum: CGFloat
+    /// The overlay's own width: the hard ceiling once the pane is dragged or
+    /// flung past `maximum`, filling the window and collapsing the host beside it.
+    let full: CGFloat
+
+    /// Halfway between `maximum` and `full`: cross it, by position or a fast
+    /// fling, and the divider commits to full instead of springing back.
+    var expandThreshold: CGFloat { maximum + (full - maximum) / 2 }
+    /// Halfway between `minimum` and closed: cross it and the pane closes
+    /// instead of springing back to `minimum`.
+    var closeThreshold: CGFloat { minimum / 2 }
+
+    func clampedToOrdinaryRange(_ width: CGFloat) -> CGFloat {
+        min(maximum, max(minimum, width))
+    }
+}
+
+/// Apple's standard overscroll resistance, the feel `UIScrollView` bounces
+/// with: an overshoot of `distance` past a boundary draws as a smaller,
+/// asymptotically bounded distance, so the divider can be pulled past its
+/// ordinary range but never past `dimension` of extra travel.
+enum ColumnRubberBand {
+    static func resisted(_ distance: CGFloat, dimension: CGFloat, coefficient: CGFloat = 0.55) -> CGFloat {
+        guard dimension > 0, distance > 0 else { return 0 }
+        return (1 - (1 / ((distance * coefficient / dimension) + 1))) * dimension
+    }
+
+    /// The width actually drawn for a raw (1:1 with the finger) target: free
+    /// inside `policy`'s ordinary range, resisted beyond it on either side.
+    /// `coefficient` is higher than a scroll bounce's: the travel on each
+    /// side is a healthy fraction of the window, not a sliver past a list's
+    /// edge, so a drag must still cross each threshold at a natural, well
+    /// short of the window's own edge, distance (`coefficient: 2` crosses
+    /// exactly at half that side's travel, the threshold's own position).
+    static func liveWidth(forRawTarget raw: CGFloat, policy: TrailingColumnWidthPolicy, coefficient: CGFloat = 2) -> CGFloat {
+        let clamped = min(max(raw, 0), policy.full)
+        if clamped < policy.minimum {
+            let overshoot = policy.minimum - clamped
+            return policy.minimum - resisted(overshoot, dimension: max(policy.minimum, 1), coefficient: coefficient)
+        }
+        if clamped > policy.maximum {
+            let overshoot = clamped - policy.maximum
+            return policy.maximum + resisted(overshoot, dimension: max(policy.full - policy.maximum, 1), coefficient: coefficient)
+        }
+        return clamped
+    }
+}
+
+/// Where a drag settles once it ends.
+enum ColumnSnapOutcome: Equatable {
+    case closed
+    case width(CGFloat)
+    case full
+}
+
+/// The zone a live width sits in, for a haptic tick each time a drag crosses
+/// into or out of a commit zone.
+enum ColumnSnapZone: Equatable {
+    case closing, ordinary, expanding
+}
+
+enum ColumnSnapResolver {
+    static func zone(for width: CGFloat, policy: TrailingColumnWidthPolicy) -> ColumnSnapZone {
+        if width <= policy.closeThreshold { return .closing }
+        if width >= policy.expandThreshold { return .expanding }
+        return .ordinary
+    }
+
+    /// The divider's resting place once a drag ends: closed, full, or an
+    /// ordinary width, carrying the gesture's velocity into the projection so
+    /// a fast flick settles like a slower drag further in the same direction
+    /// would have. Leaving full always returns to the remembered width
+    /// rather than wherever the pull-back happened to stop, so full reads as
+    /// a clean toggle and not a second free-resize range.
+    static func resolve(
+        liveWidth: CGFloat,
+        widthVelocity: CGFloat,
+        policy: TrailingColumnWidthPolicy,
+        rememberedWidth: CGFloat,
+        wasFull: Bool,
+        projectionSeconds: CGFloat = 0.12
+    ) -> ColumnSnapOutcome {
+        let projected = liveWidth + widthVelocity * projectionSeconds
+        if projected <= policy.closeThreshold { return .closed }
+        if projected >= policy.expandThreshold { return .full }
+        if wasFull { return .width(policy.clampedToOrdinaryRange(rememberedWidth)) }
+        return .width(policy.clampedToOrdinaryRange(projected))
+    }
+}
+
+// MARK: - Resize handle
+
+/// The trailing column's one draggable divider: a hairline, a visible
+/// grabber mark, and the resize/expand/close gesture's single owner, so a
+/// touch drag, a trackpad hover, and VoiceOver's adjustable actions all drive
+/// the same width. One accessibility element, not three competing views.
+final class TrailingColumnResizeHandle: UIView {
+    /// VoiceOver's increment/decrement step, in points.
+    static let accessibilityStep: CGFloat = 32
+    /// The touch and pointer band around the hairline; narrower than this and
+    /// a resize target is too easy to miss (`ExtensionStripPillHitBand` uses
+    /// the same overhang idea for pill rows).
+    static let hitWidth: CGFloat = 28
+
+    var onBegan: (() -> Void)?
+    var onChanged: ((_ translationX: CGFloat) -> Void)?
+    var onEnded: ((_ translationX: CGFloat, _ velocityX: CGFloat) -> Void)?
+    var onStep: ((_ delta: CGFloat) -> Void)?
+    var onExpandRequested: (() -> Void)?
+    var onRestoreRequested: (() -> Void)?
+
+    /// Full-window or not, for the accessibility action offered and the
+    /// spoken value; the overlay sets this from the controller's state.
+    var isFull = false {
+        didSet {
+            guard isFull != oldValue else { return }
+            accessibilityHint = isFull
+                ? String(localized: "Drag, or use the rotor, to resize. Double-tap and drag to show chat.")
+                : String(localized: "Drag, or use the rotor, to resize. Double-tap and drag to expand.")
+            accessibilityCustomActions = isFull
+                ? [UIAccessibilityCustomAction(name: String(localized: "Show Chat")) { [weak self] _ in
+                    self?.onRestoreRequested?()
+                    return true
+                }]
+                : [UIAccessibilityCustomAction(name: String(localized: "Expand Pane")) { [weak self] _ in
+                    self?.onExpandRequested?()
+                    return true
+                }]
+        }
+    }
+
+    var widthDescription: String = "" {
+        didSet { accessibilityValue = widthDescription }
+    }
+
+    private let grabber = UIView()
+    private lazy var pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = true
+        accessibilityIdentifier = "trailingColumn.resizeHandle"
+        accessibilityLabel = String(localized: "Resize panel")
+        accessibilityTraits = .adjustable
+        grabber.backgroundColor = .separator
+        grabber.layer.cornerRadius = 2
+        grabber.isUserInteractionEnabled = false
+        addSubview(grabber)
+        addGestureRecognizer(pan)
+        addInteraction(UIPointerInteraction(delegate: self))
+        accessibilityHint = String(localized: "Drag, or use the rotor, to resize. Double-tap and drag to expand.")
+        accessibilityCustomActions = [UIAccessibilityCustomAction(name: String(localized: "Expand Pane")) { [weak self] _ in
+            self?.onExpandRequested?()
+            return true
+        }]
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let grabberSize = CGSize(width: 4, height: 36)
+        grabber.frame = CGRect(
+            x: (bounds.width - grabberSize.width) / 2,
+            y: (bounds.height - grabberSize.height) / 2,
+            width: grabberSize.width,
+            height: grabberSize.height
+        )
+    }
+
+    override func accessibilityIncrement() { onStep?(Self.accessibilityStep) }
+    override func accessibilityDecrement() { onStep?(-Self.accessibilityStep) }
+
+    @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
+        switch recognizer.state {
+        case .began:
+            onBegan?()
+        case .changed:
+            onChanged?(recognizer.translation(in: self).x)
+        case .ended, .cancelled:
+            onEnded?(recognizer.translation(in: self).x, recognizer.velocity(in: self).x)
+        default:
+            break
+        }
+    }
+}
+
+extension TrailingColumnResizeHandle: UIPointerInteractionDelegate {
+    func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
+        UIPointerStyle(effect: .highlight(UITargetedPreview(view: grabber)))
+    }
+}
+
 /// A side panel in a full-height trailing column beside a UIKit screen, like
 /// an iPadOS inspector: an invisible child of the screen that asked for it,
 /// which calls `show` with the panel (nil hides it) and, at compact width,
-/// presents the same panel as a router sheet instead. A new panel id replaces
-/// the panel. The panel is one UIKit screen at the root of the column's
-/// own navigation controller, shown in a `TrailingColumnOverlayView` on top
-/// of the navigation controller that holds the screen (the screen's top
-/// ancestor outside one), whose child the column's controller becomes:
-/// UIKit raises when a child's view sits outside its parent's. It attaches
-/// while the screen is on screen, so a page pushed above the screen, or a
-/// full-screen modal over it, never shows it, and the panel's own pushed
-/// pages survive until the screen returns.
+/// presents the same panel as a router sheet instead. A new panel id with the
+/// column already open replaces its content without re-running the open
+/// transition; nil, from nothing, and from something each animate. The panel
+/// is one UIKit screen at the root of the column's own navigation controller,
+/// shown in a `TrailingColumnOverlayView` on top of the navigation controller
+/// that holds the screen (the screen's top ancestor outside one), whose child
+/// the column's controller becomes: UIKit raises when a child's view sits
+/// outside its parent's. It attaches while the screen is on screen, so a page
+/// pushed above the screen, or a full-screen modal over it, never shows it,
+/// and the panel's own pushed pages survive until the screen returns.
 final class TrailingColumnController: UIViewController {
     struct Panel {
         let id: AnyHashable
         let minWidth: CGFloat
         let idealWidth: CGFloat
+        /// The soft ceiling of ordinary dragging; nil picks a width generous
+        /// enough for most content without being the whole window.
+        var maxWidth: CGFloat? = nil
         /// Builds the panel's UIKit screen when the column installs it.
         let makeScreen: () -> UIViewController
     }
+
+    /// The divider was dragged or flung past the close threshold, same as
+    /// the panel's own Close or Done. The owner closes the same way that
+    /// control does, so the model stays the single source of truth and this
+    /// column never reopens itself on the next update pass.
+    var onDismissRequested: (() -> Void)?
 
     private var panelID: AnyHashable?
     private var root: AppRootEnvironment?
@@ -56,6 +271,17 @@ final class TrailingColumnController: UIViewController {
     /// The UIKit screen that owns this column.
     private weak var owningScreen: UIViewController?
     private var isOnScreen = false
+
+    /// The installed panel's own width range, captured once per install or
+    /// swap; `currentWidthPolicy` turns it into points against the overlay's
+    /// live bounds on every use, so a Stage Manager resize recomputes the
+    /// ordinary range and `full` together with the width itself.
+    private var panelConstraints: (minWidth: CGFloat, idealWidth: CGFloat, maxWidth: CGFloat?)?
+    private var isFull = false
+    /// Width at the drag's start, before translation; nil outside a drag.
+    private var dragStartWidth: CGFloat?
+    private var dragZone: ColumnSnapZone?
+    private var settleAnimator: UIViewPropertyAnimator?
 
     init(screen: UIViewController) {
         owningScreen = screen
@@ -92,8 +318,18 @@ final class TrailingColumnController: UIViewController {
         }
         self.root = root
         requested = panel
-        if panel.id == panelID, container != nil, !isRemoving {
-            overlay?.widths = (panel.minWidth, panel.idealWidth)
+        if panel.id == panelID, let overlay, container != nil, !isRemoving {
+            // Already open on this id: a content-only refresh (new min/ideal
+            // width from the same screen) never replays the open transition.
+            applyPanelConstraints(panel, overlay: overlay)
+            return
+        }
+        if panelID != nil, container != nil, !isRemoving {
+            // A different panel while the column is already open: swap the
+            // screen in place. The column's width and full state are
+            // untouched, so the pane does not close and reopen for a second
+            // reflow.
+            swapPanel(panel)
             return
         }
         removePanel()
@@ -118,17 +354,105 @@ final class TrailingColumnController: UIViewController {
         container.onSafeAreaInsetsChange = { [weak self] in
             self?.overlay?.setNeedsLayout()
         }
-        let overlay = TrailingColumnOverlayView(column: container.view)
-        overlay.widths = (panel.minWidth, panel.idealWidth)
-        overlay.onColumnWidth = { [weak self] width in
-            self?.makeRoom(for: width)
-        }
-
+        let overlay = makeOverlay(column: container.view)
         panelID = panel.id
         self.container = container
         self.overlay = overlay
+        isFull = false
+        applyPanelConstraints(panel, overlay: overlay)
         setNeedsUpdateProperties()
-        attach()
+        attach(animated: true)
+    }
+
+    /// Replaces the open column's content without closing it: the overlay,
+    /// its width, and `isFull` all stay as they are.
+    private func swapPanel(_ panel: Panel) {
+        guard let overlay, let container else { return }
+        Router.endSearch(in: container) { [weak self] in
+            guard let self else { return }
+            let screen = panel.makeScreen()
+            let newContainer = RouterNavigationController(rootViewController: screen)
+            let themeStore = self.root?.themeStore
+            newContainer.interfaceStyle = { themeStore?.userInterfaceStyle ?? .unspecified }
+            newContainer.traitOverrides.horizontalSizeClass = .compact
+            newContainer.onSafeAreaInsetsChange = { [weak self] in
+                self?.overlay?.setNeedsLayout()
+            }
+            if let host = self.host {
+                if !host.shouldAutomaticallyForwardAppearanceMethods {
+                    container.beginAppearanceTransition(false, animated: false)
+                }
+                container.willMove(toParent: nil)
+                container.view.removeFromSuperview()
+                container.removeFromParent()
+                if !host.shouldAutomaticallyForwardAppearanceMethods {
+                    container.endAppearanceTransition()
+                }
+                host.addChild(newContainer)
+                overlay.replaceColumn(newContainer.view)
+                newContainer.didMove(toParent: host)
+                if !host.shouldAutomaticallyForwardAppearanceMethods {
+                    newContainer.beginAppearanceTransition(true, animated: false)
+                    newContainer.endAppearanceTransition()
+                }
+            }
+            self.panelID = panel.id
+            self.container = newContainer
+            self.applyPanelConstraints(panel, overlay: overlay)
+            self.setNeedsUpdateProperties()
+        }
+    }
+
+    private func makeOverlay(column: UIView) -> TrailingColumnOverlayView {
+        let overlay = TrailingColumnOverlayView(column: column)
+        overlay.onColumnWidth = { [weak self] width in
+            self?.makeRoom(for: width)
+        }
+        overlay.handle.onBegan = { [weak self] in self?.dragBegan() }
+        overlay.handle.onChanged = { [weak self] translationX in self?.dragChanged(translationX: translationX) }
+        overlay.handle.onEnded = { [weak self] translationX, velocityX in
+            self?.dragEnded(translationX: translationX, velocityX: velocityX)
+        }
+        overlay.handle.onStep = { [weak self] delta in self?.step(by: delta) }
+        overlay.handle.onExpandRequested = { [weak self] in self?.requestExpandToFull() }
+        overlay.handle.onRestoreRequested = { [weak self] in self?.requestRestoreFromFull() }
+        overlay.onBoundsWidthChanged = { [weak self] _ in self?.rescaleForBoundsChange() }
+        return overlay
+    }
+
+    /// A live resize (Stage Manager, rotation, multitasking) while the
+    /// column is simply resting: rescale immediately so proportions hold at
+    /// every intermediate size, not only once the user lets go of the window
+    /// edge. A drag or an in-flight snap animation already owns the width
+    /// this frame and must not be fought.
+    private func rescaleForBoundsChange() {
+        guard dragStartWidth == nil, settleAnimator == nil, let overlay else { return }
+        overlay.width = restingWidth(overlay: overlay)
+    }
+
+    /// Captures the installed panel's own width range. A fraction remembered
+    /// from a previous resize, in this process or a prior launch, is already
+    /// bounds-independent and applies as soon as it is known; nothing here
+    /// needs the overlay's bounds, which can still be zero before its first
+    /// layout (`currentWidthPolicy` reads those live wherever it is used).
+    private func applyPanelConstraints(_ panel: Panel, overlay: TrailingColumnOverlayView) {
+        panelConstraints = (panel.minWidth, panel.idealWidth, panel.maxWidth)
+        if overlay.restingFraction == nil, let stored = AppPreferences.TrailingColumn.widthFraction {
+            overlay.restingFraction = stored
+        }
+    }
+
+    /// The live width range in points, from the installed panel's own range
+    /// and the overlay's current bounds: the ordinary resize range
+    /// (`minimum`...`maximum`), and `full`, the overlay's own width.
+    private var currentWidthPolicy: TrailingColumnWidthPolicy? {
+        guard let panelConstraints, let overlay else { return nil }
+        let boundsWidth = overlay.bounds.width
+        let softMaximum = panelConstraints.maxWidth ?? min(panelConstraints.idealWidth * 1.75, 640)
+        let maximum = boundsWidth > 0 ? min(softMaximum, boundsWidth) : softMaximum
+        let minimum = min(panelConstraints.minWidth, maximum)
+        let ideal = min(panelConstraints.idealWidth, maximum)
+        return TrailingColumnWidthPolicy(minimum: minimum, ideal: ideal, maximum: maximum, full: max(boundsWidth, maximum))
     }
 
     override func updateProperties() {
@@ -141,13 +465,13 @@ final class TrailingColumnController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         isOnScreen = true
-        attach()
+        attach(animated: false)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         isOnScreen = false
-        detach()
+        detach(animated: false)
     }
 
     /// The navigation controller that holds the screen this column belongs
@@ -157,14 +481,22 @@ final class TrailingColumnController: UIViewController {
         owningScreen.map { $0.navigationController ?? $0 }
     }
 
-    private func attach() {
+    /// Attaches the overlay and slides the column in from zero width, so the
+    /// host narrows and the pane arrives in the same interruptible motion
+    /// instead of popping in once layout catches up.
+    private func attach(animated: Bool) {
         guard isOnScreen, let overlay, let container, overlay.superview == nil,
               let host = hostController else { return }
         self.host = host
         screen = owningScreen
-        host.addChild(container)
+        // The overlay needs its real frame before `restingWidth` can read
+        // live bounds; a `full` reopen, or a proportional one, would
+        // otherwise compute against the zero-size frame it was created with.
         overlay.frame = host.view.bounds
         overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        let target = restingWidth(overlay: overlay)
+        overlay.width = animated ? 0 : target
+        host.addChild(container)
         host.view.addSubview(overlay)
         container.didMove(toParent: host)
         // A navigation controller forwards appearance to its stack only.
@@ -172,25 +504,41 @@ final class TrailingColumnController: UIViewController {
             container.beginAppearanceTransition(true, animated: false)
             container.endAppearanceTransition()
         }
+        host.view.layoutIfNeeded()
+        if animated {
+            animateWidth(to: target, initialVelocity: 0)
+        }
     }
 
-    private func detach() {
-        guard let host else { return }
-        if let container, container.parent === host {
-            if !host.shouldAutomaticallyForwardAppearanceMethods {
-                container.beginAppearanceTransition(false, animated: false)
-            }
-            container.willMove(toParent: nil)
-            overlay?.removeFromSuperview()
-            container.removeFromParent()
-            if !host.shouldAutomaticallyForwardAppearanceMethods {
-                container.endAppearanceTransition()
-            }
+    private func detach(animated: Bool, completion: (() -> Void)? = nil) {
+        guard let host else {
+            completion?()
+            return
         }
-        makeRoom(for: 0)
-        screenFollowsKeyboard(true)
-        screen = nil
-        self.host = nil
+        let finish: () -> Void = { [weak self] in
+            guard let self else { return }
+            if let container = self.container, container.parent === host {
+                if !host.shouldAutomaticallyForwardAppearanceMethods {
+                    container.beginAppearanceTransition(false, animated: false)
+                }
+                container.willMove(toParent: nil)
+                self.overlay?.removeFromSuperview()
+                container.removeFromParent()
+                if !host.shouldAutomaticallyForwardAppearanceMethods {
+                    container.endAppearanceTransition()
+                }
+            }
+            self.makeRoom(for: 0)
+            self.screenFollowsKeyboard(true)
+            self.screen = nil
+            self.host = nil
+            completion?()
+        }
+        guard animated, overlay?.superview != nil else {
+            finish()
+            return
+        }
+        animateWidth(to: 0, initialVelocity: 0, completion: finish)
     }
 
     /// The keyboard spans the window, so a field in the panel (the Outline's
@@ -266,36 +614,186 @@ final class TrailingColumnController: UIViewController {
         // Holds `self` until the panel is gone: a dismantled column must
         // still take its overlay off the host.
         Router.endSearch(in: container) { [self] in
-            self.detach()
-            self.container = nil
-            self.overlay = nil
-            self.panelID = nil
-            self.isRemoving = false
-            self.installRequestedPanel()
+            self.detach(animated: true) {
+                self.container = nil
+                self.overlay = nil
+                self.panelID = nil
+                self.panelConstraints = nil
+                self.isFull = false
+                self.isRemoving = false
+                self.installRequestedPanel()
+            }
         }
+    }
+
+    // MARK: - Resize, expand, and close
+
+    private func restingWidth(overlay: TrailingColumnOverlayView) -> CGFloat {
+        guard let policy = currentWidthPolicy else { return 0 }
+        if isFull { return policy.full }
+        guard let fraction = overlay.restingFraction, policy.full > 0 else { return policy.ideal }
+        return policy.clampedToOrdinaryRange(fraction * policy.full)
+    }
+
+    private func dragBegan() {
+        settleAnimator?.stopAnimation(true)
+        settleAnimator = nil
+        dragStartWidth = overlay?.width ?? 0
+        dragZone = nil
+    }
+
+    /// The remembered width in points: the last settled fraction against the
+    /// current bounds, or the panel's own ideal width before anything was
+    /// ever remembered.
+    private func rememberedWidth(policy: TrailingColumnWidthPolicy) -> CGFloat {
+        guard let fraction = overlay?.restingFraction, policy.full > 0 else { return policy.ideal }
+        return policy.clampedToOrdinaryRange(fraction * policy.full)
+    }
+
+    private func dragChanged(translationX: CGFloat) {
+        guard let overlay, let policy = currentWidthPolicy, let dragStartWidth else { return }
+        // Dragging the handle toward the host (leading, negative x) widens
+        // the column: width grows as `translationX` falls.
+        let raw = dragStartWidth - translationX
+        overlay.width = ColumnRubberBand.liveWidth(forRawTarget: raw, policy: policy)
+        let zone = ColumnSnapResolver.zone(for: raw, policy: policy)
+        if zone != dragZone {
+            dragZone = zone
+            AppHaptics.selectionChanged()
+        }
+    }
+
+    private func dragEnded(translationX: CGFloat, velocityX: CGFloat) {
+        guard let overlay, let policy = currentWidthPolicy, dragStartWidth != nil else { return }
+        dragStartWidth = nil
+        dragZone = nil
+        let widthVelocity = -velocityX
+        let outcome = ColumnSnapResolver.resolve(
+            liveWidth: overlay.width,
+            widthVelocity: widthVelocity,
+            policy: policy,
+            rememberedWidth: rememberedWidth(policy: policy),
+            wasFull: isFull
+        )
+        settle(outcome, initialVelocityPointsPerSecond: widthVelocity)
+    }
+
+    private func step(by delta: CGFloat) {
+        guard let overlay, let policy = currentWidthPolicy else { return }
+        let target = policy.clampedToOrdinaryRange(overlay.width + delta)
+        settle(.width(target), initialVelocityPointsPerSecond: 0)
+    }
+
+    private func requestExpandToFull() {
+        settle(.full, initialVelocityPointsPerSecond: 0)
+    }
+
+    private func requestRestoreFromFull() {
+        guard let policy = currentWidthPolicy else { return }
+        settle(.width(rememberedWidth(policy: policy)), initialVelocityPointsPerSecond: 0)
+    }
+
+    private func settle(_ outcome: ColumnSnapOutcome, initialVelocityPointsPerSecond: CGFloat) {
+        guard let overlay, let policy = currentWidthPolicy else { return }
+        switch outcome {
+        case .closed:
+            isFull = false
+            onDismissRequested?()
+        case .full:
+            isFull = true
+            overlay.handle.isFull = true
+            animateWidth(to: policy.full, initialVelocity: initialVelocityPointsPerSecond)
+        case .width(let width):
+            isFull = false
+            overlay.handle.isFull = false
+            let fraction = policy.full > 0 ? width / policy.full : 0
+            overlay.restingFraction = fraction
+            AppPreferences.TrailingColumn.setWidthFraction(fraction)
+            animateWidth(to: width, initialVelocity: initialVelocityPointsPerSecond)
+        }
+    }
+
+    // MARK: - Testing
+
+    /// The installed overlay's resize handle, so a test can drive a drag by
+    /// calling its `onBegan`/`onChanged`/`onEnded` closures directly instead
+    /// of synthesizing real touches: the exact closures a live pan gesture
+    /// calls.
+    var resizeHandleForTesting: TrailingColumnResizeHandle? { overlay?.handle }
+    var widthForTesting: CGFloat? { overlay?.width }
+    var isFullForTesting: Bool { isFull }
+    var restingFractionForTesting: CGFloat? { overlay?.restingFraction }
+    /// The panel's own screen, mounted at the root of the column's
+    /// navigation controller, so a test can assert which destination the
+    /// container is actually showing.
+    var mountedScreenForTesting: UIViewController? { container?.viewControllers.first }
+
+    /// Animates to `target` with an interruptible spring: a transition still
+    /// in flight (a quick toggle, or a drag that starts mid-settle) stops in
+    /// place and restarts from there, so the pane never jumps.
+    private func animateWidth(to target: CGFloat, initialVelocity: CGFloat, completion: (() -> Void)? = nil) {
+        guard let overlay, let host else {
+            completion?()
+            return
+        }
+        settleAnimator?.stopAnimation(true)
+        let distance = target - overlay.width
+        let velocityVector = distance == 0 ? .zero : CGVector(dx: initialVelocity / distance, dy: 0)
+        let timing = UISpringTimingParameters(dampingRatio: 0.86, initialVelocity: velocityVector)
+        let animator = UIViewPropertyAnimator(duration: 0.42, timingParameters: timing)
+        animator.addAnimations { [weak self] in
+            guard let self else { return }
+            overlay.width = target
+            overlay.layoutIfNeeded()
+            host.view.layoutIfNeeded()
+        }
+        animator.addCompletion { [weak self] _ in
+            if self?.settleAnimator === animator {
+                self?.settleAnimator = nil
+            }
+            completion?()
+        }
+        settleAnimator = animator
+        animator.startAnimation()
     }
 }
 
 /// Covers the host's view and shows the column at its trailing edge, above
-/// the host's navigation bar, with a hairline divider. Touches outside the
-/// column reach the views below. Sizes the column on every layout: up to the
-/// ideal width; narrower windows split the space, down to the minimum.
+/// the host's navigation bar, with a draggable divider. Touches outside the
+/// column reach the views below.
 final class TrailingColumnOverlayView: UIView {
-    var widths: (minimum: CGFloat, ideal: CGFloat) = (0, 0) {
+    /// The column's own width, the one source of truth for layout; the
+    /// controller sets it directly during a drag (cheap, every touch event)
+    /// and through an animator for every open, close, and snap transition.
+    var width: CGFloat = 0 {
         didSet { setNeedsLayout() }
     }
+    /// The last settled ordinary width, as a fraction of this overlay's own
+    /// width, so it scales with rotation, Stage Manager resizing, and
+    /// multitasking instead of freezing at a point value from a different
+    /// window shape. Nil until the first resting width is known.
+    var restingFraction: CGFloat?
     var onColumnWidth: ((CGFloat) -> Void)?
+    /// This overlay's own width changed (a rotation, a Stage Manager live
+    /// resize, or multitasking): a chance to rescale `width` from a
+    /// proportional state before this same layout pass draws it, so the pane
+    /// keeps its share of the window instead of keeping yesterday's points.
+    var onBoundsWidthChanged: ((CGFloat) -> Void)?
 
-    private let column: UIView
+    private(set) var column: UIView
     private let divider = UIView()
+    let handle = TrailingColumnResizeHandle()
+    private var lastBoundsWidth: CGFloat?
 
     init(column: UIView) {
         self.column = column
         super.init(frame: .zero)
         backgroundColor = .clear
         divider.backgroundColor = .separator
+        divider.isUserInteractionEnabled = false
         addSubview(divider)
         addSubview(column)
+        addSubview(handle)
     }
 
     @available(*, unavailable)
@@ -303,18 +801,35 @@ final class TrailingColumnOverlayView: UIView {
         return nil
     }
 
-    private var columnWidth: CGFloat {
-        min(widths.ideal, max(widths.minimum, bounds.width / 2))
+    /// A panel swap keeps this overlay and its width; only the hosted screen
+    /// changes.
+    func replaceColumn(_ newColumn: UIView) {
+        column.removeFromSuperview()
+        column = newColumn
+        insertSubview(column, belowSubview: handle)
+        setNeedsLayout()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        if lastBoundsWidth != bounds.width {
+            lastBoundsWidth = bounds.width
+            onBoundsWidthChanged?(bounds.width)
+        }
         // The host may add views (a toolbar) above this one.
         superview?.bringSubviewToFront(self)
-        let width = columnWidth
         let hairline = 1 / max(traitCollection.displayScale, 1)
+        let width = max(0, min(self.width, bounds.width))
         column.frame = CGRect(x: bounds.maxX - width, y: 0, width: width, height: bounds.height)
         divider.frame = CGRect(x: column.frame.minX - hairline, y: 0, width: hairline, height: bounds.height)
+        // Clamped inside the overlay's own bounds, so the handle stays a
+        // full, grabbable strip even at the full-window state, where the
+        // divider's own position would otherwise sit half off-screen at the
+        // window's leading edge: the one visible way back to the chat.
+        let handleX = max(0, min(column.frame.minX - TrailingColumnResizeHandle.hitWidth / 2, bounds.width - TrailingColumnResizeHandle.hitWidth))
+        handle.frame = CGRect(x: handleX, y: 0, width: TrailingColumnResizeHandle.hitWidth, height: bounds.height)
+        handle.isHidden = width <= 0
+        handle.widthDescription = String(localized: "\(Int(width.rounded())) points")
         onColumnWidth?(width)
     }
 
@@ -325,6 +840,7 @@ final class TrailingColumnOverlayView: UIView {
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if handle.frame.contains(point), !handle.isHidden { return super.hitTest(point, with: event) }
         guard column.frame.contains(point) else { return nil }
         return super.hitTest(point, with: event)
     }

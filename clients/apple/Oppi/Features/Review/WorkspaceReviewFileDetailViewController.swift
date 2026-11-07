@@ -645,6 +645,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         }
         let files = WorkspaceReviewFileNavigationPolicy.navigationFiles(configuration.navigationFiles)
         fileList?.update(files: files, currentPath: currentFile.path)
+        column.onDismissRequested = { [weak self] in self?.showsFileListColumn = false }
         column.show(
             TrailingColumnController.Panel(
                 id: AnyHashable(FileListPanel().id),

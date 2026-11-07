@@ -243,6 +243,7 @@ final class CommitDetailViewController: UIViewController {
     private func updateDiffPanel(root: AppRootEnvironment) {
         let file = selectedFile
         let inColumn = usesTrailingColumn
+        column.onDismissRequested = { [weak self] in self?.selectedFile = nil }
         column.show(
             inColumn ? file.map { file in
                 TrailingColumnController.Panel(

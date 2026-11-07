@@ -490,6 +490,28 @@ enum AppPreferences {
         }
     }
 
+    // MARK: - Trailing Column
+
+    /// The trailing column's user-resized width (`TrailingColumnController`), shared by
+    /// every destination that container presents: chat's side panels, a commit's
+    /// diff, a review's file list, and the chat reader. Stored as a fraction of the
+    /// overlay's own width, not points, so one remembered choice scales with size
+    /// class, rotation, and multitasking width instead of needing a value per shape.
+    enum TrailingColumn {
+        static let widthFractionKey = "\(AppIdentifiers.subsystem).trailingColumn.widthFraction"
+
+        /// Nil until the user drags or adjusts the divider once; callers fall back
+        /// to their own default width.
+        static var widthFraction: CGFloat? {
+            guard UserDefaults.standard.object(forKey: widthFractionKey) != nil else { return nil }
+            return CGFloat(UserDefaults.standard.double(forKey: widthFractionKey))
+        }
+
+        static func setWidthFraction(_ fraction: CGFloat) {
+            UserDefaults.standard.set(Double(fraction), forKey: widthFractionKey)
+        }
+    }
+
     // MARK: - Appearance
 
     /// Spinner and dictation indicator style preferences.

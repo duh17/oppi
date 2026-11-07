@@ -37,6 +37,9 @@
     "clients/apple/Oppi/Features/Mcp/McpServerDetailViewController.swift": {
       ".settingsToggle(": 1
     },
+    "clients/apple/Oppi/Features/Review/TrailingSidePanelPolicy.swift": {
+      "AppPreferences.*.set": 1
+    },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalBarSettingsViewController.swift": {
       ".settingsToggle(": 1
     },
