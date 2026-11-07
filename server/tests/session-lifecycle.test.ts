@@ -2505,6 +2505,37 @@ describe("SessionLifecycleCoordinator.resetIdleTimer", () => {
     expect(deps.stopSession).toHaveBeenCalledWith("session-1");
   });
 
+  it("keeps a busy session whose turn is quiet past the timeout, then stops once it settles", async () => {
+    const active = makeLifecycleActiveSession({ status: "busy" });
+    let running = true;
+    Object.defineProperty(active.sdkBackend, "isStreaming", { get: () => running });
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+    await vi.advanceTimersByTimeAsync(300_000);
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(deps.stopSession).not.toHaveBeenCalled();
+
+    running = false;
+    active.session.status = "ready";
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+  });
+
+  it("still stops a session marked busy whose backend runs no turn", async () => {
+    const active = makeLifecycleActiveSession({ status: "busy" });
+    Object.defineProperty(active.sdkBackend, "isStreaming", { get: () => false });
+    Object.defineProperty(active.sdkBackend, "isCompacting", { get: () => false });
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+    await vi.advanceTimersByTimeAsync(300_000);
+
+    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+  });
+
   it("does not stop when input resets the timer while the wake check runs", async () => {
     const active = makeLifecycleActiveSession();
     let answer: (pending: boolean) => void = () => {};

@@ -288,6 +288,23 @@ export class SessionLifecycleCoordinator {
       return;
     }
 
+    // "Idle" here only means no events for the timeout; a turn can be busy and quiet (a long
+    // tool or MCP call). Stopping then would kill live work. The backend must agree the turn
+    // runs: a `busy` status with no live run or compaction is stale (a missed settle), and
+    // that session still expires.
+    if (
+      idleActive.session.status === "busy" &&
+      (idleActive.sdkBackend.isStreaming || idleActive.sdkBackend.isCompacting)
+    ) {
+      log.info("session_lifecycle.idle_timeout.held_for_running_turn", {
+        sessionId: idleActive.session.id,
+        key,
+        timeoutMs,
+      });
+      this.resetIdleTimer(key);
+      return;
+    }
+
     // A running background job or a supervised child wakes this session when it
     // finishes. Stopping now would kill that job or drop the child's report.
     let pendingWake = false;
