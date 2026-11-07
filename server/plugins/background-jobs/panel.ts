@@ -208,8 +208,7 @@ function jobNode(job: PanelJob, at: number, first: boolean): ReturnType<typeof s
           icon({ id: `status:${job.id}`, name: mark.name, tone: mark.tone }),
           text({ id: `title:${job.id}`, text: commandTitle(job.command), style: "headline" }),
           // A running job's age is a node the client ticks, so the panel is not republished each
-          // minute. `clock` (5:07): the row has room, and the seconds show the job is alive. It sits
-          // in the head row because the body's depth limit leaves no room beside the id.
+          // minute. `clock` (5:07): the row has room, and the seconds show the job is alive.
           ...(running
             ? [
                 elapsed({
@@ -229,9 +228,8 @@ function jobNode(job: PanelJob, at: number, first: boolean): ReturnType<typeof s
         ],
       }),
       // The id and state sit on a line of their own, under the head row at the card's full width.
-      // Beside the title in a stack of their own, a client that sizes a row's stack to its
-      // narrowest child (before Build 58) wraps this caption a character a line when the command
-      // is short (`ls`).
+      // In a stack beside the title, Build 57 and earlier can squeeze them to a few points between
+      // the glyph and the elapsed count, a character a line, when the command is short (`ls`).
       text({
         id: `meta:${job.id}`,
         text: `${job.id} · ${running ? "Running" : outcome(job)}`,

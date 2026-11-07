@@ -40,24 +40,26 @@ runs, the pill also shows, in secondary text, how long the oldest running job
 has run and the last line the newest running job printed, cut to 40 characters.
 When a listed job failed or was interrupted, a red badge counts it ("2 failed").
 
-In the drawer, each job is one row: a status glyph, a short title (the program
-and its first plain arguments, without a leading `cd … &&`, options, pipes, or
-redirects), and the job id with a live age counter or how it ended
-(`Exit 1`, `Stopped`, `Timed out`). The client ticks the age itself. A running
-job has a **Stop** button, which kills it as `background_job cancel` does.
-Under the title, a running job shows its folder, the time left before its
-timeout if it has one, and its live output: the last 3 lines, at most 160
-characters, so the row fits in the drawer without scrolling. Escape codes are
+In the drawer, each job is a card. Its first line holds a status glyph and a
+short title (the program and its first plain arguments, without a leading
+`cd … &&`, options, pipes, or redirects). A running job's first line also holds
+a live age counter, which the client ticks itself, and a **Stop** button, which
+kills the job as `background_job cancel` does. The next line, at the card's full
+width, holds the job id and its state: `Running`, or how the job ended
+(`Exit 1`, `Stopped`, `Timed out`). Under that, a running job shows its folder,
+the time left before its timeout if it has one, and its live output: the last 3
+lines, at most 160 characters, so the card fits in the drawer without
+scrolling. Escape codes are
 removed, and a progress line that redraws itself with a carriage return is
 shown at its latest state. When the output passes the 64,000 characters the
-result keeps, the row says "Output truncated". **Details**, folded by default,
+result keeps, the card says "Output truncated". **Details**, folded by default,
 holds the full command and, while the job runs, the full working directory. It
 also holds the end of the output, up to the last 12 lines and 480 characters:
 always for a finished job, and for a running job when that is more than the
-row shows.
+card shows.
 
 New output redraws the panel at most once every 2 seconds, and only when a
-running row's lines would change. Several jobs printing at once share that
+running card's lines would change. Several jobs printing at once share that
 pace, and a command still in the foreground does not redraw the panel. The
 live output is read from the output the job's runner already holds in memory.
 It is never saved, and it does not reach the transcript or the model. A job's

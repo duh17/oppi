@@ -74,8 +74,8 @@ describe("background jobs panel view", () => {
   });
 
   it("keeps the id and state line out of the head row, at the card's full width", () => {
-    // A short title (`ls`) beside the caption in a stack of its own would give a client that sizes
-    // a row's stack to its narrowest child (before Build 58) a column the caption wraps in.
+    // In a stack beside a short title (`ls`), Build 57 and earlier can squeeze the caption to a few
+    // points and wrap it a character a line.
     const list = body(render([job("bash-8", { command: "ls" })]));
     const card = find(list, "job:bash-8");
     const head = find(list, "head:bash-8");
@@ -86,7 +86,6 @@ describe("background jobs panel view", () => {
       "elapsed:bash-8",
       "stop:bash-8",
     ]);
-    expect(head.children.some((child) => child.type === "stack")).toBe(false);
     expect(card.children.map((child) => child.id)).toContain("meta:bash-8");
   });
 
