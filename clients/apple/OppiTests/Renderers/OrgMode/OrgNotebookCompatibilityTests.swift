@@ -110,6 +110,15 @@ struct OrgNotebookCompatibilityTests {
         #expect(second == "SHIPPED")
     }
 
+    @Test func declarationQuotedInASourceBlockIsNotASetting() {
+        let blocks = parser.parse("#+BEGIN_SRC org\n#+TODO: A | B\n#+END_SRC\n* A x\n* TODO y")
+        let keywords = blocks.compactMap { block -> String? in
+            if case let .heading(_, keyword, _, _, _) = block { return keyword ?? "none" }
+            return nil
+        }
+        #expect(keywords == ["none", "TODO"])
+    }
+
     @Test func withoutDeclarationWaitIsPlainTitleText() {
         let blocks = parser.parse("* WAIT Device check")
         guard case let .heading(_, keyword, _, _, _) = blocks[0] else {
@@ -283,17 +292,16 @@ struct OrgNotebookCompatibilityTests {
         #expect(convert("[[id:other][Other note]]") == [.paragraph([.text("Other note")])])
     }
 
-    @Test func serializedPathWithSpacesStillParsesAsOneDestination() {
-        let markdown = MarkdownBlockSerializer.serialize(
-            convert("[[file:my notes/release (final).org][notes]]")
-        )
+    @Test(arguments: ["my notes/release (final).org", "my notes/<draft>.org"])
+    func serializedPathWithSpacesStillParsesAsOneDestination(path: String) {
+        let markdown = MarkdownBlockSerializer.serialize(convert("[[file:\(path)][notes]]"))
         let parsed = parseCommonMark(markdown)
         guard case let .paragraph(inlines) = parsed[0],
               case let .link(_, destination) = inlines[0] else {
             Issue.record("Expected a link, got \(parsed)")
             return
         }
-        #expect(destination == "my notes/release (final).org")
+        #expect(destination == path)
     }
 
     // MARK: - Through the reader's pipeline

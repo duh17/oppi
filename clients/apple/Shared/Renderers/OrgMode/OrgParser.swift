@@ -45,13 +45,25 @@ struct OrgParser: DocumentParser, Sendable {
     }
 
     /// Org applies `#+TODO:` to the whole file wherever the line sits, so the
-    /// declarations are read before any heading is classified.
+    /// declarations are read before any heading is classified. A declaration
+    /// quoted in a source block is code, not a setting.
     private func scanTodoKeywords(_ lines: [Substring]) -> OrgTodoKeywords {
         var declarations: [OrgBlock] = []
+        var inSource = false
         for line in lines {
-            guard let first = line.utf8.first, first == 0x23 || first == 0x20 || first == 0x09,
-                  Self.stripped(line).hasPrefix("#+"),
-                  let keyword = parseKeyword(line),
+            guard let first = line.utf8.first, first == 0x23 || first == 0x20 || first == 0x09 else { continue }
+            let trimmed = Self.stripped(line)
+            guard trimmed.hasPrefix("#+") else { continue }
+            let upper = trimmed.uppercased()
+            if inSource {
+                if upper.hasPrefix("#+END_SRC") { inSource = false }
+                continue
+            }
+            if upper.hasPrefix("#+BEGIN_SRC") {
+                inSource = true
+                continue
+            }
+            guard let keyword = parseKeyword(line),
                   case let .keyword(key, _) = keyword,
                   OrgTodoKeywords.isDeclarationKey(key) else { continue }
             declarations.append(keyword)

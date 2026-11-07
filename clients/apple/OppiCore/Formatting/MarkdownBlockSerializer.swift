@@ -96,10 +96,15 @@ enum MarkdownBlockSerializer {
             let text = serializeInlines(children)
             if let dest = destination {
                 // A path with spaces or parentheses only parses as one
-                // destination inside angle brackets.
-                let needsBrackets = dest.contains(where: { $0 == " " || $0 == "(" || $0 == ")" })
-                    && !dest.contains(where: { $0 == "<" || $0 == ">" })
-                return needsBrackets ? "[\(text)](<\(dest)>)" : "[\(text)](\(dest))"
+                // destination inside angle brackets, where `<` and `>` need
+                // a backslash.
+                guard dest.contains(where: { $0 == " " || $0 == "(" || $0 == ")" }) else {
+                    return "[\(text)](\(dest))"
+                }
+                let bracketed = dest
+                    .replacingOccurrences(of: "<", with: "\\<")
+                    .replacingOccurrences(of: ">", with: "\\>")
+                return "[\(text)](<\(bracketed)>)"
             }
             return text
         case .image(let alt, let source):
