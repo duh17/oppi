@@ -1139,6 +1139,7 @@
 		70D8427365941E8DB2D8E855 /* PushEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = C77B5D9B52AF85DDEE510CFF /* PushEnvelope.swift */; };
 		70D9FF4E5B27C7464D7C20EB /* AgentDetailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F28AABCE4427B183948D99F /* AgentDetailViewController.swift */; };
 		70F55877EEB613BEE524DECB /* PairedServerKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2959299BFA73F150F5562ED /* PairedServerKeychain.swift */; };
+		7126B7376D4E25553C6D6705 /* OrgKeywordNoiseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 620476D651EBC667C3BE40A4 /* OrgKeywordNoiseTests.swift */; };
 		7129C67EC9608442588A2F33 /* OrbMetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79289812FD7C83A5FAF21678 /* OrbMetalView.swift */; };
 		712B079CC3788331480BCA2F /* RexTailnetDiscoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85362ECA3B359FF990E8A67F /* RexTailnetDiscoveryTests.swift */; };
 		712C0503DF1F2BCD47FCC2B0 /* MacWorkspaceFileBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118B5DE983269414E3D1DF81 /* MacWorkspaceFileBrowserTests.swift */; };
@@ -3547,6 +3548,7 @@
 		61C928F17B9CF388CF10E553 /* ContextBarScopingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextBarScopingTests.swift; sourceTree = "<group>"; };
 		61D76415BF6EA4858023AD26 /* VoiceInputTelemetryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputTelemetryTests.swift; sourceTree = "<group>"; };
 		61FF062A8C20483AB79BBE57 /* ChatSessionRuntimeTelemetryTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSessionRuntimeTelemetryTracker.swift; sourceTree = "<group>"; };
+		620476D651EBC667C3BE40A4 /* OrgKeywordNoiseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrgKeywordNoiseTests.swift; sourceTree = "<group>"; };
 		620673961F94D2666E3D7BEB /* DictationStreamClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationStreamClient.swift; sourceTree = "<group>"; };
 		6269C6264700AF54D1902152 /* VoiceSpectrumAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSpectrumAnalyzer.swift; sourceTree = "<group>"; };
 		628DF4C77332B9B1C1F8879F /* BashToolRowViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BashToolRowViewTests.swift; sourceTree = "<group>"; };
@@ -6079,6 +6081,7 @@
 			children = (
 				C8874233E148759CD66C7BDC /* OrgContentSafetyTests.swift */,
 				1801BC1D2931735C1F224650 /* OrgGenericBlockTests.swift */,
+				620476D651EBC667C3BE40A4 /* OrgKeywordNoiseTests.swift */,
 				E453F12687870B5454218D76 /* OrgListNestingTests.swift */,
 				8D24E62FABFD1C4DB4481E41 /* OrgNotebookCompatibilityTests.swift */,
 				6CB7B52477FD11824DF3C6C2 /* OrgNotebookFixture.swift */,
@@ -10159,6 +10162,7 @@
 				3CD454891E264E19A49983E5 /* OrbMetalTests.swift in Sources */,
 				B19BCA1BAD6503A8778653AD /* OrgContentSafetyTests.swift in Sources */,
 				7B7AE4CF4C203EB88F47573C /* OrgGenericBlockTests.swift in Sources */,
+				7126B7376D4E25553C6D6705 /* OrgKeywordNoiseTests.swift in Sources */,
 				4BA4A29538CB268960336E2A /* OrgListNestingTests.swift in Sources */,
 				64F39723F37860A3AB96FC4B /* OrgNotebookCompatibilityTests.swift in Sources */,
 				2B2772387127EA455975AF8A /* OrgNotebookFixture.swift in Sources */,

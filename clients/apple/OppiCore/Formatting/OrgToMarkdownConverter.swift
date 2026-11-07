@@ -152,6 +152,14 @@ enum OrgToMarkdownConverter {
         name.uppercased() == "PROPERTIES"
     }
 
+    /// `#+FILETAGS: :a:b:` (or `:a: :b:`, space-separated groups) split into
+    /// individual tag names, the same shape heading tags parse to.
+    private static func filetags(_ value: String) -> [String] {
+        value.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            .flatMap { $0.split(separator: ":") }
+            .map(String.init)
+    }
+
     /// One list item's own blocks: its term and content (or just its
     /// content), then any nested blocks — a sub-list, a continuation
     /// paragraph, or both — indented under it in the source.
@@ -294,10 +302,22 @@ enum OrgToMarkdownConverter {
                 } else if upper == "AUTHOR" || upper == "DATE" || upper == "EMAIL" {
                     // Render metadata as dim paragraph.
                     result.append(.paragraph([.emphasis([.text("\(key): \(value)")])]))
-                } else {
-                    // Other keywords as inline code.
-                    let text = "#+\(key): \(value)"
-                    result.append(.paragraph([.code(text)]))
+                } else if upper == "FILETAGS" {
+                    // The same capsule a heading's own tags draw.
+                    let tags = Self.filetags(value)
+                    guard !tags.isEmpty else { break }
+                    var inlines: [MarkdownInline] = []
+                    for (index, tag) in tags.enumerated() {
+                        if index > 0 { inlines.append(.text(" ")) }
+                        inlines.append(.html(OrgBadges.tag(tag).markup))
+                    }
+                    result.append(.paragraph(inlines))
+                } else if !value.isEmpty {
+                    // Every other keyword a reading view has no use for (`#+NAME`,
+                    // `#+CAPTION`, `#+LINK`, `#+PROPERTY`, `#+SETUPFILE`, `#+ATTR_*`,
+                    // and anything else Org defines): shown subtly, the same way as
+                    // `AUTHOR`/`DATE`, rather than as a loud code chip.
+                    result.append(.paragraph([.emphasis([.text("#+\(key): \(value)")])]))
                 }
 
             case .horizontalRule:

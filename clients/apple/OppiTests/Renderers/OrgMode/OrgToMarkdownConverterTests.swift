@@ -159,8 +159,9 @@ struct OrgToMarkdownConverterTests {
         }
 
         guard case .paragraph(let keywordInlines) = converted[4],
-              case .code(let keywordText) = keywordInlines.first else {
-            Issue.record("Expected fallback keyword paragraph as code")
+              case .emphasis(let emphasisInlines) = keywordInlines.first,
+              case .text(let keywordText) = emphasisInlines.first else {
+            Issue.record("Expected fallback keyword paragraph shown subtly")
             return
         }
         #expect(keywordText == "#+FOO: bar")
