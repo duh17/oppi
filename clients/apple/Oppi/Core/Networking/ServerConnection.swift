@@ -188,7 +188,6 @@ final class ServerConnection {
     /// Relay the server pushes through (`capabilities.pushNotifications`); nil when it does not.
     var pushRelay: URL? { serverCapabilities?.pushRelay }
 
-
     /// The server pushes and the user turned push on for it, so it skips this device's push
     /// only while this device holds a live stream.
     var pushNotificationsAvailable: Bool {

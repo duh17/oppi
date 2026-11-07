@@ -26,11 +26,17 @@ enum StreamAuthRenewResult: Sendable, Equatable {
     /// Nothing changed: the socket still closes at its old deadline.
     case refused(reason: String)
 
-    /// Refusals a newer token cannot fix: the socket is not a renewable device socket, or it is
-    /// already past its deadline. Its own close handling takes over.
+    /// Refusals a later renewal may fix: a token the server no longer takes, or a socket that
+    /// asked too often. Any other refusal (`not_renewable`, `past_deadline`, `gate_denied`,
+    /// `revoked`, or a reason this build does not know) is final, and the socket's own close
+    /// handling takes over.
+    private static let retryableReasons: Set<String> = [
+        "unknown_token", "expired", "evicted", "wrong_device", "rate_limited",
+    ]
+
     var isFinal: Bool {
         guard case .refused(let reason) = self else { return false }
-        return reason == "not_renewable" || reason == "past_deadline"
+        return !Self.retryableReasons.contains(reason)
     }
 }
 

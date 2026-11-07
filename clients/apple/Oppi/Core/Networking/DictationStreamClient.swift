@@ -431,6 +431,7 @@ final class DictationStreamClient: DictationTransport {
         // and its continuation intact. A superseded loop must not tear down the
         // socket that replaced it.
         guard self.task?.identity == task.identity else { return }
+        authRenewer?.stop()
         status = .disconnected
         continuation?.finish()
     }

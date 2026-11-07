@@ -491,6 +491,7 @@ final class WebSocketClient {
         receiveTask = nil
         pingTask?.cancel()
         pingTask = nil
+        authRenewer?.stop()
         webSocket?.cancel(.goingAway, nil)
         webSocket = nil
         status = .disconnected
@@ -510,6 +511,7 @@ final class WebSocketClient {
         healthReportTask = nil
         pingTask?.cancel()
         pingTask = nil
+        authRenewer?.stop()
         ws.cancel(.goingAway, nil)
     }
 
@@ -850,7 +852,10 @@ final class WebSocketClient {
                     }
 
                     if case .authRenewResult(let result) = streamMessage.message {
-                        await MainActor.run { [weak self] in self?.authRenewer?.handle(result) }
+                        await MainActor.run { [weak self] in
+                            guard self?.webSocket?.identity == ws.identity else { return }
+                            self?.authRenewer?.handle(result)
+                        }
                         continue
                     }
 

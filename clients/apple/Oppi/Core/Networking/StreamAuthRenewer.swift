@@ -180,8 +180,10 @@ final class StreamAuthRenewer {
             try await send(try StreamAuthRenewal.requestFrame(token: token))
         } catch {
             guard !Task.isCancelled else { return }
+            // A WebSocket send fails only once the socket is gone; its replacement starts
+            // its own renewer.
             renewalLogger.error("Renewal send failed: \(error.localizedDescription, privacy: .public)")
-            schedule(after: Self.retryDelay)
+            stop()
             return
         }
         // The answer reschedules, which cancels this task. Without one (a lost frame), try

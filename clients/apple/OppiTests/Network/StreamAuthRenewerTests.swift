@@ -46,7 +46,8 @@ struct StreamAuthRenewerTests {
         renewer.stop()
     }
 
-    @Test func refusalNoTokenFixesStopsRenewing() async throws {
+    @Test(arguments: ["past_deadline", "gate_denied", "revoked", "a_reason_this_build_does_not_know"])
+    func refusalNoTokenFixesStopsRenewing(reason: String) async throws {
         let clock = ManualRenewalClock()
         let tokens = RenewalTokenSource(expiries: ["at_a": clock.now.addingTimeInterval(600)], fresh: ["at_b"])
         let socket = RenewalSocketRecorder()
@@ -56,12 +57,30 @@ struct StreamAuthRenewerTests {
         clock.elapse()
         #expect(await waitForMainActorCondition { socket.sentTokens == ["at_b"] && clock.sleeps.count == 2 })
 
-        renewer.handle(.refused(reason: "past_deadline"))
+        renewer.handle(.refused(reason: reason))
         #expect(await waitForMainActorCondition { !clock.isSleeping })
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(100)) {
             clock.sleeps.count == 2 && !clock.isSleeping
         })
         #expect(socket.sentTokens == ["at_b"])
+    }
+
+    @Test func aFailedSendStopsRenewingTheGoneSocket() async throws {
+        let clock = ManualRenewalClock()
+        let tokens = RenewalTokenSource(expiries: ["at_a": clock.now.addingTimeInterval(600)], fresh: ["at_b", "at_c"])
+        let renewer = makeRenewer(clock: clock, tokens: tokens)
+        renewer.start(
+            token: "at_a",
+            send: { _ in throw URLError(.networkConnectionLost) },
+            onRenewed: { _ in Issue.record("A failed send renewed") }
+        )
+        #expect(await waitForMainActorCondition { clock.sleeps.count == 1 })
+        clock.elapse()
+        #expect(await waitForMainActorCondition { tokens.replaced == ["at_a"] })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(100)) {
+            clock.sleeps.count == 1 && !clock.isSleeping
+        })
+        #expect(tokens.mints == 1)
     }
 
     @Test func unansweredRenewalResendsWithoutAnotherMint() async throws {
