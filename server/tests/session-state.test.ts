@@ -43,14 +43,17 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 function applySnapshot(
   session: Session,
   state: PiStateSnapshot | null | undefined,
-  contextWindowResolver?: (modelId: string) => number,
+  options: {
+    contextWindowResolver?: (modelId: string) => number;
+    syncStatus?: boolean;
+  } = {},
 ): boolean {
   const coordinator = new SessionStateCoordinator({
     storage: {} as Storage,
-    getContextWindowResolver: () => contextWindowResolver ?? null,
+    getContextWindowResolver: () => options.contextWindowResolver ?? null,
     persistSessionNow: () => {},
   });
-  return coordinator.applyPiStateSnapshot(session, state);
+  return coordinator.applyPiStateSnapshot(session, state, { syncStatus: options.syncStatus });
 }
 
 describe("SessionStateCoordinator.applyPiStateSnapshot", () => {
@@ -109,7 +112,7 @@ describe("SessionStateCoordinator.applyPiStateSnapshot", () => {
       {
         model: { provider: "openai-codex", id: "gpt-5.3-codex" },
       },
-      resolveContextWindow,
+      { contextWindowResolver: resolveContextWindow },
     );
 
     expect(changed).toBe(true);
@@ -130,7 +133,7 @@ describe("SessionStateCoordinator.applyPiStateSnapshot", () => {
       {
         model: { provider: "GPT-5.3 Codex", id: "GPT-5.3 Codex" },
       },
-      resolveContextWindow,
+      { contextWindowResolver: resolveContextWindow },
     );
 
     expect(changed).toBe(false);
@@ -159,7 +162,7 @@ describe("SessionStateCoordinator.applyPiStateSnapshot", () => {
   it("marks a ready session busy when the SDK is still streaming", () => {
     const session = makeSession({ status: "ready" });
 
-    const changed = applySnapshot(session, { isStreaming: true });
+    const changed = applySnapshot(session, { isStreaming: true }, { syncStatus: true });
 
     expect(changed).toBe(true);
     expect(session.status).toBe("busy");
@@ -169,7 +172,7 @@ describe("SessionStateCoordinator.applyPiStateSnapshot", () => {
   it("does not revive terminal sessions from a streaming SDK snapshot", () => {
     const session = makeSession({ status: "stopped" });
 
-    const changed = applySnapshot(session, { isStreaming: true });
+    const changed = applySnapshot(session, { isStreaming: true }, { syncStatus: true });
 
     expect(changed).toBe(false);
     expect(session.status).toBe("stopped");

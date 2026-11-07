@@ -36,7 +36,8 @@ export class SessionStateCoordinator {
   async bootstrapSessionState(key: string, active: SessionStateActiveSession): Promise<void> {
     try {
       const snapshot = active.sdkBackend.getStateSnapshot();
-      if (this.applyPiStateSnapshot(active.session, snapshot)) {
+      // The start-time seed, before any event: a turn an extension began at startup shows busy.
+      if (this.applyPiStateSnapshot(active.session, snapshot, { syncStatus: true })) {
         this.deps.persistSessionNow(key, active.session);
       }
     } catch {
@@ -50,9 +51,7 @@ export class SessionStateCoordinator {
   ): Promise<{ sessionFile?: string; sessionId?: string; leafId?: string | null } | null> {
     try {
       const snapshot = active.sdkBackend.getStateSnapshot();
-      // A read: lifecycle status belongs to the event stream. Pi reports idle between
-      // `agent_end` and `agent_settled`, and no `state` frame would follow such a flip.
-      if (this.applyPiStateSnapshot(active.session, snapshot, { syncStatus: false })) {
+      if (this.applyPiStateSnapshot(active.session, snapshot)) {
         this.deps.persistSessionNow(key, active.session);
       }
       return {
@@ -68,6 +67,10 @@ export class SessionStateCoordinator {
   /**
    * Apply fields we care about from pi `get_state` response payload.
    * Returns true if the session object changed.
+   *
+   * Lifecycle status belongs to the event stream, so reads (trace, history, `get_state`) leave
+   * it alone: Pi reports idle between `agent_end` and `agent_settled`, where the event path
+   * holds busy for a possible auto-retry. Only `syncStatus` (the start-time seed) applies it.
    */
   applyPiStateSnapshot(
     session: Session,
@@ -165,7 +168,7 @@ export class SessionStateCoordinator {
     const runtimeBusy = state.isStreaming === true || state.isCompacting === true;
     const runtimeIdle = state.isStreaming === false && state.isCompacting === false;
     if (
-      options.syncStatus !== false &&
+      options.syncStatus === true &&
       !isTerminalSessionStatus(session.status) &&
       session.status !== "stopping"
     ) {
