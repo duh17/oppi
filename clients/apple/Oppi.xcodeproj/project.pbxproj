@@ -2177,6 +2177,7 @@
 		D43635B5E64CD8A94FAB1678 /* InsetLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73A66AC7CDDBAA955BBAD5D9 /* InsetLabel.swift */; };
 		D436F4FFE21AB429D3BB3F79 /* ChatComposerDraftControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEA5B7A399DDA7C7BA1C3D5E /* ChatComposerDraftControllerTests.swift */; };
 		D4664FFC901454774A5340B2 /* SessionRowPresentationBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA33700ABC0A008153E7BF86 /* SessionRowPresentationBuilderTests.swift */; };
+		D46D613A7C073600F210437D /* MarkdownTablePerfBench.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0F4B6BDE2F9AEA6703E0578 /* MarkdownTablePerfBench.swift */; };
 		D4810D7D972A5C06696DDE83 /* MacWorkspaceGitStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAF6AF784C8B3DAB63134BCC /* MacWorkspaceGitStatusView.swift */; };
 		D492831B80CA3BBFE3EBBAE4 /* ServerSyncState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3277D42879F451F1119D4C7B /* ServerSyncState.swift */; };
 		D49FAF2F33E195CE1BEDBE3D /* OrbMetalRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 728367337213199138DC6B69 /* OrbMetalRenderer.swift */; };
@@ -4107,6 +4108,7 @@
 		A080210FF07BD4C60DC35233 /* SemanticPickHarnessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SemanticPickHarnessView.swift; sourceTree = "<group>"; };
 		A09B87529615B3D5677B49D9 /* ServerConnection+StoreUpdates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ServerConnection+StoreUpdates.swift"; sourceTree = "<group>"; };
 		A0B4FC7599C52AD4251C28C5 /* ReviewableControlMarkdownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewableControlMarkdownTests.swift; sourceTree = "<group>"; };
+		A0F4B6BDE2F9AEA6703E0578 /* MarkdownTablePerfBench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTablePerfBench.swift; sourceTree = "<group>"; };
 		A122BCF6A3CEA9ACB1FAB9B2 /* AgentToolSelectionViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentToolSelectionViewController.swift; sourceTree = "<group>"; };
 		A13F360F8079F7DC27038DDD /* UIView+VisibleWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "UIView+VisibleWindow.swift"; sourceTree = "<group>"; };
 		A14D5BB6FB012BC88AAD2E21 /* BookChapterPaginator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookChapterPaginator.swift; sourceTree = "<group>"; };
@@ -7301,6 +7303,7 @@
 				5E628A405F9139327479D182 /* HTMLPDFExportDiagnosticTests.swift */,
 				B2C631FFFB72C9E8886CFD10 /* MarkdownParsePerfBench.swift */,
 				82A9CCDCB69B63C2A2DD50D0 /* MarkdownRenderingIntegrationTests.swift */,
+				A0F4B6BDE2F9AEA6703E0578 /* MarkdownTablePerfBench.swift */,
 				9793CFAA3EC6E2B7C8F8A113 /* MermaidPerfBench.swift */,
 				EE6BDFFC692F19819841AD94 /* OrgModePerfBench.swift */,
 				84593342FB37590E8520B111 /* RendererTestSupport.swift */,
@@ -9122,6 +9125,7 @@
 				E670177CAB3F9F4E6BDDABB6 /* HTMLPDFExportDiagnosticTests.swift in Sources */,
 				18BBEF43E49FAAF0BB92514D /* MarkdownParsePerfBench.swift in Sources */,
 				92019094201E7EA79C16BF37 /* MarkdownRenderingIntegrationTests.swift in Sources */,
+				D46D613A7C073600F210437D /* MarkdownTablePerfBench.swift in Sources */,
 				9D01A37A7926759739727CD3 /* MermaidPerfBench.swift in Sources */,
 				B9127EBCDAF198C926486C7D /* OrgModePerfBench.swift in Sources */,
 				9576B70D1C48E76C35BBCF14 /* RenderStrategyPerfTests.swift in Sources */,
