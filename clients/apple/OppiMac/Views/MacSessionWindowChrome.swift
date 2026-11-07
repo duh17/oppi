@@ -33,7 +33,7 @@ enum MacSessionComposerSurface: String, Sendable {
 }
 
 /// Composer Stop aborts the in-flight turn. Session-process kill stays on
-/// the session list, matching iOS ChatActionHandler vs Force Stop Session.
+/// the session list, as on iOS, whose chat composer only stops the turn.
 enum MacSessionStopKind: String, Sendable {
     case abortTurn
     case stopSessionProcess
