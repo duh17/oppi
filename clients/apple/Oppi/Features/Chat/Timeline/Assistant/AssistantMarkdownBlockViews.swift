@@ -64,6 +64,29 @@ final class NativeCodeBlockView: UIView {
         return button
     }()
 
+    /// Hidden until a host sets `onExpand`: only a host that can open the text full screen shows it.
+    private let expandButton: UIButton = {
+        var config = UIButton.Configuration.plain()
+        config.image = UIImage(systemName: "arrow.up.left.and.arrow.down.right")
+        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
+            pointSize: 10, weight: .regular
+        )
+        config.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6)
+        let button = CodeBlockHeaderButton(type: .system)
+        button.configuration = config
+        button.isHidden = true
+        button.accessibilityIdentifier = "markdown.codeBlock.expand"
+        button.accessibilityLabel = String(localized: "Open full screen")
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 28),
+            button.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        return button
+    }()
+
     private let copyButton: UIButton = {
         var config = UIButton.Configuration.plain()
         config.image = UIImage(systemName: "doc.on.doc")
@@ -73,6 +96,7 @@ final class NativeCodeBlockView: UIView {
         config.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6)
         let button = CodeBlockHeaderButton(type: .system)
         button.configuration = config
+        button.accessibilityIdentifier = "markdown.codeBlock.copy"
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setContentHuggingPriority(.required, for: .horizontal)
         button.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -125,6 +149,7 @@ final class NativeCodeBlockView: UIView {
     private var installedHighlightIdentity: SyntaxHighlightIdentity?
     private var highlightTask: Task<Void, Never>?
     private var isLineWrappingEnabled = false
+    private var onExpand: (() -> Void)?
     private var measuredUnwrappedCodeWidth: CGFloat = 0
     /// Pretty-printed JSON shown while wrap is on. `currentCode` stays original.
     private var displayedPrettyJSON: String?
@@ -173,12 +198,14 @@ final class NativeCodeBlockView: UIView {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         headerStack.addArrangedSubview(languageLabel)
         headerStack.addArrangedSubview(spacer)
+        headerStack.addArrangedSubview(expandButton)
         headerStack.addArrangedSubview(wrapButton)
         headerStack.addArrangedSubview(copyButton)
 
         addSubview(codeScrollView)
         codeScrollView.addSubview(codeLabel)
 
+        expandButton.addTarget(self, action: #selector(expandTapped), for: .touchUpInside)
         wrapButton.addTarget(self, action: #selector(wrapTapped), for: .touchUpInside)
         copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
         codeLabel.delegate = self
@@ -493,6 +520,18 @@ final class NativeCodeBlockView: UIView {
         }
         applyCurrentLineWrapping(resetHorizontalOffset: true)
         invalidateTimelineLayout()
+    }
+
+    /// Shows the header's expand button, which runs `action`, or hides it for nil. A host that
+    /// can open this block's text full screen sets it; `identifier` scopes the button to the block.
+    func configureExpand(identifier: String?, action: (() -> Void)?) {
+        onExpand = action
+        expandButton.isHidden = action == nil
+        expandButton.accessibilityIdentifier = identifier ?? "markdown.codeBlock.expand"
+    }
+
+    @objc private func expandTapped() {
+        onExpand?()
     }
 
     @objc private func copyTapped() {

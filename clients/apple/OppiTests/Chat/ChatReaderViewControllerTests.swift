@@ -155,6 +155,34 @@ struct ChatReaderViewControllerTests {
         ))
     }
 
+    private func extensionSurfacePayload() throws -> ChatReaderPayload {
+        let object: [String: Any] = [
+            "version": 2, "id": "jobs", "title": "Jobs",
+            "placement": ["kind": "strip"],
+            "lifecycle": "persistent",
+            "header": ["title": "Jobs"],
+            "actions": [String: Any](),
+            "fallback": ["text": "Jobs"],
+            "revision": 1,
+            "sections": [[
+                "composite": "blocks", "id": "card",
+                "state": ["kind": "content"],
+                "fallback": ["text": "Jobs"],
+                "body": ["type": "text", "id": "words", "text": "nothing running"],
+            ]],
+        ]
+        let surface = try JSONDecoder().decode(
+            ExtensionUISurface.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        return .extensionSurface(ExtensionSurfaceReaderContent(
+            surface: surface,
+            identifierSuffix: "surface-jobs",
+            title: "Jobs",
+            subtitle: nil
+        ))
+    }
+
     private func makePNG() throws -> (UIImage, Data) {
         let image = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).image { context in
             UIColor.systemRed.setFill()
@@ -197,6 +225,7 @@ struct ChatReaderViewControllerTests {
             (.video(video), { [self] page in descendant(identifier: "fullscreen-video.back", in: page.view) != nil }),
             (.nowPlaying(AudioPlayerService()), { $0 is InAppNowPlayingPlayerViewController }),
             (extensionPayload(), { $0 is ExtensionNativeSurfaceDetailViewController }),
+            (try extensionSurfacePayload(), { $0 is ExtensionSurfaceDetailViewController }),
         ]
         for (payload, isExpectedPage) in cases {
             let host = push(payload)

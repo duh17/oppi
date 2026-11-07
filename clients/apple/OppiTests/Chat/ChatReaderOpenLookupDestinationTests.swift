@@ -490,10 +490,28 @@ struct ChatReaderOpenLookupDestinationTests {
                     subtitle: nil
                 )
             ),
+            .extensionSurface(
+                ExtensionSurfaceReaderContent(
+                    surface: try JSONDecoder().decode(
+                        ExtensionUISurface.self,
+                        from: Data(
+                            """
+                            {"version":2,"id":"surface","title":"Title","placement":{"kind":"strip"},
+                            "lifecycle":"persistent","header":{"title":"Title"},"actions":{},
+                            "fallback":{"text":"fallback"},"revision":1,"sections":[]}
+                            """.utf8
+                        )
+                    ),
+                    identifierSuffix: "suffix",
+                    title: "Title",
+                    subtitle: nil
+                )
+            ),
         ]
         for payload in payloads {
             switch payload.kind {
-            case .document, .image, .imageData, .audioLyrics, .video, .nowPlaying, .extensionNative:
+            case .document, .image, .imageData, .audioLyrics, .video, .nowPlaying, .extensionNative,
+                 .extensionSurface:
                 break
             }
         }

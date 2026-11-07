@@ -723,6 +723,59 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// A job card whose output block outgrows the drawer's cap: the drawer scrolls under a finger
+    /// that starts on the output, the block's expand control opens its text in the reader, and the
+    /// drawer's own full-screen button opens every card with its Stop button in reach.
+    func testLongJobOutputScrollsInTheDrawerAndOpensFullScreen() {
+        launch(environment: ["CHAT_ROUTES_SURFACE": "jobs"])
+        let pill = app.descendants(matching: .any)["extension-strip-aboveEditor-pill-surface-background_2djobs"]
+        XCTAssertTrue(pill.waitUntilExists(timeout: 10), "The jobs surface shows its pill")
+        pill.tap()
+        let drawer = app.descendants(matching: .any)["extension-strip-aboveEditor-drawer-surface-background_2djobs"]
+        XCTAssertTrue(drawer.waitUntilExists(timeout: 5), "Tapping the pill opens its drawer")
+        let fullScreen = app.buttons["extension.strip.fullScreen.aboveEditor"]
+        XCTAssertTrue(fullScreen.waitUntilExists(timeout: 5), "A body taller than the drawer's cap offers full screen")
+        attachScreenshot("jobs-drawer-open")
+
+        // The pan starts on the output block, which sits under the middle of the drawer. Wrapped,
+        // its lines take more height and its own scroll view stops scrolling sideways.
+        let output = app.textViews["markdown.codeBlock.text"]
+        XCTAssertTrue(output.exists, "The job's output block is in the drawer")
+        app.buttons["markdown.codeBlock.wrap"].tap()
+        hold()
+        let before = output.frame.minY
+        drawer.swipeUp(velocity: .slow)
+        XCTAssertTrue(
+            waitFor(output.frame.minY < before - 20),
+            "The drawer must scroll under a pan on the output: \(before) -> \(output.frame.minY)"
+        )
+        attachScreenshot("jobs-drawer-scrolled")
+        drawer.swipeDown(velocity: .slow)
+
+        // The output block's own expand control: the text in the full-screen code reader.
+        let expand = app.buttons["extension.surface.background_2djobs.jobs.tail_3abash_2d72.expand"]
+        XCTAssertTrue(expand.waitUntilExists(timeout: 5), "The output block offers to expand")
+        expand.tap()
+        let close = app.buttons["fullScreen.code.close"]
+        XCTAssertTrue(close.waitUntilExists(timeout: 5), "Expand opens the output in the full-screen reader")
+        attachScreenshot("jobs-output-full-screen")
+        close.tap()
+        XCTAssertTrue(close.waitUntilGone(timeout: 5), "Back returns to the chat")
+
+        // The drawer's full-screen button: every card, uncapped.
+        XCTAssertTrue(waitFor(fullScreen.isHittable), "The drawer is still open after the reader")
+        fullScreen.tap()
+        let back = app.buttons["extension.surfaceReader.back.surface-background_2djobs"]
+        XCTAssertTrue(back.waitUntilExists(timeout: 5), "The drawer's full-screen button opens the surface reader")
+        let stop = app.buttons["extension.surface.background_2djobs.jobs.stop_3abash_2d72"]
+        XCTAssertTrue(stop.waitUntilExists(timeout: 5), "The reader draws the job's Stop button")
+        XCTAssertTrue(stop.isHittable, "Stop is in reach without scrolling the reader")
+        attachScreenshot("jobs-surface-full-screen")
+        back.tap()
+        XCTAssertTrue(back.waitUntilGone(timeout: 5), "Back returns to the chat")
+        assertRunning()
+    }
+
     /// A pending composer image opens the annotate canvas. Its bar must carry
     /// undo/redo beside the checkmark — Add to Chat returns the annotated image,
     /// Cancel keeps the attachment — and the composer must be usable again

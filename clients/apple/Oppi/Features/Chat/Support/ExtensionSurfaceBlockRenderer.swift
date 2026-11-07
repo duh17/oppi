@@ -354,7 +354,13 @@ final class BlocksRenderer {
                 .code(base: Self.base(code.base), language: code.language, text: code.text),
                 context: environment.nativeContext
             )
-            view.accessibilityIdentifier = environment.identifier(for: node)
+            let identifier = environment.identifier(for: node)
+            view.accessibilityIdentifier = identifier
+            let language = code.language, text = code.text
+            view.configureExpand(
+                identifier: identifier.map { "\($0).expand" },
+                action: environment.context.openText.map { open in { open(language, text) } }
+            )
             return view
         case .chart(let chart):
             let view: ExtensionNativeChartBlockView = cached(key, ExtensionNativeChartBlockView())

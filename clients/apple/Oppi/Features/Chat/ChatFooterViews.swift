@@ -32,6 +32,12 @@ private extension ChatViewController {
             },
             sendAction: { [weak connection] intent in
                 connection?.sendExtensionSurfaceAction(intent, sessionId: sessionId)
+            },
+            liveComposableSurface: { [weak connection] id in
+                connection?.extensionSurfaces.surface(for: sessionId).layout.composableSurfaces[id]?.surface
+            },
+            pendingAction: { [weak connection] in
+                connection?.extensionSurfaces.surface(for: sessionId).pendingAction
             }
         )
     }

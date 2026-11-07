@@ -78,6 +78,9 @@ struct ExtensionSurfaceCompositeContext {
     /// The action waiting on the server, when one is: its declared words and disabled ids.
     let pending: ExtensionSurfacePendingAction?
     let onAction: ((ExtensionSurfaceActionIntent) -> Void)?
+    /// Opens a code block's text (language, text) full screen. Nil where a block has no reader to
+    /// open: it then draws no expand control.
+    var openText: ((_ language: String?, _ text: String) -> Void)?
 
     var palette: ThemePalette { themeID.palette }
 
@@ -169,12 +172,15 @@ final class ExtensionSurfaceCompositesView: UIView {
         pending: ExtensionSurfacePendingAction?,
         themeID: ThemeID,
         sendsActions: Bool,
+        opensText: Bool,
         sizeCategory: UIContentSizeCategory
     )?
     /// The last inputs, to draw again when the text size changes: some blocks measure their
     /// layout when drawn.
     private var latest: (surface: ExtensionUISurface, pending: ExtensionSurfacePendingAction?, themeID: ThemeID)?
     private var onAction: ((ExtensionSurfaceActionIntent) -> Void)?
+    /// Where a code block's expand control sends its text. Set before the first `apply`.
+    var openText: ((_ language: String?, _ text: String) -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -212,16 +218,19 @@ final class ExtensionSurfaceCompositesView: UIView {
         self.onAction = onAction
         latest = (surface, pending, themeID)
         let sendsActions = onAction != nil
+        let opensText = openText != nil
         let sizeCategory = traitCollection.preferredContentSizeCategory
         if let drawn, drawn.surface == surface, drawn.pending == pending, drawn.themeID == themeID,
-           drawn.sendsActions == sendsActions, drawn.sizeCategory == sizeCategory { return }
-        drawn = (surface, pending, themeID, sendsActions, sizeCategory)
+           drawn.sendsActions == sendsActions, drawn.opensText == opensText,
+           drawn.sizeCategory == sizeCategory { return }
+        drawn = (surface, pending, themeID, sendsActions, opensText, sizeCategory)
         // The cards send through this view, so an unchanged card still reaches the latest host.
         let context = ExtensionSurfaceCompositeContext(
             themeID: themeID,
             surface: surface,
             pending: pending,
-            onAction: sendsActions ? { [weak self] in self?.onAction?($0) } : nil
+            onAction: sendsActions ? { [weak self] in self?.onAction?($0) } : nil,
+            openText: opensText ? { [weak self] in self?.openText?($0, $1) } : nil
         )
         var kept: [String: UIView] = [:]
         var nextKinds: [String: String] = [:]

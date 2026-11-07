@@ -264,6 +264,9 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
                 onLeave: { back() }
             )
             fillsScreen = true
+        case .extensionSurface(let spec):
+            mounted = ExtensionSurfaceDetailViewController(content: spec, onLeave: { back() })
+            fillsScreen = true
         }
 
         addChild(mounted)

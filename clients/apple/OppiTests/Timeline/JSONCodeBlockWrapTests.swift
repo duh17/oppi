@@ -355,7 +355,7 @@ private func findWrapControl(in view: UIView) -> UIButton? {
 private func findCopyControl(in view: UIView) -> UIButton? {
     timelineAllViews(in: view)
         .compactMap { $0 as? UIButton }
-        .first { $0.accessibilityIdentifier != "markdown.codeBlock.wrap" }
+        .first { $0.accessibilityIdentifier == "markdown.codeBlock.copy" }
 }
 
 @MainActor

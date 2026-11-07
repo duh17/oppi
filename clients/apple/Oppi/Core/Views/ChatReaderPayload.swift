@@ -37,6 +37,21 @@ struct ExtensionNativeReaderContent {
     var liveSurface: (@MainActor () -> ExtensionUINativeSurface?)? = nil
 }
 
+/// One composable (v2) surface full screen: every card of the drawer, with no height cap.
+struct ExtensionSurfaceReaderContent {
+    let surface: ExtensionUISurface
+    let identifierSuffix: String
+    let title: String
+    let subtitle: String?
+    /// Current snapshot for the same surface id; the reader follows replacements through it and
+    /// keeps the last one it drew once the surface is dismissed.
+    var liveSurface: (@MainActor () -> ExtensionUISurface?)? = nil
+    /// The surface action waiting on the server, read as the reader draws.
+    var pendingAction: (@MainActor () -> ExtensionSurfacePendingAction?)? = nil
+    /// Sends one action from a card in the reader; nil draws the cards without actions.
+    var sendAction: ((ExtensionSurfaceActionIntent) -> Void)? = nil
+}
+
 /// Timeline/chat reader body. Only the ``ChatReaderNavTarget`` id rides the path.
 struct ChatReaderPayload {
     enum Kind {
@@ -50,6 +65,7 @@ struct ChatReaderPayload {
         case video(ChatReaderVideoContent)
         case nowPlaying(AudioPlayerService)
         case extensionNative(ExtensionNativeReaderContent)
+        case extensionSurface(ExtensionSurfaceReaderContent)
     }
 
     var kind: Kind
@@ -122,6 +138,10 @@ struct ChatReaderPayload {
         Self(kind: .extensionNative(content))
     }
 
+    static func extensionSurface(_ content: ExtensionSurfaceReaderContent) -> Self {
+        Self(kind: .extensionSurface(content))
+    }
+
     /// Stamp the origin chat. Nested opens inherit this value, including nil.
     func stamped(
         with destination: ComposerCanvasDestination?,
@@ -140,7 +160,7 @@ struct ChatReaderPayload {
         switch kind {
         case .document(let content, _):
             return content
-        case .image, .imageData, .audioLyrics, .video, .nowPlaying, .extensionNative:
+        case .image, .imageData, .audioLyrics, .video, .nowPlaying, .extensionNative, .extensionSurface:
             preconditionFailure("ChatReaderPayload.content requires a document")
         }
     }
@@ -149,7 +169,7 @@ struct ChatReaderPayload {
         switch kind {
         case .document(_, let context):
             return context
-        case .image, .imageData, .audioLyrics, .video, .nowPlaying, .extensionNative:
+        case .image, .imageData, .audioLyrics, .video, .nowPlaying, .extensionNative, .extensionSurface:
             return nil
         }
     }

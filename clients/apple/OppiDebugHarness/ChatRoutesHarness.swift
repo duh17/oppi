@@ -16,7 +16,9 @@ import UIKit
 /// `CHAT_ROUTES_SURFACE=tall` publishes a composable surface (a long table
 /// card, then an Actions card with Run again) whose drawer is taller than the
 /// space above the composer. `chatRoutes.surfaceActions` lists the surface
-/// actions the chat sent over its socket. `CHAT_ROUTES_SURFACE_FILE=<path>[,<path>...]` publishes the
+/// actions the chat sent over its socket. `CHAT_ROUTES_SURFACE=jobs` publishes the Background jobs
+/// surface with one running job and a long output block (`ChatRoutesJobsSurface`).
+/// `CHAT_ROUTES_SURFACE_FILE=<path>[,<path>...]` publishes the
 /// surface JSON in those files instead (a server's rendered `ExtensionUISurface`, so a panel is shown
 /// as the phone receives it). `CHAT_ROUTES_REVIEW_COMMENT=none` stages no review comment, leaving
 /// the strip to the surfaces. `CHAT_ROUTES_WARNINGS=N` adds N warning rows
@@ -363,6 +365,8 @@ enum ChatRoutesFixture {
             paths.split(separator: ",").compactMap { FileManager.default.contents(atPath: String($0)) }
         } else if environment["CHAT_ROUTES_SURFACE"] == "tall" {
             [Data(tallSurfaceJSON.utf8)]
+        } else if environment["CHAT_ROUTES_SURFACE"] == "jobs" {
+            [Data(ChatRoutesJobsSurface.json.utf8)]
         } else {
             []
         }
@@ -376,7 +380,7 @@ enum ChatRoutesFixture {
     }
 
     /// Whether the session's activity clock ticks, repainting the footer (`CHAT_ROUTES_SURFACE=tall`).
-    static var ticksSession: Bool { environment["CHAT_ROUTES_SURFACE"] == "tall" }
+    static var ticksSession: Bool { ["tall", "jobs"].contains(environment["CHAT_ROUTES_SURFACE"] ?? "") }
 
     static let tallSurfaceId = "query"
     static let tallSurfaceActionsCardId = "actions"

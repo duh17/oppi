@@ -169,6 +169,10 @@ class ExtensionDrawerPanelView: UIView {
 /// The height is all constraints, so a drawer measures in one pass.
 final class CappedScrollView: UIView {
     let scrollView = UIScrollView()
+    /// Whether the content is taller than the cap, so the viewport scrolls it. Called when that
+    /// changes, from layout.
+    var onOverflowChange: ((Bool) -> Void)?
+    private(set) var overflows = false
 
     init(content: UIView, maxHeight: CGFloat) {
         super.init(frame: .zero)
@@ -210,6 +214,10 @@ final class CappedScrollView: UIView {
         let canScroll = scrollView.contentSize.height > scrollView.bounds.height + 0.5
         scrollView.isScrollEnabled = canScroll
         scrollView.alwaysBounceVertical = canScroll
+        if canScroll != overflows {
+            overflows = canScroll
+            onOverflowChange?(canScroll)
+        }
         let maxOffset = max(0, scrollView.contentSize.height - scrollView.bounds.height)
         if scrollView.contentOffset.y > maxOffset + 0.5 {
             scrollView.contentOffset.y = maxOffset
@@ -479,7 +487,8 @@ private enum ExtensionSurfaceStripEntry: Equatable {
         return nil
     }
 
-    /// Native surfaces and terminal widgets open full screen.
+    /// Native surfaces and terminal widgets open full screen on a double tap. A composable
+    /// drawer holds controls, so it offers a button once its body outgrows the cap instead.
     var supportsFullScreen: Bool {
         switch self {
         case .native, .widget: true
@@ -787,6 +796,11 @@ struct ExtensionSurfaceDrawerActions {
     /// Sends one action on a composable surface. The host mints the request id and
     /// shows the action's declared pending state until the server settles it.
     var sendAction: ((ExtensionSurfaceActionIntent) -> Void)?
+    /// The session's current snapshot of a composable surface, by protocol id, so its reader
+    /// follows the replacements the drawer would draw.
+    var liveComposableSurface: ((String) -> ExtensionUISurface?)?
+    /// The composable surface action waiting on the server, read as the reader draws.
+    var pendingAction: (@MainActor @Sendable () -> ExtensionSurfacePendingAction?)?
 }
 
 /// The expanded body of one strip entry, under the strip: a header with the
@@ -801,6 +815,8 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
     private let subtitleLabel = ExtensionChromeFont.label(.caption1, lines: 0)
     private let mediaLabel = ExtensionChromeFont.label(.caption1, .semibold)
     private let collapseButton = UIButton(type: .custom)
+    /// A composable drawer's way to the whole surface, shown while its body is taller than the cap.
+    private let fullScreenButton = UIButton(type: .custom)
     private var nativeViewport: ExtensionNativeBlockScrollView?
     /// A composable surface's cards, in a viewport that hugs them up to the drawer's cap.
     private var compositesViewport: ExtensionSurfaceCompositesView?
@@ -833,17 +849,24 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
         collapseButton.accessibilityIdentifier = "extension-strip-\(placementID)-drawer-collapse"
         collapseButton.accessibilityLabel = "Collapse \(entry.title) \(entry.kindLabel)"
         collapseButton.addAction(UIAction { [weak self] _ in self?.onCollapse?() }, for: .touchUpInside)
-        let header = UIStackView(arrangedSubviews: [titles, collapseButton])
+        fullScreenButton.layer.cornerRadius = 16
+        fullScreenButton.isHidden = true
+        fullScreenButton.accessibilityIdentifier = "extension.strip.fullScreen.\(placementID)"
+        fullScreenButton.accessibilityLabel = String(localized: "Open full screen")
+        fullScreenButton.addAction(UIAction { [weak self] _ in self?.openFullScreen() }, for: .touchUpInside)
+        let header = UIStackView(arrangedSubviews: [titles, fullScreenButton, collapseButton])
         header.axis = .horizontal
         header.alignment = .top
         header.spacing = 10
 
         stack.addArrangedSubview(header)
-        NSLayoutConstraint.activate([
-            collapseButton.widthAnchor.constraint(equalToConstant: 32),
-            collapseButton.heightAnchor.constraint(equalToConstant: 32),
-        ])
-        collapseButton.setContentHuggingPriority(.required, for: .horizontal)
+        for button in [fullScreenButton, collapseButton] {
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: 32),
+                button.heightAnchor.constraint(equalToConstant: 32),
+            ])
+            button.setContentHuggingPriority(.required, for: .horizontal)
+        }
         buildContent()
         if entry.supportsFullScreen {
             accessibilityCustomActions = [
@@ -894,10 +917,15 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             stack.addArrangedSubview(viewport)
         case .composable:
             let composites = ExtensionSurfaceCompositesView()
+            composites.openText = { [weak self] language, text in
+                self?.actions.openReader(.document(
+                    content: .code(content: text, language: language, filePath: nil, startLine: 1)
+                ))
+            }
             compositesViewport = composites
-            stack.addArrangedSubview(
-                CappedScrollView(content: composites, maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight)
-            )
+            let capped = CappedScrollView(content: composites, maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight)
+            capped.onOverflowChange = { [weak self] overflows in self?.setOffersFullScreen(overflows) }
+            stack.addArrangedSubview(capped)
         case .messageQueue:
             let queue = MessageQueueView(presentation: .drawer)
             queue.onOpenMessage = { [weak self] item in self?.openQueuedMessage(item) }
@@ -949,6 +977,10 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
         buttonConfiguration.background.cornerRadius = 16
         buttonConfiguration.contentInsets = .zero
         collapseButton.configuration = buttonConfiguration
+        buttonConfiguration.image = UIImage.scaledSymbol(
+            "arrow.up.left.and.arrow.down.right", style: .caption1, weight: .bold, color: palette.ui.comment
+        )
+        fullScreenButton.configuration = buttonConfiguration
         inset?.backgroundColor = palette.ui.fg.withAlphaComponent(0.035)
         inset?.layer.borderColor = palette.ui.fg.withAlphaComponent(0.08).cgColor
         bodyLabel?.textColor = palette.ui.fg
@@ -1012,6 +1044,19 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
         nativeViewport.contentDidChange()
     }
 
+    /// A composable drawer offers full screen only while its body is taller than the drawer's cap.
+    private func setOffersFullScreen(_ offers: Bool) {
+        fullScreenButton.isHidden = !offers
+        accessibilityCustomActions = offers
+            ? [
+                UIAccessibilityCustomAction(name: String(localized: "Open Full Screen")) { [weak self] _ in
+                    self?.openFullScreen()
+                    return true
+                },
+            ]
+            : nil
+    }
+
     private func openFullScreen() {
         switch entry {
         case .native(let nativeSurface, _):
@@ -1033,7 +1078,22 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             actions.openReader(.document(
                 content: .terminal(content: widget.lines.joined(separator: "\n"), command: nil)
             ))
-        case .title, .status, .messageQueue, .composable:
+        case .composable(let composable):
+            let id = composable.surface.id
+            var liveSurface: (@MainActor () -> ExtensionUISurface?)?
+            if let lookup = actions.liveComposableSurface {
+                liveSurface = { lookup(id) }
+            }
+            actions.openReader(.extensionSurface(ExtensionSurfaceReaderContent(
+                surface: composable.surface,
+                identifierSuffix: entry.identifierSuffix,
+                title: entry.title,
+                subtitle: entry.subtitle,
+                liveSurface: liveSurface,
+                pendingAction: actions.pendingAction,
+                sendAction: actions.sendAction
+            )))
+        case .title, .status, .messageQueue:
             break
         }
     }
