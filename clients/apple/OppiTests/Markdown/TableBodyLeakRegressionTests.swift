@@ -256,15 +256,12 @@ struct TableBodyLeakRegressionTests {
     }
 
     private func mountedBodyRowCount(in table: NativeTableBlockView) -> Int? {
-        let stacks = timelineAllViews(in: table).compactMap { $0 as? UIStackView }
-        guard let wrap = stacks.first(where: { stack in
-            !stack.isHidden
-                && stack.axis == .vertical
-                && stack.arrangedSubviews.contains(where: { ($0 as? UIStackView)?.axis == .horizontal })
-        }) else {
+        guard let grid = timelineFirstView(ofType: MarkdownTableGridView.self, in: table),
+              !grid.isHidden,
+              let layout = grid.layout else {
             return nil
         }
-        return wrap.arrangedSubviews.filter { $0 is UIStackView }.count - 1
+        return layout.bodyRowCount
     }
 
     private func proseOutsideTable(in root: UIView) -> String {

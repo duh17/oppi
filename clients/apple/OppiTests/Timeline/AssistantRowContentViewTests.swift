@@ -1858,7 +1858,11 @@ struct NativeTableMarkdownLinkRoutingTests {
         let wrapCells = visibleTableTextViews(in: wrapTable)
 
         #expect(clipCells.count == 1, "Short tables should stay in clip mode")
-        #expect(wrapCells.count > 1, "A clamped column should enter wrap mode")
+        #expect(
+            timelineFirstView(ofType: MarkdownTableGridView.self, in: wrapTable)?.isHidden == false,
+            "A clamped column should enter wrap mode"
+        )
+        #expect(wrapCells.count == 1, "A wrap grid mounts a text view on the touched cell only")
         #expect(clipCells.allSatisfy { $0.delegate === clipTable })
         #expect(wrapCells.allSatisfy { $0.delegate === wrapTable })
     }
@@ -2037,7 +2041,14 @@ private func makeNativeTable(
 
 @MainActor
 private func visibleTableTextViews(in tableView: NativeTableBlockView) -> [UITextView] {
-    timelineAllTextViews(in: tableView).filter { !$0.isHidden && $0.bounds.width > 1 }
+    // A wrap grid is drawn; touching a cell mounts the text view that takes it.
+    if let grid = timelineFirstView(ofType: MarkdownTableGridView.self, in: tableView),
+       !grid.isHidden,
+       grid.layout != nil {
+        grid.activateCell(row: 1, column: 0)
+        return grid.activeTextView.map { [$0] } ?? []
+    }
+    return timelineAllTextViews(in: tableView).filter { !$0.isHidden && $0.bounds.width > 1 }
 }
 
 @MainActor

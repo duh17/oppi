@@ -289,11 +289,11 @@ struct NativeTableWrapToFitTests {
                 )
             }
 
-            let rows = wrapRows(in: tableView)
+            let rows = wrapRowFrames(in: tableView, to: tableView)
             #expect(rows.count >= 2, "Expected header and body rows at width \(width)")
             for index in 0..<(rows.count - 1) {
-                let current = rows[index].convert(rows[index].bounds, to: tableView)
-                let next = rows[index + 1].convert(rows[index + 1].bounds, to: tableView)
+                let current = rows[index]
+                let next = rows[index + 1]
                 #expect(
                     current.maxY <= next.minY + 0.5,
                     "Rows overlap at width \(width): \(current) vs \(next)"
@@ -309,8 +309,7 @@ struct NativeTableWrapToFitTests {
             timelineRenderedText(of: $0).contains("01:46:42")
         }
         let card = tableView.subviews.first { $0.layer.cornerRadius == 8 }
-        if let card, let lastRow = wrapRows(in: tableView).last {
-            let lastFrame = lastRow.convert(lastRow.bounds, to: card)
+        if let card, let lastFrame = wrapRowFrames(in: tableView, to: card).last {
             #expect(
                 lastFrame.maxY <= card.bounds.maxY + 1,
                 "Last row is clipped by the table card: row=\(lastFrame) card=\(card.bounds)"
@@ -357,10 +356,9 @@ struct NativeTableWrapToFitTests {
         let tables = timelineAllViews(in: row).compactMap { $0 as? NativeTableBlockView }
         #expect(tables.count == 1)
         guard let table = tables.first else { return }
-        let rows = wrapRows(in: table)
+        let rows = wrapRowFrames(in: table, to: table)
         #expect(rows.count >= 2, "Expected wrapped Time/Evidence rows")
-        if let last = rows.last {
-            let lastFrame = last.convert(last.bounds, to: table)
+        if let lastFrame = rows.last {
             #expect(
                 lastFrame.maxY <= table.bounds.maxY + 1,
                 "Last table row clipped inside assistant cell: row=\(lastFrame) table=\(table.bounds) fitted=\(fitted)"
@@ -406,7 +404,7 @@ struct NativeTableStreamingTests {
         let headers = Self.cells(["Name", "Notes"])
         let streamed = NativeTableBlockView()
         var previousTick: [[[MarkdownInline]]] = []
-        var previousRowViews: [UIView] = []
+        var previousRowCells: [NSAttributedString] = []
         var ticksThatKeptRows = 0
         for (index, tick) in ticks.enumerated() {
             let previousColumns = Self.columnWidths(of: streamed)
@@ -418,16 +416,16 @@ struct NativeTableStreamingTests {
             #expect(Self.gridSnapshot(of: streamed) == Self.gridSnapshot(of: fresh), "tick \(index)")
             #expect(Self.fittedHeight(of: streamed) == Self.fittedHeight(of: fresh), "tick \(index) height")
 
-            let rowViews = Self.bodyRowViews(of: streamed)
+            let rowCells = Self.bodyRowCells(of: streamed)
             let unchanged = zip(previousTick, tick).prefix { $0 == $1 }.count
             if !previousColumns.isEmpty, previousColumns == Self.columnWidths(of: streamed), unchanged > 0 {
                 ticksThatKeptRows += 1
                 for row in 0..<unchanged {
-                    #expect(previousRowViews[row] === rowViews[row], "tick \(index) rebuilt unchanged row \(row)")
+                    #expect(previousRowCells[row] === rowCells[row], "tick \(index) rebuilt unchanged row \(row)")
                 }
             }
             previousTick = tick
-            previousRowViews = rowViews
+            previousRowCells = rowCells
         }
         #expect(ticksThatKeptRows >= ticks.count / 2, "Only \(ticksThatKeptRows) of \(ticks.count) ticks kept rows")
     }
@@ -467,10 +465,9 @@ struct NativeTableStreamingTests {
             guard index % 8 == 7 else { continue }
 
             let card = try #require(tableView.subviews.first { $0.layer.cornerRadius == 8 })
-            let lastRow = try #require(Self.bodyRowViews(of: tableView).last)
-            let lastFrame = lastRow.convert(lastRow.bounds, to: card)
+            let lastFrame = try #require(wrapRowFrames(in: tableView, to: card).last)
             #expect(lastFrame.maxY <= card.bounds.maxY + 1, "\(index + 1) rows: last row \(lastFrame) past card \(card.bounds)")
-            for case let cell as UITextView in Self.bodyRowViews(of: tableView).flatMap({ ($0 as? UIStackView)?.arrangedSubviews ?? [] }) {
+            for cell in visibleTableCells(in: tableView) {
                 let needed = cell.sizeThatFits(CGSize(width: cell.bounds.width, height: .greatestFiniteMagnitude)).height
                 #expect(cell.bounds.height + 0.5 >= needed, "\(index + 1) rows: cell squeezed to \(cell.bounds.height) of \(needed)")
             }
@@ -489,60 +486,73 @@ struct NativeTableStreamingTests {
         texts.map { [.text($0)] }
     }
 
-    private static func wrapStack(of table: NativeTableBlockView) -> UIStackView? {
-        timelineAllViews(in: table).compactMap { $0 as? UIStackView }.first {
-            !$0.isHidden && $0.axis == .vertical
-        }
-    }
-
-    private static func bodyRowViews(of table: NativeTableBlockView) -> [UIView] {
-        // Header row and separator lead the grid.
-        Array((wrapStack(of: table)?.arrangedSubviews ?? []).dropFirst(2))
+    /// The first cell of each body row. A row the grid kept is the same object.
+    private static func bodyRowCells(of table: NativeTableBlockView) -> [NSAttributedString] {
+        guard let layout = visibleGrid(in: table)?.layout else { return [] }
+        return layout.cells.dropFirst().map { $0[0] }
     }
 
     private static func columnWidths(of table: NativeTableBlockView) -> [CGFloat] {
-        guard let header = wrapStack(of: table)?.arrangedSubviews.first as? UIStackView else { return [] }
-        return header.arrangedSubviews.map { pinnedWidth(of: $0) }
+        visibleGrid(in: table)?.layout?.columnWidths ?? []
     }
 
-    /// The cell's column width. Laid-out cells also carry UIKit's intrinsic
-    /// size constraints, which are subclasses and do not count.
-    private static func pinnedWidth(of cell: UIView) -> CGFloat {
-        cell.constraints.first {
-            type(of: $0) == NSLayoutConstraint.self && $0.firstAttribute == .width
-        }?.constant ?? -1
-    }
-
-    /// Cell text, width, and selectability, and the stripe color, of every
-    /// grid row.
+    /// Cell text, width, and interactivity, and the stripe, of every grid row.
     private static func gridSnapshot(of table: NativeTableBlockView) -> [String] {
-        (wrapStack(of: table)?.arrangedSubviews ?? []).map { row in
-            guard let row = row as? UIStackView else { return "separator" }
-            let cells = row.arrangedSubviews.map { cell in
-                let selectable = (cell as? UITextView)?.isSelectable == true ? "sel" : "-"
-                return "\(timelineRenderedText(of: cell))@\(pinnedWidth(of: cell)) \(selectable)"
+        guard let grid = visibleGrid(in: table), let layout = grid.layout else { return [] }
+        return layout.cells.enumerated().map { row, cells in
+            let selectable = grid.isInteractive ? "sel" : "-"
+            let text = cells.enumerated().map { column, cell in
+                "\(cell.string)@\(layout.columnWidths[column]) \(selectable)"
             }
-            return cells.joined(separator: " | ") + " bg=\(String(describing: row.backgroundColor))"
+            let stripe = row == 0 ? "header" : (row - 1) % 2 == 1 ? "zebra" : "plain"
+            return text.joined(separator: " | ") + " bg=\(stripe)"
         }
     }
 }
 
 @MainActor
-private func visibleTableCells(in tableView: NativeTableBlockView) -> [UITextView] {
-    timelineAllTextViews(in: tableView).filter { !$0.isHidden && $0.bounds.width > 1 }
+private func visibleGrid(in table: NativeTableBlockView) -> MarkdownTableGridView? {
+    guard let grid = timelineFirstView(ofType: MarkdownTableGridView.self, in: table),
+          !grid.isHidden, grid.layout != nil else { return nil }
+    return grid
 }
 
+/// Every cell as the text view a touch would mount over it: the cell's text at
+/// its column width, in a frame as tall as its row.
 @MainActor
-private func wrapRows(in tableView: NativeTableBlockView) -> [UIView] {
-    let stacks = timelineAllViews(in: tableView).compactMap { $0 as? UIStackView }
-    guard let wrapStack = stacks.first(where: { stack in
-        !stack.isHidden
-            && stack.axis == .vertical
-            && stack.arrangedSubviews.contains(where: { ($0 as? UIStackView)?.axis == .horizontal })
-    }) else {
-        return []
+private func visibleTableCells(in tableView: NativeTableBlockView) -> [UITextView] {
+    guard let layout = visibleGrid(in: tableView)?.layout else {
+        return timelineAllTextViews(in: tableView).filter { !$0.isHidden && $0.bounds.width > 1 }
     }
-    return wrapStack.arrangedSubviews.filter { $0.bounds.height > 2 }
+    var cells: [UITextView] = []
+    for row in layout.cells.indices {
+        for column in layout.columnWidths.indices {
+            let textView = UITextView(frame: layout.cellFrame(row: row, column: column))
+            textView.isScrollEnabled = false
+            textView.textContainerInset = UIEdgeInsets(
+                top: MarkdownTableGridLayout.cellVerticalInset,
+                left: 0,
+                bottom: MarkdownTableGridLayout.cellVerticalInset,
+                right: 0
+            )
+            textView.textContainer.lineFragmentPadding = 0
+            textView.attributedText = layout.cells[row][column]
+            cells.append(textView)
+        }
+    }
+    return cells
+}
+
+/// Frame of every grid row (header, then body rows) in `target`'s coordinates.
+@MainActor
+private func wrapRowFrames(in tableView: NativeTableBlockView, to target: UIView) -> [CGRect] {
+    guard let grid = visibleGrid(in: tableView), let layout = grid.layout else { return [] }
+    return layout.cells.indices.map { row in
+        grid.convert(
+            CGRect(x: 0, y: layout.rowOrigins[row], width: layout.contentWidth, height: layout.rowHeights[row]),
+            to: target
+        )
+    }
 }
 
 @MainActor

@@ -425,12 +425,10 @@ struct FullScreenMarkdownStressCorpusTests {
             timelineFirstView(ofType: NativeTableBlockView.self, in: $0)
         }.first
         #expect(table != nil)
-        let tableText = timelineAllTextRenderViews(in: table ?? UIView())
-            .map { timelineRenderedText(of: $0) }
-            .joined(separator: "\n")
+        let tableCells = table.map { timelineRenderedTableCells(in: $0) } ?? []
+        let tableText = tableCells.map(\.string).joined(separator: "\n")
         #expect(tableText.contains("Alpha specimen") || tableText.contains("example.invalid"))
-        let tableHasLink = timelineAllTextViews(in: table ?? UIView()).contains { textView in
-            let text = textView.attributedText ?? NSAttributedString()
+        let tableHasLink = tableCells.contains { text in
             var found = false
             text.enumerateAttribute(.link, in: NSRange(location: 0, length: text.length)) { value, _, stop in
                 guard value != nil else { return }

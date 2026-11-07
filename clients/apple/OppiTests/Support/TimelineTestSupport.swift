@@ -138,10 +138,32 @@ func timelineRenderedText(of view: UIView) -> String {
     return ""
 }
 
+/// Attributed text of every visible cell of a markdown table in either mode.
+@MainActor
+func timelineRenderedTableCells(in tableView: NativeTableBlockView) -> [NSAttributedString] {
+    if let grid = timelineFirstView(ofType: MarkdownTableGridView.self, in: tableView),
+       !grid.isHidden,
+       let layout = grid.layout {
+        return layout.cells.flatMap { $0 }
+    }
+    return timelineAllTextViews(in: tableView)
+        .filter { !$0.isHidden }
+        .compactMap(\.attributedText)
+}
+
 /// Join visible text from a markdown table in either clip or wrap mode.
 @MainActor
 func timelineRenderedTableText(in tableView: NativeTableBlockView) -> String {
-    timelineAllTextViews(in: tableView)
+    // A wrap grid is drawn from its layout, not from a text view per cell.
+    if let grid = timelineFirstView(ofType: MarkdownTableGridView.self, in: tableView),
+       !grid.isHidden,
+       let layout = grid.layout {
+        return layout.cells.flatMap { $0 }
+            .map(\.string)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n")
+    }
+    return timelineAllTextViews(in: tableView)
         .filter { !$0.isHidden }
         .map { timelineRenderedText(of: $0) }
         .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
