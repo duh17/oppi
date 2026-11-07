@@ -214,7 +214,7 @@ describe("background jobs panel view", () => {
     );
   });
 
-  it("shows a running job's live lines, folder, time left, and truncation outside the fold", () => {
+  it("shows a running job's last lines, folder, time left, and truncation outside the fold", () => {
     const output = Array.from({ length: 30 }, (_, index) => `step ${index}`).join("\n");
     const list = body(
       render([
@@ -229,11 +229,29 @@ describe("background jobs panel view", () => {
     const folded = find(list, "output:a")!;
     const tail = find(list, "tail:a") as { text: string };
     expect(find(folded, "tail:a")).toBeUndefined();
-    expect(tail.text.split("\n")).toHaveLength(12);
-    expect(tail.text).toContain("step 29");
+    // The card keeps to the end of the tail, so it fits a drawer that cannot scroll it; the whole
+    // tail is behind Details.
+    expect(tail.text.split("\n")).toEqual(["step 27", "step 28", "step 29"]);
+    const log = find(folded, "log:a") as { text: string };
+    expect(log.text.split("\n")).toHaveLength(12);
+    expect(log.text.endsWith(tail.text)).toBe(true);
     expect(find(list, "detail:a")).toMatchObject({ text: "app · times out in 5m" });
     expect(find(list, "truncated:a")).toBeDefined();
     expect(find(folded, "cwd:a")).toMatchObject({ text: "/work/app/" });
+  });
+
+  it("cuts a running job's preview to a few short lines, and shows the whole tail behind Details only when it cut", () => {
+    const wide = Array.from({ length: 5 }, (_, index) => `${index} ${"w".repeat(120)}`).join("\n");
+    const list = body(render([job("a", { output: wide })]));
+    const tail = find(list, "tail:a") as { text: string };
+    expect(Array.from(tail.text).length).toBeLessThanOrEqual(160);
+    expect(tail.text.startsWith("…")).toBe(true);
+    expect(tail.text.endsWith("w")).toBe(true);
+    expect(find(find(list, "output:a")!, "log:a")).toMatchObject({ type: "code" });
+    // A tail the card already shows whole is not repeated behind Details.
+    const short = body(render([job("b", { output: "one\ntwo\n" })]));
+    expect(find(short, "tail:b")).toMatchObject({ text: "one\ntwo" });
+    expect(find(find(short, "output:b")!, "log:b")).toBeUndefined();
   });
 
   it("lists running jobs first and counts what it cannot draw", () => {

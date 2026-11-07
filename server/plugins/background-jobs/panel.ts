@@ -34,6 +34,14 @@ const COMMAND_CHARS = 200;
  */
 const TITLE_CHARS = 24;
 const TAIL_LINES = 12;
+/**
+ * What a running job's card shows of that tail. A drawer scrolls a body taller than its cap only
+ * from Build 58; before that a long block is cut off at the bottom of the card, unreachable. Three
+ * lines of at most this many characters (a phone wraps a line at about 40) keep the card, its
+ * header, and the Details fold inside the cap, and the whole tail waits behind Details.
+ */
+const PREVIEW_LINES = 3;
+const PREVIEW_CHARS = 160;
 /** The pill's live line: what fits beside the count and the age on a phone's strip. */
 const PILL_LINE_CHARS = 40;
 const TAIL_CHARS = 480;
@@ -71,18 +79,23 @@ function clamp(value: string, chars: number): string {
 }
 
 /**
- * The last lines of a job's output, plain, cut at a character budget from the front: what a row
- * shows, and so what a running job's redraw compares.
+ * The last lines of a job's output, plain, cut at a character budget from the front: what a job
+ * shows, and so what a running job's redraw compares. A preview is the end of this tail, so a
+ * redraw that waits for the tail to change never misses one.
  */
-export function outputTail(output: string | undefined): string | undefined {
+export function outputTail(
+  output: string | undefined,
+  lines = TAIL_LINES,
+  chars = TAIL_CHARS,
+): string | undefined {
   const tail = displayLines(output ?? "")
-    .slice(-TAIL_LINES)
+    .slice(-lines)
     .join("\n");
   if (!tail) return undefined;
   const characters = Array.from(tail);
-  return characters.length <= TAIL_CHARS
+  return characters.length <= chars
     ? tail
-    : `…${characters.slice(characters.length - TAIL_CHARS + 1).join("")}`;
+    : `…${characters.slice(characters.length - chars + 1).join("")}`;
 }
 
 /** The status glyph and its tone: what a person scans for before reading a word. */
@@ -175,12 +188,14 @@ function runningDetail(job: PanelJob, at: number): string | undefined {
 function jobNode(job: PanelJob, at: number, first: boolean): ReturnType<typeof stack> {
   const tail = outputTail(job.output);
   const running = job.status === "running";
+  // A running job's card shows only the end of the tail; the rest of it waits behind Details.
+  const preview = running ? outputTail(job.output, PREVIEW_LINES, PREVIEW_CHARS) : tail;
   const mark = glyph(job.status);
   const detail = running ? runningDetail(job, at) : undefined;
-  // A running job's tail is the point of opening the panel, so it is not folded away; a finished
-  // job's output stays behind Details.
-  const tailNode = tail
-    ? code({ id: `tail:${job.id}`, language: "output", text: tail })
+  // A running job's last lines are the point of opening the panel, so they are not folded away; a
+  // finished job's output stays behind Details.
+  const tailNode = preview
+    ? code({ id: `tail:${job.id}`, language: "output", text: preview })
     : text({ id: `tail:${job.id}`, text: "No output yet", style: "caption" });
   return stack({
     id: `job:${job.id}`,
@@ -245,7 +260,11 @@ function jobNode(job: PanelJob, at: number, first: boolean): ReturnType<typeof s
             ? [text({ id: `cwd:${job.id}`, text: clamp(job.cwd, COMMAND_CHARS), style: "mono" })]
             : []),
           // The `code` node's header carries its label: this is output, not source.
-          ...(running ? [] : [tailNode]),
+          ...(running
+            ? tail && tail !== preview
+              ? [code({ id: `log:${job.id}`, language: "output", text: tail })]
+              : []
+            : [tailNode]),
         ],
       }),
     ],
