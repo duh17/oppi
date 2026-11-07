@@ -25,6 +25,8 @@ enum OrgToMarkdownConverter {
         let headingTitles: Set<String>
         /// `:ID:` values a `[[id:…]]` link can point at.
         let ids: Set<String>
+        /// Whether a heading without a state carries a placeholder for adding one.
+        let offersStateControl: Bool
     }
 
     /// Convert org blocks to markdown blocks.
@@ -37,10 +39,42 @@ enum OrgToMarkdownConverter {
         documentPath: String? = nil,
         clock: OrgBadges.Clock = .current
     ) -> [MarkdownBlock] {
-        convert(orgBlocks, context: makeContext(orgBlocks, documentPath: documentPath, clock: clock))
+        convert(
+            orgBlocks,
+            lines: nil,
+            context: makeContext(orgBlocks, documentPath: documentPath, clock: clock, offersStateControl: false)
+        )
     }
 
-    private static func makeContext(_ blocks: [OrgBlock], documentPath: String?, clock: OrgBadges.Clock) -> Context {
+    /// Convert the blocks of a document the reader edits: task items, states and
+    /// dates carry the source line they came from (`ReaderTaskControl`).
+    /// `offersStateControl` also gives a heading without a state a placeholder
+    /// for adding one.
+    static func convert(
+        located: [LocatedOrgBlock],
+        documentPath: String? = nil,
+        clock: OrgBadges.Clock = .current,
+        offersStateControl: Bool = false
+    ) -> [MarkdownBlock] {
+        let blocks = located.map(\.block)
+        return convert(
+            blocks,
+            lines: located.map(\.line),
+            context: makeContext(
+                blocks,
+                documentPath: documentPath,
+                clock: clock,
+                offersStateControl: offersStateControl
+            )
+        )
+    }
+
+    private static func makeContext(
+        _ blocks: [OrgBlock],
+        documentPath: String?,
+        clock: OrgBadges.Clock,
+        offersStateControl: Bool
+    ) -> Context {
         var titles = Set<String>()
         var ids = Set<String>()
         for block in blocks {
@@ -63,7 +97,8 @@ enum OrgToMarkdownConverter {
             todoKeywords: OrgTodoKeywords.declared(in: blocks),
             documentName: name,
             headingTitles: titles,
-            ids: ids
+            ids: ids,
+            offersStateControl: offersStateControl
         )
     }
 
@@ -107,23 +142,31 @@ enum OrgToMarkdownConverter {
         name.uppercased() == "PROPERTIES"
     }
 
-    private static func convert(_ orgBlocks: [OrgBlock], context: Context) -> [MarkdownBlock] {
+    /// `lines` holds each block's source line, when the reader can edit it.
+    private static func convert(_ orgBlocks: [OrgBlock], lines: [Int]?, context: Context) -> [MarkdownBlock] {
         var result: [MarkdownBlock] = []
         result.reserveCapacity(orgBlocks.count)
         // Whether the heading a planning line sits under is done: a finished
         // task's deadline never warns.
         var headingIsDone = false
+        var headingLine: Int?
 
-        for block in orgBlocks {
+        for (index, block) in orgBlocks.enumerated() {
+            let line = lines?[index]
             switch block {
             case .heading(let level, let keyword, let priority, let title, let tags):
                 let isDone = keyword.map(context.todoKeywords.isDone) ?? false
                 headingIsDone = isDone
+                headingLine = line
 
                 // State, priority and the title's progress cookies lead the
                 // heading as one bar, written back to back so they join.
                 var bar: [MarkdownBadge] = []
-                if let keyword { bar.append(OrgBadges.state(keyword, isDone: isDone)) }
+                if let keyword {
+                    bar.append(OrgBadges.state(keyword, isDone: isDone, line: line))
+                } else if context.offersStateControl, let line {
+                    bar.append(OrgBadges.addState(line: line))
+                }
                 if let priority { bar.append(OrgBadges.priority(String(priority))) }
                 var titleRest: [OrgInline] = []
                 for inline in title {
@@ -160,10 +203,20 @@ enum OrgToMarkdownConverter {
                 case .unordered:
                     // Check if any item has a checkbox → task list.
                     if items.contains(where: { $0.checkbox != nil }) {
-                        let taskItems = items.map { item -> MarkdownBlock.TaskItem in
+                        let taskItems = items.enumerated().map { offset, item -> MarkdownBlock.TaskItem in
                             let checked = item.checkbox == .checked
-                            let content: [MarkdownBlock] = [.paragraph(convertInlines(item.content, context: context))]
-                            return MarkdownBlock.TaskItem(checked: checked, content: content)
+                            var inlines = convertInlines(item.content, context: context)
+                            // One item per line, so an item's line follows from the
+                            // list's. It travels as a marker at the start of the item:
+                            // the Markdown this becomes is parsed again, and its own
+                            // line numbers are not the Org file's.
+                            // A plain item in the list is marked line 0: it has no box,
+                            // and the Markdown's own line must not stand in for the Org's.
+                            if let line {
+                                let itemLine = item.checkbox == nil ? 0 : line + offset
+                                inlines.insert(.html(MarkdownSourceLineMarker.markup(line: itemLine)), at: 0)
+                            }
+                            return MarkdownBlock.TaskItem(checked: checked, content: [.paragraph(inlines)])
                         }
                         result.append(.taskList(taskItems))
                     } else {
@@ -183,7 +236,7 @@ enum OrgToMarkdownConverter {
                 result.append(.codeBlock(language: language, code: code))
 
             case .quote(let children):
-                let converted = convert(children, context: context)
+                let converted = convert(children, lines: nil, context: context)
                 result.append(.blockQuote(converted))
 
             case .keyword(let key, let value):
@@ -224,7 +277,7 @@ enum OrgToMarkdownConverter {
 
             case .planning(let entries):
                 let bar = entries.map {
-                    OrgBadges.planning($0, headingIsDone: headingIsDone, clock: context.clock)
+                    OrgBadges.planning($0, headingIsDone: headingIsDone, clock: context.clock, headingLine: headingLine)
                 }
                 result.append(.paragraph(bar.map { .html($0.markup) }))
 

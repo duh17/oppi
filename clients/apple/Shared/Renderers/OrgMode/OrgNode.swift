@@ -53,8 +53,14 @@ enum OrgBlock: Equatable, Sendable {
     case planning([OrgPlanningEntry])
 }
 
+/// A top-level block with the 1-based source line it starts on.
+struct LocatedOrgBlock: Equatable, Sendable {
+    let block: OrgBlock
+    let line: Int
+}
+
 /// The keyword a planning line entry starts with.
-enum OrgPlanningKind: Equatable, Sendable {
+enum OrgPlanningKind: Equatable, Hashable, Sendable {
     case scheduled
     case deadline
     case closed

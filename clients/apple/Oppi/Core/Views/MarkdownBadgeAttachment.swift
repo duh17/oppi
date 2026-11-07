@@ -12,7 +12,7 @@ import UIKit
 /// the previous segment's arrow drawn on its own fill, so adjacent segments
 /// meet edge to edge and a segment that wraps to a new line still shows where
 /// it came from. Only the bar's last segment ends in its own arrow.
-final class MarkdownBadgeAttachment: NSTextAttachment {
+final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachment {
     struct Style: Equatable {
         let fill: UIColor
         let ink: UIColor
@@ -26,6 +26,8 @@ final class MarkdownBadgeAttachment: NSTextAttachment {
     private(set) var text: String
     private(set) var symbol: String?
     private(set) var style: Style
+    /// The source line this badge edits, when the reader can save its file.
+    let control: ReaderTaskControl?
     private var spokenLabel: String
     /// Used when TextKit does not say which font the badge sits in.
     private let fallbackFont: UIFont
@@ -77,6 +79,7 @@ final class MarkdownBadgeAttachment: NSTextAttachment {
         text = badge.text
         symbol = badge.symbol
         spokenLabel = badge.label
+        control = badge.control
         self.style = style
         self.fallbackFont = fallbackFont
         super.init(data: nil, ofType: nil)
@@ -100,12 +103,17 @@ final class MarkdownBadgeAttachment: NSTextAttachment {
         static let endsInArrow = "oppi.badge.endsInArrow"
         static let isCapsule = "oppi.badge.isCapsule"
         static let fontSize = "oppi.badge.fontSize"
+        static let control = "oppi.badge.control"
+        static let line = "oppi.badge.line"
     }
 
     required init?(coder: NSCoder) {
         text = coder.decodeObject(of: NSString.self, forKey: Key.text) as String? ?? ""
         symbol = coder.decodeObject(of: NSString.self, forKey: Key.symbol) as String?
         spokenLabel = coder.decodeObject(of: NSString.self, forKey: Key.label) as String? ?? text
+        control = (coder.decodeObject(of: NSString.self, forKey: Key.control) as String?).flatMap { name in
+            ReaderTaskControl(name: name, line: String(coder.decodeInteger(forKey: Key.line)))
+        }
         style = Style(
             fill: coder.decodeObject(of: UIColor.self, forKey: Key.fill) ?? .systemGray,
             ink: coder.decodeObject(of: UIColor.self, forKey: Key.ink) ?? .label,
@@ -129,6 +137,8 @@ final class MarkdownBadgeAttachment: NSTextAttachment {
         coder.encode(style.endsInArrow, forKey: Key.endsInArrow)
         coder.encode(style.isCapsule, forKey: Key.isCapsule)
         coder.encode(Double(fallbackFont.pointSize), forKey: Key.fontSize)
+        coder.encode(control?.kindName as NSString?, forKey: Key.control)
+        coder.encode(control?.line ?? 0, forKey: Key.line)
     }
 
     // Segments build off the main actor, where `accessibilityLabel`'s setter is
@@ -210,7 +220,7 @@ final class MarkdownBadgeAttachment: NSTextAttachment {
         let arrowDepth = style.isCapsule ? 0 : height * 0.3
         let symbolImage = symbolImage(font: textFont)
         let symbolWidth = symbolImage?.size.width ?? 0
-        let symbolGap = symbolImage == nil ? 0 : size * 0.3
+        let symbolGap = symbolImage == nil || text.isEmpty ? 0 : size * 0.3
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: textFont]).width)
         let leading = style.joinFill == nil ? 0 : arrowDepth
         let trailing = style.endsInArrow ? arrowDepth : 0

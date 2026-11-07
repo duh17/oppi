@@ -23,14 +23,33 @@ enum OrgBadges {
     /// Done states that mean dropped rather than finished, by name.
     private static let droppedPrefixes = ["CANCEL", "KILL", "ABANDON", "DROP", "WONTFIX"]
 
-    static func state(_ keyword: String, isDone: Bool) -> MarkdownBadge {
+    /// The state segment of the heading on `line`; tapping it changes the state.
+    static func state(_ keyword: String, isDone: Bool, line: Int? = nil) -> MarkdownBadge {
         let tone: MarkdownBadge.Tone
         if isDone {
             tone = droppedPrefixes.contains(where: keyword.hasPrefix) ? .muted : .success
         } else {
             tone = waitingPrefixes.contains(where: keyword.hasPrefix) ? .warning : .accent
         }
-        return MarkdownBadge(text: keyword, label: keyword.lowercased().capitalized, tone: tone)
+        return MarkdownBadge(
+            text: keyword,
+            label: keyword.lowercased().capitalized,
+            tone: tone,
+            control: line.map { ReaderTaskControl(kind: .state, line: $0) }
+        )
+    }
+
+    /// What a heading without a state offers a reader that can save its file:
+    /// the way to give it one.
+    static func addState(line: Int) -> MarkdownBadge {
+        MarkdownBadge(
+            text: "",
+            label: "No state",
+            tone: .quiet,
+            symbol: "circle.dashed",
+            control: ReaderTaskControl(kind: .state, line: line),
+            isPlaceholder: true
+        )
     }
 
     static func priority(_ priority: String) -> MarkdownBadge {
@@ -66,13 +85,23 @@ enum OrgBadges {
 
     /// A planning entry as a dated segment. A deadline still open after it
     /// passed warns.
-    static func planning(_ entry: OrgPlanningEntry, headingIsDone: Bool, clock: Clock) -> MarkdownBadge {
+    static func planning(
+        _ entry: OrgPlanningEntry,
+        headingIsDone: Bool,
+        clock: Clock,
+        headingLine: Int? = nil
+    ) -> MarkdownBadge {
+        // Scheduled and Deadline change under the heading; Closed is a record.
+        let control = headingLine.flatMap { line in
+            entry.kind == .closed ? nil : ReaderTaskControl(kind: .date(entry.kind), line: line)
+        }
         guard let date = OrgDate(entry.timestamp.text, calendar: clock.calendar) else {
             return MarkdownBadge(
                 text: entry.timestamp.text,
                 label: "\(entry.kind.label) \(entry.timestamp.text)",
                 tone: .neutral,
-                symbol: symbol(for: entry.kind, overdue: false)
+                symbol: symbol(for: entry.kind, overdue: false),
+                control: control
             )
         }
         let overdue = entry.kind == .deadline && !headingIsDone && date.hasPassed(clock: clock)
@@ -87,7 +116,8 @@ enum OrgBadges {
             text: date.shown(clock: clock),
             label: label,
             tone: tone,
-            symbol: symbol(for: entry.kind, overdue: overdue)
+            symbol: symbol(for: entry.kind, overdue: overdue),
+            control: control
         )
     }
 

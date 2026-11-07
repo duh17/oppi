@@ -671,9 +671,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             lineAnchorNotice: onLineAnchorNotice,
             editItems: editOwner.barItems,
             markdownViewportIntent: markdownViewportRestore?.state[path],
-            onMarkdownViewportIntentChange: { [weak self] intent in
-                self?.markdownViewportRestore?.state[path] = intent
-            },
+            onMarkdownViewportIntentChange: { [weak self] in self?.markdownViewportRestore?.state[path] = $0 },
+            taskEditing: editOwner.makeReaderTaskEditing(path: path) { [weak self] text in if self?.isCurrentFile(path) == true { self?.content = .text(text) } },
             addToChatDestination: configuration.addToChatDestination
         )
         reader.setLeadingFloatingAccessoryCount(leadingAccessoryCount)

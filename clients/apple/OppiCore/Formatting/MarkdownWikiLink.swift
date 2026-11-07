@@ -1006,7 +1006,8 @@ enum MarkdownWikiLinkRewriter {
             return .taskList(items.map { item in
                 MarkdownBlock.TaskItem(
                     checked: item.checked,
-                    content: rewrite(blocks: item.content, context: context)
+                    content: rewrite(blocks: item.content, context: context),
+                    sourceLine: item.sourceLine
                 )
             })
         case .table(let headers, let rows):

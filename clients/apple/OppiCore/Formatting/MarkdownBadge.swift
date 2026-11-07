@@ -41,13 +41,28 @@ struct MarkdownBadge: Equatable, Sendable {
     let shape: Shape
     /// SF Symbol drawn before the text.
     let symbol: String?
+    /// The source line this badge edits, for a reader that can save its file.
+    let control: ReaderTaskControl?
+    /// Stands in for a control the document does not have yet (the state of a
+    /// heading without one). The reader draws it only where the control works.
+    let isPlaceholder: Bool
 
-    init(text: String, label: String, tone: Tone, shape: Shape = .segment, symbol: String? = nil) {
+    init(
+        text: String,
+        label: String,
+        tone: Tone,
+        shape: Shape = .segment,
+        symbol: String? = nil,
+        control: ReaderTaskControl? = nil,
+        isPlaceholder: Bool = false
+    ) {
         self.text = text
         self.label = label
         self.tone = tone
         self.shape = shape
         self.symbol = symbol
+        self.control = control
+        self.isPlaceholder = isPlaceholder
     }
 
     private static let openTag = "<oppi-badge"
@@ -61,6 +76,11 @@ struct MarkdownBadge: Equatable, Sendable {
             ("label", label),
         ]
         if let symbol { attributes.append(("symbol", symbol)) }
+        if let control {
+            attributes.append(("control", control.kindName))
+            attributes.append(("line", String(control.line)))
+        }
+        if isPlaceholder { attributes.append(("placeholder", "1")) }
         let body = attributes.map { "\($0.0)=\"\(Self.escape($0.1))\"" }.joined(separator: " ")
         return "\(Self.openTag) \(body)/>"
     }
@@ -79,7 +99,11 @@ struct MarkdownBadge: Equatable, Sendable {
             label: attributes["label"] ?? text,
             tone: tone,
             shape: attributes["shape"].flatMap(Shape.init(rawValue:)) ?? .segment,
-            symbol: attributes["symbol"]
+            symbol: attributes["symbol"],
+            control: attributes["control"].flatMap { name in
+                attributes["line"].flatMap { ReaderTaskControl(name: name, line: $0) }
+            },
+            isPlaceholder: attributes["placeholder"] == "1"
         )
     }
 

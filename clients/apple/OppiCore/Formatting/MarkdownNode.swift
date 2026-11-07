@@ -19,6 +19,15 @@ indirect enum MarkdownBlock: Equatable, Sendable {
     struct TaskItem: Equatable, Sendable {
         let checked: Bool
         let content: [MarkdownBlock]
+        /// The 1-based source line the item's checkbox is on, when the parse
+        /// knows it: a reader that can save the file toggles that line.
+        var sourceLine: Int?
+
+        init(checked: Bool, content: [MarkdownBlock], sourceLine: Int? = nil) {
+            self.checked = checked
+            self.content = content
+            self.sourceLine = sourceLine
+        }
     }
 }
 

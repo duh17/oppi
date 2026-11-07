@@ -809,4 +809,134 @@ struct DocumentEditOwnerTests {
         #expect(await owner.read() == .ownRead)
         #expect(identifiers(owner) == ["document.edit.more"])
     }
+
+    // MARK: Edits from the reader
+
+    /// What the transport was asked to write, and under which version.
+    @MainActor
+    private final class WriteLog {
+        private(set) var bytes: [Data] = []
+        private(set) var conditions: [WorkspaceFileWriteCondition] = []
+        func note(_ data: Data, _ condition: WorkspaceFileWriteCondition) {
+            bytes.append(data)
+            conditions.append(condition)
+        }
+    }
+
+    private func readerEditOwner(
+        path: String = "tasks.org",
+        fileType: FileType = .orgMode,
+        text: String,
+        log: WriteLog,
+        outcome: WorkspaceFileWriteOutcome,
+        autoSave: Bool = false
+    ) -> DocumentEditOwner {
+        let transport = WorkspaceFileEditTransport(
+            read: { _ in .failed },
+            write: { _, bytes, condition in
+                await log.note(bytes, condition)
+                return outcome
+            }
+        )
+        return owner(
+            subject: workspaceSubject(path: path, fileType: fileType),
+            capability: capability,
+            snapshot: WorkspaceFileDiskSnapshot(bytes: Data(text.utf8), etag: tag("a")),
+            transport: transport,
+            autoSave: autoSave
+        )
+    }
+
+    /// A tapped checkbox saves only the edited text, under the version the reader
+    /// read, even with Auto-Save off, and the next edit rides the newer version.
+    @Test func aReaderEditWritesTheEditedTextUnderTheReadVersion() async {
+        let log = WriteLog()
+        let owner = readerEditOwner(text: "* TODO a\n- [ ] x\n- [ ] y\n", log: log, outcome: .saved(etag: tag("b")))
+        _ = await owner.read()
+        #expect(owner.allowsReaderEdits)
+
+        let first = await owner.saveReaderEdit { TaskSourceEdit.toggleCheckbox(in: $0, line: 2, dialect: .org) }
+        #expect(first == .saved("* TODO a\n- [X] x\n- [ ] y\n"))
+        #expect(log.bytes == [Data("* TODO a\n- [X] x\n- [ ] y\n".utf8)])
+        #expect(log.conditions == [.version(tag("a"))])
+        #expect(!owner.isEditing, "a saved edit leaves the reader as it was")
+
+        let second = await owner.saveReaderEdit { TaskSourceEdit.toggleCheckbox(in: $0, line: 3, dialect: .org) }
+        #expect(second == .saved("* TODO a\n- [X] x\n- [X] y\n"))
+        #expect(log.conditions.last == .version(tag("b")), "the second save is conditioned on the first save's version")
+    }
+
+    /// A file that changed on disk is a conflict, not an overwrite: the write is
+    /// refused by its version check, the editor opens with the edit in its
+    /// buffer, and nothing writes again by itself.
+    @Test func aReaderEditOnAChangedFileOpensTheEditorOnTheConflict() async {
+        let log = WriteLog()
+        let owner = readerEditOwner(text: "* TODO a\n- [ ] x\n", log: log, outcome: .stale)
+        _ = await owner.read()
+
+        let outcome = await owner.saveReaderEdit { TaskSourceEdit.toggleCheckbox(in: $0, line: 2, dialect: .org) }
+
+        #expect(outcome == .needsAttention)
+        #expect(log.conditions == [.version(tag("a"))], "one conditional write, never a retry or an unconditional one")
+        #expect(owner.isEditing, "the existing editor shows the conflict banner")
+        #expect(owner.session?.status == .conflict)
+        #expect(owner.session?.currentText == "* TODO a\n- [X] x\n", "the edit waits in the buffer for the person's choice")
+        #expect(!owner.allowsReaderEdits, "the reader's controls rest while the editor is open")
+    }
+
+    @Test func anEditThatChangesNothingWritesNothing() async {
+        let log = WriteLog()
+        let owner = readerEditOwner(text: "* TODO a\n", log: log, outcome: .saved(etag: tag("b")))
+        _ = await owner.read()
+
+        #expect(await owner.saveReaderEdit { _ in nil } == .unchanged)
+        #expect(await owner.saveReaderEdit { $0 } == .unchanged)
+        #expect(log.bytes.isEmpty)
+    }
+
+    /// A file the editor cannot save (a host file, or one the server does not
+    /// edit) has no controls: the reader never offers what it cannot keep.
+    @Test func aFileTheEditorCannotSaveAllowsNoReaderEdits() async {
+        let log = WriteLog()
+        let transport = WorkspaceFileEditTransport(
+            read: { _ in .failed },
+            write: { _, bytes, condition in
+                await log.note(bytes, condition)
+                return .saved(etag: "x")
+            }
+        )
+        let hostFile = DocumentEditSubject.file(
+            serverId: "srv",
+            source: .hostFile,
+            workspaceId: "",
+            worktreeId: nil,
+            path: "/Users/alex/notebook/projects/oppi.org",
+            skillFile: nil,
+            fileType: .orgMode
+        )
+        let host = owner(subject: hostFile, capability: capability, transport: transport)
+        #expect(await host.read() == .ownRead)
+        #expect(!host.allowsReaderEdits)
+        #expect(await host.saveReaderEdit { $0 + "x" } == .unavailable)
+
+        let notEditable = owner(
+            subject: workspaceSubject(path: "tasks.org", fileType: .orgMode),
+            capability: nil,
+            transport: transport
+        )
+        _ = await notEditable.read()
+        #expect(!notEditable.allowsReaderEdits)
+
+        let untagged = owner(
+            subject: workspaceSubject(path: "tasks.org", fileType: .orgMode),
+            capability: capability,
+            snapshot: WorkspaceFileDiskSnapshot(bytes: Data("* TODO a".utf8), etag: nil),
+            transport: transport
+        )
+        _ = await untagged.read()
+        #expect(!untagged.allowsReaderEdits)
+        #expect(await notEditable.saveReaderEdit { $0 + "x" } == .unavailable)
+        #expect(await untagged.saveReaderEdit { $0 + "x" } == .unavailable)
+        #expect(log.bytes.isEmpty, "nothing is written for a file the reader cannot save")
+    }
 }

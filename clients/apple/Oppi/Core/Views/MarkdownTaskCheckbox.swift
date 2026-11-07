@@ -20,13 +20,20 @@ enum MarkdownTaskCheckbox {
         let laterParagraph: NSParagraphStyle
     }
 
-    static func item(checked: Bool, palette: ThemePalette, font: UIFont = AppFont.messageBody) -> Item {
+    /// `line` is the source line of the item's box, when the reader knows it.
+    static func item(
+        checked: Bool,
+        palette: ThemePalette,
+        font: UIFont = AppFont.messageBody,
+        line: Int? = nil
+    ) -> Item {
         let column = max(hitSize, ceil(font.lineHeight * 1.6))
         let attachment = TaskCheckboxAttachment(
             isChecked: checked,
             tint: checked ? palette.ui.green : palette.ui.fgDim,
             column: column,
-            fallbackFont: font
+            fallbackFont: font,
+            control: line.map { ReaderTaskControl(kind: .checkbox, line: $0) }
         )
         var checkbox = AttributedString(NSAttributedString(attachment: attachment))
         // The font travels with the run, so reader text scaling reaches the glyph.
@@ -49,8 +56,9 @@ enum MarkdownTaskCheckbox {
 
 /// Draws a square checkbox SF Symbol centred in the item's leading column,
 /// sized from the font of the line it sits in.
-final class TaskCheckboxAttachment: NSTextAttachment {
+final class TaskCheckboxAttachment: NSTextAttachment, ReaderTaskControlAttachment {
     let isChecked: Bool
+    let control: ReaderTaskControl?
     private let tint: UIColor
     /// Width of the leading column the glyph is centred in.
     private let column: CGFloat
@@ -58,7 +66,8 @@ final class TaskCheckboxAttachment: NSTextAttachment {
 
     override class var supportsSecureCoding: Bool { true }
 
-    init(isChecked: Bool, tint: UIColor, column: CGFloat, fallbackFont: UIFont) {
+    init(isChecked: Bool, tint: UIColor, column: CGFloat, fallbackFont: UIFont, control: ReaderTaskControl? = nil) {
+        self.control = control
         self.isChecked = isChecked
         self.tint = tint
         self.column = column
@@ -76,9 +85,12 @@ final class TaskCheckboxAttachment: NSTextAttachment {
         static let tint = "oppi.taskCheckbox.tint"
         static let column = "oppi.taskCheckbox.column"
         static let fontSize = "oppi.taskCheckbox.fontSize"
+        static let line = "oppi.taskCheckbox.line"
     }
 
     required init?(coder: NSCoder) {
+        let line = coder.decodeInteger(forKey: Key.line)
+        control = line > 0 ? ReaderTaskControl(kind: .checkbox, line: line) : nil
         isChecked = coder.decodeBool(forKey: Key.checked)
         tint = coder.decodeObject(of: UIColor.self, forKey: Key.tint) ?? .secondaryLabel
         let column = coder.decodeDouble(forKey: Key.column)
@@ -94,6 +106,7 @@ final class TaskCheckboxAttachment: NSTextAttachment {
         coder.encode(tint, forKey: Key.tint)
         coder.encode(Double(column), forKey: Key.column)
         coder.encode(Double(fallbackFont.pointSize), forKey: Key.fontSize)
+        coder.encode(control?.line ?? 0, forKey: Key.line)
     }
 
     // Segments build off the main actor; UIKit reads the label on the main

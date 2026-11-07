@@ -714,15 +714,24 @@ enum DocumentRenderPipeline {
     /// synchronous, so cancellation is checked between each independently
     /// meaningful stage and prevents conversion/serialization after a cancelled
     /// parse instead of letting stale work run through the whole pipeline.
+    ///
+    /// Task items, states and dates in the Markdown carry their Org source line.
+    /// `offersStateControl` is for a reader that can save the file: a heading
+    /// without a state then carries the control that adds one.
     static func orgToMarkdown(
         _ source: String,
         documentPath: String? = nil,
+        offersStateControl: Bool = false,
         cancellationCheck: @escaping @Sendable () -> Bool
     ) -> String? {
         guard !cancellationCheck() else { return nil }
-        let orgBlocks = OrgParser().parse(source)
+        let orgBlocks = OrgParser().parseLocated(source)
         guard !cancellationCheck() else { return nil }
-        let mdBlocks = OrgToMarkdownConverter.convert(orgBlocks, documentPath: documentPath)
+        let mdBlocks = OrgToMarkdownConverter.convert(
+            located: orgBlocks,
+            documentPath: documentPath,
+            offersStateControl: offersStateControl
+        )
         guard !cancellationCheck() else { return nil }
         let markdown = MarkdownBlockSerializer.serialize(mdBlocks)
         guard !cancellationCheck() else { return nil }

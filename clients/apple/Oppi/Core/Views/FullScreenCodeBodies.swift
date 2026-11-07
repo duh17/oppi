@@ -99,6 +99,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
             stackView.addArrangedSubview(view)
             if let textView = view as? BaselineSafeTextView {
                 textView.delegate = self
+                textView.taskControlHandler = segmentApplier.taskControlHandler
             }
             if let imageView = view as? NativeMarkdownImageView {
                 imageView.activatePreparedDisplay()
@@ -141,8 +142,10 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
     fileprivate func bindReaderChrome(
         lineAnchorModeEnabled: Bool,
         textViewDelegate: any UITextViewDelegate,
-        doubleTapActivation: (() -> Void)?
+        doubleTapActivation: (() -> Void)?,
+        taskControlHandler: (any ReaderTaskControlHandling)? = nil
     ) {
+        segmentApplier.taskControlHandler = taskControlHandler
         // The source-line enclosure is painted by the reader's overlay. Keep
         // the arranged content at the ledger's canonical width instead of
         // consuming 28 points here after graphical artifacts were prepared.
@@ -404,6 +407,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     /// providers are the ones its owner supplied for this document.
     private let resourceAccess: MarkdownResourceAccess
     private let sourceFilePath: String?
+    /// Set when the reader can save the document: its checkboxes, Org states
+    /// and dates then work.
+    private let taskEditing: ReaderTaskEditing?
     private let lineAnchor: SourceLineAnchor?
     private let lineAnchorResolution: SourceLineAnchorResolution?
     private let maximumViewportHeight: CGFloat?
@@ -480,6 +486,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         textSelectionEnabled: Bool = true,
         resourceAccess: MarkdownResourceAccess = .empty,
         sourceFilePath: String? = nil,
+        taskEditing: ReaderTaskEditing? = nil,
         lineAnchor: SourceLineAnchor? = nil,
         focusLineAnchor: Bool = true,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.markdown.defaultPreferences,
@@ -502,6 +509,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.textSelectionEnabled = textSelectionEnabled
         self.resourceAccess = resourceAccess
         self.sourceFilePath = sourceFilePath
+        self.taskEditing = taskEditing
         self.lineAnchor = lineAnchor
         let initialText = content
         self.lineAnchorResolution = lineAnchor?.resolution(fileContent: initialText)
@@ -708,13 +716,15 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
     nonisolated private static func prepareOrgModeSource(
         _ source: String,
-        documentPath: String?
+        documentPath: String?,
+        editable: Bool
     ) -> PreparedOrgModeSource? {
         let started = DispatchTime.now().uptimeNanoseconds
         let ranOnMainThread = Thread.isMainThread
         guard let markdown = DocumentRenderPipeline.orgToMarkdown(
             source,
             documentPath: documentPath,
+            offersStateControl: editable,
             cancellationCheck: { Task<Never, Never>.isCancelled }
         ) else { return nil }
         return PreparedOrgModeSource(
@@ -726,11 +736,12 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
     private func scheduleOrgModeSourcePreparation(source: String) {
         let documentPath = sourceFilePath
+        let editable = taskEditing != nil
         sourcePreparationTask?.cancel()
         sourcePreparationTask = Task { @MainActor [weak self] in
             let prepared: PreparedOrgModeSource? = await withCancellableDetachedTask(priority: .userInitiated) {
                 guard !Task.isCancelled else { return nil }
-                return Self.prepareOrgModeSource(source, documentPath: documentPath)
+                return Self.prepareOrgModeSource(source, documentPath: documentPath, editable: editable)
             }
             guard let self, let prepared, !Task.isCancelled else { return }
             self.sourcePreparationTask = nil
@@ -1182,7 +1193,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         cell.bindReaderChrome(
             lineAnchorModeEnabled: lineAnchor != nil,
             textViewDelegate: self,
-            doubleTapActivation: viewportDoubleTapActivation
+            doubleTapActivation: viewportDoubleTapActivation,
+            taskControlHandler: taskEditing
         )
         cell.appliedItemIndex = indexPath.item
         cell.appliedSegmentID = renderedSegmentIDs.indices.contains(indexPath.item)
@@ -1755,7 +1767,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         cell.bindReaderChrome(
             lineAnchorModeEnabled: lineAnchor != nil,
             textViewDelegate: self,
-            doubleTapActivation: viewportDoubleTapActivation
+            doubleTapActivation: viewportDoubleTapActivation,
+            taskControlHandler: taskEditing
         )
         cell.appliedItemIndex = item
         cell.appliedSegmentID = id

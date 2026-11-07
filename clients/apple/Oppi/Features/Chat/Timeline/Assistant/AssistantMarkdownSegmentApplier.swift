@@ -250,6 +250,9 @@ private final class MarkdownChunkSettleAnimator {
 final class AssistantMarkdownSegmentApplier {
     private let stackView: UIStackView
     private weak var textViewDelegate: (any UITextViewDelegate)?
+    /// Set by a reader that can save its file: the text views it builds then
+    /// carry working task controls.
+    weak var taskControlHandler: (any ReaderTaskControlHandling)?
 
     /// Segment types currently rendered — used for structural diff.
     private var renderedSegmentSignatures: [SegmentSignature] = []
@@ -1365,6 +1368,7 @@ final class AssistantMarkdownSegmentApplier {
         _ textView: BaselineSafeTextView,
         sourceLineRange: ClosedRange<Int>?
     ) {
+        textView.taskControlHandler = taskControlHandler
         textView.reviewCommentSourceLineRangeResolver = { [weak textView] range in
             guard let sourceLineRange else { return nil }
             guard let textView else { return sourceLineRange }

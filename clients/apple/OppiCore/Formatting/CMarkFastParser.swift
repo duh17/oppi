@@ -949,6 +949,7 @@ private func convertCMarkBlock(
         var items: [[MarkdownBlock]] = []
         var hasTaskItems = false
         var itemCheckedStates: [Bool?] = []
+        var itemStartLines: [Int] = []
 
         var item = cmark_node_first_child(node)
         while let itemNode = item {
@@ -962,6 +963,7 @@ private func convertCMarkBlock(
             }
             let checked = isTask && cmark_gfm_extensions_get_tasklist_item_checked(itemNode)
             itemCheckedStates.append(isTask ? checked : nil)
+            itemStartLines.append(Int(cmark_node_get_start_line(itemNode)))
 
             var itemBlocks: [MarkdownBlock] = []
             var itemChild = cmark_node_first_child(itemNode)
@@ -976,8 +978,14 @@ private func convertCMarkBlock(
         }
 
         if hasTaskItems {
-            let taskItems = zip(itemCheckedStates, items).map { state, content in
-                MarkdownBlock.TaskItem(checked: state ?? false, content: content)
+            let taskItems = zip(zip(itemCheckedStates, itemStartLines), items).map { entry, content in
+                // A plain item in a list that has tasks has no box to toggle.
+                var sourceLine = entry.0 == nil || entry.1 <= 0 ? nil : entry.1
+                var content = content
+                // Org converts to Markdown that is parsed again, so the line this
+                // parse sees is not the Org file's: the converter's marker is.
+                if let marked = takeSourceLineMarker(from: &content) { sourceLine = marked > 0 ? marked : nil }
+                return MarkdownBlock.TaskItem(checked: entry.0 ?? false, content: content, sourceLine: sourceLine)
             }
             return .taskList(taskItems)
         } else if listType == CMARK_ORDERED_LIST {
@@ -1001,6 +1009,29 @@ private func convertCMarkBlock(
                 return convertCMarkTable(node, restoration: restoration)
             }
         }
+        return nil
+    }
+}
+
+/// Removes the `MarkdownSourceLineMarker` that starts a task item, and returns
+/// the line it names.
+private func takeSourceLineMarker(from content: inout [MarkdownBlock]) -> Int? {
+    switch content.first {
+    case .paragraph(var inlines)?:
+        guard case .html(let raw)? = inlines.first, let line = MarkdownSourceLineMarker.line(in: raw) else { return nil }
+        inlines.removeFirst()
+        if inlines.isEmpty {
+            content.removeFirst()
+        } else {
+            content[0] = .paragraph(inlines)
+        }
+        return line
+    case .htmlBlock(let raw)?:
+        // A marker with nothing after it on its line is an HTML block.
+        guard let line = MarkdownSourceLineMarker.line(in: raw) else { return nil }
+        content.removeFirst()
+        return line
+    default:
         return nil
     }
 }

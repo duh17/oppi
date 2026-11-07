@@ -14,6 +14,29 @@ import UIKit
 final class BaselineSafeTextView: UITextView, ReviewCommentSourceLineRangeResolving {
     var reviewCommentSourceLineRangeResolver: ((NSRange) -> ClosedRange<Int>?)?
 
+    /// Owns what the task controls in the text do (a reader that can save its
+    /// file sets it). Without one the text has no tappable control and no
+    /// control for VoiceOver.
+    weak var taskControlHandler: (any ReaderTaskControlHandling)? {
+        didSet { if taskControlHandler !== oldValue { taskAccessibilityCache = nil } }
+    }
+    var taskAttachmentScan: TaskAttachmentScan?
+    var taskAccessibilityCache: TaskAccessibilityCache?
+    lazy var taskTouchTarget = ReaderTaskTouchTarget()
+
+    override var attributedText: NSAttributedString? {
+        didSet { invalidateTaskControls() }
+    }
+
+    /// A control gets the touch ahead of the text view's own gestures.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if let located = taskControl(at: point) {
+            aimTaskTouchTarget(at: located)
+            return taskTouchTarget
+        }
+        return super.hitTest(point, with: event)
+    }
+
     func reviewCommentSourceLineRange(for range: NSRange) -> ClosedRange<Int>? {
         reviewCommentSourceLineRangeResolver?(range)
     }
@@ -51,6 +74,18 @@ final class BaselineSafeTextView: UITextView, ReviewCommentSourceLineRangeResolv
     }
 
     // MARK: - Accessibility
+
+    /// Text with badges or checkboxes speaks through lines of its own (UIKit's
+    /// leave the attachments out), so it is a container, not one element.
+    override var isAccessibilityElement: Bool {
+        get { usesSpokenLines ? false : super.isAccessibilityElement }
+        set { super.isAccessibilityElement = newValue }
+    }
+
+    override var accessibilityElements: [Any]? {
+        get { usesSpokenLines ? spokenElements() : super.accessibilityElements }
+        set { super.accessibilityElements = newValue }
+    }
 
     /// UIKit drops attachments (badges, inline formulas) from a text view's
     /// spoken text. Speak each attachment's own label where it sits instead.

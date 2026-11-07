@@ -347,6 +347,7 @@ extension FullScreenCodeContent {
                 ),
                 resourceAccess: resourceAccess,
                 sourceFilePath: filePath,
+                taskEditing: context.taskEditing,
                 lineAnchor: context.lineAnchor,
                 focusLineAnchor: context.focusLineAnchor,
                 readerPreferences: readerPreferences,
@@ -444,6 +445,7 @@ extension FullScreenCodeContent {
                     languageHint: "org"
                 ),
                 sourceFilePath: filePath,
+                taskEditing: context.taskEditing,
                 readerPreferences: readerPreferences,
                 perfSurface: .fullScreenMarkdown
             )
@@ -605,6 +607,9 @@ struct ReaderBodyContext {
     let lineAnchor: SourceLineAnchor?
     /// False when a restored reading position outranks the line anchor.
     let focusLineAnchor: Bool
+    /// Set when the reader's owner can save the document: Markdown and Org
+    /// bodies then draw working task controls.
+    let taskEditing: ReaderTaskEditing?
     /// Keeps the trace observation of the body being built; the reader ends it
     /// when that body leaves.
     let adoptTrace: (ReaderTraceToken) -> Void

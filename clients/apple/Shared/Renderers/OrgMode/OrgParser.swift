@@ -40,8 +40,20 @@ struct OrgParser: DocumentParser, Sendable {
     }
 
     nonisolated func parse(_ source: String) -> [OrgBlock] {
+        parseLocated(source).map(\.block)
+    }
+
+    /// The top-level blocks with the 1-based source line each starts on, for
+    /// readers that edit the lines a block came from.
+    nonisolated func parseLocated(_ source: String) -> [LocatedOrgBlock] {
         let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
         return parseBlocks(lines: lines, todoKeywords: scanTodoKeywords(lines))
+    }
+
+    /// The keywords `parse` classifies headings with: the file's `#+TODO:`
+    /// declarations, or the defaults.
+    nonisolated func todoKeywords(in source: String) -> OrgTodoKeywords {
+        scanTodoKeywords(source.split(separator: "\n", omittingEmptySubsequences: false))
     }
 
     /// Org applies `#+TODO:` to the whole file wherever the line sits, so the
@@ -71,9 +83,12 @@ struct OrgParser: DocumentParser, Sendable {
         return declarations.isEmpty ? .standard : OrgTodoKeywords.declared(in: declarations)
     }
 
-    private func parseBlocks(lines: [Substring], todoKeywords: OrgTodoKeywords) -> [OrgBlock] {
+    private func parseBlocks(lines: [Substring], todoKeywords: OrgTodoKeywords) -> [LocatedOrgBlock] {
         var cursor = 0
-        var blocks: [OrgBlock] = []
+        var blocks: [LocatedOrgBlock] = []
+        func add(_ block: OrgBlock) {
+            blocks.append(LocatedOrgBlock(block: block, line: cursor + 1))
+        }
         // Line a planning line may sit on: directly under a heading.
         var planningCursor = -1
 
@@ -81,7 +96,7 @@ struct OrgParser: DocumentParser, Sendable {
             let line = lines[cursor]
 
             if cursor == planningCursor, let planning = parsePlanning(line) {
-                blocks.append(planning)
+                add(planning)
                 cursor += 1
                 continue
             }
@@ -98,7 +113,7 @@ struct OrgParser: DocumentParser, Sendable {
             case "*":
                 // Possible heading (stars + space)
                 if let heading = parseHeading(line, todoKeywords: todoKeywords) {
-                    blocks.append(heading)
+                    add(heading)
                     cursor += 1
                     planningCursor = cursor
                     continue
@@ -112,7 +127,7 @@ struct OrgParser: DocumentParser, Sendable {
                     // Block delimiters take priority
                     if trimmed.uppercased().hasPrefix("#+BEGIN_SRC") {
                         let (block, newCursor) = parseCodeBlock(lines: lines, startCursor: cursor)
-                        blocks.append(block)
+                        add(block)
                         cursor = newCursor
                         continue
                     }
@@ -120,18 +135,18 @@ struct OrgParser: DocumentParser, Sendable {
                         let (block, newCursor) = parseQuoteBlock(
                             lines: lines, startCursor: cursor, todoKeywords: todoKeywords
                         )
-                        blocks.append(block)
+                        add(block)
                         cursor = newCursor
                         continue
                     }
                     if let keyword = parseKeyword(line) {
-                        blocks.append(keyword)
+                        add(keyword)
                         cursor += 1
                         continue
                     }
                 }
                 if let comment = parseComment(line) {
-                    blocks.append(comment)
+                    add(comment)
                     cursor += 1
                     continue
                 }
@@ -141,12 +156,12 @@ struct OrgParser: DocumentParser, Sendable {
                 // - followed by space → list item; 5+ dashes → horizontal rule
                 if isListItemStart(line) {
                     let (list, newCursor) = parseList(lines: lines, startCursor: cursor)
-                    blocks.append(list)
+                    add(list)
                     cursor = newCursor
                     continue
                 }
                 if isHorizontalRule(line) {
-                    blocks.append(.horizontalRule)
+                    add(.horizontalRule)
                     cursor += 1
                     continue
                 }
@@ -155,14 +170,14 @@ struct OrgParser: DocumentParser, Sendable {
             case "+":
                 if isListItemStart(line) {
                     let (list, newCursor) = parseList(lines: lines, startCursor: cursor)
-                    blocks.append(list)
+                    add(list)
                     cursor = newCursor
                     continue
                 }
 
             case "|":
                 let (block, newCursor) = parseTable(lines: lines, startCursor: cursor)
-                blocks.append(block)
+                add(block)
                 cursor = newCursor
                 continue
 
@@ -170,7 +185,7 @@ struct OrgParser: DocumentParser, Sendable {
                 let trimmed = Self.stripped(line)
                 if isDrawerStart(trimmed[...]) {
                     let (block, newCursor) = parseDrawer(lines: lines, startCursor: cursor)
-                    blocks.append(block)
+                    add(block)
                     cursor = newCursor
                     continue
                 }
@@ -178,7 +193,7 @@ struct OrgParser: DocumentParser, Sendable {
             case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
                 if isListItemStart(line) {
                     let (list, newCursor) = parseList(lines: lines, startCursor: cursor)
-                    blocks.append(list)
+                    add(list)
                     cursor = newCursor
                     continue
                 }
@@ -189,7 +204,7 @@ struct OrgParser: DocumentParser, Sendable {
 
             // Default: paragraph — collect contiguous non-blank, non-structural lines
             let (paragraph, newCursor) = parseParagraph(lines: lines, startCursor: cursor)
-            blocks.append(paragraph)
+            add(paragraph)
             // Safety: always advance at least one line to prevent infinite loops.
             cursor = max(newCursor, cursor + 1)
         }
@@ -296,41 +311,8 @@ struct OrgParser: DocumentParser, Sendable {
     private func parsePlanning(_ line: Substring) -> OrgBlock? {
         guard let first = line.first(where: { $0 != " " && $0 != "\t" }),
               first == "S" || first == "D" || first == "C" else { return nil }
-        let text = String(Self.stripped(line))
-        var entries: [OrgPlanningEntry] = []
-        var pos = text.startIndex
-
-        func skipSpaces() {
-            while pos < text.endIndex, text[pos] == " " || text[pos] == "\t" {
-                pos = text.index(after: pos)
-            }
-        }
-
-        while pos < text.endIndex {
-            let rest = text[pos...]
-            let kind: OrgPlanningKind
-            let label: String
-            if rest.hasPrefix("SCHEDULED:") {
-                kind = .scheduled
-                label = "SCHEDULED:"
-            } else if rest.hasPrefix("DEADLINE:") {
-                kind = .deadline
-                label = "DEADLINE:"
-            } else if rest.hasPrefix("CLOSED:") {
-                kind = .closed
-                label = "CLOSED:"
-            } else {
-                return nil
-            }
-            pos = text.index(pos, offsetBy: label.count)
-            skipSpaces()
-            guard pos < text.endIndex,
-                  let (timestamp, end) = parseTimestampAt(text: text, pos: pos) else { return nil }
-            entries.append(OrgPlanningEntry(kind: kind, timestamp: timestamp))
-            pos = end
-            skipSpaces()
-        }
-        return entries.isEmpty ? nil : .planning(entries)
+        guard let entries = OrgPlanningLine.parse(String(Self.stripped(line))) else { return nil }
+        return .planning(entries.map { OrgPlanningEntry(kind: $0.kind, timestamp: $0.timestamp) })
     }
 
     // MARK: - Comment
@@ -433,7 +415,7 @@ struct OrgParser: DocumentParser, Sendable {
             cursor += 1
         }
 
-        let innerBlocks = parseBlocks(lines: innerLines, todoKeywords: todoKeywords)
+        let innerBlocks = parseBlocks(lines: innerLines, todoKeywords: todoKeywords).map(\.block)
 
         return (.quote(innerBlocks), cursor)
     }
@@ -865,37 +847,8 @@ struct OrgParser: DocumentParser, Sendable {
         return nil
     }
 
-    /// `<2026-11-11 Wed>` or `[2026-11-06 Fri 14:00 +1w]`: a date, then anything
-    /// up to the matching bracket on the same line.
     private func parseTimestampAt(text: String, pos: String.Index) -> (OrgTimestamp, String.Index)? {
-        let open = text[pos]
-        let isActive = open == "<"
-        guard isActive || open == "[" else { return nil }
-        let close: Character = isActive ? ">" : "]"
-
-        var idx = text.index(after: pos)
-        for shape in "0000-00-00" {
-            guard idx < text.endIndex else { return nil }
-            let c = text[idx]
-            if shape == "0" {
-                guard c.isASCII, c.isNumber else { return nil }
-            } else if c != shape {
-                return nil
-            }
-            idx = text.index(after: idx)
-        }
-        guard idx < text.endIndex, text[idx] == close || text[idx] == " " else { return nil }
-
-        while idx < text.endIndex {
-            let c = text[idx]
-            if c == close {
-                let content = String(text[text.index(after: pos)..<idx])
-                return (OrgTimestamp(isActive: isActive, text: content), text.index(after: idx))
-            }
-            if c == "<" || c == ">" || c == "[" || c == "]" { return nil }
-            idx = text.index(after: idx)
-        }
-        return nil
+        OrgPlanningLine.timestamp(in: text, at: pos)
     }
 
     /// `[2/5]`, `[/]`, `[40%]`, `[%]`.

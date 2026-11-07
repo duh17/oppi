@@ -303,6 +303,27 @@ final class WorkspaceFileEditSession {
         return true
     }
 
+    /// A reader's edit, such as a tapped checkbox: the buffer becomes `text`
+    /// and is saved now, as the person's own save, so it writes whatever
+    /// Auto-Save says. It goes through the same write and the same version check
+    /// as an editor's save, so a file that changed on disk is a conflict, never
+    /// an overwrite.
+    ///
+    /// Only a reader with no editor open makes one: the editor owns the buffer
+    /// while it is attached.
+    ///
+    /// - Returns: whether the bytes were sent or queued. False means nothing
+    ///   was sent (the session has stopped saving, or the text is over the
+    ///   limit), and the edit stays in the buffer for the editor to show.
+    @discardableResult
+    func saveReaderEdit(_ text: String) -> Bool {
+        guard !isEditorAttached, !status.stopsAutosave else { return false }
+        guard text != currentText else { return true }
+        bufferText = text
+        noteEdit()
+        return saveNow()
+    }
+
     /// Where a Discard came from, for the sentence a refusal leaves behind.
     enum DiscardSource {
         /// Done → Discard Changes.

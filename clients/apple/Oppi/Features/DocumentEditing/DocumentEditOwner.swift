@@ -405,12 +405,19 @@ final class DocumentEditOwner {
     /// Opens our editor on the displayed bytes, reusing a live session so one
     /// file never has two writers with different base tags.
     func beginEditing() {
-        guard let identity, let maxBytes, let backend = backendSource() else { return }
+        guard let session = editSession() else { return }
+        adopt(session)
+    }
+
+    /// The session that writes this document: a live one, else the newest this
+    /// owner held (it keeps the latest acknowledged tag after an edit settled),
+    /// else one made from the tagged read.
+    private func editSession() -> WorkspaceFileEditSession? {
+        guard let identity, let maxBytes, let backend = backendSource() else { return nil }
         let session: WorkspaceFileEditSession
         if let live = registry.session(for: identity) {
             session = live
         } else if let existing = self.session, existing.identity == identity {
-            // Keeps the newest acknowledged tag after an earlier edit settled.
             session = existing
             registry.register(existing)
         } else if let base,
@@ -425,9 +432,79 @@ final class DocumentEditOwner {
             session = created
             registry.register(created)
         } else {
-            return
+            return nil
         }
-        adopt(session)
+        self.session = session
+        return session
+    }
+
+    // MARK: Edits from the reader
+
+    /// Whether the reader may edit the document it shows in place (a tapped
+    /// task control): the same tagged, editable text read that offers the
+    /// pencil, and no editor open over it.
+    var allowsReaderEdits: Bool {
+        identity != nil && maxBytes != nil && base != nil && !isEditing
+    }
+
+    enum ReaderEditOutcome: Equatable {
+        /// Saved: the reader shows this text.
+        case saved(String)
+        /// The edit changed nothing.
+        case unchanged
+        /// The save did not land (the file changed on disk, is gone, or could
+        /// not be reached). The editor opened over the reader with the edit in
+        /// its buffer, and its banner offers the existing conflict choices.
+        case needsAttention
+        case unavailable
+    }
+
+    /// The task controls for a Markdown or Org reader of this document, or nil
+    /// when the reader may not edit in place (the pencil's rule, so a file the
+    /// editor cannot save shows none) or the file is neither. `show` receives the
+    /// text each saved edit leaves, for the reader to render; an edit that did not
+    /// land has opened the editor instead, and its banner takes over.
+    func makeReaderTaskEditing(
+        path: String,
+        show: @escaping @MainActor (String) -> Void
+    ) -> ReaderTaskEditing? {
+        guard allowsReaderEdits else { return nil }
+        let dialect: TaskSourceEdit.Dialect
+        switch FileType.detect(from: path) {
+        case .markdown: dialect = .markdown
+        case .orgMode: dialect = .org
+        default: return nil
+        }
+        return ReaderTaskEditing(
+            dialect: dialect,
+            isAvailable: { [weak self] in self?.allowsReaderEdits == true },
+            source: { [weak self] in
+                guard let self else { return "" }
+                return session?.currentText ?? base.flatMap { WorkspaceFileTextCodec.decode($0.bytes) } ?? ""
+            },
+            apply: { [weak self] transform in
+                guard case .saved(let text)? = await self?.saveReaderEdit(transform) else { return }
+                show(text)
+            }
+        )
+    }
+
+    /// Saves the edit `transform` makes to the document's current text, through
+    /// the document's edit session: the same write, version check and conflict
+    /// handling as the editor. Nothing is written but the edited text.
+    func saveReaderEdit(_ transform: (String) -> String?) async -> ReaderEditOutcome {
+        guard allowsReaderEdits, let session = editSession() else { return .unavailable }
+        guard let edited = transform(session.currentText), edited != session.currentText else { return .unchanged }
+        guard session.saveReaderEdit(edited) else {
+            adopt(session)
+            return .needsAttention
+        }
+        await session.waitForInFlightWrite()
+        guard session.status == .saved else {
+            adopt(session)
+            return .needsAttention
+        }
+        return .saved(session.currentText)
     }
 
     /// Done: the editor hands its buffer back and starts the save, and the page
