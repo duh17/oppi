@@ -22,11 +22,15 @@ indirect enum MarkdownBlock: Equatable, Sendable {
         /// The 1-based source line the item's checkbox is on, when the parse
         /// knows it: a reader that can save the file toggles that line.
         var sourceLine: Int?
+        /// Org's `[-]`: some but not all of the item's own sub-items are done.
+        /// GFM has no such state, so this is always false outside Org.
+        var isPartial: Bool
 
-        init(checked: Bool, content: [MarkdownBlock], sourceLine: Int? = nil) {
+        init(checked: Bool, content: [MarkdownBlock], sourceLine: Int? = nil, isPartial: Bool = false) {
             self.checked = checked
             self.content = content
             self.sourceLine = sourceLine
+            self.isPartial = isPartial
         }
     }
 }

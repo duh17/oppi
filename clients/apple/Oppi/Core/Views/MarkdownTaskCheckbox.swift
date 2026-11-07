@@ -21,16 +21,21 @@ enum MarkdownTaskCheckbox {
     }
 
     /// `line` is the source line of the item's box, when the reader knows it.
+    /// `isPartial` is Org's `[-]`: some but not all of the item's own
+    /// sub-items are done, drawn as a dash in the box rather than empty or
+    /// checked.
     static func item(
         checked: Bool,
         palette: ThemePalette,
         font: UIFont = AppFont.messageBody,
-        line: Int? = nil
+        line: Int? = nil,
+        isPartial: Bool = false
     ) -> Item {
         let column = max(hitSize, ceil(font.lineHeight * 1.6))
         let attachment = TaskCheckboxAttachment(
             isChecked: checked,
-            tint: checked ? palette.ui.green : palette.ui.fgDim,
+            isPartial: isPartial,
+            tint: (checked || isPartial) ? palette.ui.green : palette.ui.fgDim,
             column: column,
             fallbackFont: font,
             control: line.map { ReaderTaskControl(kind: .checkbox, line: $0) }
@@ -58,6 +63,8 @@ enum MarkdownTaskCheckbox {
 /// sized from the font of the line it sits in.
 final class TaskCheckboxAttachment: NSTextAttachment, ReaderTaskControlAttachment {
     let isChecked: Bool
+    /// Org's `[-]`: some but not all of the item's own sub-items are done.
+    let isPartial: Bool
     let control: ReaderTaskControl?
     private let tint: UIColor
     /// Width of the leading column the glyph is centred in.
@@ -66,9 +73,17 @@ final class TaskCheckboxAttachment: NSTextAttachment, ReaderTaskControlAttachmen
 
     override class var supportsSecureCoding: Bool { true }
 
-    init(isChecked: Bool, tint: UIColor, column: CGFloat, fallbackFont: UIFont, control: ReaderTaskControl? = nil) {
+    init(
+        isChecked: Bool,
+        isPartial: Bool = false,
+        tint: UIColor,
+        column: CGFloat,
+        fallbackFont: UIFont,
+        control: ReaderTaskControl? = nil
+    ) {
         self.control = control
         self.isChecked = isChecked
+        self.isPartial = isPartial
         self.tint = tint
         self.column = column
         self.fallbackFont = fallbackFont
@@ -82,6 +97,7 @@ final class TaskCheckboxAttachment: NSTextAttachment, ReaderTaskControlAttachmen
 
     private enum Key {
         static let checked = "oppi.taskCheckbox.checked"
+        static let partial = "oppi.taskCheckbox.partial"
         static let tint = "oppi.taskCheckbox.tint"
         static let column = "oppi.taskCheckbox.column"
         static let fontSize = "oppi.taskCheckbox.fontSize"
@@ -92,6 +108,7 @@ final class TaskCheckboxAttachment: NSTextAttachment, ReaderTaskControlAttachmen
         let line = coder.decodeInteger(forKey: Key.line)
         control = line > 0 ? ReaderTaskControl(kind: .checkbox, line: line) : nil
         isChecked = coder.decodeBool(forKey: Key.checked)
+        isPartial = coder.decodeBool(forKey: Key.partial)
         tint = coder.decodeObject(of: UIColor.self, forKey: Key.tint) ?? .secondaryLabel
         let column = coder.decodeDouble(forKey: Key.column)
         self.column = column > 0 ? column : MarkdownTaskCheckbox.hitSize
@@ -103,6 +120,7 @@ final class TaskCheckboxAttachment: NSTextAttachment, ReaderTaskControlAttachmen
     override func encode(with coder: NSCoder) {
         super.encode(with: coder)
         coder.encode(isChecked, forKey: Key.checked)
+        coder.encode(isPartial, forKey: Key.partial)
         coder.encode(tint, forKey: Key.tint)
         coder.encode(Double(column), forKey: Key.column)
         coder.encode(Double(fallbackFont.pointSize), forKey: Key.fontSize)
@@ -112,7 +130,10 @@ final class TaskCheckboxAttachment: NSTextAttachment, ReaderTaskControlAttachmen
     // Segments build off the main actor; UIKit reads the label on the main
     // actor through this override.
     override var accessibilityLabel: String? {
-        get { isChecked ? "checkbox, checked" : "checkbox, not checked" }
+        get {
+            if isPartial { return "checkbox, partially checked" }
+            return isChecked ? "checkbox, checked" : "checkbox, not checked"
+        }
         set {}
     }
 
@@ -121,7 +142,8 @@ final class TaskCheckboxAttachment: NSTextAttachment, ReaderTaskControlAttachmen
     private func symbol(font: UIFont?) -> UIImage? {
         // Small scale lands the square a little above the line's cap height.
         let configuration = UIImage.SymbolConfiguration(font: font ?? fallbackFont, scale: .small)
-        return UIImage(systemName: isChecked ? "checkmark.square.fill" : "square", withConfiguration: configuration)?
+        let name = isPartial ? "minus.square.fill" : (isChecked ? "checkmark.square.fill" : "square")
+        return UIImage(systemName: name, withConfiguration: configuration)?
             .withTintColor(tint, renderingMode: .alwaysOriginal)
     }
 

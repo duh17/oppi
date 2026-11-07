@@ -481,17 +481,45 @@ struct OrgParser: DocumentParser, Sendable {
         return (bullet: bullet, isOrdered: true, content: content)
     }
 
-    private func parseList(lines: [Substring], startCursor: Int) -> (OrgBlock, Int) {
+    /// Columns of leading space/tab before a line's first character (a tab
+    /// counts as one column): how a list tells a nested item or continuation
+    /// line from a sibling at the same level.
+    private func indentOf(_ line: Substring) -> Int {
+        var columns = 0
+        for ch in line {
+            guard ch == " " || ch == "\t" else { break }
+            columns += 1
+        }
+        return columns
+    }
+
+    /// `term :: description`: Org's description-list separator, `::`
+    /// surrounded by whitespace. nil when `content` has no such separator.
+    private func splitDescriptionTerm(_ content: String) -> (term: String, description: String)? {
+        guard let range = content.range(of: " :: ") else { return nil }
+        return (String(content[content.startIndex..<range.lowerBound]), String(content[range.upperBound...]))
+    }
+
+    /// Parses a plain list at exactly `indent` columns (the first item's own
+    /// indent, when the caller does not already know it). The list's kind
+    /// comes from its first item, never its last: a bullet of the other kind
+    /// at this same indent starts a new, sibling list instead of silently
+    /// flipping this one's kind. A line indented deeper than the item that
+    /// precedes it is that item's own region — a nested list, a continuation
+    /// line, or both — parsed by `parseListRegion`.
+    private func parseList(lines: [Substring], startCursor: Int, indent: Int? = nil) -> (OrgBlock, Int) {
+        let indent = indent ?? indentOf(lines[startCursor])
         var items: [OrgListItem] = []
         var cursor = startCursor
-        var isOrdered = false
+        var isOrdered: Bool?
 
         while cursor < lines.count {
             let line = lines[cursor]
             if line.allSatisfy(\.isWhitespace) { break }
+            guard indentOf(line) == indent else { break }
             guard let parsed = parseListItemLine(line) else { break }
-
-            isOrdered = parsed.isOrdered
+            if let isOrdered, parsed.isOrdered != isOrdered { break }
+            if isOrdered == nil { isOrdered = parsed.isOrdered }
 
             var content = parsed.content
             var checkbox: OrgCheckbox?
@@ -506,13 +534,74 @@ struct OrgParser: DocumentParser, Sendable {
                 content = String(content.dropFirst(4))
             }
 
+            var term: [OrgInline]?
+            if let split = splitDescriptionTerm(content) {
+                term = parseInlines(split.term)
+                content = split.description
+            }
+
             let inlines = parseInlines(content)
-            items.append(OrgListItem(bullet: parsed.bullet, checkbox: checkbox, content: inlines))
+            let itemLine = cursor + 1
             cursor += 1
+
+            var children: [OrgBlock] = []
+            if cursor < lines.count, !lines[cursor].allSatisfy(\.isWhitespace) {
+                let childIndent = indentOf(lines[cursor])
+                if childIndent > indent {
+                    let (kids, newCursor) = parseListRegion(lines: lines, startCursor: cursor, indent: childIndent)
+                    children = kids
+                    cursor = newCursor
+                }
+            }
+
+            items.append(OrgListItem(
+                bullet: parsed.bullet, checkbox: checkbox, content: inlines,
+                term: term, children: children, line: itemLine
+            ))
         }
 
-        let kind: OrgListKind = isOrdered ? .ordered : .unordered
+        let kind: OrgListKind = (isOrdered ?? false) ? .ordered : .unordered
         return (.list(kind: kind, items: items), cursor)
+    }
+
+    /// The indented region under one list item: at exactly `indent`, a line
+    /// that starts a bullet becomes a nested list, and a run of lines that do
+    /// not becomes one continuation paragraph, in whatever order the source
+    /// has them. Stops at a blank line, a dedent below `indent`, or a line
+    /// indented past `indent` (its own further-nested item is that block's
+    /// problem, not this region's).
+    private func parseListRegion(lines: [Substring], startCursor: Int, indent: Int) -> ([OrgBlock], Int) {
+        var blocks: [OrgBlock] = []
+        var cursor = startCursor
+        while cursor < lines.count {
+            let line = lines[cursor]
+            if line.allSatisfy(\.isWhitespace) { break }
+            guard indentOf(line) == indent else { break }
+            if isListItemStart(line) {
+                let (list, newCursor) = parseList(lines: lines, startCursor: cursor, indent: indent)
+                blocks.append(list)
+                cursor = newCursor
+            } else {
+                let (paragraph, newCursor) = parseContinuationParagraph(lines: lines, startCursor: cursor, indent: indent)
+                blocks.append(paragraph)
+                cursor = newCursor
+            }
+        }
+        return (blocks, cursor)
+    }
+
+    /// A continuation line (or contiguous run of them) at exactly `indent`,
+    /// joined with spaces the same way an ordinary paragraph joins its lines.
+    private func parseContinuationParagraph(lines: [Substring], startCursor: Int, indent: Int) -> (OrgBlock, Int) {
+        var cursor = startCursor
+        while cursor < lines.count {
+            let line = lines[cursor]
+            if line.allSatisfy(\.isWhitespace) { break }
+            guard indentOf(line) == indent, !isListItemStart(line) else { break }
+            cursor += 1
+        }
+        let text = lines[startCursor..<cursor].map { String(Self.stripped($0)) }.joined(separator: " ")
+        return (.paragraph(parseInlines(text)), cursor)
     }
 
     // MARK: - Paragraph

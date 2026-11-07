@@ -203,15 +203,53 @@ enum OrgListKind: Equatable, Sendable {
 }
 
 /// A single item in a plain list.
-struct OrgListItem: Equatable, Sendable {
+struct OrgListItem: Sendable {
     /// The bullet/counter marker (e.g. "-", "+", "1.", "1)").
     let bullet: String
 
     /// Optional checkbox state.
     let checkbox: OrgCheckbox?
 
-    /// Inline content of the item (first line).
+    /// Inline content of the item (first line, or the description half of a
+    /// `term :: description` item).
     let content: [OrgInline]
+
+    /// The term of a description-list item (`term :: description`), nil for
+    /// an ordinary item.
+    let term: [OrgInline]?
+
+    /// Nested blocks indented under this item: a sub-list, a continuation
+    /// paragraph, or both.
+    let children: [OrgBlock]
+
+    /// 1-based source line this item's own bullet sits on, for a reader that
+    /// edits a checkbox by line. Excluded from equality: it is positional
+    /// metadata the parser fills in, not part of the item's meaning, so a
+    /// test can build an item without naming a line.
+    let line: Int?
+
+    init(
+        bullet: String,
+        checkbox: OrgCheckbox? = nil,
+        content: [OrgInline],
+        term: [OrgInline]? = nil,
+        children: [OrgBlock] = [],
+        line: Int? = nil
+    ) {
+        self.bullet = bullet
+        self.checkbox = checkbox
+        self.content = content
+        self.term = term
+        self.children = children
+        self.line = line
+    }
+}
+
+extension OrgListItem: Equatable {
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.bullet == rhs.bullet && lhs.checkbox == rhs.checkbox && lhs.content == rhs.content
+            && lhs.term == rhs.term && lhs.children == rhs.children
+    }
 }
 
 /// Checkbox state for list items.

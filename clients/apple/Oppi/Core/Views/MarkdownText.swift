@@ -2138,7 +2138,9 @@ enum FlatSegment: Sendable {
             var result = AttributedString()
             for (i, item) in items.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
-                let layout = MarkdownTaskCheckbox.item(checked: item.checked, palette: palette, line: item.sourceLine)
+                let layout = MarkdownTaskCheckbox.item(
+                    checked: item.checked, palette: palette, line: item.sourceLine, isPartial: item.isPartial
+                )
                 var paragraph = layout.checkbox
                 for (j, block) in item.content.enumerated() {
                     if j > 0 {

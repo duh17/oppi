@@ -1007,7 +1007,8 @@ enum MarkdownWikiLinkRewriter {
                 MarkdownBlock.TaskItem(
                     checked: item.checked,
                     content: rewrite(blocks: item.content, context: context),
-                    sourceLine: item.sourceLine
+                    sourceLine: item.sourceLine,
+                    isPartial: item.isPartial
                 )
             })
         case .table(let headers, let rows):

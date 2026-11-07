@@ -38,21 +38,31 @@ enum MarkdownBlockSerializer {
 
         case .unorderedList(let items):
             return items.map { blocks in
-                let content = blocks.map(serializeBlock).joined(separator: "\n")
-                return "- \(content)"
+                let content = blocks.map(serializeBlock).joined(separator: "\n\n")
+                return indentContinuation(content, firstLinePrefix: "- ")
             }.joined(separator: "\n")
 
         case .orderedList(let start, let items):
             return items.enumerated().map { i, blocks in
-                let content = blocks.map(serializeBlock).joined(separator: "\n")
-                return "\(start + i). \(content)"
+                let content = blocks.map(serializeBlock).joined(separator: "\n\n")
+                return indentContinuation(content, firstLinePrefix: "\(start + i). ")
             }.joined(separator: "\n")
 
         case .taskList(let items):
             return items.map { item in
+                // GFM's task-list extension only recognizes `[ ]`/`[x]`: Org's
+                // `[-]` (partial) goes out as an ordinary unchecked box, with
+                // `isPartial` carried by a marker inline (`OrgToMarkdownConverter`),
+                // not by the box character.
                 let check = item.checked ? "[x]" : "[ ]"
-                let content = item.content.map(serializeBlock).joined(separator: "\n")
-                return "- \(check) \(content)"
+                let content = item.content.map(serializeBlock).joined(separator: "\n\n")
+                // CommonMark measures a list item's continuation indent from its
+                // marker (`- `), not from the checkbox text that follows: the
+                // checkbox is ordinary paragraph content to the block parser,
+                // which only looks for it after structure is already decided.
+                // Indenting to the checkbox's own width over-indents by 4+
+                // spaces, turning a nested list into an indented code block.
+                return indentContinuation(content, firstLinePrefix: "- \(check) ", indentWidth: 2)
             }.joined(separator: "\n")
 
         case .thematicBreak:
@@ -70,6 +80,22 @@ enum MarkdownBlockSerializer {
         case .htmlBlock(let html):
             return html
         }
+    }
+
+    /// Prefixes a list item's serialized content with its marker, indenting
+    /// every line after the first by the marker's width: a line that is not
+    /// indented to its item's content column reads as a sibling block, not
+    /// part of the item, once CommonMark parses it — the one thing a nested
+    /// list or a continuation paragraph inside an item needs to round-trip.
+    private static func indentContinuation(_ content: String, firstLinePrefix prefix: String, indentWidth: Int? = nil) -> String {
+        // Fast path: a single-block, single-line item (the overwhelming
+        // majority) needs no per-line work at all.
+        guard content.contains("\n") else { return prefix + content }
+        let indent = String(repeating: " ", count: indentWidth ?? prefix.count)
+        let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
+        return lines.enumerated().map { index, line in
+            index == 0 ? "\(prefix)\(line)" : (line.isEmpty ? "" : "\(indent)\(line)")
+        }.joined(separator: "\n")
     }
 
     // MARK: - Inline serialization

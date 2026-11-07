@@ -23,6 +23,19 @@ enum MarkdownSourceLineMarker {
     }
 }
 
+/// Carries Org's `[-]` (some but not all of an item's own sub-items are
+/// done) through a Markdown round trip. GFM's task-list syntax has no
+/// partial state, so the item still serializes as an ordinary unchecked box;
+/// this marker rides in the item's content, right after the source-line
+/// marker when both are present, and is stripped the same way.
+enum MarkdownPartialTaskMarker {
+    static let markup = "<oppi-partial/>"
+
+    static func isPartial(in html: String) -> Bool {
+        html.trimmingCharacters(in: .whitespacesAndNewlines) == markup
+    }
+}
+
 /// A control the reader draws for a line of its Org or Markdown source, and
 /// the line it edits.
 ///

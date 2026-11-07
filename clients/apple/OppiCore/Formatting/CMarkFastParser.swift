@@ -982,10 +982,13 @@ private func convertCMarkBlock(
                 // A plain item in a list that has tasks has no box to toggle.
                 var sourceLine = entry.0 == nil || entry.1 <= 0 ? nil : entry.1
                 var content = content
+                // Org's `[-]` has no GFM box of its own, so the converter marks
+                // it apart from the ordinary unchecked box it serializes as.
+                let isPartial = takePartialMarker(from: &content)
                 // Org converts to Markdown that is parsed again, so the line this
                 // parse sees is not the Org file's: the converter's marker is.
                 if let marked = takeSourceLineMarker(from: &content) { sourceLine = marked > 0 ? marked : nil }
-                return MarkdownBlock.TaskItem(checked: entry.0 ?? false, content: content, sourceLine: sourceLine)
+                return MarkdownBlock.TaskItem(checked: entry.0 ?? false, content: content, sourceLine: sourceLine, isPartial: isPartial)
             }
             return .taskList(taskItems)
         } else if listType == CMARK_ORDERED_LIST {
@@ -1010,6 +1013,28 @@ private func convertCMarkBlock(
             }
         }
         return nil
+    }
+}
+
+/// Removes the `MarkdownPartialTaskMarker` that starts a task item, when
+/// present, and reports whether it was there.
+private func takePartialMarker(from content: inout [MarkdownBlock]) -> Bool {
+    switch content.first {
+    case .paragraph(var inlines)?:
+        guard case .html(let raw)? = inlines.first, MarkdownPartialTaskMarker.isPartial(in: raw) else { return false }
+        inlines.removeFirst()
+        if inlines.isEmpty {
+            content.removeFirst()
+        } else {
+            content[0] = .paragraph(inlines)
+        }
+        return true
+    case .htmlBlock(let raw)?:
+        guard MarkdownPartialTaskMarker.isPartial(in: raw) else { return false }
+        content.removeFirst()
+        return true
+    default:
+        return false
     }
 }
 
