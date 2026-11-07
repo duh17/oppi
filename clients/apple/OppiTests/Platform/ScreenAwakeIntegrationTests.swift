@@ -147,6 +147,32 @@ struct ScreenAwakeIntegrationTests {
         #expect(updates().last == false)
     }
 
+    // MARK: - Idle sessions
+
+    /// Every update for a session that never ran must leave the idle timer alone. Each one
+    /// used to restart the post-activity timeout, so routine traffic for idle sessions kept
+    /// the screen from auto-locking for as long as it kept arriving.
+    @Test("updates for sessions that never ran do not wake the screen")
+    func idleSessionUpdatesNeverWakeTheScreen() async {
+        let (ctrl, updates) = makeController()
+        let (conn, pipe) = await makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1", status: .ready))
+        conn.sessionStore.upsert(makeTestSession(id: "s2", workspaceId: "w1", status: .ready))
+
+        pipe.handle(.state(session: makeTestSession(id: "s1", workspaceId: "w1", status: .ready)), sessionId: "s1")
+        conn.handleAppEvent(.sessionSummary(
+            sessionId: "s2",
+            workspaceId: "w1",
+            emittedAt: 1,
+            summary: SessionSummary(from: makeTestSession(id: "s2", workspaceId: "w1", status: .ready))
+        ))
+        conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .sessionEnded(reason: "done")))
+        conn.disconnectSession()
+
+        #expect(!ctrl.isPreventingSleep)
+        #expect(updates().isEmpty)
+    }
+
     // MARK: - disconnectSession cleanup
 
     @Test("disconnectSession clears screen-awake for active session")

@@ -162,4 +162,46 @@ struct ScreenAwakeControllerTests {
         #expect(!controller.isPreventingSleep)
         #expect(idleTimerUpdates == [true, false])
     }
+
+    @Test("updates that change no reason never wake an idle screen")
+    func noOpUpdatesLeaveTheIdleTimerAlone() {
+        var idleTimerUpdates: [Bool] = []
+
+        let controller = ScreenAwakeController(
+            timeoutProvider: { .seconds(120) },
+            idleTimerSetter: { idleTimerUpdates.append($0) },
+            sleepFunction: { _ in try await Task.sleep(for: .seconds(3600)) }
+        )
+
+        controller.setSessionActivity(false, sessionId: "idle")
+        controller.clearSessionActivity(sessionId: "idle")
+        controller.setVoiceInputActive(false)
+        controller.setSetupInstallActive(false)
+        controller.refreshFromPreferences()
+
+        #expect(!controller.isPreventingSleep)
+        #expect(idleTimerUpdates.isEmpty)
+    }
+
+    @Test("updates that change no reason do not restart the release timeout")
+    func noOpUpdatesDoNotExtendTheTimeout() async {
+        let controller = ScreenAwakeController(
+            timeoutProvider: { .milliseconds(40) },
+            idleTimerSetter: { _ in }
+        )
+
+        controller.setSessionActivity(true, sessionId: "s1")
+        controller.setSessionActivity(false, sessionId: "s1")
+
+        // Idle sessions keep reporting more often than the timeout.
+        var released = false
+        for _ in 0..<30 where !released {
+            controller.setSessionActivity(false, sessionId: "idle")
+            controller.clearSessionActivity(sessionId: "idle")
+            try? await Task.sleep(for: .milliseconds(10))
+            released = !controller.isPreventingSleep
+        }
+
+        #expect(released)
+    }
 }

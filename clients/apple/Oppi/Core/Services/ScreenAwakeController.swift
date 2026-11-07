@@ -13,6 +13,9 @@ import UIKit
 /// - After every reason clears, prevention remains enabled for the configured
 ///   timeout (`AppPreferences.ScreenAwake`) before releasing. Off (`nil`)
 ///   releases immediately.
+/// - A write that changes no reason does nothing: it must neither wake an idle
+///   screen nor restart the timeout, or routine updates for idle sessions would
+///   keep the screen on for as long as they keep arriving.
 @MainActor
 final class ScreenAwakeController {
     static let shared = ScreenAwakeController()
@@ -69,8 +72,7 @@ final class ScreenAwakeController {
     }
 
     func clearSessionActivity(sessionId: String) {
-        activeReasons.remove(sessionReason(for: sessionId))
-        reevaluateLockState()
+        setReason(sessionReason(for: sessionId), isActive: false)
     }
 
     func refreshFromPreferences() {
@@ -78,12 +80,10 @@ final class ScreenAwakeController {
     }
 
     private func setReason(_ reason: String, isActive: Bool) {
-        if isActive {
-            activeReasons.insert(reason)
-        } else {
-            activeReasons.remove(reason)
-        }
-        reevaluateLockState()
+        let changed = isActive
+            ? activeReasons.insert(reason).inserted
+            : activeReasons.remove(reason) != nil
+        if changed { reevaluateLockState() }
     }
 
     private func sessionReason(for sessionId: String) -> String {
@@ -99,7 +99,8 @@ final class ScreenAwakeController {
             return
         }
 
-        guard let timeout = timeoutProvider() else {
+        // Nothing held and nothing to release (a preference change while idle).
+        guard isPreventingSleep, let timeout = timeoutProvider() else {
             applyIdleTimerDisabled(false)
             return
         }

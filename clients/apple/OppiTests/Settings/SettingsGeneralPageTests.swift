@@ -132,37 +132,44 @@ struct SettingsGeneralPageTests {
 @Suite("Settings live hook")
 @MainActor
 struct SettingsLiveHookTests {
-    private func makeController(_ updates: UpdateLog) -> ScreenAwakeController {
-        ScreenAwakeController(
-            timeoutProvider: { .seconds(2) },
+    /// A controller in its keep-awake-after-activity timeout (which never fires here), with
+    /// the preference already switched to Off: only a refresh applies it.
+    private func makeControllerInTimeout(_ updates: UpdateLog) -> ScreenAwakeController {
+        let controller = ScreenAwakeController(
+            timeoutProvider: { updates.timeout },
             idleTimerSetter: { updates.values.append($0) },
-            sleepFunction: { _ in }
+            sleepFunction: { _ in try await Task.sleep(for: .seconds(3600)) }
         )
+        controller.setVoiceInputActive(true)
+        controller.setVoiceInputActive(false)
+        updates.timeout = nil
+        return controller
     }
 
     final class UpdateLog {
         var values: [Bool] = []
+        var timeout: Duration? = .seconds(120)
     }
 
     @Test("Keep Awake After Activity refreshes the idle timer")
     func keepAwakeRefreshes() {
         let updates = UpdateLog()
-        let hook = SettingsStore.liveAfterWrite(screenAwake: makeController(updates))
+        let hook = SettingsStore.liveAfterWrite(screenAwake: makeControllerInTimeout(updates))
 
         hook(SettingsCatalog.keepAwakeAfterActivity.id)
 
-        #expect(updates.values == [true])
+        #expect(updates.values == [true, false])
     }
 
     @Test("Open Links, Haptic Feedback, and Server Metrics do not")
     func otherSettingsDoNot() {
         let updates = UpdateLog()
-        let hook = SettingsStore.liveAfterWrite(screenAwake: makeController(updates))
+        let hook = SettingsStore.liveAfterWrite(screenAwake: makeControllerInTimeout(updates))
 
         for setting in [SettingsCatalog.openLinks.id, SettingsCatalog.hapticFeedback.id, SettingsCatalog.serverMetricsEnabled.id] {
             hook(setting)
         }
 
-        #expect(updates.values.isEmpty)
+        #expect(updates.values == [true])
     }
 }
