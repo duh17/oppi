@@ -110,6 +110,8 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
     private var paintsSelection = false
     private var columnFill: [(UIView, NSLayoutConstraint)] = []
     private var childWidths: [(UIView, NSLayoutConstraint)] = []
+    /// A floor under each flexible child's width in a row; see `isFlexibleInRow`.
+    private var flexibleFloors: [(UIView, NSLayoutConstraint)] = []
     /// The children as the tree gave them. `stack` holds them directly, except while a row that
     /// starts with a glyph is stacked as a column: then the glyph and the view after it sit in
     /// `leadingPair`, so the glyph stays beside the words it labels instead of alone on a line.
@@ -194,11 +196,27 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
         self.children = children
         for entry in columnFill { entry.1.isActive = false }
         for entry in childWidths { entry.1.isActive = false }
+        for entry in flexibleFloors { entry.1.isActive = false }
         // Whatever a child's own hugging says, it never draws outside the stack that holds it: a
         // long badge or a wide table wraps or shrinks rather than escaping the card.
         childWidths = children.map { view in
             (view, view.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor))
         }
+        // In a row, words take the width the row's other children leave (low hugging, normal
+        // compression; counts and controls hug), and no less than their longest word. Sized by the
+        // priorities alone, a title stack beside an elapsed count and Stop tied with them and the
+        // solver could collapse it to a few points (28 of 180 pt), wrapping its caption a character
+        // a line while the rest of the row sat empty.
+        // A row too narrow for the floors stacks as a column (`shouldStack`).
+        flexibleFloors = isRow ? children.filter(Self.isFlexibleInRow).map { view in
+            view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            view.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+            let floor = view.widthAnchor.constraint(greaterThanOrEqualToConstant: 0)
+            // Below the row's own width bound, so a word wider than the row still gives way.
+            floor.priority = UILayoutPriority(999)
+            return (view, floor)
+        } : []
+        setNeedsUpdateConstraints()
         columnFill = children.compactMap { view in
             guard let fillable = view as? BlocksColumnFillable, fillable.fillsColumn else { return nil }
             return (view, view.widthAnchor.constraint(equalTo: stack.widthAnchor))
@@ -234,6 +252,7 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
         pairsLeadingGlyph = vertical && isRow && children.count >= 3 && children[0] is BlocksIconView
             && Self.isWords(children[1])
         arrangeChildren()
+        for entry in flexibleFloors { entry.1.isActive = !vertical && !inline }
         guard !vertical else {
             stackLeading?.isActive = true
             stackTrailing?.isActive = true
@@ -266,6 +285,29 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
             stackTrailing?.isActive = true
             stackCenter?.isActive = false
         }
+    }
+
+    /// Whether a row's child is words that take the row's remaining width: text, or a column of
+    /// nothing but text, other than a chip, which keeps a width of its own.
+    private static func isFlexibleInRow(_ view: UIView) -> Bool {
+        isWords(view) && (view as? BlocksTextView)?.fillsColumn != false
+    }
+
+    /// The widest word under `view`, in the font it is drawn in.
+    private static func longestWord(in view: UIView) -> CGFloat {
+        var widest: CGFloat = 0
+        if let label = view as? UILabel, let text = label.text {
+            for word in text.split(whereSeparator: \.isWhitespace) {
+                widest = max(widest, ceil((String(word) as NSString).size(withAttributes: [.font: label.font as Any]).width))
+            }
+        }
+        for subview in view.subviews { widest = max(widest, longestWord(in: subview)) }
+        return widest
+    }
+
+    override func updateConstraints() {
+        for entry in flexibleFloors { entry.1.constant = Self.longestWord(in: entry.0) }
+        super.updateConstraints()
     }
 
     /// Whether a view is text, or a column of nothing but text.
@@ -515,7 +557,8 @@ final class BlocksElapsedView: UIView {
             label.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
         setContentHuggingPriority(.required, for: .horizontal)
-        setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        // A count never wraps or gives way to the words beside it; they take what it leaves.
+        setContentCompressionResistancePriority(.required, for: .horizontal)
         isAccessibilityElement = true
         accessibilityTraits = .staticText
     }

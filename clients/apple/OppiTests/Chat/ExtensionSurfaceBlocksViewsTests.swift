@@ -842,6 +842,62 @@ struct ExtensionSurfaceBlocksViewsTests {
         #expect(stopFrame.minY >= titleFrame.maxY - 0.5, "Stop did not wrap below the title")
     }
 
+    /// A job's head row: a glyph, a stack of a title over a caption, then the elapsed count and Stop,
+    /// which hug their content.
+    private func titledRow(title: String, caption: String) -> [String: Any] {
+        [
+            "type": "row",
+            "id": "head",
+            "children": [
+                ["type": "icon", "id": "glyph", "name": "arrow.triangle.2.circlepath", "tone": "accent"],
+                [
+                    "type": "stack", "id": "titles", "spacing": "tight",
+                    "children": [
+                        ["type": "text", "id": "title", "text": title, "style": "headline"],
+                        ["type": "text", "id": "caption", "text": caption, "style": "caption"],
+                    ],
+                ],
+                ["type": "elapsed", "id": "elapsed", "since": Int((Date().timeIntervalSince1970 - 75) * 1000), "style": "caption", "format": "clock"],
+                [
+                    "type": "button", "id": "stop", "title": "Stop", "role": "destructive",
+                    "action": ["id": "retry"],
+                ],
+            ],
+        ]
+    }
+
+    @Test func aStackInARowKeepsItsLongestWordWhateverWidthTheRowIsGiven() throws {
+        // A short title over a longer caption, then the count and Stop, which hug. Sized by
+        // priority ties alone, the stack collapsed to a few points at some widths (28 pt of 180)
+        // while 140 were free, and its caption ran down the card a character a line.
+        let caption = "bash-8 \u{00B7} Running"
+        for inset in stride(from: 28, through: 98, by: 14) {
+            let view = ExtensionSurfaceCompositesView()
+            show(view, inset: CGFloat(inset))
+            view.apply(
+                surface: try headerlessBlocks([titledRow(title: "ls", caption: caption)]),
+                pending: nil,
+                themeID: themeID,
+                onAction: nil
+            )
+            view.layoutIfNeeded()
+            view.superview?.layoutIfNeeded()
+            view.layoutIfNeeded()
+            let label = try #require(allLabels(in: view).first { $0.text == caption }, "the caption was not drawn")
+            let width = view.bounds.width
+            let longestWord = caption.split(separator: " ")
+                .map { (String($0) as NSString).size(withAttributes: [.font: label.font]).width }.max() ?? 0
+            #expect(
+                label.bounds.width >= ceil(longestWord),
+                "in \(width) pt the caption is \(label.bounds.width) pt wide, its longest word \(longestWord)"
+            )
+            #expect(
+                label.bounds.height <= label.font.lineHeight * 2 + 1,
+                "in \(width) pt the caption wraps to \(label.bounds.height / label.font.lineHeight) lines"
+            )
+        }
+    }
+
     @Test func aGroupPublishedFoldedStartsFoldedAndOpensOnTap() throws {
         let view = composites(try panelWithFoldedGroup())
         let disclosure = try testUnwrap(

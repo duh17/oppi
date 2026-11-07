@@ -2,7 +2,8 @@
 import Foundation
 
 /// `CHAT_ROUTES_SURFACE=jobs`: the Background jobs surface as the server renders it
-/// (`server/plugins/background-jobs`) for one running job whose output tail is long, so the card
+/// (`server/plugins/background-jobs`) for two running jobs: a short command (`ls`) with no output
+/// yet, whose title is narrower than its caption, then one whose output tail is long, so the card
 /// is taller than a drawer's cap and the output block is the part that overflows.
 /// `__STARTED__` is the job's start time, stamped when the surface is seeded.
 enum ChatRoutesJobsSurface {
@@ -22,7 +23,7 @@ enum ChatRoutesJobsSurface {
   "lifecycle": "persistent",
   "header": {
     "title": "Background jobs",
-    "subtitle": "1 running"
+    "subtitle": "2 running"
   },
   "pill": {
     "content": {
@@ -66,9 +67,75 @@ enum ChatRoutesJobsSurface {
         "type": "stack",
         "children": [
           {
+            "id": "job:bash-8",
+            "type": "stack",
+            "children": [
+              {
+                "id": "head:bash-8",
+                "type": "row",
+                "children": [
+                  {
+                    "id": "status:bash-8",
+                    "type": "icon",
+                    "name": "arrow.triangle.2.circlepath",
+                    "tone": "accent"
+                  },
+                  {
+                    "id": "title:bash-8",
+                    "type": "text",
+                    "text": "ls",
+                    "style": "headline"
+                  },
+                  {
+                    "id": "elapsed:bash-8",
+                    "type": "elapsed",
+                    "since": __STARTED__,
+                    "style": "caption",
+                    "format": "clock"
+                  },
+                  {
+                    "id": "stop:bash-8",
+                    "type": "button",
+                    "title": "Stop",
+                    "role": "destructive",
+                    "action": {
+                      "id": "stop",
+                      "values": {
+                        "job": "bash-8"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "meta:bash-8",
+                "type": "text",
+                "text": "bash-8 · Running",
+                "style": "caption"
+              },
+              {
+                "id": "detail:bash-8",
+                "type": "text",
+                "text": "oppi",
+                "style": "caption"
+              },
+              {
+                "id": "tail:bash-8",
+                "type": "text",
+                "text": "No output yet",
+                "style": "caption"
+              }
+            ],
+            "spacing": "tight"
+          },
+          {
             "id": "job:bash-72",
             "type": "stack",
             "children": [
+              {
+                "id": "rule:bash-72",
+                "type": "divider"
+              },
               {
                 "id": "head:bash-72",
                 "type": "row",
@@ -80,23 +147,10 @@ enum ChatRoutesJobsSurface {
                     "tone": "accent"
                   },
                   {
-                    "id": "titles:bash-72",
-                    "type": "stack",
-                    "children": [
-                      {
-                        "id": "title:bash-72",
-                        "type": "text",
-                        "text": "while [ \"$(sysctl -n vm…",
-                        "style": "headline"
-                      },
-                      {
-                        "id": "meta:bash-72",
-                        "type": "text",
-                        "text": "bash-72 · Running",
-                        "style": "caption"
-                      }
-                    ],
-                    "spacing": "tight"
+                    "id": "title:bash-72",
+                    "type": "text",
+                    "text": "while [ \"$(sysctl -n vm…",
+                    "style": "headline"
                   },
                   {
                     "id": "elapsed:bash-72",
@@ -118,6 +172,12 @@ enum ChatRoutesJobsSurface {
                     }
                   }
                 ]
+              },
+              {
+                "id": "meta:bash-72",
+                "type": "text",
+                "text": "bash-72 · Running",
+                "style": "caption"
               },
               {
                 "id": "detail:bash-72",
