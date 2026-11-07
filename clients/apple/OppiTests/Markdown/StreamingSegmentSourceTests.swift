@@ -158,7 +158,14 @@ struct StreamingSegmentSourceTests {
                     isStreaming: true,
                     themeID: .dark
                 ))
-                let canonical = FlatSegment.build(from: parseCommonMark(content), themeID: .dark)
+                // A table at the tail shows its rows once their lines end.
+                let canonical = FlatSegment.build(
+                    from: AssistantMarkdownSegmentSource.droppingUnfinishedTableRow(
+                        parseCommonMark(content),
+                        content: content
+                    ),
+                    themeID: .dark
+                )
 
                 #expect(
                     Self.segmentsEqual(streamed, canonical),

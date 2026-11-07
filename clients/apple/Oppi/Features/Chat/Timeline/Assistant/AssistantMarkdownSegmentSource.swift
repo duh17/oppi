@@ -375,7 +375,7 @@ final class AssistantMarkdownSegmentSource {
         }
 
         let tailSegments = FlatSegment.build(
-            from: parsed.tailBlocks,
+            from: Self.droppingUnfinishedTableRow(parsed.tailBlocks, content: config.content),
             themeID: config.themeID,
             serverID: identity.serverID,
             workspaceID: identity.workspaceID,
@@ -412,6 +412,27 @@ final class AssistantMarkdownSegmentSource {
             frozen: frozen,
             readerPreferences: config.readerPreferences
         )
+    }
+
+    /// A table at the open tail shows only the rows whose line has ended.
+    ///
+    /// Every byte of a streamed row changes the row and, with it, the table's
+    /// column widths and row heights. Laying the table out per byte makes a
+    /// stream cost O(table) per tick; per finished row it costs O(new rows).
+    /// Once the stream ends, the canonical build shows every row.
+    static func droppingUnfinishedTableRow(
+        _ blocks: [MarkdownBlock],
+        content: String
+    ) -> [MarkdownBlock] {
+        guard case .table(let headers, let rows)? = blocks.last, !rows.isEmpty else { return blocks }
+        let newline = UInt8(ascii: "\n")
+        let lastLine = content.utf8.reversed().prefix { $0 != newline }
+        // Spaces after the last newline start no row.
+        guard lastLine.contains(where: { $0 != UInt8(ascii: " ") && $0 != UInt8(ascii: "\t") && $0 != UInt8(ascii: "\r") })
+        else { return blocks }
+        var dropped = blocks
+        dropped[dropped.count - 1] = .table(headers: headers, rows: Array(rows.dropLast()))
+        return dropped
     }
 
     // MARK: - Prefix extension

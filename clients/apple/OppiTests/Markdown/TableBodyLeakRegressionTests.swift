@@ -69,7 +69,8 @@ struct TableBodyLeakRegressionTests {
             ))
         }
         layoutHosted(markdown, window: window)
-        try assertMountedTenRowTable(in: markdown)
+        // The last row has no newline yet, so it waits for its line to end.
+        try assertMountedTenRowTable(in: markdown, rows: 9)
 
         if chunkSize == 24 {
             try writeStreamedRender(of: markdown, to: "/tmp/oppi-table-body-leak-streamed-24.png")
@@ -189,8 +190,16 @@ struct TableBodyLeakRegressionTests {
             themeID: .dark
         ))
         layoutHosted(markdown, window: window)
-        try assertMountedTenRowTable(in: markdown)
+        try assertMountedTenRowTable(in: markdown, rows: 9)
         #expect(!proseOutsideTable(in: markdown).contains("| Work |"))
+
+        markdown.apply(configuration: .make(
+            content: Self.tenRowTableMarkdown,
+            isStreaming: false,
+            themeID: .dark
+        ))
+        layoutHosted(markdown, window: window)
+        try assertMountedTenRowTable(in: markdown)
     }
 
     // MARK: - Hosting / paint
@@ -234,19 +243,19 @@ struct TableBodyLeakRegressionTests {
         try #require(image.pngData()).write(to: url)
     }
 
-    private func assertMountedTenRowTable(in root: UIView) throws {
+    private func assertMountedTenRowTable(in root: UIView, rows expectedRows: Int = 10) throws {
         let tables = timelineAllViews(in: root).compactMap { $0 as? NativeTableBlockView }
         #expect(tables.count == 1, "expected exactly one mounted table, got \(tables.count)")
         let table = try #require(tables.first)
         let tableText = timelineRenderedTableText(in: table)
-        for title in Self.expectedBodyTitles {
+        for title in Self.expectedBodyTitles.prefix(expectedRows) {
             #expect(tableText.contains(title), "mounted table missing \(title)")
         }
         if let rows = mountedBodyRowCount(in: table) {
-            #expect(rows == 10, "mounted body rows \(rows), expected 10")
+            #expect(rows == expectedRows, "mounted body rows \(rows), expected \(expectedRows)")
         } else {
             let found = Self.expectedBodyTitles.filter { tableText.contains($0) }
-            #expect(found.count == 10, "clip-mode table titles \(found.count), expected 10")
+            #expect(found.count == expectedRows, "clip-mode table titles \(found.count), expected \(expectedRows)")
         }
         let prose = proseOutsideTable(in: root)
         #expect(!containsLeakedPipes(prose), "pipe prose outside table: \(prose)")

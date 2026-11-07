@@ -1220,6 +1220,7 @@ struct AssistantTimelineRowContentViewTests {
         | Name | Value |
         | --- | --- |
         | alpha | 100 |
+
         """
         mdView.apply(configuration: .make(content: phase2, isStreaming: true, themeID: ThemeRuntimeState.currentThemeID()))
         _ = fittedTimelineSize(for: mdView, width: 370)
@@ -1231,7 +1232,7 @@ struct AssistantTimelineRowContentViewTests {
         let tableAfterPhase2View = try #require(tableAfterPhase2)
         #expect(timelineRenderedTableText(in: tableAfterPhase2View).contains("alpha"))
 
-        // Phase 3: second row arrives (partial).
+        // Phase 3: second row arrives (partial). It waits for its line to end.
         let phase3 = """
         Results:
 
@@ -1247,6 +1248,12 @@ struct AssistantTimelineRowContentViewTests {
         #expect(tableAfterPhase3 === tableAfterPhase1, "Table view should still be the same instance")
 
         let tableAfterPhase3View = try #require(tableAfterPhase3)
+        #expect(!timelineRenderedTableText(in: tableAfterPhase3View).contains("beta"))
+
+        // Phase 4: the row's line ends.
+        mdView.apply(configuration: .make(content: phase3 + " |\n", isStreaming: true, themeID: ThemeRuntimeState.currentThemeID()))
+        _ = fittedTimelineSize(for: mdView, width: 370)
+        #expect(timelineFirstView(ofType: NativeTableBlockView.self, in: mdView) === tableAfterPhase1)
         #expect(timelineRenderedTableText(in: tableAfterPhase3View).contains("beta"))
     }
 
