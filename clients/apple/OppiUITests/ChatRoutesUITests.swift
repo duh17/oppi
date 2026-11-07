@@ -771,8 +771,14 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(stop.waitUntilExists(timeout: 5), "The reader draws the job's Stop button")
         XCTAssertTrue(stop.isHittable, "Stop is in reach without scrolling the reader")
         attachScreenshot("jobs-surface-full-screen")
+        // Stop in the reader is the drawer's Stop: the same action reaches the session's socket.
+        stop.tap()
         back.tap()
         XCTAssertTrue(back.waitUntilGone(timeout: 5), "Back returns to the chat")
+        XCTAssertTrue(
+            waitFor(app.staticTexts["chatRoutes.surfaceActions"].label == "background-jobs/jobs/stop"),
+            "Stop in the reader must reach the socket: \(app.staticTexts["chatRoutes.surfaceActions"].label)"
+        )
         assertRunning()
     }
 
