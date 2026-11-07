@@ -1176,7 +1176,9 @@ describe("AgentLaunchService", () => {
     }
   });
 
-  it("recovers an expired launching lease and sends the prompt on retry", async () => {
+  it("refuses to redispatch a launching row whose lease expired", async () => {
+    // A process can die after Pi accepts the prompt but before the delivered receipt is saved.
+    // Expiry releases contention, not permission to send the first prompt a second time.
     const launching = makeSession({
       id: "launching-1",
       launch: {
@@ -1186,10 +1188,8 @@ describe("AgentLaunchService", () => {
         lease: { owner: "worker-a", acquiredAt: 1_000, expiresAt: 1_500 },
       },
     });
-    const { service, createSession, startSession, sendPrompt } = makeService({
-      sessions: [launching],
-      nowMs: 2_000,
-    });
+    const { service, createSession, claimSessionLaunchRecovery, startSession, sendPrompt } =
+      makeService({ sessions: [launching], nowMs: 2_000 });
 
     const result = await service.launch({
       agent: { name: "test" },
@@ -1200,63 +1200,30 @@ describe("AgentLaunchService", () => {
     });
 
     expect(result).toMatchObject({
-      kind: "existing",
-      session: { id: "launching-1", firstMessage: "recover prompt" },
-      promptDispatch: "delivered",
+      kind: "launch_delivery_unknown",
+      retryable: false,
+      session: { id: "launching-1" },
     });
     expect(createSession).not.toHaveBeenCalled();
-    expect(startSession).toHaveBeenCalledWith("launching-1", makeWorkspace());
-    expect(sendPrompt).toHaveBeenCalledWith("launching-1", "recover prompt", {});
-  });
-
-  it("does not recover an expired launch when the retry target differs", async () => {
-    const launching = makeSession({
-      id: "launching-1",
-      workspaceId: "ws-1",
-      worktreeId: "feature-a",
-      launch: {
-        idempotencyKey: "launch-1",
-        status: "launching",
-        requestedAt: 1_000,
-        target: { workspaceId: "ws-1", worktreeId: "feature-a", runtime: "host" },
-        lease: { owner: "worker-a", acquiredAt: 1_000, expiresAt: 1_500 },
-      },
-    });
-    const { service, claimSessionLaunchRecovery, startSession, sendPrompt } = makeService({
-      sessions: [launching],
-      nowMs: 2_000,
-    });
-
-    const result = await service.launch({
-      agent: { name: "test" },
-      target: { workspace: makeWorkspace(), worktreeId: "feature-b" },
-      prompt: "must not recover into feature-b",
-      idempotencyKey: "launch-1",
-      leaseOwner: "worker-b",
-    });
-
-    expect(result).toMatchObject({
-      kind: "existing",
-      session: { id: "launching-1" },
-      promptDispatch: "not_sent",
-    });
     expect(claimSessionLaunchRecovery).not.toHaveBeenCalled();
     expect(startSession).not.toHaveBeenCalled();
     expect(sendPrompt).not.toHaveBeenCalled();
   });
 
-  it("does not send the prompt when expired launch recovery loses the lease race", async () => {
-    const launching = makeSession({
-      id: "launching-1",
+  it("does not send the prompt when failed launch recovery loses the lease race", async () => {
+    const failed = makeSession({
+      id: "failed-1",
       launch: {
         idempotencyKey: "launch-1",
-        status: "launching",
+        status: "failed",
         requestedAt: 1_000,
-        lease: { owner: "worker-a", acquiredAt: 1_000, expiresAt: 1_500 },
+        completedAt: 1_500,
+        promptDispatch: "not_sent",
+        promptError: "transport down",
       },
     });
     const { service, startSession, sendPrompt } = makeService({
-      sessions: [launching],
+      sessions: [failed],
       nowMs: 2_000,
       recoveryClaim: "lose",
     });
@@ -1272,7 +1239,7 @@ describe("AgentLaunchService", () => {
     expect(result).toMatchObject({
       kind: "launch_in_progress",
       retryable: true,
-      session: { id: "launching-1" },
+      session: { id: "failed-1" },
     });
     expect(startSession).not.toHaveBeenCalled();
     expect(sendPrompt).not.toHaveBeenCalled();

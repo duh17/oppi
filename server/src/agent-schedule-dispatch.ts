@@ -86,6 +86,9 @@ async function launchNewSession(
     // The durable session resolves the saved Agent when it first attaches (`resolveDurableAgent`).
     ...(input.action.engine === "durable" ? { engine: "durable" as const } : {}),
   });
+  if (result.kind === "launch_delivery_unknown") {
+    throw new ScheduleDispatchError("other", "launch_delivery_unknown");
+  }
   if (result.kind === "launch_in_progress") {
     throw new ScheduleDispatchError("launch_in_progress");
   }

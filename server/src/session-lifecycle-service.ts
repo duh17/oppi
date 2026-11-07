@@ -245,6 +245,9 @@ export class SessionLifecycleService {
     if (result.kind === "launch_in_progress") {
       throw new SessionLifecycleError("launch_in_progress", 409);
     }
+    if (result.kind === "launch_delivery_unknown") {
+      throw new SessionLifecycleError("launch_delivery_unknown", 409);
+    }
 
     return {
       session: result.session,

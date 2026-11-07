@@ -252,6 +252,25 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         engine: requestedEngine.engine,
       });
 
+      if (result.kind === "launch_delivery_unknown") {
+        helpers.json(
+          res,
+          {
+            receipt: {
+              accepted: false,
+              retryable: false,
+              reason: "launch_delivery_unknown",
+              agentId: agent.id,
+              agentVersion: agent.version,
+              sessionId: result.session.id,
+              idempotencyKey: body.idempotencyKey,
+            },
+          },
+          409,
+        );
+        return true;
+      }
+
       if (result.kind === "launch_in_progress") {
         helpers.json(
           res,

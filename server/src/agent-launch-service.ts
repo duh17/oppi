@@ -94,6 +94,15 @@ export type AgentLaunchResult =
       retryable: true;
       session: Session;
       retryAfterMs: number;
+    }
+  | {
+      /**
+       * The launch lease expired before a delivered receipt was saved. A process can die after
+       * Pi accepts the prompt, so a redispatch could run the first turn twice. Not retryable.
+       */
+      kind: "launch_delivery_unknown";
+      retryable: false;
+      session: Session;
     };
 
 export interface AgentLaunchServiceDeps {
@@ -220,6 +229,13 @@ export class AgentLaunchService {
         this.assertIdempotentDelegationMatches(existing, delegation);
         this.assertIdempotentAutoStopMatches(existing, autoStop);
         this.assertIdempotentEngineMatches(existing, request.engine);
+        if (this.launchDeliveryIsUnknown(existing, request, now)) {
+          return {
+            kind: "launch_delivery_unknown",
+            retryable: false,
+            session: this.hydratedSnapshot(existing),
+          };
+        }
         const existingResult = this.resultForExistingLaunch(existing, now);
         if (
           existingResult.kind === "existing" &&
@@ -677,6 +693,23 @@ export class AgentLaunchService {
         existing.launch?.promptDispatch ?? (existing.firstMessage ? "delivered" : "not_sent"),
       ...(existing.launch?.failure ? { failure: existing.launch.failure } : {}),
     };
+  }
+
+  /**
+   * An expired `launching` lease with a prompt to send is ambiguous: a process can die after Pi
+   * accepts the prompt but before the delivered receipt is saved, and the receipt cannot tell that
+   * from a pre-send crash. Expiry releases contention, not permission to duplicate a turn.
+   * (Control launch applies the same rule.) A `failed` receipt is a known not-sent and recovers.
+   */
+  private launchDeliveryIsUnknown(
+    existing: Session,
+    request: AgentLaunchRequest,
+    now: number,
+  ): boolean {
+    const launch = existing.launch;
+    if (launch?.status !== "launching" || launch.promptDispatch === "delivered") return false;
+    if (!request.prompt?.trim()) return false;
+    return !launch.lease || launch.lease.expiresAt <= now;
   }
 
   private shouldRecoverExistingLaunch(
