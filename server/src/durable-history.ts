@@ -423,8 +423,15 @@ export async function readDurableSearchTranscript(
   const { content, unsafe } = await readSearchRange(harness, conversation, 0, throughEntryId);
   if (!unsafe) return mergeSearchTranscript(empty, content);
   // A tool name with whitespace cannot be merged from pages; one extraction over everything can.
+  // It stops at the marker's entry too, or the next append would index what follows twice.
+  const records = await allEntries(harness, id);
   return extractSearchTranscriptFromEntries(
-    await projectEntries(harness, await allEntries(harness, id)),
+    await projectEntries(
+      harness,
+      throughEntryId === undefined
+        ? records
+        : records.filter((entry) => entry.id <= throughEntryId),
+    ),
   );
 }
 

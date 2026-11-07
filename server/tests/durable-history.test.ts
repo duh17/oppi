@@ -52,6 +52,7 @@ function assistant(
   text: string,
   stopReason: AssistantMessage["stopReason"],
   tool = false,
+  toolName = "bash",
 ): AssistantMessage {
   return {
     role: "assistant",
@@ -62,7 +63,7 @@ function assistant(
             {
               type: "toolCall" as const,
               id: "stub-tool",
-              name: "bash",
+              name: toolName,
               arguments: { command: "echo output" },
             },
           ]
@@ -87,6 +88,8 @@ function assistant(
 async function history(options: {
   stopped: boolean;
   tool?: boolean;
+  /** The crash stub's tool call name, `bash` by default. */
+  toolName?: string;
   /** Store the tool result the way pi-durable does: its diagnostics rendered into the content. */
   diagnostics?: boolean;
   prefix?: number;
@@ -118,7 +121,7 @@ async function history(options: {
     await append([{ role: "user", content: `turn ${index}`, timestamp: index }]);
     await append([assistant(`answer ${index}`, "stop")]);
   }
-  await append([assistant("crash stub", "aborted", options.tool)], taskId);
+  await append([assistant("crash stub", "aborted", options.tool, options.toolName)], taskId);
   if (options.tool)
     await append(
       [
@@ -363,6 +366,20 @@ it("reads a full search transcript only through the entry a marker names", async
   const transcript = await readDurableSearchTranscript(f.harness, f.id, through);
   expect(transcript.userMessages.split("\n")).toEqual(["older 0", "older 1", "older 2", "older 3"]);
   expect(transcript.assistantMessages).toBe("");
+});
+
+it("stops at the marker's entry when a tool name with whitespace forces one whole extraction", async () => {
+  const f = await history({ stopped: true, tool: true, toolName: "run shell" });
+  const through = f.records.find(
+    (entry) => entry.model?.[0]?.role === "user" && entry.model[0].content === "between one",
+  )!.id;
+  const transcript = await readDurableSearchTranscript(f.harness, f.id, through);
+  // "between two" and the retry come after the marker: the next sync indexes them.
+  expect(transcript).toEqual({
+    userMessages: "between one",
+    assistantMessages: "crash stub",
+    toolNames: "run shell",
+  });
 });
 
 it("never replays a tool result's model-only diagnostics, and keeps its warn note", async () => {

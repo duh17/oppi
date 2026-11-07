@@ -1180,7 +1180,7 @@ const TAIL_PARTIAL_WORD_MAX = 64;
  * partial leading word, so the index holds no fragment no query could mean. An unbroken run
  * longer than `TAIL_PARTIAL_WORD_MAX` keeps its cut: one giant token must not erase a message.
  */
-export function tailWithinCap(text: string, cap: number): string {
+function tailWithinCap(text: string, cap: number): string {
   if (text.length <= cap) return text;
   const cut = text.length - cap;
   let start = cut;
@@ -1232,6 +1232,11 @@ function emptySearchTranscriptAccum(): SearchTranscriptAccum {
  * Append a text part, then drop whole oldest parts the cap no longer needs (a part still
  * overlapping the cap window stays; `tailWithinCap` trims it at the end). Memory stays bounded
  * by the cap plus one part however long the session runs.
+ *
+ * `length` counts each part plus its joining newline. A part goes only while the rest stays over
+ * the cap: then `tailWithinCap` still cuts, at the same place it would cut the whole text. Left
+ * at or just under the cap, the rest would be kept uncut, leading whitespace and all, where an
+ * append (`mergeSearchTranscript`) cuts and strips it.
  */
 function pushCappedPart(parts: string[], length: number, text: string, cap: number): number {
   parts.push(text);
@@ -1239,7 +1244,7 @@ function pushCappedPart(parts: string[], length: number, text: string, cap: numb
   let drop = 0;
   while (drop < parts.length - 1) {
     const oldest = (parts[drop] ?? "").length + 1;
-    if (length - oldest < cap) break;
+    if (length - oldest - 1 <= cap) break;
     length -= oldest;
     drop++;
   }

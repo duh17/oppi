@@ -512,6 +512,34 @@ describe("search transcript extraction fields", () => {
     }
   });
 
+  it("merges to a full extraction when the cap falls on the newline before a message", () => {
+    // The newest message starts with whitespace and fills the cap with the newline before it (or
+    // one under it), so the cut lands on that newline and drops the older message whole.
+    for (const newest of [
+      ` ${"y".repeat(USER_MESSAGE_CAP - 1)}`,
+      ` ${"y".repeat(USER_MESSAGE_CAP - 2)}`,
+    ]) {
+      const entries = ["older", newest].map(
+        (content, n) =>
+          ({
+            type: "message",
+            id: `e${n}`,
+            parentId: n === 0 ? null : `e${n - 1}`,
+            timestamp: "2026-01-01T00:00:00Z",
+            message: { role: "user", content },
+          }) as SessionEntry,
+      );
+      const full = extractSearchTranscriptFromEntries(entries);
+      expect(full.userMessages).toBe(newest.trimStart());
+      expect(
+        mergeSearchTranscript(
+          extractSearchTranscriptFromEntries(entries.slice(0, 1)),
+          extractSearchTranscriptAddition(entries.slice(1)),
+        ),
+      ).toEqual(full);
+    }
+  });
+
   it("keeps inline media out of the field caps so later text stays searchable", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "search-extract-media-cap-"));
     cleanupPaths.add(dataDir);
