@@ -11,16 +11,22 @@ enum ReadableContentWidth {
     static let column: CGFloat = 760
 
     /// `view` is at most the cap wide, as wide as `container` when that is
-    /// narrower (at `.defaultHigh`, so the cap wins), and centered in it. The
-    /// caller activates the constraints.
+    /// narrower (at `.defaultHigh`, so the cap wins), and centered in the
+    /// container's safe area, never wider than it. A container can run under a
+    /// sidebar or a rail (an iPad split view's detail extends under its
+    /// sidebar, which is a safe-area inset), so centering on its bounds would
+    /// center on the window and slide the column under the sidebar. The caller
+    /// activates the constraints.
     @MainActor
     static func constrain(_ view: UIView, to container: UIView) -> [NSLayoutConstraint] {
+        let safe = container.safeAreaLayoutGuide
         let fill = view.widthAnchor.constraint(equalTo: container.widthAnchor)
         fill.priority = .defaultHigh
         return [
             view.widthAnchor.constraint(lessThanOrEqualToConstant: column),
+            view.widthAnchor.constraint(lessThanOrEqualTo: safe.widthAnchor),
             fill,
-            view.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            view.centerXAnchor.constraint(equalTo: safe.centerXAnchor),
         ]
     }
 }
