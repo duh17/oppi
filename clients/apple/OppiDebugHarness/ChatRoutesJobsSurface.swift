@@ -129,7 +129,7 @@ enum ChatRoutesJobsSurface {
                 "id": "tail:bash-72",
                 "type": "code",
                 "language": "output",
-                "text": "…lures (0 unexpected) in 0.089 seconds\nTest Suite 'OppiTests.xctest' passed at 2026-11-07 01:31:25.103.\n     Executed 1 test, with 0 failures (0 unexpected) in 16.095 (16.102) seconds\n     Executed 1 test, with 0 failures (0 unexpected) in 16.095 (16.104) seconds\nFull log: /Users/alex/work/app/clients/apple/.build/logs/pool-0-20261107-013123.log\nSummary: /Users/alex/work/app/clients/apple/.build/logs/pool-0-20261107-013123.summary.json\nWaiting for the screenshot run to finish"
+                "text": "…lures (0 unexpected) in 0.089 seconds\nTest Suite 'OppiTests.xctest' passed at 2026-11-07 01:31:25.103.\n     Executed 1 test, with 0 failures (0 unexpected) in 16.095 (16.102) seconds\n     Executed 1 test, with 0 failures (0 unexpected) in 16.095 (16.104) seconds\nFull log: ~/work/app/clients/apple/.build/logs/pool-0-20261107-013123.log\nSummary: ~/work/app/clients/apple/.build/logs/pool-0-20261107-013123.summary.json\nWaiting for the screenshot run to finish"
               },
               {
                 "id": "output:bash-72",
@@ -146,7 +146,7 @@ enum ChatRoutesJobsSurface {
                   {
                     "id": "cwd:bash-72",
                     "type": "text",
-                    "text": "/Users/alex/work/wt_app",
+                    "text": "~/work/wt_app",
                     "style": "mono"
                   }
                 ]
