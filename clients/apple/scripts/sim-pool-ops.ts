@@ -225,7 +225,8 @@ export const DEVICE_PROFILES: Record<string, DeviceProfile> = {
     claimCount: 8,
   },
   ipad: {
-    deviceType: "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB",
+    // Stands in for the iPad mini (A20 Pro) (756x1158 pt) until Xcode ships that device type; the A17 Pro is 744x1133 pt.
+    deviceType: "com.apple.CoreSimulator.SimDeviceType.iPad-mini-A17-Pro",
     runtime: "",
     slotStart: 6,
     count: 4,
@@ -2758,7 +2759,7 @@ clients/apple, even if the script was launched from another tree.
 
 --device-profile NAME (or OPPI_SIM_DEVICE_PROFILE) selects a named lane:
   iphone  iPhone 16 Pro, run slots 0-5 (the default pool), claim slots 20-27
-  ipad    iPad Pro 13-inch (M5), run slots 6-9, claim slots 40-47
+  ipad    iPad mini (A17 Pro), run slots 6-9, claim slots 40-47
   duo     iPhone Duo on iOS 27.1, run slot 10, claim slots 30-37
 Explicit OPPI_SIM_DEVICE_TYPE, OPPI_SIM_RUNTIME, OPPI_SIM_POOL_SLOT_START, and
 OPPI_SIM_POOL_COUNT override the profile.

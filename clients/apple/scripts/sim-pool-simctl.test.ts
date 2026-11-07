@@ -98,7 +98,7 @@ describe("sim-pool-simctl", () => {
       devices,
       0,
       "com.apple.CoreSimulator.SimRuntime.iOS-26-0",
-      "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB",
+      "com.apple.CoreSimulator.SimDeviceType.iPad-mini-A17-Pro",
     );
     expect(mismatch.match).toBeUndefined();
     expect(mismatch.mismatches.map((device) => device.udid).sort()).toEqual(["U1", "U2"]);
