@@ -412,16 +412,9 @@ describe("SessionManager extension UI", () => {
     (manager as unknown as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
     const key = "s1";
     const starting = (
-      manager as unknown as {
-        starting: {
-          claim: (
-            key: string,
-            priorStatus: () => string,
-          ) => { dialogs?: unknown; stopRequested: boolean; subscribers: Set<unknown> };
-        };
-      }
+      manager as unknown as { starting: { claim: (key: string) => { dialogs?: unknown } } }
     ).starting;
-    starting.claim(key, () => "ready").dialogs = {
+    starting.claim(key).dialogs = {
       bridge: { respond: () => false },
       state: { session: { id: key }, pendingUIRequests: new Map() },
     };

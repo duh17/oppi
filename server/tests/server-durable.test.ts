@@ -4617,6 +4617,23 @@ describe("server durable managed runtime", () => {
     expect(savedStatuses).not.toContain("ready");
   });
 
+  it("still fences a stopped conversation that a focused socket once watched", async () => {
+    const f = await fixture([]);
+    // A socket that subscribed to startup dialogs and left, with no start of its own.
+    const leftover = createDurableSession(f.storage, "Watched, then stopped");
+    leftover.serverDurable = { storeId: f.session.id, conversationId: 99 };
+    f.storage.saveSession(leftover);
+    f.manager.subscribeStartupUI(leftover.id, () => {})();
+    leftover.status = "stopped";
+    f.storage.saveSession(leftover);
+    const abort = vi.spyOn(SessionHost.prototype, "abortConversations");
+
+    await f.manager.startSession(f.session.id, f.workspace);
+
+    expect(abort).toHaveBeenCalledWith(new Set([99]), { background: true });
+    await f.manager.stopSession(f.session.id);
+  });
+
   it("persists a busy sandbox restart attachment until its original submission settles once", async () => {
     let finishReply!: () => void;
     const replyGate = new Promise<void>((resolve) => {

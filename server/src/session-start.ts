@@ -91,6 +91,12 @@ export class SessionStartCoordinator {
     const assertOpen = (): void => {
       if (this.deps.isClosed?.()) throw new Error("Server is stopping; session not started");
     };
+    const endWithoutRuntime = (event: "start_failed" | "launch_failed"): void => {
+      applyLifecycle(session, event);
+      session.currentTurnStartedAt = undefined;
+      session.lastActivity = Date.now();
+      this.deps.persistSessionNow(key, session);
+    };
 
     return this.deps.runtimeManager.withWorkspaceLock(identity.workspaceId, async () => {
       assertOpen();
@@ -187,20 +193,6 @@ export class SessionStartCoordinator {
             assertOpen();
           }
 
-          // A stop requested while the backend was building wins: it ends this start before a
-          // runtime registers, the same as a failed build, but it resolves rather than rejects
-          // — dismissing a startup dialog to unblock the stop is a cooperative return, not a
-          // failure. No live session, and no `ready` row on the way to `stopped`.
-          if (isStopRequested()) {
-            await sdkBackend.dispose().catch(() => undefined);
-            applyLifecycle(session, "start_failed");
-            session.currentTurnStartedAt = undefined;
-            session.lastActivity = Date.now();
-            this.deps.persistSessionNow(key, session);
-            this.deps.runtimeManager.releaseSession(identity);
-            return session;
-          }
-
           const activeSession: SessionStartActiveSession = {
             ...createRuntimeSessionStateScaffold<SessionMessageQueueStore>(
               session,
@@ -222,6 +214,16 @@ export class SessionStartCoordinator {
               sessionId: session.id,
               error: safeErrorMessage(error),
             });
+          }
+
+          // A stop requested while the start ran wins here, with no await before the runtime
+          // registers: the start ends like a failed build, but resolves, since the stop is a
+          // cooperative end (it dismisses startup dialogs to get here). No `ready` row is saved.
+          if (isStopRequested()) {
+            await sdkBackend.dispose().catch(() => undefined);
+            endWithoutRuntime("start_failed");
+            this.deps.runtimeManager.releaseSession(identity);
+            return session;
           }
 
           if (sdkBackend.nativeMessageQueue) delete activeSession.messageQueue;
@@ -266,12 +268,7 @@ export class SessionStartCoordinator {
             });
           }
         }
-        if (!abandoned && !registered) {
-          applyLifecycle(session, failedStart);
-          session.currentTurnStartedAt = undefined;
-          session.lastActivity = Date.now();
-          this.deps.persistSessionNow(key, session);
-        }
+        if (!abandoned && !registered) endWithoutRuntime(failedStart);
         this.deps.runtimeManager.releaseSession(identity);
         throw err;
       }

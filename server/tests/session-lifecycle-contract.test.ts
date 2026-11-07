@@ -380,6 +380,8 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
   },
   // No socket can attach before the runtime registers, and the stop wins the race before one
   // ever does: the row never goes live, so no stop frames of a live session broadcast either.
+  // The stop's caller answers clients: the HTTP stop of a session with no runtime emits
+  // stop_confirmed and the stopped summary on the app-event stream.
   "classic.stop_during_start": {
     ws: [],
     app: [],

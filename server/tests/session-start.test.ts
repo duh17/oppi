@@ -237,7 +237,16 @@ describe("SessionStartCoordinator status persistence", () => {
     const deps = makeDeps(session);
     const workspace = makeWorkspace();
     const dispose = vi.fn(async () => {});
-    vi.spyOn(SdkBackend, "create").mockResolvedValue({ dispose } as unknown as SdkBackend);
+    let stopRequested = false;
+    // The stop lands during the start's last await before registration.
+    const cacheMissSeed = vi.fn(async () => {
+      stopRequested = true;
+      return [];
+    });
+    vi.spyOn(SdkBackend, "create").mockResolvedValue({
+      dispose,
+      cacheMissSeed,
+    } as unknown as SdkBackend);
 
     // The start resolves rather than rejects: a stop that wins the race is a cooperative
     // return, not a failure.
@@ -245,7 +254,7 @@ describe("SessionStartCoordinator status persistence", () => {
       "key",
       session.id,
       workspace,
-      () => true,
+      () => stopRequested,
     );
 
     expect(result).toBe(session);

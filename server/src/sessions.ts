@@ -302,17 +302,18 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   /** Focused streams can relay startup dialogs before the SDK runtime exists. */
   subscribeStartupUI(sessionId: string, send: (message: ServerMessage) => void): () => void {
-    const priorStatus = (): Session["status"] =>
-      this.storage.getSession(sessionId)?.status ?? "stopped";
-    const { subscribers, dialogs } = this.starting.claim(this.sessionKey(sessionId), priorStatus);
-    subscribers.add(send);
-    for (const message of dialogs ? buildPendingExtensionUIRequestMessages(dialogs.state) : [])
-      send({ ...message, sessionId });
+    const key = this.sessionKey(sessionId);
+    const entry = this.starting.claim(key);
+    entry.subscribers.add(send);
+    if (entry.dialogs)
+      for (const message of buildPendingExtensionUIRequestMessages(entry.dialogs.state))
+        send({ ...message, sessionId });
     let detached = false;
     return () => {
       if (detached) return;
       detached = true;
-      subscribers.delete(send);
+      entry.subscribers.delete(send);
+      this.starting.release(key, entry);
     };
   }
 
@@ -385,13 +386,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       return activeNow.session;
     }
 
-    const existing = this.starting.get(key);
-    if (existing?.promise) return existing.promise;
-
-    const priorStatus = (): Session["status"] =>
-      this.storage.getSession(sessionId)?.status ?? "stopped";
-    const entry = this.starting.claim(key, priorStatus);
-    entry.promise = this.runtimeManager.withSessionLock(sessionId, async () => {
+    const entry = this.starting.claim(key);
+    if (entry.start) return entry.start.promise;
+    // Read before the start can save `starting`.
+    const priorStatus = this.storage.getSession(sessionId)?.status ?? "stopped";
+    const promise = this.runtimeManager.withSessionLock(sessionId, async () => {
       const activeAgain = this.active.get(key);
       if (activeAgain) {
         this.resetIdleTimer(key);
@@ -401,13 +400,15 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         key,
         sessionId,
         startWorkspace,
-        () => entry.stopRequested,
+        () => entry.start?.stopRequested === true,
       );
     });
+    entry.start = { promise, priorStatus, stopRequested: false };
 
     try {
-      return await entry.promise;
+      return await promise;
     } finally {
+      entry.start = undefined;
       this.starting.release(key, entry);
     }
   }
@@ -1080,12 +1081,12 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     // A start in flight sees `stopRequested` before it registers a runtime and ends without
     // one: the stop wins before the row is ever saved `ready`.
     const starting = this.starting.get(key);
-    if (starting?.promise) {
-      starting.stopRequested = true;
+    if (starting?.start) {
+      starting.start.stopRequested = true;
       // A dialog an extension opened at startup holds the start until it is answered: Stop
       // dismisses it rather than wait for an answer that may never come.
       starting.dialogs?.bridge.cancelDialogs();
-      await starting.promise.catch(() => undefined);
+      await starting.start.promise.catch(() => undefined);
     }
     if (!this.isActive(sessionId)) {
       const session = this.storage.getSession(sessionId);
@@ -1274,7 +1275,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         if (this.isActive(session.id) || (queued.has(session.id) && !workspaceGone())) continue;
         // `startSession` opens the store after writing "starting": keep a live session's work, but
         // still fence a stopped one being reopened so leftover jobs stay aborted.
-        const prior = this.starting.get(this.sessionKey(session.id))?.priorStatus;
+        const prior = this.starting.get(this.sessionKey(session.id))?.start?.priorStatus;
         if (prior !== undefined && prior !== "stopped" && prior !== "stopping") continue;
         ids.add(conversationId);
       }
