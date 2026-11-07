@@ -42,6 +42,8 @@ extension ChatViewController {
         model.reviewCommentDrawerExpanded = next.commentsExpanded
         model.nowPlayingDrawerExpanded = next.nowPlayingExpanded
         if model.nowPlayingDrawerExpanded {
+            // Extension panels own their selection; ask both placements to collapse.
+            model.extensionDrawerCollapseRequestID &+= 1
             collapseNotifyChip()
             dismissKeyboard()
         }
@@ -75,6 +77,7 @@ extension ChatViewController {
         sessionManager.followsReturnedChildren = model.extensionDrawerExpanded
         if expanded {
             model.reviewCommentDrawerExpanded = false
+            model.nowPlayingDrawerExpanded = false
             collapseNotifyChip()
             dismissKeyboard()
         }

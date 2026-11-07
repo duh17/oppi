@@ -27,6 +27,29 @@ struct ReviewCommentStripChromeTests {
         #expect(!chat.model.nowPlayingDrawerExpanded)
     }
 
+    @Test("Now playing and an extension drawer are never open together")
+    func nowPlayingAndExtensionDrawersAreExclusive() async {
+        let (connection, _) = await makeTestConnection(sessionId: "drawers-np")
+        let chat = ChatViewController(sessionId: "drawers-np", connection: connection, navigation: AppNavigation())
+
+        // An extension drawer opens while now playing is open: now playing closes.
+        chat.toggleNowPlayingDrawer()
+        #expect(chat.model.nowPlayingDrawerExpanded)
+        chat.handleExtensionDrawerExpansion(true, in: .aboveEditor)
+        #expect(!chat.model.nowPlayingDrawerExpanded)
+
+        // Now playing opens while an extension drawer is open: the panels are asked to collapse.
+        let collapseRequest = chat.model.extensionDrawerCollapseRequestID
+        chat.toggleNowPlayingDrawer()
+        #expect(chat.model.nowPlayingDrawerExpanded)
+        #expect(chat.model.extensionDrawerCollapseRequestID == collapseRequest + 1)
+
+        // Closing now playing asks for nothing.
+        chat.toggleNowPlayingDrawer()
+        #expect(!chat.model.nowPlayingDrawerExpanded)
+        #expect(chat.model.extensionDrawerCollapseRequestID == collapseRequest + 1)
+    }
+
     @Test("Live subagent tails keep streaming while any extension drawer stays expanded")
     func liveTailsFollowTheDrawersTogether() async {
         let (connection, _) = await makeTestConnection(sessionId: "drawer-tails")
