@@ -310,7 +310,10 @@ export class DurableMcp {
   private startup?: Promise<void>;
   private waitedForStartup = false;
   private offers: Promise<void> = Promise.resolve();
+  /** The latest failed tool-list commit; cleared by the next commit that lands. */
   private offerError?: Error;
+  /** Names from failed commits, offered again with the next commit. */
+  private readonly unoffered = new Set<string>();
   private closed = false;
   private extension: Extension;
   /** Pi tool name to the `<server>\0<tool>` it was assigned to, so names stay unique and stable. */
@@ -498,6 +501,11 @@ export class DurableMcp {
     // Connections that settled during the waits chained their tool-list commits; land them
     // before admission so this request offers the tools.
     await this.offers;
+    if (this.offerError) {
+      // Retry what failed: a transient store error must not fail every later prompt.
+      this.offerTools([]);
+      await this.offers;
+    }
     if (this.offerError) throw this.offerError;
   }
 
@@ -773,22 +781,27 @@ export class DurableMcp {
 
   /**
    * Append names to the conversation's explicit tool list; from the next request on. Runs
-   * from connection callbacks, so a failure is kept and fails the next prompt instead of
-   * letting it run without the tools.
+   * from connection callbacks, so a failure is kept and fails the next prompt, which retries it
+   * first, instead of letting the prompt run without the tools. The names that failed ride on
+   * the next commit, and a commit that lands clears the error.
    */
   private offerTools(names: readonly string[]): void {
     const conversation = this.conversation;
-    if (!conversation || !names.length || this.closed) return;
+    if (!conversation || (!names.length && !this.unoffered.size) || this.closed) return;
     this.offers = this.offers.then(async () => {
       if (this.closed) return;
+      const offering = [...new Set([...this.unoffered, ...names])];
       try {
         await conversation.commit(async (tx) => {
           const agent = await tx.doc(AgentDoc, conversation.id);
           if (!Array.isArray(agent.tools)) return;
-          for (const name of names) if (!agent.tools.includes(name)) agent.tools.push(name);
+          for (const name of offering) if (!agent.tools.includes(name)) agent.tools.push(name);
         }, BACKGROUND_CONTEXT);
+        this.unoffered.clear();
+        this.offerError = undefined;
       } catch (error) {
         if (this.closed) return;
+        for (const name of offering) this.unoffered.add(name);
         this.offerError = new Error(
           `Could not offer MCP tools to this session: ${error instanceof Error ? error.message : String(error)}`,
         );

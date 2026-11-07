@@ -720,3 +720,48 @@ describe("server durable MCP (host)", () => {
     },
   );
 });
+
+describe("DurableMcp tool offers", () => {
+  it("retries a failed tool-list commit at the next prompt instead of failing every prompt", async () => {
+    writeMcpJson(agentDir, {
+      docs: { command: join(agentDir, "missing-mcp-server"), exposure: "codemode" },
+    });
+    const agent = { tools: [] as string[], modelTools: [] as string[] };
+    let failuresLeft = 1;
+    let commits = 0;
+    const conversation = {
+      id: "c1",
+      commit: async (run: (tx: unknown) => Promise<unknown>) => {
+        commits++;
+        if (failuresLeft-- > 0) throw new Error("store busy");
+        return run({ doc: async () => agent });
+      },
+      agent: async () => ({ tools: agent.tools.map((name) => ({ name })) }),
+    };
+    const mcp = await DurableMcp.open({
+      sessionId: "s1",
+      cwd: agentDir,
+      agentDir,
+      projectTrusted: false,
+      piTools: new Set(),
+      providerToken: async () => undefined,
+      toolCache: new McpToolCache(mcpToolCachePath(agentDir), "host"),
+      install: () => {},
+      uninstall: () => {},
+      namespaces: () => {},
+    });
+    expect(mcp).toBeDefined();
+    try {
+      mcp!.attach(conversation as never);
+      await waitFor(() => commits > 0, "the attach commit");
+
+      // The failed commit left codemode off the tool list; this prompt retries it and lands it.
+      await expect(mcp!.beforePrompt()).resolves.toBeUndefined();
+      expect(agent.tools).toContain("codemode");
+      // The error cleared with the commit that landed.
+      await expect(mcp!.beforePrompt()).resolves.toBeUndefined();
+    } finally {
+      await mcp!.close();
+    }
+  });
+});
