@@ -1831,11 +1831,6 @@ final class ServerConnection {
         try await sender.sendStop(sessionIdOverride: sessionIdOverride)
     }
 
-    func sendStopSession(sessionIdOverride: String? = nil) async throws {
-        try prepareFocusedSessionBindingForSendIfNeeded(sessionIdOverride: sessionIdOverride)
-        try await sender.sendStopSession(sessionIdOverride: sessionIdOverride)
-    }
-
     func send(_ message: ClientMessage) async throws { try await sender.send(message) }
 
     /// Sends one action on a composable surface at the revision the client holds, and shows the

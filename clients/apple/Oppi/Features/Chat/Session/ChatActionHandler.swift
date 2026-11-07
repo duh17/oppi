@@ -15,18 +15,15 @@ enum ReloadOutcome: Equatable {
 /// model/thinking changes, and session management.
 ///
 /// Extracted from the chat screen to keep it focused on composition.
-/// Owns the stop/force-stop state machine and action dispatch.
+/// Owns the stop state and action dispatch.
 @MainActor @Observable
 final class ChatActionHandler {
-    // MARK: - Stop State Machine
+    // MARK: - Stop State
 
     private(set) var isStopping = false
-    private(set) var showForceStop = false
-    private(set) var isForceStopInFlight = false
     private(set) var isSending = false
     private(set) var sendAckStage: TurnAckStage?
     private(set) var reconnectFailureMessage: String?
-    private var forceStopTask: Task<Void, Never>?
     /// Set when the chat leaves (`cleanup()`), cleared by the next send. Leaving
     /// closes the chat's stream, which fails a just-sent turn's ack wait.
     private(set) var hasLeftChat = false
@@ -36,9 +33,6 @@ final class ChatActionHandler {
 
     /// Test seam: override stop-turn transport.
     var _sendStopForTesting: ((ServerConnection) async throws -> Void)?
-
-    /// Test seam: override force-stop transport.
-    var _sendStopSessionForTesting: ((ServerConnection) async throws -> Void)?
 
     private static let sessionNameMaxLength = 48
 
@@ -432,7 +426,7 @@ final class ChatActionHandler {
         }
     }
 
-    // MARK: - Stop / Force Stop
+    // MARK: - Stop
 
     func stop(
         connection: ServerConnection,
@@ -452,10 +446,6 @@ final class ChatActionHandler {
         }
 
         isStopping = true
-        showForceStop = false
-
-        forceStopTask?.cancel()
-        forceStopTask = nil
 
         Task { @MainActor in
             do {
@@ -477,48 +467,9 @@ final class ChatActionHandler {
         }
     }
 
-    func forceStop(
-        connection: ServerConnection,
-        reducer: TimelineReducer,
-        sessionStore: SessionStore,
-        sessionId: String
-    ) {
-        guard !isForceStopInFlight else { return }
-        isForceStopInFlight = true
-
-        Task { @MainActor in
-            do {
-                if let sendStopSessionHook = self._sendStopSessionForTesting {
-                    try await sendStopSessionHook(connection)
-                } else {
-                    try await connection.sendStopSession(sessionIdOverride: sessionId)
-                }
-                reducer.appendSystemEvent("Session stopped")
-            } catch {
-                if let api = connection.apiClient,
-                   let routeScope = sessionStore.routeScope(for: sessionId) {
-                    do {
-                        let updatedSession = try await api.stopSession(scope: routeScope, sessionId: sessionId)
-                        sessionStore.upsert(updatedSession)
-                        reducer.appendSystemEvent("Session stopped")
-                    } catch {
-                        reducer.process(.error(sessionId: sessionId, message: "Stop failed: \(error.localizedDescription)"))
-                    }
-                } else {
-                    reducer.process(.error(sessionId: sessionId, message: "Stop failed: \(error.localizedDescription)"))
-                }
-            }
-            isForceStopInFlight = false
-        }
-    }
-
     /// Reset stop state when session leaves busy.
     func resetStopState() {
         isStopping = false
-        showForceStop = false
-        isForceStopInFlight = false
-        forceStopTask?.cancel()
-        forceStopTask = nil
         reconnectFailureMessage = nil
         clearSendStageNow()
     }
@@ -907,9 +858,6 @@ final class ChatActionHandler {
     // MARK: - Cleanup
 
     func cleanup() {
-        forceStopTask?.cancel()
-        forceStopTask = nil
-
         reconnectFailureMessage = nil
         clearSendStageNow()
         isSending = false

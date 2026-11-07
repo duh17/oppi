@@ -22,8 +22,6 @@ extension QuickSessionViewController: ChatComposerSource {
             isStopping: false,
             voiceInputManager: model.voiceInputManager,
             onLiveVoiceSelected: model.liveVoiceEntry,
-            showForceStop: false,
-            isForceStopInFlight: false,
             askRequest: nil,
             slashCommands: model.slashCommands,
             fileSuggestions: model.selectedChatState.fileSuggestions,
@@ -120,7 +118,6 @@ extension QuickSessionViewController: ChatComposerSource {
 
     func composerSend() { model.handleSend() }
     func composerStop() {}
-    func composerForceStop() {}
     func composerExpand() { model.showExpandedComposer = true }
     func composerSubmitAsk(
         _ request: AskRequest,

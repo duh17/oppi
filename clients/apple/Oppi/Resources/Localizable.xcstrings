@@ -1539,17 +1539,6 @@
     "Finish setup by signing in or adding an API key. This unlocks model selection for sessions on this server." : {
 
     },
-    "Force Stop Session" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "强制停止会话"
-          }
-        }
-      }
-    },
     "Fork from here" : {
       "extractionState" : "stale",
       "localizations" : {

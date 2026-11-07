@@ -50,8 +50,6 @@ struct ComposerBarContent {
     var onLiveVoiceSelected: (() -> Void)? = nil
     /// Non-nil while a Live Voice call runs in this bar.
     var liveVoiceCall: ComposerLiveVoiceCall? = nil
-    var showForceStop: Bool
-    var isForceStopInFlight: Bool
     var askRequest: AskRequest?
     var slashCommands: [SlashCommand]
     var fileSuggestions: [FileSuggestion]
@@ -91,7 +89,6 @@ protocol ComposerBarHosting: AnyObject {
     func setInputFocused(_ value: Bool)
     func performSend()
     func performStop()
-    func performForceStop()
     func performExpand()
     func submitAsk(
         _ request: AskRequest,
@@ -667,7 +664,6 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     let textVerticalInset: CGFloat = 6
 
     let rootStack = UIStackView()
-    let forceStopButton = ComposerForceStopButton()
     let slashPanel = ComposerSuggestionPanelView()
     let filePanel = ComposerSuggestionPanelView()
     let sendProgressView = ComposerSendProgressView()
@@ -808,8 +804,8 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             ).height
         }
         // Above the capsule, each with the stack's spacing.
-        for row in [forceStopButton, sendProgressView] as [UIView] where !row.isHidden {
-            transient += fitted(row) + rootStack.spacing
+        if !sendProgressView.isHidden {
+            transient += fitted(sendProgressView) + rootStack.spacing
         }
         for panel in [slashPanel, filePanel] where !panel.isHidden {
             transient += panel.measuredHeight + rootStack.spacing

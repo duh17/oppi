@@ -18,8 +18,6 @@ extension ComposerBarContent {
             sendProgressText: nil,
             isStopping: false,
             voiceInputManager: nil,
-            showForceStop: false,
-            isForceStopInFlight: false,
             askRequest: nil,
             slashCommands: [],
             fileSuggestions: [],
@@ -94,7 +92,6 @@ final class ComposerOwnerTestScreen: UIViewController, ChatComposerSource {
     func composerSetBusyStreamingBehavior(_ value: StreamingBehavior) {}
     func composerSend() {}
     func composerStop() {}
-    func composerForceStop() {}
     func composerExpand() {}
     func composerSubmitAsk(
         _ request: AskRequest,

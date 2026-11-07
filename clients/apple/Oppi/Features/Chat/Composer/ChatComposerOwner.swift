@@ -25,7 +25,6 @@ protocol ChatComposerSource: AnyObject {
     func composerInputFocusDidChange(_ focused: Bool)
     func composerSend()
     func composerStop()
-    func composerForceStop()
     func composerExpand()
     func composerSubmitAsk(
         _ request: AskRequest,
@@ -387,7 +386,6 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
 
     func performSend() { source?.composerSend() }
     func performStop() { source?.composerStop() }
-    func performForceStop() { source?.composerForceStop() }
     func performExpand() { source?.composerExpand() }
 
     func submitAsk(

@@ -521,10 +521,6 @@ final class MessageSender {
         throw lastError ?? WebSocketError.notConnected
     }
 
-    func sendStopSession(sessionIdOverride: String? = nil) async throws {
-        try await dispatchSend(.stopSession(), sessionIdOverride: sessionIdOverride)
-    }
-
     // MARK: - Convenience: Commands
 
     func requestState() async throws {

@@ -317,8 +317,6 @@ extension ChatViewController: ChatComposerSource {
             onLiveVoiceSelected: liveVoiceEntry,
             // The input bar is the call surface while a call holds the composer.
             liveVoiceCall: liveVoiceCall?.composerCall,
-            showForceStop: actionHandler.showForceStop,
-            isForceStopInFlight: actionHandler.isForceStopInFlight,
             askRequest: ask,
             slashCommands: availableSlashCommands,
             fileSuggestions: chatState.fileSuggestions,
@@ -391,7 +389,6 @@ extension ChatViewController: ChatComposerSource {
 
     func composerSend() { sendComposerAction(draftClearance: .afterSuccess) }
     func composerStop() { stopTurn() }
-    func composerForceStop() { forceStopTurn() }
     func composerExpand() { presentComposer() }
 
     func composerSubmitAsk(

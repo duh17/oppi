@@ -7,13 +7,11 @@ import UIKit
 @MainActor
 struct ChatActionHandlerTests {
 
-    // MARK: - Stop State Machine
+    // MARK: - Stop State
 
     @Test func initialState() {
         let handler = ChatActionHandler()
         #expect(!handler.isStopping)
-        #expect(!handler.showForceStop)
-        #expect(!handler.isForceStopInFlight)
         #expect(!handler.isSending)
         #expect(handler.sendAckStage == nil)
         #expect(handler.sendProgressText == nil)
@@ -27,8 +25,6 @@ struct ChatActionHandlerTests {
         handler.resetStopState()
 
         #expect(!handler.isStopping)
-        #expect(!handler.showForceStop)
-        #expect(!handler.isForceStopInFlight)
         #expect(!handler.isSending)
         #expect(handler.sendAckStage == nil)
         #expect(handler.sendProgressText == nil)
@@ -40,7 +36,7 @@ struct ChatActionHandlerTests {
         handler.cleanup() // idempotent
     }
 
-    @Test func stopTurnSendsStopCommandOnly() async {
+    @Test func stopTurnSendsStopCommand() async {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
@@ -53,13 +49,9 @@ struct ChatActionHandlerTests {
         connection._setActiveSessionIdForTesting("s1")
 
         var sentStop = 0
-        var sentStopSession = 0
 
         handler._sendStopForTesting = { _ in
             sentStop += 1
-        }
-        handler._sendStopSessionForTesting = { _ in
-            sentStopSession += 1
         }
 
         handler.stop(
@@ -73,35 +65,6 @@ struct ChatActionHandlerTests {
         _ = await waitForTestCondition(timeoutMs: 400) { await MainActor.run { sentStop > 0 } }
 
         #expect(sentStop == 1)
-        #expect(sentStopSession == 0)
-        #expect(!handler.showForceStop)
-    }
-
-    @Test func stopTurnNeverAutoShowsForceStop() async {
-        let handler = ChatActionHandler()
-        let reducer = TimelineReducer()
-        let connection = ServerConnection()
-        let sessionStore = SessionStore()
-        let sessionManager = ChatSessionManager(sessionId: "s1")
-
-        var session = makeTestSession(id: "s1", name: nil, messageCount: 0)
-        session.status = .busy
-        sessionStore.upsert(session)
-        connection._setActiveSessionIdForTesting("s1")
-        handler._sendStopForTesting = { _ in }
-
-        handler.stop(
-            connection: connection,
-            reducer: reducer,
-            sessionStore: sessionStore,
-            sessionManager: sessionManager,
-            sessionId: "s1"
-        )
-
-        try? await Task.sleep(for: .milliseconds(250))
-
-        #expect(!handler.showForceStop)
-        #expect(!handler.isForceStopInFlight)
     }
 
     // MARK: - Composer Commands

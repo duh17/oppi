@@ -285,13 +285,6 @@ extension ChatViewController {
         }
     }
 
-    func forceStopTurn() {
-        actionHandler.forceStop(
-            connection: connection, reducer: reducer,
-            sessionStore: sessionStore, sessionId: sessionId
-        )
-    }
-
     private func restoreQueuedMessagesToComposer() async throws {
         guard connection.isFocusedSession(sessionId) else { return }
         model.messageQueueError = nil

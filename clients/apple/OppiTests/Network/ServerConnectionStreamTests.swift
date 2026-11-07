@@ -1495,7 +1495,6 @@ private final class SentClientFrames {
 private enum BindingGuardCommand: CaseIterable {
     case prompt
     case stop
-    case stopSession
 
     @MainActor
     func send(using connection: ServerConnection, sessionId: String) async throws {
@@ -1504,8 +1503,6 @@ private enum BindingGuardCommand: CaseIterable {
             try await connection.sendPrompt("prompt", sessionIdOverride: sessionId)
         case .stop:
             try await connection.sendStop(sessionIdOverride: sessionId)
-        case .stopSession:
-            try await connection.sendStopSession(sessionIdOverride: sessionId)
         }
     }
 }

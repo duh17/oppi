@@ -35,8 +35,6 @@ extension ComposerBarController {
         } else {
             failureView.setHiddenIfChanged(true)
         }
-        forceStopButton.setHiddenIfChanged(!content.showForceStop)
-        forceStopButton.apply(isInFlight: content.isForceStopInFlight, colors: colors)
 
         attachmentStrip.apply(
             attachments: content.pendingAttachments,

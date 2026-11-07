@@ -70,8 +70,6 @@ final class PreviewComposerController: UIViewController, ChatComposerSource {
             isStopping: false,
             voiceInputManager: nil,
             liveVoiceCall: nil,
-            showForceStop: false,
-            isForceStopInFlight: false,
             askRequest: values.askRequest,
             slashCommands: [],
             fileSuggestions: [],
@@ -109,7 +107,6 @@ final class PreviewComposerController: UIViewController, ChatComposerSource {
 
     func composerSend() {}
     func composerStop() {}
-    func composerForceStop() {}
     func composerExpand() {}
     func composerSubmitAsk(
         _ request: AskRequest,

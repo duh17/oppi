@@ -2424,7 +2424,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     // MARK: - System Events (from local actions)
 
     /// Append a system event directly (not from the agent event pipeline).
-    /// Used for local-only events like force-stop confirmations.
+    /// Used for local-only events like a reconnect notice or a fork confirmation.
     func appendSystemEvent(_ message: String) {
         items.append(.systemEvent(id: UUID().uuidString, message: message))
         bumpRenderVersion()

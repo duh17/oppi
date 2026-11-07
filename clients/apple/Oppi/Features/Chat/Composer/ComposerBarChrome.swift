@@ -953,37 +953,6 @@ final class ComposerSendProgressView: UIView {
     }
 }
 
-final class ComposerForceStopButton: UIButton {
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        titleLabel?.font = UIFont.preferredFont(forTextStyle: .caption1)
-        contentHorizontalAlignment = .leading
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func apply(isInFlight: Bool, colors: ComposerThemeColors) {
-        var config = UIButton.Configuration.plain()
-        config.baseForegroundColor = colors.red
-        config.contentInsets = .zero
-        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-            var outgoing = incoming
-            outgoing.font = UIFont.preferredFont(forTextStyle: .caption1)
-            return outgoing
-        }
-        if isInFlight {
-            config.title = "Stopping…"
-            config.showsActivityIndicator = true
-        } else {
-            config.title = "Force Stop Session"
-            config.showsActivityIndicator = false
-        }
-        configuration = config
-        isEnabled = !isInFlight
-    }
-}
-
 extension UIView {
     /// Flips an arranged subview's hidden flag at once, never as a stack-view
     /// animation. An animated hide finishes later and can land after a newer

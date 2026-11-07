@@ -109,8 +109,6 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
             isStopping: false,
             // No mic while a Live Voice call holds it.
             voiceInputManager: ComposerShared.dictation(voiceInputManager, near: controller?.viewIfLoaded),
-            showForceStop: false,
-            isForceStopInFlight: false,
             askRequest: nil,
             slashCommands: [],
             fileSuggestions: [],
@@ -250,7 +248,6 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
     }
     func performSend() { send() }
     func performStop() {}
-    func performForceStop() {}
     func performExpand() {}
     func submitAsk(
         _ request: AskRequest,

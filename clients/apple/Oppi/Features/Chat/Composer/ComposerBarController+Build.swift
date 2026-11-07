@@ -171,7 +171,7 @@ extension ComposerBarController {
         capsuleMin.priority = .defaultHigh
         capsuleMin.isActive = true
 
-        for arranged in [forceStopButton, slashPanel, filePanel, sendProgressView, capsule] {
+        for arranged in [slashPanel, filePanel, sendProgressView, capsule] {
             rootStack.addArrangedSubview(arranged)
         }
         let minWidth = view.widthAnchor.constraint(greaterThanOrEqualToConstant: 320)
@@ -265,7 +265,6 @@ extension ComposerBarController {
         endCallButton.addAction(UIAction { [weak self] _ in
             self?.host?.content.liveVoiceCall?.onEnd()
         }, for: .touchUpInside)
-        forceStopButton.addAction(UIAction { [weak self] _ in self?.host?.performForceStop() }, for: .touchUpInside)
         expandInActionRow.addAction(UIAction { [weak self] _ in self?.host?.performExpand() }, for: .touchUpInside)
         overlayExpand.addAction(UIAction { [weak self] _ in self?.host?.performExpand() }, for: .touchUpInside)
         busyModeButton.addAction(UIAction { [weak self] _ in self?.presentBusyModePicker() }, for: .touchUpInside)

@@ -24,8 +24,6 @@ extension GuidedControlComposerController: ChatComposerSource {
             isStopping: false,
             voiceInputManager: model.voiceInputManager,
             onLiveVoiceSelected: nil,
-            showForceStop: false,
-            isForceStopInFlight: false,
             askRequest: nil,
             slashCommands: [],
             fileSuggestions: [],
@@ -90,7 +88,6 @@ extension GuidedControlComposerController: ChatComposerSource {
     func composerInputFocusDidChange(_ focused: Bool) { model.inputFocusDidChange(focused) }
     func composerSend() { model.send() }
     func composerStop() {}
-    func composerForceStop() {}
     func composerExpand() {}
     func composerSubmitAsk(
         _ request: AskRequest,

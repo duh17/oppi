@@ -2451,7 +2451,6 @@ private final class ComposerBarTestHost: ComposerBarHosting {
     func setInputFocused(_ value: Bool) {}
     func performSend() {}
     func performStop() {}
-    func performForceStop() {}
     func performExpand() {}
     /// Delivered Ask responses; nil answers is Ignore. Completions run at once
     /// unless a test holds them to play delivery itself.
