@@ -1,6 +1,8 @@
 import UIKit
 
-private final class CodeBlockHeaderButton: UIButton {
+/// A small header button that still takes a 44 pt touch: the hit area grows past the visible
+/// bounds, as far as the views that hold it let a touch reach.
+final class MinimumHitTargetButton: UIButton {
     private static let minimumHitTarget: CGFloat = 44
 
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
@@ -51,7 +53,7 @@ final class NativeCodeBlockView: UIView {
             pointSize: 12, weight: .regular
         )
         config.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6)
-        let button = CodeBlockHeaderButton(type: .system)
+        let button = MinimumHitTargetButton(type: .system)
         button.configuration = config
         button.accessibilityIdentifier = "markdown.codeBlock.wrap"
         button.translatesAutoresizingMaskIntoConstraints = false
@@ -72,7 +74,7 @@ final class NativeCodeBlockView: UIView {
             pointSize: 10, weight: .regular
         )
         config.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6)
-        let button = CodeBlockHeaderButton(type: .system)
+        let button = MinimumHitTargetButton(type: .system)
         button.configuration = config
         button.isHidden = true
         button.accessibilityIdentifier = "markdown.codeBlock.expand"
@@ -94,7 +96,7 @@ final class NativeCodeBlockView: UIView {
             pointSize: 10, weight: .regular
         )
         config.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6)
-        let button = CodeBlockHeaderButton(type: .system)
+        let button = MinimumHitTargetButton(type: .system)
         button.configuration = config
         button.accessibilityIdentifier = "markdown.codeBlock.copy"
         button.translatesAutoresizingMaskIntoConstraints = false
@@ -336,6 +338,7 @@ final class NativeCodeBlockView: UIView {
 
         languageLabel.text = language ?? "code"
         languageLabel.textColor = palette.ui.comment
+        expandButton.tintColor = palette.ui.fgDim
         copyButton.tintColor = palette.ui.fgDim
         updateWrapButton()
 

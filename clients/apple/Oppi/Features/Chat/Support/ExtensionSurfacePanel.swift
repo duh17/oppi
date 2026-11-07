@@ -814,9 +814,9 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
     private let titleLabel = ExtensionChromeFont.label(.subheadline, .semibold)
     private let subtitleLabel = ExtensionChromeFont.label(.caption1, lines: 0)
     private let mediaLabel = ExtensionChromeFont.label(.caption1, .semibold)
-    private let collapseButton = UIButton(type: .custom)
+    private let collapseButton = MinimumHitTargetButton(type: .custom)
     /// A composable drawer's way to the whole surface, shown while its body is taller than the cap.
-    private let fullScreenButton = UIButton(type: .custom)
+    private let fullScreenButton = MinimumHitTargetButton(type: .custom)
     private var nativeViewport: ExtensionNativeBlockScrollView?
     /// A composable surface's cards, in a viewport that hugs them up to the drawer's cap.
     private var compositesViewport: ExtensionSurfaceCompositesView?
