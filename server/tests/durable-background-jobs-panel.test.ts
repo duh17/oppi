@@ -73,6 +73,23 @@ describe("background jobs panel view", () => {
     expect(JSON.stringify([surface.header, surface.pill])).not.toContain("land.ts");
   });
 
+  it("keeps the id and state line out of the head row, at the card's full width", () => {
+    // A short title (`ls`) beside the caption in a stack of its own would give a client that sizes
+    // a row's stack to its narrowest child (before Build 58) a column the caption wraps in.
+    const list = body(render([job("bash-8", { command: "ls" })]));
+    const card = find(list, "job:bash-8");
+    const head = find(list, "head:bash-8");
+    if (card?.type !== "stack" || head?.type !== "row") throw new Error("expected a card and its head row");
+    expect(head.children.map((child) => child.id)).toEqual([
+      "status:bash-8",
+      "title:bash-8",
+      "elapsed:bash-8",
+      "stop:bash-8",
+    ]);
+    expect(head.children.some((child) => child.type === "stack")).toBe(false);
+    expect(card.children.map((child) => child.id)).toContain("meta:bash-8");
+  });
+
   it.each([
     ["cd /tmp; ls -la", "ls"],
     ["cd 'my dir' && cd sub && npm test -- --run src/panel", "npm test"],
