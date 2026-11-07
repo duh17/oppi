@@ -16,6 +16,7 @@ import { safeErrorMessage } from "./log-utils.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { RESTART_HELD_NOTICE, RESTART_PENDING_REFUSAL, type DrainSession } from "./server-drain.js";
 import { canResumeAfterServerRestart } from "./session-lifecycle-service.js";
+import { turnRunning } from "./session-lifecycle-state.js";
 import { hasServerDurableBinding } from "./session-runtime-capabilities.js";
 import type { Storage } from "./storage.js";
 import type { ChatAttachmentRef, Session } from "./types.js";
@@ -84,7 +85,7 @@ export class SessionRestartHold {
     const kind = followUp ? "follow_up" : opts?.streamingBehavior === "steer" ? "steer" : "prompt";
     const live = this.deps.liveSession(sessionId);
     if (!live) return undefined;
-    if (kind === "steer" && isTurnRunning(live)) return undefined;
+    if (kind === "steer" && turnRunning(live)) return undefined;
     // A steer into an idle session would start a turn: it is a prompt here.
     if (this.belongsToRunningTurn(live.session, message)) return undefined;
     if (!canResumeAfterServerRestart(live.session)) {
@@ -138,7 +139,7 @@ export class SessionRestartHold {
   drainSessions(): DrainSession[] {
     const sessions: DrainSession[] = [];
     for (const live of this.deps.liveSessions()) {
-      if (!isTurnRunning(live)) continue;
+      if (!turnRunning(live)) continue;
       sessions.push({
         sessionId: live.session.id,
         ...(live.session.name ? { name: live.session.name } : {}),
@@ -232,12 +233,6 @@ export class SessionRestartHold {
 
   private turnRunning(sessionId: string): boolean {
     const live = this.deps.liveSession(sessionId);
-    return live !== undefined && isTurnRunning(live);
+    return live !== undefined && turnRunning(live);
   }
-}
-
-function isTurnRunning(live: RestartHoldSession): boolean {
-  return (
-    live.session.status === "busy" || live.sdkBackend.isStreaming || live.sdkBackend.isCompacting
-  );
 }

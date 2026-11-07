@@ -43,6 +43,7 @@ import { type SessionStartActiveSession } from "./session-start.js";
 import { type SessionStateActiveSession } from "./session-state.js";
 import { createLogger } from "./logger.js";
 import type { AutoStopGuard } from "./session-lifecycle.js";
+import { lifecyclePhase } from "./session-lifecycle-state.js";
 import { safeErrorMessage } from "./log-utils.js";
 import {
   buildPendingExtensionUIRequestMessages,
@@ -1359,7 +1360,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
    */
   async awaitsNextTurn(sessionId: string): Promise<boolean> {
     const active = this.active.get(this.sessionKey(sessionId));
-    if (active?.session.status !== "ready") return false;
+    if (!active || lifecyclePhase(active.session).name !== "idle") return false;
     try {
       return (
         (await active.sdkBackend.hasPendingWake()) || (await active.sdkBackend.hasPendingWork())

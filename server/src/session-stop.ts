@@ -2,7 +2,11 @@ import type { SdkBackendDisposeResult } from "./sdk-backend.js";
 import type { AgentBackend } from "./agent-backend.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
-import { applyLifecycle, type RuntimeLiveMarkers } from "./session-lifecycle-state.js";
+import {
+  applyLifecycle,
+  lifecyclePhase,
+  type RuntimeLiveMarkers,
+} from "./session-lifecycle-state.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 
 export type StopRequestSource = "user" | "timeout" | "server";
@@ -168,6 +172,25 @@ export class SessionStopCoordinator {
     return mode === "abort"
       ? applyLifecycle(session, "abort_requested")
       : applyLifecycle(session, "terminate_requested", this.deps.markers);
+  }
+
+  /**
+   * An abort of work that opened no turn (a compaction, or a durable run before its agent_start)
+   * has no agent_end to confirm it: it is confirmed once the abort was accepted and the engine
+   * is idle. A turn that started meanwhile confirms at its agent_end instead.
+   */
+  confirmAbortWithoutRun(key: string, active: StopSessionState): void {
+    const pending = active.pendingStop;
+    const phase = lifecyclePhase(active.session);
+    if (pending?.mode !== "abort" || phase.name !== "aborting" || phase.run) return;
+    if (active.sdkBackend.isStreaming || active.sdkBackend.isCompacting) return;
+    this.clearPendingStop(active);
+    this.deps.broadcast(key, { type: "stop_confirmed", source: pending.source });
+    if (applyLifecycle(active.session, "run_settled")) {
+      active.session.lastActivity = Date.now();
+      this.deps.persistSessionNow(key, active.session);
+      this.deps.broadcast(key, { type: "state", session: active.session });
+    }
   }
 
   finishPendingStopOnAgentEnd(key: string, active: PendingStopSessionState): void {

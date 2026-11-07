@@ -65,8 +65,6 @@ export interface LifecycleCheckpoint {
 /**
  * A decided lifecycle change that alters a row on purpose. The change that lands updates the
  * row's expectation and drops its tag.
- * - `single-status-owner`: one owner assigns a session's status, and one predicate says whether
- *   a turn runs, so abort and input admission agree with the engine.
  * - `start-phase-owns-stop`: a stop during a start ends that start before it registers a runtime.
  * - `explicit-stop-states`: every engine's abort and stop, the mirror's included, go through the
  *   same stop states and broadcast the same stop frames.
@@ -74,10 +72,7 @@ export interface LifecycleCheckpoint {
  *   session, matching the CLI wait.
  */
 export type PlannedChange =
-  | "single-status-owner"
-  | "start-phase-owns-stop"
-  | "explicit-stop-states"
-  | "waiting-shows-working";
+  "start-phase-owns-stop" | "explicit-stop-states" | "waiting-shows-working";
 
 export interface LifecycleScenario {
   id: string;
@@ -1231,10 +1226,7 @@ export const DURABLE_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         id: "durable.commit_before_agent_start",
         engine: "durable",
         description:
-          "A prompt the store committed whose agent_start the session has not seen yet: the row is still ready while the backend runs. The CLI wait is not idle, and an abort answers that the session is idle.",
-        // With one predicate for a running turn, abort agrees with admission and the backend: an
-        // abort in this gap will stop the run instead of answering that the session is idle.
-        plannedChange: "single-status-owner",
+          "A prompt the store committed whose agent_start the session has not seen yet: the row is still ready while the backend runs. The CLI wait is not idle, and an abort stops the run.",
       },
       [fauxAssistantMessage(LONG_ANSWER)],
       async (world) => {

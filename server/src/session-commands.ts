@@ -22,6 +22,7 @@ import {
   readShareSessionRedactionPolicy,
   readThinkingLevel,
 } from "./session-command-parse.js";
+import { lifecyclePhase, turnRunning } from "./session-lifecycle-state.js";
 import { normalizeCommandError } from "./session-protocol.js";
 import { shareSession } from "./session-share.js";
 import { composeModelId, type SessionStateActiveSession } from "./session-state.js";
@@ -71,11 +72,7 @@ function assertIdleForCommand(active: CommandSessionState, commandType: string):
     return;
   }
 
-  if (
-    active.session.status !== "ready" ||
-    active.sdkBackend.isStreaming ||
-    active.sdkBackend.isCompacting
-  ) {
+  if (lifecyclePhase(active.session).name !== "idle" || turnRunning(active)) {
     throw new Error(`${commandType} requires an idle session`);
   }
 }
@@ -243,11 +240,11 @@ export class SessionCommandCoordinator {
     }
   }
 
+  /** A compact waits for a running turn to settle; one sent during another compaction fails. */
   private shouldQueueCompact(active: CommandSessionState, commandType: string): boolean {
-    return (
-      commandType === "compact" &&
-      (active.session.status !== "ready" || active.sdkBackend.isStreaming)
-    );
+    const compactingOnly =
+      active.sdkBackend.isCompacting && lifecyclePhase(active.session).name === "idle";
+    return commandType === "compact" && turnRunning(active) && !compactingOnly;
   }
 
   private enqueueCompact(

@@ -1,4 +1,5 @@
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
+import { lifecyclePhase, turnRunning } from "./session-lifecycle-state.js";
 import type { SessionStopCoordinator, StopSessionState } from "./session-stop.js";
 import type { ServerMessage } from "./types.js";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
@@ -64,18 +65,7 @@ export class SessionStopFlowCoordinator {
       // stop message arrives first, the answer is silently lost.
       preAbort?.();
       const active = this.deps.getActiveSession(key);
-      if (!active) return;
-
-      if (active.session.status !== "busy") {
-        if (!active.pendingStop) {
-          this.deps.broadcast(key, {
-            type: "stop_confirmed",
-            source: "user",
-            reason: "Session already idle",
-          });
-        }
-        return;
-      }
+      if (!active || !this.hasTurnToAbort(key, active)) return;
 
       let ownedPending = active.pendingStop;
       let queueClear: SessionAbortQueueClear | undefined;
@@ -84,16 +74,7 @@ export class SessionStopFlowCoordinator {
           if (this.deps.getActiveSession(key) !== active) return;
           // The turn can settle while abort waits behind reload/queue work. Do
           // not create a pending stop for a turn that already became idle.
-          if (active.session.status !== "busy") {
-            if (!active.pendingStop) {
-              this.deps.broadcast(key, {
-                type: "stop_confirmed",
-                source: "user",
-                reason: "Session already idle",
-              });
-            }
-            return;
-          }
+          if (!this.hasTurnToAbort(key, active)) return;
           if (!this.deps.stopCoordinator.beginPendingStop(key, active, "abort", "user")) return;
           ownedPending = active.pendingStop;
           if (!ownedPending) return;
@@ -129,6 +110,8 @@ export class SessionStopFlowCoordinator {
               this.deps.acceptQueueClearOnAbort(queueClear);
               queueClear = undefined;
             }
+            if (outcome === "accepted")
+              this.deps.stopCoordinator.confirmAbortWithoutRun(key, active);
           } catch (error) {
             if (active.pendingStop !== ownedPending) {
               // Agent-end/timeout ownership already settled this request. A
@@ -158,6 +141,23 @@ export class SessionStopFlowCoordinator {
         throw error;
       }
     });
+  }
+
+  /**
+   * Whether an abort has a turn to stop. A stop under way owns the turn, including an abort that
+   * Pi confirmed at agent_end and that has not settled; with no turn running the answer is that
+   * the session is already idle.
+   */
+  private hasTurnToAbort(key: string, active: SessionStopFlowSessionState): boolean {
+    const phase = lifecyclePhase(active.session).name;
+    if (active.pendingStop || phase === "aborting" || phase === "terminating") return false;
+    if (turnRunning(active)) return true;
+    this.deps.broadcast(key, {
+      type: "stop_confirmed",
+      source: "user",
+      reason: "Session already idle",
+    });
+    return false;
   }
 
   async stopSession(key: string, sessionId: string, preStop?: () => void): Promise<void> {
@@ -202,7 +202,7 @@ export class SessionStopFlowCoordinator {
 
       await this.deps.runtimeManager.withWorkspaceLock(active.workspaceId, async () => {
         if (this.deps.getActiveSession(key) !== active) return;
-        const wasBusy = active.session.status === "busy";
+        const wasBusy = turnRunning(active);
         if (!this.deps.stopCoordinator.beginPendingStop(key, active, "terminate", "user")) {
           this.deps.stopCoordinator.promotePendingStop(key, active, "terminate", "user");
         }

@@ -14,6 +14,7 @@
  * says live and outlives it until the row says otherwise.
  */
 
+import type { AgentBackend } from "./agent-backend.js";
 import { createLogger } from "./logger.js";
 import type { RuntimeLivePhase, Storage } from "./storage.js";
 import type { Session } from "./types.js";
@@ -196,4 +197,22 @@ export function applyLifecycle(
   if (session.status === status) return false;
   session.status = status;
   return true;
+}
+
+/**
+ * Whether a turn runs: the lifecycle says so (until an abort settles), or the engine does. The
+ * engine read covers a durable store that committed a run before its agent_start reached the
+ * session, and a compaction that runs without a turn.
+ */
+export function turnRunning(active: {
+  session: Session;
+  sdkBackend?: Partial<Pick<AgentBackend, "isStreaming" | "isCompacting">>;
+}): boolean {
+  const phase = lifecyclePhase(active.session).name;
+  return (
+    phase === "running" ||
+    phase === "aborting" ||
+    active.sdkBackend?.isStreaming === true ||
+    active.sdkBackend?.isCompacting === true
+  );
 }

@@ -598,13 +598,16 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
     ],
   },
   // The store committed the prompt and its run is going, but the session has not seen agent_start:
-  // the row is ready, the CLI wait holds (the pending-work read), and an abort answers that the
-  // session is idle while the run continues. `single-status-owner` (one predicate for a running
-  // turn) changes that abort answer; the wait and the frames after the release stay.
+  // the row is ready and the CLI wait holds (the pending-work read). An abort reads the engine,
+  // which runs, so it stops the run. The test holds every event from agent_start on, so the abort
+  // is confirmed once the engine is idle, before the held run's frames arrive.
   "durable.commit_before_agent_start": {
     ws: [
       "state ready/idle",
-      'stop_confirmed "Session already idle"',
+      "stop_requested",
+      "state stopping/idle",
+      "stop_confirmed",
+      "state ready/idle",
       "agent_start",
       "summary busy/working",
       "state busy/working",
@@ -615,14 +618,18 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
     ],
     app: [
       "summary ready/idle",
-      'stop_confirmed "Session already idle"',
+      "stop_requested",
+      "summary stopping/idle",
+      "stop_confirmed",
+      "summary ready/idle",
       "summary busy/working",
       "summary ready/done",
     ],
     steps: [
       "start: ready/idle wait:idle saved:starting>ready",
       "committed: ready/idle wait:waiting wake",
-      "released: ready/done wait:idle saved:busy>ready",
+      "abort_in_gap: ready/idle wait:idle saved:stopping>ready",
+      "released: ready/done wait:idle saved:ready",
     ],
   },
   "durable.start_fails_after_registration": {
@@ -654,7 +661,6 @@ describe("recorded fixture", () => {
       "classic.wake_hold": "waiting-shows-working",
       "mirror.busy_idle_stop": "explicit-stop-states",
       "mirror.abort_mid_turn": "explicit-stop-states",
-      "durable.commit_before_agent_start": "single-status-owner",
     });
   });
 
@@ -697,10 +703,9 @@ describe("session lifecycle on the wire", () => {
 
 // ─── Input admission: what each input gets at each point of a turn ───
 //
-// Today five predicates decide whether a turn runs (row status, Pi's streaming and compacting
-// flags, in different combinations); `single-status-owner` replaces them with one predicate for a
-// running turn. This table is what a client gets for each input at each point, so a change that
-// moves one cell has to say so.
+// One predicate decides whether a turn runs (`turnRunning`: the lifecycle phase or the engine's
+// streaming and compacting flags). This table is what a client gets for each input at each point,
+// so a change that moves one cell has to say so.
 
 const ADMISSION_POINTS: Record<string, (world: ClassicWorld) => Promise<void>> = {
   idle: async () => {},
@@ -826,26 +831,23 @@ const EXPECTED_ADMISSION: Record<string, Record<AdmissionInput, string>> = {
     compact: "queued",
     abort: "stopping",
   },
-  // The row says stopping, but stop_confirmed has gone out and Pi is idle, so a prompt is
-  // admitted and a second abort hears "already idle". `single-status-owner` CHANGES this row: a
-  // turn counts as running until its abort settles, so the prompt is refused and the steer and
-  // follow-up are accepted.
+  // stop_confirmed has gone out and Pi is idle, but the turn runs until its abort settles: a
+  // prompt is refused, steer and follow-up join the turn, and a second abort is absorbed by the
+  // one under way.
   aborting_after_agent_end: {
-    prompt: "accepted",
-    steer: IDLE_STEER,
-    follow_up: IDLE_FOLLOW_UP,
+    prompt: BUSY_PROMPT,
+    steer: "accepted",
+    follow_up: "accepted",
     compact: "queued",
-    abort: "confirmed: Session already idle",
+    abort: "no answer",
   },
-  // Steer and follow-up count a compaction as a running turn; abort reads only the row and
-  // answers idle. `single-status-owner` CHANGES the abort cell: one predicate for a running turn
-  // makes abort agree with admission.
+  // A compaction counts as a running turn for every input; a compact refuses to start a second.
   compacting: {
     prompt: BUSY_PROMPT,
     steer: "accepted",
     follow_up: "accepted",
     compact: "rejected: compact requires an idle session",
-    abort: "confirmed: Session already idle",
+    abort: "stopping",
   },
 };
 

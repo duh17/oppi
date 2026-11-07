@@ -1,3 +1,4 @@
+import { turnRunning } from "./session-lifecycle-state.js";
 import { appendSessionMessage } from "./session-protocol.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
 import type { ChatAttachmentRef, ServerConfig, Session } from "./types.js";
@@ -93,14 +94,6 @@ export class SessionInputCoordinator {
     this.uploadStoreConfig = deps.uploadStoreConfig ?? resolveUploadStoreConfig(deps.config);
   }
 
-  private isRuntimeBusy(active: SessionInputSessionState): boolean {
-    return (
-      active.session.status === "busy" ||
-      active.sdkBackend?.isStreaming === true ||
-      active.sdkBackend?.isCompacting === true
-    );
-  }
-
   private async prepareMessageWithAttachments(
     active: SessionInputSessionState,
     message: string,
@@ -182,7 +175,7 @@ export class SessionInputCoordinator {
       streamingBehavior: opts?.streamingBehavior,
     };
 
-    const runtimeBusy = this.isRuntimeBusy(active);
+    const runtimeBusy = turnRunning(active);
 
     if (
       runtimeBusy &&
@@ -228,7 +221,7 @@ export class SessionInputCoordinator {
     // turn may have ended during the await above, so read busy again: a prompt
     // that runs now is a plain prompt and is recorded at admission.
     const queueKind =
-      opts?.streamingBehavior && this.isRuntimeBusy(active)
+      opts?.streamingBehavior && turnRunning(active)
         ? opts.streamingBehavior === "steer"
           ? "steer"
           : "follow_up"
@@ -392,7 +385,7 @@ export class SessionInputCoordinator {
       throw new Error(`Session not active: ${key}`);
     }
 
-    if (!this.isRuntimeBusy(active)) {
+    if (!turnRunning(active)) {
       throw new Error(streamingInputBusyErrorMessage(active.session, kind));
     }
 
