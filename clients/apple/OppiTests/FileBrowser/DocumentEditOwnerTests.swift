@@ -894,8 +894,9 @@ struct DocumentEditOwnerTests {
         #expect(log.bytes.isEmpty)
     }
 
-    /// A file the editor cannot save (a host file, or one the server does not
-    /// edit) has no controls: the reader never offers what it cannot keep.
+    /// A file the editor cannot save (a host file no server origin claims, or one
+    /// the server does not edit) has no controls: the reader never offers what
+    /// it cannot keep.
     @Test func aFileTheEditorCannotSaveAllowsNoReaderEdits() async {
         let log = WriteLog()
         let transport = WorkspaceFileEditTransport(
@@ -938,5 +939,55 @@ struct DocumentEditOwnerTests {
         #expect(await notEditable.saveReaderEdit { $0 + "x" } == .unavailable)
         #expect(await untagged.saveReaderEdit { $0 + "x" } == .unavailable)
         #expect(log.bytes.isEmpty, "nothing is written for a file the reader cannot save")
+    }
+
+    /// Controls follow the owner's resolved identity, not the subject's: a home
+    /// notebook file the server edits through its host origin gets them, and
+    /// writes under the resolving read's version; one it refuses gets none.
+    @Test func aHomeFileTheServerEditsGetsReaderEditsAndARefusedOneNone() async {
+        let path = "~/notebook/tasks.org"
+        let notebook = DocumentEditSubject.file(
+            serverId: "srv",
+            source: .hostFile,
+            workspaceId: "",
+            worktreeId: nil,
+            path: path,
+            skillFile: nil,
+            fileType: .orgMode
+        )
+        let canonical = WorkspaceFileEditIdentity(serverId: "srv", hostPath: "/Users/alex/notebook/tasks.org")
+        let snapshot = WorkspaceFileDiskSnapshot(bytes: Data("* TODO a\n- [ ] x\n".utf8), etag: tag("a"))
+        let log = WriteLog()
+        let savedTag = tag("b")
+        let transport = WorkspaceFileEditTransport(
+            read: { _ in .failed },
+            write: { _, bytes, condition in
+                await log.note(bytes, condition)
+                return .saved(etag: savedTag)
+            }
+        )
+        #expect(notebook.editIdentity(serverId: "srv") == nil, "the subject alone names no editor")
+
+        let home = owner(
+            subject: notebook,
+            capability: capability,
+            transport: transport,
+            resolve: { _ in .editable(canonical, snapshot, resolvedHostPath: "/Users/alex/notebook/tasks.org") }
+        )
+        _ = await home.read()
+        #expect(home.makeReaderTaskEditing(path: path) { _ in } != nil)
+        #expect(await home.saveReaderEdit { TaskSourceEdit.toggleCheckbox(in: $0, line: 2, dialect: .org) } == .saved("* TODO a\n- [X] x\n"))
+        #expect(log.conditions == [.version(tag("a"))])
+
+        let refused = owner(
+            subject: notebook,
+            capability: capability,
+            transport: transport,
+            resolve: { _ in .readOnly(reason: "protected") }
+        )
+        #expect(await refused.read() == .ownRead)
+        #expect(refused.makeReaderTaskEditing(path: path) { _ in } == nil)
+        #expect(await refused.saveReaderEdit { $0 + "x" } == .unavailable)
+        #expect(log.bytes.count == 1, "the refused file wrote nothing")
     }
 }
