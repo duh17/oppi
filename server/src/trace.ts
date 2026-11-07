@@ -497,18 +497,21 @@ export interface SessionEntry {
  *
  * This produces the same view the user sees in pi TUI.
  */
-function buildEntryPath(entries: SessionEntry[], leafId?: string | null): SessionEntry[] {
+/** The fields that place an entry in the session tree. */
+type EntryLink = Pick<SessionEntry, "type" | "id" | "parentId">;
+
+function buildEntryPath<T extends EntryLink>(entries: T[], leafId?: string | null): T[] {
   if (entries.length === 0) return [];
   if (leafId === null) return [];
 
-  const byId = new Map<string, SessionEntry>();
+  const byId = new Map<string, T>();
   for (const entry of entries) {
     if (entry.id) {
       byId.set(entry.id, entry);
     }
   }
 
-  let leaf: SessionEntry | undefined;
+  let leaf: T | undefined;
   if (leafId !== undefined) {
     leaf = byId.get(leafId);
     if (!leaf) {
@@ -526,8 +529,8 @@ function buildEntryPath(entries: SessionEntry[], leafId?: string | null): Sessio
 
   if (!leaf) return [];
 
-  const path: SessionEntry[] = [];
-  let current: SessionEntry | undefined = leaf;
+  const path: T[] = [];
+  let current: T | undefined = leaf;
   while (current) {
     path.push(current);
     current = current.parentId ? byId.get(current.parentId) : undefined;
@@ -1146,7 +1149,7 @@ export function parseSessionEntries(content: string): SessionEntry[] {
  * Leaf the search extractor walks: last non-header entry with an id.
  * Empty string is not used; null means the file has no such entry.
  */
-export function sessionTranscriptLeafId(entries: SessionEntry[]): string | null {
+export function sessionTranscriptLeafId(entries: EntryLink[]): string | null {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];
     if (entry && entry.type !== "session" && entry.id) return entry.id;
@@ -1252,51 +1255,74 @@ function pushCappedPart(parts: string[], length: number, text: string, cap: numb
   return length;
 }
 
-function consumeSearchTranscriptEntry(accum: SearchTranscriptAccum, entry: SessionEntry): void {
-  if (entry.type !== "message") return;
-  const msg = entry.message;
-  if (!msg) return;
+/**
+ * An entry reduced to its place in the tree and what it adds to the search fields, in order. A
+ * full read of a long file keeps these instead of parsed entries, so the file's tool output,
+ * images and thinking are garbage as soon as their chunk is parsed.
+ */
+export interface SearchEntry extends EntryLink {
+  user?: string;
+  assistant?: string[];
+  tools?: string[];
+}
+
+export function toSearchEntry(entry: SessionEntry): SearchEntry {
+  const link: SearchEntry = { type: entry.type, id: entry.id, parentId: entry.parentId };
+  const msg = entry.type === "message" ? entry.message : undefined;
+  if (!msg) return link;
 
   if (msg.role === "user") {
     const text = stripInlineMediaDataUris(
       extractText(msg.content, { includeMediaDataURIs: false }),
     );
-    if (text) {
-      accum.userLen = pushCappedPart(
-        accum.userParts,
-        accum.userLen,
-        replaceUnpairedSurrogates(text),
-        SEARCH_USER_MESSAGE_CAP,
-      );
-    }
-    return;
+    if (text) link.user = replaceUnpairedSurrogates(text);
+    return link;
   }
 
-  if (msg.role !== "assistant") return;
+  if (msg.role !== "assistant") return link;
 
+  const assistant: string[] = [];
+  const tools: string[] = [];
   const content = msg.content;
   if (Array.isArray(content)) {
     for (const projected of projectAssistantContentRuns(msg)) {
       if (projected.kind === "text") {
         if (projected.text) {
           const normalized = replaceUnpairedSurrogates(stripInlineMediaDataUris(projected.text));
-          if (normalized) pushAssistantText(accum, normalized);
+          if (normalized) assistant.push(normalized);
         }
         continue;
       }
       const block = projected.block;
       if (block.type === "toolCall") {
         const tool = (block.name as string) || "unknown";
-        if (tool) accum.toolNameSet.add(normalizeTraceValueForMobile(tool) as string);
+        if (tool) tools.push(normalizeTraceValueForMobile(tool) as string);
       }
     }
-    return;
-  }
-
-  if (typeof content === "string" && content) {
+  } else if (typeof content === "string" && content) {
     const normalized = replaceUnpairedSurrogates(stripInlineMediaDataUris(content));
-    if (normalized) pushAssistantText(accum, normalized);
+    if (normalized) assistant.push(normalized);
   }
+  if (assistant.length > 0) link.assistant = assistant;
+  if (tools.length > 0) link.tools = tools;
+  return link;
+}
+
+function consumeSearchEntry(accum: SearchTranscriptAccum, entry: SearchEntry): void {
+  if (entry.user) {
+    accum.userLen = pushCappedPart(
+      accum.userParts,
+      accum.userLen,
+      entry.user,
+      SEARCH_USER_MESSAGE_CAP,
+    );
+  }
+  for (const text of entry.assistant ?? []) pushAssistantText(accum, text);
+  for (const tool of entry.tools ?? []) accum.toolNameSet.add(tool);
+}
+
+function consumeSearchTranscriptEntry(accum: SearchTranscriptAccum, entry: SessionEntry): void {
+  consumeSearchEntry(accum, toSearchEntry(entry));
 }
 
 function pushAssistantText(accum: SearchTranscriptAccum, text: string): void {
@@ -1439,16 +1465,16 @@ export function extractSearchTranscriptFromEntries(
 }
 
 /**
- * Same extraction as extractSearchTranscriptFromEntries, yielding every
- * `yieldEvery` entries so a large file cannot stall one event-loop turn.
+ * Same extraction as extractSearchTranscriptFromEntries over entries `toSearchEntry` reduced,
+ * yielding every `yieldEvery` entries so a large file cannot stall one event-loop turn.
  * Returns null when `shouldStop` fires between slices.
  */
-export async function extractSearchTranscriptFromEntriesYielding(
-  entries: SessionEntry[],
+export async function extractSearchTranscriptYielding(
+  entries: SearchEntry[],
   yieldEvery: number,
   shouldStop: () => boolean = () => false,
 ): Promise<SearchTranscriptContent | null> {
-  const { path } = selectVisibleSessionContext(entries, { view: "full" });
+  const path = buildEntryPath(entries);
   const accum = emptySearchTranscriptAccum();
   for (let i = 0; i < path.length; i++) {
     if (i > 0 && i % yieldEvery === 0) {
@@ -1456,7 +1482,7 @@ export async function extractSearchTranscriptFromEntriesYielding(
       if (shouldStop()) return null;
     }
     const entry = path[i];
-    if (entry) consumeSearchTranscriptEntry(accum, entry);
+    if (entry) consumeSearchEntry(accum, entry);
   }
   return finishSearchTranscript(accum);
 }

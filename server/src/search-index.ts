@@ -25,12 +25,14 @@ import { durableStoreId, isServerDurableSession } from "./session-runtime-capabi
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "./sqlite-compat.js";
 import {
   extractSearchTranscriptAddition,
-  extractSearchTranscriptFromEntriesYielding,
+  extractSearchTranscriptYielding,
   hasUnsafeSearchToolName,
   mergeSearchTranscript,
   parseSessionEntries,
   readSearchTranscriptFile,
   sessionTranscriptLeafId,
+  toSearchEntry,
+  type SearchEntry,
   type SearchTranscriptContent,
   type SessionEntry,
 } from "./trace.js";
@@ -120,6 +122,8 @@ export interface SearchIndexBackgroundSyncResult extends SearchIndexSyncResult {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_BACKGROUND_SYNC_BUDGET_MS = 8;
+/** FTS rows per page of the startup scan for indexed session ids (`ftsSessionIdScan`). */
+const FTS_ID_SCAN_PAGE = 256;
 /** Visible entries walked between event-loop yields on a full reindex. */
 const FULL_REINDEX_YIELD_EVERY = 1_000;
 /** FTS5 merge pages per step. 200 pages took up to 44 ms on an 11k-session index; 32 stays near the budget. */
@@ -1237,17 +1241,26 @@ export class SearchIndex {
     jsonlPath: string,
     size: number,
   ): Promise<{ transcript: SearchTranscriptContent; leafId: string | null } | null> {
-    // Small files stay one read. Large files yield between chunks so a cold
-    // reindex cannot stall the event loop for the whole file.
+    // Small files stay one read. Large files go a chunk per read, and every
+    // entry is reduced to its search parts as its chunk is parsed, so a long
+    // file's tool output and images are never held until the file ends.
     if (size < 256 * 1024) {
       const bytes = await readByteRange(jsonlPath, 0, size);
-      return this.finishFullTranscript(parseSessionEntries(bytes.toString("utf8")));
+      return this.finishFullTranscript(
+        parseSessionEntries(bytes.toString("utf8")).map(toSearchEntry),
+      );
     }
 
     const handle = await open(jsonlPath, "r");
-    const entries: SessionEntry[] = [];
+    const entries: SearchEntry[] = [];
     const decoder = new TextDecoder("utf-8");
-    let leftover = "";
+    const parse = (text: string): void => {
+      for (const entry of parseSessionEntries(text)) entries.push(toSearchEntry(entry));
+    };
+    // Bytes of the line still being read. Lines are cut at the newline byte and
+    // decoded once: appending each chunk's text to the partial line copied a
+    // 28 MB line for every 1 MB chunk, some 400 MB for that line alone.
+    let partial: Buffer[] = [];
     const chunkSize = 1024 * 1024;
     const buffer = Buffer.alloc(chunkSize);
     try {
@@ -1258,19 +1271,25 @@ export class SearchIndex {
         const { bytesRead } = await handle.read(buffer, 0, length, position);
         if (bytesRead === 0) break;
         position += bytesRead;
-        leftover += decoder.decode(buffer.subarray(0, bytesRead), { stream: true });
-        const newline = leftover.lastIndexOf("\n");
-        if (newline >= 0) {
-          entries.push(...parseSessionEntries(leftover.slice(0, newline)));
-          leftover = leftover.slice(newline + 1);
+        const chunk = buffer.subarray(0, bytesRead);
+        // 0x0a never occurs inside a multi-byte UTF-8 character.
+        const newline = chunk.lastIndexOf(0x0a);
+        if (newline < 0) {
+          partial.push(Buffer.from(chunk));
+          continue;
         }
-        if (entries.length > 0 && entries.length % FULL_REINDEX_YIELD_EVERY === 0) {
-          await new Promise<void>((resolve) => setImmediate(resolve));
-          if (this.closed) return null;
-        }
+        const lines = chunk.subarray(0, newline);
+        parse(
+          decoder.decode(partial.length > 0 ? Buffer.concat([...partial, lines]) : lines, {
+            stream: true,
+          }),
+        );
+        partial = newline + 1 < bytesRead ? [Buffer.from(chunk.subarray(newline + 1))] : [];
+        // Every chunk that ends a line is parsed in its own event-loop turn.
+        await new Promise<void>((resolve) => setImmediate(resolve));
       }
-      leftover += decoder.decode();
-      if (leftover.trim()) entries.push(...parseSessionEntries(leftover));
+      const rest = decoder.decode(Buffer.concat(partial));
+      if (rest.trim()) parse(rest);
     } finally {
       await handle.close();
     }
@@ -1279,9 +1298,9 @@ export class SearchIndex {
   }
 
   private async finishFullTranscript(
-    entries: SessionEntry[],
+    entries: SearchEntry[],
   ): Promise<{ transcript: SearchTranscriptContent; leafId: string | null } | null> {
-    const transcript = await extractSearchTranscriptFromEntriesYielding(
+    const transcript = await extractSearchTranscriptYielding(
       entries,
       FULL_REINDEX_YIELD_EVERY,
       () => this.closed,
@@ -1798,34 +1817,67 @@ export class SearchIndex {
   /**
    * Sessions whose FTS row is the one fts_meta points at. FTS rows nothing points
    * at (an interrupted pair) are deleted here, because rowid-keyed upserts would
-   * otherwise leave them behind as duplicates. One FTS scan reads only session_id.
+   * otherwise leave them behind as duplicates.
+   *
+   * The scan goes `FTS_ID_SCAN_PAGE` rows at a time and stops (yields) after each
+   * page: FTS5 reads a row's whole text to return even its session_id, so one
+   * statement over every row held the event loop for 1.6 s on a cold 260 MB index.
+   * Each page reads the pointers with its rows and drops its strays before the
+   * stop, so a turn-end write between pages is never mistaken for a stray.
    */
-  private loadFtsSessionIds(): Set<string> {
-    const pointers = new Map(
-      (
-        this.db
-          .prepare("SELECT session_id, fts_rowid FROM fts_meta WHERE fts_rowid IS NOT NULL")
-          .all() as Array<{ session_id: string; fts_rowid: number }>
-      ).map((row) => [row.session_id, row.fts_rowid]),
+  private *ftsSessionIdScan(): Generator<void, Set<string>> {
+    const page = this.db.prepare(
+      "SELECT f.rowid AS rowid, f.session_id AS session_id, m.fts_rowid AS pointer FROM session_fts f LEFT JOIN fts_meta m ON m.session_id = f.session_id WHERE f.rowid > ? ORDER BY f.rowid LIMIT ?",
     );
-    const rows = this.db.prepare("SELECT rowid, session_id FROM session_fts").all() as Array<{
-      rowid: number;
-      session_id: string;
-    }>;
+    const deleteByRowid = this.db.prepare("DELETE FROM session_fts WHERE rowid = ?");
     const indexed = new Set<string>();
-    const stray: number[] = [];
-    for (const row of rows) {
-      if (pointers.get(row.session_id) === row.rowid) indexed.add(row.session_id);
-      else stray.push(row.rowid);
+    let strays = 0;
+    let after = 0;
+    for (;;) {
+      const rows = page.all(after, FTS_ID_SCAN_PAGE) as Array<{
+        rowid: number;
+        session_id: string;
+        pointer: number | null;
+      }>;
+      const stray: number[] = [];
+      for (const row of rows) {
+        if (row.pointer === row.rowid) indexed.add(row.session_id);
+        else stray.push(row.rowid);
+      }
+      if (stray.length > 0) {
+        this.db.transaction(() => {
+          for (const rowid of stray) deleteByRowid.run(rowid);
+        })();
+        strays += stray.length;
+      }
+      const last = rows.at(-1);
+      if (!last || rows.length < FTS_ID_SCAN_PAGE) break;
+      after = last.rowid;
+      yield;
     }
-    if (stray.length > 0) {
-      const deleteByRowid = this.db.prepare("DELETE FROM session_fts WHERE rowid = ?");
-      this.db.transaction(() => {
-        for (const rowid of stray) deleteByRowid.run(rowid);
-      })();
-      log.warn("search_index.stray_rows_removed", { count: stray.length });
-    }
+    if (strays > 0) log.warn("search_index.stray_rows_removed", { count: strays });
     return indexed;
+  }
+
+  private loadFtsSessionIds(): Set<string> {
+    const scan = this.ftsSessionIdScan();
+    for (;;) {
+      const step = scan.next();
+      if (step.done) return step.value;
+    }
+  }
+
+  /** `loadFtsSessionIds` a page per event-loop turn, for the background sync. */
+  private async loadFtsSessionIdsYielding(
+    yieldBetweenPages: () => Promise<void>,
+  ): Promise<Set<string> | null> {
+    const scan = this.ftsSessionIdScan();
+    for (;;) {
+      const step = scan.next();
+      if (step.done) return step.value;
+      await yieldBetweenPages();
+      if (this.closed) return null;
+    }
   }
 
   /** Read-only skip for unchanged sessions. Null means the caller must write. */
@@ -2347,11 +2399,14 @@ export class SearchIndex {
     const sessionIds = new Set(indexableSessions.map((s) => s.id));
     const durableSessions = indexableSessions.filter((s) => this.isIndexedFromDurable(s));
     const fileSessions = indexableSessions.filter((s) => !this.isIndexedFromDurable(s));
-    const ftsIds = this.loadFtsSessionIds();
     const yieldBetweenBatches = options.yieldToEventLoop ?? yieldToEventLoop;
     const result = emptySyncResult();
     let sessionsChecked = 0;
     let maxBatchMs = 0;
+    const ftsIds = await this.loadFtsSessionIdsYielding(yieldBetweenBatches);
+    if (!ftsIds) {
+      return this.completeBackgroundSync(startedAt, result, sessionsChecked, maxBatchMs, true);
+    }
 
     log.info("search_index.sync_started", {
       mode: "background",

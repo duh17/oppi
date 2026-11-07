@@ -1196,6 +1196,72 @@ describe("SearchIndex background sync", () => {
     }
   });
 
+  it("reads a long file in chunks to the same fields as one whole read", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-background-chunks-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "long.jsonl");
+
+    // One answer spans the 1 MiB read boundary, which falls inside a two-byte character of its
+    // multi-byte tail; that tail is the newest text, so the capped field keeps all of it.
+    const first = transcriptLine("u1", null, "user", "chunkstarttoken");
+    const shape = transcriptLine("a1", "u1", "assistant", "@@", "read");
+    const before =
+      Buffer.byteLength(first) + Buffer.byteLength(shape.slice(0, shape.indexOf("@@")));
+    const tail = "é😀".repeat(20_000);
+    const fillerBytes = 1024 * 1024 - before - 30_001;
+    const filler = "filler ".repeat(Math.ceil(fillerBytes / 7)).slice(0, fillerBytes);
+    writeFileSync(
+      jsonlPath,
+      first +
+        transcriptLine("a1", "u1", "assistant", filler + tail, "read") +
+        // The last line has no trailing newline.
+        transcriptLine("u2", "a1", "user", "chunkendtoken").trimEnd(),
+    );
+    const session = makeSession({ id: "chunked", piSessionFile: jsonlPath });
+    const index = new SearchIndex(dataDir, () => session);
+    await index.startBackgroundSync([session]);
+    index.close();
+
+    const fields = indexedTranscriptFields(dataDir, session.id);
+    expect(fields?.assistant_messages.endsWith(tail)).toBe(true);
+    expect(fields?.user_messages).toBe("chunkstarttoken\nchunkendtoken");
+    expect(fields).toEqual(fullIndexFields(session));
+  });
+
+  it("keeps a row a turn end rewrites while startup still scans for stray rows", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-background-scan-"));
+    cleanupPaths.add(dataDir);
+
+    // Enough rows that the scan for stray FTS rows takes several event-loop turns.
+    const sessions = Array.from({ length: 600 }, (_, n) =>
+      makeFileSession(dataDir, `scan-${n}`, `scanuser${n}`, `scananswer${n}`),
+    );
+    const sessionMap = new Map(sessions.map((session) => [session.id, session]));
+    const index = new SearchIndex(dataDir, (id) => sessionMap.get(id));
+    index.sync(sessions);
+
+    // The first session's row is early in the scan. Its turn end replaces it with a new row
+    // the scan has not reached yet.
+    const rewritten = sessions[0]!;
+    let turnEnd: Promise<void> | undefined;
+    const result = await index.startBackgroundSync(sessions, {
+      yieldToEventLoop: async () => {
+        if (turnEnd) return;
+        writeJsonl(rewritten.piSessionFile!, "scanuser0 rewrittenturntoken", "scananswer0");
+        turnEnd = index.indexSession(rewritten.id);
+        await turnEnd;
+      },
+    });
+
+    expect(turnEnd).toBeDefined();
+    expect(result.cancelled).toBe(false);
+    expect(index.search("rewrittenturntoken", "ws-1", 10).map((hit) => hit.sessionId)).toEqual([
+      rewritten.id,
+    ]);
+    expect(index.search("scanuser599", "ws-1", 10)).toHaveLength(1);
+    index.close();
+  });
+
   it("keeps sessions indexed live during warming out of the orphan sweep", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "search-index-background-live-orphan-"));
     cleanupPaths.add(dataDir);
