@@ -6,6 +6,9 @@ import UIKit
 /// only when the window itself is too narrow for them. A window narrower than
 /// the column reads at its full width.
 ///
+/// Reader prose keeps this column rather than `ReadableContentWidth`: it is
+/// pure prose at the reader's own text scale (40 em), and it widens tables and code.
+///
 /// The reader's scroll view stays full-bleed: touches in the margins scroll the
 /// document, the indicator sits at the window edge, and content passes under the
 /// bars edge to edge. Only each block is inset (`inset(for:in:)`).

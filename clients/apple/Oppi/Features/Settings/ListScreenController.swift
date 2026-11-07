@@ -698,16 +698,10 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         } else {
             bottom = collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         }
-        let maxWidth = collectionView.widthAnchor.constraint(lessThanOrEqualToConstant: IPadReadableContentWidth.form)
-        let fillWidth = collectionView.widthAnchor.constraint(equalTo: view.widthAnchor)
-        fillWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
             bottom,
-            collectionView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            maxWidth,
-            fillWidth,
-        ])
+        ] + ReadableContentWidth.constrain(collectionView, to: view))
     }
 
     /// Paint the page and the list in the theme. The list's own background is
