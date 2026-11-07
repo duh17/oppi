@@ -119,6 +119,13 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    `EntityIcon` does not draw). A menu that lists a thing with a name and no
  *    icon is what this catches; nothing else should add to it.
  *
+ *  - Width decisions are a ratchet of the same kind: `AdaptiveWidth` owns "is
+ *    this layout wide?", so a `userInterfaceIdiom` read (the Duo is a phone
+ *    with a regular-width inner display) and a raw `horizontalSizeClass ==` or
+ *    `!=` read are counted outside the files in `adaptiveWidthExceptions`, each
+ *    with its reason. A new file has baseline 0. Assigning the trailing column's
+ *    trait override, or passing a size class along, is not a read.
+ *
  * Policy: dev/architecture-client.md, "UIKit and SwiftUI ownership".
  * Comments and string literals are stripped before matching.
  *
@@ -279,6 +286,30 @@ const sharedMacOnlySwiftUI: { file: string; reason: string }[] = [
     reason: "The Mac's SwiftUI wrapper around `OrbMetalView`; iOS draws the same view in UIKit. Excluded from the Oppi target.",
   },
 ];
+/** Files that may read the idiom or the raw size class, each with the question it answers. */
+const adaptiveWidthExceptions: { file: string; reason: string }[] = [
+  {
+    file: "clients/apple/Oppi/Core/Views/AdaptiveWidth.swift",
+    reason: "The owner.",
+  },
+  {
+    file: "clients/apple/Oppi/App/AppNavigation.swift",
+    reason: "The shell's split-or-stack choice also needs the vertical class and the aspect ratio.",
+  },
+  {
+    file: "clients/apple/Oppi/Features/Settings/SettingsPrivacyPage.swift",
+    reason: "Copy: names the device (iPad or iPhone) in the disclosure text.",
+  },
+  {
+    file: "clients/apple/Oppi/Features/Chat/Session/HardwareKeybindingAdapter.swift",
+    reason: "Keybindings: the idiom picks the default chord set.",
+  },
+  {
+    file: "clients/apple/Oppi/Features/Chat/Session/HardwareKeybindingResponder.swift",
+    reason: "Keybindings: hands the idiom to the adapter.",
+  },
+];
+const adaptiveWidthExempt = adaptiveWidthExceptions.map((entry) => entry.file);
 const swiftUIExemptFiles = [...swiftUIImporterFiles, ...sharedMacOnlySwiftUI.map((entry) => entry.file)];
 
 const constructs: Construct[] = [
@@ -336,6 +367,19 @@ const constructs: Construct[] = [
       "clients/apple/Oppi/Core/Views/ErrorAlertPresenter.swift",
       "clients/apple/Oppi/Core/Views/ConfirmationSheet.swift",
     ],
+  },
+  // Width decisions outside `AdaptiveWidth`: see `adaptiveWidthExceptions`.
+  {
+    name: "userInterfaceIdiom",
+    pattern: /\buserInterfaceIdiom\b/g,
+    disallowed: false,
+    exemptFiles: adaptiveWidthExempt,
+  },
+  {
+    name: "horizontalSizeClass ==/!=",
+    pattern: /\bhorizontalSizeClass\s*[=!]=/g,
+    disallowed: false,
+    exemptFiles: adaptiveWidthExempt,
   },
   // Whole-screen and in-list load states outside `LoadState`: see "Load states" in the guide.
   {
@@ -616,6 +660,12 @@ SettingsStore. Declare the setting in SettingsCatalog and read and write it thro
 SettingsStore (settingToggleRow, settingChoiceRow on the settings base); see
 ${settingsGuide}. The count only goes down: \`bun scripts/uikit-structure-guard.ts --update\`
 lowers the baseline after a page moves.
+
+userInterfaceIdiom and a raw horizontalSizeClass == or != mean a screen decides
+for itself whether the layout is wide. Ask AdaptiveWidth.isWide(traitCollection)
+(or AdaptiveWidth.windowIsWide(view) for system chrome that follows the window,
+such as the search bar's Cancel). The idiom is for copy and keybindings only; see
+adaptiveWidthExceptions.
 
 A page on ListScreenController that writes isLoadCancellation or an override
 func viewIsAppearing takes over the trigger or the outcome of the load the kit
