@@ -78,82 +78,162 @@ struct ChatTimelineChromeOverlapTests {
     }
 }
 
+/// Where the chat's timeline lays its rows out, measured on the real chat
+/// screen in a navigation controller, the way the app shows it. The chat pins
+/// the timeline to its safe-area guide, so the timeline's own width is the one
+/// input to the row column.
 @MainActor
 @Suite("Chat timeline row column")
 struct ChatTimelineRowColumnTests {
-    private let margin = ChatTimelineCachedHeightLayout.sectionInsets.leading
+    private static let window = CGSize(width: 1032, height: 1376)
+    private static let margin = ChatTimelineCachedHeightLayout.sectionInsets.leading
 
-    @Test func trailingOnlyInsetNarrowsRowsFromTheTrailingSideOnly() {
-        let column = ChatTimelineCachedHeightLayout.rowColumn(
-            boundsWidth: 700,
-            safeAreaInsets: UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 83)
+    /// Opening a panel grows the navigation controller's trailing safe area and
+    /// narrows the chat beside it in one animated layout pass, in which UIKit
+    /// lays the timeline out once with its new bounds but its old center, and
+    /// with its own `safeAreaInsets` still those of its old full-width frame.
+    /// Rows measured from either were laid out in a column that did not exist:
+    /// 200 pt wide beside a 400 pt list panel, and none at all beside Share and
+    /// the reader at 520 pt, where a height was never kept and UIKit trapped in
+    /// a self-sizing loop. Rows lay out at the full width before and at the
+    /// narrowed column after, nothing between.
+    @Test(
+        "a panel opening beside the timeline lays its rows out only at the old or the narrowed column",
+        arguments: [ChatSidePanel.outline, .share]
+    )
+    func openingAPanelNeverLaysRowsOutInAStaleColumn(panel: ChatSidePanel) async throws {
+        let host = try await makeSeededHost()
+        defer { host.hide() }
+        let timeline = host.timeline
+        let fullColumn = timeline.bounds.width - 2 * Self.margin
+
+        var rowWidths: Set<CGFloat> = []
+        timeline.didCaptureAnchorForTesting = { [weak timeline] in
+            for cell in timeline?.visibleCells ?? [] { rowWidths.insert(cell.bounds.width) }
+        }
+        defer { timeline.didCaptureAnchorForTesting = nil }
+        host.chat.showSidePanel(panel)
+        let opened = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.chat.trailingColumn.mountedScreenForTesting != nil
+        }
+        try #require(opened, "the panel never mounted")
+        host.chat.trailingColumn.finishSettleForTesting()
+        host.window.layoutIfNeeded()
+        for cell in timeline.visibleCells { rowWidths.insert(cell.bounds.width) }
+
+        let narrowedColumn = timeline.bounds.width - 2 * Self.margin
+        #expect(narrowedColumn < fullColumn, "the timeline must narrow beside the panel")
+        #expect(
+            rowWidths.isSubset(of: [fullColumn, narrowedColumn]),
+            "rows laid out at \(rowWidths.sorted()), expected only \(fullColumn) and \(narrowedColumn)"
         )
-
-        #expect(column.x == margin)
-        #expect(column.x + column.width == 700 - 83 - margin)
+        #expect(timeline.visibleCells.count == 5)
+        #expect(timeline.visibleCells.allSatisfy { $0.bounds.width == narrowedColumn })
     }
 
-    @Test func leadingOnlyInsetShiftsRowsAndKeepsTheTrailingMargin() {
-        let column = ChatTimelineCachedHeightLayout.rowColumn(
-            boundsWidth: 700,
-            safeAreaInsets: UIEdgeInsets(top: 0, left: 83, bottom: 0, right: 0)
-        )
+    /// A vertical rail on one edge (the Duo's control rail) is safe area on that
+    /// side only: rows keep their margin inside it and the usual margin on the
+    /// other side, and come back to full width when it goes.
+    @Test("rows stay clear of a side rail on either edge")
+    func rowsStayClearOfASideRail() async throws {
+        let host = try await makeSeededHost()
+        defer { host.hide() }
+        let rail: CGFloat = 83
 
-        #expect(column.x == 83 + margin)
-        #expect(column.x + column.width == 700 - margin)
+        func rowSpans() -> Set<ClosedRange<CGFloat>> {
+            host.window.layoutIfNeeded()
+            return Set(host.timeline.visibleCells.map {
+                let frame = $0.convert($0.bounds, to: host.window)
+                return frame.minX...frame.maxX
+            })
+        }
+
+        #expect(rowSpans() == [Self.margin...(Self.window.width - Self.margin)])
+        host.navigation.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: rail, bottom: 0, right: 0)
+        #expect(rowSpans() == [(rail + Self.margin)...(Self.window.width - Self.margin)])
+        host.navigation.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: rail)
+        #expect(rowSpans() == [Self.margin...(Self.window.width - rail - Self.margin)])
+        host.navigation.additionalSafeAreaInsets = .zero
+        #expect(rowSpans() == [Self.margin...(Self.window.width - Self.margin)])
     }
 
-    @Test func narrowerThanTheInsetsNeverGoesNegative() {
-        let column = ChatTimelineCachedHeightLayout.rowColumn(
-            boundsWidth: 100,
-            safeAreaInsets: UIEdgeInsets(top: 0, left: 60, bottom: 0, right: 60)
-        )
+    // MARK: - Fixture
 
-        #expect(column.width == 0)
-    }
+    private struct Host {
+        let chat: ChatViewController
+        let navigation: UINavigationController
+        let timeline: AnchoredCollectionView
+        let window: UIWindow
+        // Held for the test: the chat and the window trait do not own them.
+        let appNavigation: AppNavigation
+        let appRoot: AppRootEnvironment
 
-    @Test func collectionRowsFollowTheRailInsetAsItAppearsAndGoes() throws {
-        let host = UIViewController()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 700, height: 400))
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        defer {
+        func hide() {
             window.isHidden = true
             window.rootViewController = nil
         }
-        let collectionView = AnchoredCollectionView(
-            frame: host.view.bounds,
-            collectionViewLayout: ChatTimelineController.makeTestLayout()
+    }
+
+    /// The chat at regular width on an iPad-sized window, showing a user
+    /// message and four short replies.
+    private func makeSeededHost() async throws -> Host {
+        let sessionId = "timeline-column-\(UUID().uuidString)"
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
+        let appNavigation = AppNavigation()
+        let appRoot = makeTestAppRoot()
+        let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: appNavigation)
+        let navigation = UINavigationController(rootViewController: chat)
+
+        let scene = try #require(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "timeline column tests need the test host's window scene"
         )
-        collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        collectionView.contentInsetAdjustmentBehavior = .never
-        host.view.addSubview(collectionView)
-        let registration = UICollectionView.CellRegistration<UICollectionViewCell, String> { _, _, _ in }
-        let dataSource = UICollectionViewDiffableDataSource<Int, String>(
-            collectionView: collectionView
-        ) { view, indexPath, id in
-            view.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: id)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(origin: .zero, size: Self.window)
+        window.traitOverrides.appRootEnvironment = appRoot
+        window.traitOverrides.horizontalSizeClass = .regular
+        window.rootViewController = navigation
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        let host = Host(
+            chat: chat,
+            navigation: navigation,
+            timeline: try #require(timelineFirstView(ofType: AnchoredCollectionView.self, in: chat.view)),
+            window: window,
+            appNavigation: appNavigation,
+            appRoot: appRoot
+        )
+
+        let events = [traceEvent(id: "user", type: .user, text: "Review the routes")]
+            + (1...4).map { traceEvent(id: "reply-\($0)", type: .assistant, text: "Reply \($0).") }
+        let seeded = await waitForMainActorCondition(timeout: .seconds(3)) {
+            // The chat's connect, which has no server here, resets its reducer.
+            if !chat.reducer.items.contains(where: { $0.id == "user" }) { chat.reducer.loadSession(events) }
+            window.layoutIfNeeded()
+            return host.timeline.visibleCells.count == 5
         }
-        var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
-        snapshot.appendSections([0])
-        snapshot.appendItems(["row"])
-        dataSource.apply(snapshot, animatingDifferences: false)
+        if !seeded { host.hide() }
+        try #require(
+            seeded,
+            "the timeline never showed its five rows: items=\(chat.reducer.items.count) cells=\(host.timeline.visibleCells.count)"
+        )
+        return host
+    }
 
-        func rowFrame() throws -> CGRect {
-            host.view.layoutIfNeeded()
-            collectionView.layoutIfNeeded()
-            return try #require(collectionView.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))).frame
-        }
-
-        #expect(try rowFrame().maxX == 700 - margin)
-
-        host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 83)
-        let withRail = try rowFrame()
-        #expect(withRail.minX == margin)
-        #expect(withRail.maxX == 700 - 83 - margin)
-
-        host.additionalSafeAreaInsets = .zero
-        #expect(try rowFrame().maxX == 700 - margin)
+    private func traceEvent(id: String, type: TraceEventType, text: String) -> TraceEvent {
+        TraceEvent(
+            id: id,
+            type: type,
+            timestamp: "2026-10-15T18:00:00.000Z",
+            text: text,
+            tool: nil,
+            args: nil,
+            output: nil,
+            toolCallId: nil,
+            toolName: nil,
+            isError: nil,
+            thinking: nil
+        )
     }
 }
-

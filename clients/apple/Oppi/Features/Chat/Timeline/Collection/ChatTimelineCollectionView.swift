@@ -250,8 +250,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         // The chat screen folds the bar and context-bar chrome into
         // `topOverlap`. Automatic adjustment would add the window safe area
         // again and park the first row below the branch chip. Horizontal safe
-        // area (a vertical rail on one side) is handled by
-        // `ChatTimelineCachedHeightLayout.rowColumn`.
+        // area (a vertical rail on one side, the iPad trailing column) is
+        // outside the timeline: the chat pins it to the safe-area guide.
         collectionView.contentInsetAdjustmentBehavior = .never
         collectionView.contentInset.top = configuration.topOverlap
         collectionView.contentInset.bottom = configuration.bottomOverlap
@@ -2604,20 +2604,20 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
     static let sectionInsets = NSDirectionalEdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
     private static let heightMatchTolerance: CGFloat = 1
 
-    /// Horizontal span rows occupy: the section insets, plus whatever part of the
-    /// window's safe area overlaps this view (a vertical rail holds one side only).
-    /// The collection uses `contentInsetAdjustmentBehavior = .never`, so UIKit adds
-    /// no horizontal inset of its own. `safeAreaInsets` is physical, so each side is
-    /// applied to its own edge and never mirrored or maxed. A view that SwiftUI
-    /// already placed inside the safe area reports 0 here.
-    static func rowColumn(
-        boundsWidth: CGFloat,
-        safeAreaInsets: UIEdgeInsets
-    ) -> (x: CGFloat, width: CGFloat) {
+    /// Horizontal span rows occupy: the timeline's width inside the section
+    /// insets, and nothing else. The chat pins the timeline to its safe-area
+    /// guide, so a side rail or the iPad trailing column already sits outside
+    /// it. The column never reads safe-area insets or the frame's position:
+    /// opening the trailing column narrows the timeline inside one layout pass,
+    /// and UIKit lays it out once with its new bounds but its old center, while
+    /// its own `safeAreaInsets` still held the overlap of its old full-width
+    /// frame (520 pt on a 512 pt timeline). Rows measured in the column either
+    /// left were the wrong width, and with no column left at all UIKit trapped
+    /// in a self-sizing loop. Bounds are set first, so the width is right in
+    /// every pass.
+    static func rowColumn(boundsWidth: CGFloat) -> (x: CGFloat, width: CGFloat) {
         let section = sectionInsets
-        let width = boundsWidth - safeAreaInsets.left - safeAreaInsets.right
-            - section.leading - section.trailing
-        return (safeAreaInsets.left + section.leading, max(width, 0))
+        return (section.leading, max(boundsWidth - section.leading - section.trailing, 0))
     }
 
     private struct CachedHeight {
@@ -2807,7 +2807,11 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
         }
         lastLayoutWidth = width
 
-        guard width > 1 else {
+        let column = Self.rowColumn(boundsWidth: width)
+        // No column, no rows: a height measured at no width is never cached
+        // (`resolvedHeight`), so a row laid out there re-measures every pass
+        // and UIKit traps in a self-sizing loop.
+        guard width > 1, column.width > 1 else {
             attributesByIndex = []
             contentSize = .zero
             return
@@ -2816,7 +2820,6 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
         let sectionCount = collectionView.numberOfSections
         let itemCount = sectionCount > 0 ? collectionView.numberOfItems(inSection: 0) : 0
         let insets = Self.sectionInsets
-        let column = Self.rowColumn(boundsWidth: width, safeAreaInsets: collectionView.safeAreaInsets)
         let itemWidth = column.width
         var y = insets.top
         var nextAttributes: [UICollectionViewLayoutAttributes] = []

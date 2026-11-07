@@ -73,10 +73,7 @@ extension ChatTimelineController {
     /// cell has bounds. Nil before the timeline has a width.
     func timelineRowWidth() -> CGFloat? {
         guard let collectionView, collectionView.bounds.width > 1 else { return nil }
-        let width = ChatTimelineCachedHeightLayout.rowColumn(
-            boundsWidth: collectionView.bounds.width,
-            safeAreaInsets: collectionView.safeAreaInsets
-        ).width
+        let width = ChatTimelineCachedHeightLayout.rowColumn(boundsWidth: collectionView.bounds.width).width
         return width > 0 ? width : nil
     }
 
