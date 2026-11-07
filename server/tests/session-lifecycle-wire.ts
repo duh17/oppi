@@ -90,9 +90,14 @@ const VOLATILE_FRAME_TYPES = new Set([
   "tool_update",
   "tool_output",
   "context_usage",
-  // The working-words plugin's rotating label: its text and timing are random.
-  "extension_ui_notification",
 ]);
+
+function isVolatileFrame(message: { type: string; method?: string }): boolean {
+  if (VOLATILE_FRAME_TYPES.has(message.type)) return true;
+  // The working-words plugin's rotating label: its text and timing are random. Other
+  // notifications stay, since a status line (`setStatus`) or the working indicator is state.
+  return message.type === "extension_ui_notification" && message.method === "setWorkingMessage";
+}
 
 export type IdAliases = Array<[from: string, to: string]>;
 
@@ -236,7 +241,7 @@ export class LifecycleRecorder {
     channel: RecordedFrame["channel"],
     message: ServerMessage | AppEventMessage,
   ): void {
-    if (VOLATILE_FRAME_TYPES.has(message.type)) return;
+    if (isVolatileFrame(message as { type: string; method?: string })) return;
     const live = this.liveSession() ?? this.storage.getSession(this.sessionId) ?? undefined;
     const server: RecordedFrame["server"] = {
       status: live?.status ?? "missing",
@@ -428,6 +433,11 @@ export async function classicWorld(
 /** Pi's streaming flag, as the SDK backend reports it to the lifecycle. */
 export function setStreaming(world: ClassicWorld, streaming: boolean): void {
   (world.backend.sdkBackend as { isStreaming: boolean }).isStreaming = streaming;
+}
+
+/** Pi's compacting flag: set while a compaction runs, with or without a turn. */
+export function setCompacting(world: ClassicWorld, compacting: boolean): void {
+  (world.backend.sdkBackend as unknown as { isCompacting: boolean }).isCompacting = compacting;
 }
 
 export const assistantEnd = (text: string, stopReason = "stop", errorMessage?: string) => ({
@@ -709,6 +719,12 @@ export const CLASSIC_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         engine: "classic",
         description:
           "Stop while the session is still starting wins: the start finishes, nothing stays live, and the row ends stopped.",
+        // S2's starting phase ends such a start without registering a runtime, so the row is no
+        // longer saved ready on its way to stopped, and the stop frames of a live session go.
+        plannedChange: {
+          slice: "S2",
+          note: "the start ends stopped without registering, so ready is never saved and the stop frames change",
+        },
         row: { status: "stopped" },
         holdCreate: true,
       },
@@ -759,6 +775,44 @@ export const CLASSIC_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
       },
       async (world) => {
         await startAndAttach(world);
+      },
+    ),
+  () =>
+    runClassic(
+      {
+        id: "classic.compaction_queued",
+        engine: "classic",
+        description:
+          "A compact asked for mid-turn waits for the turn to settle, then runs: the row stays ready while program status says it is compacting.",
+      },
+      async (world) => {
+        await startAndAttach(world);
+        await beginRun(world);
+        let finishCompact!: () => void;
+        vi.mocked(world.backend.sdkBackend.compact).mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              setCompacting(world, true);
+              world.emit({ type: "compaction_start", reason: "manual" });
+              finishCompact = () => resolve({} as never);
+            }),
+        );
+        await world.recorder.step("compact_requested", () =>
+          world.manager.forwardClientCommand(SESSION_ID, { type: "compact" }, "compact-1"),
+        );
+        // The queued compact runs once the turn settles.
+        await settleRun(world);
+        await world.recorder.step("compaction_end", () => {
+          setCompacting(world, false);
+          world.emit({
+            type: "compaction_end",
+            aborted: false,
+            willRetry: false,
+            summary: "Earlier work, summarised",
+            tokensBefore: 1_000,
+          });
+          finishCompact();
+        });
       },
     ),
   () =>
@@ -908,6 +962,12 @@ export const MIRROR_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         engine: "mirror",
         description:
           "A terminal session: busy from the bridge's state, a run's events, idle again, then stopped from the terminal side.",
+        // S3 routes the mirror's stop through the shared stop phases: the stop will broadcast
+        // stop_requested, stopping and stop_confirmed before the session ends.
+        plannedChange: {
+          slice: "S3",
+          note: "the mirror's stop will broadcast stop_requested, stopping and stop_confirmed",
+        },
       },
       async (world) => {
         await connectMirror(world);

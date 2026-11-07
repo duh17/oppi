@@ -7,14 +7,16 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 import { queueOrphanedSessionsForRestart } from "../src/session-restart-resume.js";
 import { Storage } from "../src/storage.js";
-import type { Session } from "../src/types.js";
+import type { ServerMessage, Session } from "../src/types.js";
 import {
   assistantEnd,
   buildSessionLifecycleWire,
   classicWorld,
+  flush,
   serializeSessionLifecycleWire,
   SESSION_ID,
   SESSION_LIFECYCLE_WIRE_FILE,
+  setCompacting,
   setStreaming,
   type ClassicWorld,
   type LifecycleScenario,
@@ -65,6 +67,9 @@ const SEQUENCE_FRAMES = new Set([
   "session_error",
   "extension_ui_request",
   "extension_ui_settled",
+  "compaction_start",
+  "compaction_end",
+  "command_result",
 ]);
 
 function programLabel(program: { state: string; kind?: string }): string {
@@ -403,6 +408,32 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
     app: [],
     steps: ["start: busy/working wait:waiting saved:starting>ready>busy"],
   },
+  // A compact asked for mid-turn is held until the turn settles, then runs on a ready row:
+  // program status says working (Compacting context) and the CLI wait holds until it ends. A
+  // program status derived from the lifecycle phase alone (idle here) would lose that.
+  "classic.compaction_queued": {
+    ws: [
+      "state ready/idle",
+      "agent_start",
+      "summary busy/working",
+      "state busy/working",
+      "agent_end",
+      "summary busy/working",
+      "agent_settled",
+      'compaction_start "manual"',
+      "summary ready/working",
+      "compaction_end",
+      "summary ready/done",
+      "command_result",
+    ],
+    app: ["summary busy/working", "summary ready/working", "summary ready/done"],
+    steps: [
+      "start: ready/idle wait:idle saved:starting>ready",
+      "agent_start: busy/working wait:waiting",
+      "agent_settled: ready/working wait:waiting saved:ready",
+      "compaction_end: ready/done wait:idle",
+    ],
+  },
   // S5 DELIBERATELY CHANGES the `agent_settled` step of this row. A session idle and waiting on a
   // background job shows Done today (ready/done) while the CLI wait says it is not idle. The owner
   // decided S5 shows Working there instead, so ready/done becomes ready/working in the frames and the
@@ -619,7 +650,9 @@ describe("recorded fixture", () => {
         .map((found) => [found.id, found.plannedChange?.slice]),
     );
     expect(planned).toEqual({
+      "classic.stop_during_start": "S2",
       "classic.wake_hold": "S5",
+      "mirror.busy_idle_stop": "S3",
       "mirror.abort_mid_turn": "S3",
       "durable.commit_before_agent_start": "S1",
     });
@@ -659,6 +692,165 @@ describe("session lifecycle on the wire", () => {
       app: sequence(found, "app"),
       steps: steps(found),
     }).toEqual(expected);
+  });
+});
+
+// ─── Input admission: what each input gets at each point of a turn ───
+//
+// Today five predicates decide whether a turn runs (row status, Pi's streaming and compacting
+// flags, in different combinations); S1 replaces them with one `turnRunning`. This table is what a
+// client gets for each input at each point, so a slice that moves one cell has to say so.
+
+const ADMISSION_POINTS: Record<string, (world: ClassicWorld) => Promise<void>> = {
+  idle: async () => {},
+  running: async (world) => {
+    setStreaming(world, true);
+    world.emit({ type: "agent_start" });
+  },
+  // Pi reports idle between a failed response's agent_end and its auto-retry.
+  retry_gap: async (world) => {
+    setStreaming(world, true);
+    world.emit({ type: "agent_start" });
+    world.emit(assistantEnd("", "error", "429 overloaded"));
+    setStreaming(world, false);
+    world.emit({ type: "agent_end", messages: [] });
+  },
+  // An abort whose run has ended but not settled: the row says stopping, Pi is idle.
+  aborting_after_agent_end: async (world) => {
+    setStreaming(world, true);
+    world.emit({ type: "agent_start" });
+    await world.manager.sendAbort(SESSION_ID);
+    setStreaming(world, false);
+    world.emit({ type: "agent_end", messages: [] });
+  },
+  // A compaction with no turn: the row says ready, Pi is compacting.
+  compacting: async (world) => {
+    setCompacting(world, true);
+    world.emit({ type: "compaction_start", reason: "threshold" });
+  },
+};
+
+type AdmissionInput = "prompt" | "steer" | "follow_up" | "compact" | "abort";
+const ADMISSION_INPUTS: AdmissionInput[] = ["prompt", "steer", "follow_up", "compact", "abort"];
+
+const answered = (pending: Promise<unknown>): Promise<string> =>
+  pending.then(
+    () => "accepted",
+    (error: unknown) => `rejected: ${error instanceof Error ? error.message : String(error)}`,
+  );
+
+async function send(
+  world: ClassicWorld,
+  input: AdmissionInput,
+  frames: ServerMessage[],
+): Promise<string> {
+  switch (input) {
+    case "prompt":
+      return answered(world.manager.sendPrompt(SESSION_ID, "next"));
+    case "steer":
+      return answered(world.manager.sendSteer(SESSION_ID, "steer"));
+    case "follow_up":
+      return answered(world.manager.sendFollowUp(SESSION_ID, "later"));
+    case "compact": {
+      await world.manager.forwardClientCommand(SESSION_ID, { type: "compact" }, "compact-1");
+      await flush();
+      const result = frames.find((message) => message.type === "command_result");
+      if (!result) return "queued";
+      return result.success ? "ran" : `rejected: ${result.error}`;
+    }
+    case "abort": {
+      await world.manager.sendAbort(SESSION_ID);
+      await flush();
+      const answer = frames.find(
+        (message) => message.type === "stop_requested" || message.type === "stop_confirmed",
+      );
+      if (!answer) return "no answer";
+      return answer.type === "stop_confirmed" ? `confirmed: ${answer.reason}` : "stopping";
+    }
+  }
+}
+
+/** What one input gets from a fresh session brought to `point`. */
+async function admission(point: string, input: AdmissionInput): Promise<string> {
+  const world = await classicWorld({ id: "admission", engine: "classic", description: point });
+  try {
+    await world.manager.startSession(SESSION_ID, world.workspace);
+    await ADMISSION_POINTS[point]?.(world);
+    await flush();
+    const frames: ServerMessage[] = [];
+    const unsubscribe = world.manager.subscribe(SESSION_ID, (message) => frames.push(message));
+    try {
+      return await send(world, input, frames);
+    } finally {
+      unsubscribe();
+    }
+  } finally {
+    // End a turn still open, so closing does not wait out the stop grace for it.
+    setStreaming(world, false);
+    setCompacting(world, false);
+    const left = world.manager.getActiveSession(SESSION_ID)?.status;
+    if (left === "busy" || left === "stopping") {
+      world.emit({ type: "agent_end", messages: [] });
+      world.emit({ type: "agent_settled" });
+      await flush();
+    }
+    await world.dispose();
+  }
+}
+
+const BUSY_PROMPT =
+  "rejected: Prompt requires an idle session; use steer or follow_up while a turn is streaming";
+const IDLE_STEER = "rejected: Steer requires an active streaming turn";
+const IDLE_FOLLOW_UP = "rejected: Follow-up requires an active streaming turn";
+
+const EXPECTED_ADMISSION: Record<string, Record<AdmissionInput, string>> = {
+  idle: {
+    prompt: "accepted",
+    steer: IDLE_STEER,
+    follow_up: IDLE_FOLLOW_UP,
+    compact: "ran",
+    abort: "confirmed: Session already idle",
+  },
+  running: {
+    prompt: BUSY_PROMPT,
+    steer: "accepted",
+    follow_up: "accepted",
+    compact: "queued",
+    abort: "stopping",
+  },
+  retry_gap: {
+    prompt: BUSY_PROMPT,
+    steer: "accepted",
+    follow_up: "accepted",
+    compact: "queued",
+    abort: "stopping",
+  },
+  // The row says stopping, but stop_confirmed has gone out and Pi is idle, so a prompt is
+  // admitted and a second abort hears "already idle". S1 CHANGES this row: `turnRunning` holds
+  // through `aborting`, so the prompt is refused and the steer and follow-up are accepted.
+  aborting_after_agent_end: {
+    prompt: "accepted",
+    steer: IDLE_STEER,
+    follow_up: IDLE_FOLLOW_UP,
+    compact: "queued",
+    abort: "confirmed: Session already idle",
+  },
+  // Steer and follow-up count a compaction as a running turn; abort reads only the row and
+  // answers idle. S1 CHANGES the abort cell: one `turnRunning` makes abort agree with admission.
+  compacting: {
+    prompt: BUSY_PROMPT,
+    steer: "accepted",
+    follow_up: "accepted",
+    compact: "rejected: compact requires an idle session",
+    abort: "confirmed: Session already idle",
+  },
+};
+
+describe("input admission", () => {
+  it.each(Object.keys(EXPECTED_ADMISSION))("%s", async (point) => {
+    const answers: Record<string, string> = {};
+    for (const input of ADMISSION_INPUTS) answers[input] = await admission(point, input);
+    expect(answers).toEqual(EXPECTED_ADMISSION[point]);
   });
 });
 
@@ -801,7 +993,9 @@ describe("idle expiry", () => {
         title: "Allow this command?",
       });
 
-      await minutes(IDLE_MINUTES * 3);
+      // A dialog with no timeout of its own has none on the server either: a day later it
+      // still holds the session.
+      await minutes(24 * 60);
       expect(world.manager.isActive(SESSION_ID)).toBe(true);
 
       world.manager.respondToUIRequest(SESSION_ID, {
