@@ -161,53 +161,106 @@ enum MarkdownBlockSerializer {
         }
     }
 
-    /// Escapes the characters CommonMark would otherwise read as syntax in a
-    /// plain text run: a backslash (so `\\` and `\(...\)` keep their
-    /// backslashes instead of cmark eating them as escapes), `<` and `>` (so
-    /// a literal `<tag>` and a stray `>` at the start of a line stay text
-    /// instead of becoming raw HTML or a block quote), `*` (so a line Org's
-    /// own parser decided was not a heading, such as an indented `  * item`,
-    /// does not turn back into a Markdown bullet once serialized — Org
-    /// already extracted every real `*bold*` span into its own node, so a
-    /// literal `*` left in text is one Org itself read as plain), and `]`
-    /// immediately before `(` (so `[x](y)` typed as prose does not become a
-    /// link: escaping the closing bracket alone is enough to keep the `[`
-    /// from ever finding a match, and, unlike escaping `[` itself, never
-    /// writes the literal two bytes `\[` — the fast-path guard that skips
-    /// `CMarkFastParser`'s math-protection scan for an ordinary document
-    /// checks the whole source for exactly that sequence, so writing it
-    /// anywhere turns every line of even an unrelated large file through that
-    /// scan). A lone `[` or `]` is left alone: on its own, without a `(`
-    /// right after, CommonMark never reads it as a link either. Backticks are
-    /// left alone too: Org has no code-span syntax of its own, and this is
-    /// the one Markdown feature Org prose gets "for free" that is worth
-    /// keeping.
+    /// Escapes what CommonMark would otherwise read as syntax in a plain text
+    /// run, so the text renders as the characters it holds:
+    ///
+    /// - A backslash, `<`, `>` and `*` get a backslash: `\\` keeps both
+    ///   backslashes, a literal `<tag>` or a leading `>` stays text instead of
+    ///   raw HTML or a block quote, and a `*` Org already read as plain (it
+    ///   pulled every real `*bold*` span into its own node) never turns back
+    ///   into emphasis or a bullet.
+    /// - `]` right before `(` or `:` becomes the entity `&#93;`, so `[x](y)`
+    ///   typed as prose is no link and a `[x]: y` line no link definition that
+    ///   cmark would swallow. A backslash would not do: the reader's math
+    ///   support reads `\]` as a display-math delimiter and shows it.
+    /// - Math goes out untouched: `\(…\)`, `\[…\]`, `$…$` and `$$…$$` are
+    ///   Org's LaTeX fragments and the reader's math syntax alike, and an
+    ///   escape inside one would change the TeX.
+    ///
+    /// Backticks are left alone: Org has no code-span syntax of its own, and a
+    /// Markdown code span is worth keeping in Org prose.
     private static func escapeText(_ text: String) -> String {
-        guard text.utf8.contains(where: { $0 == 0x5C || $0 == 0x3C || $0 == 0x3E || $0 == 0x2A })
-            || text.contains("](") else {
-            return text
-        }
-        var escaped = ""
-        escaped.reserveCapacity(text.count + 4)
-        var index = text.startIndex
-        while index < text.endIndex {
-            let character = text[index]
-            switch character {
-            case "\\", "<", ">", "*":
-                escaped.append("\\")
-                escaped.append(character)
-            case "]":
-                let next = text.index(after: index)
-                if next < text.endIndex, text[next] == "(" {
-                    escaped.append("\\]")
-                } else {
-                    escaped.append(character)
-                }
-            default:
-                escaped.append(character)
+        // Fast path, without copying the text: most runs hold nothing to escape.
+        var previous: UInt8 = 0
+        let hasEscape = text.utf8.contains { byte in
+            defer { previous = byte }
+            switch byte {
+            case 0x5C, 0x3C, 0x3E, 0x2A: return true
+            case 0x28, 0x3A: return previous == 0x5D
+            default: return false
             }
-            index = text.index(after: index)
         }
-        return escaped
+        guard hasEscape else { return text }
+        let bytes = Array(text.utf8)
+        var escaped: [UInt8] = []
+        escaped.reserveCapacity(bytes.count + 8)
+        var index = 0
+        while index < bytes.count {
+            if let end = mathEnd(bytes, at: index) {
+                escaped.append(contentsOf: bytes[index..<end])
+                index = end
+                continue
+            }
+            if needsEscape(bytes, at: index) {
+                if bytes[index] == 0x5D {
+                    escaped.append(contentsOf: "&#93;".utf8)
+                } else {
+                    escaped.append(0x5C)
+                    escaped.append(bytes[index])
+                }
+            } else {
+                escaped.append(bytes[index])
+            }
+            index += 1
+        }
+        return String(decoding: escaped, as: UTF8.self)
+    }
+
+    /// Whether the byte at `index` is one `escapeText` rewrites, math aside.
+    @inline(__always)
+    private static func needsEscape(_ bytes: [UInt8], at index: Int) -> Bool {
+        switch bytes[index] {
+        case 0x5C, 0x3C, 0x3E, 0x2A: // \ < > *
+            return true
+        case 0x5D: // ]
+            let next = index + 1 < bytes.count ? bytes[index + 1] : 0
+            return next == 0x28 || next == 0x3A // ( :
+        default:
+            return false
+        }
+    }
+
+    /// The end of the math fragment starting at `index` (`\(…\)`, `\[…\]`,
+    /// `$$…$$`, `$…$`), or nil when none starts there or it never closes. A
+    /// single `$` pair needs non-space text just inside both signs, as Org and
+    /// TeX require, so prose such as "$5 and $10" is not read as math.
+    private static func mathEnd(_ bytes: [UInt8], at index: Int) -> Int? {
+        func find(_ closer: [UInt8], from start: Int) -> Int? {
+            var cursor = start
+            while cursor + closer.count <= bytes.count {
+                if bytes[cursor] == closer[0], bytes[cursor..<(cursor + closer.count)].elementsEqual(closer) {
+                    return cursor
+                }
+                cursor += 1
+            }
+            return nil
+        }
+        func isSpace(_ byte: UInt8) -> Bool { byte == 0x20 || byte == 0x09 }
+
+        let next = index + 1 < bytes.count ? bytes[index + 1] : 0
+        switch bytes[index] {
+        case 0x5C where next == 0x28: // \(
+            return find([0x5C, 0x29], from: index + 2).map { $0 + 2 }
+        case 0x5C where next == 0x5B: // \[
+            return find([0x5C, 0x5D], from: index + 2).map { $0 + 2 }
+        case 0x24 where next == 0x24: // $$
+            return find([0x24, 0x24], from: index + 2).map { $0 + 2 }
+        case 0x24: // $
+            guard next != 0, !isSpace(next), let close = find([0x24], from: index + 2),
+                  !isSpace(bytes[close - 1]) else { return nil }
+            return close + 1
+        default:
+            return nil
+        }
     }
 }

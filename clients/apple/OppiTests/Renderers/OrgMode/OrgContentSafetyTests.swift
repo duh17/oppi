@@ -116,21 +116,27 @@ struct OrgContentSafetyTests {
 
     // MARK: - Markdown escaping
 
-    @Test func backslashEscapedLatexDoesNotSilentlyLoseItsBackslashes() {
-        // The reader's own `\(...\)` math protection (CMarkFastParser) keeps
-        // an escaped pair verbatim rather than collapsing it the way a plain
-        // backslash escape would: the fix's job is that the backslash is
-        // never silently dropped (the original bug), not byte-exact
-        // round-tripping through that unrelated machinery.
-        let markdown = DocumentRenderPipeline.orgToMarkdown(#"Equation \(a+b\) holds."#)
-        let parsed = parseCommonMark(markdown)
+    @Test func latexFragmentsReachTheReaderAsMath() {
+        // Org's `\(…\)`, `\[…\]` and `$…$` are the reader's own math syntax:
+        // escaping a backslash or `*` inside one would change the TeX, and an
+        // escaped `\(` shows as literal text instead of math.
+        let org = #"Inline \(a*b\), display \[x_1 < y\] and $\alpha$ hold."#
+        let parsed = parseCommonMark(DocumentRenderPipeline.orgToMarkdown(org))
         guard case .paragraph(let inlines)? = parsed.first else {
             Issue.record("Expected a paragraph, got \(parsed)")
             return
         }
-        let text = plainText(from: inlines)
-        #expect(text.contains("\\"), "a backslash must not silently vanish: got \(text)")
-        #expect(text.contains("a+b"))
+        #expect(plainText(from: inlines) == org)
+    }
+
+    @Test func backslashOutsideMathIsKept() {
+        let org = #"A lone \( and C:\dir\file stay."#
+        let parsed = parseCommonMark(DocumentRenderPipeline.orgToMarkdown(org))
+        guard case .paragraph(let inlines)? = parsed.first else {
+            Issue.record("Expected a paragraph, got \(parsed)")
+            return
+        }
+        #expect(plainText(from: inlines).contains(#"C:\dir\file"#))
     }
 
     @Test func doubleBackslashLineBreakSurvivesTheMarkdownRoundTrip() {
@@ -165,15 +171,18 @@ struct OrgContentSafetyTests {
         #expect(plainText(from: inlines) == "A <tag> in prose.")
     }
 
-    @Test func literalBracketsDoNotBecomeALink() {
-        let markdown = DocumentRenderPipeline.orgToMarkdown("See [x](y) in text.")
-        let parsed = parseCommonMark(markdown)
-        guard case .paragraph(let inlines)? = parsed.first else {
-            Issue.record("Expected a paragraph, got \(parsed)")
-            return
+    @Test func literalBracketsDoNotBecomeALinkOrDefinition() {
+        // The math in the second document turns on the reader's math scan,
+        // which reads a backslash-escaped `\]` as a display-math delimiter.
+        for org in ["See [x](y) in text.", #"See [x](y) in text with \(a\) math."#, "[1]: https://example.com"] {
+            let parsed = parseCommonMark(DocumentRenderPipeline.orgToMarkdown(org))
+            guard case .paragraph(let inlines)? = parsed.first else {
+                Issue.record("Expected a paragraph for \(org), got \(parsed)")
+                continue
+            }
+            #expect(!inlines.contains { if case .link = $0 { return true }; return false })
+            #expect(plainText(from: inlines) == org)
         }
-        #expect(!inlines.contains { if case .link = $0 { return true }; return false })
-        #expect(plainText(from: inlines) == "See [x](y) in text.")
     }
 
     @Test func escapingABracketNeverWritesTheTwoByteSequenceThatTriggersAWholeDocumentMathScan() {
