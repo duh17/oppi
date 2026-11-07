@@ -13,7 +13,6 @@ Part of [Oppi server architecture](../architecture-server.md).
 
 `SessionManager` keeps active sessions in memory and delegates to the coordinators in `session-coordinators.ts` (`SessionBroadcaster` owns per-session sequence numbers and catch-up). The `AgentBackend` seam (`agent-backend.ts`) carries commands, queue authority, lifecycle transactions, and snapshots; `SdkBackend` (`sdk-backend.ts`) keeps the live Pi `AgentSession` inside the adapter.
 
-- `starting` phase owns its stop race: a stop wins before the runtime registers. `aborting`/`terminating` carry their own stop timer and completion signal on the phase (`session-lifecycle-state.ts`'s `StopState`), not a separate `PendingStop` record; `runtime_ended` broadcasts a stopped summary before `session_ended`.
 - `session-work-root.ts` is the one owner of a session's host directory (workspace mount or worktree, control cwd). Start and attachment writes ask for creation; reads and cleanup never create directories.
 - Pi JSONLs whose cwd is under the retired classic Pi Control root, `$OPPI_DATA_DIR/control-sessions`, stay out of importable-local discovery (`isControlSessionLocalArtifact`).
 - `GondolinManager` derives a VM's read-only Skill mounts at boot, one per workspace `.pi/skills` entry; they are outside the VM fingerprint, so a new entry waits for the next boot.
@@ -105,4 +104,4 @@ A sandbox conversation persists its boundary in `oppi.execution-runtime` and att
 
 ## Terminal mirror runtime
 
-`PiTuiMirrorRuntime` owns `/mirror/v1/bridge` and implements the same `AgentRuntimeTransport` as the managed runtime, projecting through the shared pipeline. If the bridge disconnects, the session stays `"pi-tui"` unless the app explicitly resumes it as managed. Its abort and stop apply the same shared `abort_requested`/`terminate_requested` events and stop phases, so the wire shows the same `stop_requested`/`stopping`/`stop_confirmed` frames as the managed runtime; the bridge's own idle report or disconnect settles the stop, not a runtime transaction permit.
+`PiTuiMirrorRuntime` owns `/mirror/v1/bridge` and implements the same `AgentRuntimeTransport` as the managed runtime, projecting through the shared pipeline and stop phases. If the bridge disconnects, the session stays `"pi-tui"` unless the app explicitly resumes it as managed.

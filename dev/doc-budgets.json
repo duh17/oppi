@@ -26,8 +26,8 @@
       "reason": "Content access and current-file routes, workspace file edit sessions and drafts, launch and Quick Session intake. 676 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server.md": {
-      "words": 1800,
-      "reason": "Server map and cross-cutting owners: program status, push, Live Voice and barge-in, the protocol boundary checklist, settings and route registries, and the boundary rules the architecture check links to. 1735 words (S3's stop-phase sentence); headroom max(15%, 100 words)."
+      "words": 1700,
+      "reason": "Server map and cross-cutting owners: program status, push, Live Voice and barge-in, the protocol boundary checklist, settings and route registries, and the boundary rules the architecture check links to. 1476 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/blocks-and-boundaries.md": {
       "words": 750,
@@ -50,8 +50,8 @@
       "reason": "Session list and history read models, touched-file and worktree change views with their git budget, and the app-event allowlist. 477 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/runtime.md": {
-      "words": 3400,
-      "reason": "Session runtime owners and invariants: runtime dispatch, managed SDK and sandbox Skills, server durable (stores, classic-event facade, sandbox execution, restart and store failure, MCP, extensions), subagents, Oppi Control's cards and replay risks, durable gaps, Agents and schedules, mirror. 3326 words (S3's stop-phase and mirror-stop sentences); headroom max(15%, 100 words)."
+      "words": 3260,
+      "reason": "Session runtime owners and invariants: runtime dispatch, managed SDK and sandbox Skills, server durable (stores, classic-event facade, sandbox execution, restart and store failure, MCP, extensions), subagents, Oppi Control's cards and replay risks, durable gaps, Agents and schedules, mirror. 2829 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/tool-inspection.md": {
       "words": 480,

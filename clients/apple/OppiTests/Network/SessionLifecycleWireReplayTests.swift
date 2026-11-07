@@ -68,8 +68,8 @@ struct SessionLifecycleWireReplayTests {
             closedBy: "none: the next state/session_summary always catches it up",
             reason: "compaction_start carries no status, so the row keeps its prior value for that "
                 + "one frame, briefly undercounting a wrapping-up session's keep-alive and awake "
-                + "need too. A terminate's stop_confirmed used to lag the same way; this slice's "
-                + "stopped summary now catches the row up before stop_confirmed ever arrives.",
+                + "need too. A terminate's stop_confirmed does not lag: the stopped summary on "
+                + "runtime_ended catches the row up first.",
             fields: [.status, .awake, .keepAlive],
             expectedFires: 6
         ) { _, frame, diff in
@@ -207,17 +207,15 @@ struct SessionLifecycleWireReplayTests {
         #expect(app[3].client.status == "stopping" && app[3].server.status == "stopping")
     }
 
-    /// A terminate: the row lags stopping→stopped by one frame at stop_requested and
-    /// stop_confirmed (neither carries status), and session_ended, the one event the client
-    /// still turns into a status, is what catches it up to stopped.
+    /// A terminate: the row lags busy→stopping by one frame at stop_requested, and the stopped
+    /// summary on runtime_ended catches it up before stop_confirmed and session_ended.
     @Test func terminateStoppedSummaryCatchesUpBeforeConfirmation() async throws {
         let focused = try await observe("classic.terminate_busy", .focused)
         #expect(focused[3].frameType == "stop_requested")
         #expect(focused[3].client.status == "busy" && focused[3].server.status == "stopping")
         #expect(focused[4].frameType == "state")
         #expect(focused[4].client.status == "stopping" && focused[4].server.status == "stopping")
-        // The stopped summary this slice broadcasts on runtime_ended arrives before stop_confirmed
-        // and session_ended, so neither carries a status or program lag anymore.
+        // Neither stop_confirmed nor session_ended lags in status or program status.
         #expect(focused[7].frameType == "state")
         #expect(focused[7].client.status == "stopped" && focused[7].server.status == "stopped")
         #expect(focused[7].client.program == "idle" && focused[7].server.program == "idle")
