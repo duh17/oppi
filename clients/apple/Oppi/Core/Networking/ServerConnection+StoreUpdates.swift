@@ -75,14 +75,7 @@ extension ServerConnection {
             return applySessionSummary(summary)
 
         case .sessionEnded:
-            let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId
-            let completedAt = Date()
-            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
-                current.status = .stopped
-                current.currentTurnStartedAt = nil
-                current.lastActivity = completedAt
-                sessionStore.upsert(current)
-            }
+            let workspaceId = sessionStore.applySessionEnded(id: sessionId)?.workspaceId
             if let workspaceId {
                 syncWorkspaceSummary(workspaceId: workspaceId)
             }

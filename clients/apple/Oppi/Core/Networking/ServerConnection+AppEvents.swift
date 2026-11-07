@@ -23,9 +23,7 @@ extension ServerConnection {
             removeSessionFromAppEvent(event, sessionId: sessionId, workspaceId: workspaceId)
 
         case .sessionEnded(let sessionId, let workspaceId, _, _):
-            // Kept until the server broadcasts a stopped summary when its runtime ends: 0.54.0
-            // servers never follow session_ended with a state/session_summary.
-            updateSessionStatusFromAppEvent(sessionId: sessionId, workspaceId: workspaceId)
+            applySessionEndedFromAppEvent(sessionId: sessionId, workspaceId: workspaceId)
             clearSessionScopedAppEventState(for: event, sessionId: sessionId)
 
         case .stopRequested:
@@ -164,26 +162,19 @@ extension ServerConnection {
         syncLiveActivityState()
     }
 
-    /// `session_ended` is the one app event the client still turns into a status write:
-    /// the terminal `stopped` fact, kept until a server summary covers it (see the caller).
-    private func updateSessionStatusFromAppEvent(
+    /// `session_ended` is the one app event that writes a status; see
+    /// `SessionStore.applySessionEnded`.
+    private func applySessionEndedFromAppEvent(
         sessionId: String,
         workspaceId: String?
     ) {
-        guard var current = sessionStore.session(id: sessionId) else { return }
-        let wasRunning = current.status.isRunning
-        let completedAt = Date()
-        current.status = .stopped
-        current.currentTurnStartedAt = nil
-        current.lastActivity = completedAt
-        if current.workspaceId == nil, !current.isControlConversation {
-            current.workspaceId = workspaceId
+        guard let previous = sessionStore.applySessionEnded(id: sessionId, workspaceId: workspaceId) else {
+            return
         }
-        sessionStore.upsert(current)
-        if wasRunning {
+        if previous.status.isRunning {
             notePushDiscoveryMoment()
         }
-        if let resolvedWorkspaceId = current.workspaceId ?? workspaceId {
+        if let resolvedWorkspaceId = sessionStore.session(id: sessionId)?.workspaceId ?? workspaceId {
             syncWorkspaceSummary(workspaceId: resolvedWorkspaceId)
         }
         screenAwakeController.clearSessionActivity(sessionId: sessionId)

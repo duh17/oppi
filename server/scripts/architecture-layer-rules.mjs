@@ -216,6 +216,19 @@ const IOS_UNLOCK_DEFERRAL_ALLOWED_FILES = new Set([
   "clients/apple/Oppi/Core/Services/AppLockService.swift", // definition
 ]);
 const IOS_TIMELINE_ROOT = "clients/apple/Oppi/Features/Chat/Timeline/";
+// Session rows take their status from server snapshots, which `SessionStore` applies; the client
+// never derives it from events. The match is textual: any `.status` assignment other than to
+// `self`, comments and strings ignored, so files that own a different `status` field are listed
+// by name.
+const IOS_SESSION_STATUS_ASSIGNMENT = /(?<!\bself\??)\.\s*status\s*=(?!=)/g;
+const IOS_SESSION_STATUS_WRITER_ALLOWED_FILES = new Set([
+  "clients/apple/Oppi/Core/Services/SessionStore.swift",
+  // Not a Session: a schedule, a file-edit status view, tool-call rows.
+  "clients/apple/Oppi/Features/Schedules/ScheduleDetailViewController.swift",
+  "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditChrome.swift",
+  "clients/apple/OppiCore/Runtime/TimelineReducer.swift",
+  "clients/apple/OppiCore/Runtime/LiveNestedToolCalls.swift",
+]);
 
 // View-layer files receive explicit values and actions from composition. They must not hold the
 // connection or reach transport or shared stores through it. Each entry is a way the timeline used to
@@ -1506,6 +1519,30 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
           column: location.column,
           reason: check.reason,
           remediation: check.remediation,
+        }),
+      );
+    }
+  }
+
+  for (const file of candidateFiles) {
+    if (IOS_SESSION_STATUS_WRITER_ALLOWED_FILES.has(file)) {
+      continue;
+    }
+    const parsed = readSwiftSource(repoRoot, file);
+    if (!parsed) {
+      continue;
+    }
+    for (const assignment of parsed.stripped.matchAll(IOS_SESSION_STATUS_ASSIGNMENT)) {
+      const location = lineAndColumnForIndex(parsed.stripped, assignment.index);
+      violations.push(
+        makeIosViolation({
+          rule: "ios-session-status-writer",
+          file,
+          line: location.line,
+          column: location.column,
+          reason: "Only SessionStore writes a session's status, from server snapshots.",
+          remediation:
+            "Let the server's state or session_summary carry the status. If this `status` is not a Session's, add the file to IOS_SESSION_STATUS_WRITER_ALLOWED_FILES.",
         }),
       );
     }

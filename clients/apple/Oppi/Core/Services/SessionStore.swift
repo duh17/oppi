@@ -974,6 +974,26 @@ final class SessionStore {
         }
     }
 
+    /// Record `session_ended` as `stopped`, the one lifecycle status the client writes from an
+    /// event instead of a server snapshot. It stays until the server broadcasts a stopped
+    /// summary when a runtime ends: 0.54.0 servers send no state or summary after
+    /// `session_ended`. A `workspaceId` fills an unscoped row, except a control conversation's.
+    ///
+    /// Returns the row as it was before, or nil when the store holds no such session.
+    @discardableResult
+    func applySessionEnded(id: String, workspaceId: String? = nil, at date: Date = Date()) -> Session? {
+        guard let previous = session(id: id) else { return nil }
+        var ended = previous
+        ended.status = .stopped
+        ended.currentTurnStartedAt = nil
+        ended.lastActivity = date
+        if ended.workspaceId == nil, !ended.isControlConversation {
+            ended.workspaceId = workspaceId
+        }
+        upsert(ended)
+        return previous
+    }
+
     /// Remove a session.
     func remove(id: String) {
         markDeletedSessionTombstone(id)

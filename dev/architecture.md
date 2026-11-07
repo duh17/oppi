@@ -54,5 +54,5 @@ Prompt to pixel: `ClientMessage` → `ws-message-handler.ts` → `SessionRuntime
 - Mirror sessions are terminal-owned: the server never auto-starts an SDK runtime for a `runtime == "pi-tui"` session.
 - Hot timeline traffic stays separate from cold projections: everything the transport map puts on HTTP stays there, and only the created or focused session uses the session stream.
 - Scheduled runs use the managed-session launch path, not a separate adapter.
-- The client applies shared store updates exactly once per inbound live event. A still-stopped session stays history-only: opening its focused stream can resume server-owned execution.
+- The client applies shared store updates exactly once per inbound live event, and never derives lifecycle status from events: `state`, `session_summary`, `session_ended`, and `session_deleted` are the only status writers. A still-stopped session stays history-only: opening its focused stream can resume server-owned execution.
 - Server protocol types (`server/src/types/protocol.ts`) and their Apple mirrors (`OppiCore/Models/`) change together with their tests: a mismatched pair fails at the transport boundary ([checklist](architecture-server.md#protocol-boundary)).

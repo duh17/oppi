@@ -632,6 +632,40 @@ describe("architecture layer rule helpers", () => {
     }
   });
 
+  it("flags a client session status assignment outside SessionStore", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-ios-status-writer-"));
+
+    try {
+      const assignment = "func end(_ s: inout Session) { s.status = .stopped }\n";
+      const router = "clients/apple/Oppi/Core/Networking/Router.swift";
+      const manager = "clients/apple/OppiCore/Runtime/Manager.swift";
+      write(join(repoRoot, router), assignment);
+      write(
+        join(repoRoot, manager),
+        "func copy(_ a: inout Session, _ b: Session) { a.status=b.status; list[0] .status = .busy }\n",
+      );
+      write(join(repoRoot, "clients/apple/Oppi/Core/Services/SessionStore.swift"), assignment);
+      write(
+        join(repoRoot, "clients/apple/Oppi/Core/Networking/Reader.swift"),
+        [
+          "let busy = s.status == .busy || s.status != .ready",
+          "init(status: Status) { self.status = status; self?.status = status }",
+          "// s.status = .stopped was removed",
+          'let note = "s.status = .stopped"',
+          "",
+        ].join("\n"),
+      );
+
+      const flagged = findIosLayerViolations(repoRoot)
+        .filter((violation) => violation.rule === "ios-session-status-writer")
+        .map((violation) => violation.file);
+
+      expect(flagged.sort()).toEqual([router, manager, manager]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("flags Pi TUI runtime ownership checks outside approved modules", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-pi-tui-check-"));
 
