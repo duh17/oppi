@@ -509,6 +509,36 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// iPad: a section header's title stays level with the rows' text when the sidebar hides
+    /// and shows again. The secondary column extends under the sidebar, so a header that
+    /// takes its inset from the safe area would carry the sidebar's width into the title.
+    func testSessionListHeadersStayWithTheRowsAcrossTheSidebarToggle() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "The sidebar toggle needs the split view")
+        launchShell()
+        revealSidebar(isSplit: true)
+        let toggle = app.buttons["workspace.split.sidebarToggle"]
+        let list = app.collectionViews["workspace.sessionList"]
+        let row = app.buttons["session.nav.rail-2"]
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "The first section's row did not show")
+        let titles = ["Your Turn", "Working"]
+        /// How far a header's title sits in from the rows' leading edge.
+        func offset(_ title: String) -> CGFloat {
+            list.staticTexts[title].firstMatch.frame.minX - row.frame.minX
+        }
+
+        let baseline = offset("Your Turn")
+        XCTAssertTrue((0...40).contains(baseline), "A header title must sit just inside the rows, not \(baseline) pt (a sidebar's width)")
+        for state in ["hidden", "shown"] {
+            toggle.tap()
+            for title in titles {
+                XCTAssertTrue(
+                    waitFor(abs(offset(title) - baseline) <= 1),
+                    "\(title) must keep its \(baseline) pt offset with the sidebar \(state), not \(offset(title))"
+                )
+            }
+        }
+    }
+
     /// Taps `row`, expects the page titled `title`, then goes back to `bar`.
     private func pushAndReturn(row: String, title: String, to bar: XCUIElement) {
         reveal(app.buttons[row]).tap()

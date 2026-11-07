@@ -273,11 +273,7 @@ final class SessionListCollection<
         // Pull-to-refresh needs the bounce even when the rows fit on screen.
         collectionView.alwaysBounceVertical = true
         leadingDragGuard.install(on: collectionView)
-        installDataSource(
-            headerInset: appearance == .insetGrouped
-                ? SessionListSectionHeaderView.insetGroupedInset
-                : SessionListSectionHeaderView.plainInset
-        )
+        installDataSource()
     }
 
     /// Applies the pass's snapshot, animated once the list has rows on
@@ -359,7 +355,7 @@ final class SessionListCollection<
         }
     }
 
-    private func installDataSource(headerInset: CGFloat) {
+    private func installDataSource() {
         let sessionCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
             guard let self, let row = current.sessions[item] else { return }
             cell.contentConfiguration = SessionListEntryConfiguration(
@@ -409,7 +405,6 @@ final class SessionListCollection<
         let header = UICollectionView.SupplementaryRegistration<SessionListSectionHeaderView>(
             elementKind: SessionListSectionHeaderView.elementKind
         ) { [weak self] view, _, indexPath in
-            view.horizontalInset = headerInset
             self?.configure(view, at: indexPath)
         }
         dataSource.supplementaryViewProvider = { collectionView, _, indexPath in
@@ -806,7 +801,13 @@ final class SessionListLeadingDragGuard: NSObject, UIGestureRecognizerDelegate {
 /// A session-list section header: a plain title ("Your Turn"), or an
 /// expandable group (a stopped day) that is one button with its title,
 /// an optional count, an Expanded/Collapsed value, and a chevron.
-final class SessionListSectionHeaderView: UICollectionReusableView {
+///
+/// A list cell, not a plain reusable view: the list lays a header out across the
+/// full width of the list, which on iPad runs under the sidebar, and sets a plain
+/// reusable view's margins from that frame. Its safe-area inset then counted twice
+/// and went stale when the sidebar toggled, which left the title mid-screen. A list
+/// cell's content margins stay level with the rows' own at any width.
+final class SessionListSectionHeaderView: UICollectionViewListCell {
     static let elementKind = UICollectionView.elementKindSectionHeader
 
     /// Covers the header for an expandable group; hidden for a titled one.
@@ -839,43 +840,27 @@ final class SessionListSectionHeaderView: UICollectionReusableView {
         row.isUserInteractionEnabled = false
         row.translatesAutoresizingMaskIntoConstraints = false
         button.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
-        addSubview(button)
+        contentView.addSubview(row)
+        contentView.addSubview(button)
         button.addAction(UIAction { [weak self] _ in self?.onToggle?() }, for: .touchUpInside)
 
-        let margins = layoutMarginsGuide
+        let margins = contentView.layoutMarginsGuide
         NSLayoutConstraint.activate([
-            button.topAnchor.constraint(equalTo: topAnchor),
-            button.bottomAnchor.constraint(equalTo: bottomAnchor),
-            button.leadingAnchor.constraint(equalTo: leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.topAnchor.constraint(equalTo: contentView.topAnchor),
+            button.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            button.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             row.topAnchor.constraint(equalTo: margins.topAnchor),
             row.bottomAnchor.constraint(equalTo: margins.bottomAnchor),
             row.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
             row.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
         ])
-        directionalLayoutMargins = NSDirectionalEdgeInsets(
-            top: header.directionalLayoutMargins.top,
-            leading: Self.plainInset,
-            bottom: header.directionalLayoutMargins.bottom,
-            trailing: Self.plainInset
-        )
+        contentView.directionalLayoutMargins.top = header.directionalLayoutMargins.top
+        contentView.directionalLayoutMargins.bottom = header.directionalLayoutMargins.bottom
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    /// Header text sits 16 pt in on a plain list and 20 pt in on an inset
-    /// grouped one (level with the rows' text), as SwiftUI's did.
-    static let plainInset: CGFloat = 16
-    static let insetGroupedInset: CGFloat = 20
-
-    var horizontalInset: CGFloat = SessionListSectionHeaderView.plainInset {
-        didSet {
-            directionalLayoutMargins.leading = horizontalInset
-            directionalLayoutMargins.trailing = horizontalInset
-        }
-    }
 
     /// A titled header. Reuse clears the expandable state.
     func configure(title: String, palette: ThemePalette) {
@@ -921,7 +906,10 @@ final class SessionListSectionHeaderView: UICollectionReusableView {
         titleLabel.text = title
         // SwiftUI's section header color; the chevron and count keep the theme's.
         titleLabel.textColor = .secondaryLabel
-        backgroundColor = palette.ui.bg
+        var background = UIBackgroundConfiguration.clear()
+        background.backgroundColor = palette.ui.bg
+        backgroundConfiguration = background
+        automaticallyUpdatesBackgroundConfiguration = false
     }
 }
 
