@@ -1228,7 +1228,17 @@ export const DURABLE_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         description:
           "A prompt the store committed whose agent_start the session has not seen yet: the row is still ready while the backend runs. The CLI wait is not idle, and an abort stops the run.",
       },
-      [fauxAssistantMessage(LONG_ANSWER)],
+      // The model answers only once aborted, so the run records no partial answer whose length
+      // depends on timing.
+      [
+        (_context, options) =>
+          new Promise((resolve) => {
+            const answer = () => resolve(fauxAssistantMessage(LONG_ANSWER));
+            if (!options?.signal) throw new Error("the faux model needs an abort signal");
+            if (options.signal.aborted) answer();
+            else options.signal.addEventListener("abort", answer, { once: true });
+          }),
+      ],
       async (world) => {
         const { recorder, manager } = world;
         await startDurable(world);

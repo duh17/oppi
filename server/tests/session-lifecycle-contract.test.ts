@@ -600,7 +600,8 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
   // The store committed the prompt and its run is going, but the session has not seen agent_start:
   // the row is ready and the CLI wait holds (the pending-work read). An abort reads the engine,
   // which runs, so it stops the run. The test holds every event from agent_start on, so the abort
-  // is confirmed once the engine is idle, before the held run's frames arrive.
+  // is confirmed once the engine is idle, before the held run's frames arrive. The run was cut
+  // short before its first token, so it sends no answer.
   "durable.commit_before_agent_start": {
     ws: [
       "state ready/idle",
@@ -610,7 +611,6 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "state ready/idle",
       "agent_start",
       "summary busy/working",
-      "state busy/working",
       "agent_end",
       "summary busy/working",
       "agent_settled",
