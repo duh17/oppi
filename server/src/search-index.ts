@@ -8,9 +8,10 @@
  * Lifecycle:
  * - Server boot: open db, incremental sync (JSONL state + session metadata)
  * - Live: re-index on agent_end. A file-backed session reads only the bytes
- *   appended since the stored cursor; truncation, rewrite, compaction, or fork
- *   falls back to a full reindex. The read is async and does not block the
- *   event loop on the whole file.
+ *   appended since the stored cursor; truncation, rewrite, or fork falls back
+ *   to a full reindex. Indexed text is the whole current branch, compacted
+ *   history included; a field over its cap keeps the newest text. The read is
+ *   async and does not block the event loop on the whole file.
  * - Shutdown: close db
  */
 
@@ -30,6 +31,7 @@ import {
   SEARCH_ASSISTANT_MESSAGE_CAP,
   SEARCH_USER_MESSAGE_CAP,
   sessionTranscriptLeafId,
+  tailWithinCap,
   type SearchTranscriptContent,
   type SessionEntry,
 } from "./trace.js";
@@ -194,8 +196,8 @@ interface FtsMetaRow {
 
 /** Last bytes of the indexed prefix. In-place rewrite keeps the inode, so size and inode alone do not prove the prefix is unchanged. */
 const FILE_BOUNDARY_BYTES = 64;
-/** Appended entry types that change which earlier lines are visible. */
-const FULL_REINDEX_ENTRY_TYPES = new Set(["compaction", "branch_summary", "session"]);
+/** Appended entry types that change which earlier lines are on the indexed branch. */
+const FULL_REINDEX_ENTRY_TYPES = new Set(["branch_summary", "session"]);
 
 function extractSessionTitle(session: Session): string {
   return [session.name, session.firstMessage]
@@ -409,13 +411,10 @@ function storedCursorIsNewer(stored: FileCursor, snapshot: FileCursor, fileSize:
   return stored.offset === snapshot.offset && stored.boundary !== snapshot.boundary;
 }
 
+/** Same text a full extraction yields: the newest `cap` characters of the joined fields. */
 function appendCapped(existing: string, addition: string, cap: number): string {
-  if (!addition) return existing.length > cap ? existing.slice(0, cap) : existing;
-  if (!existing || existing.length >= cap) {
-    return existing ? existing.slice(0, cap) : addition.slice(0, cap);
-  }
-  const joined = `${existing}\n${addition}`;
-  return joined.length > cap ? joined.slice(0, cap) : joined;
+  const joined = !addition ? existing : !existing ? addition : `${existing}\n${addition}`;
+  return tailWithinCap(joined, cap);
 }
 
 function mergeToolNames(existing: string, addition: string): string {
@@ -447,9 +446,9 @@ function tailHasUnsafeToolName(entries: SessionEntry[]): boolean {
 }
 
 /**
- * True when the appended entries only extend the indexed leaf. Compaction,
- * a new session header, a branch summary, or a fork (parent chain misses the
- * stored leaf) changes visibility of earlier lines, so the caller must reindex.
+ * True when the appended entries only extend the indexed leaf. A new session
+ * header, a branch summary, or a fork (parent chain misses the stored leaf)
+ * changes which earlier lines are on the branch, so the caller must reindex.
  */
 function tailExtendsIndexedLeaf(entries: SessionEntry[], leafId: string): boolean {
   if (!leafId || tailHasUnsafeToolName(entries)) return false;
@@ -625,6 +624,7 @@ export class SearchIndex {
     if (this.schemaVersion() === "6") {
       this.db.prepare("INSERT OR REPLACE INTO fts_schema VALUES ('version', ?)").run("7");
     }
+    this.migrateToV8();
   }
 
   // -------------------------------------------------------------------------
@@ -743,6 +743,43 @@ export class SearchIndex {
     });
   }
 
+  /**
+   * v7 → v8: rows index the whole current branch, not the post-compaction view, and keep the
+   * newest text over a cap. Rows written before hold only the visible context, so every row goes
+   * back through extraction once, in the cooperative background sync:
+   * - File rows lose their cursor and fingerprint size (kept mtime keeps recency order), so the
+   *   next sync reads the file in full rather than appending to a stale prefix.
+   * - Durable rows lose their marker, and every store's catch-up mark goes, so
+   *   `durableStoreUnchanged` cannot leave a store closed on the strength of an old pass.
+   */
+  private migrateToV8(): void {
+    if (this.schemaVersion() !== "7") return;
+    const started = performance.now();
+    const changes = (statement: SqliteStatement): number =>
+      Number((statement.run() as { changes: number | bigint }).changes);
+    let files = 0;
+    let durable = 0;
+    this.db.transaction(() => {
+      files = changes(
+        this.db.prepare(
+          "UPDATE fts_meta SET jsonl_size = -1, jsonl_dev = NULL, jsonl_ino = NULL, jsonl_offset = NULL, jsonl_boundary = NULL, jsonl_leaf_id = NULL WHERE jsonl_path IS NOT NULL",
+        ),
+      );
+      durable = changes(
+        this.db.prepare(
+          "UPDATE fts_meta SET durable_marker = NULL WHERE durable_marker IS NOT NULL",
+        ),
+      );
+      this.db.prepare("DELETE FROM fts_schema WHERE key LIKE 'durable_store_synced:%'").run();
+      this.db.prepare("INSERT OR REPLACE INTO fts_schema VALUES ('version', ?)").run("8");
+    })();
+    log.info("search_index.migrated_v8", {
+      fileRows: files,
+      durableRows: durable,
+      elapsedMs: Math.round(performance.now() - started),
+    });
+  }
+
   private ensureSchema(): void {
     // Check schema version
     const hasSchemaTable = this.db
@@ -751,9 +788,10 @@ export class SearchIndex {
 
     if (hasSchemaTable) {
       // v3–v6 upgrade in place; migrateToV6 finishes v5 data, then the
-      // constructor stamps version 7 once the file cursor columns exist.
+      // constructor stamps version 7 once the file cursor columns exist and
+      // migrateToV8 re-extracts every row.
       const version = this.schemaVersion();
-      if (version === "7") return;
+      if (version === "7" || version === "8") return;
       if (version === "6") {
         this.ensureFileCursorColumns();
         this.db.prepare("INSERT OR REPLACE INTO fts_schema VALUES ('version', ?)").run("7");
@@ -776,7 +814,7 @@ export class SearchIndex {
         return;
       }
 
-      // Unknown/older versions — drop and recreate at v7.
+      // Unknown/older versions — drop and recreate at v8.
       this.db.exec("DROP TABLE IF EXISTS session_fts");
       this.db.exec("DROP TABLE IF EXISTS fts_meta");
       this.db.exec("DROP TABLE IF EXISTS fts_schema");
@@ -815,7 +853,7 @@ export class SearchIndex {
         value TEXT
       );
 
-      INSERT OR REPLACE INTO fts_schema VALUES ('version', '7');
+      INSERT OR REPLACE INTO fts_schema VALUES ('version', '8');
     `);
   }
 

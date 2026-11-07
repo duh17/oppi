@@ -21,7 +21,11 @@ import {
   readDurableTraceOutline,
 } from "../src/durable-history.js";
 import { readOlderConversationEntries } from "../src/durable-conversation-stream.js";
-import { createLiveEntryRendererSet, type TraceEvent } from "../src/trace.js";
+import {
+  createLiveEntryRendererSet,
+  SEARCH_USER_MESSAGE_CAP,
+  type TraceEvent,
+} from "../src/trace.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 
@@ -272,19 +276,26 @@ async function rowsRead(f: Awaited<ReturnType<typeof history>>): Promise<number>
   return pages.reduce((total, page) => total + page.items.length, 0);
 }
 
-// Turn-end indexing reads this for every durable session, so it must not grow with the history a
-// compaction already hides.
-it("reads a search transcript back only to the entry the newest compaction keeps", async () => {
+// Search finds what a compaction hid from the model: the transcript covers the whole history.
+it("reads a search transcript from before the newest compaction, without its summary", async () => {
   const f = await history({ stopped: false, prefix: 250, compact: true });
   const transcript = await readDurableSearchTranscript(f.harness, f.id);
-  expect(transcript).toEqual({
-    userMessages: "between one\nbetween two",
-    assistantMessages: "retry",
-    toolNames: "",
-  });
-  // 250 older entries, the crash stub and the compaction's kept entries make 255 records.
-  expect(await rowsRead(f)).toBeLessThanOrEqual(100);
+  expect(transcript.userMessages.split("\n")).toEqual([
+    ...Array.from({ length: 250 }, (_, index) => `older ${index}`),
+    "between one",
+    "between two",
+  ]);
+  expect(transcript.assistantMessages).toBe("retry");
+  expect(transcript.userMessages).not.toContain("earlier work");
   expect(f.resume).not.toHaveBeenCalled();
+});
+
+it("keeps the newest user text when the history outgrows the search cap", async () => {
+  const f = await history({ stopped: false, prefix: 6000, compact: true });
+  const { userMessages } = await readDurableSearchTranscript(f.harness, f.id);
+  expect(userMessages.length).toBeLessThanOrEqual(SEARCH_USER_MESSAGE_CAP);
+  expect(userMessages.endsWith("older 5999\nbetween one\nbetween two")).toBe(true);
+  expect(userMessages).not.toContain("older 0\n");
 });
 
 it("reads the whole history for a search transcript when no compaction hides any of it", async () => {

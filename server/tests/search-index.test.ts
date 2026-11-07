@@ -220,7 +220,7 @@ describe("SearchIndex indexes transcript content only", () => {
     }
   });
 
-  it("indexes only visible post-compaction trace content", () => {
+  it("indexes text from before a compaction, not the compaction summary", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "search-index-"));
     cleanupPaths.add(dataDir);
 
@@ -299,8 +299,8 @@ describe("SearchIndex indexes transcript content only", () => {
       expect(result.transcriptsRead).toBe(1);
       expect(result.transcriptBytesRead).toBeGreaterThan(0);
 
-      expect(index.search("hiddencompacttoken", "ws-1", 10)).toHaveLength(0);
-      expect(index.search("hiddenassistantcompacttoken", "ws-1", 10)).toHaveLength(0);
+      expect(index.search("hiddencompacttoken", "ws-1", 10)).toHaveLength(1);
+      expect(index.search("hiddenassistantcompacttoken", "ws-1", 10)).toHaveLength(1);
       expect(index.search("summarycompacttoken", "ws-1", 10)).toHaveLength(0);
       expect(index.search("keptcompacttoken", "ws-1", 10)).toHaveLength(1);
       expect(index.search("keptassistantcompacttoken", "ws-1", 10)).toHaveLength(1);
@@ -569,6 +569,56 @@ describe("SearchIndex indexes transcript content only", () => {
     }
   });
 
+  it("re-extracts v7 rows that indexed only post-compaction text, once", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-schema-v8-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    const compaction = JSON.stringify({
+      type: "compaction",
+      id: "c1",
+      parentId: "a1",
+      timestamp: "2026-01-01T00:00:05.000Z",
+      summary: "compacted",
+      firstKeptEntryId: "a1",
+      tokensBefore: 10,
+    });
+    writeFileSync(
+      jsonlPath,
+      transcriptLine("u1", null, "user", "legacyearlyphrase") +
+        transcriptLine("a1", "u1", "assistant", "reply") +
+        compaction +
+        "\n" +
+        transcriptLine("u2", "c1", "user", "legacylatephrase"),
+    );
+    const session = makeSession({ id: "sess-v7", piSessionFile: jsonlPath });
+    const sessions = new Map([[session.id, session]]);
+
+    const firstIndex = new SearchIndex(dataDir, (id) => sessions.get(id));
+    await firstIndex.indexSession(session.id);
+    firstIndex.close();
+
+    // A v7 row as the old extractor wrote it: only the text after the compaction, fingerprint intact.
+    const db = openDatabase(join(dataDir, "session-search.db"));
+    try {
+      db.prepare(
+        "UPDATE session_fts SET user_messages = 'legacylatephrase' WHERE session_id = ?",
+      ).run(session.id);
+      db.prepare("UPDATE fts_schema SET value = '7' WHERE key = 'version'").run();
+    } finally {
+      db.close();
+    }
+
+    const migrated = new SearchIndex(dataDir, (id) => sessions.get(id));
+    try {
+      expect(migrated.search("legacyearlyphrase", "ws-1", 10)).toEqual([]);
+      expect(migrated.sync([session])).toMatchObject({ reindexed: 1, transcriptsRead: 1 });
+      expect(migrated.search("legacyearlyphrase", "ws-1", 10)).toHaveLength(1);
+      expect(migrated.sync([session])).toMatchObject({ skipped: 1, transcriptsRead: 0 });
+    } finally {
+      migrated.close();
+    }
+  });
+
   it("re-extracts v5 rows that indexed inline media, once", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "search-index-schema-v6-"));
     cleanupPaths.add(dataDir);
@@ -683,12 +733,14 @@ describe("SearchIndex indexes transcript content only", () => {
     const migrated = new SearchIndex(dataDir, (id) => sessions.get(id));
     try {
       expect(migrated.search("v4 migrate token", "ws-1", 10)).toHaveLength(1);
+      // The upgrade keeps the FTS rows searchable; the sync then re-extracts the row once for v8.
       expect(migrated.sync([session])).toMatchObject({
         added: 0,
-        reindexed: 0,
-        skipped: 1,
-        transcriptsRead: 0,
+        reindexed: 1,
+        skipped: 0,
+        transcriptsRead: 1,
       });
+      expect(migrated.sync([session])).toMatchObject({ skipped: 1, transcriptsRead: 0 });
     } finally {
       migrated.close();
     }
@@ -707,7 +759,7 @@ describe("SearchIndex indexes transcript content only", () => {
       const meta = after
         .prepare("SELECT workspace_id, title FROM fts_meta WHERE session_id = ?")
         .get(session.id) as { workspace_id: string; title: string };
-      expect(version.value).toBe("7");
+      expect(version.value).toBe("8");
       expect(columns).toEqual(
         expect.arrayContaining([
           "workspace_id",
@@ -1601,7 +1653,7 @@ describe("SearchIndex turn-end indexing", () => {
       );
       await index.indexSession(session.id);
       expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
-      expect(index.search("alpha", "ws-1")).toEqual([]);
+      expect(index.search("alpha", "ws-1")).toHaveLength(1);
       expect(index.search("zeta", "ws-1")).toHaveLength(1);
       expect(index.search("summarycompacttoken", "ws-1")).toEqual([]);
 
@@ -1683,6 +1735,109 @@ describe("SearchIndex turn-end indexing", () => {
         transcriptLine("u2", "a1", "user", `cap-cross token ${"z".repeat(100)}`),
       );
       await index.indexSession(session.id);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+    } finally {
+      index.close();
+    }
+  });
+
+  it("keeps the newest text when a session outgrows the field caps, on a full read and on an append", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-newest-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    const filler = "routine filler words ".repeat(100);
+    let lines = "";
+    let parent: string | null = null;
+    // 60 user turns of ~2k chars and 60 assistant turns of ~1k chars: user text passes its 50k
+    // cap, assistant text (~60k) sits under 100k, so only the user field must drop its oldest text.
+    for (let turn = 0; turn < 60; turn++) {
+      const u = `u${turn}`;
+      lines += transcriptLine(
+        u,
+        parent,
+        "user",
+        `${turn === 0 ? "oldestuserphrase" : ""} ${filler}`,
+      );
+      lines += transcriptLine(
+        `a${turn}`,
+        u,
+        "assistant",
+        `${turn === 0 ? "oldestassistantphrase" : ""} ${filler.slice(0, 1_000)}`,
+      );
+      parent = `a${turn}`;
+    }
+    lines += transcriptLine("u-last", parent, "user", "newestuserphrase");
+    writeFileSync(jsonlPath, lines);
+    const session = makeSession({ id: "sess-newest", piSessionFile: jsonlPath });
+    const index = new SearchIndex(dataDir, () => session);
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      await index.indexSession(session.id);
+      const full = indexedTranscriptFields(dataDir, session.id)!;
+      expect(full.user_messages.length).toBeLessThanOrEqual(50_000);
+      expect(index.search("newestuserphrase", "ws-1")).toHaveLength(1);
+      expect(index.search("oldestuserphrase", "ws-1")).toEqual([]);
+      // Under its cap, the assistant field keeps everything.
+      expect(index.search("oldestassistantphrase", "ws-1")).toHaveLength(1);
+
+      // An append goes through the incremental merge and must agree with a fresh full read.
+      appendFileSync(
+        jsonlPath,
+        transcriptLine(
+          "a-last",
+          "u-last",
+          "assistant",
+          `${filler.repeat(30)} newestassistantphrase`,
+        ) + transcriptLine("u-after", "a-last", "user", "afterappenduserphrase"),
+      );
+      await index.indexSession(session.id);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+      expect(index.search("afterappenduserphrase", "ws-1")).toHaveLength(1);
+      expect(index.search("newestassistantphrase", "ws-1")).toHaveLength(1);
+      expect(index.search("oldestassistantphrase", "ws-1")).toEqual([]);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("appends a compaction incrementally and still finds text from before it", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-compact-append-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeFileSync(
+      jsonlPath,
+      transcriptLine("u1", null, "user", "beforecompactionphrase ".repeat(2_000)) +
+        transcriptLine("a1", "u1", "assistant", "reply"),
+    );
+    const session = makeSession({ id: "sess-compact-append", piSessionFile: jsonlPath });
+    const sessions = new Map([[session.id, session]]);
+    const index = new SearchIndex(dataDir, (id) => sessions.get(id));
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      index.sync([session]);
+      const size = statSync(jsonlPath).size;
+      appendFileSync(
+        jsonlPath,
+        JSON.stringify({
+          type: "compaction",
+          id: "c1",
+          parentId: "a1",
+          timestamp: "2026-01-01T00:00:05.000Z",
+          summary: "everything before was compacted",
+          firstKeptEntryId: "a1",
+          tokensBefore: 10,
+        }) +
+          "\n" +
+          transcriptLine("u2", "c1", "user", "aftercompactionphrase"),
+      );
+      const result = index.sync([session]);
+      expect(result.transcriptsReindexed).toBe(1);
+      // Only the appended bytes were read: a compaction no longer forces a full read.
+      expect(result.transcriptBytesRead).toBe(statSync(jsonlPath).size - size);
+      expect(index.search("beforecompactionphrase", "ws-1")).toHaveLength(1);
+      expect(index.search("aftercompactionphrase", "ws-1")).toHaveLength(1);
       expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
     } finally {
       index.close();
@@ -1781,7 +1936,7 @@ describe("SearchIndex turn-end indexing", () => {
         index.sync([session]);
       };
       await index.indexSession(session.id);
-      expect(index.search("overlap hidden token", "ws-1")).toEqual([]);
+      expect(index.search("overlap hidden token", "ws-1")).toHaveLength(1);
       expect(index.search("overlap post token", "ws-1")).toHaveLength(1);
       expect(index.search("overlap summary token", "ws-1")).toEqual([]);
       expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));

@@ -17,6 +17,7 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { readDurableSearchTranscript, readDurableTipEntryId } from "../src/durable-history.js";
 import { SearchIndex, type DurableSearchSource } from "../src/search-index.js";
 import { updateSearchIndexForSessionEvent } from "../src/session-search-indexing.js";
+import { openDatabase } from "../src/sqlite-compat.js";
 import type { Session } from "../src/types.js";
 
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -283,6 +284,7 @@ describe("SearchIndex durable sessions", () => {
       cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
       const s = {
         f,
+        dir,
         sessions,
         holds: [] as string[],
         failing: new Set<string>(),
@@ -319,6 +321,23 @@ describe("SearchIndex durable sessions", () => {
       };
       return s;
     }
+
+    it("re-extracts every store once after the schema moves to full-history rows", async () => {
+      const s = await servers();
+      await s.boot();
+      // A v7 index: rows, markers and catch-up marks all current, so v7 code would skip every store.
+      const db = openDatabase(join(s.dir, "session-search.db"));
+      try {
+        db.prepare("UPDATE fts_schema SET value = '7' WHERE key = 'version'").run();
+      } finally {
+        db.close();
+      }
+
+      const upgraded = await s.boot();
+      expect(upgraded.result).toMatchObject({ reindexed: 3, transcriptsReindexed: 3, skipped: 0 });
+      expect(s.holds.sort()).toEqual(["A", "B"]);
+      expect((await s.boot()).result).toMatchObject({ skipped: 3, transcriptsReindexed: 0 });
+    });
 
     it("leaves a store closed when its files predate the last complete sync", async () => {
       const s = await servers();

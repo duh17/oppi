@@ -39,37 +39,41 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 /** Mobile text renders inline media as data URIs; search never indexes them. */
 const INLINE_MEDIA = /\n?data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,[a-z0-9+/=_-]*/gi;
 
-/** Oracle: search fields after mobile TraceEvent construction + filter, minus inline media. */
+/**
+ * Oracle: search fields after mobile TraceEvent construction + filter over the full current
+ * branch, minus inline media. A field over its cap keeps its newest characters. (The fixtures
+ * here cut only inside unbroken runs, where the extractor keeps the exact cut.)
+ */
 function searchableFieldsFromMobileTrace(jsonlPath: string): {
   userMessages: string;
   assistantMessages: string;
   toolNames: string;
 } | null {
-  const events = readSessionTraceFromFile(jsonlPath);
+  const events = readSessionTraceFromFile(jsonlPath, { view: "full" });
   if (!events) return null;
 
   const userParts: string[] = [];
   const assistantParts: string[] = [];
   const toolNameSet = new Set<string>();
-  let userLen = 0;
-  let assistantLen = 0;
 
   for (const event of events) {
     const text = event.text?.replace(INLINE_MEDIA, "");
-    if (event.type === "user" && text && userLen < USER_MESSAGE_CAP) {
+    if (event.type === "user" && text) {
       userParts.push(text);
-      userLen += text.length;
-    } else if (event.type === "assistant" && text && assistantLen < ASSISTANT_MESSAGE_CAP) {
+    } else if (event.type === "assistant" && text) {
       assistantParts.push(text);
-      assistantLen += text.length;
     } else if (event.type === "toolCall" && event.tool) {
       toolNameSet.add(event.tool);
     }
   }
 
+  const newest = (parts: string[], cap: number): string => {
+    const joined = parts.join("\n");
+    return joined.length > cap ? joined.slice(-cap) : joined;
+  };
   return {
-    userMessages: userParts.join("\n").slice(0, USER_MESSAGE_CAP),
-    assistantMessages: assistantParts.join("\n").slice(0, ASSISTANT_MESSAGE_CAP),
+    userMessages: newest(userParts, USER_MESSAGE_CAP),
+    assistantMessages: newest(assistantParts, ASSISTANT_MESSAGE_CAP),
     toolNames: [...toolNameSet].join(" "),
   };
 }
@@ -274,9 +278,6 @@ function writeSearchFixture(jsonlPath: string): {
 
   return {
     discardedTokens: [
-      "hiddencompacttoken",
-      "hiddenassistantcompacttoken",
-      "hidden_tool_token",
       "secretthinkingtoken",
       "moresecretthinkingtoken",
       "secrethiddentoolresulttoken",
@@ -290,6 +291,10 @@ function writeSearchFixture(jsonlPath: string): {
       "base64",
     ],
     retainedTokens: [
+      // From before the compaction: search covers the whole current branch.
+      "hiddencompacttoken",
+      "hiddenassistantcompacttoken",
+      "hidden_tool_token",
       "keptcompacttoken",
       "keptassistantcompacttoken",
       "postcompacttoken",
@@ -324,7 +329,12 @@ describe("search transcript extraction fields", () => {
       expect(indexed.assistant_messages).toBe(oracle.assistantMessages);
       expect(indexed.tool_names).toBe(oracle.toolNames);
 
-      expect(oracle.toolNames.split(" ").sort()).toEqual(["bash", "read", "unknown"]);
+      expect(oracle.toolNames.split(" ").sort()).toEqual([
+        "bash",
+        "hidden_tool_token",
+        "read",
+        "unknown",
+      ]);
       expect(oracle.userMessages).toContain("broken \uFFFD... ok 😀");
       expect(oracle.userMessages).not.toContain("\uD83D...");
       expect(oracle.assistantMessages).not.toContain("secretthinkingtoken");
@@ -342,7 +352,7 @@ describe("search transcript extraction fields", () => {
     }
   });
 
-  it("caps user and assistant fields the same way the mobile filter does", () => {
+  it("caps user and assistant fields to their newest text, as the mobile filter's full branch would", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "search-extract-cap-"));
     cleanupPaths.add(dataDir);
     const jsonlPath = join(dataDir, "session.jsonl");

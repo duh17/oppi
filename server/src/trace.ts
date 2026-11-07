@@ -1165,9 +1165,32 @@ export function parseJsonl(content: string, options: TraceReadOptions = {}): Tra
   return buildSessionContext(entries, options);
 }
 
-/** Historical search FTS caps. Applied during direct extraction. */
+/**
+ * Search FTS field caps. Search indexes a session's whole current branch, so a long session can
+ * exceed them; the newest text is kept and the oldest dropped (`tailWithinCap`).
+ */
 export const SEARCH_USER_MESSAGE_CAP = 50_000;
 export const SEARCH_ASSISTANT_MESSAGE_CAP = 100_000;
+
+/** Longest partial leading word `tailWithinCap` drops; a longer unbroken run keeps its cut. */
+const TAIL_PARTIAL_WORD_MAX = 64;
+
+/**
+ * The newest `cap` characters of `text`. A cut inside a word (or a surrogate pair) drops that
+ * partial leading word, so the index holds no fragment no query could mean. An unbroken run
+ * longer than `TAIL_PARTIAL_WORD_MAX` keeps its cut: one giant token must not erase a message.
+ */
+export function tailWithinCap(text: string, cap: number): string {
+  if (text.length <= cap) return text;
+  const cut = text.length - cap;
+  let start = cut;
+  if (!/\s/.test(text.charAt(cut - 1))) {
+    const limit = Math.min(text.length, cut + TAIL_PARTIAL_WORD_MAX);
+    while (start < limit && !/\s/.test(text.charAt(start))) start++;
+    if (start === limit) start = cut;
+  }
+  return replaceUnpairedSurrogates(text.slice(start).replace(/^\s+/, ""));
+}
 
 /**
  * Inline base64 media (`data:<mime>;base64,...`), with the newline that joined
@@ -1188,10 +1211,10 @@ export interface SearchTranscriptContent {
 }
 
 /**
- * Extract the FTS fields search indexes from selected session entries.
- * Reuses branch/compaction visibility and the same user/assistant/tool-name
- * sources as mobile TraceEvents, without constructing thinking, tool results,
- * custom cards, or the mobile normalization tree.
+ * Extract the FTS fields search indexes from a session's current branch. Search reads the
+ * whole branch (`view: "full"`), so text a compaction hid from the model stays findable; rewound
+ * branches stay out. Uses the same user/assistant/tool-name sources as mobile TraceEvents,
+ * without constructing thinking, tool results, custom cards, or the mobile normalization tree.
  */
 interface SearchTranscriptAccum {
   userParts: string[];
@@ -1205,6 +1228,25 @@ function emptySearchTranscriptAccum(): SearchTranscriptAccum {
   return { userParts: [], assistantParts: [], toolNameSet: new Set(), userLen: 0, assistantLen: 0 };
 }
 
+/**
+ * Append a text part, then drop whole oldest parts the cap no longer needs (a part still
+ * overlapping the cap window stays; `tailWithinCap` trims it at the end). Memory stays bounded
+ * by the cap plus one part however long the session runs.
+ */
+function pushCappedPart(parts: string[], length: number, text: string, cap: number): number {
+  parts.push(text);
+  length += text.length + 1;
+  let drop = 0;
+  while (drop < parts.length - 1) {
+    const oldest = (parts[drop] ?? "").length + 1;
+    if (length - oldest < cap) break;
+    length -= oldest;
+    drop++;
+  }
+  if (drop > 0) parts.splice(0, drop);
+  return length;
+}
+
 function consumeSearchTranscriptEntry(accum: SearchTranscriptAccum, entry: SessionEntry): void {
   if (entry.type !== "message") return;
   const msg = entry.message;
@@ -1214,10 +1256,13 @@ function consumeSearchTranscriptEntry(accum: SearchTranscriptAccum, entry: Sessi
     const text = stripInlineMediaDataUris(
       extractText(msg.content, { includeMediaDataURIs: false }),
     );
-    if (text && accum.userLen < SEARCH_USER_MESSAGE_CAP) {
-      const normalized = replaceUnpairedSurrogates(text);
-      accum.userParts.push(normalized);
-      accum.userLen += normalized.length;
+    if (text) {
+      accum.userLen = pushCappedPart(
+        accum.userParts,
+        accum.userLen,
+        replaceUnpairedSurrogates(text),
+        SEARCH_USER_MESSAGE_CAP,
+      );
     }
     return;
   }
@@ -1228,12 +1273,9 @@ function consumeSearchTranscriptEntry(accum: SearchTranscriptAccum, entry: Sessi
   if (Array.isArray(content)) {
     for (const projected of projectAssistantContentRuns(msg)) {
       if (projected.kind === "text") {
-        if (projected.text && accum.assistantLen < SEARCH_ASSISTANT_MESSAGE_CAP) {
+        if (projected.text) {
           const normalized = replaceUnpairedSurrogates(stripInlineMediaDataUris(projected.text));
-          if (normalized) {
-            accum.assistantParts.push(normalized);
-            accum.assistantLen += normalized.length;
-          }
+          if (normalized) pushAssistantText(accum, normalized);
         }
         continue;
       }
@@ -1246,19 +1288,25 @@ function consumeSearchTranscriptEntry(accum: SearchTranscriptAccum, entry: Sessi
     return;
   }
 
-  if (typeof content === "string" && content && accum.assistantLen < SEARCH_ASSISTANT_MESSAGE_CAP) {
+  if (typeof content === "string" && content) {
     const normalized = replaceUnpairedSurrogates(stripInlineMediaDataUris(content));
-    if (normalized) {
-      accum.assistantParts.push(normalized);
-      accum.assistantLen += normalized.length;
-    }
+    if (normalized) pushAssistantText(accum, normalized);
   }
+}
+
+function pushAssistantText(accum: SearchTranscriptAccum, text: string): void {
+  accum.assistantLen = pushCappedPart(
+    accum.assistantParts,
+    accum.assistantLen,
+    text,
+    SEARCH_ASSISTANT_MESSAGE_CAP,
+  );
 }
 
 function finishSearchTranscript(accum: SearchTranscriptAccum): SearchTranscriptContent {
   return {
-    userMessages: accum.userParts.join("\n").slice(0, SEARCH_USER_MESSAGE_CAP),
-    assistantMessages: accum.assistantParts.join("\n").slice(0, SEARCH_ASSISTANT_MESSAGE_CAP),
+    userMessages: tailWithinCap(accum.userParts.join("\n"), SEARCH_USER_MESSAGE_CAP),
+    assistantMessages: tailWithinCap(accum.assistantParts.join("\n"), SEARCH_ASSISTANT_MESSAGE_CAP),
     toolNames: [...accum.toolNameSet].join(" "),
   };
 }
@@ -1266,15 +1314,15 @@ function finishSearchTranscript(accum: SearchTranscriptAccum): SearchTranscriptC
 export function extractSearchTranscriptFromEntries(
   entries: SessionEntry[],
 ): SearchTranscriptContent {
-  const { visibleEntries } = selectVisibleSessionContext(entries);
+  const { path } = selectVisibleSessionContext(entries, { view: "full" });
   const accum = emptySearchTranscriptAccum();
-  for (const entry of visibleEntries) consumeSearchTranscriptEntry(accum, entry);
+  for (const entry of path) consumeSearchTranscriptEntry(accum, entry);
   return finishSearchTranscript(accum);
 }
 
 /**
  * Same extraction as extractSearchTranscriptFromEntries, yielding every
- * `yieldEvery` visible entries so a large file cannot stall one event-loop turn.
+ * `yieldEvery` entries so a large file cannot stall one event-loop turn.
  * Returns null when `shouldStop` fires between slices.
  */
 export async function extractSearchTranscriptFromEntriesYielding(
@@ -1282,14 +1330,14 @@ export async function extractSearchTranscriptFromEntriesYielding(
   yieldEvery: number,
   shouldStop: () => boolean = () => false,
 ): Promise<SearchTranscriptContent | null> {
-  const { visibleEntries } = selectVisibleSessionContext(entries);
+  const { path } = selectVisibleSessionContext(entries, { view: "full" });
   const accum = emptySearchTranscriptAccum();
-  for (let i = 0; i < visibleEntries.length; i++) {
+  for (let i = 0; i < path.length; i++) {
     if (i > 0 && i % yieldEvery === 0) {
       await new Promise<void>((resolve) => setImmediate(resolve));
       if (shouldStop()) return null;
     }
-    const entry = visibleEntries[i];
+    const entry = path[i];
     if (entry) consumeSearchTranscriptEntry(accum, entry);
   }
   return finishSearchTranscript(accum);
