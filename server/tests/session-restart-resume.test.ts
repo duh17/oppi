@@ -435,7 +435,7 @@ describe("session restart resume", () => {
     storage.queueRestartResume([{ sessionId: "s1", wasBusy: true }], 1);
     const lifecycle = new SessionLifecycleService({
       storage,
-      sessions: {} as never,
+      sessions: { stopSession: async () => {} } as never,
       sessionRuntimes: { isSessionConnected: () => false } as never,
       ensureSessionContextWindow: (s) => s,
     });
@@ -482,7 +482,7 @@ describe("session restart resume", () => {
     storage.queueRestartResume([{ sessionId: "s1", wasBusy: true }], 1);
     const lifecycle = new SessionLifecycleService({
       storage,
-      sessions: {} as never,
+      sessions: { stopSession: async () => {} } as never,
       sessionRuntimes: { isSessionConnected: () => false } as never,
       ensureSessionContextWindow: (s) => s,
     });

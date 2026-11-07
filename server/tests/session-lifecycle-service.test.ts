@@ -1963,6 +1963,14 @@ describe("SessionLifecycleService", () => {
         saveSession.mock.invocationCallOrder[0]!,
       );
     });
+    it("hands a not-connected classic session to the runtime so a start in flight is stopped", async () => {
+      const { service, stopSession, saveSession } = makeService();
+      await service.stopSession(makeSession({ status: "starting" }));
+      expect(stopSession).toHaveBeenCalledWith("sess-1");
+      expect(stopSession.mock.invocationCallOrder[0]).toBeLessThan(
+        saveSession.mock.invocationCallOrder[0]!,
+      );
+    });
     it("does not persist a stopped durable session when offline abort fails", async () => {
       const { service, saveSession } = makeService({
         stopError: new Error("durable abort failed"),

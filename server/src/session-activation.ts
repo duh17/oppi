@@ -17,6 +17,11 @@ export class SessionActivationCoordinator {
 
   constructor(private readonly deps: SessionActivationCoordinatorDeps) {}
 
+  /** The start in flight for `key`, which registers the session's runtime when it settles. */
+  pendingStart(key: string): Promise<Session> | undefined {
+    return this.starting.get(key);
+  }
+
   async startSession(key: string, sessionId: string, workspace?: Workspace): Promise<Session> {
     const existing = this.deps.getActiveSession(key);
     if (existing) {

@@ -831,8 +831,9 @@ export class SessionLifecycleService {
       } else if (this.deps.sessionRuntimes.isSessionConnected(session.id)) {
         await this.deps.sessionRuntimes.stopSession(session.id);
       } else {
-        if (session.serverDurable?.conversationId !== undefined)
-          await this.deps.sessions.stopSession(session.id);
+        // Not connected yet may still mean starting: the manager lets this stop win over the
+        // start, and aborts a durable conversation that never attached.
+        await this.deps.sessions.stopSession(session.id);
         markStoredSessionStopped();
       }
     } catch (error: unknown) {

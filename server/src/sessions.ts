@@ -1069,6 +1069,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   async stopSession(sessionId: string, preserveRestartResume = false): Promise<void> {
     if (!preserveRestartResume) this.storage.clearRestartResume(sessionId);
     const key = this.sessionKey(sessionId);
+    // A start in flight registers its runtime when it finishes and would then save `ready`
+    // over this stop. Wait for it, then stop what it started: the stop wins.
+    const starting = this.activationCoordinator.pendingStart(key);
+    if (starting) await starting.catch(() => undefined);
     if (!this.isActive(sessionId)) {
       const session = this.storage.getSession(sessionId);
       const id = this.boundConversationId(sessionId);
