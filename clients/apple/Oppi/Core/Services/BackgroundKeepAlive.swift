@@ -32,7 +32,8 @@ struct UIApplicationBackgroundTasks: AppBackgroundTasks {
 /// multi-second TLS reconnect.
 ///
 /// The task ends when:
-/// - All sessions leave busy/starting state (observed via polling)
+/// - All sessions leave busy/starting state (observed via polling). The sockets
+///   then close as in the no-agents background path.
 /// - The app returns to foreground (`end()` called)
 /// - iOS expires the background task (~30s, but often longer on modern devices).
 ///   The streams then close with goingAway, as when nothing was busy, and the
@@ -113,6 +114,12 @@ final class BackgroundKeepAlive {
                 guard !Task.isCancelled else { return }
                 guard let coordinator, Self.hasActiveAgent(in: coordinator.connections.values) else {
                     Self.log.info("No active agents — ending background keep-alive")
+                    // The process now suspends with nothing keeping it alive: close the
+                    // sockets as the no-agents background path does, unless live audio
+                    // still drains over them. Foreground `end()` cancels this poll first.
+                    if let coordinator, self?.window === current, !coordinator.hasActiveAudioTransportPlayback {
+                        coordinator.prepareAllForBackground()
+                    }
                     self?.finish(current)
                     return
                 }

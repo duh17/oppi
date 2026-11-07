@@ -821,8 +821,18 @@ final class ServerConnection {
         streamCapabilitiesLoaded = true
     }
 
+    /// Close this server's live sockets before iOS suspends the app. Foreground recovery
+    /// reopens the focused stream (`connectStream`) and the app-event stream
+    /// (`resumeAppEventStreamIfStopped`).
     func prepareForBackground() {
         wsClient?.prepareForBackground()
+        disconnectAppEventStream()
+    }
+
+    /// Reopens the app-event stream when it is not running.
+    func resumeAppEventStreamIfStopped() {
+        guard appEventStreamAvailable, !appEventStreamCoordinator.isRunning else { return }
+        startAppEventStreamIfAvailable()
     }
 
     func routeStreamMessage(_ frameEvent: StreamFrameEvent) {

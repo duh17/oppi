@@ -1374,6 +1374,9 @@ final class ConnectionCoordinator {
             _onRefreshInactiveServerForTesting?(serverId)
             #endif
             guard connection.apiClient != nil else { continue }
+            // Backgrounding closed this server's app-event stream; only the active
+            // server runs `reconnectIfNeeded`.
+            connection.resumeAppEventStreamIfStopped()
             await connection.refreshWorkspaceAndSessionLists(force: true)
             await connection.refreshPairingApprovals()
         }

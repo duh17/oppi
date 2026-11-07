@@ -496,9 +496,7 @@ extension ServerConnection {
         }
 
         // 2. Reopen the global app event stream when foreground recovery finds it stopped.
-        if appEventStreamAvailable, !appEventStreamCoordinator.isRunning {
-            startAppEventStreamIfAvailable()
-        }
+        resumeAppEventStreamIfStopped()
 
         // 3. Refresh global lists as needed (single-flight + freshness-gated).
         await refreshWorkspaceAndSessionLists(force: false)

@@ -1124,6 +1124,79 @@ struct ConnectionCoordinatorTests {
         #expect(tasks.began == 2)
     }
 
+    /// Idle-end is the only background exit that left the sockets open into suspension.
+    @Test func keepAliveClosesTheSocketsWhenAgentsGoIdleInTheBackground() async {
+        let (coordinator, _) = makeCoordinator()
+        let server = makeServer(id: "sha256:keep-alive-idle", name: "A")
+        coordinator.serverStore.addOrUpdate(server)
+        await coordinator.switchToTestServer(server)
+        let connection = coordinator.activeConnection
+        connection.setAppEventStreamTransportState(.connected)
+        let tasks = FakeBackgroundTasks()
+        let keepAlive = BackgroundKeepAlive(backgroundTasks: tasks, sleep: { _ in })
+
+        keepAlive.begin(coordinator: coordinator)
+        await tasks.waitForEnd()
+
+        #expect(connection.appEventStreamTransportState == .disconnected)
+    }
+
+    @Test func keepAliveLeavesSocketsOpenWhenLiveAudioStillNeedsThem() async {
+        let (coordinator, _) = makeCoordinator()
+        let server = makeServer(id: "sha256:keep-alive-audio", name: "A")
+        coordinator.serverStore.addOrUpdate(server)
+        await coordinator.switchToTestServer(server)
+        let connection = coordinator.activeConnection
+        connection.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: "s-live")
+        connection.setAppEventStreamTransportState(.connected)
+        let tasks = FakeBackgroundTasks()
+        let keepAlive = BackgroundKeepAlive(backgroundTasks: tasks, sleep: { _ in })
+
+        keepAlive.begin(coordinator: coordinator)
+        await tasks.waitForEnd()
+
+        #expect(connection.appEventStreamTransportState == .connected)
+    }
+
+    @Test func foregroundEndOfKeepAliveLeavesSocketsOpen() async {
+        let (coordinator, _) = makeCoordinator()
+        let server = makeServer(id: "sha256:keep-alive-foreground", name: "A")
+        coordinator.serverStore.addOrUpdate(server)
+        await coordinator.switchToTestServer(server)
+        let connection = coordinator.activeConnection
+        connection.setAppEventStreamTransportState(.connected)
+        let tasks = FakeBackgroundTasks()
+        let keepAlive = BackgroundKeepAlive(
+            backgroundTasks: tasks,
+            sleep: { _ in try await Task.sleep(for: .seconds(3_600)) }
+        )
+
+        keepAlive.begin(coordinator: coordinator)
+        keepAlive.end()
+
+        #expect(tasks.endedCount == 1)
+        #expect(connection.appEventStreamTransportState == .connected)
+    }
+
+    @Test func foregroundRecoveryReopensAnInactiveServersClosedAppEventStream() async {
+        let (coordinator, _) = makeCoordinator()
+        let selected = makeServer(id: "sha256:fg-ae-selected", name: "Selected")
+        let inactive = makeServer(id: "sha256:fg-ae-inactive", name: "Inactive")
+        coordinator.serverStore.addOrUpdate(selected)
+        coordinator.serverStore.addOrUpdate(inactive)
+        await coordinator.switchToTestServer(inactive)
+        let connection = coordinator.activeConnection
+        connection.setSplitStreamCapabilitiesForTesting(appEventStream: true)
+        var opens = 0
+        connection._startAppEventStreamForTesting = { _ in opens += 1 }
+        await coordinator.switchToTestServer(selected)
+
+        connection.prepareForBackground()
+        await coordinator.refreshInactiveServers()
+
+        #expect(opens == 1)
+    }
+
     @Test func foregroundRecoveryRefreshesInactiveBusyServer() async {
         let (coordinator, _) = makeCoordinator()
         let selected = makeServer(id: "sha256:fg-selected", name: "Selected")
