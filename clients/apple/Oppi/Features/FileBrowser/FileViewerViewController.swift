@@ -199,7 +199,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     private var sizeWarning: FileViewerSizeWarningView?
     /// The unavailable or failed state on screen, kept to repaint on a theme change.
     private var stateView: (view: UIContentUnavailableView, state: LoadState)?
-    private var videoPage: UIView?
+    private var videoPage: AspectFitMediaView?
     /// Under the reader: the reader's own page color, so the band below its
     /// safe area (the home indicator) does not show the viewer's lighter page.
     private var readerPage: UIView?
@@ -799,9 +799,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     }
 
     private func mountVideo(_ source: AuthenticatedMediaSource) -> UIView {
-        let page = UIView()
-        addPage(page)
-        videoPage = page
         let model = AuthenticatedMediaPlayerModel()
         let host = AuthenticatedMediaPlayerHostController(model: model)
         // `loadedMediaPath` changes with `content`, so the loader always names
@@ -817,21 +814,13 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             timedTextLoader: loadedMediaPath.flatMap { makeTimedTextLoader(path: $0, kind: .video) }
         )
         addChild(host)
-        host.view.translatesAutoresizingMaskIntoConstraints = false
+        // The player takes the video's own proportions inside the page; until
+        // its size arrives (`prepareVideo`) the box is 16:9.
         host.view.layer.cornerRadius = 10
         host.view.clipsToBounds = true
-        page.addSubview(host.view)
-        let safe = page.safeAreaLayoutGuide
-        let preferred = host.view.heightAnchor.constraint(equalTo: safe.heightAnchor, multiplier: 0.34)
-        preferred.priority = .defaultHigh
-        NSLayoutConstraint.activate([
-            host.view.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 16),
-            host.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -16),
-            host.view.centerYAnchor.constraint(equalTo: safe.centerYAnchor),
-            preferred,
-            host.view.heightAnchor.constraint(greaterThanOrEqualToConstant: 220),
-            host.view.heightAnchor.constraint(lessThanOrEqualToConstant: 420),
-        ])
+        let page = AspectFitMediaView(content: host.view)
+        addPage(page)
+        videoPage = page
         host.didMove(toParent: self)
         mountedChildren.append(host)
         videoModel = model
@@ -850,7 +839,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             telemetrySource: "authenticated_media",
             telemetryMode: "inline",
             telemetrySessionId: nil,
-            onPresentationSize: nil
+            onPresentationSize: { [weak self] size in self?.videoPage?.contentSize = size }
         )
     }
 
