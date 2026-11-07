@@ -718,6 +718,30 @@ describe("stop lifecycle", () => {
     }
   });
 
+  it("stopSession during an abort lets the turn reach agent_end before disposing", async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, events, dispose } = makeManagerHarness("busy");
+      await manager.sendAbort("s1");
+
+      const stopPromise = manager.stopSession("s1");
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+      expect(dispose).not.toHaveBeenCalled();
+
+      (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
+        "s1",
+        { type: "agent_end" },
+      );
+      await stopPromise;
+
+      expect(dispose).toHaveBeenCalledTimes(1);
+      expect(events.some((event) => event.type === "session_ended")).toBe(true);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("clears the terminate deadline as soon as agent_end starts disposal", async () => {
     const timers = new ManualStopTimers();
     const { manager, dispose } = makeManagerHarness("busy", timers);
