@@ -12,7 +12,11 @@ import type { Message, NestedToolCalls as PiNestedToolCalls } from "@earendil-wo
 import { performance } from "node:perf_hooks";
 import {
   buildSessionContext,
+  extractSearchTranscriptAddition,
   extractSearchTranscriptFromEntries,
+  hasUnsafeSearchToolName,
+  mergeSearchTranscript,
+  SearchAdditionJoiner,
   type SearchTranscriptContent,
   type SessionEntry,
   type LiveEntryRendererSet,
@@ -347,17 +351,137 @@ export async function readDurableTipEntryId(harness: Harness, id: ConversationId
   return tip === undefined ? "" : String(tip);
 }
 
+/** Entries projected at a time while search reads a range: memory stays at a page however long the conversation. */
+const SEARCH_PAGE = 200;
+
+/**
+ * Search fields of the entries after `afterEntryId` through `throughEntryId` (the conversation's
+ * start and tip when omitted), read a page at a time and joined page by page, uncut: cut by
+ * `mergeSearchTranscript`, they match one extraction over all of them. `unsafe` when a tool name
+ * holds whitespace, which only a full extraction can place.
+ */
+async function readSearchRange(
+  harness: Harness,
+  conversation: Conversation,
+  afterEntryId: number,
+  throughEntryId: number | undefined,
+): Promise<{ content: SearchTranscriptContent; unsafe: boolean }> {
+  const joined = new SearchAdditionJoiner();
+  if (throughEntryId !== undefined && throughEntryId <= afterEntryId) {
+    return { content: joined.result(), unsafe: false };
+  }
+  let cursor;
+  do {
+    const page = await conversation.entries(
+      {
+        ...(afterEntryId > 0 ? { minEntryId: (afterEntryId + 1) as EntryId } : {}),
+        ...(throughEntryId === undefined ? {} : { maxEntryId: throughEntryId as EntryId }),
+        order: "ascending",
+      },
+      SEARCH_PAGE,
+      cursor,
+      context,
+    );
+    const records = page.items;
+    // An aborted attempt hides behind its retry, which may sit past this page: the entries up to
+    // the next answer are the evidence, as `readRetryEvidence` reads them.
+    const last = records.at(-1);
+    const hidden = new Set<EntryId>();
+    if (last && records.some(isAbortedAttempt)) {
+      const evidence = [
+        ...records,
+        ...(await readRetryEvidence(conversation, last.id, throughEntryId)),
+      ];
+      for (const entry of records) {
+        if (await isRecoveredPartial(entry, harness, evidence)) hidden.add(entry.id);
+      }
+    }
+    const entries = await projectEntries(harness, records, hidden);
+    if (hasUnsafeSearchToolName(entries)) return { content: joined.result(), unsafe: true };
+    joined.add(extractSearchTranscriptAddition(entries));
+    cursor = page.next;
+    // Storage reads settle as microtasks, so without this a long conversation holds the event
+    // loop from its first page to its last.
+    if (cursor !== undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+  } while (cursor !== undefined);
+  return { content: joined.result(), unsafe: false };
+}
+
 /**
  * FTS fields for search, extracted from the same projection the traces use. Reads the whole
- * history: text a compaction hid from the model stays searchable.
+ * history (through `throughEntryId`, the entry a freshness marker names, when given): text a
+ * compaction hid from the model stays searchable.
  */
 export async function readDurableSearchTranscript(
   harness: Harness,
   id: ConversationId,
+  throughEntryId?: number,
 ): Promise<SearchTranscriptContent> {
+  const conversation = await harness.conversation(id, context);
+  const empty = { userMessages: "", assistantMessages: "", toolNames: "" };
+  if (!conversation || (throughEntryId !== undefined && throughEntryId < 1)) return empty;
+  const { content, unsafe } = await readSearchRange(harness, conversation, 0, throughEntryId);
+  if (!unsafe) return mergeSearchTranscript(empty, content);
+  // A tool name with whitespace cannot be merged from pages; one extraction over everything can.
   return extractSearchTranscriptFromEntries(
     await projectEntries(harness, await allEntries(harness, id)),
   );
+}
+
+/** Entries per page, and pages at most, while `newestAnswerIsAbortedAttempt` looks back for the newest answer. */
+const ANSWER_SCAN_PAGE = 32;
+const ANSWER_SCAN_PAGES = 8;
+
+/**
+ * Whether the newest assistant entry at or before `entryId` is an aborted attempt of a task. A
+ * conversation with no answer that far back is read as "yes": the caller then reads in full.
+ */
+async function newestAnswerIsAbortedAttempt(
+  conversation: Conversation,
+  entryId: number,
+): Promise<boolean> {
+  let cursor;
+  for (let pages = 0; pages < ANSWER_SCAN_PAGES; pages++) {
+    const page = await conversation.entries(
+      { maxEntryId: entryId as EntryId },
+      ANSWER_SCAN_PAGE,
+      cursor,
+      context,
+    );
+    for (const entry of page.items) {
+      if (entry.model?.[0]?.role === "assistant") return isAbortedAttempt(entry);
+    }
+    cursor = page.next;
+    if (cursor === undefined) return false;
+  }
+  return true;
+}
+
+/**
+ * The search fields of the entries after `afterEntryId` through `throughEntryId`, for
+ * `mergeSearchTranscript` onto the fields of everything up to `afterEntryId`. Reads only those
+ * entries. Null when appending could differ from a full read, so the caller reads in full: the
+ * entry before is an aborted attempt whose retry may be among the new entries (that would hide
+ * text already indexed), or a new tool name holds whitespace.
+ */
+export async function readDurableSearchAddition(
+  harness: Harness,
+  id: ConversationId,
+  afterEntryId: number,
+  throughEntryId: number,
+): Promise<SearchTranscriptContent | null> {
+  if (throughEntryId <= afterEntryId) return null;
+  const conversation = await harness.conversation(id, context);
+  if (!conversation || (await newestAnswerIsAbortedAttempt(conversation, afterEntryId))) {
+    return null;
+  }
+  const { content, unsafe } = await readSearchRange(
+    harness,
+    conversation,
+    afterEntryId,
+    throughEntryId,
+  );
+  return unsafe ? null : content;
 }
 
 /** Ordinary pages scan only a newest-first ID-bounded window. Extend it when

@@ -15,6 +15,7 @@ import { commitWrites } from "@earendil-works/pi-durable/testing";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
+  readDurableSearchAddition,
   readDurableSearchTranscript,
   readDurableTrace,
   readDurableTracePage,
@@ -89,6 +90,8 @@ async function history(options: {
   /** Store the tool result the way pi-durable does: its diagnostics rendered into the content. */
   diagnostics?: boolean;
   prefix?: number;
+  /** Completed turns (a user entry, then an answer no task attempts) before the crash stub. */
+  answered?: number;
   card?: boolean;
   image?: boolean;
   /** A compaction after "between two" that keeps the history from "between one" on. */
@@ -111,6 +114,10 @@ async function history(options: {
   }
   for (let index = 0; index < (options.prefix ?? 0); index++)
     await append([{ role: "user", content: `older ${index}`, timestamp: index }]);
+  for (let index = 0; index < (options.answered ?? 0); index++) {
+    await append([{ role: "user", content: `turn ${index}`, timestamp: index }]);
+    await append([assistant(`answer ${index}`, "stop")]);
+  }
   await append([assistant("crash stub", "aborted", options.tool)], taskId);
   if (options.tool)
     await append(
@@ -308,6 +315,54 @@ it("reads the whole history for a search transcript when no compaction hides any
   ]);
   expect(transcript.assistantMessages).toBe("retry");
   expect(await rowsRead(f)).toBe(254);
+});
+
+// Turn-end indexing appends the entries after the indexed marker instead of re-reading the
+// conversation, so a long conversation costs the turn, not its whole history.
+it("reads only the entries after the marker for a search addition", async () => {
+  const f = await history({ stopped: false, answered: 150 });
+  // Indexed through the last completed turn; new: the crash stub, "between one", "between two",
+  // and the retry that hides the stub.
+  const after = f.records[299]!.id;
+  const tip = f.records.at(-1)!.id;
+  f.reads.mockClear();
+  const addition = await readDurableSearchAddition(f.harness, f.id, after, tip);
+  expect(addition).toEqual({
+    userMessages: "between one\nbetween two",
+    assistantMessages: "retry",
+    toolNames: "",
+  });
+  // The 300 completed entries stay unread apart from the page that finds the newest answer.
+  expect(await rowsRead(f)).toBeLessThanOrEqual(40);
+  expect(f.resume).not.toHaveBeenCalled();
+});
+
+it("leaves a search addition to a full read when the indexed answer was an aborted attempt", async () => {
+  const f = await history({ stopped: false });
+  const stub = f.records[0]!;
+  const tip = f.records.at(-1)!.id;
+  // The retry among the new entries hides the stub's text already in the row: only a full read
+  // gets that right.
+  expect(await readDurableSearchAddition(f.harness, f.id, stub.id, tip)).toBeNull();
+  const full = await readDurableSearchTranscript(f.harness, f.id);
+  expect(full.assistantMessages).toBe("retry");
+});
+
+it("hides a crash stub from a paged search read when its retry is on the next page", async () => {
+  // Search reads 200 entries a page: the stub is the last entry of the first, the retry sits past it.
+  const f = await history({ stopped: false, prefix: 199 });
+  expect(f.records[199]!.model?.[0]?.role).toBe("assistant");
+  const transcript = await readDurableSearchTranscript(f.harness, f.id);
+  expect(transcript.assistantMessages).toBe("retry");
+  expect(transcript.userMessages.split("\n").slice(-2)).toEqual(["between one", "between two"]);
+});
+
+it("reads a full search transcript only through the entry a marker names", async () => {
+  const f = await history({ stopped: false, prefix: 5 });
+  const through = f.records[3]!.id;
+  const transcript = await readDurableSearchTranscript(f.harness, f.id, through);
+  expect(transcript.userMessages.split("\n")).toEqual(["older 0", "older 1", "older 2", "older 3"]);
+  expect(transcript.assistantMessages).toBe("");
 });
 
 it("never replays a tool result's model-only diagnostics, and keeps its warn note", async () => {

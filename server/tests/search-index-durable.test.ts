@@ -14,7 +14,11 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { commitWrites } from "@earendil-works/pi-durable/testing";
 import type { Message } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { readDurableSearchTranscript, readDurableTipEntryId } from "../src/durable-history.js";
+import {
+  readDurableSearchAddition,
+  readDurableSearchTranscript,
+  readDurableTipEntryId,
+} from "../src/durable-history.js";
 import { SearchIndex, type DurableSearchSource } from "../src/search-index.js";
 import { updateSearchIndexForSessionEvent } from "../src/session-search-indexing.js";
 import { openDatabase } from "../src/sqlite-compat.js";
@@ -105,16 +109,21 @@ async function durableFixture() {
   }
 
   const resume = vi.spyOn(harness, "resume");
-  const readTranscript = vi.fn((conversationId: number) =>
-    readDurableSearchTranscript(harness, conversationId as ConversationId),
+  const readTranscript = vi.fn((conversationId: number, throughEntryId: number) =>
+    readDurableSearchTranscript(harness, conversationId as ConversationId, throughEntryId),
+  );
+  const readAddition = vi.fn((afterEntryId: number, throughEntryId: number) =>
+    readDurableSearchAddition(harness, id, afterEntryId, throughEntryId),
   );
   const source: DurableSearchSource = {
     readTipEntryId: () => readDurableTipEntryId(harness, id),
-    readTranscript: () => readTranscript(id as number),
+    readTranscript: (_session, throughEntryId) => readTranscript(id as number, throughEntryId),
+    readTranscriptAddition: (_session, afterEntryId, throughEntryId) =>
+      readAddition(afterEntryId, throughEntryId),
     holdStore: async () => () => {},
     storeModifiedAtMs: async () => Infinity,
   };
-  return { id: id as number, turn, source, readTranscript, resume };
+  return { id: id as number, harness, turn, source, readTranscript, readAddition, resume };
 }
 
 function openIndex(session: (id: string) => Session | undefined, source: DurableSearchSource) {
@@ -155,8 +164,51 @@ describe("SearchIndex durable sessions", () => {
     await vi.waitFor(() => expect(index.search("axolotl")).toHaveLength(1));
     expect(index.search("pangolin")).toHaveLength(1);
     expect(index.search("zebrafish")).toHaveLength(1);
-    expect(f.readTranscript).toHaveBeenCalledTimes(2);
+    // The new turn appends to the row: only the entries after the marker are read.
+    expect(f.readTranscript).toHaveBeenCalledTimes(1);
+    expect(f.readAddition).toHaveBeenCalledTimes(1);
     expect(f.resume).not.toHaveBeenCalled();
+  });
+
+  it("appends each turn so the row equals a full extraction, past the field caps", async () => {
+    const f = await durableFixture();
+    const session = makeSession(f.id);
+    const dir = mkdtempSync(join(tmpdir(), "oppi-durable-search-index-"));
+    const index = new SearchIndex(dir, () => session);
+    index.durableSource = f.source;
+    cleanups.push(
+      () => index.close(),
+      () => rmSync(dir, { recursive: true, force: true }),
+    );
+    // Turns of varying size: some pass the 50k user and 100k assistant caps on their own, others
+    // are short, so cuts land inside earlier turns, inside a turn, and between turns.
+    const sizes = [300, 40_000, 120, 70_000, 9_000, 60_000, 25, 25, 110_000, 4_000];
+    for (const [turn, size] of sizes.entries()) {
+      const words = (label: string) =>
+        Array.from({ length: Math.ceil(size / 8) }, (_, n) => `${label}${turn}x${n}`).join(" ");
+      await f.turn(words("user"), words("asst"), `tool_${turn % 3}`);
+      await index.syncDurableSession(session.id);
+      const db = openDatabase(join(dir, "session-search.db"));
+      try {
+        const row = db
+          .prepare(
+            "SELECT user_messages, assistant_messages, tool_names FROM session_fts WHERE session_id = ?",
+          )
+          .get(session.id);
+        const full = await readDurableSearchTranscript(f.harness, f.id as ConversationId);
+        expect(row).toEqual({
+          user_messages: full.userMessages,
+          assistant_messages: full.assistantMessages,
+          tool_names: full.toolNames,
+        });
+      } finally {
+        db.close();
+      }
+    }
+    expect(f.readTranscript).toHaveBeenCalledTimes(1);
+    expect(f.readAddition).toHaveBeenCalledTimes(sizes.length - 1);
+    expect(index.search(`user${sizes.length - 1}x0`)).toHaveLength(1);
+    expect(index.search("user0x0")).toEqual([]);
   });
 
   it("covers durable sessions in startup background sync and reuses text on a rename", async () => {
@@ -220,8 +272,9 @@ describe("SearchIndex durable sessions", () => {
     const index = openIndex((id) => sessions.get(id), {
       readTipEntryId: (id) =>
         id === broken.id ? Promise.reject(lockError) : f.source.readTipEntryId(id),
-      readTranscript: (id) =>
-        id === broken.id ? Promise.reject(lockError) : f.source.readTranscript(id),
+      readTranscript: (id, through) =>
+        id === broken.id ? Promise.reject(lockError) : f.source.readTranscript(id, through),
+      readTranscriptAddition: f.source.readTranscriptAddition,
       holdStore: (id) => (id === broken.id ? Promise.reject(lockError) : f.source.holdStore(id)),
       storeModifiedAtMs: f.source.storeModifiedAtMs,
     });
@@ -254,7 +307,8 @@ describe("SearchIndex durable sessions", () => {
         if (!held.has(storeOf(id))) readOutsideHold.push(id);
         return f.source.readTipEntryId(id);
       },
-      readTranscript: (id) => f.source.readTranscript(id),
+      readTranscript: (id, through) => f.source.readTranscript(id, through),
+      readTranscriptAddition: f.source.readTranscriptAddition,
       holdStore: async (id) => {
         holds.push(storeOf(id));
         held.add(storeOf(id));
@@ -423,7 +477,9 @@ describe("SearchIndex durable sessions", () => {
             await hook?.(index);
             return sourceOf(id).readTipEntryId(id);
           },
-          readTranscript: (id) => sourceOf(id).readTranscript(id),
+          readTranscript: (id, through) => sourceOf(id).readTranscript(id, through),
+          readTranscriptAddition: (id, after, through) =>
+            sourceOf(id).readTranscriptAddition(id, after, through),
           holdStore: async () => () => {},
           storeModifiedAtMs: async (storeId) => modifiedAt[storeId]!,
         };

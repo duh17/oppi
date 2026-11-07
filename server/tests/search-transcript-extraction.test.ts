@@ -6,7 +6,15 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { SearchIndex } from "../src/search-index.js";
 import { openDatabase } from "../src/sqlite-compat.js";
-import { readSearchTranscriptFile, readSessionTraceFromFile } from "../src/trace.js";
+import {
+  extractSearchTranscriptAddition,
+  extractSearchTranscriptFromEntries,
+  mergeSearchTranscript,
+  readSearchTranscriptFile,
+  readSessionTraceFromFile,
+  SearchAdditionJoiner,
+  type SessionEntry,
+} from "../src/trace.js";
 import type { Session } from "../src/types.js";
 
 const USER_MESSAGE_CAP = 50_000;
@@ -430,6 +438,77 @@ describe("search transcript extraction fields", () => {
       expect(indexed.tool_names).toBe(oracle.toolNames);
     } finally {
       index.close();
+    }
+  });
+
+  it("merges an appended turn into earlier fields exactly as one full extraction yields them", () => {
+    // Deterministic pseudo-random sessions: message sizes from a few characters to well past a cap,
+    // words of 1-12 characters or, now and then, one unbroken run longer than the partial-word
+    // window, so cuts land in words, in runs, between messages, and between turns.
+    let seed = 20_261_106;
+    const next = (n: number): number => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed % n;
+    };
+    const text = (length: number): string => {
+      let out = "";
+      while (out.length < length) {
+        out += next(40) === 0 ? "r".repeat(80 + next(400)) : "w".repeat(1 + next(12));
+        out += next(6) === 0 ? "\n" : " ";
+      }
+      return out.slice(0, length);
+    };
+    for (let session = 0; session < 10; session++) {
+      const entries: SessionEntry[] = [];
+      for (let n = 0; n < 12 + next(30); n++) {
+        const role = n % 2 === 0 ? "user" : "assistant";
+        const length = next(4) === 0 ? 20_000 + next(90_000) : 1 + next(3_000);
+        const body = `${n}:${text(length)}`;
+        entries.push({
+          type: "message",
+          id: `e${n}`,
+          parentId: n === 0 ? null : `e${n - 1}`,
+          timestamp: "2026-01-01T00:00:00Z",
+          message: {
+            role,
+            content:
+              role === "user"
+                ? body
+                : [
+                    { type: "text", text: body },
+                    { type: "toolCall", id: `c${n}`, name: `tool_${n % 5}`, arguments: {} },
+                  ],
+          },
+        } as SessionEntry);
+      }
+      const full = extractSearchTranscriptFromEntries(entries);
+      // Append in turns of one to five entries, the way turn-end indexing does.
+      let done = 1;
+      let indexed = extractSearchTranscriptFromEntries(entries.slice(0, done));
+      while (done < entries.length) {
+        const upTo = Math.min(entries.length, done + 1 + next(5));
+        indexed = mergeSearchTranscript(
+          indexed,
+          extractSearchTranscriptAddition(entries.slice(done, upTo)),
+        );
+        done = upTo;
+        expect(indexed).toEqual(extractSearchTranscriptFromEntries(entries.slice(0, done)));
+      }
+      expect(indexed).toEqual(full);
+
+      // A full read in pages (a durable conversation read a page at a time) lands on the same fields.
+      const joiner = new SearchAdditionJoiner();
+      for (let from = 0; from < entries.length;) {
+        const to = Math.min(entries.length, from + 1 + next(7));
+        joiner.add(extractSearchTranscriptAddition(entries.slice(from, to)));
+        from = to;
+      }
+      expect(
+        mergeSearchTranscript(
+          { userMessages: "", assistantMessages: "", toolNames: "" },
+          joiner.result(),
+        ),
+      ).toEqual(full);
     }
   });
 

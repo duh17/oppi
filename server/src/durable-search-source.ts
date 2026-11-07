@@ -26,9 +26,17 @@ export function createDurableSearchSource(
       const { readDurableTipEntryId } = await import("./durable-history.js");
       return withConversation(sessionId, readDurableTipEntryId);
     },
-    readTranscript: async (sessionId) => {
+    readTranscript: async (sessionId, throughEntryId) => {
       const { readDurableSearchTranscript } = await import("./durable-history.js");
-      return withConversation(sessionId, readDurableSearchTranscript);
+      return withConversation(sessionId, (harness, id) =>
+        readDurableSearchTranscript(harness, id, throughEntryId),
+      );
+    },
+    readTranscriptAddition: async (sessionId, afterEntryId, throughEntryId) => {
+      const { readDurableSearchAddition } = await import("./durable-history.js");
+      return withConversation(sessionId, (harness, id) =>
+        readDurableSearchAddition(harness, id, afterEntryId, throughEntryId),
+      );
     },
     holdStore: async (sessionId) => {
       const session = storage.getSession(sessionId);

@@ -24,14 +24,13 @@ import { createLogger } from "./logger.js";
 import { durableStoreId, isServerDurableSession } from "./session-runtime-capabilities.js";
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "./sqlite-compat.js";
 import {
-  extractSearchTranscriptFromEntries,
+  extractSearchTranscriptAddition,
   extractSearchTranscriptFromEntriesYielding,
+  hasUnsafeSearchToolName,
+  mergeSearchTranscript,
   parseSessionEntries,
   readSearchTranscriptFile,
-  SEARCH_ASSISTANT_MESSAGE_CAP,
-  SEARCH_USER_MESSAGE_CAP,
   sessionTranscriptLeafId,
-  tailWithinCap,
   type SearchTranscriptContent,
   type SessionEntry,
 } from "./trace.js";
@@ -63,7 +62,18 @@ export interface SearchFilters {
 export interface DurableSearchSource {
   /** Newest entry id for the conversation ("" when it has no entries). */
   readTipEntryId(sessionId: string): Promise<string>;
-  readTranscript(sessionId: string): Promise<SearchTranscriptContent>;
+  /** The fields of every entry through `throughEntryId` (the entry the freshness marker names). */
+  readTranscript(sessionId: string, throughEntryId: number): Promise<SearchTranscriptContent>;
+  /**
+   * The fields of the entries after `afterEntryId` through `throughEntryId`, uncut, to merge onto
+   * the fields of everything up to `afterEntryId`. Null when appending could differ from a full
+   * read: the caller then reads in full.
+   */
+  readTranscriptAddition(
+    sessionId: string,
+    afterEntryId: number,
+    throughEntryId: number,
+  ): Promise<SearchTranscriptContent | null>;
   /** Keep the session's store open until the returned release runs. */
   holdStore(sessionId: string): Promise<() => void>;
   /** Newest write time (epoch ms) of the store's files; Infinity when they cannot be read. */
@@ -411,47 +421,13 @@ function storedCursorIsNewer(stored: FileCursor, snapshot: FileCursor, fileSize:
   return stored.offset === snapshot.offset && stored.boundary !== snapshot.boundary;
 }
 
-/** Same text a full extraction yields: the newest `cap` characters of the joined fields. */
-function appendCapped(existing: string, addition: string, cap: number): string {
-  const joined = !addition ? existing : !existing ? addition : `${existing}\n${addition}`;
-  return tailWithinCap(joined, cap);
-}
-
-function mergeToolNames(existing: string, addition: string): string {
-  if (!addition) return existing;
-  if (!existing) return addition;
-  const seen = new Set(existing.split(" ").filter(Boolean));
-  const extra: string[] = [];
-  for (const name of addition.split(" ").filter(Boolean)) {
-    if (seen.has(name)) continue;
-    seen.add(name);
-    extra.push(name);
-  }
-  return extra.length === 0 ? existing : `${existing} ${extra.join(" ")}`;
-}
-
-function tailHasUnsafeToolName(entries: SessionEntry[]): boolean {
-  for (const entry of entries) {
-    const content = entry.message?.content;
-    if (!Array.isArray(content)) continue;
-    for (const block of content) {
-      if (!block || typeof block !== "object") continue;
-      const record = block as { type?: unknown; name?: unknown };
-      if (record.type === "toolCall" && typeof record.name === "string" && /\s/.test(record.name)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 /**
  * True when the appended entries only extend the indexed leaf. A new session
  * header, a branch summary, or a fork (parent chain misses the stored leaf)
  * changes which earlier lines are on the branch, so the caller must reindex.
  */
 function tailExtendsIndexedLeaf(entries: SessionEntry[], leafId: string): boolean {
-  if (!leafId || tailHasUnsafeToolName(entries)) return false;
+  if (!leafId || hasUnsafeSearchToolName(entries)) return false;
   for (const entry of entries) {
     if (FULL_REINDEX_ENTRY_TYPES.has(entry.type)) return false;
   }
@@ -480,21 +456,8 @@ function mergeTail(
 ): { content: SearchTranscriptContent; leafId: string } | null {
   const entries = parseSessionEntries(tailText);
   if (!tailExtendsIndexedLeaf(entries, storedLeafId)) return null;
-  const addition = extractSearchTranscriptFromEntries(entries);
   return {
-    content: {
-      userMessages: appendCapped(
-        existing.userMessages,
-        addition.userMessages,
-        SEARCH_USER_MESSAGE_CAP,
-      ),
-      assistantMessages: appendCapped(
-        existing.assistantMessages,
-        addition.assistantMessages,
-        SEARCH_ASSISTANT_MESSAGE_CAP,
-      ),
-      toolNames: mergeToolNames(existing.toolNames, addition.toolNames),
-    },
+    content: mergeSearchTranscript(existing, extractSearchTranscriptAddition(entries)),
     leafId: sessionTranscriptLeafId(entries) ?? storedLeafId,
   };
 }
@@ -558,6 +521,17 @@ function sanitizeFtsQuery(raw: string): string {
   }
 
   return tokens.join(" ");
+}
+
+/** The entry id a durable marker (`<conversation>:<tip entry>`) names for this conversation, if any. */
+function durableMarkerTip(
+  marker: string | null | undefined,
+  conversationId: number,
+): number | null {
+  const prefix = `${conversationId}:`;
+  if (!marker?.startsWith(prefix)) return null;
+  const tip = Number(marker.slice(prefix.length));
+  return Number.isInteger(tip) && tip > 0 ? tip : null;
 }
 
 function finiteTimestampOrNull(value: number | undefined): number | null {
@@ -1666,7 +1640,20 @@ export class SearchIndex {
       }
     }
 
-    const transcript = await source.readTranscript(sessionId);
+    // The marker is the cursor: the row holds every entry through its tip, so the entries after
+    // it append to the row as a classic file's tail does. Both reads stop at the marker's tip, so
+    // a turn that lands mid-read is never indexed ahead of the marker (it would append twice).
+    const tip = Number(marker.slice(marker.indexOf(":") + 1));
+    const indexedTip = durableMarkerTip(meta?.durable_marker, conversationId);
+    const indexed = this.indexedTranscript(sessionId);
+    const addition =
+      indexed && indexedTip !== null && indexedTip < tip
+        ? await source.readTranscriptAddition(sessionId, indexedTip, tip)
+        : null;
+    const transcript =
+      indexed && addition
+        ? mergeSearchTranscript(indexed, addition)
+        : await source.readTranscript(sessionId, tip);
     live = this.liveDurableSession(sessionId, conversationId);
     if (this.closed || !live) return result;
     this.writeDurableRow(live, marker, extractSessionTitle(live), {

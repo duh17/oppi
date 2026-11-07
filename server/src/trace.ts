@@ -1304,11 +1304,124 @@ function pushAssistantText(accum: SearchTranscriptAccum, text: string): void {
 }
 
 function finishSearchTranscript(accum: SearchTranscriptAccum): SearchTranscriptContent {
+  return mergeSearchTranscript(emptySearchTranscript(), finishSearchAddition(accum));
+}
+
+function emptySearchTranscript(): SearchTranscriptContent {
+  return { userMessages: "", assistantMessages: "", toolNames: "" };
+}
+
+/** The accumulated text as joined, not yet cut to the caps: `mergeSearchTranscript` cuts it. */
+function finishSearchAddition(accum: SearchTranscriptAccum): SearchTranscriptContent {
   return {
-    userMessages: tailWithinCap(accum.userParts.join("\n"), SEARCH_USER_MESSAGE_CAP),
-    assistantMessages: tailWithinCap(accum.assistantParts.join("\n"), SEARCH_ASSISTANT_MESSAGE_CAP),
+    userMessages: accum.userParts.join("\n"),
+    assistantMessages: accum.assistantParts.join("\n"),
     toolNames: [...accum.toolNameSet].join(" "),
   };
+}
+
+function joinCapped(existing: string, addition: string, cap: number): string {
+  const joined = !addition ? existing : !existing ? addition : `${existing}\n${addition}`;
+  return tailWithinCap(joined, cap);
+}
+
+/**
+ * Append the fields of newer entries (`extractSearchTranscriptAddition`) to the fields already
+ * extracted from everything before them. The result is what one extraction over all the entries
+ * yields: the addition is joined before any cut, so a long addition cannot displace text a
+ * single cut would keep.
+ */
+export function mergeSearchTranscript(
+  existing: SearchTranscriptContent,
+  addition: SearchTranscriptContent,
+): SearchTranscriptContent {
+  const seen = new Set(existing.toolNames.split(" ").filter(Boolean));
+  const extra = addition.toolNames.split(" ").filter((name) => name && !seen.has(name));
+  const toolNames = [...new Set(extra)].join(" ");
+  return {
+    userMessages: joinCapped(existing.userMessages, addition.userMessages, SEARCH_USER_MESSAGE_CAP),
+    assistantMessages: joinCapped(
+      existing.assistantMessages,
+      addition.assistantMessages,
+      SEARCH_ASSISTANT_MESSAGE_CAP,
+    ),
+    toolNames:
+      existing.toolNames && toolNames
+        ? `${existing.toolNames} ${toolNames}`
+        : existing.toolNames || toolNames,
+  };
+}
+
+/**
+ * Joins the additions of consecutive ranges of entries (`extractSearchTranscriptAddition`) read
+ * one range at a time, dropping whole oldest ranges once the caps no longer need them, so memory
+ * stays at a cap however long the history. `result()` is uncut, for `mergeSearchTranscript` to
+ * cut (a cut made here would leave the final cut one it could not reproduce).
+ */
+export class SearchAdditionJoiner {
+  private user: string[] = [];
+  private userLen = 0;
+  private assistant: string[] = [];
+  private assistantLen = 0;
+  private toolNames = new Set<string>();
+
+  add(addition: SearchTranscriptContent): void {
+    if (addition.userMessages) {
+      this.userLen = pushCappedPart(
+        this.user,
+        this.userLen,
+        addition.userMessages,
+        SEARCH_USER_MESSAGE_CAP,
+      );
+    }
+    if (addition.assistantMessages) {
+      this.assistantLen = pushCappedPart(
+        this.assistant,
+        this.assistantLen,
+        addition.assistantMessages,
+        SEARCH_ASSISTANT_MESSAGE_CAP,
+      );
+    }
+    for (const name of addition.toolNames.split(" ")) if (name) this.toolNames.add(name);
+  }
+
+  result(): SearchTranscriptContent {
+    return {
+      userMessages: this.user.join("\n"),
+      assistantMessages: this.assistant.join("\n"),
+      toolNames: [...this.toolNames].join(" "),
+    };
+  }
+}
+
+/**
+ * True when a tool name holds whitespace: names are stored space-joined, so such a name cannot
+ * be merged into an existing field by splitting it back apart. The caller extracts in full.
+ */
+export function hasUnsafeSearchToolName(entries: SessionEntry[]): boolean {
+  for (const entry of entries) {
+    const content = entry.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (!block || typeof block !== "object") continue;
+      const record = block as { type?: unknown; name?: unknown };
+      if (record.type === "toolCall" && typeof record.name === "string" && /\s/.test(record.name)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Fields of entries that follow ones already extracted, for `mergeSearchTranscript`. Same
+ * extraction as `extractSearchTranscriptFromEntries`, without the final cut.
+ */
+export function extractSearchTranscriptAddition(entries: SessionEntry[]): SearchTranscriptContent {
+  const { path } = selectVisibleSessionContext(entries, { view: "full" });
+  const accum = emptySearchTranscriptAccum();
+  for (const entry of path) consumeSearchTranscriptEntry(accum, entry);
+  return finishSearchAddition(accum);
 }
 
 export function extractSearchTranscriptFromEntries(
