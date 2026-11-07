@@ -314,6 +314,8 @@ const TAGS = {
       // server.dictation_finalize
       "transcribed",
       "no_audio",
+      // server.ws_auth_renew
+      "renewed",
     ],
     description: "Event-specific domain outcome; each event narrows it.",
   },
@@ -358,6 +360,14 @@ const TAGS = {
       "dictation_unavailable",
       "unsupported_message",
       "other",
+      // server.ws_auth_renew
+      "unknown_token",
+      "expired",
+      "revoked",
+      "evicted",
+      "wrong_device",
+      "not_renewable",
+      "past_deadline",
     ],
     description: "Why the event happened; each event narrows it.",
   },
@@ -1400,6 +1410,27 @@ const EVENTS = {
     group: "server_ops",
     fields: { duration_ms: "ms" },
     tags: { stream: { required: true } },
+  },
+  "server.ws_auth_renew": {
+    description:
+      "Did a live WebSocket renew its access in band before expiry, and why was a renewal refused?",
+    group: "connection",
+    fields: {},
+    tags: {
+      stream: { required: true },
+      result: { required: true, values: ["renewed", "rejected"] },
+      reason: {
+        values: [
+          "unknown_token",
+          "expired",
+          "revoked",
+          "evicted",
+          "wrong_device",
+          "not_renewable",
+          "past_deadline",
+        ],
+      },
+    },
   },
   "server.ws_ping": {
     description: "What is the server-initiated ping round-trip time?",

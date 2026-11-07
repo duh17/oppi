@@ -705,6 +705,16 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     error: "STT backend unavailable",
     fatal: true,
   },
+  auth_renew_result_renewed: {
+    type: "auth_renew_result",
+    ok: true,
+    expiresAt: 1739751060000,
+  },
+  auth_renew_result_rejected: {
+    type: "auth_renew_result",
+    ok: false,
+    reason: "wrong_device",
+  },
 } satisfies Record<string, ServerMessage>;
 
 type TypedCanonicalServerMessageType =
@@ -892,6 +902,8 @@ const SERVER_MESSAGE_ORDER = [
   "dictation_result",
   "dictation_final",
   "dictation_error",
+  "auth_renew_result_renewed",
+  "auth_renew_result_rejected",
 ] as const satisfies readonly (
   keyof typeof TYPED_CANONICAL_SERVER_MESSAGES | keyof typeof SERVER_MESSAGE_COMPATIBILITY_EXAMPLES
 )[];

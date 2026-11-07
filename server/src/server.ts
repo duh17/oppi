@@ -18,15 +18,12 @@ import { resolveExecutableOnPath } from "./host-env.js";
 import { createPrivateKey, randomUUID, timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import type { Storage } from "./storage.js";
-import {
-  CLOCK_SKEW_MS,
-  WS_CLOSE_AUTH_EXPIRED,
-  WS_CLOSE_REASON_AUTH_EXPIRED,
-} from "./storage/device-auth.js";
+import { WS_CLOSE_AUTH_EXPIRED, WS_CLOSE_REASON_AUTH_EXPIRED } from "./storage/device-auth.js";
 import { SessionManager } from "./sessions.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
 import { AppEventStreamMux } from "./app-event-stream.js";
 import { BoundSessionStreamMux, DictationStreamMux } from "./stream.js";
+import { SocketAccessDeadlines, type RenewStreamAccess } from "./stream-auth-renewal.js";
 import { RouteHandler } from "./routes/index.js";
 import { SdkBackend } from "./sdk-backend.js";
 import { normalizeRegisteredPathPattern } from "./routes/registry.js";
@@ -488,7 +485,7 @@ export class Server {
   private presenceSocketDevices: Map<WebSocket, string> = new Map();
   /** When each present device last sent a frame (message or pong) on any presence socket. */
   private presenceHeardAt: Map<string, number> = new Map();
-  private accessExpiryTimers: Map<WebSocket, ReturnType<typeof setTimeout>> = new Map();
+  private readonly socketAccess: SocketAccessDeadlines;
 
   // Server resource utilization sampler (CPU, memory, sessions)
   private resourceSampler: ServerResourceSampler;
@@ -687,6 +684,15 @@ export class Server {
       voiceMedia: this.voiceMediaCoordinator,
     });
 
+    this.socketAccess = new SocketAccessDeadlines({
+      principals: this.socketPrincipals,
+      validateAccessToken: (token) => this.storage.validateAccessToken(token),
+      expire: (ws) => this.closeSocketForAccessExpiry(ws),
+      extended: (ws, expiresAt) => this.dictationStreamMux.extendAccess(ws, expiresAt),
+      metrics: this.opsMetrics,
+    });
+    const renewAccess: RenewStreamAccess = (ws, token, stream) =>
+      this.socketAccess.renew(ws, token, stream);
     const streamContext = {
       storage: this.storage,
       sessions: this.sessions,
@@ -711,6 +717,7 @@ export class Server {
         this.voiceCallController.isAuthExpired(connectionId),
       isLiveVoiceCallConnection: (connectionId: string) =>
         this.voiceCallController.isCallConnection(connectionId),
+      renewAccess: renewAccess,
       trackConnection: (ws: WebSocket) => this.trackConnection(ws),
       untrackConnection: (ws: WebSocket) => this.untrackConnection(ws),
       serverDictationAvailable: this.dictationConfig !== undefined,
@@ -726,6 +733,7 @@ export class Server {
       trackConnection: (ws: WebSocket) => this.trackConnection(ws),
       untrackConnection: (ws: WebSocket) => this.untrackConnection(ws),
       metrics: this.opsMetrics,
+      renewAccess,
     });
     this.pairing = new DevicePairing({
       storage: this.storage,
@@ -1254,8 +1262,7 @@ export class Server {
       // A throw above skips closeWebSocketServer; these timers must not keep a
       // stopped Server alive after an update restore replaces it. The cleanup and the
       // GC wait come before mcp.dispose(), whose rejection would skip them.
-      for (const timer of this.accessExpiryTimers.values()) clearTimeout(timer);
-      this.accessExpiryTimers.clear();
+      this.socketAccess.clear();
       await this.uploadGcInFlight;
       await this.extensionProviderCatalog?.dispose();
       await this.mcp?.dispose();
@@ -1586,19 +1593,14 @@ export class Server {
     }
   }
 
-  private clearAccessExpiryTimer(ws: WebSocket): void {
-    const timer = this.accessExpiryTimers.get(ws);
-    if (timer) clearTimeout(timer);
-    this.accessExpiryTimers.delete(ws);
-  }
-
-  private closeSocketForAccessExpiry(ws: WebSocket): void {
+  /** Past the socket's access deadline: close it, or return when to look again (a hold). */
+  private closeSocketForAccessExpiry(ws: WebSocket): number | undefined {
     if (ws.readyState !== WebSocket.OPEN && ws.readyState !== WebSocket.CONNECTING) {
-      return;
+      return undefined;
     }
     if (this.dictationStreamMux.isRecording(ws)) {
       this.dictationStreamMux.markAuthExpired(ws);
-      return;
+      return undefined;
     }
     // Like a recording dictation socket, a socket that is the live controller of
     // a Live Voice call closes when the call ends instead (a reconnect would
@@ -1606,29 +1608,15 @@ export class Server {
     // Revoking the device or rotating owner credentials still closes it at once.
     const connectionId = this.boundSessionStreamMux.connectionIdFor(ws);
     if (connectionId && this.voiceCallController.holdPastAuthExpiry(connectionId)) {
-      this.scheduleAccessExpiryCheck(ws, LIVE_VOICE_EXPIRY_RECHECK_MS);
-      return;
+      return LIVE_VOICE_EXPIRY_RECHECK_MS;
     }
     ws.close(WS_CLOSE_AUTH_EXPIRED, WS_CLOSE_REASON_AUTH_EXPIRED);
-  }
-
-  private scheduleAccessTokenExpiry(ws: WebSocket, expiresAt: number): void {
-    this.scheduleAccessExpiryCheck(ws, Math.max(0, expiresAt + CLOCK_SKEW_MS - Date.now()));
-  }
-
-  private scheduleAccessExpiryCheck(ws: WebSocket, delay: number): void {
-    this.clearAccessExpiryTimer(ws);
-    const timer = setTimeout(() => {
-      this.accessExpiryTimers.delete(ws);
-      this.closeSocketForAccessExpiry(ws);
-    }, delay);
-    this.accessExpiryTimers.set(ws, timer);
+    return undefined;
   }
 
   private closeWebSocketServer(): Promise<void> {
     this.closeActiveConnections(WS_CLOSE_GOING_AWAY, "Server shutting down");
-    for (const timer of this.accessExpiryTimers.values()) clearTimeout(timer);
-    this.accessExpiryTimers.clear();
+    this.socketAccess.clear();
     const closeLocal = new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
         for (const ws of this.localWss.clients) ws.terminate();
@@ -2024,13 +2012,11 @@ export class Server {
     wss.handleUpgrade(req, socket, head, (ws) => {
       this.socketPrincipals.set(ws, principal);
       ws.on("close", (code) => {
-        this.clearAccessExpiryTimer(ws);
+        this.socketAccess.forget(ws);
         this.socketPrincipals.delete(ws);
         this.forgetPresenceSocket(ws, code);
       });
-      if (principal.kind === "device" && principal.tokenClass === "at_" && principal.expiresAt) {
-        this.scheduleAccessTokenExpiry(ws, principal.expiresAt);
-      }
+      this.socketAccess.track(ws);
       this.routeAuthenticatedUpgrade(ws, {
         sessionStreamMatch,
         appEventStreamMatch,

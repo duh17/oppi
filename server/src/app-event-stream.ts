@@ -7,7 +7,8 @@ import {
 } from "./session-attention.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { isExtensionUISessionStreamOnlyMethod } from "./extension-ui-contract.js";
-import { startServerPing } from "./stream.js";
+import { incomingAuthRenewToken, parseIncomingJsonRecord, startServerPing } from "./stream.js";
+import { NOT_RENEWABLE, type RenewStreamAccess } from "./stream-auth-renewal.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { Storage } from "./storage.js";
 import type { PairingApprovalEvents } from "./device-pairing.js";
@@ -19,6 +20,7 @@ import type {
   ServerMessage,
   Session,
   SessionSummary,
+  StreamAuthRenewResultMessage,
 } from "./types.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -99,6 +101,8 @@ export interface AppEventStreamContext {
   untrackConnection: (ws: WebSocket) => void;
   metrics?: ServerTelemetry;
   now?: () => number;
+  /** Answers `auth_renew`, the one client frame this stream reads. */
+  renewAccess?: RenewStreamAccess;
 }
 
 export interface AppEventEmitter {
@@ -179,7 +183,7 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
     let msgRecv = 0;
     let connectionClosed = false;
 
-    const send = (message: AppEventMessage): boolean => {
+    const send = (message: AppEventMessage | StreamAuthRenewResultMessage): boolean => {
       if (ws.readyState !== WebSocket.OPEN) {
         return false;
       }
@@ -231,6 +235,11 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
           { messages: 1, binary_bytes: toBuffer(data).byteLength },
           { stream: "app_events", message_type: "binary" },
         );
+        return;
+      }
+      const renewToken = incomingAuthRenewToken(parseIncomingJsonRecord(data));
+      if (renewToken !== undefined) {
+        send(this.ctx.renewAccess?.(ws, renewToken, "app_events") ?? NOT_RENEWABLE);
         return;
       }
       metrics?.record(

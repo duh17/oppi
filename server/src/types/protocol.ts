@@ -6,6 +6,7 @@ import type { PairingMethod } from "./config.js";
 import type { GitStatus } from "./git.js";
 import type { Session, SessionSummary } from "./session.js";
 import type { StyledSegment } from "./shared.js";
+import type { StreamAuthRenewResultMessage } from "./stream-auth-renewal.js";
 import type { ThinkingLevel } from "../thinking-levels.js";
 import type { MessageOrigin } from "../../plugins/subagents/agent-message.js";
 
@@ -1227,6 +1228,7 @@ export type ServerMessage =
         activeText?: string;
       }
     | { type: "dictation_error"; error: string; fatal: boolean }
+    | StreamAuthRenewResultMessage
   ) & {
     seq?: number;
     /**

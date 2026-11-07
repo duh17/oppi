@@ -19,6 +19,7 @@ import type {
   ConversationStreamServerMessage,
   ServerMessage,
   Session,
+  StreamAuthRenewResultMessage,
   Workspace,
 } from "./types.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
@@ -51,6 +52,7 @@ import {
   WS_CLOSE_REASON_AUTH_EXPIRED,
 } from "./storage/device-auth.js";
 import { asRecord } from "./json-shape.js";
+import { authRenewToken, NOT_RENEWABLE, type RenewStreamAccess } from "./stream-auth-renewal.js";
 
 /** Services needed by the stream mux — injected by Server. */
 export interface StreamContext {
@@ -84,6 +86,8 @@ export interface StreamContext {
   isConnectionAuthExpired?: (connectionId: string) => boolean;
   /** The connection is the live frontend of a Live Voice call. */
   isLiveVoiceCallConnection?: (connectionId: string) => boolean;
+  /** Answers `auth_renew` on a focused session or dictation socket. */
+  renewAccess?: RenewStreamAccess;
 }
 
 function isLiveVoiceFrame(msg: { type: string; command?: string }): boolean {
@@ -182,7 +186,7 @@ function toBuffer(data: RawData): Buffer {
   return Buffer.from(data);
 }
 
-function parseIncomingJsonRecord(
+export function parseIncomingJsonRecord(
   data: RawData,
 ): { ok: true; record: Record<string, unknown> } | { ok: false; error: string } {
   let parsed: unknown;
@@ -213,8 +217,16 @@ type IncomingSessionCommand =
       code?: ClientCommandParseErrorCode;
     };
 
-function parseIncomingSessionCommand(data: RawData): IncomingSessionCommand {
-  const decoded = parseIncomingJsonRecord(data);
+type IncomingJsonRecord = ReturnType<typeof parseIncomingJsonRecord>;
+
+/** The `auth_renew` token a decoded frame carries, or `undefined` for any other frame. */
+export function incomingAuthRenewToken(
+  decoded: IncomingJsonRecord | undefined,
+): string | undefined {
+  return decoded?.ok ? authRenewToken(decoded.record) : undefined;
+}
+
+function parseIncomingSessionCommand(decoded: IncomingJsonRecord): IncomingSessionCommand {
   if (!decoded.ok) {
     return decoded;
   }
@@ -235,9 +247,8 @@ function parseIncomingSessionCommand(data: RawData): IncomingSessionCommand {
 }
 
 function parseIncomingDictationMessage(
-  data: RawData,
+  decoded: IncomingJsonRecord,
 ): { ok: true; message: ClientMessage } | { ok: false; error: string } {
-  const decoded = parseIncomingJsonRecord(data);
   if (!decoded.ok) {
     return decoded;
   }
@@ -661,8 +672,22 @@ export class BoundSessionStreamMux {
     const startupMessages: Array<{ data: RawData; isBinary: boolean }> = [];
     /** What this socket declared it draws while it was still opening, if it said anything. */
     let startupCapabilities: string[] | undefined;
+    /**
+     * Renewal is answered as it arrives, during startup too and ahead of queued commands: a
+     * command waiting on a slow handler must not hold the socket past its access deadline.
+     */
+    const answerAuthRenew = (token: string): void => {
+      msgRecv += 1;
+      send(this.ctx.renewAccess?.(ws, token, "session") ?? NOT_RENEWABLE);
+    };
     startupRelay.messageHandler = (data, isBinary) => {
-      const parsed = !isBinary ? parseIncomingSessionCommand(data) : undefined;
+      const decoded = !isBinary ? parseIncomingJsonRecord(data) : undefined;
+      const renewToken = incomingAuthRenewToken(decoded);
+      if (renewToken !== undefined) {
+        answerAuthRenew(renewToken);
+        return;
+      }
+      const parsed = decoded ? parseIncomingSessionCommand(decoded) : undefined;
       if (
         parsed?.ok &&
         parsed.message.type === "extension_ui_response" &&
@@ -880,12 +905,18 @@ export class BoundSessionStreamMux {
       );
 
       ws.on("message", (data, isBinary) => {
+        const decoded = !isBinary ? parseIncomingJsonRecord(data) : undefined;
+        const renewToken = incomingAuthRenewToken(decoded);
+        if (renewToken !== undefined) {
+          answerAuthRenew(renewToken);
+          return;
+        }
         queue = queue
           .then(async () => {
             if (connectionClosed) return;
             msgRecv += 1;
 
-            if (isBinary) {
+            if (!decoded) {
               const pcm = toBuffer(data);
               // Mic audio for a Live Voice call running on this connection.
               const handled = this.ctx.handleVoiceAudio?.(connId, pcm) === true;
@@ -908,7 +939,7 @@ export class BoundSessionStreamMux {
               );
             }
 
-            const parsed = parseIncomingSessionCommand(data);
+            const parsed = parseIncomingSessionCommand(decoded);
             if (!parsed.ok) {
               // Malformed required fields without requestId stay on the
               // uncorrelated error frame. command_result is only for a known
@@ -1157,7 +1188,7 @@ export class DictationStreamMux {
   constructor(
     private ctx: Pick<
       StreamContext,
-      "metrics" | "trackConnection" | "untrackConnection" | "createDictationManager"
+      "metrics" | "trackConnection" | "untrackConnection" | "createDictationManager" | "renewAccess"
     >,
   ) {}
 
@@ -1168,6 +1199,12 @@ export class DictationStreamMux {
 
   isRecording(ws: WebSocket): boolean {
     return Boolean(this.connections.get(ws)?.manager.isActive());
+  }
+
+  /** A renewed socket may start takes until its new token expires. */
+  extendAccess(ws: WebSocket, expiresAt: number): void {
+    const state = this.connections.get(ws);
+    if (state) state.expiresAt = expiresAt;
   }
 
   markAuthExpired(ws: WebSocket): void {
@@ -1243,7 +1280,7 @@ export class DictationStreamMux {
 
     let msgSent = 0;
     let msgRecv = 0;
-    const send = (msg: DictationServerMessage): void => {
+    const send = (msg: DictationServerMessage | StreamAuthRenewResultMessage): void => {
       if (ws.readyState !== WebSocket.OPEN) return;
       msgSent += 1;
       ws.send(JSON.stringify(msg));
@@ -1296,7 +1333,13 @@ export class DictationStreamMux {
         return;
       }
 
-      const parsed = parseIncomingDictationMessage(data);
+      const decoded = parseIncomingJsonRecord(data);
+      const renewToken = incomingAuthRenewToken(decoded);
+      if (renewToken !== undefined) {
+        send(this.ctx.renewAccess?.(ws, renewToken, "dictation") ?? NOT_RENEWABLE);
+        return;
+      }
+      const parsed = parseIncomingDictationMessage(decoded);
       if (!parsed.ok) {
         send({ type: "dictation_error", error: parsed.error, fatal: false });
         return;

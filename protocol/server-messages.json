@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 72
+    "messageCount": 74
   },
   "messages": {
     "connected": {
@@ -1518,6 +1518,16 @@
       "type": "dictation_error",
       "error": "STT backend unavailable",
       "fatal": true
+    },
+    "auth_renew_result_renewed": {
+      "type": "auth_renew_result",
+      "ok": true,
+      "expiresAt": 1739751060000
+    },
+    "auth_renew_result_rejected": {
+      "type": "auth_renew_result",
+      "ok": false,
+      "reason": "wrong_device"
     }
   }
 }

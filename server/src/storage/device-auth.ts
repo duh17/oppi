@@ -19,6 +19,16 @@ import type { ConfigStore } from "./config-store.js";
 
 export const REFRESH_AUDIENCE = "oppi:refresh:v1";
 export const ACCESS_TOKEN_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Test-only: an E2E harness server (`OPPI_E2E_UI_HARNESS=1`) shortens access tokens to
+ * `OPPI_E2E_ACCESS_TOKEN_TTL_MS`, so a soak sees many expiries in minutes. Ignored elsewhere.
+ */
+function accessTokenTtlMs(): number {
+  if (process.env["OPPI_E2E_UI_HARNESS"] !== "1") return ACCESS_TOKEN_TTL_MS;
+  const override = Number(process.env["OPPI_E2E_ACCESS_TOKEN_TTL_MS"]);
+  return Number.isSafeInteger(override) && override > 0 ? override : ACCESS_TOKEN_TTL_MS;
+}
 export const CHALLENGE_TTL_MS = 60 * 1000;
 export const CLOCK_SKEW_MS = 30 * 1000;
 /** Private WebSocket close code: live stream authority expired. */
@@ -296,7 +306,7 @@ export class DeviceAuthStore {
       deviceId: device.id,
       scope: device.scope,
       createdAt: now,
-      expiresAt: now + ACCESS_TOKEN_TTL_MS,
+      expiresAt: now + accessTokenTtlMs(),
       lastUsedAt: now,
     };
     this.configStore.mutate((config) => ({
@@ -383,7 +393,7 @@ export class DeviceAuthStore {
       deviceId: device.id,
       scope: device.scope,
       createdAt: now,
-      expiresAt: now + ACCESS_TOKEN_TTL_MS,
+      expiresAt: now + accessTokenTtlMs(),
       lastUsedAt: now,
     };
     this.configStore.mutate((latest) => ({

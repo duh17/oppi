@@ -219,6 +219,7 @@ enum TelemetryTag {
         case ignored
         case transcribed
         case noAudio = "no_audio"
+        case renewed
     }
 
     /// Why the event happened; each event narrows it.
@@ -256,6 +257,13 @@ enum TelemetryTag {
         case dictationUnavailable = "dictation_unavailable"
         case unsupportedMessage = "unsupported_message"
         case other
+        case unknownToken = "unknown_token"
+        case expired
+        case revoked
+        case evicted
+        case wrongDevice = "wrong_device"
+        case notRenewable = "not_renewable"
+        case pastDeadline = "past_deadline"
     }
 
     /// Coarse error class, one vocabulary for every event. Never a platform type name, error text, or code.

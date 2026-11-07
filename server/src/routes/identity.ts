@@ -479,6 +479,9 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
           maxBytes: MAX_WORKSPACE_FILE_EDIT_BYTES,
         } satisfies WorkspaceFileEditingCapability,
         appEventStream: { version: 1 },
+        // `auth_renew` on the app-event, focused session, and dictation streams moves the
+        // socket's access deadline to a fresh token's, so token rotation never reconnects.
+        streamAuthRenewal: { version: 1 },
         dictationStream: voiceReady.has("dictation") ? { version: 1 } : undefined,
         // `POST /speech` reads messages aloud with the configured `tts` provider.
         speech: voiceReady.has("speech") ? { version: 1 } : undefined,
