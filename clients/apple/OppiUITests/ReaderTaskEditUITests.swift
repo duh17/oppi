@@ -135,6 +135,26 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
         waitForDisk(expected, after: "unchecking a Markdown task")
     }
 
+    /// The reader draws the saved file again; the person stays where they were
+    /// reading, not back at the top.
+    func testASaveKeepsTheReadingPosition() throws {
+        launch(file: "tasks.org", long: true)
+        let row = try XCTUnwrap(disk.components(separatedBy: "\n").firstIndex(of: "- [ ] bottom box")) + 1
+        let box = app.buttons["fileViewer.task.checkbox.\(row)"]
+        let visibleBottom = app.windows.firstMatch.frame.maxY - 60
+        for _ in 0..<15 where !(box.exists && box.frame.maxY < visibleBottom && box.frame.minY > 100) { app.swipeUp() }
+        let before = box.frame
+        XCTAssertLessThan(before.maxY, visibleBottom, "the last task is on screen")
+        box.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        waitForDisk(Self.orgSeed + Self.longTail.replacingOccurrences(of: "- [ ] bottom box", with: "- [X] bottom box"), after: "toggling the last task")
+
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, abs(box.frame.minY - before.minY) >= 4 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertEqual(box.frame.minY, before.minY, accuracy: 4, "the redrawn reader keeps the scroll position")
+    }
+
     // MARK: Read-only
 
     func testAFileTheServerCannotSaveShowsNoControls() throws {
@@ -170,6 +190,10 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
     Some prose.
     """
 
+    /// What `OPPI_READER_TASK_LONG` adds to the Org seed.
+    private static let longTail = (1...60).map { "\n\nParagraph \($0) of filler prose that makes the file long enough to scroll." }.joined()
+        + "\n\n* TODO Bottom\n- [ ] bottom box\n- [ ] second box"
+
     private static let markdownSeed = """
     # Release plan [1/3]
 
@@ -179,9 +203,10 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
       - [ ] Reviewer one
     """
 
-    private func launch(file: String, readOnly: Bool = false) {
+    private func launch(file: String, readOnly: Bool = false, long: Bool = false) {
         var environment = ["OPPI_READER_TASK_FILE": file]
         if readOnly { environment["OPPI_READER_TASK_READONLY"] = "1" }
+        if long { environment["OPPI_READER_TASK_LONG"] = "1" }
         launchPreview(screen: "reader-task-edit", environment: environment, readyTimeout: 20)
         if !readOnly {
             let first = file == "tasks.org" ? "fileViewer.task.checkbox.5" : "fileViewer.task.checkbox.3"

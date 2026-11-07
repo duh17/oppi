@@ -751,6 +751,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             #endif
             self.collectionView.backgroundView = nil
             self.applyPreparedDocument(prepared.markdown)
+            self.applyPendingMutableTransitionViewportIntentIfReady()
         }
     }
 
@@ -799,7 +800,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 
     private func applyPendingMutableTransitionViewportIntentIfReady() {
+        // An Org document is not the Markdown it renders until its preparation lands.
         guard let intent = pendingMutableTransitionViewportIntent,
+              sourcePreparationTask == nil,
               deferredInitialRenderTask == nil,
               asyncRenderTask == nil,
               !needsDocumentLayoutPreparation,

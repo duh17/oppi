@@ -9,7 +9,9 @@ import UIKit
 /// strip shows what that file holds, so a UI test checks the bytes on disk.
 ///
 /// `OPPI_READER_TASK_FILE` picks the file (`tasks.org` by default, or
-/// `notes.md`). "Change file on disk" is a second writer, for the conflict path.
+/// `notes.md`), and `OPPI_READER_TASK_LONG=1` adds a screenful of prose and a
+/// last task under the Org seed. "Change file on disk" is a second writer, for
+/// the conflict path.
 enum ReaderTaskEditFixture {
     static let workspaceId = "preview-tasks"
     static let host = "preview-tasks.oppi"
@@ -53,7 +55,13 @@ enum ReaderTaskEditFixture {
 
     static func seed() {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? Data(orgSeed.utf8).write(to: url(for: "tasks.org"), options: .atomic)
+        var org = orgSeed
+        if ProcessInfo.processInfo.environment["OPPI_READER_TASK_LONG"] == "1" {
+            // A task far down the page, for the reading position across a save.
+            org += (1...60).map { "\n\nParagraph \($0) of filler prose that makes the file long enough to scroll." }.joined()
+            org += "\n\n* TODO Bottom\n- [ ] bottom box\n- [ ] second box"
+        }
+        try? Data(org.utf8).write(to: url(for: "tasks.org"), options: .atomic)
         try? Data(markdownSeed.utf8).write(to: url(for: "notes.md"), options: .atomic)
     }
 

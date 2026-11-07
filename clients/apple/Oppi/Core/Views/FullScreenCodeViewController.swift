@@ -183,6 +183,16 @@ final class FullScreenCodeViewController: UIViewController {
         onMarkdownViewportIntentChange?(intent)
     }
 
+    /// A parent that mounts a new reader in place of this one (after a task
+    /// control saves) removes it with no appearance change, so the reading
+    /// position is reported here too.
+    override func willMove(toParent parent: UIViewController?) {
+        if parent == nil, let intent = currentMarkdownViewportIntent() {
+            onMarkdownViewportIntentChange?(intent)
+        }
+        super.willMove(toParent: parent)
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
 

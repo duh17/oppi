@@ -142,7 +142,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     var onLineAnchorNotice: (@MainActor @Sendable (String) -> Void)?
     /// The text editor opened or closed.
     var onEditingChange: ((Bool) -> Void)?
-    var markdownViewportRestore: FileBrowserViewportRestore?
+    /// The browser's shared positions, else the viewer's own: a remount (a task save) keeps the place.
+    var markdownViewportRestore = FileBrowserViewportRestore()
 
     // MARK: State
 
@@ -670,8 +671,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             lineAnchor: activeSelection == nil ? configuration.lineAnchor : nil,
             lineAnchorNotice: onLineAnchorNotice,
             editItems: editOwner.barItems,
-            markdownViewportIntent: markdownViewportRestore?.state[path],
-            onMarkdownViewportIntentChange: { [weak self] in self?.markdownViewportRestore?.state[path] = $0 },
+            markdownViewportIntent: markdownViewportRestore.state[path],
+            onMarkdownViewportIntentChange: { [weak self] in self?.markdownViewportRestore.state[path] = $0 },
             taskEditing: editOwner.makeReaderTaskEditing(path: path) { [weak self] text in if self?.isCurrentFile(path) == true { self?.content = .text(text) } },
             addToChatDestination: configuration.addToChatDestination
         )
