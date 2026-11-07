@@ -120,6 +120,10 @@ final class DocumentEditOwner {
     /// The tagged read the editor starts from. Nil means no pencil, whatever
     /// else is true of the document.
     private(set) var base: WorkspaceFileDiskSnapshot?
+    /// The canonical host path the resolving read reported, when it was read in
+    /// a host context: the base a host Markdown file's relative links need, which
+    /// the reader would otherwise get from its own read.
+    private(set) var resolvedHostPath: String?
     private(set) var maxBytes: Int?
     private(set) var session: WorkspaceFileEditSession?
     private(set) var isEditing = false {
@@ -177,11 +181,43 @@ final class DocumentEditOwner {
 
     /// The reader's read. Only an editable document has a tagged read, so the
     /// editor's base is exactly the bytes the reader shows.
+    ///
+    /// A file is first read where the reader reached it, and the server names
+    /// the origin that edits it (`FileEditResolution`): a link, a session's
+    /// path, and the workspace tree all land on one identity for one file, so
+    /// they share one session, one draft, and one pencil rule. A server that
+    /// cannot say leaves the subject's own identity in charge.
     func read() async -> ReadResult {
         let generation = generation
-        guard let identity = subject.editIdentity(serverId: serverIdSource()),
-              subject.fileType?.previewCategory == .text,
+        let serverId = serverIdSource()
+        guard subject.fileType?.previewCategory == .text,
               let backend = backendSource() else {
+            reset()
+            return .ownRead
+        }
+        var subjectIdentity = subject.editIdentity(serverId: serverId)
+        var resolved: WorkspaceFileDiskSnapshot?
+        if let location = subject.resolutionLocation(serverId: serverId) {
+            let resolution = await backend.transport.resolve(location)
+            guard generation == self.generation else { return .ownRead }
+            switch resolution {
+            case .editable(let canonical, let snapshot, let resolvedHostPath):
+                subjectIdentity = canonical
+                resolved = snapshot
+                self.resolvedHostPath = resolvedHostPath
+            case .readOnly:
+                // The server's word on this file. A subject with an identity of
+                // its own still reads it, untagged, so a deleted file's draft and
+                // the reader's text stay as they were.
+                if subjectIdentity == nil {
+                    reset()
+                    return .ownRead
+                }
+            case .unresolved:
+                break
+            }
+        }
+        guard let identity = subjectIdentity else {
             reset()
             return .ownRead
         }
@@ -195,7 +231,13 @@ final class DocumentEditOwner {
         guard generation == self.generation else { return .ownRead }
         self.identity = identity
         maxBytes = capability.maxBytes
-        switch await backend.transport.read(identity) {
+        let outcome: WorkspaceFileReadOutcome
+        if let resolved {
+            outcome = resolved.creatable ? .creatable : .snapshot(resolved)
+        } else {
+            outcome = await backend.transport.read(identity)
+        }
+        switch outcome {
         case .snapshot(let snapshot):
             guard generation == self.generation else { return .ownRead }
             base = Self.editableBase(snapshot, maxBytes: capability.maxBytes)
@@ -549,6 +591,7 @@ final class DocumentEditOwner {
         closeEditor()
         identity = nil
         base = nil
+        resolvedHostPath = nil
         maxBytes = nil
         session = nil
         isEditing = false

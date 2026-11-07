@@ -4,10 +4,11 @@ import Foundation
 /// One editable document: server + owner + owner-relative path. A workspace file
 /// names its checkout (a nil worktree means main; a set worktree never falls
 /// back to main). A Skill file is one of an editable Skill's own files. Pi's own
-/// agent files (`SYSTEM.md`, `prompts/`) are the host home's one writable spot.
-/// An Agent prompt and a Schedule prompt are records the editor writes through
-/// their own endpoints, tagged by the record's version. No other origin (host,
-/// session) is editable.
+/// agent files are `SYSTEM.md` and `prompts/`. A host file is a home file no
+/// narrower owner holds, by canonical path. An Agent prompt and a Schedule
+/// prompt are records the editor writes through their own endpoints, tagged by
+/// the record's version. A session is never an owner: a file read through a
+/// session edits as whatever the server says owns it (`FileEditResolution`).
 struct WorkspaceFileEditIdentity: Hashable, Sendable {
     /// What reads and writes the document.
     enum Owner: Hashable, Sendable {
@@ -18,6 +19,9 @@ struct WorkspaceFileEditIdentity: Hashable, Sendable {
         /// `origin=pi` on `/files/current`: Pi's own agent files, allowlisted by
         /// the server, never the rest of the host home.
         case pi
+        /// `origin=host` on `/files/current`: a home file no workspace, Skill, or
+        /// Pi owns, by the canonical absolute path the server named.
+        case host
         /// An Agent's `instructions.text`, read and written with `GET`/`PATCH /agents/:id`.
         case agent(id: String)
         /// A Schedule's `action.prompt`, read and written with `GET`/`PATCH /schedules/:id`.
@@ -27,7 +31,7 @@ struct WorkspaceFileEditIdentity: Hashable, Sendable {
         /// editing for. A record's prompt is edited through its own route.
         var isFile: Bool {
             switch self {
-            case .workspace, .skill, .pi: true
+            case .workspace, .skill, .pi, .host: true
             case .agent, .schedule: false
             }
         }
@@ -59,6 +63,43 @@ struct WorkspaceFileEditIdentity: Hashable, Sendable {
         self.path = piPath
     }
 
+    /// A host file, by the canonical absolute path the server named.
+    init(serverId: String, hostPath: String) {
+        self.serverId = serverId
+        self.owner = .host
+        self.path = hostPath
+    }
+
+    /// The identity a `/files/current` query names (`X-Oppi-Edit-Origin`), or
+    /// nil for an origin this client does not edit.
+    init?(serverId: String, editOriginQuery query: String) {
+        var components = URLComponents()
+        // Form encoding: the server writes a space as `+` and a plus as `%2B`.
+        components.percentEncodedQuery = query.replacingOccurrences(of: "+", with: "%20")
+        var values: [String: String] = [:]
+        for item in components.queryItems ?? [] {
+            // One value per key, as the server writes it; a repeat is malformed.
+            guard values[item.name] == nil, let value = item.value else { return nil }
+            values[item.name] = value
+        }
+        guard let path = values["path"], !path.isEmpty else { return nil }
+        switch values["origin"] {
+        case "workspace":
+            guard let workspaceId = values["workspaceId"], !workspaceId.isEmpty else { return nil }
+            self.init(serverId: serverId, workspaceId: workspaceId, worktreeId: values["worktreeId"], path: path)
+        case "skill":
+            guard let skillId = values["skillId"], !skillId.isEmpty else { return nil }
+            self.init(serverId: serverId, skillId: skillId, path: path)
+        case "pi":
+            self.init(serverId: serverId, piPath: path)
+        case "host":
+            guard path.hasPrefix("/") else { return nil }
+            self.init(serverId: serverId, hostPath: path)
+        default:
+            return nil
+        }
+    }
+
     init(serverId: String, agentId: String) {
         self.serverId = serverId
         self.owner = .agent(id: agentId)
@@ -79,6 +120,7 @@ struct WorkspaceFileEditIdentity: Hashable, Sendable {
         case .workspace(let workspaceId, let worktreeId): ["v1", serverId, workspaceId, worktreeId ?? "", path]
         case .skill(let skillId): ["skill-v1", serverId, skillId, path]
         case .pi: ["pi-v1", serverId, path]
+        case .host: ["host-v1", serverId, path]
         case .agent(let agentId): ["agent-v1", serverId, agentId]
         case .schedule(let scheduleId): ["schedule-v1", serverId, scheduleId]
         }
@@ -90,7 +132,7 @@ struct WorkspaceFileEditIdentity: Hashable, Sendable {
 /// Flat keys, so drafts stored before Skill files decode as workspace files.
 extension WorkspaceFileEditIdentity: Codable {
     private enum CodingKeys: String, CodingKey {
-        case serverId, workspaceId, worktreeId, skillId, agentId, scheduleId, pi, path
+        case serverId, workspaceId, worktreeId, skillId, agentId, scheduleId, pi, host, path
     }
 
     init(from decoder: Decoder) throws {
@@ -105,6 +147,8 @@ extension WorkspaceFileEditIdentity: Codable {
             self.init(serverId: serverId, skillId: skillId, path: path)
         } else if try container.decodeIfPresent(Bool.self, forKey: .pi) == true {
             self.init(serverId: serverId, piPath: path)
+        } else if try container.decodeIfPresent(Bool.self, forKey: .host) == true {
+            self.init(serverId: serverId, hostPath: path)
         } else {
             self.init(
                 serverId: serverId,
@@ -131,6 +175,8 @@ extension WorkspaceFileEditIdentity: Codable {
             try container.encode(scheduleId, forKey: .scheduleId)
         case .pi:
             try container.encode(true, forKey: .pi)
+        case .host:
+            try container.encode(true, forKey: .host)
         }
     }
 }
@@ -181,6 +227,71 @@ enum WorkspaceFileWriteCondition: Sendable, Equatable {
 
     init(storedTag: String) {
         self = storedTag == "*" ? .absent : .version(storedTag)
+    }
+}
+
+/// Where a reader read a file: the `/files/current` origin and path it used,
+/// which is not necessarily the origin that edits it.
+struct FileEditLocation: Hashable, Sendable {
+    let serverId: String
+    let origin: APIClient.CurrentFileOrigin
+    let path: String
+}
+
+/// Sent on an editor read: "name the origin that edits this file". A server
+/// without `fileEditOrigins` ignores it.
+let fileEditResolveHeader = "X-Oppi-Edit-Resolve"
+/// The `/files/current` query that edits the file just read.
+let fileEditOriginHeader = "X-Oppi-Edit-Origin"
+/// Why the file just read has no editor.
+let fileEditRefusalHeader = "X-Oppi-Edit-Refusal"
+
+/// The server's answer to "who edits this file?" for a read at a
+/// `FileEditLocation`. The same file answers the same way whichever link,
+/// tree, or session reached it.
+enum FileEditResolution: Sendable, Equatable {
+    /// Edit through `identity`; `snapshot` is this read's bytes and tag, and
+    /// `resolvedHostPath` the canonical path a host-context read reports (the
+    /// base a host Markdown file's relative links resolve against).
+    case editable(WorkspaceFileEditIdentity, WorkspaceFileDiskSnapshot, resolvedHostPath: String?)
+    /// The server says the file has no editor (`X-Oppi-Edit-Refusal`), or a
+    /// sandbox context refused the path (403).
+    case readOnly(reason: String)
+    /// Nothing known: a server without `fileEditOrigins`, a missing file, or a
+    /// failed read. The subject's own identity, if any, decides.
+    case unresolved
+
+    /// One resolving read's answer. A 200 without a usable origin and tag (or
+    /// creatable mark) says nothing, so it is `.unresolved`, never editable.
+    init(response: HTTPURLResponse, body: Data, serverId: String) {
+        switch response.statusCode {
+        case 200:
+            break
+        case 403:
+            // A sandbox context refused a path outside its workspace.
+            self = .readOnly(reason: "outside-sandbox")
+            return
+        default:
+            self = .unresolved
+            return
+        }
+        if let reason = response.value(forHTTPHeaderField: fileEditRefusalHeader) {
+            self = .readOnly(reason: reason)
+            return
+        }
+        let creatable = response.value(forHTTPHeaderField: workspaceFileCreatableHeader) != nil
+        let etag = creatable ? nil : response.value(forHTTPHeaderField: "ETag")
+        guard let query = response.value(forHTTPHeaderField: fileEditOriginHeader),
+              let identity = WorkspaceFileEditIdentity(serverId: serverId, editOriginQuery: query),
+              creatable || etag != nil else {
+            self = .unresolved
+            return
+        }
+        self = .editable(
+            identity,
+            WorkspaceFileDiskSnapshot(bytes: body, etag: etag, creatable: creatable),
+            resolvedHostPath: HostFileResolvedPathHeaders.resolvedPath(from: response)
+        )
     }
 }
 

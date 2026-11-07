@@ -152,11 +152,13 @@ actor APIClient: ClientLogUploading {
     private let trustDelegate: PinnedServerTrustDelegate
     private let availabilityObserver: APIClientAvailabilityObserver?
     nonisolated private let responseFailureObserverBox = APIClientResponseFailureObserverBox()
-    /// `workspaceFileEditing`, `skillFileEditing`, and `piFileEditing` from this
-    /// client's own `/server/info`. Nil keeps those files read-only.
+    /// `workspaceFileEditing`, `skillFileEditing`, `piFileEditing`, and
+    /// `fileEditOrigins` from this client's own `/server/info`. Nil keeps those
+    /// files read-only.
     private var workspaceFileEditing: ServerInfo.WorkspaceFileEditingCapability?
     private var skillFileEditing: ServerInfo.WorkspaceFileEditingCapability?
     private var piFileEditing: ServerInfo.WorkspaceFileEditingCapability?
+    private var fileEditOrigins: ServerInfo.WorkspaceFileEditingCapability?
 
     init(
         environment: OppiClientEnvironment,
@@ -464,6 +466,7 @@ actor APIClient: ClientLogUploading {
         workspaceFileEditing = info.capabilities?.workspaceFileEditing
         skillFileEditing = info.capabilities?.skillFileEditing
         piFileEditing = info.capabilities?.piFileEditing
+        fileEditOrigins = info.capabilities?.fileEditOrigins
         return info
     }
 
@@ -2037,7 +2040,7 @@ actor APIClient: ClientLogUploading {
 
     /// Editing capability for this server and owner. Nil means read-only:
     /// workspace files need `workspaceFileEditing`, Skill files `skillFileEditing`,
-    /// Pi's own agent files `piFileEditing`.
+    /// Pi's own agent files `piFileEditing`, host files `fileEditOrigins`.
     func fileEditingCapability(
         for owner: WorkspaceFileEditIdentity.Owner
     ) -> ServerInfo.WorkspaceFileEditingCapability? {
@@ -2045,6 +2048,7 @@ actor APIClient: ClientLogUploading {
         case .workspace: workspaceFileEditing
         case .skill: skillFileEditing
         case .pi: piFileEditing
+        case .host: fileEditOrigins
         // A record's prompt is edited through its own route, which every server of
         // this version answers; it has no file-editing capability to check.
         case .agent, .schedule: nil
@@ -2061,9 +2065,12 @@ actor APIClient: ClientLogUploading {
             throw CocoaError(.featureUnsupported)
         }
         let url = try makeFileEditURL(identity)
+        // A host file is tagged only on a read that asks for its owner.
+        let resolves = fileEditOrigins != nil
         let (data, response) = try await performAuthorized {
             var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
             req.httpMethod = "GET"
+            if resolves { req.setValue("1", forHTTPHeaderField: fileEditResolveHeader) }
             return req
         }
         try checkStatus(response, data: data)
@@ -2088,10 +2095,33 @@ actor APIClient: ClientLogUploading {
         }
     }
 
+    /// Who edits the file a reader read at `location`, and that read's bytes and
+    /// tag: one `GET /files/current` with `X-Oppi-Edit-Resolve`, through the
+    /// origin the reader used. The server follows the path to its canonical file
+    /// and names the origin that owns it, so a chat link, an Org `file:` link,
+    /// and the workspace tree all edit one file the same way. A read through a
+    /// sandbox session stays inside its sandbox. Without `fileEditOrigins` there
+    /// is no request and the answer is `.unresolved`.
+    func resolveFileForEditing(_ location: FileEditLocation) async -> FileEditResolution {
+        guard let capability = fileEditOrigins, capability.version >= 1 else { return .unresolved }
+        do {
+            let url = try makeCurrentFileURL(location.origin, path: location.path)
+            let (data, response) = try await performAuthorized {
+                var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+                req.setValue("1", forHTTPHeaderField: fileEditResolveHeader)
+                return req
+            }
+            guard let http = response as? HTTPURLResponse else { return .unresolved }
+            return FileEditResolution(response: http, body: data, serverId: location.serverId)
+        } catch {
+            return .unresolved
+        }
+    }
+
     /// Guarded write of one text file. The only file-write URL this client builds:
-    /// `PUT /files/current` with `origin=workspace`, `origin=skill`, or
-    /// `origin=pi`, raw bytes, and one precondition — the version it overwrites,
-    /// or `If-None-Match: *` for a file it read as absent.
+    /// `PUT /files/current` with `origin=workspace`, `origin=skill`, `origin=pi`,
+    /// or `origin=host`, raw bytes, and one precondition — the version it
+    /// overwrites, or `If-None-Match: *` for a file it read as absent.
     func writeEditedFile(
         _ identity: WorkspaceFileEditIdentity,
         bytes: Data,
@@ -2148,6 +2178,7 @@ actor APIClient: ClientLogUploading {
         case .workspace(let workspaceId, let worktreeId): .workspace(workspaceId: workspaceId, worktreeId: worktreeId)
         case .skill(let skillId): .skill(skillId: skillId)
         case .pi: .pi
+        case .host: .host(controlSessionId: nil)
         case .agent, .schedule: throw CocoaError(.featureUnsupported)
         }
         return try makeCurrentFileURL(origin, path: identity.path)
@@ -2850,7 +2881,7 @@ actor APIClient: ClientLogUploading {
 
     /// Namespace a current-file path resolves in. It selects resolution only;
     /// pairing/auth is the host-file gate and sandbox paths stay confined.
-    enum CurrentFileOrigin: Sendable, Equatable {
+    enum CurrentFileOrigin: Sendable, Hashable {
         /// Absolute or `~/` owner-host path; relative paths resolve from the
         /// declared control session's cwd when one is given.
         case host(controlSessionId: String?)

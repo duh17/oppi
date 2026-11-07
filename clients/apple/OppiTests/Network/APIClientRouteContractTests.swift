@@ -176,7 +176,8 @@ private final class RequestRecorder: @unchecked Sendable {
     "nodeVersion":"22","piVersion":"1","configVersion":1,"capabilities":{\
     "workspaceFileEditing":{"version":1,"maxBytes":1048576},\
     "skillFileEditing":{"version":1,"maxBytes":1048576},\
-    "piFileEditing":{"version":1,"maxBytes":1048576}},\
+    "piFileEditing":{"version":1,"maxBytes":1048576},\
+    "fileEditOrigins":{"version":1,"maxBytes":1048576}},\
     "stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":0,\
     "modelCount":0}}
     """.utf8)
@@ -606,6 +607,11 @@ extension APIClientEndpoint {
         APIClientEndpoint("writeEditedFile") {
             _ = await $0.writeEditedFile(
                 APIClientEndpoint.editableFile, bytes: Data("edited".utf8), condition: .version("\"tag-1\"")
+            )
+        },
+        APIClientEndpoint("resolveFileForEditing") {
+            _ = await $0.resolveFileForEditing(
+                FileEditLocation(serverId: "s1", origin: .host(controlSessionId: nil), path: "/Users/alex/notes.md")
             )
         },
         APIClientEndpoint("resolveHostFile") {

@@ -113,6 +113,11 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var skillFileEditing: WorkspaceFileEditingCapability? = nil
         /// Guarded `PUT /files/current?origin=pi` for Pi's own agent files. Missing means read-only.
         var piFileEditing: WorkspaceFileEditingCapability? = nil
+        /// An editor read with `X-Oppi-Edit-Resolve` names the origin that edits
+        /// the file however it was reached, and `PUT /files/current?origin=host`
+        /// writes a home file no other origin owns. Missing means only the origins
+        /// above edit, by the reader's own identity.
+        var fileEditOrigins: WorkspaceFileEditingCapability? = nil
         /// Create requests may ask for `engine: "durable"` (`experimental.serverDurable`).
         var durableSessions: CapabilityVersion? = nil
         /// Durable sessions replicate over the focused socket (`attach` / `snapshot` / `update`).

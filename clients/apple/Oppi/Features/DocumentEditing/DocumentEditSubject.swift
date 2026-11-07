@@ -1,8 +1,22 @@
 import Foundation
 
+/// The sessions a reader read a file in the context of: the session whose chat
+/// held the link, and the control session whose directory a relative host path
+/// resolves against. The server judges a followed path in that context, so a
+/// sandbox session's link never edits a file outside its sandbox.
+struct FileEditReadContext: Equatable {
+    var sessionId: String?
+    var controlSessionId: String?
+
+    init(sessionId: String? = nil, controlSessionId: String? = nil) {
+        self.sessionId = sessionId?.isEmpty == false ? sessionId : nil
+        self.controlSessionId = controlSessionId?.isEmpty == false ? controlSessionId : nil
+    }
+}
+
 /// What a reader shows under one edit entry. A file opens our editor through
 /// `/files/current`; an Agent's prompt and a Schedule's prompt open it through
-/// their own record; nothing else is editable in this slice.
+/// their own record.
 enum DocumentEditSubject: Equatable {
     /// A file the reader browsed. `source` says where it comes from,
     /// `fileType` is what the reader renders it as, and `skillFile` names a
@@ -11,6 +25,11 @@ enum DocumentEditSubject: Equatable {
     /// and `ServerSkillFilePresentation.editable` decides whether that Skill is
     /// editable at all. A session-touched file's identity is the workspace file
     /// its session path names; `worktreeId` is the session's checkout.
+    /// `context` is the session the file was reached from, if any.
+    ///
+    /// On a server with `fileEditOrigins` the identity is not the reader's to
+    /// choose: the owner reads at `resolutionLocation` and edits through the
+    /// origin the server names for the canonical file.
     case file(
         serverId: String?,
         source: FileBrowserContentSource,
@@ -18,7 +37,8 @@ enum DocumentEditSubject: Equatable {
         worktreeId: String?,
         path: String,
         skillFile: SkillFileEditTarget?,
-        fileType: FileType
+        fileType: FileType,
+        context: FileEditReadContext = FileEditReadContext()
     )
     /// An Agent's custom prompt (`instructions.text`), edited in place. The
     /// server comes from the owner, since the record id alone does not name it.
@@ -39,14 +59,55 @@ enum DocumentEditSubject: Equatable {
 }
 
 extension DocumentEditSubject {
-    /// The document this subject edits: a workspace file by workspace + worktree
-    /// + path, a host file as its Skill's own file, or a record's prompt on
-    /// `serverId` (which a prompt subject does not carry). A host file outside an
-    /// editable Skill, a session file, and a snapshot have no identity, so they
-    /// can never open the editor.
+    /// Where the owner asks the server who edits this file: the origin and path
+    /// the reader read it through. A link followed from a session reads in that
+    /// session's context; a host path otherwise reads as a host file (relative to
+    /// its control session's directory when it has one). Nil for a record's
+    /// prompt and a snapshot, which have no file.
+    func resolutionLocation(serverId: String?) -> FileEditLocation? {
+        switch self {
+        case let .file(fileServerId, source, workspaceId, worktreeId, path, skillFile, _, context):
+            guard let fileServerId, !fileServerId.isEmpty, !path.isEmpty else { return nil }
+            let origin: APIClient.CurrentFileOrigin
+            var readPath = path
+            switch source {
+            case .workspaceFile:
+                guard !workspaceId.isEmpty else { return nil }
+                origin = .workspace(workspaceId: workspaceId, worktreeId: worktreeId)
+            case .hostFile:
+                if let skillFile {
+                    origin = .skill(skillId: skillFile.skillId)
+                    readPath = skillFile.path
+                } else if let controlSessionId = context.controlSessionId {
+                    origin = .host(controlSessionId: controlSessionId)
+                } else if let sessionId = context.sessionId {
+                    origin = .session(sessionId: sessionId)
+                } else {
+                    origin = .host(controlSessionId: nil)
+                }
+            case .sessionFile(let sessionId):
+                origin = .session(sessionId: sessionId)
+            case .sessionTouched(let touched):
+                origin = .session(sessionId: touched.sessionId)
+            }
+            return FileEditLocation(serverId: fileServerId, origin: origin, path: readPath)
+        case .piFile(let path, _):
+            guard let serverId, !serverId.isEmpty, !path.isEmpty else { return nil }
+            return FileEditLocation(serverId: serverId, origin: .pi, path: path)
+        case .agentInstructions, .schedulePrompt, .snapshot:
+            return nil
+        }
+    }
+
+    /// The document this subject edits by the reader's own reckoning: a
+    /// workspace file by workspace + worktree + path, a host file as its Skill's
+    /// own file, or a record's prompt on `serverId` (which a prompt subject does
+    /// not carry). A server with `fileEditOrigins` overrides it for a file; this
+    /// is the identity an older server edits, and the one a deleted file's kept
+    /// draft reopens under.
     func editIdentity(serverId: String?) -> WorkspaceFileEditIdentity? {
         switch self {
-        case let .file(fileServerId, source, workspaceId, worktreeId, path, skillFile, _):
+        case let .file(fileServerId, source, workspaceId, worktreeId, path, skillFile, _, _):
             guard let fileServerId, !fileServerId.isEmpty else { return nil }
             switch source {
             case .workspaceFile:
@@ -108,7 +169,7 @@ extension DocumentEditSubject {
     /// prompt is Markdown, as the reader shows it.
     var fileType: FileType? {
         switch self {
-        case .file(_, _, _, _, _, _, let fileType): fileType
+        case .file(_, _, _, _, _, _, let fileType, _): fileType
         case .agentInstructions, .schedulePrompt: .markdown
         case .piFile(let path, _): FileType.detect(from: path)
         case .snapshot: nil

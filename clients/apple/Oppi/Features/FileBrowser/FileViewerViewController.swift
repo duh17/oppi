@@ -418,9 +418,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         )
     }
 
-    /// What the edit entry sees of the file at `path`, which is what the
-    /// reader is about to load. Only the file this viewer was opened for edits
-    /// as its Skill's own file; another host path has no edit identity.
+    /// What the edit entry sees of the file at `path`, read in the context of the session this
+    /// viewer came from. Only the file it was opened for reads as its Skill's own file.
     private func editSubject(for path: String) -> DocumentEditSubject {
         .file(
             serverId: configuration.serverId,
@@ -429,7 +428,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             worktreeId: configuration.worktreeId,
             path: path,
             skillFile: path == configuration.filePath ? configuration.skillFile : nil,
-            fileType: FileType.detect(from: path)
+            fileType: FileType.detect(from: path),
+            context: FileEditReadContext(sessionId: configuration.sessionId, controlSessionId: configuration.controlSessionId)
         )
     }
 
@@ -1175,10 +1175,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             content = .error("Not connected")
             return
         }
-        // Reappearing over an open editor must not reload over the buffer.
-        if editOwner.isEditing,
-           let identity = editOwner.identity,
-           identity == editSubject(for: currentSelection.path).editIdentity(serverId: configuration.serverId) {
+        // Reappearing over an open editor must not reload over the buffer (subjects, not the canonical identity).
+        if editOwner.isEditing, editOwner.identity != nil,
+           editOwner.subject == editSubject(for: currentSelection.path) {
             return
         }
 
@@ -1369,7 +1368,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
                 return .deletedDraft(text)
             case .bytes(let snapshot, let draftText):
                 guard isCurrentFile(path) else { return nil }
-                return .bytes(snapshot.bytes, editedText: draftText, resolvedHostPath: nil)
+                return .bytes(snapshot.bytes, editedText: draftText, resolvedHostPath: editOwner.resolvedHostPath)
             }
         }
         if configuration.source == .hostFile {

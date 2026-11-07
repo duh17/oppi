@@ -128,6 +128,7 @@ struct DocumentEditOwnerTests {
         draftStore: WorkspaceFileDraftStore? = nil,
         sessionRegistry: WorkspaceFileEditSessionRegistry? = nil,
         readSpy: ReadSpy? = nil,
+        resolve: @escaping @Sendable (FileEditLocation) async -> FileEditResolution = { _ in .unresolved },
         handlers: DocumentEditOwner.Handlers = .init(),
         autoSave: Bool = true,
         onChange: @escaping @MainActor () -> Void = {}
@@ -140,7 +141,8 @@ struct DocumentEditOwnerTests {
                     await readSpy?.note()
                     return outcome ?? .snapshot(snapshot)
                 },
-                write: { identity, bytes, condition in await transport.write(identity, bytes, condition) }
+                write: { identity, bytes, condition in await transport.write(identity, bytes, condition) },
+                resolve: resolve
             )
         )
         return DocumentEditOwner(
@@ -462,6 +464,105 @@ struct DocumentEditOwnerTests {
 
         #expect(await owner.read() == .ownRead)
         #expect(owner.barItems.isEmpty)
+    }
+
+    // MARK: A followed link
+
+    /// Records where each owner asked the server who edits its file.
+    private actor LocationLog {
+        private(set) var locations: [FileEditLocation] = []
+        func note(_ location: FileEditLocation) { locations.append(location) }
+    }
+
+    /// A chat link to a host path and the workspace tree name one file: the
+    /// server answers one identity for both, so the second reader adopts the
+    /// editor the first opened instead of starting a second writer.
+    @Test func aLinkAndTheWorkspaceTreeShareOneEditor() async {
+        let canonical = WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "notes.md")
+        let snapshot = WorkspaceFileDiskSnapshot(bytes: Data("hello".utf8), etag: tag("a"))
+        let log = LocationLog()
+        let resolve: @Sendable (FileEditLocation) async -> FileEditResolution = { location in
+            await log.note(location)
+            // A host-context read reports the canonical path; a workspace read does not.
+            let hostPath: String? = if case .session = location.origin { "/Users/preview/oppi/notes.md" } else { nil }
+            return .editable(canonical, snapshot, resolvedHostPath: hostPath)
+        }
+        let sessions = registry()
+        let spy = ReadSpy()
+        let link = DocumentEditSubject.file(
+            serverId: "srv",
+            source: .hostFile,
+            workspaceId: "w1",
+            worktreeId: nil,
+            path: "/Users/preview/oppi/notes.md",
+            skillFile: nil,
+            fileType: .markdown,
+            context: FileEditReadContext(sessionId: "session-1")
+        )
+        let fromLink = owner(
+            subject: link,
+            capability: capability,
+            sessionRegistry: sessions,
+            readSpy: spy,
+            resolve: resolve
+        )
+        let fromTree = owner(
+            subject: workspaceSubject(),
+            capability: capability,
+            sessionRegistry: sessions,
+            readSpy: spy,
+            resolve: resolve
+        )
+
+        #expect(await fromLink.read() == .bytes(snapshot, draftText: nil))
+        #expect(fromLink.identity == canonical)
+        #expect(
+            fromLink.resolvedHostPath == "/Users/preview/oppi/notes.md",
+            "the link's reader keeps the real path its relative links resolve against"
+        )
+        #expect(identifiers(fromLink) == ["workspace-file-editor.edit"])
+        fromLink.beginEditing()
+        let session = fromLink.session
+        #expect(session != nil)
+
+        #expect(await fromTree.read() == .bytes(snapshot, draftText: nil))
+        #expect(fromTree.identity == canonical)
+        #expect(fromTree.session === session, "one file, one writer")
+        #expect(spy.count == 0, "the resolving read is the editor's base; nothing reads twice")
+        // The link read in its session's context, so a sandbox session's link is
+        // judged inside that sandbox; the tree read through its workspace.
+        #expect(await log.locations == [
+            FileEditLocation(serverId: "srv", origin: .session(sessionId: "session-1"), path: "/Users/preview/oppi/notes.md"),
+            FileEditLocation(serverId: "srv", origin: .workspace(workspaceId: "w1", worktreeId: nil), path: "notes.md"),
+        ])
+    }
+
+    /// The server's refusal is the answer for a file with no identity of its
+    /// own: no pencil, and no second read.
+    @Test func aRefusedLinkIsReadOnly() async {
+        let spy = ReadSpy()
+        let subject = DocumentEditSubject.file(
+            serverId: "srv",
+            source: .hostFile,
+            workspaceId: "",
+            worktreeId: nil,
+            path: "~/.ssh/notes.md",
+            skillFile: nil,
+            fileType: .markdown
+        )
+        let owner = owner(
+            subject: subject,
+            capability: capability,
+            readSpy: spy,
+            resolve: { location in
+                #expect(location.origin == .host(controlSessionId: nil))
+                return .readOnly(reason: "protected")
+            }
+        )
+
+        #expect(await owner.read() == .ownRead)
+        #expect(owner.barItems.isEmpty)
+        #expect(spy.count == 0)
     }
 
     // MARK: A read that the reader has moved on from

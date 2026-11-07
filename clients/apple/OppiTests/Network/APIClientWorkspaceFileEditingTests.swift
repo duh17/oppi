@@ -11,6 +11,7 @@ private final class EditURLProtocol: URLProtocol, @unchecked Sendable {
         let url: URL
         let ifMatch: String?
         let ifNoneMatch: String?
+        let resolve: String?
         let body: Data
     }
 
@@ -28,6 +29,7 @@ private final class EditURLProtocol: URLProtocol, @unchecked Sendable {
             url: request.url!,
             ifMatch: request.value(forHTTPHeaderField: "If-Match"),
             ifNoneMatch: request.value(forHTTPHeaderField: "If-None-Match"),
+            resolve: request.value(forHTTPHeaderField: fileEditResolveHeader),
             body: body
         )
         Self.lock.lock()
@@ -319,5 +321,67 @@ struct APIClientWorkspaceFileEditingTests {
         // else created the file first.
         EditURLProtocol.handler = { _ in (412, [:], Data(#"{"error":"Precondition failed"}"#.utf8)) }
         #expect(await client.writeEditedFile(systemPrompt, bytes: bytes, condition: .absent) == .stale)
+    }
+
+    /// A followed link reads where the reader reached it and edits through the
+    /// origin the server names: a workspace checkout for a project file, the
+    /// host for a notebook file. A refusal or a sandbox's 403 is read-only.
+    @Test func aFollowedLinkEditsThroughTheOriginTheServerNames() async throws {
+        defer { EditURLProtocol.reset() }
+        let link = FileEditLocation(serverId: "s1", origin: .session(sessionId: "sess-1"), path: "~/code/a b.md")
+
+        // An older server cannot say: no request, and the reader's own identity decides.
+        let older = makeClient()
+        try await loadCapabilities(older, #"{"workspaceFileEditing":{"version":1,"maxBytes":1048576}}"#)
+        #expect(await older.resolveFileForEditing(link) == .unresolved)
+        #expect(EditURLProtocol.recorded.isEmpty)
+
+        let client = makeClient()
+        try await loadCapabilities(client, #"{"fileEditOrigins":{"version":1,"maxBytes":1048576}}"#)
+        let bytes = Data("# A\n".utf8)
+        EditURLProtocol.handler = { _ in
+            (200, ["ETag": Self.tag, fileEditOriginHeader: "origin=workspace&workspaceId=w1&worktreeId=wt-2&path=docs%2Fa+b.md"], bytes)
+        }
+        #expect(await client.resolveFileForEditing(link) == .editable(
+            WorkspaceFileEditIdentity(serverId: "s1", workspaceId: "w1", worktreeId: "wt-2", path: "docs/a b.md"),
+            WorkspaceFileDiskSnapshot(bytes: bytes, etag: Self.tag),
+            resolvedHostPath: nil
+        ))
+        let resolving = try #require(EditURLProtocol.recorded.last)
+        #expect(resolving.resolve == "1")
+        #expect(query(resolving.url) == ["origin": "session", "sessionId": "sess-1", "path": "~/code/a b.md"])
+
+        // A notebook file outside every workspace edits as a host file, by the
+        // canonical path the server named.
+        let notebookPath = "/Users/alex/notebook/tasks.org"
+        EditURLProtocol.reset()
+        EditURLProtocol.handler = { record in
+            if record.method == "GET" {
+                return (200, [
+                    "ETag": Self.tag,
+                    fileEditOriginHeader: "origin=host&path=%2FUsers%2Falex%2Fnotebook%2Ftasks.org",
+                    HostFileResolvedPathHeaders.resolvedPathField: notebookPath,
+                ], bytes)
+            }
+            return (200, ["Content-Type": "application/json"], Data(#"{"etag":\#(Self.newTagJSON),"size":4,"mtimeMs":1}"#.utf8))
+        }
+        let notebook = WorkspaceFileEditIdentity(serverId: "s1", hostPath: notebookPath)
+        #expect(await client.resolveFileForEditing(
+            FileEditLocation(serverId: "s1", origin: .host(controlSessionId: nil), path: "~/notebook/tasks.org")
+        ) == .editable(notebook, WorkspaceFileDiskSnapshot(bytes: bytes, etag: Self.tag), resolvedHostPath: notebookPath))
+        #expect(await client.writeEditedFile(notebook, bytes: bytes, condition: .version(Self.tag)) == .saved(etag: Self.newTag))
+        let put = try #require(EditURLProtocol.recorded.last)
+        #expect(put.method == "PUT")
+        #expect(query(put.url) == ["origin": "host", "path": notebookPath])
+        #expect(put.ifMatch == Self.tag)
+
+        // The server's refusal, and a sandbox session refusing a path outside it.
+        EditURLProtocol.handler = { _ in (200, [fileEditRefusalHeader: "protected"], bytes) }
+        #expect(await client.resolveFileForEditing(link) == .readOnly(reason: "protected"))
+        EditURLProtocol.handler = { _ in (403, [:], Data(#"{"error":"Path outside sandbox workspace"}"#.utf8)) }
+        #expect(await client.resolveFileForEditing(link) == .readOnly(reason: "outside-sandbox"))
+        // A missing file says nothing about its owner.
+        EditURLProtocol.handler = { _ in (404, [:], Data(#"{"error":"File not found"}"#.utf8)) }
+        #expect(await client.resolveFileForEditing(link) == .unresolved)
     }
 }

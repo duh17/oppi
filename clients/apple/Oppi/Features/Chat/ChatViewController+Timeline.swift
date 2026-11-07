@@ -154,20 +154,35 @@ extension ChatViewController {
         )
     }
 
-    /// The live workspace file a reader's bytes name, when this chat can resolve
-    /// one. The row may show a tool's output; the pencil edits the file on disk
-    /// now, through the ordinary workspace edit path.
+    /// The live file a reader's bytes name, when this chat can resolve one. The
+    /// row may show a tool's output; the pencil edits the file on disk now. A
+    /// path in this chat's checkout reads as that workspace file; any other path
+    /// the tool reported reads through this session, and the server names the
+    /// origin that edits it (a sandbox session's path stays in its sandbox).
     private func liveFileSubject(for content: FullScreenCodeContent) -> DocumentEditSubject? {
         guard let path = content.filePath,
               let serverId = resolvedServerId,
               let workspaceId = timelineWorkspaceId,
-              let workspace = connection.workspaceStore.workspaces.first(where: { $0.id == workspaceId }),
-              let workspacePath = WorkspaceFileEditPath.reportedPath(
-                  path,
-                  runtime: workspace.runtime,
-                  hostMount: workspace.hostMount,
-                  worktreeId: session?.worktreeId
-              ) else { return nil }
+              let workspace = connection.workspaceStore.workspaces.first(where: { $0.id == workspaceId }) else {
+            return nil
+        }
+        guard let workspacePath = WorkspaceFileEditPath.reportedPath(
+            path,
+            runtime: workspace.runtime,
+            hostMount: workspace.hostMount,
+            worktreeId: session?.worktreeId
+        ) else {
+            return .file(
+                serverId: serverId,
+                source: .sessionFile(sessionId: sessionId),
+                workspaceId: workspaceId,
+                worktreeId: nil,
+                path: path,
+                skillFile: nil,
+                fileType: FileType.detect(from: path),
+                context: FileEditReadContext(sessionId: sessionId)
+            )
+        }
         return .file(
             serverId: serverId,
             source: .workspaceFile,
