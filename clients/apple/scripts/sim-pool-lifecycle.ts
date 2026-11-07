@@ -9,7 +9,7 @@
  * was started with and then reap the wrong simulators against an empty ledger.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, type Stats } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -259,34 +259,56 @@ type ShutdownMode = {
  * ever ran, and every test build installs a new one, so a long-lived pool
  * simulator grew past 60 GB. The cache is rebuilt on demand.
  */
-function symbolicationCacheDir(udid: string): string {
-  return join(
-    process.env.HOME ?? homedir(),
-    "Library",
-    "Developer",
-    "CoreSimulator",
-    "Devices",
-    udid,
-    "data",
-    "Library",
-    "Caches",
-    "com.apple.coresymbolicationd",
-  );
+const SYMBOLICATION_CACHE_PATH = ["data", "Library", "Caches", "com.apple.coresymbolicationd"];
+
+/**
+ * The cache dir of `udid`, or the reason it must be left alone. The UDID comes
+ * from simctl output, so it must be one plain path segment (no `/`, `.`, or
+ * empty value), and every component from the device dir down must be a real
+ * directory: a symlink anywhere there could point the delete outside the
+ * device. The Devices dir itself may be a symlink (a relocated CoreSimulator).
+ * rmSync never follows symlinks inside the cache.
+ */
+function symbolicationCacheDir(udid: string): { dir: string } | { skip: string } {
+  if (!/^[0-9A-Za-z-]+$/.test(udid)) {
+    return { skip: "malformed UDID" };
+  }
+  let dir = join(process.env.HOME ?? homedir(), "Library", "Developer", "CoreSimulator", "Devices", udid);
+  for (const component of ["", ...SYMBOLICATION_CACHE_PATH]) {
+    dir = component ? join(dir, component) : dir;
+    let stat: Stats | undefined;
+    try {
+      stat = lstatSync(dir, { throwIfNoEntry: false });
+    } catch (error) {
+      return { skip: error instanceof Error ? error.message : String(error) };
+    }
+    if (!stat) {
+      return { skip: "" };
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      return { skip: `${dir} is not a real directory` };
+    }
+  }
+  return { dir };
 }
 
 /**
  * Deletes a pool simulator's symbolication cache. Callers hold the slot lease
  * and have just seen the device Shutdown, so nothing is using the cache.
+ * Never throws: a cache left behind is retried at the next shutdown.
  */
 function clearSymbolicationCache(label: string, udid: string): void {
-  const dir = symbolicationCacheDir(udid);
-  if (!existsSync(dir)) {
+  const found = symbolicationCacheDir(udid);
+  if ("skip" in found) {
+    if (found.skip) {
+      log(`[sim-pool] ${label}: leaving symbolication cache for ${JSON.stringify(udid)}: ${found.skip}`);
+    }
     return;
   }
-  const du = spawnSync("du", ["-sk", dir], { encoding: "utf8" });
+  const du = spawnSync("du", ["-sk", found.dir], { encoding: "utf8" });
   const kib = Number.parseInt(du.stdout ?? "", 10);
   try {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(found.dir, { recursive: true, force: true });
   } catch (error) {
     log(`[sim-pool] ${label}: failed to clear symbolication cache for ${udid}: ${error instanceof Error ? error.message : String(error)}`);
     return;
@@ -413,7 +435,12 @@ async function shutdownPoolSlot(
     }
     // Only a device proven Shutdown under the lease loses its cache.
     const after = await runXcrun(session, ["simctl", "list", "devices", "-j"]);
-    if (after.stop.quiescent && after.code === 0) {
+    if (!after.stop.quiescent) {
+      log(`[sim-pool] ${label}: post-shutdown list did not prove quiescence for ${udid}`);
+      finish("uncertain", after.stop.note ?? "post-shutdown list did not prove quiescence");
+      return "failed";
+    }
+    if (after.code === 0 && !session.canceled) {
       try {
         if (deviceState(parseDevicesJson(after.stdout), udid) === "Shutdown") {
           clearSymbolicationCache(label, udid);

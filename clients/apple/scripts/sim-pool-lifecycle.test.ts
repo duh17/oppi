@@ -1,6 +1,16 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acquireHeavySlot } from "./sim-pool-build";
@@ -349,11 +359,17 @@ describe("sim-pool reap", () => {
     );
     const cacheOf = (name: string) =>
       join(sim.root, "Library/Developer/CoreSimulator/Devices", `UDID-${name}`, "data/Library/Caches/com.apple.coresymbolicationd");
-    const names = ["Oppi-Pool-0", "Oppi-Pool-1", "Oppi-Pool-2", "Oppi-Pool-31", "Alex iPhone"];
+    const names = ["Oppi-Pool-0", "Oppi-Pool-1", "Oppi-Pool-31", "Alex iPhone"];
     for (const name of names) {
       mkdirSync(join(cacheOf(name), "entry"), { recursive: true });
       writeFileSync(join(cacheOf(name), "entry", "blob"), "x".repeat(8192));
     }
+    // Oppi-Pool-2's Caches is a symlink out of the device: the delete must not follow it.
+    const outside = join(sim.root, "outside");
+    mkdirSync(join(outside, "com.apple.coresymbolicationd"), { recursive: true });
+    writeFileSync(join(outside, "com.apple.coresymbolicationd", "blob"), "x");
+    mkdirSync(join(cacheOf("Oppi-Pool-2"), "..", ".."), { recursive: true });
+    symlinkSync(outside, join(cacheOf("Oppi-Pool-2"), ".."));
     // A sibling cache directory must survive.
     const sibling = join(cacheOf("Oppi-Pool-1"), "..", "other");
     mkdirSync(sibling, { recursive: true });
@@ -366,12 +382,35 @@ describe("sim-pool reap", () => {
     expectOk(result);
     expect(sim.shutdowns().sort()).toEqual(["Oppi-Pool-1", "Oppi-Pool-2"]);
     expect(existsSync(cacheOf("Oppi-Pool-1"))).toBe(false);
-    expect(existsSync(cacheOf("Oppi-Pool-2"))).toBe(false);
     expect(existsSync(sibling)).toBe(true);
+    expect(existsSync(join(outside, "com.apple.coresymbolicationd", "blob"))).toBe(true);
+    expect(result.stderr).toMatch(/leaving symbolication cache for "UDID-Oppi-Pool-2": .* is not a real directory/);
     for (const name of ["Oppi-Pool-0", "Oppi-Pool-31", "Alex iPhone"]) {
       expect(existsSync(join(cacheOf(name), "entry", "blob"))).toBe(true);
     }
     expect(result.stderr).toMatch(/reap: freed \d+ bytes of symbolication cache for UDID-Oppi-Pool-1/);
+  });
+
+  test("keeps the symbolication cache of a simulator booted again right after its shutdown", () => {
+    const sim = fakeSimulators([{ name: "Oppi-Pool-1", state: "Booted", type: IPHONE }]);
+    const cache = join(
+      sim.root,
+      "Library/Developer/CoreSimulator/Devices/UDID-Oppi-Pool-1/data/Library/Caches/com.apple.coresymbolicationd",
+    );
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(join(cache, "blob"), "x");
+    seedSlot(sim.lockDir, 1, 45);
+
+    // Something outside the pool boots the device again as soon as simctl shutdown returns.
+    const result = sim.pool(["reap"], {
+      OPPI_SIM_POOL_IDLE_MINUTES: "30",
+      OPPI_SIM_POOL_KEEP_WARM: "0",
+      FAKE_SIMCTL_REBOOT_AFTER_SHUTDOWN: "1",
+    });
+    expectOk(result);
+    expect(sim.shutdowns()).toEqual(["Oppi-Pool-1"]);
+    expect(sim.state("Oppi-Pool-1")).toBe("Booted");
+    expect(existsSync(join(cache, "blob"))).toBe(true);
   });
 
   test("finishes slots a failed shutdown left uncertain, and release frees its owner's", () => {

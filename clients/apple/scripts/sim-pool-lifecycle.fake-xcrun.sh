@@ -48,7 +48,10 @@ case "$sub" in
     echo "UDID-$1"
     ;;
   boot) set_state "$1" Booted ;;
-  shutdown) set_state "$1" Shutdown ;;
+  shutdown)
+    # FAKE_SIMCTL_REBOOT_AFTER_SHUTDOWN: another client boots the device again before the next list.
+    [ -n "${FAKE_SIMCTL_REBOOT_AFTER_SHUTDOWN:-}" ] || set_state "$1" Shutdown
+    ;;
   bootstatus | spawn | uninstall | keychain | privacy) ;;
   *) exit 127 ;;
 esac
