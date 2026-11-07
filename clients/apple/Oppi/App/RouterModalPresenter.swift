@@ -55,6 +55,8 @@ final class RouterModalPresenter {
     }
 
     weak var anchor: UIViewController?
+    /// The control a popover points at: the anchor's view when nil.
+    private weak var source: UIView?
     var request: Request?
     var onDismiss: (() -> Void)?
     var clearItem: (() -> Void)?
@@ -106,16 +108,19 @@ final class RouterModalPresenter {
 
     /// A UIKit screen's slot, set from its state in `updateProperties()`: a
     /// non-nil `id` presents `screen`, nil dismisses, and `clear` resets the
-    /// screen's state after a swipe-down or the modal's own `finish()`.
+    /// screen's state after a swipe-down or the modal's own `finish()`. A popover
+    /// points at `source` (the control that opened it), or the anchor's view.
     func update(
         id: AnyHashable?,
         presentation: ModalPresentation,
+        source: UIView? = nil,
         root: AppRootEnvironment,
         onDismiss: (() -> Void)? = nil,
         clear: @escaping () -> Void,
         screen: () -> RouterScreen
     ) {
         self.onDismiss = onDismiss
+        self.source = source
         clearItem = clear
         request = id.map { Request(id: $0, presentation: presentation, root: root, screen: screen()) }
         sync()
@@ -189,7 +194,7 @@ final class RouterModalPresenter {
                 controller,
                 presentation: request.presentation,
                 from: anchor,
-                sourceView: anchor.view,
+                sourceView: source ?? anchor.view,
                 theme: request.root.themeStore,
                 onDismiss: onDismiss
             )

@@ -209,8 +209,7 @@ final class DiffReaderView: UIView {
         )
         options.configurePresentation(
             barItem: nil,
-            sourceButton: viewingOptionsButton,
-            horizontalSizeClass: traitCollection.horizontalSizeClass
+            sourceButton: viewingOptionsButton
         )
         viewingOptionsController = options
         presenter.present(options, animated: true)

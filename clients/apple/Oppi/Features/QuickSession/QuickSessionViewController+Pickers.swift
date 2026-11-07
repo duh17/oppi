@@ -2,7 +2,7 @@ import UIKit
 
 /// Quick Session's router modals, one presenter slot each, requested from the
 /// model's flags in `updateProperties()`: the workspace and worktree popovers
-/// (UIKit, on their pills), the Agent and thinking popovers of the
+/// (UIKit, pointing at their pills), the Agent and thinking popovers of the
 /// accessibility-size panel, and the shared UIKit model picker sheet.
 extension QuickSessionViewController {
     var presenters: [RouterModalPresenter] {
@@ -15,7 +15,8 @@ extension QuickSessionViewController {
         let pickerPopover = ModalPresentation.popover.keepsPopoverInCompactWidth()
         modelPicker.update(
             id: model.showModelPicker ? "model-picker" : nil,
-            presentation: .sheet.inNavigation(),
+            presentation: .popoverOrSheet(detents: [.large()]).inNavigation(),
+            source: model.modelPickerSource,
             root: root,
             clear: { [weak self] in self?.model.showModelPicker = false },
             screen: { model.modelPickerScreen() }
@@ -23,6 +24,7 @@ extension QuickSessionViewController {
         workspacePicker.update(
             id: model.showWorkspacePicker ? "workspace-picker" : nil,
             presentation: pickerPopover,
+            source: workspacePill,
             root: root,
             clear: { [weak self] in self?.model.showWorkspacePicker = false },
             screen: {
@@ -34,6 +36,7 @@ extension QuickSessionViewController {
         worktreePicker.update(
             id: model.showWorktreePicker && model.showsWorktreePicker ? "worktree-picker" : nil,
             presentation: pickerPopover,
+            source: worktreePill,
             root: root,
             clear: { [weak self] in self?.model.showWorktreePicker = false },
             screen: {
@@ -47,6 +50,7 @@ extension QuickSessionViewController {
         agentPicker.update(
             id: stacks && model.showAgentPicker ? "agent-picker" : nil,
             presentation: pickerPopover,
+            source: agentPill,
             root: root,
             clear: { [weak self] in self?.model.showAgentPicker = false },
             screen: {
@@ -58,6 +62,7 @@ extension QuickSessionViewController {
         thinkingPicker.update(
             id: stacks && showsThinkingPicker ? "thinking-picker" : nil,
             presentation: .popover.arrowDirections(.down).keepsPopoverInCompactWidth(),
+            source: thinkingPill,
             root: root,
             clear: { [weak self] in self?.showsThinkingPicker = false },
             screen: {

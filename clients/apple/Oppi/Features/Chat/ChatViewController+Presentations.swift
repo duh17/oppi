@@ -93,7 +93,8 @@ extension ChatViewController {
         )
         modals.modelPicker.update(
             id: model.showModelPicker ? AnyHashable("model-picker") : nil,
-            presentation: .sheet.detents([.medium(), .large()], selected: .large).inNavigation(),
+            presentation: .popoverOrSheet(selected: .large).inNavigation(),
+            source: model.modelPickerSource,
             root: root,
             clear: { [weak self] in self?.model.showModelPicker = false },
             screen: modelPickerScreen

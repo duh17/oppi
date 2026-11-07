@@ -230,7 +230,8 @@ final class GuidedControlComposerController: UIViewController {
         let model = model
         modelPicker.update(
             id: model.showModelPicker ? "model-picker" : nil,
-            presentation: .sheet.inNavigation(),
+            presentation: .popoverOrSheet(detents: [.large()]).inNavigation(),
+            source: model.modelPickerSource,
             root: root,
             clear: { [weak model] in model?.showModelPicker = false },
             screen: {
@@ -370,7 +371,10 @@ final class GuidedControlComposerController: UIViewController {
         stackedWorkspacePill.showsMenuAsPrimaryAction = true
         stackedModelPill.accessibilityIdentifier = "session.toolbar.model"
         stackedModelPill.accessibilityLabel = "Model"
-        stackedModelPill.addAction(UIAction { [weak self] _ in self?.model.showModelPicker = true }, for: .primaryActionTriggered)
+        stackedModelPill.addAction(UIAction { [weak self, weak stackedModelPill] _ in
+            guard let stackedModelPill else { return }
+            self?.model.openModelPicker(from: stackedModelPill)
+        }, for: .primaryActionTriggered)
         stackedThinkingPill.accessibilityIdentifier = "session.toolbar.thinking"
         stackedThinkingPill.accessibilityLabel = "Thinking level"
         stackedThinkingPill.addAction(UIAction { [weak self] _ in self?.presentStackedThinkingPicker() }, for: .primaryActionTriggered)

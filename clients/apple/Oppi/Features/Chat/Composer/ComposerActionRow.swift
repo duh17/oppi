@@ -21,8 +21,13 @@ struct ComposerAction: Identifiable {
     }
 
     final class Handler {
-        let run: () -> Void
+        /// Runs with the control that was tapped, for an action that opens a
+        /// popover pointing at it.
+        let run: (UIView) -> Void
         init(_ run: @escaping () -> Void) {
+            self.run = { _ in run() }
+        }
+        init(fromControl run: @escaping (UIView) -> Void) {
             self.run = run
         }
     }
@@ -98,7 +103,7 @@ extension ComposerAction {
         title: String,
         provider: String?,
         colors: ComposerThemeColors,
-        onTap: @escaping () -> Void
+        onTap: @escaping (UIView) -> Void
     ) -> ComposerAction {
         ComposerAction(
             id: "session.toolbar.model",
@@ -109,7 +114,7 @@ extension ComposerAction {
             accessibilityValue: title,
             showsChevron: true,
             chrome: .toolbar,
-            kind: .tap(.init(onTap))
+            kind: .tap(.init(fromControl: onTap))
         )
     }
 
@@ -268,7 +273,7 @@ extension ComposerActionRow {
         thinkingTint: UIColor,
         supportedThinkingLevels: [ThinkingLevel],
         colors: ComposerThemeColors,
-        onModelTap: @escaping () -> Void,
+        onModelTap: @escaping (UIView) -> Void,
         onThinkingSelect: @escaping (ThinkingLevel) -> Void,
         onSaveThinkingAsDefault: (() -> Void)?
     ) -> ComposerActionRow {

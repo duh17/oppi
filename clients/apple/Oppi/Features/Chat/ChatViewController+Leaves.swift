@@ -395,7 +395,7 @@ extension ChatViewController: ChatComposerSource {
                 in: chatState.cachedModels
             ),
             colors: colors,
-            onModelTap: { [weak self] in self?.model.showModelPicker = true },
+            onModelTap: { [weak self] in self?.model.openModelPicker(from: $0) },
             onThinkingSelect: { [weak self] level in self?.setThinking(level) },
             onSaveThinkingAsDefault: canPersistSessionDefaults ? { [weak self] in
                 self?.saveThinkingAsDefault()
@@ -445,7 +445,7 @@ extension ChatViewController: ChatComposerSource {
             onPrepareVoiceInput: { [weak self] in try await self?.prepareChatVoiceInput($0) },
             onLiveVoiceSelected: liveVoiceEntry,
             onSend: { [weak self] in self?.sendComposerAction(draftClearance: .afterSuccess) },
-            onModelTap: { [weak self] in self?.model.showModelPicker = true },
+            onModelTap: { [weak self] in self?.model.openModelPicker(from: $0) },
             onThinkingSelect: { [weak self] level in self?.setThinking(level) },
             onSaveThinkingAsDefault: canPersistSessionDefaults ? { [weak self] in
                 self?.saveThinkingAsDefault()

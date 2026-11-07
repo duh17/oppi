@@ -1845,7 +1845,7 @@ struct ComposerBarTests {
             thinkingTint: .systemBlue,
             supportedThinkingLevels: ThinkingLevel.allCases,
             colors: .placeholder,
-            onModelTap: {},
+            onModelTap: { _ in },
             onThinkingSelect: { _ in },
             onSaveThinkingAsDefault: nil
         )
@@ -1881,7 +1881,7 @@ struct ComposerBarTests {
             thinkingTint: .systemBlue,
             supportedThinkingLevels: ThinkingLevel.allCases,
             colors: .placeholder,
-            onModelTap: {},
+            onModelTap: { _ in },
             onThinkingSelect: { _ in },
             onSaveThinkingAsDefault: nil
         )
@@ -2320,7 +2320,7 @@ struct ComposerDictatedCommentRowTests {
             thinkingTint: .systemBlue,
             supportedThinkingLevels: [.off, .high],
             colors: .placeholder,
-            onModelTap: {},
+            onModelTap: { _ in },
             onThinkingSelect: { _ in },
             onSaveThinkingAsDefault: nil
         )

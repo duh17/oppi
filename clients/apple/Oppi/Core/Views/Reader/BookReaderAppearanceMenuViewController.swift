@@ -61,6 +61,7 @@ final class BookReaderAppearanceMenuViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        preferredContentSize = CGSize(width: 340, height: measuredHeight)
         setUpContent()
         applyPageColors()
         updateControls()
@@ -80,38 +81,21 @@ final class BookReaderAppearanceMenuViewController: UIViewController {
         justifySwitch.onTintColor = appearance.linkColor(in: palette)
     }
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        configurePresentation()
-    }
-
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateSheetHeightIfNeeded()
     }
 
-    /// A sheet that hugs its content on a phone and a popover at the control
-    /// that opened it on a wide screen.
-    private func configurePresentation() {
-        let width = view.bounds.width
-        if width > 0 {
-            measureHeight(for: width)
-        }
-        if AdaptiveWidth.isWide(traitCollection) {
-            modalPresentationStyle = .popover
-            preferredContentSize = CGSize(width: 340, height: measuredHeight)
-            if let popover = popoverPresentationController {
-                popover.permittedArrowDirections = .any
-            }
-            return
-        }
-        guard let sheet = sheetPresentationController else { return }
-        // The content's own height, and a taller stop for a size the sheet's
-        // measurement caps: a row below the fold with no way to reach it is a
-        // control the sheet does not have.
-        sheet.detents = [Self.detent(height: { [weak self] in self?.measuredHeight ?? 420 }), .large()]
-        sheet.prefersGrabberVisible = true
-        sheet.preferredCornerRadius = 22
+    /// A popover at the control that opened it, which UIKit adapts to a sheet
+    /// that hugs its content when compact. The sheet gets the content's own
+    /// height, and a taller stop for a size the sheet's measurement caps: a row
+    /// below the fold with no way to reach it is a control the sheet does not have.
+    var presentation: ModalPresentation {
+        .popoverOrSheet(detents: contentDetents, grabber: true, cornerRadius: 22)
+    }
+
+    private var contentDetents: [UISheetPresentationController.Detent] {
+        [Self.detent(height: { [weak self] in self?.measuredHeight ?? 420 }), .large()]
     }
 
     private static func detent(
@@ -127,9 +111,10 @@ final class BookReaderAppearanceMenuViewController: UIViewController {
         guard width > 0 else { return }
         let previous = measuredHeight
         measureHeight(for: width)
-        guard abs(measuredHeight - previous) > 1, let sheet = sheetPresentationController else { return }
+        guard abs(measuredHeight - previous) > 1,
+              let sheet = popoverPresentationController?.adaptiveSheetPresentationController else { return }
         sheet.animateChanges {
-            sheet.detents = [Self.detent(height: { [weak self] in self?.measuredHeight ?? 420 }), .large()]
+            sheet.detents = contentDetents
         }
     }
 

@@ -56,6 +56,13 @@ final class ChatScreenModel {
     /// the narrow width's pushed `.chatReader` route.
     var sidePanelReaderTarget: ChatReaderNavTarget?
     var showModelPicker = false
+    /// The control that opened the picker, which its popover points at.
+    @ObservationIgnored private(set) weak var modelPickerSource: UIView?
+
+    func openModelPicker(from source: UIView) {
+        modelPickerSource = source
+        showModelPicker = true
+    }
     var showComposer = false
     var showShareRedactionSheet = false
 

@@ -357,6 +357,47 @@ struct RouterUIKitTests {
         )
     }
 
+    /// A choice panel opened from a control: UIKit adapts it with the window, so
+    /// a call site never reads the size class.
+    @Test("popoverOrSheet is a popover at its control when wide and a sheet with its detents when compact")
+    func popoverOrSheetAdaptsWithTheWindow() async throws {
+        let owner = ModalSlotScreen()
+        let window = try showInWindow(RouterNavigationController(rootViewController: owner))
+        defer { hide(window) }
+        let control = UIButton(type: .system)
+        control.frame = CGRect(x: 40, y: 200, width: 120, height: 44)
+        owner.view.addSubview(control)
+
+        #expect(window.traitCollection.horizontalSizeClass == .compact)
+        owner.show("compact", .popoverOrSheet().inNavigation(), source: control)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            isSettled(owner.presentedViewController)
+        })
+        let sheet = try #require(owner.presentedViewController)
+        #expect(
+            sheet.view.frame.width > window.bounds.width - 40,
+            "the sheet spans the window (\(sheet.view.frame.width) of \(window.bounds.width))"
+        )
+        // The detents reached the sheet UIKit built: with no selected stop it opens at the smallest.
+        #expect(
+            sheet.view.frame.height < window.bounds.height * 0.75,
+            "the sheet opened at \(sheet.view.frame.height) of \(window.bounds.height), not its medium stop"
+        )
+        owner.show(nil)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { owner.presentedViewController == nil })
+
+        window.traitOverrides.horizontalSizeClass = .regular
+        owner.view.layoutIfNeeded()
+        owner.show("wide", .popoverOrSheet(detents: [.large()]).inNavigation(), source: control)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            isSettled(owner.presentedViewController)
+        })
+        let popover = try #require(owner.presentedViewController)
+        let popoverController = try #require(popover.popoverPresentationController)
+        #expect(popoverController.presentationStyle == .popover, "a wide window gets a popover")
+        #expect(popoverController.sourceView === control, "the popover points at the control that opened it")
+    }
+
     /// The keyboard spans the window. A field in the trailing column lifted
     /// the chat's composer beside it over the timeline; the screen's own
     /// field still moves it, and closing the column gives the keyboard back.
@@ -597,12 +638,14 @@ private final class ModalSlotScreen: UIViewController {
     func show(
         _ id: AnyHashable?,
         _ presentation: ModalPresentation = .sheet,
+        source: UIView? = nil,
         screen makeScreen: @escaping () -> UIViewController = { UIViewController() }
     ) {
         presentedID = id
         slot.update(
             id: id,
             presentation: presentation,
+            source: source,
             root: root,
             onDismiss: { [weak self] in self?.dismissals += 1 },
             clear: { [weak self] in

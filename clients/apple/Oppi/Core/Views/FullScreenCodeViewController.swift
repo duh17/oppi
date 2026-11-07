@@ -1134,8 +1134,7 @@ final class FullScreenCodeViewController: UIViewController {
 
         options.configurePresentation(
             barItem: viewingOptionsBarItem,
-            sourceButton: floatingViewingOptionsButton,
-            horizontalSizeClass: traitCollection.horizontalSizeClass
+            sourceButton: floatingViewingOptionsButton
         )
         present(options, animated: true)
     }

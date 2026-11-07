@@ -65,6 +65,13 @@ final class GuidedControlComposerModel {
     private(set) var isCreating = false
     var error: String?
     var showModelPicker = false
+    /// The control that opened the picker, which its popover points at.
+    @ObservationIgnored private(set) weak var modelPickerSource: UIView?
+
+    func openModelPicker(from source: UIView) {
+        modelPickerSource = source
+        showModelPicker = true
+    }
     /// The field has the keyboard (reported by the bar).
     private(set) var isInputFocused = false
     /// The screen holds the composer back (a lock, a write in flight): it

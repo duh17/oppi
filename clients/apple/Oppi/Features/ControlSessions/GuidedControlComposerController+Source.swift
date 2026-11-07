@@ -58,7 +58,7 @@ extension GuidedControlComposerController: ChatComposerSource {
             thinkingTint: thinkingTint,
             supportedThinkingLevels: model.supportedThinkingLevels,
             colors: colors,
-            onModelTap: { [weak self] in self?.model.showModelPicker = true },
+            onModelTap: { [weak self] in self?.model.openModelPicker(from: $0) },
             onThinkingSelect: { [weak self] in self?.model.selectThinkingLevel($0) },
             onSaveThinkingAsDefault: nil
         )

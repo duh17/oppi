@@ -99,6 +99,8 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // The popover's size when wide; a sheet ignores it.
+        preferredContentSize = CGSize(width: 380, height: 560)
         title = "Models"
         navigationItem.largeTitleDisplayMode = .never
         navigationItem.leftBarButtonItem = cancelItem

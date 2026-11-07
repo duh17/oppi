@@ -310,7 +310,10 @@ final class QuickSessionViewController: UIViewController {
         agentPill.addAction(UIAction { [weak self] _ in self?.model.showAgentPicker.toggle() }, for: .primaryActionTriggered)
         modelPill.accessibilityIdentifier = "session.toolbar.model"
         modelPill.accessibilityLabel = "Model"
-        modelPill.addAction(UIAction { [weak self] _ in self?.model.showModelPicker = true }, for: .primaryActionTriggered)
+        modelPill.addAction(UIAction { [weak self, weak modelPill] _ in
+            guard let modelPill else { return }
+            self?.model.openModelPicker(from: modelPill)
+        }, for: .primaryActionTriggered)
         thinkingPill.accessibilityIdentifier = "session.toolbar.thinking"
         thinkingPill.accessibilityLabel = "Thinking level"
         thinkingPill.addAction(UIAction { [weak self] _ in self?.showsThinkingPicker = true }, for: .primaryActionTriggered)
@@ -377,22 +380,9 @@ final class QuickSessionViewController: UIViewController {
         ])
     }
 
-    /// Popovers anchor to their pill: each pill is the view of a child
-    /// controller its presenter presents from.
+    /// Each popover points at its pill (`updatePresenters` passes it as the source).
     private func installPresenters() {
-        modelPicker.anchor = self
-        workspacePicker.anchor = anchor(for: workspacePill)
-        worktreePicker.anchor = anchor(for: worktreePill)
-        agentPicker.anchor = anchor(for: agentPill)
-        thinkingPicker.anchor = anchor(for: thinkingPill)
-    }
-
-    private func anchor(for pill: UIView) -> UIViewController {
-        let anchor = QuickSessionPillAnchor(pill: pill)
-        addChild(anchor)
-        anchor.loadViewIfNeeded()
-        anchor.didMove(toParent: self)
-        return anchor
+        for presenter in presenters { presenter.anchor = self }
     }
 
     // MARK: - Empty-space tap
@@ -452,25 +442,6 @@ private final class QuickSessionOverlayView: UIView {
     override func accessibilityPerformEscape() -> Bool {
         onEscape?()
         return true
-    }
-}
-
-/// A pill as the view of its own controller, so a router presenter anchors
-/// the pill's popover to it.
-@MainActor
-private final class QuickSessionPillAnchor: UIViewController {
-    private let pill: UIView
-
-    init(pill: UIView) {
-        self.pill = pill
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    override func loadView() {
-        view = pill
     }
 }
 

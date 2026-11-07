@@ -525,13 +525,7 @@ final class BookReaderBody: UIView {
             traits: traitCollection
         )
         let presenter = owner.presentedViewController ?? owner
-        // A wide page gets a popover at the control that opened it; a phone
-        // gets a sheet that hugs its content.
-        if AdaptiveWidth.isWide(presenter.traitCollection) {
-            menu.modalPresentationStyle = .popover
-            menu.popoverPresentationController?.sourceView = appearanceButton
-            menu.popoverPresentationController?.sourceRect = appearanceButton.bounds
-        }
+        menu.presentation.apply(to: menu, source: appearanceButton)
         presenter.present(menu, animated: true)
     }
 

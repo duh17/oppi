@@ -231,20 +231,21 @@ extension ComposerBarController {
         switch kind {
         case .tap, .picker:
             button.showsMenuAsPrimaryAction = false
-            button.addAction(UIAction { [weak self] _ in
-                self?.performAction(id: id)
+            button.addAction(UIAction { [weak self, weak button] _ in
+                guard let button else { return }
+                self?.performAction(id: id, control: button)
             }, for: .touchUpInside)
         case .menu:
             break
         }
     }
 
-    private func performAction(id: String) {
+    private func performAction(id: String, control: UIView) {
         let actions = (host?.content.actionRow.leading ?? []) + (host?.content.actionRow.trailing ?? [])
         guard let action = actions.first(where: { $0.id == id }) else { return }
         switch action.kind {
         case .tap(let handler):
-            handler.run()
+            handler.run(control)
         case .picker:
             presentActionPopover(id: id)
         case .menu:

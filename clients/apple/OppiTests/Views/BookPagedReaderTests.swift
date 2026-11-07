@@ -460,7 +460,9 @@ struct BookPagedReaderTests {
             fixture.view("fullScreen.book.appearance.justify", in: menu.view),
             "the sheet has no justification row"
         )
-        let sheet = try #require(menu.sheetPresentationController, "the sheet has no presentation")
+        // The menu is a popover that UIKit adapts to a sheet in this compact window.
+        let sheet = try #require(menu.popoverPresentationController, "the sheet has no presentation")
+            .adaptiveSheetPresentationController
         #expect(sheet.detents.count >= 2, "the sheet has only its content-sized stop")
         #expect(
             sheet.detents.contains { $0.identifier == UISheetPresentationController.Detent.Identifier.large },

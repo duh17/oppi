@@ -56,7 +56,7 @@ extension QuickSessionViewController: ChatComposerSource {
             thinkingTint: thinkingTint,
             supportedThinkingLevels: model.supportedThinkingLevels,
             colors: colors,
-            onModelTap: { [weak self] in self?.model.showModelPicker = true },
+            onModelTap: { [weak self] in self?.model.openModelPicker(from: $0) },
             onThinkingSelect: { [weak self] in self?.model.selectThinkingLevel($0) },
             onSaveThinkingAsDefault: nil
         )
@@ -144,7 +144,7 @@ extension QuickSessionViewController: ChatComposerSource {
             onPrepareVoiceInput: { [weak model] in model?.configureVoiceInputForSelectedServer($0) },
             onLiveVoiceSelected: model.liveVoiceEntry,
             onSend: { [weak model] in model?.handleSend() },
-            onModelTap: { [weak model] in model?.showModelPicker = true },
+            onModelTap: { [weak model] in model?.openModelPicker(from: $0) },
             onThinkingSelect: { [weak model] in model?.selectThinkingLevel($0) },
             onFileSuggestionQuery: { [weak model] in model?.updateFileSuggestions($0) },
             onTextChange: { [weak model] in model?.editText($0) },

@@ -550,8 +550,16 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(models.waitUntilExists(timeout: 5), "Model picker did not open")
         XCTAssertTrue(app.buttons["model.picker.row.openai/gpt-routes"].waitUntilExists(timeout: 5), "Model picker must list the chat's models")
         attachScreenshot("model-picker")
-        dragToBottom(models)
-        XCTAssertTrue(models.waitUntilGone(timeout: 5), "Swipe-down must close the model picker")
+        if usesSheets {
+            dragToBottom(models)
+            XCTAssertTrue(models.waitUntilGone(timeout: 5), "Swipe-down must close the model picker")
+        } else {
+            // A popover at the pill: narrower than half the window, with the chat still visible.
+            XCTAssertLessThan(models.frame.width, app.windows.firstMatch.frame.width / 2, "Regular width shows the picker as a popover")
+            XCTAssertTrue(app.buttons["chat.toolbar.outline"].exists, "The chat's bar stays visible beside the popover")
+            cancelButton.tap()
+            XCTAssertTrue(models.waitUntilGone(timeout: 5), "Cancel must close the popover")
+        }
         modelPill.tap()
         XCTAssertTrue(models.waitUntilExists(timeout: 5), "Model picker did not reopen")
         cancelButton.tap()
@@ -652,7 +660,8 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         app.buttons["expanded.composer.model"].tap()
         let models = app.navigationBars["Models"]
         XCTAssertTrue(models.waitUntilExists(timeout: 5), "Model picker did not open above the composer")
-        dragToBottom(models)
+        // A sheet closes with a swipe down; a popover (regular width) has Cancel.
+        if usesSheets { dragToBottom(models) } else { cancelButton.tap() }
         XCTAssertTrue(models.waitUntilGone(timeout: 5))
         hold()
         XCTAssertTrue(editor.exists, "Closing the picker must keep the composer")
@@ -1485,9 +1494,10 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// Compact width presents chat panels as sheets; regular width puts them
-    /// in the trailing column, Share included.
+    /// in the trailing column, Share included. The window's size class decides,
+    /// as the app does: a point width misreads the Duo's inner display.
     private var usesSheets: Bool {
-        app.windows.firstMatch.frame.width < 700
+        app.windows.firstMatch.horizontalSizeClass == .compact
     }
 
     /// The review sheets' close control (`FullScreenViewerNavigationChrome`).

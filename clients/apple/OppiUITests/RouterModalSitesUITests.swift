@@ -183,8 +183,13 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
 
         model.tap()
         XCTAssertTrue(models.waitUntilExists(timeout: 5), "Model picker did not reopen")
-        dragToBottom(models)
-        XCTAssertTrue(models.waitUntilGone(timeout: 5), "Swipe-down must close the model picker")
+        // A sheet closes with a swipe down; a popover (regular width) has Cancel.
+        if app.windows.firstMatch.horizontalSizeClass == .compact {
+            dragToBottom(models)
+        } else {
+            cancelButton.tap()
+        }
+        XCTAssertTrue(models.waitUntilGone(timeout: 5), "The picker must close")
         assertRunning()
 
         // Expand shows once the draft fills the inline budget.

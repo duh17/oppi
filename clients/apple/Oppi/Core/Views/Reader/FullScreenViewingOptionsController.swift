@@ -374,35 +374,27 @@ final class FullScreenViewingOptionsController: UIViewController {
         }
     }
 
-    /// A popover from a rail bar item, or from the floating button in regular
-    /// width; otherwise a sheet sized to the panel.
-    func configurePresentation(
-        barItem: UIBarButtonItem?,
-        sourceButton: UIView?,
-        horizontalSizeClass: UIUserInterfaceSizeClass
-    ) {
-        if let barItem {
-            modalPresentationStyle = .popover
-            popoverPresentationController?.barButtonItem = barItem
-        } else if AdaptiveWidth.isWide(horizontalSizeClass), let sourceButton {
-            modalPresentationStyle = .popover
-            popoverPresentationController?.sourceView = sourceButton
-            popoverPresentationController?.sourceRect = sourceButton.bounds
-            popoverPresentationController?.permittedArrowDirections = [.down, .right]
-        } else {
-            modalPresentationStyle = .pageSheet
-        }
-
-        if let sheet = sheetPresentationController {
-            let detentIdentifier = UISheetPresentationController.Detent.Identifier("viewing-options")
-            sheet.detents = [
+    /// A popover from a rail bar item or the floating button, which UIKit
+    /// adapts to a sheet sized to the panel when compact. With neither control
+    /// it is a sheet.
+    func configurePresentation(barItem: UIBarButtonItem?, sourceButton: UIView?) {
+        let detentIdentifier = UISheetPresentationController.Detent.Identifier("viewing-options")
+        var presentation = ModalPresentation.popoverOrSheet(
+            detents: [
                 .custom(identifier: detentIdentifier) { [weak self] context in
                     min(self?.preferredSheetHeight ?? 280, context.maximumDetentValue)
                 }
-            ]
-            sheet.selectedDetentIdentifier = detentIdentifier
-            sheet.prefersGrabberVisible = true
-            sheet.preferredCornerRadius = 24
+            ],
+            selected: detentIdentifier,
+            grabber: true,
+            cornerRadius: 24
+        )
+        // The floating button sits at the bottom trailing corner; a bar item keeps any direction.
+        if barItem == nil { presentation = presentation.arrowDirections([.down, .right]) }
+        if barItem == nil, sourceButton == nil { presentation.style = .pageSheet }
+        presentation.apply(to: self, source: sourceButton)
+        if let barItem {
+            popoverPresentationController?.barButtonItem = barItem
         }
     }
 

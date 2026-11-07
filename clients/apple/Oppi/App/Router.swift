@@ -23,7 +23,8 @@ struct ModalPresentation {
     /// `Router.push`.
     var wrapsInNavigation = false
     var permittedArrowDirections: UIPopoverArrowDirection = .any
-    /// UIKit turns a popover into a sheet in compact width, as SwiftUI does.
+    /// A popover becomes a page sheet in compact width, as SwiftUI does
+    /// (`PopoverAdaptsToSheet`; UIKit alone would cover the screen).
     /// `keepsPopoverInCompactWidth()` matches `.presentationCompactAdaptation(.popover)`.
     var adaptsPopoverToSheetInCompactWidth = true
 
@@ -35,6 +36,24 @@ struct ModalPresentation {
     /// SwiftUI `.popover`, anchored to the view that declares it, or to the
     /// `sourceView` a UIKit caller passes.
     static var popover: Self { Self(style: .popover) }
+    /// A popover at its control when wide, which UIKit adapts to a sheet with
+    /// these detents when compact, live on a fold or a resize. For a choice or
+    /// options panel opened from a control (HIG, Popovers). Pass the control as
+    /// the presenter's `source`; a call site never reads the size class.
+    static func popoverOrSheet(
+        detents: [UISheetPresentationController.Detent] = [.medium(), .large()],
+        selected: UISheetPresentationController.Detent.Identifier? = nil,
+        grabber: Bool = false,
+        cornerRadius: CGFloat? = nil
+    ) -> Self {
+        Self(
+            style: .popover,
+            detents: detents,
+            prefersGrabberVisible: grabber,
+            selectedDetent: selected,
+            sheetCornerRadius: cornerRadius
+        )
+    }
 
     /// Document and file viewers: covers the window when wide, a large page
     /// sheet with a grabber when compact.
@@ -75,6 +94,48 @@ struct ModalPresentation {
         var copy = self
         copy.adaptsPopoverToSheetInCompactWidth = false
         return copy
+    }
+
+    /// Sets `container` up for this presentation before it is presented: the
+    /// style, a popover's `source` (the view it points at, or the sheet it adapts
+    /// to), and the sheet's detents. `Router.present` and a presenter of its own
+    /// (the reader's menus) share it.
+    func apply(to container: UIViewController, source: UIView?) {
+        container.modalPresentationStyle = style
+        switch style {
+        case .popover:
+            guard let popover = container.popoverPresentationController else { return }
+            if let source {
+                popover.sourceView = source
+                popover.sourceRect = source.bounds
+            }
+            popover.permittedArrowDirections = permittedArrowDirections
+            if adaptsPopoverToSheetInCompactWidth {
+                popover.delegate = PopoverAdaptsToSheet.shared
+                if !detents.isEmpty {
+                    configure(popover.adaptiveSheetPresentationController)
+                }
+            } else {
+                popover.delegate = PopoverInCompactWidth.shared
+            }
+        case .formSheet, .pageSheet:
+            if let sheet = container.sheetPresentationController {
+                configure(sheet)
+            }
+        default:
+            break
+        }
+    }
+
+    private func configure(_ sheet: UISheetPresentationController) {
+        if !detents.isEmpty {
+            sheet.detents = detents
+        }
+        sheet.prefersGrabberVisible = prefersGrabberVisible
+        sheet.selectedDetentIdentifier = selectedDetent
+        if let sheetCornerRadius {
+            sheet.preferredCornerRadius = sheetCornerRadius
+        }
     }
 }
 
@@ -243,32 +304,7 @@ enum Router {
             preconditionFailure("Router.present needs a RouterModalContainer or a navigation presentation")
         }
 
-        container.modalPresentationStyle = presentation.style
-        switch presentation.style {
-        case .popover:
-            if let popover = container.popoverPresentationController {
-                let anchor = sourceView ?? presenter.view
-                popover.sourceView = anchor
-                popover.sourceRect = anchor?.bounds ?? .zero
-                popover.permittedArrowDirections = presentation.permittedArrowDirections
-                if !presentation.adaptsPopoverToSheetInCompactWidth {
-                    popover.delegate = PopoverInCompactWidth.shared
-                }
-            }
-        case .formSheet, .pageSheet:
-            if let sheet = container.sheetPresentationController {
-                if !presentation.detents.isEmpty {
-                    sheet.detents = presentation.detents
-                }
-                sheet.prefersGrabberVisible = presentation.prefersGrabberVisible
-                sheet.selectedDetentIdentifier = presentation.selectedDetent
-                if let cornerRadius = presentation.sheetCornerRadius {
-                    sheet.preferredCornerRadius = cornerRadius
-                }
-            }
-        default:
-            break
-        }
+        presentation.apply(to: container, source: sourceView ?? presenter.view)
         container.onDismissed = onDismiss
         if presentation.style == .overFullScreen || presentation.style == .fullScreen {
             // A window-covering modal: drop the presenter's keyboard. Over
@@ -399,6 +435,20 @@ enum Router {
             top = presented
         }
         return top
+    }
+}
+
+/// A popover in compact width becomes a page sheet: UIKit's own adaptation is
+/// a full-screen cover, so the sheet has to be asked for. Wide keeps the popover.
+@MainActor
+private final class PopoverAdaptsToSheet: NSObject, UIPopoverPresentationControllerDelegate {
+    static let shared = PopoverAdaptsToSheet()
+
+    func adaptivePresentationStyle(
+        for controller: UIPresentationController,
+        traitCollection: UITraitCollection
+    ) -> UIModalPresentationStyle {
+        AdaptiveWidth.isWide(traitCollection) ? .none : .pageSheet
     }
 }
 

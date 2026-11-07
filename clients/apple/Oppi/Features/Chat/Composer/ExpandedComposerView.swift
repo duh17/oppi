@@ -38,7 +38,7 @@ struct ExpandedComposerConfiguration {
     var onLiveVoiceSelected: (() -> Void)?
     var onSend: () -> Void
     var onCancel: (() -> Void)?
-    var onModelTap: () -> Void = {}
+    var onModelTap: (UIView) -> Void = { _ in }
     var onThinkingSelect: (ThinkingLevel) -> Void = { _ in }
     var onSaveThinkingAsDefault: (() -> Void)?
     var onFileSuggestionQuery: ((String?) -> Void)?
@@ -334,7 +334,10 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
         micButton.addAction(UIAction { [weak self] _ in self?.handleMicTap() }, for: .touchUpInside)
         micButton.accessibilityIdentifier = "expanded.voiceInput"
         micButton.menuProvider = { [weak self] in self?.voiceEntryMenu() }
-        modelButton.addAction(UIAction { [weak self] _ in self?.configuration.onModelTap() }, for: .touchUpInside)
+        modelButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            configuration.onModelTap(modelButton)
+        }, for: .touchUpInside)
         // Own ids: the chat's composer bar stays mounted under this one and keeps
         // `session.toolbar.model` / `.thinking`.
         modelButton.accessibilityIdentifier = "expanded.composer.model"

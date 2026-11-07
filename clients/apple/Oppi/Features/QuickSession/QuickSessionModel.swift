@@ -117,6 +117,13 @@ final class QuickSessionModel {
     // MARK: Presentation and launch
 
     var showModelPicker = false
+    /// The control that opened the picker, which its popover points at.
+    @ObservationIgnored private(set) weak var modelPickerSource: UIView?
+
+    func openModelPicker(from source: UIView) {
+        modelPickerSource = source
+        showModelPicker = true
+    }
     var showExpandedComposer = false
     var showWorkspacePicker = false
     var showWorktreePicker = false
