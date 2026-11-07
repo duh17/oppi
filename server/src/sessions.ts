@@ -1072,7 +1072,12 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     // A start in flight registers its runtime when it finishes and would then save `ready`
     // over this stop. Wait for it, then stop what it started: the stop wins.
     const starting = this.activationCoordinator.pendingStart(key);
-    if (starting) await starting.catch(() => undefined);
+    if (starting) {
+      // A dialog an extension opened at startup holds the start until it is answered: Stop
+      // dismisses it rather than wait for an answer that may never come.
+      this.startupUI.get(key)?.bridge.cancelDialogs();
+      await starting.catch(() => undefined);
+    }
     if (!this.isActive(sessionId)) {
       const session = this.storage.getSession(sessionId);
       const id = this.boundConversationId(sessionId);

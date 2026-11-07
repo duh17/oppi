@@ -648,8 +648,21 @@ export class SdkUiBridge {
   }
 
   dispose(): SdkUiBridgeDisposeResult {
-    const failures: SdkUiBridgeCleanupFailure[] = [];
+    const failures = this.cancelDialogs();
 
+    for (const key of [...this.activeWidgets.keys()]) {
+      const failure = this.disposeWidget(key);
+      if (failure) failures.push(failure);
+    }
+    this.clearPendingWidgetSnapshots();
+    this.widgetSnapshotEmittedAt.clear();
+
+    return { failures };
+  }
+
+  /** Dismiss every open dialog: each resolves with its default answer, as on a timeout. */
+  cancelDialogs(): SdkUiBridgeCleanupFailure[] {
+    const failures: SdkUiBridgeCleanupFailure[] = [];
     for (const [id, pending] of [...this.pendingResponses]) {
       try {
         pending.cancel();
@@ -667,15 +680,7 @@ export class SdkUiBridge {
       }
     }
     this.pendingResponses.clear();
-
-    for (const key of [...this.activeWidgets.keys()]) {
-      const failure = this.disposeWidget(key);
-      if (failure) failures.push(failure);
-    }
-    this.clearPendingWidgetSnapshots();
-    this.widgetSnapshotEmittedAt.clear();
-
-    return { failures };
+    return failures;
   }
 
   private disposeWidget(key: string): SdkUiBridgeCleanupFailure | undefined {

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SdkBackend } from "../src/sdk-backend.js";
+import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { Session, Workspace } from "../src/types.js";
@@ -59,6 +60,30 @@ describe("stop while a session is starting", () => {
 
     expect(manager.isActive(session.id)).toBe(false);
     expect(dispose).toHaveBeenCalled();
+    expect(storage.getSession(session.id)?.status).toBe("stopped");
+  });
+
+  it("dismisses a startup dialog instead of waiting for someone to answer it", async () => {
+    const { storage, workspace, session, manager } = makeFixture("stopped");
+    const { sdkBackend } = makeSdkBackendStub();
+    let answer: Promise<boolean> | undefined;
+    vi.spyOn(SdkBackend, "create").mockImplementation(async (config) => {
+      // An extension asks at session_start, before the runtime registers.
+      const bridge = new SdkUiBridge(config.onEvent, () => false);
+      config.onUIBridgeReady?.(bridge);
+      answer = bridge.createContext().confirm("Trust this folder?", "Asked at startup");
+      await answer;
+      config.onUIBridgeReady?.(undefined);
+      return sdkBackend;
+    });
+
+    const start = manager.startSession(session.id, workspace);
+    await vi.waitFor(() => expect(answer).toBeDefined());
+    await manager.stopSession(session.id);
+    await start;
+
+    expect(await answer).toBe(false);
+    expect(manager.isActive(session.id)).toBe(false);
     expect(storage.getSession(session.id)?.status).toBe("stopped");
   });
 
