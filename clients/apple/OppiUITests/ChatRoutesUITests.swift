@@ -1078,8 +1078,10 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(commit.waitUntilGone(timeout: 5), "Starting a session must close the column's commit")
         XCTAssertFalse(panel.exists, "Starting a session must close the Git panel")
         let backButtons = app.buttons.matching(identifier: "chat.toolbar.back")
-        // The push is still animating when its title first exists: the chat
-        // underneath keeps its Back until the transition ends.
+        // The push has ended by the time `tap()` returns, but the chat
+        // underneath keeps its Back in the accessibility tree for a moment
+        // after it (the outgoing bar items fade out); a chat inside the
+        // column would keep a second Back for good.
         XCTAssertTrue(
             waitFor(backButtons.count == 1, timeout: 5),
             "The new chat must be the only chat on screen, not one inside the column"
