@@ -498,6 +498,57 @@ describe("stopWorkspaceVm", () => {
     await expect(manager.stopWorkspaceVm("nonexistent")).resolves.toBeUndefined();
   });
 
+  it("closes a VM that is still booting when its workspace is stopped", async () => {
+    const vm = makeMockVm();
+    let finishBoot: () => void = () => {};
+    const factory: VmFactory = () =>
+      new Promise((resolve) => {
+        finishBoot = () => resolve(vm);
+      });
+    const manager = new GondolinManager(factory);
+
+    const booting = manager.ensureWorkspaceVm(makeWorkspace({ id: "w1" }), "/path");
+    const stopped = manager.stopWorkspaceVm("w1");
+    finishBoot();
+    await booting;
+    await stopped;
+
+    expect(vm.close).toHaveBeenCalledOnce();
+    expect(manager.isRunning("w1")).toBe(false);
+  });
+
+  it("stopAll closes a VM that is still booting", async () => {
+    const vm = makeMockVm();
+    let finishBoot: () => void = () => {};
+    const factory: VmFactory = () =>
+      new Promise((resolve) => {
+        finishBoot = () => resolve(vm);
+      });
+    const manager = new GondolinManager(factory);
+
+    const booting = manager.ensureWorkspaceVm(makeWorkspace({ id: "w1" }), "/path");
+    const stopped = manager.stopAll();
+    finishBoot();
+    await booting;
+    await stopped;
+
+    expect(vm.close).toHaveBeenCalledOnce();
+    expect(manager.isRunning("w1")).toBe(false);
+  });
+
+  it("stopping a workspace whose boot failed rejects only the booting caller", async () => {
+    const factory: VmFactory = async () => {
+      throw new Error("boot failed");
+    };
+    const manager = new GondolinManager(factory);
+
+    const booting = manager.ensureWorkspaceVm(makeWorkspace({ id: "w1" }), "/path");
+    const stopped = manager.stopWorkspaceVm("w1");
+
+    await expect(booting).rejects.toThrow("boot failed");
+    await expect(stopped).resolves.toBeUndefined();
+  });
+
   it("allows re-creating VM after stop", async () => {
     const { factory, calls } = makeFactory();
     const manager = new GondolinManager(factory);

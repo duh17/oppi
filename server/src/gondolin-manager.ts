@@ -429,13 +429,17 @@ export class GondolinManager {
     const inflightAfterStop = this.starting.get(id);
     if (inflightAfterStop) return inflightAfterStop;
 
-    const promise = this.startVm(workspace, hostCwd, secrets, extraEnv, guestWorkspacePath);
+    // The boot registers its VM itself, so a stop that waited on `starting` finds it in `vms`.
+    const promise = this.startVm(workspace, hostCwd, secrets, extraEnv, guestWorkspacePath).then(
+      (vm) => {
+        this.vms.set(id, { vm, fingerprint });
+        return vm;
+      },
+    );
     this.starting.set(id, promise);
 
     try {
-      const vm = await promise;
-      this.vms.set(id, { vm, fingerprint });
-      return vm;
+      return await promise;
     } finally {
       this.starting.delete(id);
     }
@@ -469,6 +473,9 @@ export class GondolinManager {
 
   async stopWorkspaceVm(workspaceId: string): Promise<void> {
     this.clearIdleTimer(workspaceId);
+    // A VM still booting is not in `vms` yet. Let the boot land, then close it below; returning
+    // here would leave it running with nothing to stop it. A failed boot has no VM to stop.
+    await this.starting.get(workspaceId)?.catch(() => undefined);
     const existing = this.vms.get(workspaceId);
     if (!existing) return;
 
@@ -486,8 +493,8 @@ export class GondolinManager {
   }
 
   async stopAll(): Promise<void> {
-    const ids = [...this.vms.keys()];
-    await Promise.allSettled(ids.map((id) => this.stopWorkspaceVm(id)));
+    const ids = new Set([...this.vms.keys(), ...this.starting.keys()]);
+    await Promise.allSettled([...ids].map((id) => this.stopWorkspaceVm(id)));
   }
 
   isRunning(workspaceId: string): boolean {
