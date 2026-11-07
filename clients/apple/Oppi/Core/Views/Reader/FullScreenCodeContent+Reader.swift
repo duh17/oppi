@@ -348,6 +348,7 @@ extension FullScreenCodeContent {
                 resourceAccess: resourceAccess,
                 sourceFilePath: filePath,
                 taskEditing: context.taskEditing,
+                centersReadingColumn: true,
                 lineAnchor: context.lineAnchor,
                 focusLineAnchor: context.focusLineAnchor,
                 readerPreferences: readerPreferences,
@@ -446,6 +447,7 @@ extension FullScreenCodeContent {
                 ),
                 sourceFilePath: filePath,
                 taskEditing: context.taskEditing,
+                centersReadingColumn: true,
                 readerPreferences: readerPreferences,
                 perfSurface: .fullScreenMarkdown
             )

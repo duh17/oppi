@@ -12,6 +12,10 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         return stack
     }()
     private var stackLeadingConstraint: NSLayoutConstraint?
+    private var stackTrailingConstraint: NSLayoutConstraint?
+    /// Each side's inset placing this block in the reading column; the cell
+    /// itself spans the full width so the margins still scroll the document.
+    fileprivate private(set) var readingInset: CGFloat = 0
 
     private lazy var segmentApplier = AssistantMarkdownSegmentApplier(
         stackView: stackView,
@@ -51,10 +55,12 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         contentView.addGestureRecognizer(doubleTapRecognizer)
         contentView.addSubview(stackView)
         let stackLeadingConstraint = stackView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor)
+        let stackTrailingConstraint = stackView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor)
         self.stackLeadingConstraint = stackLeadingConstraint
+        self.stackTrailingConstraint = stackTrailingConstraint
         NSLayoutConstraint.activate([
             stackLeadingConstraint,
-            stackView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            stackTrailingConstraint,
             stackView.topAnchor.constraint(equalTo: contentView.topAnchor),
             stackView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor),
         ])
@@ -143,13 +149,15 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         lineAnchorModeEnabled: Bool,
         textViewDelegate: any UITextViewDelegate,
         doubleTapActivation: (() -> Void)?,
-        taskControlHandler: (any ReaderTaskControlHandling)? = nil
+        taskControlHandler: (any ReaderTaskControlHandling)? = nil,
+        readingInset: CGFloat = 0
     ) {
         segmentApplier.taskControlHandler = taskControlHandler
-        // The source-line enclosure is painted by the reader's overlay. Keep
-        // the arranged content at the ledger's canonical width instead of
-        // consuming 28 points here after graphical artifacts were prepared.
-        stackLeadingConstraint?.constant = 0
+        // The source-line enclosure is painted by the reader's overlay; the
+        // only horizontal inset is the block's place in the reading column.
+        self.readingInset = readingInset
+        stackLeadingConstraint?.constant = readingInset
+        stackTrailingConstraint?.constant = -readingInset
         _ = lineAnchorModeEnabled
         self.textViewDelegate = textViewDelegate
         self.doubleTapActivation = doubleTapActivation
@@ -167,18 +175,19 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         preparesImagesForDisplay: Bool = true
     ) {
         // Source-line chrome overlays the cell; arranged content always uses
-        // the same canonical width used by the ledger and artifact renderers.
-        stackLeadingConstraint?.constant = 0
+        // the canonical width, less the reading-column inset `bindReaderChrome`
+        // set, for the ledger and artifact renderers alike.
         _ = lineAnchorModeEnabled
         self.textViewDelegate = textViewDelegate
         self.doubleTapActivation = doubleTapActivation
-        segmentApplier.preparationWidth = canonicalWidth
+        let arrangedWidth = canonicalWidth.map { max(1, $0 - 2 * readingInset) }
+        segmentApplier.preparationWidth = arrangedWidth
         segmentApplier.preparesImagesForDisplay = preparesImagesForDisplay
         segmentApplier.videoPlaybackVisible = preparesImagesForDisplay
-        if let canonicalWidth {
+        if let canonicalWidth, let arrangedWidth {
             bounds.size.width = canonicalWidth
             contentView.bounds.size.width = canonicalWidth
-            stackView.bounds.size.width = canonicalWidth
+            stackView.bounds.size.width = arrangedWidth
         }
         segmentApplier.apply(
             segments: [segment],
@@ -215,7 +224,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         // do not need (and must not force) a `layoutIfNeeded()` pass here — that
         // was the re-entrancy trigger behind the streaming stack overflow.
         let targetSize = CGSize(
-            width: width,
+            width: max(1, width - 2 * readingInset),
             height: UIView.layoutFittingCompressedSize.height
         )
         let size = stackView.systemLayoutSizeFitting(
@@ -237,7 +246,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
             contentView.bounds.size.width = targetWidth
         }
         let targetSize = CGSize(
-            width: targetWidth,
+            width: max(1, targetWidth - 2 * readingInset),
             height: UIView.layoutFittingCompressedSize.height
         )
         let size = stackView.systemLayoutSizeFitting(
@@ -348,6 +357,12 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var activeLayoutItemHeights: [CGFloat] = []
     private var heightLedger = MarkdownReaderHeightLedger()
     private var preparedCanonicalWidth: CGFloat?
+    /// Off outside the full-screen document reader: inline rows and the book
+    /// keep the full width. The column is read at layout preparation, from
+    /// the prose font; the insets it gives are kept per block until then.
+    private let centersReadingColumn: Bool
+    private var readingColumn: ReaderReadingColumn?
+    private var readingInsets: [MarkdownReaderSegmentID: CGFloat] = [:]
     private var needsDocumentLayoutPreparation = false
     private var pendingDocumentLayoutReason: MarkdownReaderLayoutReplacementReason = .document
     private var isConfiguringCell = false
@@ -487,6 +502,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         resourceAccess: MarkdownResourceAccess = .empty,
         sourceFilePath: String? = nil,
         taskEditing: ReaderTaskEditing? = nil,
+        centersReadingColumn: Bool = false,
         lineAnchor: SourceLineAnchor? = nil,
         focusLineAnchor: Bool = true,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.markdown.defaultPreferences,
@@ -510,6 +526,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.resourceAccess = resourceAccess
         self.sourceFilePath = sourceFilePath
         self.taskEditing = taskEditing
+        self.centersReadingColumn = centersReadingColumn
         self.lineAnchor = lineAnchor
         let initialText = content
         self.lineAnchorResolution = lineAnchor?.resolution(fileContent: initialText)
@@ -1077,7 +1094,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                   lineAnchorOverlaps(renderedSegmentLineRanges[indexPath.item]) else {
                 return nil
             }
-            return cell.convert(cell.bounds, to: lineAnchorHighlightView)
+            let inset = (cell as? FullScreenMarkdownSegmentCell)?.readingInset ?? 0
+            return cell.convert(cell.bounds.insetBy(dx: inset, dy: 0), to: lineAnchorHighlightView)
         }
     }
 
@@ -1197,7 +1215,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             lineAnchorModeEnabled: lineAnchor != nil,
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
-            taskControlHandler: taskEditing
+            taskControlHandler: taskEditing,
+            readingInset: readingInset(forItem: indexPath.item)
         )
         cell.appliedItemIndex = indexPath.item
         cell.appliedSegmentID = renderedSegmentIDs.indices.contains(indexPath.item)
@@ -1328,7 +1347,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         guard !views.isEmpty else { return }
         discardParkedVideoViews(parkedSegmentViews[id] ?? [])
         parkedSegmentViews[id] = views
-        let parkedWidth = preparedCanonicalWidth ?? canonicalContentWidth
+        let parkedWidth = (preparedCanonicalWidth ?? canonicalContentWidth) - 2 * cell.readingInset
         for view in views {
             (view as? NativeMarkdownVideoView)?.setPlaybackVisible(false)
             // An unconstrained `translatesAutoresizingMaskIntoConstraints=false`
@@ -1382,6 +1401,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         anchorOverride: ViewportAnchor? = nil,
         layoutReason: MarkdownReaderLayoutReplacementReason = .document
     ) {
+        readingInsets.removeAll()
         guard collectionView.bounds.width > 0 else {
             needsDocumentLayoutPreparation = true
             pendingDocumentLayoutReason = layoutReason
@@ -1400,6 +1420,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         needsDocumentLayoutPreparation = false
         pendingDocumentLayoutReason = .document
         preparedCanonicalWidth = canonicalWidth
+        readingColumn = centersReadingColumn
+            ? ReaderReadingColumn(proseFontSize: AppFont.messageBody.pointSize * readerPreferences.textScale)
+            : nil
         heightFlushGeneration &+= 1
         pendingHeightFlush = false
         scheduledRenderAheadFirstVisibleItem = nil
@@ -1421,8 +1444,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         let heightEstimateStart = MarkdownStreamingPerf.timestampNs()
         #endif
         applyViewportTextTrim(width: width, canonicalWidth: canonicalWidth)
+        let proseWidth = width - 2 * (readingColumn?.proseInset(in: canonicalWidth) ?? 0)
         let estimates = renderedSegments.map {
-            Self.estimatedHeight(for: $0, containerWidth: width)
+            Self.estimatedHeight(for: $0, containerWidth: proseWidth)
         }
         heightLedger.applyDocument(
             ids: renderedSegmentIDs,
@@ -1576,7 +1600,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         cell.bindReaderChrome(
             lineAnchorModeEnabled: lineAnchor != nil,
             textViewDelegate: self,
-            doubleTapActivation: viewportDoubleTapActivation
+            doubleTapActivation: viewportDoubleTapActivation,
+            readingInset: readingInset(forItem: item)
         )
         cell.apply(
             segment: segment,
@@ -1771,7 +1796,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             lineAnchorModeEnabled: lineAnchor != nil,
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
-            taskControlHandler: taskEditing
+            taskControlHandler: taskEditing,
+            readingInset: readingInset(forItem: item)
         )
         cell.appliedItemIndex = item
         cell.appliedSegmentID = id
@@ -1916,6 +1942,18 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
     private var canonicalContentWidth: CGFloat {
         max(1, collectionView.bounds.width - 24)
+    }
+
+    /// Each side's inset placing `item` in the reading column; a table's natural
+    /// width costs a measure of every cell, so it is kept until the next layout.
+    private func readingInset(forItem item: Int) -> CGFloat {
+        guard let readingColumn, let width = preparedCanonicalWidth,
+              renderedSegments.indices.contains(item), renderedSegmentIDs.indices.contains(item) else { return 0 }
+        let id = renderedSegmentIDs[item]
+        if let inset = readingInsets[id] { return inset }
+        let inset = readingColumn.inset(for: renderedSegments[item], in: width)
+        readingInsets[id] = inset
+        return inset
     }
 
     private func contentCellWidth(containerWidth: CGFloat? = nil) -> CGFloat {
@@ -2724,7 +2762,8 @@ extension NativeFullScreenMarkdownBody {
         measuringCell.bindReaderChrome(
             lineAnchorModeEnabled: lineAnchor != nil,
             textViewDelegate: self,
-            doubleTapActivation: viewportDoubleTapActivation
+            doubleTapActivation: viewportDoubleTapActivation,
+            readingInset: readingInset(forItem: item)
         )
         measuringCell.apply(
             segment: renderedSegments[item],

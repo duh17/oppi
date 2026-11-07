@@ -88,6 +88,7 @@ Options apply to one content family and are stored on this device only: markdown
 
 - **Wrap Text** applies to code, source text, and terminal output. Off keeps horizontal scrolling so indentation, columns, and diff structure stay intact. Plain source text defaults to wrapped; code and terminal output default to unwrapped. Diffs always stay unwrapped so line numbers and highlights align.
 - **Spacing** (Compact, Standard, Relaxed) changes the gap between Markdown blocks and line spacing. Standard adds no extra line spacing; Relaxed adds some. It never changes the source or an export.
+- **Reading width.** On a wide window, such as an iPad in landscape, rendered Markdown and Org files read in a centered column about 75 characters wide, which grows with Text Size. Tables and code blocks widen past it, up to the full window, before they scroll sideways. A narrower window uses its full width.
 
 ### Source and rendered modes
 

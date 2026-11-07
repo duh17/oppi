@@ -162,7 +162,7 @@ final class NativeCodeBlockView: UIView {
     #endif
 
     /// Horizontal padding around the text view inside `codeScrollView`.
-    private static let codeHorizontalPadding: CGFloat = 24
+    static let codeHorizontalPadding: CGFloat = 24
 
     /// Explicit width constraint for the label. In the default unwrapped mode it
     /// is the measured code width so the scroll view can pan horizontally. In

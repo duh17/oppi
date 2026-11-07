@@ -56,10 +56,13 @@ enum FullScreenMarkdownViewportIntent: Equatable {
 ///
 /// Parsing and segment reuse stay owned by `AssistantMarkdownContentView`; this
 /// type owns only the outer viewport and the one-way handoff to the immutable,
-/// render-ahead reader when the stream completes.
+/// render-ahead reader when the stream completes. Live text reads in the
+/// finished reader's prose column (`ReaderReadingColumn`), so the handoff does
+/// not move it; wide blocks widen only once the reader takes over.
 final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private let scrollView = UIScrollView()
     private let markdownView = AssistantMarkdownContentView()
+    private var markdownInsetConstraints: (leading: NSLayoutConstraint, trailing: NSLayoutConstraint, width: NSLayoutConstraint)?
 
     private let themeID: ThemeID
     private let palette: ThemePalette
@@ -144,6 +147,13 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     }
 
     override func layoutSubviews() {
+        if let markdownInsetConstraints {
+            let column = ReaderReadingColumn(proseFontSize: AppFont.messageBody.pointSize * readerPreferences.textScale)
+            let inset = 12 + column.proseInset(in: max(0, bounds.width - 24))
+            markdownInsetConstraints.leading.constant = inset
+            markdownInsetConstraints.trailing.constant = -inset
+            markdownInsetConstraints.width.constant = -2 * inset
+        }
         super.layoutSubviews()
         guard immutableBody == nil else { return }
         viewportOwner.scheduleFollowTail()
@@ -166,17 +176,23 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
 
         addSubview(scrollView)
         scrollView.addSubview(markdownView)
+        let insets = (
+            leading: markdownView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 12),
+            trailing: markdownView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -12),
+            width: markdownView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -24)
+        )
+        markdownInsetConstraints = insets
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            markdownView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 12),
-            markdownView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -12),
+            insets.leading,
+            insets.trailing,
             markdownView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 10),
             markdownView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -10),
-            markdownView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -24),
+            insets.width,
         ])
     }
 
@@ -282,6 +298,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             textSelectionEnabled: textSelectionEnabled,
             resourceAccess: resourceAccess,
             sourceFilePath: sourceFilePath,
+            centersReadingColumn: true,
             lineAnchor: lineAnchor,
             focusLineAnchor: false,
             readerPreferences: readerPreferences,
