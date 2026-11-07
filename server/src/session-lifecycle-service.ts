@@ -799,10 +799,14 @@ export class SessionLifecycleService {
     // a session that is not running yet, and withdraws messages held for after it.
     this.deps.storage.clearRestartResume(session.id);
     this.deps.storage.clearHeldInputs(session.id);
-    const hydratedSession = this.deps.ensureSessionContextWindow(session);
     let storedStopOnly = false;
     const markStoredSessionStopped = (reason?: string): void => {
       storedStopOnly = true;
+      // The stored row, not the caller's copy: a start this stop waited for saved its Pi session
+      // file or durable binding there.
+      const hydratedSession = this.deps.ensureSessionContextWindow(
+        this.deps.storage.getSession(session.id) ?? session,
+      );
       const stoppedAt = Date.now();
       hydratedSession.status = "stopped";
       hydratedSession.currentTurnStartedAt = undefined;

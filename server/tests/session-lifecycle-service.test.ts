@@ -1963,13 +1963,23 @@ describe("SessionLifecycleService", () => {
         saveSession.mock.invocationCallOrder[0]!,
       );
     });
-    it("hands a not-connected classic session to the runtime so a start in flight is stopped", async () => {
-      const { service, stopSession, saveSession } = makeService();
-      await service.stopSession(makeSession({ status: "starting" }));
-      expect(stopSession).toHaveBeenCalledWith("sess-1");
-      expect(stopSession.mock.invocationCallOrder[0]).toBeLessThan(
-        saveSession.mock.invocationCallOrder[0]!,
-      );
+    it("keeps what a start in flight saved when Stop waits for it", async () => {
+      const starting = makeSession({ status: "starting" });
+      const { service, stopSession, saveSession, getPersistedSession } = makeService({
+        storedSession: starting,
+      });
+      // The runtime lets the start finish, then ends it: the row now names its Pi session file.
+      stopSession.mockImplementationOnce(async () => {
+        saveSession({ ...starting, status: "stopped", piSessionFile: "/tmp/pi-session.jsonl" });
+      });
+
+      const result = await service.stopSession(starting);
+
+      expect(getPersistedSession("sess-1")).toMatchObject({
+        status: "stopped",
+        piSessionFile: "/tmp/pi-session.jsonl",
+      });
+      expect(result.session?.piSessionFile).toBe("/tmp/pi-session.jsonl");
     });
     it("does not persist a stopped durable session when offline abort fails", async () => {
       const { service, saveSession } = makeService({
