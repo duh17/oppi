@@ -461,10 +461,21 @@ extension ServerConnection {
     /// catch-up, and reconnect. Mixing both paths causes double-load races
     /// and visual flashes.
     func reconnectIfNeeded() async {
-        guard !foregroundRecoveryInFlight else { return }
+        // A foreground during a running recovery may follow a background that closed the
+        // streams after this recovery reopened them: run it once more, never drop it.
+        guard !foregroundRecoveryInFlight else {
+            foregroundRecoveryRequestedAgain = true
+            return
+        }
         foregroundRecoveryInFlight = true
         defer { foregroundRecoveryInFlight = false }
+        repeat {
+            foregroundRecoveryRequestedAgain = false
+            await recoverAtForeground()
+        } while foregroundRecoveryRequestedAgain
+    }
 
+    private func recoverAtForeground() async {
         await route.retryLANAtForegroundBoundary()
         if apiClient == nil {
             await route.reevaluateNetworkEndpointAtBoundary()

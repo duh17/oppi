@@ -2099,6 +2099,8 @@ final class ServerConnection {
 
     /// Reentrancy guard — prevents concurrent `reconnectIfNeeded` calls.
     var foregroundRecoveryInFlight = false
+    /// A foreground arrived while a recovery ran; that recovery runs once more.
+    var foregroundRecoveryRequestedAgain = false
 
     /// Skip expensive list refreshes when data was synced very recently.
     static let listRefreshMinimumInterval: TimeInterval = 120

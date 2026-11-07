@@ -19,6 +19,34 @@ struct ServerConnectionForegroundRecoveryTests {
         #expect(!conn.foregroundRecoveryInFlight, "Flag should be reset after completion")
     }
 
+    /// Background, then foreground again, while the first recovery still awaits the server:
+    /// the second foreground must reopen what backgrounding closed, not be dropped.
+    @Test func foregroundDuringARunningRecoveryReopensTheClosedAppEventStream() async {
+        let conn = await makeForegroundRecoveryConnection()
+        conn.setSplitStreamCapabilitiesForTesting(appEventStream: true)
+        var opens = 0
+        conn._startAppEventStreamForTesting = { _ in opens += 1 }
+        let firstRecoveryHold = AsyncGate()
+        var pairingReads = 0
+        conn._listPairingApprovalsForTesting = {
+            pairingReads += 1
+            if pairingReads == 1 { await firstRecoveryHold.wait() }
+            return []
+        }
+
+        let firstForeground = Task { @MainActor in await conn.reconnectIfNeeded() }
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { pairingReads == 1 })
+        #expect(opens == 1)
+
+        conn.prepareForBackground()
+        await conn.reconnectIfNeeded()
+        await firstRecoveryHold.open()
+        await firstForeground.value
+
+        #expect(opens == 2)
+        #expect(!conn.foregroundRecoveryInFlight)
+    }
+
     @Test func configuredOfflineConnectionRetriesAtForegroundAndNetworkBoundaries() async throws {
         let conn = ServerConnection()
         let credentials = ServerCredentials(
