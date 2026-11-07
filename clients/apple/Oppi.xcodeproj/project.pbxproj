@@ -1813,6 +1813,7 @@
 		B0E9D8EF94B2A3151F049583 /* MacWorkspaceClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC07DC076BD473A1B1276EAA /* MacWorkspaceClientTests.swift */; };
 		B0F0E849CD8A66DDFF667F1F /* GitLogo-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 66BF9B680D6DB91C9A1A5912 /* GitLogo-LICENSE.txt */; };
 		B1611852AA87E8F15AF8AF56 /* MacSessionOutlineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DF57AC7AE0F03D772CFEBA4 /* MacSessionOutlineTests.swift */; };
+		B19BCA1BAD6503A8778653AD /* OrgContentSafetyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8874233E148759CD66C7BDC /* OrgContentSafetyTests.swift */; };
 		B1AFB2A0E7881DED560F9AEE /* EPUBArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 209F1B3BCB3E06B69210F46F /* EPUBArchive.swift */; };
 		B1BFA75FA7A4265F667EAB3F /* SSHTerminalRegistryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F17F8D3ADCA2CFAE588462 /* SSHTerminalRegistryTests.swift */; };
 		B1E919704A6909DD99CB8320 /* DeviceCredential.swift in Sources */ = {isa = PBXBuildFile; fileRef = 979FDD56F528B3731944F74D /* DeviceCredential.swift */; };
@@ -4435,6 +4436,7 @@
 		C85F1AFB4916830FE3F5B125 /* SessionInboxComposeChromeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionInboxComposeChromeTests.swift; sourceTree = "<group>"; };
 		C86496CDC944DE7D752BC6B8 /* ServerSkillsViewControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSkillsViewControllerTests.swift; sourceTree = "<group>"; };
 		C88513D18E6AFDE4E730CA88 /* MacPendingAttachmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacPendingAttachmentTests.swift; sourceTree = "<group>"; };
+		C8874233E148759CD66C7BDC /* OrgContentSafetyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrgContentSafetyTests.swift; sourceTree = "<group>"; };
 		C88776834C95C072EDA0CC00 /* org-manual.org */ = {isa = PBXFileReference; path = "org-manual.org"; sourceTree = "<group>"; };
 		C8F49AEE08BEBF3711D6B5E1 /* RouterModalSitesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouterModalSitesUITests.swift; sourceTree = "<group>"; };
 		C8F55D5B231319462EC8F1B8 /* BiometricServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricServiceTests.swift; sourceTree = "<group>"; };
@@ -6071,6 +6073,7 @@
 		52DD2DD29551A2C7C578F5CD /* OrgMode */ = {
 			isa = PBXGroup;
 			children = (
+				C8874233E148759CD66C7BDC /* OrgContentSafetyTests.swift */,
 				8D24E62FABFD1C4DB4481E41 /* OrgNotebookCompatibilityTests.swift */,
 				6CB7B52477FD11824DF3C6C2 /* OrgNotebookFixture.swift */,
 				0A37588169C0D20F543BB99D /* OrgParserConformanceTests.swift */,
@@ -10148,6 +10151,7 @@
 				461FC304A1FA69FFC2A56553 /* OppiTestExperimentsAtLoad.m in Sources */,
 				F46D5ABDD39D9E79CABC37FA /* OrbGeometryTests.swift in Sources */,
 				3CD454891E264E19A49983E5 /* OrbMetalTests.swift in Sources */,
+				B19BCA1BAD6503A8778653AD /* OrgContentSafetyTests.swift in Sources */,
 				64F39723F37860A3AB96FC4B /* OrgNotebookCompatibilityTests.swift in Sources */,
 				2B2772387127EA455975AF8A /* OrgNotebookFixture.swift in Sources */,
 				FCDB7801564DB1CC260CFFFB /* OrgParserConformanceTests.swift in Sources */,

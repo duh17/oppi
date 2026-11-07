@@ -43,17 +43,30 @@ struct OrgParser: DocumentParser, Sendable {
         parseLocated(source).map(\.block)
     }
 
+    /// `\r\n` becomes `\n` before anything splits the source into lines, the
+    /// same normalization `TaskSourceEdit`'s own line splitting already does
+    /// per line (so line numbers the two agree on stay aligned). Left as is, a
+    /// `\r` stuck to the end of every split line reaches a text view as its
+    /// own paragraph break, breaking the document into far more visual lines
+    /// than it has blocks. The common case has no `\r` at all, so this skips
+    /// the allocation.
+    @inline(__always)
+    private static func normalizedLineEndings(_ source: String) -> String {
+        guard source.utf8.contains(0x0D) else { return source }
+        return source.replacingOccurrences(of: "\r\n", with: "\n")
+    }
+
     /// The top-level blocks with the 1-based source line each starts on, for
     /// readers that edit the lines a block came from.
     nonisolated func parseLocated(_ source: String) -> [LocatedOrgBlock] {
-        let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+        let lines = Self.normalizedLineEndings(source).split(separator: "\n", omittingEmptySubsequences: false)
         return parseBlocks(lines: lines, todoKeywords: scanTodoKeywords(lines))
     }
 
     /// The keywords `parse` classifies headings with: the file's `#+TODO:`
     /// declarations, or the defaults.
     nonisolated func todoKeywords(in source: String) -> OrgTodoKeywords {
-        scanTodoKeywords(source.split(separator: "\n", omittingEmptySubsequences: false))
+        scanTodoKeywords(Self.normalizedLineEndings(source).split(separator: "\n", omittingEmptySubsequences: false))
     }
 
     /// Org applies `#+TODO:` to the whole file wherever the line sits, so the
@@ -183,7 +196,7 @@ struct OrgParser: DocumentParser, Sendable {
 
             case ":":
                 let trimmed = Self.stripped(line)
-                if isDrawerStart(trimmed[...]) {
+                if isDrawerStart(trimmed[...]), drawerHasEnd(lines: lines, startCursor: cursor) {
                     let (block, newCursor) = parseDrawer(lines: lines, startCursor: cursor)
                     add(block)
                     cursor = newCursor
@@ -215,7 +228,11 @@ struct OrgParser: DocumentParser, Sendable {
     // MARK: - Heading
 
     /// Parse a heading line: `* TODO [#A] Title :tag1:tag2:`
+    ///
+    /// A headline starts in column 0: `  * item` is indented text (often a
+    /// nested list item), never a heading, whatever follows the star.
     private func parseHeading(_ line: Substring, todoKeywords: OrgTodoKeywords) -> OrgBlock? {
+        guard line.first == "*" else { return nil }
         // Trim only leading whitespace — trailing space matters for `* ` detection
         let leadTrimmed = String(line.drop(while: { $0 == " " || $0 == "\t" }))
         // Must start with stars followed by a space
@@ -507,16 +524,20 @@ struct OrgParser: DocumentParser, Sendable {
         while cursor < lines.count {
             let line = lines[cursor]
             if line.allSatisfy(\.isWhitespace) { break }
-            if isStructuralLine(line) { break }
+            if isStructuralLine(line, lines: lines, cursor: cursor) { break }
             cursor += 1
         }
 
-        // Single-line fast path: skip join allocation
+        // Single-line fast path: skip join allocation. Each line is stripped of
+        // its own leading indentation first: `org-adapt-indentation` aligns
+        // body text under a heading with spaces that carry no meaning here, and
+        // left in place, 4 or more of them would read as a Markdown indented
+        // code block once this paragraph is serialized.
         let text: String
         if cursor - firstLine == 1 {
-            text = String(lines[firstLine])
+            text = String(Self.stripped(lines[firstLine]))
         } else {
-            text = lines[firstLine..<cursor].joined(separator: " ")
+            text = lines[firstLine..<cursor].map { String(Self.stripped($0)) }.joined(separator: " ")
         }
         let inlines = parseInlines(text)
         return (.paragraph(inlines), cursor)
@@ -525,7 +546,9 @@ struct OrgParser: DocumentParser, Sendable {
     /// Check if a line starts a new structural element.
     /// Uses first non-whitespace byte (UTF-8) for fast classification — avoids
     /// trimmingCharacters allocation for the vast majority of paragraph lines.
-    private func isStructuralLine(_ line: Substring) -> Bool {
+    /// `lines`/`cursor` let a `:NAME:` line check for its own `:END:` before it
+    /// is allowed to end the paragraph as a drawer would.
+    private func isStructuralLine(_ line: Substring, lines: [Substring], cursor: Int) -> Bool {
         // Fast scan for first non-whitespace byte
         var firstByte: UInt8 = 0
         for b in line.utf8 {
@@ -542,6 +565,9 @@ struct OrgParser: DocumentParser, Sendable {
 
         switch firstByte {
         case 0x2A: // *
+            // A heading starts in column 0 — an indented star line never ends
+            // a paragraph as a heading would.
+            guard line.first == "*" else { return false }
             let trimmed = Self.stripped(line)
             guard let firstNonStar = trimmed.firstIndex(where: { $0 != "*" }) else { return false }
             return firstNonStar > trimmed.startIndex
@@ -557,7 +583,7 @@ struct OrgParser: DocumentParser, Sendable {
         case 0x7C: // |
             return true
         case 0x3A: // :
-            return isDrawerStart(Self.stripped(line))
+            return isDrawerStart(Self.stripped(line)) && drawerHasEnd(lines: lines, startCursor: cursor)
         case 0x30...0x39: // 0-9
             return isListItemStart(line)
         default:
@@ -640,7 +666,20 @@ struct OrgParser: DocumentParser, Sendable {
         return name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" }
     }
 
-    /// Parse a drawer from `:NAME:` to `:END:`.
+    /// Whether some later line is `:END:`: an unterminated drawer is not a
+    /// drawer at all, as Org treats it, so the rest of the file is never
+    /// swallowed looking for a close that never comes.
+    private func drawerHasEnd(lines: [Substring], startCursor: Int) -> Bool {
+        var cursor = startCursor + 1
+        while cursor < lines.count {
+            if Self.stripped(lines[cursor]).uppercased() == ":END:" { return true }
+            cursor += 1
+        }
+        return false
+    }
+
+    /// Parse a drawer from `:NAME:` to `:END:`. Callers check `drawerHasEnd`
+    /// first.
     private func parseDrawer(lines: [Substring], startCursor: Int) -> (OrgBlock, Int) {
         let headerTrimmed = Self.stripped(lines[startCursor])
         let name = String(headerTrimmed.dropFirst().dropLast())

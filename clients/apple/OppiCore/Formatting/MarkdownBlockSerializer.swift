@@ -81,7 +81,7 @@ enum MarkdownBlockSerializer {
     private static func serializeInline(_ inline: MarkdownInline) -> String {
         switch inline {
         case .text(let string):
-            return string
+            return escapeText(string)
         case .emphasis(let children):
             return "*\(serializeInlines(children))*"
         case .strong(let children):
@@ -133,5 +133,55 @@ enum MarkdownBlockSerializer {
         case .strikethrough(let children):
             return "~~\(serializeInlines(children))~~"
         }
+    }
+
+    /// Escapes the characters CommonMark would otherwise read as syntax in a
+    /// plain text run: a backslash (so `\\` and `\(...\)` keep their
+    /// backslashes instead of cmark eating them as escapes), `<` and `>` (so
+    /// a literal `<tag>` and a stray `>` at the start of a line stay text
+    /// instead of becoming raw HTML or a block quote), `*` (so a line Org's
+    /// own parser decided was not a heading, such as an indented `  * item`,
+    /// does not turn back into a Markdown bullet once serialized — Org
+    /// already extracted every real `*bold*` span into its own node, so a
+    /// literal `*` left in text is one Org itself read as plain), and `]`
+    /// immediately before `(` (so `[x](y)` typed as prose does not become a
+    /// link: escaping the closing bracket alone is enough to keep the `[`
+    /// from ever finding a match, and, unlike escaping `[` itself, never
+    /// writes the literal two bytes `\[` — the fast-path guard that skips
+    /// `CMarkFastParser`'s math-protection scan for an ordinary document
+    /// checks the whole source for exactly that sequence, so writing it
+    /// anywhere turns every line of even an unrelated large file through that
+    /// scan). A lone `[` or `]` is left alone: on its own, without a `(`
+    /// right after, CommonMark never reads it as a link either. Backticks are
+    /// left alone too: Org has no code-span syntax of its own, and this is
+    /// the one Markdown feature Org prose gets "for free" that is worth
+    /// keeping.
+    private static func escapeText(_ text: String) -> String {
+        guard text.utf8.contains(where: { $0 == 0x5C || $0 == 0x3C || $0 == 0x3E || $0 == 0x2A })
+            || text.contains("](") else {
+            return text
+        }
+        var escaped = ""
+        escaped.reserveCapacity(text.count + 4)
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            switch character {
+            case "\\", "<", ">", "*":
+                escaped.append("\\")
+                escaped.append(character)
+            case "]":
+                let next = text.index(after: index)
+                if next < text.endIndex, text[next] == "(" {
+                    escaped.append("\\]")
+                } else {
+                    escaped.append(character)
+                }
+            default:
+                escaped.append(character)
+            }
+            index = text.index(after: index)
+        }
+        return escaped
     }
 }
