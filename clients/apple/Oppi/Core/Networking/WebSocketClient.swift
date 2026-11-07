@@ -504,15 +504,26 @@ final class WebSocketClient {
     /// discovering the dead connection via ping timeout (1006). Stops the ping
     /// timer since no pongs can be sent while suspended. Keeps the stream
     /// continuation so `reconnectIfNeeded()` can reopen on foreground.
+    ///
+    /// Leaves `status == .disconnected` with the continuation kept, the state
+    /// `cancelReconnectBackoff()` leaves: `connectStream()` then reconnects on
+    /// foreground instead of trusting a `.connected` that describes a closed
+    /// socket. The socket is dropped here so its read failure cannot start a
+    /// reconnect while the app is backgrounded.
     func prepareForBackground() {
         guard let ws = webSocket, status == .connected else { return }
         wsLogInfo("Preparing for background — sending goingAway close")
         healthReportTask?.cancel()
         healthReportTask = nil
+        receiveTask?.cancel()
+        receiveTask = nil
         pingTask?.cancel()
         pingTask = nil
         authRenewer?.stop()
+        webSocket = nil
         ws.cancel(.goingAway, nil)
+        status = .disconnected
+        resolveConnectionWaiters()
     }
 
     /// Disconnect and clean up.

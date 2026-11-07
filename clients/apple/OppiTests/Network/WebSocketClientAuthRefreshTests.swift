@@ -1432,3 +1432,47 @@ struct DictationDeviceAuthTests {
         await consumer.value
     }
 }
+
+@Suite("WebSocketClient background", .serialized)
+@MainActor
+struct WebSocketClientBackgroundTests {
+    @Test func backgroundCloseLeavesDisconnectedAndForegroundConnectOpensAgain() async throws {
+        let factory = ScriptedFocusedWebSocketFactory()
+        let client = WebSocketClient(
+            credentials: makeTestCredentials(token: "at_current"),
+            webSocketFactory: { request in factory.makeTransport(for: request) }
+        )
+        client.setStreamURL(URL(string: "ws://127.0.0.1:7749/session/stream")!)
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 1
+        })
+        let socket = try #require(factory.sockets.first)
+        socket.yield(.string(#"{"type":"stream_connected","userName":"alex","serverDictationAvailable":false}"#))
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            client.status == .connected
+        })
+
+        client.prepareForBackground()
+
+        // `connectStream()` skips a reconnect while the status still says connected.
+        #expect(client.status == .disconnected)
+
+        // The closed socket's read failure must not reopen a socket while backgrounded.
+        try await Task.sleep(for: .milliseconds(900))
+        #expect(factory.sockets.count == 1)
+        #expect(client.status == .disconnected)
+
+        let resumed = client.connect()
+        let resumedConsumer = Task { @MainActor in for await _ in resumed {} }
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 2
+        })
+
+        client.disconnect()
+        await consumer.value
+        await resumedConsumer.value
+    }
+}
