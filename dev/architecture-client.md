@@ -78,6 +78,15 @@ UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.
 
 `OppiApp` publishes services as one `AppRootEnvironment` window trait (`window.traitOverrides.appRootEnvironment`, found with `AppRootEnvironment.near(_:)`); a controller embedding one server's page sets the trait on itself. The app has no SwiftUI environment value for it; never hand-write an environment list around a leaf: pass values. The App Lock cover (`AppLockCoverViewController`) paints before the root exists, so it reads only `ThemeRuntimeState` and `AppLockService`.
 
+### Adaptive layout
+
+One owner per layout question. `userInterfaceIdiom` is never a layout signal: the Duo is a phone with a regular-width inner display.
+
+- Wide or compact: `AdaptiveWidth.isWide(traits)`. A trailing column forces compact on its panel, so system chrome that follows the window (the search bar's Cancel) asks `AdaptiveWidth.windowIsWide(view)`. The shell's split or stack (`WorkspaceNavigationPresentation.resolve`) and the Duo's rail (`SystemVerticalBar`) stay separate.
+- Presentation: a choice or options panel opened from a control is `ModalPresentation.popoverOrSheet`, with that control as the source; UIKit makes it a sheet when compact. A screen that presents directly configures through `apply(to:source:)`.
+- Content width: a full-width content column caps at `ReadableContentWidth`, by width alone; bars, backgrounds, and scroll views stay full-bleed. Reader prose keeps `ReaderReadingColumn`.
+- Media: a media view whose box the content does not size uses `ImageViewportSizing.aspectFit` (`AspectFitMediaView` for a page).
+
 ### Presentation gotchas
 
 - A modal that edits presenter state uses `.overFullScreen`: a `.fullScreen` cover stops the presenter rendering.
@@ -87,7 +96,7 @@ UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.
 
 ### Structure guard
 
-`scripts/uikit-structure-guard.ts` scans `Oppi`, `OppiDebugHarness`, `OppiCore`, and `Shared` with comments and strings stripped. SwiftUI navigation and presentation constructs and `UIHostingController` are disallowed outside its commented `allowed` list (the two leaf hosts); another exception needs the owner's approval. The Debug-only harness is UIKit too: a harness or preview is a controller that `DebugHarnessLaunch` routes. The other ratchets (settings theming and writes, alerts, load states, entity artwork, page loads) count per file against `scripts/uikit-structure-baseline.json`: new files start at 0, decreases pass, a settings page that moves onto the kit commits the lowered baseline from `--update`, a rename keeps its count, and ordinary runs never write it.
+`scripts/uikit-structure-guard.ts` scans `Oppi`, `OppiDebugHarness`, `OppiCore`, and `Shared` with comments and strings stripped. SwiftUI navigation and presentation constructs and `UIHostingController` are disallowed outside its commented `allowed` list (the two leaf hosts); another exception needs the owner's approval. The Debug-only harness is UIKit too: a harness or preview is a controller that `DebugHarnessLaunch` routes. The other ratchets (settings theming and writes, alerts, load states, entity artwork, page loads, idiom and raw size-class reads outside `adaptiveWidthExceptions`) count per file against `scripts/uikit-structure-baseline.json`: new files start at 0, decreases pass, a settings page that moves onto the kit commits the lowered baseline from `--update`, a rename keeps its count, and ordinary runs never write it.
 
 **Mac (`clients/apple/OppiMac`):** new views are AppKit; existing SwiftUI stays until a separate decision.
 
