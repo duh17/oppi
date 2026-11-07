@@ -71,21 +71,23 @@ struct OrgParser: DocumentParser, Sendable {
 
     /// Org applies `#+TODO:` to the whole file wherever the line sits, so the
     /// declarations are read before any heading is classified. A declaration
-    /// quoted in a source block is code, not a setting.
+    /// quoted inside any `#+begin_NAME … #+end_NAME` block — not just `src` —
+    /// is text or code, not a setting.
     private func scanTodoKeywords(_ lines: [Substring]) -> OrgTodoKeywords {
         var declarations: [OrgBlock] = []
-        var inSource = false
+        var blockEndMarker: String?
         for line in lines {
             guard let first = line.utf8.first, first == 0x23 || first == 0x20 || first == 0x09 else { continue }
             let trimmed = Self.stripped(line)
             guard trimmed.hasPrefix("#+") else { continue }
             let upper = trimmed.uppercased()
-            if inSource {
-                if upper.hasPrefix("#+END_SRC") { inSource = false }
+            if let endMarker = blockEndMarker {
+                if upper == endMarker { blockEndMarker = nil }
                 continue
             }
-            if upper.hasPrefix("#+BEGIN_SRC") {
-                inSource = true
+            if upper.hasPrefix("#+BEGIN_") {
+                let name = upper.dropFirst("#+BEGIN_".count).split(separator: " ").first.map(String.init) ?? ""
+                blockEndMarker = "#+END_\(name)"
                 continue
             }
             guard let keyword = parseKeyword(line),
@@ -137,15 +139,11 @@ struct OrgParser: DocumentParser, Sendable {
                 // # → comment, #+ → keyword or block delimiter
                 let trimmed = Self.stripped(line)
                 if trimmed.hasPrefix("#+") {
-                    // Block delimiters take priority
-                    if trimmed.uppercased().hasPrefix("#+BEGIN_SRC") {
-                        let (block, newCursor) = parseCodeBlock(lines: lines, startCursor: cursor)
-                        add(block)
-                        cursor = newCursor
-                        continue
-                    }
-                    if trimmed.uppercased().hasPrefix("#+BEGIN_QUOTE") {
-                        let (block, newCursor) = parseQuoteBlock(
+                    // Any `#+begin_NAME … #+end_NAME` block — `src`, `quote`,
+                    // `example`, `verse`, `center`, `export`, `comment`, and
+                    // names Org does not define — takes priority over a keyword.
+                    if trimmed.uppercased().hasPrefix("#+BEGIN_") {
+                        let (block, newCursor) = parseGenericBlock(
                             lines: lines, startCursor: cursor, todoKeywords: todoKeywords
                         )
                         add(block)
@@ -378,63 +376,81 @@ struct OrgParser: DocumentParser, Sendable {
         return .keyword(key: key, value: "")
     }
 
-    // MARK: - Code Block
+    // MARK: - Greater and Lesser Blocks
 
-    /// Parse `#+begin_src lang ... #+end_src`
-    private func parseCodeBlock(lines: [Substring], startCursor: Int) -> (OrgBlock, Int) {
-        let startLine = Self.stripped(lines[startCursor])
-
-        // Extract language from `#+begin_src lang`
-        var language: String?
-        let prefixLen = "#+begin_src".count
-        if startLine.count > prefixLen {
-            let afterPrefix = Self.stripped(startLine.dropFirst(prefixLen))
-            if !afterPrefix.isEmpty {
-                language = afterPrefix.split(separator: " ").first.map(String.init)
-            }
-        }
-
-        var codeLines: [Substring] = []
-        var cursor = startCursor + 1
-
-        while cursor < lines.count {
-            let trimmedUpper = Self.stripped(lines[cursor]).uppercased()
-            if trimmedUpper == "#+END_SRC" {
-                cursor += 1
-                break
-            }
-            codeLines.append(lines[cursor])
-            cursor += 1
-        }
-
-        let code = codeLines.joined(separator: "\n")
-        return (.codeBlock(language: language, code: code), cursor)
-    }
-
-    // MARK: - Quote Block
-
-    /// Parse `#+begin_quote ... #+end_quote`
-    private func parseQuoteBlock(
+    /// Parse any `#+begin_NAME … #+end_NAME` block, case-insensitively
+    /// matched (`#+END_NAME` closes `#+BEGIN_NAME` whatever case either uses).
+    /// `src` and `quote` keep their own richer meaning (a language, recursed
+    /// blocks); every other name — `example`, `verse`, `center`, `export`,
+    /// `comment`, a dynamic block, or one Org does not define — goes through
+    /// `buildBlock` from its raw lines. An unterminated block reads to EOF, as
+    /// Org itself does: unlike a drawer, Org has no "not really a block" rule
+    /// for this case.
+    private func parseGenericBlock(
         lines: [Substring],
         startCursor: Int,
         todoKeywords: OrgTodoKeywords
     ) -> (OrgBlock, Int) {
-        var innerLines: [Substring] = []
-        var cursor = startCursor + 1
+        let startLine = Self.stripped(lines[startCursor])
+        let prefixLen = "#+begin_".count
+        let afterPrefix = startLine.count > prefixLen ? Self.stripped(startLine.dropFirst(prefixLen)) : Substring()
+        let nameEnd = afterPrefix.firstIndex(where: { $0 == " " || $0 == "\t" }) ?? afterPrefix.endIndex
+        let name = String(afterPrefix[..<nameEnd])
+        let parameters = nameEnd < afterPrefix.endIndex
+            ? String(Self.stripped(afterPrefix[afterPrefix.index(after: nameEnd)...]))
+            : ""
+        let endMarker = "#+END_\(name.uppercased())"
 
+        var bodyLines: [Substring] = []
+        var cursor = startCursor + 1
         while cursor < lines.count {
-            let trimmedUpper = Self.stripped(lines[cursor]).uppercased()
-            if trimmedUpper == "#+END_QUOTE" {
+            if Self.stripped(lines[cursor]).uppercased() == endMarker {
                 cursor += 1
                 break
             }
-            innerLines.append(lines[cursor])
+            bodyLines.append(lines[cursor])
             cursor += 1
         }
 
-        let innerBlocks = parseBlocks(lines: innerLines, todoKeywords: todoKeywords).map(\.block)
+        let block = buildGenericBlock(name: name, parameters: parameters, bodyLines: bodyLines, todoKeywords: todoKeywords)
+        return (block, cursor)
+    }
 
-        return (.quote(innerBlocks), cursor)
+    private func buildGenericBlock(
+        name: String,
+        parameters: String,
+        bodyLines: [Substring],
+        todoKeywords: OrgTodoKeywords
+    ) -> OrgBlock {
+        switch name.uppercased() {
+        case "SRC":
+            let language = parameters.split(separator: " ").first.map(String.init)
+            return .codeBlock(language: language, code: bodyLines.joined(separator: "\n"))
+        case "QUOTE":
+            let inner = parseBlocks(lines: bodyLines, todoKeywords: todoKeywords).map(\.block)
+            return .quote(inner)
+        case "EXAMPLE":
+            // Shown verbatim, never reparsed as Org prose: a `*not bold*` or a
+            // URL inside an example block stays literal, as Org exports it.
+            return .codeBlock(language: nil, code: bodyLines.joined(separator: "\n"))
+        case "VERSE":
+            return .verse(bodyLines.map { parseInlines(String(Self.stripped($0))) })
+        case "CENTER":
+            let joined = bodyLines.map { String(Self.stripped($0)) }.joined(separator: " ")
+            return .paragraph(parseInlines(joined))
+        case "EXPORT":
+            // The export target (`html`, `latex`, …) labels the box; its
+            // contents are shown, never rendered as that target.
+            let language = parameters.split(separator: " ").first.map(String.init)
+            return .codeBlock(language: language, code: bodyLines.joined(separator: "\n"))
+        case "COMMENT":
+            // Hidden downstream the same way a `# line` comment is.
+            return .comment(bodyLines.map { String(Self.stripped($0)) }.joined(separator: "\n"))
+        default:
+            // An unknown or dynamic block (`clocktable`, …): a labelled box
+            // naming it, not raw `#+begin_…` text.
+            return .codeBlock(language: name.lowercased(), code: bodyLines.joined(separator: "\n"))
+        }
     }
 
     // MARK: - List

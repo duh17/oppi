@@ -268,6 +268,14 @@ enum OrgToMarkdownConverter {
                     result.append(.orderedList(start: 1, mdItems))
                 }
 
+            case .verse(let verseLines):
+                var inlines: [MarkdownInline] = []
+                for (index, lineInlines) in verseLines.enumerated() {
+                    if index > 0 { inlines.append(.hardBreak) }
+                    inlines.append(contentsOf: convertInlines(lineInlines, context: context))
+                }
+                result.append(.paragraph(inlines))
+
             case .codeBlock(let language, let code):
                 result.append(.codeBlock(language: language, code: code))
 

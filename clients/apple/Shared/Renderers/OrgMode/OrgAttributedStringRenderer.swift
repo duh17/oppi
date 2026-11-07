@@ -186,6 +186,14 @@ private struct RenderContext: @unchecked Sendable {
                 .font: monoFontAt(size: configuration.fontSize * 0.85),
                 .foregroundColor: foregroundDim,
             ])
+
+        case let .verse(lines):
+            let result = NSMutableAttributedString()
+            for (index, lineInlines) in lines.enumerated() {
+                if index > 0 { result.append(NSAttributedString(string: "\n")) }
+                result.append(renderInlines(lineInlines, baseFont: bodyFont, baseColor: foreground))
+            }
+            return result
         }
     }
 

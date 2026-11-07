@@ -44,6 +44,10 @@ enum OrgBlock: Equatable, Sendable {
     /// Table with header row and data rows.
     case table(headers: [[OrgInline]], rows: [[[OrgInline]]])
 
+    /// `#+begin_verse ... #+end_verse`: one entry per source line, its line
+    /// break and indentation kept apart from ordinary paragraph joining.
+    case verse([[OrgInline]])
+
     /// Drawer: `:NAME: ... :END:`
     /// Property drawers use name "PROPERTIES" and contain key-value pairs.
     case drawer(name: String, properties: [OrgDrawerProperty])
