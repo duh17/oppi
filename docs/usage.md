@@ -92,6 +92,10 @@ In a chat whose workspace is a Git repository, **Git** in the top bar's menu (or
 
 A workspace's session list has the same **Git** button in its top bar, listing every change in the selected worktree.
 
+### The iPad side column
+
+On iPad (and in any Stage Manager window wide enough), **Files**, **Git**, **Outline**, **Context**, **Share Session**, readers you open from the chat, and a drawer's full-screen view all open in one column beside the chat. Drag the divider between them to resize it. The width you choose is kept as a share of the window, so it follows Stage Manager and rotation. The chat never gets narrower than a phone screen. Drag the divider on toward the window's leading edge to fill the window; a slim edge stays, and dragging it back returns the column to its earlier width. Drag the divider toward the trailing edge to close the column. VoiceOver can adjust the width and offers **Expand Pane** and **Show Chat**.
+
 ## Voice
 
 **Settings → Voice & Dictation → Dictation Engine** is **On-device** (the default) or **Server**.
