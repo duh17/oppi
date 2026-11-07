@@ -217,3 +217,52 @@ describe("SessionStateCoordinator.applyPiStateSnapshot", () => {
     expect(changed).toBe(false);
   });
 });
+
+describe("SessionStateCoordinator.refreshSessionState", () => {
+  // Pi settles after `agent_end`: the event path holds `busy` until `agent_settled`, because
+  // an auto-retry may start another run. A trace read in that gap sees an idle snapshot.
+  function refresh(session: Session, snapshot: PiStateSnapshot) {
+    const persisted: Session["status"][] = [];
+    const coordinator = new SessionStateCoordinator({
+      storage: {} as Storage,
+      getContextWindowResolver: () => null,
+      persistSessionNow: (_key, saved) => persisted.push(saved.status),
+    });
+    const done = coordinator.refreshSessionState("s1", {
+      session,
+      sdkBackend: { getStateSnapshot: () => snapshot, leafId: () => null } as never,
+    });
+    return { done, persisted };
+  }
+
+  it("keeps a busy session busy when the snapshot is idle", async () => {
+    const session = makeSession({ status: "busy", currentTurnStartedAt: 42 });
+
+    await refresh(session, { isStreaming: false, isCompacting: false }).done;
+
+    expect(session.status).toBe("busy");
+    expect(session.currentTurnStartedAt).toBe(42);
+  });
+
+  it("keeps a ready session ready when the snapshot is streaming", async () => {
+    const session = makeSession({ status: "ready" });
+
+    await refresh(session, { isStreaming: true }).done;
+
+    expect(session.status).toBe("ready");
+    expect(session.currentTurnStartedAt).toBeUndefined();
+  });
+
+  it("still records the trace file and persists the other fields it reads", async () => {
+    const session = makeSession({ status: "busy" });
+
+    const { done, persisted } = refresh(session, {
+      sessionFile: "/tmp/pi-session.jsonl",
+      isStreaming: false,
+      isCompacting: false,
+    });
+
+    expect(await done).toMatchObject({ sessionFile: "/tmp/pi-session.jsonl" });
+    expect(persisted).toEqual(["busy"]);
+  });
+});

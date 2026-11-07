@@ -50,7 +50,9 @@ export class SessionStateCoordinator {
   ): Promise<{ sessionFile?: string; sessionId?: string; leafId?: string | null } | null> {
     try {
       const snapshot = active.sdkBackend.getStateSnapshot();
-      if (this.applyPiStateSnapshot(active.session, snapshot)) {
+      // A read: lifecycle status belongs to the event stream. Pi reports idle between
+      // `agent_end` and `agent_settled`, and no `state` frame would follow such a flip.
+      if (this.applyPiStateSnapshot(active.session, snapshot, { syncStatus: false })) {
         this.deps.persistSessionNow(key, active.session);
       }
       return {
@@ -67,7 +69,11 @@ export class SessionStateCoordinator {
    * Apply fields we care about from pi `get_state` response payload.
    * Returns true if the session object changed.
    */
-  applyPiStateSnapshot(session: Session, state: PiStateSnapshot | null | undefined): boolean {
+  applyPiStateSnapshot(
+    session: Session,
+    state: PiStateSnapshot | null | undefined,
+    options: { syncStatus?: boolean } = {},
+  ): boolean {
     if (!state) {
       return false;
     }
@@ -158,7 +164,11 @@ export class SessionStateCoordinator {
 
     const runtimeBusy = state.isStreaming === true || state.isCompacting === true;
     const runtimeIdle = state.isStreaming === false && state.isCompacting === false;
-    if (!isTerminalSessionStatus(session.status) && session.status !== "stopping") {
+    if (
+      options.syncStatus !== false &&
+      !isTerminalSessionStatus(session.status) &&
+      session.status !== "stopping"
+    ) {
       if (runtimeBusy && session.status !== "busy") {
         session.status = "busy";
         session.currentTurnStartedAt = session.currentTurnStartedAt ?? Date.now();
