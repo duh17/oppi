@@ -43,7 +43,7 @@ import { type SessionStartActiveSession } from "./session-start.js";
 import { type SessionStateActiveSession } from "./session-state.js";
 import { createLogger } from "./logger.js";
 import type { AutoStopGuard } from "./session-lifecycle.js";
-import { lifecyclePhase } from "./session-lifecycle-state.js";
+import { isStopping, lifecyclePhase } from "./session-lifecycle-state.js";
 import { safeErrorMessage } from "./log-utils.js";
 import {
   buildPendingExtensionUIRequestMessages,
@@ -1117,7 +1117,12 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       if (!this.active.has(key) || this.incomingWork.has(sessionId)) return false;
       if (!(await guard.idle())) return false;
       const active = this.active.get(key);
-      if (!active || active.pendingStop || this.incomingWork.has(sessionId) || !guard.still())
+      if (
+        !active ||
+        isStopping(active.session) ||
+        this.incomingWork.has(sessionId) ||
+        !guard.still()
+      )
         return false;
       this.stopCoordinator.beginPendingStop(key, active, "terminate", "user");
       return true;
@@ -1157,7 +1162,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const state = await this.runtimeManager.withSessionLock(sessionId, async () => {
       const active = this.active.get(key);
       if (!active) return "stopped";
-      if (active.pendingStop?.mode === "terminate") return "stopping";
+      if (lifecyclePhase(active.session).name === "terminating") return "stopping";
       this.resetIdleTimer(key);
       return "running";
     });
@@ -1175,7 +1180,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     this.incomingWork.delete(sessionId);
     const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
-    if (active?.session.status === "ready" && !active.pendingStop)
+    if (active?.session.status === "ready" && !isStopping(active.session))
       this.lifecycleCoordinator.handleSessionSettled(key);
   }
 

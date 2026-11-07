@@ -5,7 +5,6 @@ import { EventRing } from "./event-ring.js";
 import type { CacheMissModelPriceSource, CacheMissTrackerState } from "./cache-miss.js";
 import type { ExtensionUIState } from "./extension-ui-state.js";
 import type { ProgramRunTracker } from "./program-status.js";
-import type { PendingStop } from "./session-stop.js";
 import type { SessionMessageSubscriber, SessionSurfaces } from "./session-surfaces.js";
 import { TurnDedupeCache } from "./turn-cache.js";
 import type { MessageQueueState, Session } from "./types.js";
@@ -25,7 +24,6 @@ export interface RuntimeSessionStateScaffold<
   toolOutputSnapshots: ToolOutputSnapshots;
   streamedAssistantText: string;
   currentThinkingContentIndex?: number;
-  pendingStop?: PendingStop;
   toolNames: Map<string, string>;
   toolArgs: Map<string, Record<string, unknown>>;
   streamingToolUpdatesSeen: Map<string, string>;

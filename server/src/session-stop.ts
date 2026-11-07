@@ -2,10 +2,17 @@ import type { SdkBackendDisposeResult } from "./sdk-backend.js";
 import type { AgentBackend } from "./agent-backend.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
-import { applyLifecycle, lifecyclePhase } from "./session-lifecycle-state.js";
+import {
+  activeStop,
+  applyLifecycle,
+  isStopping,
+  lifecyclePhase,
+  type StopRequestSource,
+  type StopState,
+} from "./session-lifecycle-state.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 
-export type StopRequestSource = "user" | "timeout" | "server";
+export type { StopRequestSource } from "./session-lifecycle-state.js";
 
 export interface SessionStopTimers {
   setTimeout(callback: () => void, timeoutMs: number): NodeJS.Timeout;
@@ -18,22 +25,7 @@ const DEFAULT_STOP_TIMERS: SessionStopTimers = {
   clearTimeout: (handle) => clearTimeout(handle),
 };
 
-export interface PendingStop {
-  mode: "abort" | "terminate";
-  source: StopRequestSource;
-  timeoutHandle?: NodeJS.Timeout;
-  completionPromise?: Promise<void>;
-  completionResolve?: () => void;
-  /** Exclusive permit owned by this stop while timeout/event supervision runs. */
-  runtimePermit?: SessionRuntimeTransactionPermit;
-  forceTerminationStarted?: boolean;
-}
-
-export interface PendingStopSessionState {
-  pendingStop?: PendingStop;
-}
-
-export interface StopSessionState extends PendingStopSessionState {
+export interface StopSessionState {
   session: Session;
   sdkBackend: AgentBackend;
 }
@@ -57,48 +49,36 @@ export class SessionStopCoordinator {
     private readonly timers: SessionStopTimers = DEFAULT_STOP_TIMERS,
   ) {}
 
-  clearPendingStop(active: PendingStopSessionState): PendingStop | null {
-    const pending = active.pendingStop;
-    if (!pending) {
-      return null;
+  /** Clears `stop`'s timer and resolves its completion. Leaves the phase itself untouched: an
+   * abort confirmed at `agent_end` clears this way while its phase still reads `aborting` until
+   * `agent_settled`; a caller that also leaves the phase calls `applyLifecycle` right after. */
+  private clearStopTimer(stop: StopState): void {
+    if (stop.timeoutHandle !== undefined) {
+      this.timers.clearTimeout(stop.timeoutHandle);
+      stop.timeoutHandle = undefined;
     }
-
-    if (pending.timeoutHandle) {
-      this.timers.clearTimeout(pending.timeoutHandle);
-      pending.timeoutHandle = undefined;
-    }
-
-    const resolve = pending.completionResolve;
-    pending.completionResolve = undefined;
-    pending.completionPromise = undefined;
-    active.pendingStop = undefined;
-    resolve?.();
-    return pending;
   }
 
-  private ensurePendingStopCompletion(pending: PendingStop): Promise<void> {
-    if (!pending.completionPromise) {
-      pending.completionPromise = new Promise<void>((resolve) => {
-        pending.completionResolve = resolve;
-      });
-    }
-
-    return pending.completionPromise;
+  clearStop(active: StopSessionState): StopState | null {
+    const stop = activeStop(active.session);
+    if (!stop) return null;
+    this.clearStopTimer(stop);
+    stop.resolveCompletion();
+    return stop;
   }
 
   beginPendingStop(
     key: string,
     active: StopSessionState,
-    mode: PendingStop["mode"],
+    mode: "abort" | "terminate",
     source: StopRequestSource,
     reason?: string,
   ): boolean {
-    if (active.pendingStop) {
+    if (isStopping(active.session)) {
       return false;
     }
 
-    active.pendingStop = { mode, source };
-    this.applyStopRequest(active.session, mode);
+    if (!this.applyStopRequest(active.session, mode, source)) return false;
     active.session.lastActivity = Date.now();
     this.deps.persistSessionNow(key, active.session);
 
@@ -110,27 +90,19 @@ export class SessionStopCoordinator {
   promotePendingStop(
     key: string,
     active: StopSessionState,
-    mode: PendingStop["mode"],
+    mode: "abort" | "terminate",
     source: StopRequestSource,
     reason?: string,
     emitLifecycleEvent = false,
   ): void {
-    if (!active.pendingStop) {
+    const stop = activeStop(active.session);
+    if (!stop) {
       this.beginPendingStop(key, active, mode, source, reason);
       return;
     }
+    this.clearStopTimer(stop);
 
-    const pending = active.pendingStop;
-
-    if (pending.timeoutHandle) {
-      this.timers.clearTimeout(pending.timeoutHandle);
-      pending.timeoutHandle = undefined;
-    }
-
-    pending.mode = mode;
-    pending.source = source;
-
-    if (this.applyStopRequest(active.session, mode)) {
+    if (this.applyStopRequest(active.session, mode, source)) {
       active.session.lastActivity = Date.now();
       this.deps.persistSessionNow(key, active.session);
     }
@@ -147,8 +119,8 @@ export class SessionStopCoordinator {
     source: StopRequestSource,
     reason: string,
   ): void {
-    const pending = this.clearPendingStop(active);
-    if (!pending) {
+    const stop = this.clearStop(active);
+    if (!stop) {
       return;
     }
 
@@ -161,10 +133,14 @@ export class SessionStopCoordinator {
     this.deps.broadcast(key, { type: "stop_failed", source, reason });
   }
 
-  private applyStopRequest(session: Session, mode: PendingStop["mode"]): boolean {
+  private applyStopRequest(
+    session: Session,
+    mode: "abort" | "terminate",
+    source: StopRequestSource,
+  ): boolean {
     return mode === "abort"
-      ? applyLifecycle(session, "abort_requested")
-      : applyLifecycle(session, "terminate_requested");
+      ? applyLifecycle(session, "abort_requested", source)
+      : applyLifecycle(session, "terminate_requested", source);
   }
 
   /**
@@ -173,12 +149,12 @@ export class SessionStopCoordinator {
    * is idle. A turn that started meanwhile confirms at its agent_end instead.
    */
   confirmAbortWithoutRun(key: string, active: StopSessionState): void {
-    const pending = active.pendingStop;
+    const stop = activeStop(active.session);
     const phase = lifecyclePhase(active.session);
-    if (pending?.mode !== "abort" || phase.name !== "aborting" || phase.back === "running") return;
+    if (!stop || stop.claimed || phase.name !== "aborting" || phase.back === "running") return;
     if (active.sdkBackend.isStreaming || active.sdkBackend.isCompacting) return;
-    this.clearPendingStop(active);
-    this.deps.broadcast(key, { type: "stop_confirmed", source: pending.source });
+    this.clearStop(active);
+    this.deps.broadcast(key, { type: "stop_confirmed", source: stop.source });
     if (applyLifecycle(active.session, "run_settled")) {
       active.session.lastActivity = Date.now();
       this.deps.persistSessionNow(key, active.session);
@@ -186,31 +162,26 @@ export class SessionStopCoordinator {
     }
   }
 
-  finishPendingStopOnAgentEnd(key: string, active: PendingStopSessionState): void {
-    const pending = active.pendingStop;
-    if (!pending) {
+  finishPendingStopOnAgentEnd(key: string, active: { session: Session }): void {
+    const stop = activeStop(active.session);
+    if (!stop || stop.claimed) {
       return;
     }
 
-    if (pending.mode === "abort") {
-      this.clearPendingStop(active);
-      this.deps.broadcast(key, { type: "stop_confirmed", source: pending.source });
+    if (lifecyclePhase(active.session).name === "aborting") {
+      stop.claimed = true;
+      this.clearStopTimer(stop);
+      this.deps.broadcast(key, { type: "stop_confirmed", source: stop.source });
       return;
     }
 
     queueMicrotask(() => {
       const current = this.deps.getActiveSession(key);
-      if (!current || current.pendingStop !== pending || pending.mode !== "terminate") {
+      if (!current || activeStop(current.session) !== stop || stop.claimed) {
         return;
       }
 
-      this.forceTerminateSessionProcess(
-        key,
-        current,
-        pending.source,
-        undefined,
-        pending.runtimePermit,
-      );
+      this.forceTerminateSessionProcess(key, current, stop.source, undefined, stop.permit);
     });
   }
 
@@ -259,25 +230,28 @@ export class SessionStopCoordinator {
     };
   }
 
+  /** The stop's completion, armed with a grace timeout that force-terminates when it elapses. A
+   * concurrent caller can await the returned promise instead of re-arming its own timer. */
   armPendingTerminateTimeout(
     key: string,
     active: StopSessionState,
     timeoutMs: number,
   ): Promise<void> {
-    const pending = active.pendingStop;
-    if (!pending || pending.mode !== "terminate") {
+    const stop = activeStop(active.session);
+    if (!stop || lifecyclePhase(active.session).name !== "terminating") {
       return Promise.resolve();
     }
 
-    const completion = this.ensurePendingStopCompletion(pending);
+    this.clearStopTimer(stop);
 
-    if (pending.timeoutHandle) {
-      this.timers.clearTimeout(pending.timeoutHandle);
-    }
-
-    pending.timeoutHandle = this.timers.setTimeout(() => {
+    stop.timeoutHandle = this.timers.setTimeout(() => {
       const current = this.deps.getActiveSession(key);
-      if (!current || current.pendingStop !== pending || pending.mode !== "terminate") {
+      const currentStop = current && activeStop(current.session);
+      if (
+        !current ||
+        currentStop !== stop ||
+        lifecyclePhase(current.session).name !== "terminating"
+      ) {
         return;
       }
 
@@ -288,13 +262,13 @@ export class SessionStopCoordinator {
       this.forceTerminateSessionProcess(
         key,
         current,
-        pending.source,
+        stop.source,
         `Stop session timed out after ${timeoutMs}ms`,
-        pending.runtimePermit,
+        stop.permit,
       );
     }, timeoutMs);
 
-    return completion;
+    return stop.completion;
   }
 
   async forceTerminateSessionProcess(
@@ -305,21 +279,18 @@ export class SessionStopCoordinator {
     permit?: SessionRuntimeTransactionPermit,
     emergencyDispose?: () => SdkBackendDisposeResult | Promise<SdkBackendDisposeResult>,
   ): Promise<void> {
-    const ownedPending = active.pendingStop;
-    if (!ownedPending || ownedPending.mode !== "terminate") return;
-    if (ownedPending.forceTerminationStarted && !emergencyDispose) return;
-    ownedPending.forceTerminationStarted = true;
-    ownedPending.source = source;
-    if (ownedPending.timeoutHandle) {
-      this.timers.clearTimeout(ownedPending.timeoutHandle);
-      ownedPending.timeoutHandle = undefined;
-    }
+    const stop = activeStop(active.session);
+    if (!stop || lifecyclePhase(active.session).name !== "terminating") return;
+    if (stop.claimed && !emergencyDispose) return;
+    stop.claimed = true;
+    stop.source = source;
+    this.clearStopTimer(stop);
 
     try {
       const disposal = emergencyDispose
         ? await emergencyDispose()
         : await active.sdkBackend.dispose(permit);
-      if (active.pendingStop !== ownedPending) return;
+      if (activeStop(active.session) !== stop) return;
       const forcedDisposalReason =
         disposal.disposal !== "forced"
           ? undefined
@@ -348,20 +319,41 @@ export class SessionStopCoordinator {
     }
   }
 
+  /**
+   * Settles once this abort gives up and escalates, or is no longer the session's active stop:
+   * a stop confirmed at `agent_end` claims it without changing its phase or identity, so that
+   * check (not just "is it still `aborting`") is what lets this promise settle on every exit.
+   */
   scheduleAbortStopTimeout(
     key: string,
     active: StopSessionState,
     onGiveUp: () => Promise<void>,
   ): Promise<void> {
-    const pending = active.pendingStop;
-    if (!pending || pending.mode !== "abort") {
+    const stop = activeStop(active.session);
+    if (!stop || lifecyclePhase(active.session).name !== "aborting") {
       return Promise.resolve();
     }
 
+    // The session still active and owning this exact stop, unclaimed and still aborting, or
+    // undefined when any of that no longer holds.
+    const ownedActive = (): StopSessionState | undefined => {
+      const current = this.deps.getActiveSession(key);
+      if (
+        !current ||
+        activeStop(current.session) !== stop ||
+        stop.claimed ||
+        lifecyclePhase(current.session).name !== "aborting"
+      ) {
+        return undefined;
+      }
+      return current;
+    };
+
     return new Promise<void>((resolve) => {
-      pending.timeoutHandle = this.timers.setTimeout(() => {
-        const current = this.deps.getActiveSession(key);
-        if (!current || current.pendingStop !== pending || pending.mode !== "abort") {
+      stop.timeoutHandle = this.timers.setTimeout(() => {
+        const current = ownedActive();
+        if (!current) {
+          resolve();
           return;
         }
 
@@ -384,10 +376,11 @@ export class SessionStopCoordinator {
           // process may have already exited
         }
 
-        pending.timeoutHandle = this.timers.setTimeout(() => {
+        stop.timeoutHandle = this.timers.setTimeout(() => {
           void (async () => {
-            const still = this.deps.getActiveSession(key);
-            if (!still || still.pendingStop !== pending || pending.mode !== "abort") {
+            const still = ownedActive();
+            if (!still) {
+              resolve();
               return;
             }
 
@@ -396,10 +389,11 @@ export class SessionStopCoordinator {
               timeoutMs: this.stopAbortRetryTimeoutMs,
             });
             await onGiveUp();
-            if (this.deps.getActiveSession(key) === still && still.pendingStop === pending) {
+            const final = ownedActive();
+            if (final) {
               this.finishPendingStopWithFailure(
                 key,
-                still,
+                final,
                 "server",
                 `Stop timed out — the agent may still be processing. You can send another message or stop the session.`,
               );

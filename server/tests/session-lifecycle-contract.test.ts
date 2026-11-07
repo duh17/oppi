@@ -333,6 +333,8 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
     app: ['stop_confirmed "Session already idle"'],
     steps: ["start: ready/idle wait:idle saved:starting>ready"],
   },
+  // S3's stopped summary on `runtime_ended` adds one `state`/`session_summary` pair, carrying
+  // `stopped`/`idle`, right before the stop's own confirmation.
   "classic.terminate_busy": {
     ws: [
       "state ready/idle",
@@ -342,6 +344,7 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "state stopping/working",
       "agent_end",
       "summary stopping/working",
+      "state stopped/idle",
       'stop_confirmed "Session terminated"',
       'session_ended "stopped"',
     ],
@@ -349,6 +352,7 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "summary busy/working",
       "stop_requested",
       "summary stopping/working",
+      "summary stopped/idle",
       'stop_confirmed "Session terminated"',
       'session_ended "stopped"',
     ],
@@ -364,12 +368,14 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "state ready/idle",
       "stop_requested",
       "state stopping/idle",
+      "state stopped/idle",
       'stop_confirmed "Session terminated"',
       'session_ended "stopped"',
     ],
     app: [
       "stop_requested",
       "summary stopping/idle",
+      "summary stopped/idle",
       'stop_confirmed "Session terminated"',
       'session_ended "stopped"',
     ],
@@ -468,7 +474,8 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
     ],
   },
   // The mirror's row follows the bridge's busy flag, so it flips before the events do, and
-  // agent_settled finds the row already ready.
+  // agent_settled finds the row already ready. Its stop goes through the shared stop states: the
+  // terminal side's goodbye confirms a `stop_requested` the server sent when it asked to stop.
   "mirror.busy_idle_stop": {
     ws: [
       "state ready/idle",
@@ -481,14 +488,20 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "agent_settled",
       "summary ready/done",
       "state ready/done",
+      "stop_requested",
+      "state stopping/done",
       "state stopped/done",
+      'stop_confirmed "Session terminated"',
       "summary stopped/done",
     ],
     app: [
       "summary ready/idle",
       "summary busy/working",
       "summary ready/done",
+      "stop_requested",
+      "summary stopping/done",
       "summary stopped/done",
+      'stop_confirmed "Session terminated"',
     ],
     steps: [
       "hello: ready/idle wait:idle saved:ready",
@@ -497,26 +510,38 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "message_end: busy/working wait:waiting saved:busy",
       "agent_end: busy/working wait:waiting saved:busy",
       "agent_settled: ready/done wait:idle saved:ready",
+      "stop_requested: stopping/done wait:idle saved:stopping",
       "goodbye: stopped/done wait:idle saved:stopped",
     ],
   },
-  // `explicit-stop-states` DELIBERATELY CHANGES this row: the mirror's abort sends the bridge
-  // command and nothing else today. No stop_requested, no stopping, no stop_confirmed.
+  // The abort goes through the shared stop states, same as the SDK engines: `stop_requested` and
+  // `stopping` go out the moment it is asked for, and the bridge's idle confirms it.
   "mirror.abort_mid_turn": {
     ws: [
       "state ready/idle",
       "agent_start",
       "summary busy/working",
+      "stop_requested",
+      "state stopping/working",
       "agent_end",
-      "summary busy/working",
+      "summary stopping/working",
+      "stop_confirmed",
       "agent_settled",
       "summary ready/idle",
     ],
-    app: ["summary ready/idle", "summary busy/working", "summary ready/idle"],
+    app: [
+      "summary ready/idle",
+      "summary busy/working",
+      "stop_requested",
+      "summary stopping/working",
+      "stop_confirmed",
+      "summary ready/idle",
+    ],
     steps: [
       "hello: ready/idle wait:idle saved:ready",
       "agent_start: busy/working wait:waiting saved:busy",
-      "agent_end: busy/working wait:waiting saved:busy",
+      "abort_sent: stopping/working wait:waiting saved:stopping",
+      "agent_end: stopping/working wait:waiting saved:stopping",
       "agent_settled: ready/idle wait:idle saved:ready",
     ],
   },
@@ -576,6 +601,7 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "summary stopping/working",
       "agent_settled",
       "summary stopping/done",
+      "state stopped/done",
       'stop_confirmed "Session terminated"',
       'session_ended "stopped"',
     ],
@@ -585,6 +611,7 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "stop_requested",
       "summary stopping/working",
       "summary stopping/done",
+      "summary stopped/done",
       'stop_confirmed "Session terminated"',
       'session_ended "stopped"',
     ],
@@ -631,7 +658,7 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
   },
   "durable.start_fails_after_registration": {
     ws: [],
-    app: ['session_ended "start_error"'],
+    app: ["summary stopped/idle", 'session_ended "start_error"'],
     steps: ["start: stopped/idle not live wait:idle saved:starting>ready>stopped"],
   },
 };
@@ -653,10 +680,9 @@ describe("recorded fixture", () => {
         .filter((found) => found.plannedChange)
         .map((found) => [found.id, found.plannedChange]),
     );
+    // S3 landed the mirror's shared stop states, so those two rows dropped their tag.
     expect(planned).toEqual({
       "classic.wake_hold": "waiting-shows-working",
-      "mirror.busy_idle_stop": "explicit-stop-states",
-      "mirror.abort_mid_turn": "explicit-stop-states",
     });
   });
 

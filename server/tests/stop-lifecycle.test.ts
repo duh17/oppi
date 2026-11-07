@@ -2,6 +2,7 @@ import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 import { describe, expect, it, vi } from "vitest";
 import { EventRing } from "../src/event-ring.js";
 import { QUEUE_RECONCILIATION_REQUIRED_ERROR, SdkBackend } from "../src/sdk-backend.js";
+import { isStopping } from "../src/session-lifecycle-state.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import { SessionManager } from "../src/sessions.js";
 import {
@@ -419,7 +420,7 @@ describe("stop lifecycle", () => {
 
       await expect(manager.sendAbort("s1")).rejects.toThrow("backend abort rejected");
 
-      expect(active.pendingStop).toBeUndefined();
+      expect(isStopping(active.session)).toBe(false);
       expect(session.status).toBe("busy");
       expect(abort).toHaveBeenCalledOnce();
       expect(events.filter((event) => event.type === "stop_requested")).toHaveLength(1);
@@ -480,7 +481,7 @@ describe("stop lifecycle", () => {
 
     expect(settled).toBe(true);
     expect(transaction.isExclusiveActive).toBe(false);
-    expect(active.pendingStop).toBeUndefined();
+    expect(isStopping(active.session)).toBe(false);
     expect(session.status).toBe("busy");
     expect(abort).toHaveBeenCalledOnce();
     expect(dispose).not.toHaveBeenCalled();
@@ -503,7 +504,7 @@ describe("stop lifecycle", () => {
 
     await expect(manager.sendAbort("s1")).rejects.toThrow("abort submission rejected");
 
-    expect(active.pendingStop).toBeUndefined();
+    expect(isStopping(active.session)).toBe(false);
     expect(session.status).toBe("busy");
     expect(manager.getMessageQueue("s1")).toMatchObject({
       steering: before.steering,
@@ -528,7 +529,7 @@ describe("stop lifecycle", () => {
     expect(abort).toHaveBeenCalledOnce();
     expect(events.filter((event) => event.type === "stop_requested")).toHaveLength(1);
     expect(events.filter((event) => event.type === "stop_failed")).toHaveLength(1);
-    expect(active.pendingStop).toBeUndefined();
+    expect(isStopping(active.session)).toBe(false);
 
     await manager.sendAbort("s1");
     expect(abort).toHaveBeenCalledTimes(2);
@@ -741,6 +742,38 @@ describe("stop lifecycle", () => {
     }
   });
 
+  it("terminates after an abort already confirmed at agent_end, not blocked by its early claim", async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, events, dispose } = makeManagerHarness("busy");
+      await manager.sendAbort("s1");
+
+      (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
+        "s1",
+        { type: "agent_end" },
+      );
+      expect(events.filter((event) => event.type === "stop_confirmed")).toHaveLength(1);
+
+      // The abort's own stop is "claimed" (confirmed at agent_end) while its phase still reads
+      // stopping until agent_settled. A terminate requested now promotes that same stop and must
+      // still force it through once its grace period elapses, not find a stale claim and silently
+      // do nothing (there is no further agent_end left to confirm the promotion sooner).
+      const stopPromise = manager.stopSession("s1");
+      await Promise.resolve();
+      await Promise.resolve();
+      vi.advanceTimersByTime(
+        (manager as unknown as { stopSessionGraceMs: number }).stopSessionGraceMs,
+      );
+      await stopPromise;
+
+      expect(dispose).toHaveBeenCalledTimes(1);
+      expect(events.some((event) => event.type === "session_ended")).toBe(true);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("clears the terminate deadline as soon as agent_end starts disposal", async () => {
     const timers = new ManualStopTimers();
     const { manager, dispose } = makeManagerHarness("busy", timers);
@@ -803,7 +836,7 @@ describe("stop lifecycle", () => {
     await expect(duplicate).rejects.toThrow("terminate abort rejected");
     expect(abort).toHaveBeenCalledOnce();
     expect(dispose).not.toHaveBeenCalled();
-    expect(active.pendingStop).toBeUndefined();
+    expect(isStopping(active.session)).toBe(false);
     expect(events.filter((event) => event.type === "stop_requested")).toHaveLength(1);
     expect(events.filter((event) => event.type === "stop_failed")).toHaveLength(1);
     expect(events.filter((event) => event.type === "stop_confirmed")).toHaveLength(0);

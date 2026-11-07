@@ -65,12 +65,10 @@ export interface LifecycleCheckpoint {
 /**
  * A decided lifecycle change that alters a row on purpose. The change that lands updates the
  * row's expectation and drops its tag.
- * - `explicit-stop-states`: every engine's abort and stop, the mirror's included, go through the
- *   same stop states and broadcast the same stop frames.
  * - `waiting-shows-working`: program status says working while a background job will wake the
  *   session, matching the CLI wait.
  */
-export type PlannedChange = "explicit-stop-states" | "waiting-shows-working";
+export type PlannedChange = "waiting-shows-working";
 
 export interface LifecycleScenario {
   id: string;
@@ -963,10 +961,7 @@ export const MIRROR_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         id: "mirror.busy_idle_stop",
         engine: "mirror",
         description:
-          "A terminal session: busy from the bridge's state, a run's events, idle again, then stopped from the terminal side.",
-        // Once the mirror stops through the shared stop states, its stop will broadcast
-        // stop_requested, stopping and stop_confirmed before the session ends.
-        plannedChange: "explicit-stop-states",
+          "A terminal session: busy from the bridge's state, a run's events, idle again, then stopped through the shared stop states from the terminal side.",
       },
       async (world) => {
         await connectMirror(world);
@@ -994,10 +989,7 @@ export const MIRROR_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         id: "mirror.abort_mid_turn",
         engine: "mirror",
         description:
-          "Abort a terminal run: the bridge command goes out and no stop frame or stopping status appears; the row follows the bridge's busy and idle.",
-        // Once the mirror aborts through the shared stop states, its abort will broadcast
-        // stop_requested and stopping like the other engines'.
-        plannedChange: "explicit-stop-states",
+          "Abort a terminal run through the shared stop states: stop_requested and stopping go out immediately, and the bridge's idle confirms it.",
       },
       async (world) => {
         await connectMirror(world);

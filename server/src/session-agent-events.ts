@@ -34,7 +34,7 @@ import { hasToolMediaDetails, materializeAgentEventMedia } from "./session-agent
 import { agentMessageText, type AgentMessageData } from "../plugins/subagents/agent-message.js";
 import type { EventProcessorSessionState, SessionEventProcessor } from "./session-events.js";
 import type { AgentBackend } from "./agent-backend.js";
-import type { PendingStopSessionState, SessionStopCoordinator } from "./session-stop.js";
+import type { SessionStopCoordinator } from "./session-stop.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
 import { materializeToolMediaDetails } from "./session-attachments.js";
 import { attachedFilesBlock } from "./chat-attachments.js";
@@ -45,8 +45,7 @@ import { projectVisibleCustomMessage, type SessionEntry as TraceSessionEntry } f
 import type { SessionMessageSubscriber } from "./session-surfaces.js";
 import type { ServerMessage, SessionSummary } from "./types.js";
 
-export interface SessionAgentEventState
-  extends EventProcessorSessionState, TurnSessionState, PendingStopSessionState {
+export interface SessionAgentEventState extends EventProcessorSessionState, TurnSessionState {
   subscribers: Set<SessionMessageSubscriber>;
   sdkBackend?: AgentBackend;
   toolFullOutputPaths: Map<string, string>;

@@ -26,10 +26,9 @@ struct SessionLifecycleWireReplayTests {
     /// Scenario ids whose server behaviour a later slice changes on purpose. `classic.stop_during_start`
     /// left this set once the starting phase started owning its own stop race: it now broadcasts no
     /// frames on either path (nothing is ever live), so unskipping it adds no replay differences.
+    /// The mirror rows left once its stop went through the shared stop states.
     static let plannedScenarios: Set<String> = [
         "classic.wake_hold",
-        "mirror.busy_idle_stop",
-        "mirror.abort_mid_turn",
     ]
 
     // MARK: - Named disagreements

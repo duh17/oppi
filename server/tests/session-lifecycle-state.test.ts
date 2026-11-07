@@ -124,7 +124,8 @@ describe("applyLifecycle", () => {
   it("lets a status written elsewhere stand for the phase", () => {
     const session = makeSession("busy");
     applyLifecycle(session, "abort_requested");
-    expect(lifecyclePhase(session)).toEqual({ name: "aborting", back: "running" });
+    // Its `stop` bookkeeping (source, timer, completion) is opaque here: only the phase matters.
+    expect(lifecyclePhase(session)).toMatchObject({ name: "aborting", back: "running" });
 
     // The e2e UI harness and new rows set a status directly.
     session.status = "ready";

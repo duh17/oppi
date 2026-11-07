@@ -182,7 +182,7 @@ export function createSessionCoordinatorBundle(
   const lifecycleCoordinator = new SessionLifecycleCoordinator({
     getActiveSession: (key) => deps.active.get(key) as SessionLifecycleSessionState | undefined,
     removeActiveSession: (key) => deps.active.delete(key),
-    clearPendingStop: (active) => stopCoordinator.clearPendingStop(active),
+    clearStop: (active) => stopCoordinator.clearStop(active),
     broadcast: (key, message) => deps.broadcast(key, message),
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
     releaseSession: (identity) => deps.runtimeManager.releaseSession(identity),

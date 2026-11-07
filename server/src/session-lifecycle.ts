@@ -1,5 +1,4 @@
 import { clearExtensionUIState, type ExtensionUIState } from "./extension-ui-state.js";
-import type { PendingStop, PendingStopSessionState } from "./session-stop.js";
 import type { SessionSurfaces } from "./session-surfaces.js";
 import type { AgentBackend } from "./agent-backend.js";
 import type { EventTags } from "./telemetry/catalog.js";
@@ -9,13 +8,12 @@ type SessionEndReason = EventTags<"server.session_end">["reason"];
 import { isPendingUserReplyRequest } from "./session-attention.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
-import { applyLifecycle } from "./session-lifecycle-state.js";
+import { applyLifecycle, lifecyclePhase, type StopState } from "./session-lifecycle-state.js";
 import { safeErrorMessage } from "./log-utils.js";
 
 export interface SessionLifecycleSessionState extends ExtensionUIState {
   session: Session;
   sdkBackend: AgentBackend;
-  pendingStop?: PendingStop;
   workspaceId: string;
   /** Composable surfaces a plugin published here, if any. */
   surfaces?: SessionSurfaces;
@@ -24,7 +22,7 @@ export interface SessionLifecycleSessionState extends ExtensionUIState {
 export interface SessionLifecycleCoordinatorDeps {
   getActiveSession: (key: string) => SessionLifecycleSessionState | undefined;
   removeActiveSession: (key: string) => void;
-  clearPendingStop: (active: PendingStopSessionState) => PendingStop | null;
+  clearStop: (active: SessionLifecycleSessionState) => StopState | null;
   broadcast: (key: string, message: ServerMessage) => void;
   persistSessionNow: (key: string, session: Session) => void;
   releaseSession: (identity: { workspaceId: string; sessionId: string }) => void;
@@ -76,6 +74,13 @@ export class SessionLifecycleCoordinator {
       return;
     }
 
+    // `runtime_ended` leaves the phase, so whether this was a terminate (vs an abort, vs no stop
+    // at all) is only readable now, and `clearStop` only finds its timer/completion now too.
+    const priorPhase = lifecyclePhase(active.session);
+    const wasTerminating = priorPhase.name === "terminating";
+    const wasAborting = priorPhase.name === "aborting";
+    const stop = this.deps.clearStop(active);
+
     const isIdleTimeout = this.pendingIdleTimeoutKeys.delete(key);
     const metricReason = isIdleTimeout ? "idle_timeout" : normalizeEndReason(reason);
     this.deps.metrics?.record(
@@ -94,10 +99,9 @@ export class SessionLifecycleCoordinator {
         workspaceId: active.workspaceId,
         reason,
         attemptedStatus: "stopped",
-        durableRecovery:
-          active.pendingStop?.mode === "terminate"
-            ? "persisted_stopping_marker_retry_stop"
-            : "retry_terminal_persistence",
+        durableRecovery: wasTerminating
+          ? "persisted_stopping_marker_retry_stop"
+          : "retry_terminal_persistence",
         error: message,
       });
     };
@@ -147,9 +151,14 @@ export class SessionLifecycleCoordinator {
       recordFailure("workspace_release", error);
     }
 
-    const pendingStop = this.deps.clearPendingStop(active);
+    // The stopped summary this transition owes every caller: it goes out before `session_ended`,
+    // while the active entry still has subscribers, and the app-event stream relays it as a
+    // session_summary. Closes the gap where a client kept the last `working` program status
+    // through a terminate because no frame carried the lifecycle's own `idle`.
+    this.deps.broadcast(key, { type: "state", session: active.session });
+
     try {
-      if (pendingStop?.mode === "terminate") {
+      if (wasTerminating) {
         const persistenceFailure = failures.find(
           (failure) => failure.phase === "final_persistence",
         );
@@ -169,11 +178,11 @@ export class SessionLifecycleCoordinator {
         } else {
           this.deps.broadcast(key, {
             type: "stop_confirmed",
-            source: pendingStop.source,
+            source: stop?.source ?? "server",
             reason: stopConfirmationReason || "Session terminated",
           });
         }
-      } else if (pendingStop?.mode === "abort") {
+      } else if (wasAborting) {
         this.deps.broadcast(key, {
           type: "stop_failed",
           source: "server",
