@@ -603,7 +603,7 @@ enum ToolPresentationBuilder {
         case .markdown:
             return .markdown(text: text, filePath: metadata.filePath)
         case .orgMode:
-            return .markdown(text: orgToMarkdown(text), filePath: metadata.filePath)
+            return .markdown(text: orgToMarkdown(text, documentPath: metadata.filePath), filePath: metadata.filePath)
         case .image, .audio, .video:
             return .readMedia(
                 output: text,
@@ -648,8 +648,8 @@ enum ToolPresentationBuilder {
 
     /// Convert org mode source text to markdown for the `.markdown` render pipeline.
     /// Uses the shared DocumentRenderPipeline conversion.
-    private static func orgToMarkdown(_ orgText: String) -> String {
-        DocumentRenderPipeline.orgToMarkdown(orgText)
+    private static func orgToMarkdown(_ orgText: String, documentPath: String?) -> String {
+        DocumentRenderPipeline.orgToMarkdown(orgText, documentPath: documentPath)
     }
 
 }

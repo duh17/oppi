@@ -701,12 +701,13 @@ enum DocumentRenderPipeline {
 
     // MARK: - Org → Markdown
 
-    /// Convert Org Mode source to Markdown text.
+    /// Convert Org Mode source to Markdown text. `documentPath` is the file the
+    /// source came from, when known: file links resolve against its directory.
     ///
     /// Uses the standard OrgParser → OrgToMarkdownConverter → MarkdownBlockSerializer
     /// pipeline shared across all surfaces.
-    static func orgToMarkdown(_ source: String) -> String {
-        orgToMarkdown(source, cancellationCheck: { false }) ?? ""
+    static func orgToMarkdown(_ source: String, documentPath: String? = nil) -> String {
+        orgToMarkdown(source, documentPath: documentPath, cancellationCheck: { false }) ?? ""
     }
 
     /// Cancellable Org conversion for interactive readers. Org parsing itself is
@@ -715,12 +716,13 @@ enum DocumentRenderPipeline {
     /// parse instead of letting stale work run through the whole pipeline.
     static func orgToMarkdown(
         _ source: String,
+        documentPath: String? = nil,
         cancellationCheck: @escaping @Sendable () -> Bool
     ) -> String? {
         guard !cancellationCheck() else { return nil }
         let orgBlocks = OrgParser().parse(source)
         guard !cancellationCheck() else { return nil }
-        let mdBlocks = OrgToMarkdownConverter.convert(orgBlocks)
+        let mdBlocks = OrgToMarkdownConverter.convert(orgBlocks, documentPath: documentPath)
         guard !cancellationCheck() else { return nil }
         let markdown = MarkdownBlockSerializer.serialize(mdBlocks)
         guard !cancellationCheck() else { return nil }

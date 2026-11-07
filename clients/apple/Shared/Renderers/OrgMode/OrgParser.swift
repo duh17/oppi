@@ -41,11 +41,38 @@ struct OrgParser: DocumentParser, Sendable {
 
     nonisolated func parse(_ source: String) -> [OrgBlock] {
         let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+        return parseBlocks(lines: lines, todoKeywords: scanTodoKeywords(lines))
+    }
+
+    /// Org applies `#+TODO:` to the whole file wherever the line sits, so the
+    /// declarations are read before any heading is classified.
+    private func scanTodoKeywords(_ lines: [Substring]) -> OrgTodoKeywords {
+        var declarations: [OrgBlock] = []
+        for line in lines {
+            guard let first = line.utf8.first, first == 0x23 || first == 0x20 || first == 0x09,
+                  Self.stripped(line).hasPrefix("#+"),
+                  let keyword = parseKeyword(line),
+                  case let .keyword(key, _) = keyword,
+                  OrgTodoKeywords.isDeclarationKey(key) else { continue }
+            declarations.append(keyword)
+        }
+        return declarations.isEmpty ? .standard : OrgTodoKeywords.declared(in: declarations)
+    }
+
+    private func parseBlocks(lines: [Substring], todoKeywords: OrgTodoKeywords) -> [OrgBlock] {
         var cursor = 0
         var blocks: [OrgBlock] = []
+        // Line a planning line may sit on: directly under a heading.
+        var planningCursor = -1
 
         while cursor < lines.count {
             let line = lines[cursor]
+
+            if cursor == planningCursor, let planning = parsePlanning(line) {
+                blocks.append(planning)
+                cursor += 1
+                continue
+            }
 
             // Fast-path: classify by first non-whitespace character.
             // Avoids running every parser on every line.
@@ -58,9 +85,10 @@ struct OrgParser: DocumentParser, Sendable {
             switch firstNonWS {
             case "*":
                 // Possible heading (stars + space)
-                if let heading = parseHeading(line) {
+                if let heading = parseHeading(line, todoKeywords: todoKeywords) {
                     blocks.append(heading)
                     cursor += 1
+                    planningCursor = cursor
                     continue
                 }
                 // Not a heading — fall through to paragraph
@@ -77,7 +105,9 @@ struct OrgParser: DocumentParser, Sendable {
                         continue
                     }
                     if trimmed.uppercased().hasPrefix("#+BEGIN_QUOTE") {
-                        let (block, newCursor) = parseQuoteBlock(lines: lines, startCursor: cursor)
+                        let (block, newCursor) = parseQuoteBlock(
+                            lines: lines, startCursor: cursor, todoKeywords: todoKeywords
+                        )
                         blocks.append(block)
                         cursor = newCursor
                         continue
@@ -158,7 +188,7 @@ struct OrgParser: DocumentParser, Sendable {
     // MARK: - Heading
 
     /// Parse a heading line: `* TODO [#A] Title :tag1:tag2:`
-    private func parseHeading(_ line: Substring) -> OrgBlock? {
+    private func parseHeading(_ line: Substring, todoKeywords: OrgTodoKeywords) -> OrgBlock? {
         // Trim only leading whitespace — trailing space matters for `* ` detection
         let leadTrimmed = String(line.drop(while: { $0 == " " || $0 == "\t" }))
         // Must start with stars followed by a space
@@ -170,9 +200,8 @@ struct OrgParser: DocumentParser, Sendable {
         var rest = String(leadTrimmed[leadTrimmed.index(after: firstNonStar)...])
 
         // Parse optional TODO keyword
-        let todoKeywords = ["TODO", "DONE", "NEXT", "WAITING", "CANCELLED", "HOLD"]
         var keyword: String?
-        for kw in todoKeywords where rest.hasPrefix(kw) {
+        for kw in todoKeywords.all where rest.hasPrefix(kw) {
             let afterKw = rest.index(rest.startIndex, offsetBy: kw.count)
             if afterKw == rest.endIndex || rest[afterKw] == " " {
                 keyword = kw
@@ -244,6 +273,52 @@ struct OrgParser: DocumentParser, Sendable {
         }
 
         return nil
+    }
+
+    // MARK: - Planning
+
+    /// Parse `SCHEDULED: <ts> DEADLINE: <ts> CLOSED: [ts]`. Every token on the
+    /// line must belong to a planning entry; anything else leaves the line to
+    /// the paragraph parser, so prose that happens to start with `CLOSED:` is
+    /// never swallowed.
+    private func parsePlanning(_ line: Substring) -> OrgBlock? {
+        guard let first = line.first(where: { $0 != " " && $0 != "\t" }),
+              first == "S" || first == "D" || first == "C" else { return nil }
+        let text = String(Self.stripped(line))
+        var entries: [OrgPlanningEntry] = []
+        var pos = text.startIndex
+
+        func skipSpaces() {
+            while pos < text.endIndex, text[pos] == " " || text[pos] == "\t" {
+                pos = text.index(after: pos)
+            }
+        }
+
+        while pos < text.endIndex {
+            let rest = text[pos...]
+            let kind: OrgPlanningKind
+            let label: String
+            if rest.hasPrefix("SCHEDULED:") {
+                kind = .scheduled
+                label = "SCHEDULED:"
+            } else if rest.hasPrefix("DEADLINE:") {
+                kind = .deadline
+                label = "DEADLINE:"
+            } else if rest.hasPrefix("CLOSED:") {
+                kind = .closed
+                label = "CLOSED:"
+            } else {
+                return nil
+            }
+            pos = text.index(pos, offsetBy: label.count)
+            skipSpaces()
+            guard pos < text.endIndex,
+                  let (timestamp, end) = parseTimestampAt(text: text, pos: pos) else { return nil }
+            entries.append(OrgPlanningEntry(kind: kind, timestamp: timestamp))
+            pos = end
+            skipSpaces()
+        }
+        return entries.isEmpty ? nil : .planning(entries)
     }
 
     // MARK: - Comment
@@ -328,7 +403,11 @@ struct OrgParser: DocumentParser, Sendable {
     // MARK: - Quote Block
 
     /// Parse `#+begin_quote ... #+end_quote`
-    private func parseQuoteBlock(lines: [Substring], startCursor: Int) -> (OrgBlock, Int) {
+    private func parseQuoteBlock(
+        lines: [Substring],
+        startCursor: Int,
+        todoKeywords: OrgTodoKeywords
+    ) -> (OrgBlock, Int) {
         var innerLines: [Substring] = []
         var cursor = startCursor + 1
 
@@ -342,8 +421,7 @@ struct OrgParser: DocumentParser, Sendable {
             cursor += 1
         }
 
-        let innerSource = innerLines.joined(separator: "\n")
-        let innerBlocks = parse(innerSource)
+        let innerBlocks = parseBlocks(lines: innerLines, todoKeywords: todoKeywords)
 
         return (.quote(innerBlocks), cursor)
     }
@@ -613,7 +691,7 @@ struct OrgParser: DocumentParser, Sendable {
         // Fast path: if no markup markers or link brackets exist, return plain text.
         let hasMarkup = text.utf8.contains(where: { b in
             b == 0x2A || b == 0x2F || b == 0x5F || b == 0x3D ||  // * / _ =
-            b == 0x7E || b == 0x2B || b == 0x5B                    // ~ + [
+            b == 0x7E || b == 0x2B || b == 0x5B || b == 0x3C       // ~ + [ <
         })
         if !hasMarkup {
             return [.text(text)]
@@ -645,6 +723,25 @@ struct OrgParser: DocumentParser, Sendable {
                         textStart = pos
                         continue
                     }
+                }
+            }
+
+            // Try timestamp (`<2026-11-11 Wed>`, `[2026-11-06 Fri 14:00]`) and
+            // statistics cookie (`[2/5]`, `[40%]`).
+            if ch == "[" || ch == "<" {
+                if let (timestamp, newPos) = parseTimestampAt(text: text, pos: pos) {
+                    flushText()
+                    result.append(.timestamp(timestamp))
+                    pos = newPos
+                    textStart = pos
+                    continue
+                }
+                if ch == "[", let (cookie, newPos) = parseCookieAt(text: text, pos: pos) {
+                    flushText()
+                    result.append(cookie)
+                    pos = newPos
+                    textStart = pos
+                    continue
                 }
             }
 
@@ -754,6 +851,62 @@ struct OrgParser: DocumentParser, Sendable {
             end = text.index(after: end)
         }
         return nil
+    }
+
+    /// `<2026-11-11 Wed>` or `[2026-11-06 Fri 14:00 +1w]`: a date, then anything
+    /// up to the matching bracket on the same line.
+    private func parseTimestampAt(text: String, pos: String.Index) -> (OrgTimestamp, String.Index)? {
+        let open = text[pos]
+        let isActive = open == "<"
+        guard isActive || open == "[" else { return nil }
+        let close: Character = isActive ? ">" : "]"
+
+        var idx = text.index(after: pos)
+        for shape in "0000-00-00" {
+            guard idx < text.endIndex else { return nil }
+            let c = text[idx]
+            if shape == "0" {
+                guard c.isASCII, c.isNumber else { return nil }
+            } else if c != shape {
+                return nil
+            }
+            idx = text.index(after: idx)
+        }
+        guard idx < text.endIndex, text[idx] == close || text[idx] == " " else { return nil }
+
+        while idx < text.endIndex {
+            let c = text[idx]
+            if c == close {
+                let content = String(text[text.index(after: pos)..<idx])
+                return (OrgTimestamp(isActive: isActive, text: content), text.index(after: idx))
+            }
+            if c == "<" || c == ">" || c == "[" || c == "]" { return nil }
+            idx = text.index(after: idx)
+        }
+        return nil
+    }
+
+    /// `[2/5]`, `[/]`, `[40%]`, `[%]`.
+    private func parseCookieAt(text: String, pos: String.Index) -> (OrgInline, String.Index)? {
+        var idx = text.index(after: pos)
+        func skipDigits() {
+            while idx < text.endIndex, text[idx].isASCII, text[idx].isNumber {
+                idx = text.index(after: idx)
+            }
+        }
+        skipDigits()
+        guard idx < text.endIndex else { return nil }
+        if text[idx] == "/" {
+            idx = text.index(after: idx)
+            skipDigits()
+        } else if text[idx] == "%" {
+            idx = text.index(after: idx)
+        } else {
+            return nil
+        }
+        guard idx < text.endIndex, text[idx] == "]" else { return nil }
+        let content = String(text[text.index(after: pos)..<idx])
+        return (.progress(content), text.index(after: idx))
     }
 
     private func parseLinkAt(text: String, pos: String.Index) -> (OrgInline, String.Index)? {

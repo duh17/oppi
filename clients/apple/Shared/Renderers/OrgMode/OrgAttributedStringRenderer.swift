@@ -177,6 +177,15 @@ private struct RenderContext: @unchecked Sendable {
         case let .drawer(name, properties):
             let text = ":\(name):\n" + properties.map { ":\($0.key): \($0.value)" }.joined(separator: "\n") + "\n:END:"
             return renderComment(text)
+
+        case let .planning(entries):
+            let text = entries
+                .map { "\($0.kind.label) \($0.timestamp.text)" }
+                .joined(separator: "  ·  ")
+            return NSAttributedString(string: text, attributes: [
+                .font: monoFontAt(size: configuration.fontSize * 0.85),
+                .foregroundColor: foregroundDim,
+            ])
         }
     }
 
@@ -473,6 +482,19 @@ private struct RenderContext: @unchecked Sendable {
                 .backgroundColor: codeBackground,
             ]
             return NSAttributedString(string: str, attributes: attrs)
+
+        case let .timestamp(timestamp):
+            return NSAttributedString(string: timestamp.text, attributes: [
+                .font: baseFont,
+                .foregroundColor: foregroundDim,
+            ])
+
+        case let .progress(cookie):
+            return NSAttributedString(string: "[\(cookie)]", attributes: [
+                .font: monoFontAt(size: baseFont.pointSize),
+                .foregroundColor: baseColor,
+                .backgroundColor: codeBackground,
+            ])
 
         case let .link(url, description):
             let result = NSMutableAttributedString()

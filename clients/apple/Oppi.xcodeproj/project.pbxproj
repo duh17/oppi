@@ -434,6 +434,7 @@
 		2AD6BBD446CFE1A7CFD40000 /* ComposerDraftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27560F6067A16918331DF012 /* ComposerDraftStore.swift */; };
 		2AE8FBE88813FD8A8BDAF093 /* NativeFullScreenSourceBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1716CC5986A09A38FFB7C07E /* NativeFullScreenSourceBody.swift */; };
 		2B036A6218C19C00B08269F1 /* ThemeUIKitPaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C8CCDA65F74ABC8B57B648C /* ThemeUIKitPaletteTests.swift */; };
+		2B2772387127EA455975AF8A /* OrgNotebookFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CB7B52477FD11824DF3C6C2 /* OrgNotebookFixture.swift */; };
 		2B3665F60397AA3E94C49714 /* OrbGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = D93E76EF6BD2F8ACD5D108D7 /* OrbGeometry.swift */; };
 		2B40385297C413307D51F3D9 /* PairingApprovalSheetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A423F9E1AC0062E54839DDC3 /* PairingApprovalSheetTests.swift */; };
 		2B5E247F46333963723D9550 /* ModelStatsValues.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFEEA81B679A3BA75CAAF348 /* ModelStatsValues.swift */; };
@@ -1010,6 +1011,7 @@
 		64C905D66A4E8DE1BFEB9C16 /* ShellRouteScreensTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F60DC500E872A7520A7E301 /* ShellRouteScreensTests.swift */; };
 		64D27A8C61D8782F2EB2BF6E /* LocalSessionRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54D30E828BDA03AF3B9B9BD6 /* LocalSessionRow.swift */; };
 		64E3F9F2DA017200B662BCC8 /* TeXMathParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C5FE18EB11C7F2BF511C7B9 /* TeXMathParser.swift */; };
+		64F39723F37860A3AB96FC4B /* OrgNotebookCompatibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D24E62FABFD1C4DB4481E41 /* OrgNotebookCompatibilityTests.swift */; };
 		650103900A879EC7723E4A82 /* AgentEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25CB78D462F0D1F9B0BE02AC /* AgentEvent.swift */; };
 		654AA40BE5EAAA72621472F5 /* GeneratedH264Fixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = C95C8232C23FC95071664893 /* GeneratedH264Fixture.swift */; };
 		655509F180456AE0D04216E5 /* MacMarkdownUSDZView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 013F0DE25BDFA86D97A8093A /* MacMarkdownUSDZView.swift */; };
@@ -3601,6 +3603,7 @@
 		6C829ED8BA0B53B2967CBACB /* MacSessionInboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionInboxTests.swift; sourceTree = "<group>"; };
 		6C8CCDA65F74ABC8B57B648C /* ThemeUIKitPaletteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeUIKitPaletteTests.swift; sourceTree = "<group>"; };
 		6CAF2AA157AA7A10C4E16F15 /* ANSIParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ANSIParserTests.swift; sourceTree = "<group>"; };
+		6CB7B52477FD11824DF3C6C2 /* OrgNotebookFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrgNotebookFixture.swift; sourceTree = "<group>"; };
 		6CCEE15005ADBD66183D70F0 /* SemanticAnnotationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SemanticAnnotationTests.swift; sourceTree = "<group>"; };
 		6CE7F0BBDD813EF8300FA59A /* ChatTimelineCollectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTimelineCollectionView.swift; sourceTree = "<group>"; };
 		6D00C1EAC69B4C2368678A74 /* ToolTimelineRowContent+CodeRendering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ToolTimelineRowContent+CodeRendering.swift"; sourceTree = "<group>"; };
@@ -3888,6 +3891,7 @@
 		8D12D6AD3BBD46626AA6941B /* RecentModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentModelsTests.swift; sourceTree = "<group>"; };
 		8D1B51EE7EDC8B2E28C37914 /* VoiceInputAudioEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputAudioEngine.swift; sourceTree = "<group>"; };
 		8D1E894886D53C5996B0BF12 /* MermaidSequenceRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidSequenceRenderer.swift; sourceTree = "<group>"; };
+		8D24E62FABFD1C4DB4481E41 /* OrgNotebookCompatibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrgNotebookCompatibilityTests.swift; sourceTree = "<group>"; };
 		8D45BECE748C8D9B96D7AC60 /* PreviewServerActivation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewServerActivation.swift; sourceTree = "<group>"; };
 		8D4B5C724040CE0DDA7DB7FE /* MacHTMLPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacHTMLPreview.swift; sourceTree = "<group>"; };
 		8D4ED5F6D7342021B60F0C49 /* ServerConnectionLANTransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionLANTransportTests.swift; sourceTree = "<group>"; };
@@ -6019,6 +6023,8 @@
 		52DD2DD29551A2C7C578F5CD /* OrgMode */ = {
 			isa = PBXGroup;
 			children = (
+				8D24E62FABFD1C4DB4481E41 /* OrgNotebookCompatibilityTests.swift */,
+				6CB7B52477FD11824DF3C6C2 /* OrgNotebookFixture.swift */,
 				0A37588169C0D20F543BB99D /* OrgParserConformanceTests.swift */,
 				8A4BAF27B0787756180D319F /* OrgParserErrorRecoveryTests.swift */,
 				43800E9618984B58D831C353 /* OrgRendererTests.swift */,
@@ -10072,6 +10078,8 @@
 				461FC304A1FA69FFC2A56553 /* OppiTestExperimentsAtLoad.m in Sources */,
 				F46D5ABDD39D9E79CABC37FA /* OrbGeometryTests.swift in Sources */,
 				3CD454891E264E19A49983E5 /* OrbMetalTests.swift in Sources */,
+				64F39723F37860A3AB96FC4B /* OrgNotebookCompatibilityTests.swift in Sources */,
+				2B2772387127EA455975AF8A /* OrgNotebookFixture.swift in Sources */,
 				FCDB7801564DB1CC260CFFFB /* OrgParserConformanceTests.swift in Sources */,
 				F06B1F8FB156F63E060514BF /* OrgParserErrorRecoveryTests.swift in Sources */,
 				D5D0CAB6A68D67504391821F /* OrgRendererTests.swift in Sources */,

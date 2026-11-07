@@ -47,6 +47,102 @@ enum OrgBlock: Equatable, Sendable {
     /// Drawer: `:NAME: ... :END:`
     /// Property drawers use name "PROPERTIES" and contain key-value pairs.
     case drawer(name: String, properties: [OrgDrawerProperty])
+
+    /// Planning line directly under a heading:
+    /// `SCHEDULED: <2026-11-11 Wed> DEADLINE: <2026-11-13 Fri> CLOSED: [2026-11-06 Fri 14:00]`
+    case planning([OrgPlanningEntry])
+}
+
+/// The keyword a planning line entry starts with.
+enum OrgPlanningKind: Equatable, Sendable {
+    case scheduled
+    case deadline
+    case closed
+
+    /// How a reading view names the entry.
+    var label: String {
+        switch self {
+        case .scheduled: "Scheduled"
+        case .deadline: "Deadline"
+        case .closed: "Closed"
+        }
+    }
+}
+
+/// A timestamp: `<2026-11-11 Wed>` (active) or `[2026-11-06 Fri 14:00]` (inactive).
+struct OrgTimestamp: Equatable, Sendable {
+    let isActive: Bool
+    /// What sits between the brackets, verbatim: date, weekday, time, repeater
+    /// and warning period (`2026-11-12 Thu 09:00 +1w`).
+    let text: String
+}
+
+/// One `KEYWORD: timestamp` pair on a planning line.
+struct OrgPlanningEntry: Equatable, Sendable {
+    let kind: OrgPlanningKind
+    let timestamp: OrgTimestamp
+}
+
+/// Heading keyword sequences from `#+TODO:` lines, or the built-in defaults.
+///
+/// Org keeps one set per file, whatever line declares it, so the parser scans
+/// for declarations before it classifies headings. A declaration replaces the
+/// defaults, as in Org.
+struct OrgTodoKeywords: Equatable, Sendable {
+    let active: [String]
+    let done: [String]
+
+    static let standard = Self(
+        active: ["TODO", "NEXT", "WAITING", "HOLD"],
+        done: ["DONE", "CANCELLED"]
+    )
+
+    var all: [String] { active + done }
+
+    func isDone(_ keyword: String) -> Bool { done.contains(keyword) }
+
+    /// Keyword sequences in `#+TODO:`, `#+SEQ_TODO:` and `#+TYP_TODO:` blocks of
+    /// `blocks`, or `.standard` when none declares any.
+    static func declared(in blocks: [OrgBlock]) -> Self {
+        var declared: Self?
+        for case let .keyword(key, value) in blocks where isDeclarationKey(key) {
+            if let sequence = Self(declaration: value) {
+                declared = declared.map { Self(active: $0.active + sequence.active, done: $0.done + sequence.done) } ?? sequence
+            }
+        }
+        return declared ?? .standard
+    }
+
+    /// `#+TODO:` keys, upper-cased as the parser stores them.
+    static func isDeclarationKey(_ key: String) -> Bool {
+        key == "TODO" || key == "SEQ_TODO" || key == "TYP_TODO"
+    }
+
+    /// Parse a declaration value: `TODO NEXT WAIT(w@) | DONE CANCELLED`. Without
+    /// a `|` the last keyword is the done state. Fast-access and logging
+    /// suffixes in parentheses are dropped.
+    init?(declaration: String) {
+        var active: [String] = []
+        var done: [String] = []
+        var seenBar = false
+        for token in declaration.split(whereSeparator: { $0 == " " || $0 == "\t" }) {
+            if token == "|" {
+                seenBar = true
+                continue
+            }
+            let name = token.prefix(while: { $0 != "(" })
+            guard !name.isEmpty else { continue }
+            if seenBar { done.append(String(name)) } else { active.append(String(name)) }
+        }
+        if !seenBar, let last = active.popLast() { done = [last] }
+        guard !active.isEmpty || !done.isEmpty else { return nil }
+        self.init(active: active, done: done)
+    }
+
+    init(active: [String], done: [String]) {
+        self.active = active
+        self.done = done
+    }
 }
 
 /// A single property in an org drawer.
@@ -85,6 +181,13 @@ enum OrgInline: Equatable, Sendable {
 
     /// Link: `[[url][description]]` or `[[url]]`
     case link(url: String, description: [Self]?)
+
+    /// Timestamp object: `<2026-11-11 Wed>` or `[2026-11-06 Fri 14:00]`.
+    case timestamp(OrgTimestamp)
+
+    /// Statistics cookie: `[2/5]` or `[40%]`, stored without the brackets
+    /// (`2/5`, `40%`; `/` and `%` when Org has not counted yet).
+    case progress(String)
 }
 
 /// List kind — unordered (bullet) or ordered (numbered).

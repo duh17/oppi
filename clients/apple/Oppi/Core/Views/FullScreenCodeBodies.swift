@@ -706,11 +706,15 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         Thread.isMainThread
     }
 
-    nonisolated private static func prepareOrgModeSource(_ source: String) -> PreparedOrgModeSource? {
+    nonisolated private static func prepareOrgModeSource(
+        _ source: String,
+        documentPath: String?
+    ) -> PreparedOrgModeSource? {
         let started = DispatchTime.now().uptimeNanoseconds
         let ranOnMainThread = Thread.isMainThread
         guard let markdown = DocumentRenderPipeline.orgToMarkdown(
             source,
+            documentPath: documentPath,
             cancellationCheck: { Task<Never, Never>.isCancelled }
         ) else { return nil }
         return PreparedOrgModeSource(
@@ -721,11 +725,12 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 
     private func scheduleOrgModeSourcePreparation(source: String) {
+        let documentPath = sourceFilePath
         sourcePreparationTask?.cancel()
         sourcePreparationTask = Task { @MainActor [weak self] in
             let prepared: PreparedOrgModeSource? = await withCancellableDetachedTask(priority: .userInitiated) {
                 guard !Task.isCancelled else { return nil }
-                return Self.prepareOrgModeSource(source)
+                return Self.prepareOrgModeSource(source, documentPath: documentPath)
             }
             guard let self, let prepared, !Task.isCancelled else { return }
             self.sourcePreparationTask = nil

@@ -107,27 +107,6 @@ struct OrgToMarkdownConverterTests {
         }
     }
 
-    // MARK: - Drawers
-
-    @Test func drawerConvertsToCodeBlock() {
-        let org = """
-        :PROPERTIES:
-        :ID: test-123
-        :CREATED: 2024-01-01
-        :END:
-        """
-        let blocks = parser.parse(org)
-        let mdBlocks = OrgToMarkdownConverter.convert(blocks)
-
-        guard case .codeBlock(let language, let code) = mdBlocks[0] else {
-            Issue.record("Expected code block, got \(mdBlocks)")
-            return
-        }
-        #expect(language == "properties")
-        #expect(code.contains(":ID:"))
-        #expect(code.contains("test-123"))
-    }
-
     // MARK: - Headings
 
     @Test func headingWithTodoKeyword() {

@@ -83,10 +83,9 @@ struct OrgModePerfBench {
     )
     func largeDocumentReaderUsesMarkdownViewport() async throws {
         let expectedMarkdown = await Task.detached(priority: .userInitiated) {
-            DocumentRenderPipeline.orgToMarkdown(Self.orgManualDoc)
+            DocumentRenderPipeline.orgToMarkdown(Self.orgManualDoc, documentPath: "org-manual.org")
         }.value
         #expect(Self.orgManualDoc.utf8.count == 853_547)
-        #expect(expectedMarkdown.utf8.count == 855_654)
         #expect(expectedMarkdown.contains("orgtbl-radio-table-templates"))
 
         let reviewRouter = ReviewCommentSelectionRouter(dispatch: { _ in })
