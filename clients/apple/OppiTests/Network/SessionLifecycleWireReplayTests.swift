@@ -34,9 +34,6 @@ struct SessionLifecycleWireReplayTests {
 
     // MARK: - Named disagreements
 
-    /// The client applies the server's status from summaries and state frames instead of
-    /// rewriting it from events.
-    static let statusFromServer = "client status follows the server"
     /// One activity rule (status, replica and local stop intent) feeds keep-alive and screen-awake.
     static let oneActivityRule = "one session activity rule"
 
@@ -72,9 +69,9 @@ struct SessionLifecycleWireReplayTests {
         .init(
             name: "statusLagsAtStopRequested",
             closedBy: "none: the state frame that always follows it catches it up",
-            reason: "stop_requested carries no status (deleted by this change). The row keeps its "
-                + "prior value for that one frame, until the state/session_summary that follows "
-                + "(always the very next frame on the wire) catches it up.",
+            reason: "stop_requested carries no status, and the client takes status only from the "
+                + "server's state and summaries. The row keeps its prior value for that one frame, "
+                + "until the state/session_summary that follows it on the wire.",
             fields: [.status],
             expectedFires: 24
         ) { _, frame, diff in
@@ -83,8 +80,8 @@ struct SessionLifecycleWireReplayTests {
         .init(
             name: "statusLagsAtStopConfirmedOrCompactionStart",
             closedBy: "none: the next state/session_summary always catches it up",
-            reason: "A terminate's stop_confirmed, and compaction_start, carry no status (deleted "
-                + "by this change). The row keeps its prior value for that one frame. keepAlive and "
+            reason: "A terminate's stop_confirmed, and compaction_start, carry no status. The row "
+                + "keeps its prior value for that one frame. keepAlive and "
                 + "awake only differ here too, at compaction_start, where the lag briefly "
                 + "undercounts a wrapping-up session, and at a terminate's stop_confirmed, where "
                 + "the row still looks busy enough to need the app alive and awake.",
@@ -107,12 +104,9 @@ struct SessionLifecycleWireReplayTests {
         .init(
             name: "appEventsDoNotDriveAwake",
             closedBy: Self.oneActivityRule,
-            reason: "The screen-awake reason is set by focused-stream agent events and by stop "
-                + "events, never by a session summary. The app-event channel alone carries "
-                + "summaries, so a running session holds no screen-awake reason. That includes the "
-                + "durable run released after an abort that landed before its agent_start. Stop "
-                + "events no longer set it locally either, so the window this covers is longer "
-                + "than before this change.",
+            reason: "The screen-awake reason follows state frames and summaries on the session "
+                + "stream only; app-event summaries never set it, so on the app-event channel a "
+                + "running session holds no screen-awake reason. That includes the durable run released after an abort that landed before its agent_start.",
             fields: [.awake],
             expectedFires: 68
         ) { path, _, diff in
@@ -123,7 +117,7 @@ struct SessionLifecycleWireReplayTests {
             closedBy: Self.oneActivityRule,
             reason: "A terminate of an idle session, or a durable abort that lands before agent_start "
                 + "while the row is still ready, moves the server to stopping. On the stream paths only "
-                + "agent_start or a running state or summary sets the screen-awake reason, so the "
+                + "a running state or summary sets the screen-awake reason, so the "
                 + "client holds none at stop_requested. If the activity rule decides an idle stop "
                 + "holds nothing, the server-implied answer changes instead.",
             fields: [.awake],
@@ -167,8 +161,8 @@ struct SessionLifecycleWireReplayTests {
         #expect(fires == expected)
     }
 
-    /// A non-fatal error frame carries no status on any path now (deleted by this change): the
-    /// row stays busy, matching the server, through error/session_error.
+    /// A non-fatal error frame carries no status on any path: the row stays busy, matching the
+    /// server, through error/session_error.
     @Test func nonFatalErrorFrameCarriesNoStatus() async throws {
         let background = try await observe("classic.run_error", .background)
         #expect(background[3].frameType == "error")
@@ -184,8 +178,8 @@ struct SessionLifecycleWireReplayTests {
         #expect(errorFrame.client.status == "busy" && errorFrame.server.status == "busy")
     }
 
-    /// stop_requested carries no status (deleted by this change): the row lags one frame, busy
-    /// until the state frame that follows. stop_confirmed and agent_settled carry none either,
+    /// stop_requested carries no status: the row lags one frame, busy until the state frame that
+    /// follows. stop_confirmed and agent_settled carry none either,
     /// so the row stays stopping through both, matching the server until its ready summary.
     @Test func stopConfirmedNoLongerReleasesStoppingEarly() async throws {
         let focused = try await observe("classic.abort_mid_turn", .focused)
@@ -206,8 +200,8 @@ struct SessionLifecycleWireReplayTests {
     }
 
     /// A terminate: the row lags stopping→stopped by one frame at stop_requested and
-    /// stop_confirmed (neither carries status), and session_ended — the inference this plan
-    /// still keeps — is what catches it up to stopped.
+    /// stop_confirmed (neither carries status), and session_ended, the one event the client
+    /// still turns into a status, is what catches it up to stopped.
     @Test func terminateLagsStoppedUntilSessionEnded() async throws {
         let focused = try await observe("classic.terminate_busy", .focused)
         #expect(focused[3].frameType == "stop_requested")
