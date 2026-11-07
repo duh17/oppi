@@ -579,3 +579,174 @@ struct TimelineLifecycleBench {
         String(format: "%.1f", value)
     }
 }
+
+/// Main-thread layout cost of a chat timeline that is out of the window while
+/// its session keeps streaming: a page pushed over the chat, or another chat
+/// in front. Stands in for `app.timeline_layout` (the forced
+/// `collectionView.layoutIfNeeded()` after each timeline apply, recorded by
+/// `ChatTimelinePerf.endLayoutPass`) on the path where the chat cannot be seen.
+///
+/// Each tick grows the streaming reply and toggles the working row, the
+/// pattern behind the off-screen layout bursts. `hidden_apply_*` is the cost
+/// while hidden; `reappear_settle_ms` is what the chat pays when it comes back.
+///
+/// Output format: `METRIC name=number`.
+@Suite("HiddenTimelineLayoutBench", .tags(.perf))
+@MainActor
+struct HiddenTimelineLayoutBench {
+    private static let iterations = 5
+    private static let warmupIterations = 2
+    private static let ticks = 40
+    private static let historyCount = 80
+
+    @Test func hiddenAttachedTimeline() {
+        report(label: "attached", detached: false)
+    }
+
+    @Test func hiddenDetachedTimeline() {
+        report(label: "detached", detached: true)
+    }
+
+    private struct RunResult {
+        let hiddenApplyMs: Double
+        let hiddenLayoutPasses: Int
+        let reappearSettleMs: Double
+    }
+
+    private func report(label: String, detached: Bool) {
+        var applyMs: [Double] = []
+        var passes: [Int] = []
+        var settleMs: [Double] = []
+        for run in 0 ..< (Self.warmupIterations + Self.iterations) {
+            let result = runHiddenStream(detached: detached, sessionId: "bench-hidden-\(label)-\(run)")
+            guard run >= Self.warmupIterations else { continue }
+            applyMs.append(result.hiddenApplyMs)
+            passes.append(result.hiddenLayoutPasses)
+            settleMs.append(result.reappearSettleMs)
+        }
+        let total = median(applyMs)
+        print("METRIC hidden_\(label)_apply_total_ms=\(fmt(total))")
+        print("METRIC hidden_\(label)_apply_per_tick_ms=\(fmt(total / Double(Self.ticks)))")
+        print("METRIC hidden_\(label)_layout_passes=\(passes.sorted()[passes.count / 2])")
+        print("METRIC hidden_\(label)_reappear_settle_ms=\(fmt(median(settleMs)))")
+        #expect(total.isFinite && total > 0)
+    }
+
+    private func runHiddenStream(detached: Bool, sessionId: String) -> RunResult {
+        let windowed = makeWindowedTimelineHarness(sessionId: sessionId)
+        let collectionView = windowed.collectionView
+        guard let anchored = collectionView as? AnchoredCollectionView else {
+            Issue.record("timeline is not anchored")
+            return RunResult(hiddenApplyMs: 0, hiddenLayoutPasses: 0, reappearSettleMs: 0)
+        }
+        defer { windowed.window.isHidden = true }
+
+        let history = Self.history()
+        apply(history + [Self.reply(tick: 0)], working: true, to: windowed)
+        collectionView.layoutIfNeeded()
+        let maxOffset = maxOffsetY(collectionView)
+        anchored.applyOffsetCorrection(maxOffset)
+        collectionView.layoutIfNeeded()
+        windowed.scrollController.updateNearBottom(true)
+        windowed.coordinator.updateScrollState(collectionView)
+
+        if detached {
+            windowed.scrollController.detachFromBottomForUserScroll()
+            anchored.applyOffsetCorrection(maxOffset * 0.5)
+            collectionView.layoutIfNeeded()
+            windowed.coordinator.updateScrollState(collectionView, preserveDetachedState: true)
+            anchored.isDetachedFromBottom = true
+            anchored.captureDetachedAnchor()
+        }
+
+        // Off screen: the chat's view leaves the window, the timeline stays
+        // in it. Nothing lays it out until it returns.
+        let offscreenHost = UIView(frame: windowed.window.bounds)
+        offscreenHost.addSubview(collectionView)
+
+        anchored._debugResetCounters()
+        var applyNs: UInt64 = 0
+        for tick in 1 ... Self.ticks {
+            let start = DispatchTime.now().uptimeNanoseconds
+            apply(history + [Self.reply(tick: tick)], working: tick % 2 == 0, to: windowed)
+            applyNs &+= DispatchTime.now().uptimeNanoseconds &- start
+        }
+        let passes = anchored._debugLayoutAnchorCount
+
+        // Back on screen: the move into the window and the first layout pass
+        // it gets before the next frame.
+        let settleStart = DispatchTime.now().uptimeNanoseconds
+        windowed.window.addSubview(collectionView)
+        collectionView.layoutIfNeeded()
+        let settleNs = DispatchTime.now().uptimeNanoseconds &- settleStart
+
+        return RunResult(
+            hiddenApplyMs: Double(applyNs) / 1_000_000,
+            hiddenLayoutPasses: passes,
+            reappearSettleMs: Double(settleNs) / 1_000_000
+        )
+    }
+
+    private func apply(_ items: [ChatItem], working: Bool, to windowed: WindowedTimelineHarness) {
+        var config = makeTimelineConfiguration(
+            items: items,
+            isBusy: true,
+            streamingAssistantID: Self.replyID,
+            sessionId: windowed.sessionId,
+            reducer: windowed.reducer,
+            toolOutputStore: windowed.toolOutputStore,
+            toolArgsStore: windowed.toolArgsStore,
+            connection: windowed.harness.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.harness.audioPlayer,
+            bottomOverlap: 80
+        )
+        config.showsWorkingIndicator = working
+        windowed.coordinator.apply(configuration: config, to: windowed.collectionView)
+    }
+
+    private static let replyID = "bench-hidden-reply"
+
+    private static func history() -> [ChatItem] {
+        (0 ..< historyCount).map { index -> ChatItem in
+            if index % 3 == 1 {
+                return .toolCall(
+                    id: "bench-hidden-tool-\(index)",
+                    tool: "bash",
+                    argsSummary: "rg pattern Sources/File\(index).swift",
+                    outputPreview: "match \(index)",
+                    outputByteCount: 512,
+                    isError: false,
+                    isDone: true
+                )
+            }
+            return .assistantMessage(
+                id: "bench-hidden-history-\(index)",
+                text: String(repeating: "History row \(index) with **markdown** and `code`. ", count: 6),
+                timestamp: Date(timeIntervalSince1970: 1_700_000_000 + Double(index))
+            )
+        }
+    }
+
+    private static func reply(tick: Int) -> ChatItem {
+        .assistantMessage(
+            id: replyID,
+            text: (0 ... tick).map { "Streaming line \($0) of the live reply." }.joined(separator: "\n"),
+            timestamp: Date(timeIntervalSince1970: 1_700_001_000)
+        )
+    }
+
+    private func maxOffsetY(_ cv: UICollectionView) -> CGFloat {
+        let insets = cv.adjustedContentInset
+        return max(-insets.top, cv.contentSize.height - cv.bounds.height + insets.bottom)
+    }
+
+    private func median(_ values: [Double]) -> Double {
+        let sorted = values.sorted()
+        return sorted[sorted.count / 2]
+    }
+
+    private func fmt(_ value: Double) -> String {
+        String(format: "%.3f", value)
+    }
+}

@@ -168,18 +168,20 @@ enum TimelineSnapshotApplier {
         return currentIDs.filter(visibleIDSet.contains)
     }
 
+    /// Reconfigures the rows still in the snapshot. Returns whether any were;
+    /// the caller owns the layout pass that sizes them.
+    @discardableResult
     static func reconfigureItems(
         _ itemIDs: [String],
         dataSource: DataSource?,
-        collectionView: UICollectionView,
         currentIDs: [String],
         sessionId: String? = nil
-    ) {
-        guard let dataSource else { return }
+    ) -> Bool {
+        guard let dataSource else { return false }
 
         var snapshot = dataSource.snapshot()
         let existing = itemIDs.filter { snapshot.indexOfItem($0) != nil }
-        guard !existing.isEmpty else { return }
+        guard !existing.isEmpty else { return false }
 
         snapshot.reconfigureItems(existing)
 
@@ -190,10 +192,7 @@ enum TimelineSnapshotApplier {
         )
         dataSource.apply(snapshot, animatingDifferences: false)
         ChatTimelinePerf.endCollectionApply(applyToken)
-
-        let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: currentIDs.count, sessionId: sessionId)
-        collectionView.layoutIfNeeded()
-        ChatTimelinePerf.endLayoutPass(layoutToken)
+        return true
     }
 
     static func reconfigureItemIDs(

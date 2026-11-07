@@ -220,3 +220,284 @@ struct WorkingIndicatorLiveTailPinTests {
         )
     }
 }
+
+/// A chat out of the window (a page pushed over it, another chat in front)
+/// skips the timeline's forced layout and settles once when it returns. The
+/// person must see what a timeline that stayed on screen shows: the same rows
+/// at the same scroll position, whether they followed the live tail or were
+/// reading back.
+@Suite("Off-screen timeline settle")
+@MainActor
+struct OffscreenTimelineSettleTests {
+    private let composerHeight: CGFloat = 80
+
+    @Test func attachedTimelineHiddenThroughUpdatesReturnsToTheSameTail() throws {
+        let visible = makeWindowedTimelineHarness(sessionId: "session-offscreen-attached-visible")
+        let hidden = makeWindowedTimelineHarness(sessionId: "session-offscreen-attached-hidden")
+        defer {
+            hideTestWindow(visible.window)
+            hideTestWindow(hidden.window)
+        }
+        let history = historyItems()
+        for windowed in [visible, hidden] {
+            apply(history + [reply(round: 0)], working: true, to: windowed)
+            settleTimelineLayout(windowed.collectionView)
+            pinToBottom(windowed)
+        }
+
+        let host = takeOffScreen(hidden)
+        for round in 1...8 {
+            let items = history + [reply(round: round)]
+            apply(items, working: round % 2 == 0, to: visible)
+            settleTimelineLayout(visible.collectionView)
+            apply(items, working: round % 2 == 0, to: hidden)
+        }
+        bringBack(hidden, from: host)
+
+        try expectSameViewport(hidden, as: visible)
+        #expect(hidden.scrollController.isCurrentlyNearBottom)
+        let maxOffset = timelineMaxOffset(hidden.collectionView)
+        #expect(
+            abs(hidden.collectionView.contentOffset.y - maxOffset) <= 1,
+            "returned off the live tail: offset=\(hidden.collectionView.contentOffset.y) max=\(maxOffset)"
+        )
+    }
+
+    @Test func detachedTimelineHiddenThroughUpdatesReturnsToTheSameReaderPosition() throws {
+        let visible = makeWindowedTimelineHarness(sessionId: "session-offscreen-detached-visible")
+        let hidden = makeWindowedTimelineHarness(sessionId: "session-offscreen-detached-hidden")
+        defer {
+            hideTestWindow(visible.window)
+            hideTestWindow(hidden.window)
+        }
+        let history = historyItems()
+        for windowed in [visible, hidden] {
+            apply(history + [reply(round: 0)], working: true, to: windowed)
+            settleTimelineLayout(windowed.collectionView)
+            pinToBottom(windowed)
+            detach(windowed)
+        }
+        let anchorID = try #require(firstReadRowID(in: visible))
+        let anchorScreenY = try #require(screenY(of: anchorID, in: visible))
+
+        let host = takeOffScreen(hidden)
+        for round in 1...8 {
+            // Rows land below the reader: a tool call appended at the tail
+            // and the working row coming and going.
+            var items = history + [reply(round: round)]
+            if round >= 4 {
+                items.append(.toolCall(
+                    id: "offscreen-tool",
+                    tool: "bash",
+                    argsSummary: "swift test",
+                    outputPreview: "ok",
+                    outputByteCount: 8,
+                    isError: false,
+                    isDone: round >= 6
+                ))
+            }
+            apply(items, working: round % 2 == 0, to: visible)
+            settleTimelineLayout(visible.collectionView)
+            apply(items, working: round % 2 == 0, to: hidden)
+        }
+        bringBack(hidden, from: host)
+
+        try expectSameViewport(hidden, as: visible)
+        #expect(!hidden.scrollController.isCurrentlyNearBottom)
+        let visibleY = try #require(screenY(of: anchorID, in: visible))
+        let hiddenY = try #require(screenY(of: anchorID, in: hidden))
+        #expect(abs(visibleY - anchorScreenY) <= 1, "precondition: the visible reader stayed put")
+        #expect(abs(hiddenY - visibleY) <= 1, "reader row moved: hidden=\(hiddenY) visible=\(visibleY)")
+    }
+
+    @Test func detachedTimelineHiddenWhileRowsAboveTheReaderChangeReturnsToTheSameReaderPosition() throws {
+        let visible = makeWindowedTimelineHarness(sessionId: "session-offscreen-above-visible")
+        let hidden = makeWindowedTimelineHarness(sessionId: "session-offscreen-above-hidden")
+        defer {
+            hideTestWindow(visible.window)
+            hideTestWindow(hidden.window)
+        }
+        // A live thinking row sits above the reader; earlier rows wait behind
+        // the window's top.
+        let thinkingID = "offscreen-thinking"
+        var full = historyItems()
+        full.insert(
+            .thinking(id: thinkingID, preview: "plan", hasMore: false, isDone: false),
+            at: 16
+        )
+        for windowed in [visible, hidden] {
+            apply(Array(full[12...]) + [reply(round: 0)], hiddenCount: 12, working: true, to: windowed)
+            settleTimelineLayout(windowed.collectionView)
+            pinToBottom(windowed)
+            detach(windowed)
+        }
+        let anchorID = try #require(firstReadRowID(in: visible))
+        let thinkingIndex = try #require(visible.coordinator.currentIDs.firstIndex(of: thinkingID))
+        let anchorIndex = try #require(visible.coordinator.currentIDs.firstIndex(of: anchorID))
+        #expect(thinkingIndex < anchorIndex, "precondition: the thinking row is above the reader")
+        let anchorScreenY = try #require(screenY(of: anchorID, in: visible))
+
+        let host = takeOffScreen(hidden)
+        for round in 1...6 {
+            // Earlier rows are revealed above the reader, then the thinking
+            // row above it grows, while the working row comes and goes.
+            full[16] = .thinking(
+                id: thinkingID,
+                preview: String(repeating: "Thinking round \(round). ", count: round * 12),
+                hasMore: true,
+                isDone: false
+            )
+            let hiddenCount = round == 1 ? 12 : 4
+            let items = Array(full[hiddenCount...]) + [reply(round: round)]
+            apply(items, hiddenCount: hiddenCount, working: round % 2 == 0, to: visible)
+            settleTimelineLayout(visible.collectionView)
+            apply(items, hiddenCount: hiddenCount, working: round % 2 == 0, to: hidden)
+        }
+        bringBack(hidden, from: host)
+
+        try expectSameViewport(hidden, as: visible)
+        #expect(!hidden.scrollController.isCurrentlyNearBottom)
+        let visibleY = try #require(screenY(of: anchorID, in: visible))
+        let hiddenY = try #require(screenY(of: anchorID, in: hidden))
+        #expect(abs(visibleY - anchorScreenY) <= 1, "precondition: the visible reader stayed put")
+        #expect(abs(hiddenY - visibleY) <= 1, "reader row moved: hidden=\(hiddenY) visible=\(visibleY)")
+    }
+
+    // MARK: - Helpers
+
+    /// The chat's view leaves the window; the timeline stays in it.
+    private func takeOffScreen(_ windowed: WindowedTimelineHarness) -> UIView {
+        let host = UIView(frame: windowed.window.bounds)
+        host.addSubview(windowed.collectionView)
+        #expect(windowed.collectionView.window == nil)
+        return host
+    }
+
+    /// Back in the window, then the layout passes the next frames run.
+    private func bringBack(_ windowed: WindowedTimelineHarness, from host: UIView) {
+        windowed.window.addSubview(windowed.collectionView)
+        #expect(host.subviews.isEmpty)
+        settleTimelineLayout(windowed.collectionView)
+    }
+
+    private func expectSameViewport(
+        _ hidden: WindowedTimelineHarness,
+        as visible: WindowedTimelineHarness
+    ) throws {
+        #expect(hidden.coordinator.currentIDs == visible.coordinator.currentIDs)
+        #expect(
+            abs(hidden.collectionView.contentSize.height - visible.collectionView.contentSize.height) <= 1,
+            "content height: hidden=\(hidden.collectionView.contentSize.height) visible=\(visible.collectionView.contentSize.height)"
+        )
+        #expect(
+            abs(hidden.collectionView.contentOffset.y - visible.collectionView.contentOffset.y) <= 1,
+            "offset: hidden=\(hidden.collectionView.contentOffset.y) visible=\(visible.collectionView.contentOffset.y)"
+        )
+        #expect(visibleRowIDs(in: hidden) == visibleRowIDs(in: visible))
+    }
+
+    private func visibleRowIDs(in windowed: WindowedTimelineHarness) -> [String] {
+        let collectionView = windowed.collectionView
+        let viewport = CGRect(origin: collectionView.contentOffset, size: collectionView.bounds.size)
+        return windowed.coordinator.currentIDs.enumerated().compactMap { index, id in
+            guard let attributes = collectionView.layoutAttributesForItem(at: IndexPath(item: index, section: 0)),
+                  attributes.frame.intersects(viewport) else { return nil }
+            return id
+        }
+    }
+
+    private func firstReadRowID(in windowed: WindowedTimelineHarness) -> String? {
+        let collectionView = windowed.collectionView
+        let readingTop = collectionView.contentOffset.y + collectionView.adjustedContentInset.top
+        return windowed.coordinator.currentIDs.enumerated().first { index, _ in
+            guard let attributes = collectionView.layoutAttributesForItem(at: IndexPath(item: index, section: 0)) else {
+                return false
+            }
+            return attributes.frame.maxY > readingTop
+        }?.element
+    }
+
+    private func screenY(of itemID: String, in windowed: WindowedTimelineHarness) -> CGFloat? {
+        guard let index = windowed.coordinator.currentIDs.firstIndex(of: itemID),
+              let attributes = windowed.collectionView.layoutAttributesForItem(at: IndexPath(item: index, section: 0)) else {
+            return nil
+        }
+        return attributes.frame.minY - windowed.collectionView.contentOffset.y
+    }
+
+    private func apply(
+        _ items: [ChatItem],
+        hiddenCount: Int = 0,
+        working: Bool,
+        to windowed: WindowedTimelineHarness
+    ) {
+        var config = makeTimelineConfiguration(
+            items: items,
+            hiddenCount: hiddenCount,
+            isBusy: true,
+            streamingAssistantID: replyID,
+            sessionId: windowed.sessionId,
+            reducer: windowed.reducer,
+            toolOutputStore: windowed.toolOutputStore,
+            toolArgsStore: windowed.toolArgsStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer,
+            bottomOverlap: composerHeight
+        )
+        config.showsWorkingIndicator = working
+        windowed.coordinator.apply(configuration: config, to: windowed.collectionView)
+    }
+
+    private func pinToBottom(_ windowed: WindowedTimelineHarness) {
+        let collectionView = windowed.collectionView
+        collectionView.layoutIfNeeded()
+        (collectionView as? AnchoredCollectionView)?.applyOffsetCorrection(timelineMaxOffset(collectionView))
+        settleTimelineLayout(collectionView)
+        windowed.scrollController.updateNearBottom(true)
+        windowed.coordinator.updateScrollState(collectionView)
+    }
+
+    /// The reader drags halfway up the history.
+    private func detach(_ windowed: WindowedTimelineHarness) {
+        let collectionView = windowed.collectionView
+        guard let anchored = collectionView as? AnchoredCollectionView else { return }
+        anchored.testIsTracking = true
+        anchored.testIsDragging = true
+        windowed.coordinator.scrollViewWillBeginDragging(collectionView)
+        setTimelineUserScrollOffsetY(collectionView, timelineMaxOffset(collectionView) * 0.5)
+        windowed.coordinator.scrollViewDidScroll(collectionView)
+        anchored.testIsTracking = false
+        anchored.testIsDragging = false
+        windowed.coordinator.scrollViewDidEndDragging(collectionView, willDecelerate: false)
+        settleTimelineLayout(collectionView)
+    }
+
+    private let replyID = "offscreen-reply"
+
+    private func reply(round: Int) -> ChatItem {
+        .assistantMessage(
+            id: replyID,
+            text: (0...(round * 3)).map { "Streaming line \($0) of the live reply." }.joined(separator: "\n"),
+            timestamp: Date(timeIntervalSince1970: 1_700_001_000)
+        )
+    }
+
+    private func historyItems() -> [ChatItem] {
+        (0..<36).map { index in
+            .assistantMessage(
+                id: "offscreen-history-\(index)",
+                text: String(repeating: "History \(index) line. ", count: 12),
+                timestamp: Date(timeIntervalSince1970: 1_700_000_000 + Double(index))
+            )
+        }
+    }
+
+    private func timelineMaxOffset(_ collectionView: UICollectionView) -> CGFloat {
+        let insets = collectionView.adjustedContentInset
+        return max(
+            -insets.top,
+            collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
+        )
+    }
+}

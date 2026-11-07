@@ -323,6 +323,9 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     var timelineTopOverlap: CGFloat = 0
     var timelineBottomOverlap: CGFloat = 0
     private var lastPublishedVisibleAudioStripItemIDs = Set<String>()
+    /// Layout skipped while the timeline was out of the window, owed to its
+    /// next appearance (`settleOffscreenUpdates(in:)`).
+    var offscreenSettle: OffscreenTimelineSettle?
 
     override init() {
         super.init()
@@ -1439,6 +1442,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         // the same item to a new index path. Skip when a viewport jump is
         // pending: the identity pin would fight relative-Y restoration.
         var readerPosition: AnchoredCollectionView.DetachedReaderPosition?
+        var forcesLayoutOffscreen = false
         if let anchoredCV = collectionView as? AnchoredCollectionView {
             let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
             anchoredCV.isDetachedFromBottom = detached
@@ -1451,11 +1455,33 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             if pendingViewportRestore {
                 anchoredCV.clearDetachedAnchor()
             } else if detached {
-                anchoredCV.captureDetachedAnchor()
-                anchoredCV.remapDetachedAnchorItemID(
-                    using: workLineReplacementIDByPreviousID
-                )
-                readerPosition = anchoredCV.detachedReaderPosition
+                if let owed = offscreenSettle?.readerPosition,
+                   anchoredCV.isCurrent(owed) {
+                    // Off screen since that capture, nothing has laid the rows
+                    // out: a capture now would read unsettled frames. The
+                    // settle restores the position the reader last saw.
+                    anchoredCV.remapDetachedAnchorItemID(
+                        using: workLineReplacementIDByPreviousID
+                    )
+                    if anchoredCV.pinsRow(in: applyPlan.nextIDs) {
+                        readerPosition = owed
+                    } else {
+                        // The reader's row leaves in this apply. Settle what is
+                        // pending and pin a row that stays, as a visible
+                        // timeline would, and lay this apply out in full once.
+                        collectionView.layoutIfNeeded()
+                        anchoredCV.restoreDetachedReaderPosition(owed)
+                        offscreenSettle?.readerPosition = nil
+                        forcesLayoutOffscreen = true
+                    }
+                }
+                if readerPosition == nil {
+                    anchoredCV.captureDetachedAnchor()
+                    anchoredCV.remapDetachedAnchorItemID(
+                        using: workLineReplacementIDByPreviousID
+                    )
+                    readerPosition = anchoredCV.detachedReaderPosition
+                }
             }
         }
 
@@ -1563,25 +1589,22 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         // governor/idle settle below owns the layout pass and applies only
         // the movement it needs.
         let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
-        if detached {
+        if detached, !forcesLayoutOffscreen, defersLayoutOffscreen(collectionView) {
+            // Off screen the pass only makes geometry nobody sees current.
+            // The settle runs it once, with the same restore, on return.
+            let replaysReaderPosition = !workLineReplacementIDByPreviousID.isEmpty
+            oweOffscreenSettle { owed in
+                owed.readerPosition = readerPosition
+                owed.replaysReaderPosition = owed.replaysReaderPosition || replaysReaderPosition
+            }
+        } else if detached {
             let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: applyPlan.nextIDs.count, sessionId: configuration.sessionId)
             collectionView.layoutIfNeeded()
             if let readerPosition,
                let anchoredCollectionView = collectionView as? AnchoredCollectionView {
                 anchoredCollectionView.restoreDetachedReaderPosition(readerPosition)
                 if !workLineReplacementIDByPreviousID.isEmpty {
-                    DispatchQueue.main.async { [weak anchoredCollectionView] in
-                        // A finger that landed since the apply owns the
-                        // viewport; replaying the old Y would snap it back.
-                        guard let anchoredCollectionView,
-                              !anchoredCollectionView.isTracking,
-                              !anchoredCollectionView.isDragging,
-                              !anchoredCollectionView.isDecelerating else {
-                            return
-                        }
-                        anchoredCollectionView.layoutIfNeeded()
-                        anchoredCollectionView.restoreDetachedReaderPosition(readerPosition)
-                    }
+                    replayDetachedReaderPosition(readerPosition, in: anchoredCollectionView)
                 }
             }
             ChatTimelinePerf.endLayoutPass(layoutToken)
@@ -1612,7 +1635,9 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         // user-driven scrolls back toward the bottom.
         let isBusy = configuration.isBusy
         let alreadyAttached = scrollController?.isCurrentlyNearBottom ?? true
-        if !isBusy, alreadyAttached {
+        // An owed settle samples the state after its own tail pin; sampling
+        // now would read an unpinned offset and could detach the reader.
+        if !isBusy, alreadyAttached, offscreenSettle == nil {
             updateScrollState(collectionView)
         }
         updateDetachedStreamingHintVisibility()
@@ -2250,13 +2275,22 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                 }
             }
         }
-        TimelineSnapshotApplier.reconfigureItems(
+        guard TimelineSnapshotApplier.reconfigureItems(
             itemIDs,
             dataSource: dataSource,
-            collectionView: collectionView,
             currentIDs: currentIDs,
             sessionId: sessionId
-        )
+        ) else {
+            return
+        }
+        guard !defersLayoutOffscreen(collectionView) else {
+            // Sized when the timeline returns (`settleOffscreenUpdates`).
+            oweOffscreenSettle { _ in }
+            return
+        }
+        let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: currentIDs.count, sessionId: sessionId)
+        collectionView.layoutIfNeeded()
+        ChatTimelinePerf.endLayoutPass(layoutToken)
     }
 
     private let liveTailMinimumBottomPadding: CGFloat = 16
@@ -2334,19 +2368,14 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         sessionId: String,
         structuralAppend: Bool = false
     ) {
-        guard scrollController?.isCurrentlyNearBottom ?? true else { return }
-        guard !collectionView.isTracking,
-              !collectionView.isDragging,
-              !collectionView.isDecelerating else {
-            return
-        }
-        if #available(iOS 17.4, *), collectionView.isScrollAnimating {
-            return
-        }
-        if (collectionView as? AnchoredCollectionView)?.expandCollapseAnchorIP != nil {
-            // The tapped work header owns the viewport until its structural
-            // apply and deferred self-sizing passes settle. An idle bottom
-            // correction here would yank an older turn back to the tail.
+        guard canReconcileAmbientScroll(collectionView) else { return }
+        let toExactBottom = !isBusy || structuralAppend
+        if defersLayoutOffscreen(collectionView) {
+            // Nobody sees the tail off screen; pin it when the timeline returns.
+            oweOffscreenSettle { owed in
+                owed.pinsAttachedTail = true
+                owed.settlesAttachedBottom = owed.settlesAttachedBottom || toExactBottom
+            }
             return
         }
 
@@ -2362,10 +2391,32 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         collectionView.layoutIfNeeded()
         ChatTimelinePerf.endLayoutPass(layoutToken)
 
-        if isBusy, !structuralAppend {
-            keepLiveTailVisible(collectionView)
-        } else {
+        pinAttachedTail(collectionView, toExactBottom: toExactBottom)
+    }
+
+    func canReconcileAmbientScroll(_ collectionView: UICollectionView) -> Bool {
+        guard scrollController?.isCurrentlyNearBottom ?? true else { return false }
+        guard !collectionView.isTracking,
+              !collectionView.isDragging,
+              !collectionView.isDecelerating else {
+            return false
+        }
+        if #available(iOS 17.4, *), collectionView.isScrollAnimating {
+            return false
+        }
+        // The tapped work header owns the viewport until its structural
+        // apply and deferred self-sizing passes settle. An idle bottom
+        // correction here would yank an older turn back to the tail.
+        return (collectionView as? AnchoredCollectionView)?.expandCollapseAnchorIP == nil
+    }
+
+    /// A structural append or an idle timeline pins the exact bottom; busy
+    /// in-place growth only keeps the live tail clear of the composer.
+    func pinAttachedTail(_ collectionView: UICollectionView, toExactBottom: Bool) {
+        if toExactBottom {
             settleAttachedBottom(collectionView)
+        } else {
+            keepLiveTailVisible(collectionView)
         }
     }
 

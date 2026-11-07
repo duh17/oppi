@@ -28,6 +28,14 @@ final class AnchoredCollectionView: UICollectionView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// A timeline that updated out of the window skipped its forced layout;
+    /// settle it here, before the first frame back on screen.
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else { return }
+        (delegate as? ChatTimelineController)?.settleOffscreenUpdates(in: self)
+    }
+
     /// UIKit keeps a touch on `UIControl` unless this returns true, so a
     /// slow drag on a path pill never becomes a timeline pan.
     override func touchesShouldCancel(in view: UIView) -> Bool {
@@ -257,6 +265,17 @@ final class AnchoredCollectionView: UICollectionView {
     var detachedReaderPosition: DetachedReaderPosition? {
         guard detachedAnchorItemID != nil else { return nil }
         return DetachedReaderPosition(generation: detachedAnchorGeneration, screenY: detachedAnchorScreenY)
+    }
+
+    /// Whether `position` is still the live pin: no capture, clear, or jump since.
+    func isCurrent(_ position: DetachedReaderPosition) -> Bool {
+        position.generation == detachedAnchorGeneration && detachedAnchorItemID != nil
+    }
+
+    /// Whether the pinned row is one of `itemIDs` (rendered identities).
+    func pinsRow(in itemIDs: [String]) -> Bool {
+        guard let detachedAnchorItemID else { return false }
+        return itemIDs.contains(detachedAnchorItemID)
     }
 
     /// Compositional layout can expose a prepended or replaced row's final
