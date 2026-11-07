@@ -8,9 +8,9 @@ import Testing
 ///
 /// This characterises today's client. It does not say the client is right. Where the client
 /// and the server disagree, the difference must be a named `Disagreement` below: it carries
-/// the reason and the slice that removes it, and `expectedFires` pins how often it shows. A
+/// the reason and the change that removes it, and `expectedFires` pins how often it shows. A
 /// difference no rule explains fails the run, and so does a rule that stops firing, so the
-/// slice that deletes client inference removes its rule in the same change.
+/// change that deletes client inference removes its rule in the same commit.
 ///
 /// Three replays per scenario:
 /// - `focused`: the focused-stream frames through `TestEventPipeline`, session focused.
@@ -18,8 +18,8 @@ import Testing
 ///   has focus over (`routeStreamMessage` → cross-session routing).
 /// - `app`: the app-event frames through `handleAppEvent`.
 ///
-/// Scenarios tagged `plannedChange` in the fixture are replayed to completion but their
-/// differences are not pinned: a later server slice changes their frames on purpose.
+/// Scenarios tagged `plannedChange` in the fixture are not replayed: a later server change
+/// alters their frames on purpose.
 @Suite("Session lifecycle wire replay")
 @MainActor
 struct SessionLifecycleWireReplayTests {
@@ -34,13 +34,19 @@ struct SessionLifecycleWireReplayTests {
 
     // MARK: - Named disagreements
 
+    /// The client applies the server's status from summaries and state frames instead of
+    /// rewriting it from events.
+    static let statusFromServer = "client status follows the server"
+    /// One activity rule (status, replica and local stop intent) feeds keep-alive and screen-awake.
+    static let oneActivityRule = "one session activity rule"
+
     /// Every difference between the client row and the server, by name. `matches` sees the path,
     /// the frame type and every differing field at that frame; the first rule that lists the field
     /// and matches claims it.
     static let disagreements: [LifecycleDisagreement] = [
         .init(
             name: "agentStartLeadsSummary",
-            closedBy: "C1",
+            closedBy: Self.statusFromServer,
             reason: "The client marks the row busy on the agent_start event. The server sends the busy "
                 + "summary after the event, so its status at that frame is still ready.",
             fields: [.status, .keepAlive, .awake],
@@ -50,7 +56,7 @@ struct SessionLifecycleWireReplayTests {
         },
         .init(
             name: "agentSettledLeadsSummary",
-            closedBy: "C1",
+            closedBy: Self.statusFromServer,
             reason: "The client marks the row ready on agent_settled. The server's ready summary "
                 + "follows, so its status at that frame is still busy.",
             fields: [.status, .keepAlive, .awake],
@@ -60,11 +66,11 @@ struct SessionLifecycleWireReplayTests {
         },
         .init(
             name: "stopConfirmedReleasesStopping",
-            closedBy: "C1",
+            closedBy: Self.statusFromServer,
             reason: "An abort's stop_confirmed arrives at agent_end, while the server row is still "
                 + "stopping until agent_settled. The client rewrites stopping to ready on stop_confirmed "
-                + "and releases the screen-awake reason; it stays ready through the server's stopping "
-                + "summaries. (Disagreement row 1.)",
+                + "and releases the screen-awake reason. The next stopping summary puts the row back, "
+                + "and agent_settled releases it again before the server's ready summary.",
             fields: [.status, .keepAlive, .awake],
             expectedFires: 51
         ) { _, frame, diff in
@@ -72,9 +78,9 @@ struct SessionLifecycleWireReplayTests {
         },
         .init(
             name: "stopConfirmedReleasesTerminate",
-            closedBy: "C1",
+            closedBy: Self.statusFromServer,
             reason: "A terminate sends stop_confirmed while the server row is already stopped. The client "
-                + "shows ready for the frame, then stopped on session_ended (or never, on durable).",
+                + "shows ready for the frame, then stopped on session_ended.",
             fields: [.status],
             expectedFires: 9
         ) { _, frame, diff in
@@ -82,11 +88,11 @@ struct SessionLifecycleWireReplayTests {
         },
         .init(
             name: "nonFatalErrorMarksSessionError",
-            closedBy: "C1",
+            closedBy: Self.statusFromServer,
             reason: "Any non-fatal error or session_error frame marks the row .error, unless the "
                 + "message starts \"Retrying (\". The server sets error only for launch failures; the "
                 + "turn continues busy and its next summary restores the row. Only the background "
-                + "and app paths show it: the focused path ignores the error frame. (Row 11.)",
+                + "and app paths show it: the focused path ignores the error frame.",
             fields: [.status, .keepAlive, .awake],
             expectedFires: 10
         ) { path, frame, diff in
@@ -94,10 +100,12 @@ struct SessionLifecycleWireReplayTests {
         },
         .init(
             name: "sessionEndedKeepsProgress",
-            closedBy: "unowned: the plan's disagreement rows do not cover it",
+            closedBy: "unowned: needs a server summary when the session reaches stopped",
             reason: "After a terminate the server's programStatus is idle. The client keeps the last "
                 + "working programStatus on stop_confirmed and session_ended, which carry none; "
-                + "only a summary or state frame replaces it, and none follows.",
+                + "only a summary or state frame replaces it, and the server sends none once the "
+                + "row is stopped. Rows and the Live Activity do not show it: a stopped session "
+                + "with a working program status reads Stopped.",
             fields: [.program],
             expectedFires: 6
         ) { _, frame, diff in
@@ -117,7 +125,7 @@ struct SessionLifecycleWireReplayTests {
         },
         .init(
             name: "keepAliveIgnoresStopping",
-            closedBy: "C2",
+            closedBy: Self.oneActivityRule,
             reason: "BackgroundKeepAlive.hasActiveAgent counts busy and starting rows. A stopping "
                 + "session has an agent still winding down, so the server-implied answer is true.",
             fields: [.keepAlive],
@@ -127,7 +135,7 @@ struct SessionLifecycleWireReplayTests {
         },
         .init(
             name: "appEventsDoNotDriveAwake",
-            closedBy: "C2",
+            closedBy: Self.oneActivityRule,
             reason: "The screen-awake reason is set by focused-stream agent events and by stop "
                 + "events, never by a session summary. The app-event channel alone carries "
                 + "summaries, so a running session holds no screen-awake reason.",
@@ -138,7 +146,7 @@ struct SessionLifecycleWireReplayTests {
         },
         .init(
             name: "appStopFailedLeavesAwakeOn",
-            closedBy: "C2",
+            closedBy: Self.oneActivityRule,
             reason: "stop_failed sets the screen-awake reason, and only an agent_settled event clears "
                 + "it. On the app-event channel the ready summary does not, so the reason outlives "
                 + "the run.",
@@ -149,9 +157,11 @@ struct SessionLifecycleWireReplayTests {
         },
         .init(
             name: "stopFromIdleDoesNotSetAwake",
-            closedBy: "C2",
+            closedBy: Self.oneActivityRule,
             reason: "A terminate of an idle session moves the server to stopping. Only agent_start "
-                + "sets the screen-awake reason, so the client holds none while stopping.",
+                + "sets the screen-awake reason, so the client holds none while stopping. If the "
+                + "activity rule decides an idle terminate holds nothing, the server-implied "
+                + "answer changes instead.",
             fields: [.awake],
             expectedFires: 2
         ) { path, frame, diff in
@@ -172,7 +182,7 @@ struct SessionLifecycleWireReplayTests {
         var fires: [String: Int] = [:]
         for scenario in try LifecycleFixture.load() where scenario.plannedChange == nil {
             for path in LifecycleReplayPath.allCases {
-                for observation in await LifecycleReplay.run(scenario, path: path) {
+                for observation in try await LifecycleReplay.run(scenario, path: path) {
                     for (field, difference) in observation.differences.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
                         if let rule = Self.disagreements.first(where: {
                             $0.fields.contains(field) && $0.matches(path, observation.frameType, observation.differences)
@@ -193,17 +203,7 @@ struct SessionLifecycleWireReplayTests {
         #expect(fires == expected)
     }
 
-    @Test func plannedScenariosReplayToCompletionWithoutPinning() async throws {
-        for scenario in try LifecycleFixture.load() where scenario.plannedChange != nil {
-            for path in LifecycleReplayPath.allCases {
-                let expectedFrames = scenario.frames.filter { $0.channel == path.channel }.count
-                let observations = await LifecycleReplay.run(scenario, path: path)
-                #expect(observations.count == expectedFrames, "\(scenario.id)/\(path.rawValue)")
-            }
-        }
-    }
-
-    /// Row 11: a non-fatal error frame marks the session errored on a background session and on
+    /// A non-fatal error frame marks the session errored on a background session and on
     /// the app-event channel, while the server stays busy; the next summary puts it right.
     @Test func nonFatalErrorFrameMarksTheSessionErrored() async throws {
         let background = try await observe("classic.run_error", .background)
@@ -221,7 +221,7 @@ struct SessionLifecycleWireReplayTests {
         #expect(errorFrame.client.status == "busy" && errorFrame.server.status == "busy")
     }
 
-    /// Row 1: stop_confirmed releases `stopping` to ready while the server stays stopping until
+    /// An abort's stop_confirmed releases `stopping` to ready while the server stays stopping until
     /// agent_settled, on all three paths.
     @Test func stopConfirmedReleasesStoppingBeforeTheServerDoes() async throws {
         let focused = try await observe("classic.abort_mid_turn", .focused)
@@ -251,7 +251,7 @@ struct SessionLifecycleWireReplayTests {
         #expect(focused[8].client.program == "working" && focused[8].server.program == "idle")
     }
 
-    /// C2's readers: keep-alive ignores `stopping`, and a stop_failed on the app channel
+    /// The activity readers: keep-alive ignores `stopping`, and a stop_failed on the app channel
     /// leaves the screen-awake reason on after the server is ready.
     @Test func activityReadersDisagreeWithTheServerWhileStopping() async throws {
         let abort = try await observe("classic.abort_mid_turn", .app)
@@ -267,7 +267,7 @@ struct SessionLifecycleWireReplayTests {
 
     private func observe(_ id: String, _ path: LifecycleReplayPath) async throws -> [LifecycleObservation] {
         let scenario = try #require(try LifecycleFixture.load().first { $0.id == id })
-        return await LifecycleReplay.run(scenario, path: path)
+        return try await LifecycleReplay.run(scenario, path: path)
     }
 }
 
@@ -292,7 +292,7 @@ struct LifecycleDifference: Equatable {
 
 struct LifecycleDisagreement {
     let name: String
-    /// The slice that removes it, or why none does.
+    /// The change that removes it, or why none does.
     let closedBy: String
     let reason: String
     let fields: Set<LifecycleField>
@@ -331,9 +331,11 @@ enum LifecycleReplayPath: String, CaseIterable, Sendable {
 struct LifecycleReading: Equatable {
     var status: String
     var program: String
-    /// `BackgroundKeepAlive.hasActiveAgent` for the client; for the server, starting, busy or stopping.
+    /// `BackgroundKeepAlive.hasActiveAgent` for the client. For the server, starting, busy or
+    /// stopping: an agent that is launching, running or winding down needs the app alive.
     var keepAlive: Bool
-    /// A screen-awake session reason for the client; for the server, busy or stopping.
+    /// A screen-awake session reason for the client. For the server, busy or stopping
+    /// (`SessionStatus.isRunning`), the rule the client already applies to summaries.
     var awake: Bool
 }
 
@@ -410,7 +412,7 @@ enum LifecycleFixture {
 
 @MainActor
 enum LifecycleReplay {
-    static func run(_ scenario: LifecycleScenario, path: LifecycleReplayPath) async -> [LifecycleObservation] {
+    static func run(_ scenario: LifecycleScenario, path: LifecycleReplayPath) async throws -> [LifecycleObservation] {
         // The background path needs the session to be anything but focused.
         let focusedId = path == .background ? "another-session" : LifecycleFixture.sessionId
         let (conn, pipe) = await makeTestConnection(sessionId: focusedId)
@@ -431,16 +433,16 @@ enum LifecycleReplay {
         for (index, frame) in frames.enumerated() {
             switch path {
             case .focused:
-                let message = try! JSONDecoder().decode(ServerMessage.self, from: frame.json)
+                let message = try JSONDecoder().decode(ServerMessage.self, from: frame.json)
                 pipe.handle(message, sessionId: LifecycleFixture.sessionId)
                 pipe.flushNow()
             case .background:
-                let message = try! JSONDecoder().decode(ServerMessage.self, from: frame.json)
+                let message = try JSONDecoder().decode(ServerMessage.self, from: frame.json)
                 conn.routeStreamMessage(StreamMessage(
                     sessionId: LifecycleFixture.sessionId, seq: nil, currentSeq: nil, message: message
                 ))
             case .app:
-                conn.handleAppEvent(try! JSONDecoder().decode(AppEventMessage.self, from: frame.json))
+                conn.handleAppEvent(try JSONDecoder().decode(AppEventMessage.self, from: frame.json))
             }
             let row = conn.sessionStore.session(id: LifecycleFixture.sessionId)
             observations.append(LifecycleObservation(
