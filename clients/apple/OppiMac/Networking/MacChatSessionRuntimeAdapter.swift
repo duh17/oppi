@@ -473,8 +473,7 @@ final class MacChatSessionRuntimeAdapter:
         switch command {
         case "prompt", "steer", "follow_up",
              "get_queue", "remove_queued_message", "take_queue",
-             "set_model", "cycle_model",
-             "set_thinking_level", "cycle_thinking_level":
+             "set_model", "set_thinking_level":
             return true
         default:
             return requestId != nil

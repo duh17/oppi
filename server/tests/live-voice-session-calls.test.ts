@@ -71,8 +71,6 @@ describe("Live Voice calls on ordinary sessions", () => {
     });
 
     harness.sent.length = 0;
-
-    harness.sent.length = 0;
     await harness.dispatch(
       { type: "voice_call_attach", callId: "call-1", lastEventSeq: 0, requestId: "a" },
       { connId: "connection-2", authenticatedDeviceId: "paired-device-1" },
