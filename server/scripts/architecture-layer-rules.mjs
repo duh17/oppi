@@ -50,9 +50,10 @@ const SERVER_CONFIG_UPDATE_ALLOWED_PREFIXES = ["server/src/storage/", "server/sr
 const SERVER_CONFIG_UPDATE_CALL = /\.\s*updateConfig\s*\(/g;
 
 // `session-lifecycle-state.ts` is the only writer of `Session.status`. The match is textual: any
-// `.status =` assignment, comments ignored, so files that own a different `status` field are
-// listed by name. New rows set their status in an object literal, which this does not match.
-const SERVER_SESSION_STATUS_ASSIGNMENT = /\.\s*status\s*=(?![=>])/g;
+// `.status`/`["status"]` assignment, comments ignored, so files that own a different `status`
+// field are listed by name. New rows set their status in an object literal, which this allows.
+const SERVER_SESSION_STATUS_ASSIGNMENT =
+  /(?:\.\s*status|\[\s*["'`]status["'`]\s*\])\s*(?:\?\?|\|\||&&)?=(?![=>])/g;
 const SERVER_SESSION_STATUS_WRITER_ALLOWED_FILES = new Set([
   "server/src/session-lifecycle-state.ts",
   // Seeds sessions in a chosen state for UI tests.
@@ -61,9 +62,11 @@ const SERVER_SESSION_STATUS_WRITER_ALLOWED_FILES = new Set([
   "server/src/server-update.ts",
   "server/src/stt-provider.ts",
   "server/src/provider-auth/flow-store.ts",
+  // SQL over stored rows.
+  "server/src/storage/session-sqlite-store.ts",
 ]);
-// Not a Session: CLI errors and the CLI's own watch state; SQL over stored rows.
-const SERVER_SESSION_STATUS_WRITER_ALLOWED_PREFIXES = ["server/src/cli/", "server/src/storage/"];
+// Not a Session: CLI errors and the CLI's own watch state.
+const SERVER_SESSION_STATUS_WRITER_ALLOWED_PREFIXES = ["server/src/cli/"];
 
 const SERVER_PI_TUI_RUNTIME_CHECK_ALLOWED_FILES = new Set([
   "server/src/session-lifecycle-service.ts",
@@ -130,7 +133,9 @@ function findTestSourcePathUse(stripped) {
   for (const match of stripped.matchAll(IOS_TEST_FILE_LITERAL)) {
     const before = stripped.slice(Math.max(0, match.index - 80), match.index);
     const after = stripped.slice(match.index + match[0].length, match.index + match[0].length + 4);
-    const defaultArgument = /\b(?:file|filePath)\s*:\s*(?:StaticString|String)\s*=\s*$/.test(before) && /^\s*[,)]/.test(after);
+    const defaultArgument =
+      /\b(?:file|filePath)\s*:\s*(?:StaticString|String)\s*=\s*$/.test(before) &&
+      /^\s*[,)]/.test(after);
     if (!defaultArgument) {
       return { index: match.index };
     }
@@ -200,9 +205,7 @@ const IOS_VIEW_LAYER_PATH_PREFIXES = [
 const IOS_FORBIDDEN_VIEW_NETWORK_TYPES = ["APIClient", "WebSocketClient"];
 
 // Only the open owner system-opens URLs (browser preference, non-HTTP schemes).
-const IOS_SYSTEM_URL_OPEN_ALLOWED_FILES = new Set([
-  "clients/apple/Oppi/App/AppOpener.swift",
-]);
+const IOS_SYSTEM_URL_OPEN_ALLOWED_FILES = new Set(["clients/apple/Oppi/App/AppOpener.swift"]);
 const IOS_IN_APP_BROWSER_ALLOWED_FILES = new Set([
   "clients/apple/Oppi/App/AppOpener.swift",
   "clients/apple/Oppi/Features/Settings/TailnetSettingsViewController.swift", // Authentication always stays in-app.
@@ -1469,8 +1472,7 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
         pattern: /\bperformWhenUnlocked\b/,
         allowed: IOS_UNLOCK_DEFERRAL_ALLOWED_FILES.has(file),
         reason: "Opens must wait for App Lock in one place.",
-        remediation:
-          "Call AppOpener.open; it waits for unlock, launch, and the target server.",
+        remediation: "Call AppOpener.open; it waits for unlock, launch, and the target server.",
       },
       {
         rule: "timeline-text-link-interception",
@@ -1611,7 +1613,12 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
   // Pool builds use a shared compilation cache with prefix mapping, which compiles #filePath
   // to /^src/...; a test that opens a file through it finds nothing.
   const testFiles = files
-    ? files.map(normalizeRepoPath).filter((file) => IOS_TEST_TARGET_ROOTS.some((root) => file.startsWith(root)) && file.endsWith(".swift"))
+    ? files
+        .map(normalizeRepoPath)
+        .filter(
+          (file) =>
+            IOS_TEST_TARGET_ROOTS.some((root) => file.startsWith(root)) && file.endsWith(".swift"),
+        )
     : IOS_TEST_TARGET_ROOTS.flatMap((root) =>
         listFilesRecursively(path.join(repoRoot, root), ".swift").map((absolutePath) =>
           normalizeRepoPath(path.relative(repoRoot, absolutePath)),
@@ -1630,7 +1637,8 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
         file,
         line: location.line,
         column: location.column,
-        reason: "Tests use #filePath/#file only as a failure-location default argument; pool builds compile it to a mapped /^src path, so a path built from it opens nothing.",
+        reason:
+          "Tests use #filePath/#file only as a failure-location default argument; pool builds compile it to a mapped /^src path, so a path built from it opens nothing.",
         remediation:
           "Load the file from the test bundle (add it as a resource of the test target; see TestFixtures/ProtocolFixtures in OppiTests).",
       }),

@@ -603,6 +603,10 @@ describe("architecture layer rule helpers", () => {
       const assignment =
         'export const end = (s: { status: string }) => { s.status = "stopped"; };\n';
       write(join(repoRoot, "server/src/session-random.ts"), assignment);
+      write(
+        join(repoRoot, "server/src/session-bracket.ts"),
+        'export const end = (s: { status?: string }) => { s["status"] = "stopped"; s.status ??= "ready"; };\n',
+      );
       write(join(repoRoot, "server/src/session-lifecycle-state.ts"), assignment);
       write(
         join(repoRoot, "server/src/session-reader.ts"),
@@ -618,7 +622,11 @@ describe("architecture layer rule helpers", () => {
         .filter((violation) => violation.rule === "session-status-writer")
         .map((violation) => violation.file);
 
-      expect(flagged).toEqual(["server/src/session-random.ts"]);
+      expect(flagged.sort()).toEqual([
+        "server/src/session-bracket.ts",
+        "server/src/session-bracket.ts",
+        "server/src/session-random.ts",
+      ]);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -1108,7 +1116,10 @@ describe("Mac architecture layer rules", () => {
         disable,
       );
       write(
-        join(repoRoot, "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift"),
+        join(
+          repoRoot,
+          "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift",
+        ),
         "struct Row {}\n",
       );
       const violations = findIosLayerViolations(repoRoot).filter(
@@ -1267,17 +1278,28 @@ describe("Mac architecture layer rules", () => {
         "clients/apple/OppiPerfTests/C.swift",
         "clients/apple/OppiUITests/F.swift",
       ];
-      write(join(repoRoot, readers[0]), "let u = URL(fileURLWithPath: #filePath).deletingLastPathComponent()\n");
+      write(
+        join(repoRoot, readers[0]),
+        "let u = URL(fileURLWithPath: #filePath).deletingLastPathComponent()\n",
+      );
       write(join(repoRoot, readers[1]), "let d = FileManager.default.contents(atPath: #file)\n");
       write(join(repoRoot, readers[2]), "let p = #filePath\nlet u = URL(fileURLWithPath: p)\n");
-      write(join(repoRoot, readers[3]), "func root(_ path: String = #filePath) -> URL { URL(fileURLWithPath: path) }\n");
+      write(
+        join(repoRoot, readers[3]),
+        "func root(_ path: String = #filePath) -> URL { URL(fileURLWithPath: path) }\n",
+      );
       // Failure-location defaults and comments are fine; so is #filePath outside the test targets.
       write(
         join(repoRoot, "clients/apple/OppiUITests/D.swift"),
         "func check(file: StaticString = #filePath, line: UInt = #line) {}\nfunc near(_ a: Int, file: String = #file) {}\n// URL(fileURLWithPath: #filePath)\n",
       );
-      write(join(repoRoot, "clients/apple/OppiMacTests/E.swift"), "let u = URL(fileURLWithPath: #filePath)\n");
-      const violations = findIosLayerViolations(repoRoot).filter((v) => v.rule === "ios-test-no-source-paths");
+      write(
+        join(repoRoot, "clients/apple/OppiMacTests/E.swift"),
+        "let u = URL(fileURLWithPath: #filePath)\n",
+      );
+      const violations = findIosLayerViolations(repoRoot).filter(
+        (v) => v.rule === "ios-test-no-source-paths",
+      );
       expect(violations.map((v) => v.file).sort()).toEqual(readers.sort());
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
