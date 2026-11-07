@@ -189,7 +189,35 @@ describe("SessionStartCoordinator status persistence", () => {
     );
   });
 
-  it("rolls old starting sessions back to ready when SDK startup fails", async () => {
+  it.each(["starting", "ready", "busy"] as const)(
+    "leaves a %s row stopped when SDK startup fails: no runtime exists",
+    async (status) => {
+      const session = makeSession({ status });
+      const deps = makeDeps(session);
+      vi.spyOn(SdkBackend, "create").mockRejectedValue(new Error("boom"));
+
+      await expect(
+        new SessionStartCoordinator(deps).startSessionInner("key", session.id),
+      ).rejects.toThrow("boom");
+
+      expect(deps.persistedStatuses).toEqual(["starting", "stopped"]);
+      expect(session.status).toBe("stopped");
+    },
+  );
+
+  it("keeps an error row an error when SDK startup fails", async () => {
+    const session = makeSession({ status: "error" });
+    const deps = makeDeps(session);
+    vi.spyOn(SdkBackend, "create").mockRejectedValue(new Error("boom"));
+
+    await expect(
+      new SessionStartCoordinator(deps).startSessionInner("key", session.id),
+    ).rejects.toThrow("boom");
+
+    expect(session.status).toBe("error");
+  });
+
+  it("frees the workspace slot when SDK startup fails", async () => {
     const session = makeSession({ status: "starting" });
     const deps = makeDeps(session);
     vi.spyOn(SdkBackend, "create").mockRejectedValue(new Error("boom"));
@@ -198,8 +226,6 @@ describe("SessionStartCoordinator status persistence", () => {
       new SessionStartCoordinator(deps).startSessionInner("key", session.id),
     ).rejects.toThrow("boom");
 
-    expect(deps.persistedStatuses).toEqual(["starting", "ready"]);
-    expect(session.status).toBe("ready");
     expect(deps.runtimeManager.releaseSession).toHaveBeenCalledWith({
       workspaceId: `session-${session.id}`,
       sessionId: session.id,

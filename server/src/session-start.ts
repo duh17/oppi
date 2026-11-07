@@ -74,7 +74,9 @@ export class SessionStartCoordinator {
     }
 
     const identity = this.buildWorkspaceIdentity(session, workspace);
-    const previousStatus = session.status === "starting" ? "ready" : session.status;
+    // No runtime exists before a start succeeds, so a failed start leaves the row stopped: a
+    // stored `ready` claims a live session and is resumed after the next restart.
+    const failedStartStatus: Session["status"] = session.status === "error" ? "error" : "stopped";
     const assertOpen = (): void => {
       if (this.deps.isClosed?.()) throw new Error("Server is stopping; session not started");
     };
@@ -229,7 +231,7 @@ export class SessionStartCoordinator {
         if (registered) {
           // The runtime is registered and its backend runs: end it like any session end so the
           // failure leaves no live session behind. It saves `stopped`, which stays: the
-          // pre-start status below describes a session with no runtime.
+          // failed-start status below describes a session with no runtime.
           try {
             await this.deps.onSessionEnd(key, "start_error");
           } catch (endError) {
@@ -240,7 +242,7 @@ export class SessionStartCoordinator {
           }
         }
         if (!abandoned && !registered) {
-          session.status = previousStatus;
+          session.status = failedStartStatus;
           session.currentTurnStartedAt = undefined;
           session.lastActivity = Date.now();
           this.deps.persistSessionNow(key, session);

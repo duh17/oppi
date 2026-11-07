@@ -100,7 +100,14 @@ describe("session restart resume", () => {
     const { storage, workspace } = makeStorage();
     const ws = { workspaceId: workspace.id };
     saveSession(storage, "busy", { ...ws, status: "busy", currentTurnStartedAt: 5 });
-    saveSession(storage, "idle", { ...ws, status: "ready" });
+    saveSession(storage, "idle", { ...ws, status: "ready", piSessionFile: "/tmp/idle.jsonl" });
+    saveSession(storage, "durable-idle", {
+      ...ws,
+      status: "ready",
+      serverDurable: { storeId: "durable-idle", conversationId: 7 },
+    });
+    // Created and never opened: stored `ready`, but no runtime ever existed.
+    saveSession(storage, "shell", { ...ws, status: "ready" });
     saveSession(storage, "starting", { ...ws, status: "starting" });
     saveSession(storage, "stopping", { ...ws, status: "stopping" });
     saveSession(storage, "incognito", { ...ws, status: "busy", ephemeral: true });
@@ -118,12 +125,23 @@ describe("session restart resume", () => {
       expect.arrayContaining([
         { sessionId: "busy", wasBusy: true },
         { sessionId: "idle", wasBusy: false },
+        { sessionId: "durable-idle", wasBusy: false },
         { sessionId: "starting", wasBusy: false },
         { sessionId: "control", wasBusy: false },
       ]),
     );
-    expect(storage.listRestartResume()).toHaveLength(4);
-    for (const id of ["busy", "idle", "starting", "stopping", "incognito", "mirror", "control"]) {
+    expect(storage.listRestartResume()).toHaveLength(5);
+    for (const id of [
+      "busy",
+      "idle",
+      "durable-idle",
+      "shell",
+      "starting",
+      "stopping",
+      "incognito",
+      "mirror",
+      "control",
+    ]) {
       expect(storage.getSession(id)?.status, id).toBe("stopped");
     }
     expect(storage.getSession("busy")?.currentTurnStartedAt).toBeUndefined();
@@ -215,7 +233,11 @@ describe("session restart resume", () => {
   it("keeps the resume queued when marking crash orphans stopped fails partway", () => {
     const { storage, workspace } = makeStorage();
     saveSession(storage, "a", { workspaceId: workspace.id, status: "busy" });
-    saveSession(storage, "b", { workspaceId: workspace.id, status: "ready" });
+    saveSession(storage, "b", {
+      workspaceId: workspace.id,
+      status: "ready",
+      piSessionFile: "/tmp/b.jsonl",
+    });
     const failing = {
       listSessions: () => storage.listSessions(),
       queueRestartResume: storage.queueRestartResume.bind(storage),
@@ -268,7 +290,7 @@ describe("session restart resume", () => {
   it("continues an idle session that comes back owed a result its killed job never sent", async () => {
     // A crash, or a shutdown that could not tell the session was waiting, queues it idle.
     const { storage, workspace } = makeStorage();
-    const ws = { workspaceId: workspace.id };
+    const ws = { workspaceId: workspace.id, piSessionFile: "/tmp/started.jsonl" };
     saveSession(storage, "waiting-on-job", { ...ws, status: "ready" });
     saveSession(storage, "idle", { ...ws, status: "ready" });
     queueOrphanedSessionsForRestart(storage);

@@ -27,6 +27,7 @@
  */
 
 import type { DurableHarness, SessionHost } from "./durable-harness.js";
+import { isControlConversation } from "./control-session.js";
 import { durableStoreLockStaleInMs } from "./durable-store-lock.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
@@ -71,6 +72,20 @@ function restartEntry(
 }
 
 /**
+ * A stored `ready` row that never had a runtime: a create-only shell nobody opened. A started
+ * session records its Pi session file (classic) or conversation (durable) before it can idle,
+ * so a `ready` row with neither has nothing to resume. A control row is always launched at once.
+ */
+function neverStarted(session: Session): boolean {
+  return (
+    session.status === "ready" &&
+    session.piSessionFile === undefined &&
+    session.serverDurable?.conversationId === undefined &&
+    !isControlConversation(session)
+  );
+}
+
+/**
  * Graceful stop: remember live sessions before the stop flow marks them stopped.
  * `losesWork` names sessions whose pending wake dies with this process.
  */
@@ -100,7 +115,10 @@ export function queueOrphanedSessionsForRestart(
   const orphaned = storage
     .listSessions()
     .filter((session) => session.status !== "stopped" && session.status !== "error");
-  const entries = orphaned.flatMap((session) => restartEntry(session) ?? []);
+  // A shell that never started is still marked stopped below, but it is not brought back.
+  const entries = orphaned.flatMap((session) =>
+    neverStarted(session) ? [] : (restartEntry(session) ?? []),
+  );
   // Queue before marking stopped: the running status is the only evidence.
   // A crash in between leaves them running, and the next start queues again.
   storage.queueRestartResume(entries, nowMs);
