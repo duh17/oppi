@@ -110,6 +110,8 @@ enum DebugHarnessLaunch {
         // terminal's three fixture connections, and the script reader.
         case "file-browser-motion": return FileBrowserMotionPreviewController(review: false)
         case "review-file-motion": return FileBrowserMotionPreviewController(review: true)
+        // The reader's task controls over files on the simulator's disk.
+        case "reader-task-edit": return ReaderTaskEditPreviewController()
         case "ssh-terminal": return SSHTerminalPreviewController()
         case "ssh-terminal-status-blocked": return SSHTerminalPreviewController(status: .blocked)
         case "ssh-terminal-rex-panes": return SSHTerminalPreviewController(status: .rexPanes)
