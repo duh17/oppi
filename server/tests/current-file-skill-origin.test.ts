@@ -255,4 +255,54 @@ describe("/files/current?origin=skill", () => {
       true,
     );
   });
+
+  /// A followed link names a Skill's file by host path; the Skill that owns it
+  /// is the one `/files/current?origin=skill` writes it through.
+  it("finds the editable Skill that owns a canonical host path", async () => {
+    const fixture = seed();
+    const skillsDir = join(fixture.agentDir, "skills");
+    const dirSkill = writeSkill(skillsDir, "notes");
+    mkdirSync(join(dirSkill, "refs"));
+    writeFileSync(join(dirSkill, "refs", "guide.md"), "guide\n");
+    writeFileSync(
+      join(skillsDir, "solo.md"),
+      ["---", "name: solo", "description: solo description", "---", "# solo", ""].join("\n"),
+    );
+    mkdirSync(join(skillsDir, "assets"));
+    writeFileSync(join(skillsDir, "assets", "notes.txt"), "not a skill's file\n");
+    const packageDir = join(fixture.root, "package");
+    writeSkill(join(packageDir, "skills"), "packaged");
+    writeFileSync(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "skill-package",
+        version: "1.0.0",
+        pi: { skills: ["skills/packaged/SKILL.md"] },
+      }),
+    );
+    writeFileSync(
+      join(fixture.agentDir, "settings.json"),
+      JSON.stringify({ packages: [packageDir] }),
+    );
+
+    const notes = await skillId(fixture, "notes");
+    const solo = await skillId(fixture, "solo");
+    expect(
+      await fixture.service.editableSkillContaining(join(dirSkill, "refs", "guide.md")),
+    ).toEqual({ skillId: notes, root: dirSkill, path: "refs/guide.md" });
+    expect(await fixture.service.editableSkillContaining(join(skillsDir, "solo.md"))).toEqual({
+      skillId: solo,
+      root: skillsDir,
+      path: "solo.md",
+    });
+    // Beside a single-file Skill, and inside a read-only package Skill: no owner.
+    expect(
+      await fixture.service.editableSkillContaining(join(skillsDir, "assets", "notes.txt")),
+    ).toBeNull();
+    expect(
+      await fixture.service.editableSkillContaining(
+        join(packageDir, "skills", "packaged", "SKILL.md"),
+      ),
+    ).toBeNull();
+  });
 });

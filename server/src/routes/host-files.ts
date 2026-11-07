@@ -1,3 +1,4 @@
+import { realpath } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute } from "node:path";
@@ -16,10 +17,24 @@ import {
   type ResolvedCurrentFile,
 } from "../current-file.js";
 import { listDirectoryEntries } from "../directory-listing.js";
+import {
+  FILE_EDIT_ORIGIN_HEADER,
+  FILE_EDIT_REFUSAL_HEADER,
+  FILE_EDIT_RESOLVE_HEADER,
+  fileEditOriginQuery,
+  fileEditTargetForOwner,
+  type FileEditOwnerResult,
+  type FileEditOwnerSources,
+  hostFileEditTarget,
+  piFileEditTarget,
+  protectedRoots,
+  resolveFileEditOwner,
+} from "../file-edit-owner.js";
 import { decodeWorkspaceRoutePath, getContentType } from "../file-serving-policy.js";
+import { expandExactHostPath } from "../host-file-path.js";
 import { createLogger, type Logger } from "../logger.js";
 import { readAudioMediaInfo } from "../media-info.js";
-import { piAgentCreatesIn, piAgentEditablePath } from "../pi-agent-files.js";
+import { piAgentEditablePath } from "../pi-agent-files.js";
 import { sessionWorkRoot, type SessionWorkRoot } from "../session-work-root.js";
 import type { DirectoryListingResponse } from "../types.js";
 import {
@@ -28,6 +43,7 @@ import {
 } from "../server-resource-service.js";
 import {
   FILE_EDIT_CREATABLE_HEADER,
+  type FileEditInspection,
   type FileEditTarget,
   inspectFileForEdit,
   putEditedFileFromRequest,
@@ -66,9 +82,11 @@ type CurrentFileRequest =
   | { kind: "error"; status: number; message: string };
 
 /**
- * The file the editor reads and writes for a query origin, or null. Only the
- * `workspace`, `skill`, and `pi` query origins edit; a session read that
- * resolves into a workspace stays read-only.
+ * The file the editor reads and writes for a query origin that names its own
+ * root, or null. The `workspace`, `skill`, and `pi` origins edit by path under
+ * that root; `origin=host` edits too, but only once `resolveFileEditOwner`
+ * proves the file has no narrower owner (see `handleCurrentFilePut`). A
+ * session read names its file's owner through `X-Oppi-Edit-Origin` instead.
  */
 function editTargetFor(request: {
   originKind: string;
@@ -86,24 +104,14 @@ function editTargetFor(request: {
     return { root: request.origin.root, requestedPath: request.path };
   }
   if (request.originKind === "pi" && request.origin.kind === "pi") {
-    return {
-      root: request.origin.agentDir,
-      requestedPath: request.path,
-      // The allowlist again, on the path after symlinks: a link inside the
-      // agent directory must not reach a file the list does not name. This is
-      // also where a *linked* Pi file stays read-only — `inspectFileForEdit`
-      // refuses a final-component symlink and the canonical recheck refuses a
-      // link that leads elsewhere — so whether a linked SYSTEM.md may be edited
-      // is decided here and in that one refusal, and nowhere else.
-      allowsCanonical: (relativeToRealRoot) => piAgentEditablePath(relativeToRealRoot) !== null,
-      // A missing file the editor may create: the same allowlist, plus the one
-      // directory it may appear in. `inspectFileForEdit` still proves that
-      // directory is the real one and refuses a link, so a `prompts` symlink
-      // creates nothing.
-      createsIn: (parentRelativeToRealRoot) => piAgentCreatesIn(parentRelativeToRealRoot),
-    };
+    return piFileEditTarget(request.origin.agentDir, request.path);
   }
   return null;
+}
+
+/** A read asked for its file's edit origin: the client sends `X-Oppi-Edit-Resolve: 1`. */
+function asksForEditOrigin(req: IncomingMessage): boolean {
+  return req.headers[FILE_EDIT_RESOLVE_HEADER] === "1" && !req.headers.range;
 }
 
 export function createHostFileRoutes(
@@ -117,11 +125,117 @@ export function createHostFileRoutes(
   // home it reads), not a value to freeze at route construction.
   const piAgentDir = (): string => options.piAgentDir ?? getAgentDir();
 
+  /** What `resolveFileEditOwner` reads: this server's workspaces, Skills, Pi, and home. */
+  function ownerSources(): FileEditOwnerSources {
+    return {
+      workspaces: () => ctx.storage.listWorkspaces(),
+      dataDir: ctx.storage.getDataDir(),
+      agentDir: () => {
+        const dir = piAgentDir();
+        return isAbsolute(dir) ? dir : null;
+      },
+      homeDir,
+      editableSkillContaining: async (realPath) => {
+        try {
+          return await ctx.serverResources.editableSkillContaining(realPath);
+        } catch (error: unknown) {
+          // No Skill catalog means no Skill owner; the file falls to the next one.
+          log.warn("currentfile.skill_owner_failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        }
+      },
+    };
+  }
+
+  /**
+   * `X-Oppi-Edit-Origin` (the query that edits this file) or
+   * `X-Oppi-Edit-Refusal` (why it has no editor) for a read that resolved to
+   * `realPath`, and the owner's eligible inspection when there is one. A read
+   * through a sandbox workspace, directly or as a sandbox session, is confined
+   * to that workspace.
+   */
+  async function editOriginAnswer(
+    request: Extract<CurrentFileRequest, { kind: "ok" }>,
+    realPath: string,
+    lexicalPath: string,
+  ): Promise<{
+    headers: Record<string, string>;
+    inspection: Extract<FileEditInspection, { kind: "eligible" }> | null;
+  }> {
+    const confinement =
+      request.origin.kind === "workspace" && request.origin.workspace.runtime === "sandbox"
+        ? { workspace: request.origin.workspace, root: request.origin.root }
+        : undefined;
+    const sources = ownerSources();
+    const result: FileEditOwnerResult = await resolveFileEditOwner({
+      realPath,
+      lexicalPath,
+      sources,
+      confinement,
+    });
+    if (result.kind === "refused") {
+      return { headers: { [FILE_EDIT_REFUSAL_HEADER]: result.reason }, inspection: null };
+    }
+    const target = fileEditTargetForOwner(result.owner, protectedRoots(sources) ?? undefined);
+    const inspection = target ? await inspectFileForEdit(target) : null;
+    // The owner's own read must land on the file this read served; anything
+    // else (a swap in between, a size or encoding refusal) has no editor.
+    if (inspection?.kind !== "eligible" || inspection.realPath !== realPath) {
+      return { headers: { [FILE_EDIT_REFUSAL_HEADER]: "ineligible" }, inspection: null };
+    }
+    return {
+      headers: { [FILE_EDIT_ORIGIN_HEADER]: fileEditOriginQuery(result.owner) },
+      inspection,
+    };
+  }
+
+  /**
+   * The editor target of a `PUT ?origin=host`: a file under the home whose
+   * owner is the host itself. A file a narrower owner holds (a workspace, a
+   * Skill, Pi) is written through that owner, so the same file never has two
+   * write paths with different rules; a protected file is never written.
+   */
+  async function hostWriteTarget(
+    path: string,
+  ): Promise<
+    { kind: "ok"; target: FileEditTarget } | { kind: "error"; status: number; message: string }
+  > {
+    const lexical = expandExactHostPath(path, { homeDir });
+    if (!lexical) return { kind: "error", status: 404, message: "File not found" };
+    let real: string;
+    try {
+      real = await realpath(lexical);
+    } catch {
+      // Host files are never created through the editor.
+      return { kind: "error", status: 404, message: "File not found" };
+    }
+    const sources = ownerSources();
+    const result = await resolveFileEditOwner({ realPath: real, lexicalPath: lexical, sources });
+    if (result.kind === "refused") {
+      return { kind: "error", status: 403, message: "File is not editable" };
+    }
+    if (result.owner.kind !== "host") {
+      return {
+        kind: "error",
+        status: 409,
+        message: `Edit this file through origin=${result.owner.kind}`,
+      };
+    }
+    const roots = protectedRoots(sources);
+    const target = roots ? hostFileEditTarget(roots, lexical) : null;
+    if (!target) return { kind: "error", status: 403, message: "File is not editable" };
+    return { kind: "ok", target };
+  }
+
   /**
    * Parse the unified current-file origin. Origin selects path resolution; it
    * never falls back to a less restrictive origin.
    *
-   * - `origin=host`: absolute, `~`, or local `file://` owner-host paths.
+   * - `origin=host`: absolute, `~`, or local `file://` owner-host paths. A
+   *   write needs a file under the home that no narrower origin owns and the
+   *   refusal list allows (`file-edit-owner.ts`).
    * - `origin=workspace&workspaceId[&worktreeId]`: the selected checkout or mount.
    * - `origin=session&sessionId`: the session's actual cwd (worktree, sandbox
    *   mount, or control-session cwd).
@@ -322,7 +436,20 @@ export function createHostFileRoutes(
               basename(request.path),
             ),
           },
-          { [FILE_EDIT_CREATABLE_HEADER]: "1" },
+          {
+            [FILE_EDIT_CREATABLE_HEADER]: "1",
+            // A missing file has no canonical path: the origin that offers to
+            // create it (only Pi's own files) is the one that writes it.
+            ...(asksForEditOrigin(req) && request.origin.kind === "pi"
+              ? {
+                  [FILE_EDIT_ORIGIN_HEADER]: fileEditOriginQuery({
+                    kind: "pi",
+                    agentDir: request.origin.agentDir,
+                    path: request.path,
+                  }),
+                }
+              : {}),
+          },
         );
         return;
       }
@@ -334,14 +461,27 @@ export function createHostFileRoutes(
       const servable = await statServableFile(resolved.file.realPath, resolved.file.lexicalPath);
       switch (servable.kind) {
         case "ok": {
-          const extraHeaders = resolvedPathHeaders(resolved.file);
-          // ETag only for an editing origin (workspace, skill, pi), not session→workspace.
-          if (inspection?.kind === "eligible") {
+          let extraHeaders = resolvedPathHeaders(resolved.file);
+          // The tag: an editing origin's own inspection (what older clients
+          // read), or — when the reader asked — the inspection of the origin that
+          // owns the file however it was reached. The tag is the bytes' hash,
+          // so it is the same whichever origin answers it.
+          let tagged = inspection?.kind === "eligible" ? inspection : null;
+          if (asksForEditOrigin(req)) {
+            const answer = await editOriginAnswer(
+              request,
+              resolved.file.realPath,
+              resolved.file.lexicalPath,
+            );
+            extraHeaders = { ...extraHeaders, ...answer.headers };
+            tagged ??= answer.inspection;
+          }
+          if (tagged) {
             status = sendExactFileBytes(
               res,
               method,
-              { bytes: inspection.bytes, contentType: servable.file.contentType },
-              { ...extraHeaders, ETag: inspection.etag },
+              { bytes: tagged.bytes, contentType: servable.file.contentType },
+              { ...extraHeaders, ETag: tagged.etag },
             );
             return;
           }
@@ -386,7 +526,16 @@ export function createHostFileRoutes(
       }
       originKind = request.originKind;
       relativePath = request.path;
-      const target = editTargetFor(request);
+      let target = editTargetFor(request);
+      if (request.originKind === "host") {
+        const host = await hostWriteTarget(request.path);
+        if (host.kind === "error") {
+          status = host.status;
+          helpers.error(res, host.status, host.message);
+          return;
+        }
+        target = host.target;
+      }
       if (!target) {
         status = 404;
         helpers.error(res, 404, "File not found");

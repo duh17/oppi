@@ -359,6 +359,30 @@ export class ServerResourceService {
     return entry.baseDir;
   }
 
+  /**
+   * The editable Skill that owns a canonical host file, or null: a directory
+   * Skill owns everything under its directory, a Markdown Skill without one
+   * owns only its file. `/files/current` asks this when it names the origin a
+   * followed link edits through (`file-edit-owner.ts`); the deepest Skill wins
+   * when one sits inside another.
+   */
+  async editableSkillContaining(
+    realPath: string,
+  ): Promise<{ skillId: string; root: string; path: string } | null> {
+    let best: { skillId: string; root: string; path: string } | null = null;
+    for (const entry of await this.buildSkillCatalog(await this.resolveContext())) {
+      if (!entry.summary.editable) continue;
+      const root = canonicalPath(entry.baseDir);
+      if (realPath === root || !isPathWithinRoot(realPath, root)) continue;
+      const path = relative(root, realPath).split(sep).join("/");
+      if (entry.markdownFileName !== "SKILL.md" && path !== entry.markdownFileName) continue;
+      if (!best || root.length > best.root.length) {
+        best = { skillId: entry.summary.id, root, path };
+      }
+    }
+    return best;
+  }
+
   async getExtensionDetail(id: string): Promise<ServerExtensionDetail> {
     return this.extensionDetail(id, false);
   }

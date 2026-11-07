@@ -88,6 +88,7 @@ export const TEXT_EXTENSIONS = new Set([
   ".txt",
   ".md",
   ".markdown",
+  ".org",
   ".rst",
   ".adoc",
   ".ts",

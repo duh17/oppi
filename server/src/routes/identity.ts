@@ -478,6 +478,14 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
           version: 1,
           maxBytes: MAX_WORKSPACE_FILE_EDIT_BYTES,
         } satisfies WorkspaceFileEditingCapability,
+        // A `/files/current` read sent with `X-Oppi-Edit-Resolve: 1` names the
+        // origin that edits its file however it was reached (`X-Oppi-Edit-Origin`)
+        // or why it has none (`X-Oppi-Edit-Refusal`), and `origin=host` writes a
+        // home file no narrower origin owns, outside the refusal list.
+        fileEditOrigins: {
+          version: 1,
+          maxBytes: MAX_WORKSPACE_FILE_EDIT_BYTES,
+        } satisfies WorkspaceFileEditingCapability,
         appEventStream: { version: 1 },
         // `auth_renew` on the app-event, focused session, and dictation streams moves the
         // socket's access deadline to a fresh token's, so token rotation never reconnects.

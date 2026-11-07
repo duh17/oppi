@@ -201,8 +201,10 @@ function context(fixture: Fixture): RouteContext {
     storage: {
       getDataDir: () => fixture.dataDir,
       getWorkspace: (id: string) => fixture.workspaces.find((workspace) => workspace.id === id),
+      listWorkspaces: () => fixture.workspaces,
       getSession: (id: string) => fixture.sessions.find((item) => item.id === id),
     },
+    serverResources: { editableSkillContaining: async () => null },
   } as unknown as RouteContext;
 }
 
@@ -766,7 +768,7 @@ describe("PUT /files/current?origin=workspace", () => {
     expect(readFileSync(join(fixture.outside, "secret.txt")).toString("utf8")).toBe("host-secret");
   });
 
-  it("rejects PUT for host and session origins", async () => {
+  it("writes a workspace file only through its workspace, never a host path or a session", async () => {
     const fixture = seed();
     const tag = etagFor(readFileSync(join(fixture.hostRoot, "README.md")));
     const original = readFileSync(join(fixture.hostRoot, "README.md"));
@@ -777,7 +779,7 @@ describe("PUT /files/current?origin=workspace", () => {
       Buffer.from("nope"),
       { "if-match": tag },
     );
-    expect(hostPut.statusCode).toBe(404);
+    expect(hostPut.statusCode).toBe(409);
 
     const sessionPut = await putCurrent(
       fixture,

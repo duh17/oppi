@@ -1,6 +1,7 @@
 /**
- * File editor write contract (I0): workspace files, editable Skill files, and
- * Pi's own allowlisted agent files.
+ * File editor write contract (I0): workspace files, editable Skill files, Pi's
+ * own allowlisted agent files, and host files under the home that no narrower
+ * origin owns (`file-edit-owner.ts` decides which origin a file belongs to).
  *
  * Reads and writes share one eligibility predicate that is stricter than
  * host-workspace current-file fallbacks (`~`, host-absolute, `..`).
@@ -93,7 +94,7 @@ export type FileEditInspection =
 
 /** One file the editor may read and write: a path that must stay under `root`. */
 export interface FileEditTarget {
-  /** Host directory: a workspace checkout or mount, an editable Skill's directory, or Pi's agent directory. */
+  /** Host directory: a workspace checkout or mount, an editable Skill's directory, Pi's agent directory, or the home. */
   root: string;
   requestedPath: string;
   /**

@@ -521,7 +521,8 @@ const rawApiRouteSpecs = [
     operationId: "getCurrentFile",
     surface: "core",
     auth: "owner",
-    description: "Current-file bytes by origin (host, workspace, session, skill, or pi).",
+    description:
+      "Current-file bytes by origin (host, workspace, session, skill, or pi). With X-Oppi-Edit-Resolve: 1, names the origin that edits the file (X-Oppi-Edit-Origin) or why it is read-only (X-Oppi-Edit-Refusal).",
   },
   {
     method: "HEAD",
@@ -537,7 +538,7 @@ const rawApiRouteSpecs = [
     surface: "core",
     auth: "owner",
     description:
-      "Guarded write of a text file. origin=workspace, origin=skill (an editable Skill's own file), or origin=pi (Pi's own agent files); requires one concrete If-Match, or If-None-Match: * to create a missing Pi agent file. A workspace or Skill file is never created.",
+      "Guarded write of a text file. origin=workspace, origin=skill (an editable Skill's own file), origin=pi (Pi's own agent files), or origin=host (a home file no other origin owns, outside the refusal list); requires one concrete If-Match, or If-None-Match: * to create a missing Pi agent file. A workspace, Skill, or host file is never created.",
   },
   {
     method: "GET",
