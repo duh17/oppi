@@ -71,6 +71,7 @@ describe("session targeting uses Pi-native Session.id", () => {
         sessionRuntimes: {
           isSessionConnected: vi.fn(() => false),
           refreshSessionState: vi.fn(async () => undefined),
+          awaitsNextTurn: vi.fn(async () => false),
         },
         ensureSessionContextWindow: vi.fn((value: Session) => value),
       } as unknown as RouteContext;

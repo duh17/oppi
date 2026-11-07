@@ -178,6 +178,51 @@ describe("subagents", () => {
     expect(next?.state).toBe("success");
   });
 
+  test("a ready get with a pending wake keeps the row Working, not Done", () => {
+    const launched = subagentFromCreate(
+      "oppi session create --name scout --json",
+      '{"ok":true,"data":{"session_id":"child-1"}}',
+      "parent-1",
+    );
+    if (!launched) throw new Error("expected a launch");
+    const next = applyGet(launched, {
+      ok: true,
+      data: { session: { id: "child-1", status: "ready", pendingWake: true } },
+    });
+    expect(next?.state).toBe("running");
+    // Once the background job ends, the next get (no pendingWake) settles the row.
+    const settled = applyGet(next!, {
+      ok: true,
+      data: { session: { id: "child-1", status: "ready" } },
+    });
+    expect(settled?.state).toBe("success");
+  });
+
+  test("a wait reading with a pending wake keeps running and settled rows Working", () => {
+    const launched = {
+      id: "child-1",
+      title: "scout",
+      subtitle: "child1",
+      link: "oppi://session/child-1",
+      state: "running" as const,
+    };
+    const stillWaking = applyWaitReading([launched], {
+      timedOut: true,
+      settled: [],
+      attention: [],
+      running: [{ id: "child-1", status: "ready", pendingWake: true }],
+    });
+    expect(stillWaking[0]?.state).toBe("running");
+    const settled = applyWaitReading([launched], {
+      timedOut: false,
+      settled: [{ id: "child-1", status: "ready", pendingWake: true }],
+      attention: [],
+      running: [],
+    });
+    expect(settled[0]?.state).toBe("running");
+    expect(subagentRows(settled)[0]?.subtitle).toBe("Working");
+  });
+
   test("applyGet keeps a launched row when the payload has no parent field", () => {
     const launched = subagentFromCreate(
       "oppi session create --name scout --json",

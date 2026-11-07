@@ -163,27 +163,29 @@ export function refreshLaunched(
 
 export function withStatuses(
   rows: Subagent[],
-  updates: Array<{ id: string; status?: string }>,
+  updates: Array<{ id: string; status?: string; pendingWake?: boolean }>,
 ): Subagent[] {
-  const byId = new Map(updates.map((item) => [item.id, item.status]));
+  const byId = new Map(updates.map((item) => [item.id, item]));
   return rows.map((row) => {
-    const status = byId.get(row.id);
-    if (!status) return row;
-    return { ...row, state: stateFromStatus(status) };
+    const update = byId.get(row.id);
+    if (!update?.status) return row;
+    return { ...row, state: stateFromStatus(update.status, update.pendingWake) };
   });
 }
 
 export function applyWaitReading(
   rows: Subagent[],
   reading: {
-    settled: Array<{ id: string; status?: string }>;
+    settled: Array<{ id: string; status?: string; pendingWake?: boolean }>;
     attention: Array<{ id: string }>;
-    running: Array<{ id: string; status?: string }>;
+    running: Array<{ id: string; status?: string; pendingWake?: boolean }>;
   },
 ): Subagent[] {
   const byId = new Map<string, Subagent["state"]>();
-  for (const record of reading.running) byId.set(record.id, stateFromStatus(record.status));
-  for (const record of reading.settled) byId.set(record.id, stateFromStatus(record.status));
+  for (const record of reading.running)
+    byId.set(record.id, stateFromStatus(record.status, record.pendingWake));
+  for (const record of reading.settled)
+    byId.set(record.id, stateFromStatus(record.status, record.pendingWake));
   for (const record of reading.attention) byId.set(record.id, "warning");
   return rows.map((row) => {
     const state = byId.get(row.id);
@@ -340,7 +342,7 @@ function subagentFromSession(
     title: name,
     subtitle: shortId(id),
     link: sessionLink(id, workspaceId),
-    state: stateFromStatus(stringField(session, "status")),
+    state: stateFromStatus(stringField(session, "status"), boolField(session, "pendingWake")),
     ...(model ? { model } : {}),
     ...(contextTokens !== undefined ? { contextTokens } : {}),
     ...(contextWindow !== undefined ? { contextWindow } : {}),
@@ -424,12 +426,17 @@ function agentEmoji(icon: unknown): string | undefined {
   return value;
 }
 
-function stateFromStatus(status: string | undefined): Subagent["state"] {
+/**
+ * `pendingWake` (`SessionManager.awaitsNextTurn`, carried on a live GET or `wait` snapshot) says
+ * a running background job or a supervised child will still start this session's next turn: an
+ * otherwise-settled row stays Working instead of Done.
+ */
+function stateFromStatus(status: string | undefined, pendingWake?: boolean): Subagent["state"] {
   const token = (status ?? "").toLowerCase();
-  if (token === "stopped" || token === "idle" || token === "ready" || token === "stopping")
-    return "success";
   if (token === "error") return "error";
   if (token === "attention") return "warning";
+  if (token === "stopped" || token === "idle" || token === "ready" || token === "stopping")
+    return pendingWake ? "running" : "success";
   return "running";
 }
 
@@ -497,6 +504,11 @@ function stringField(record: Record<string, unknown> | null, key: string): strin
 function numberField(record: Record<string, unknown> | null, key: string): number | undefined {
   const value = record?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function boolField(record: Record<string, unknown> | null, key: string): boolean | undefined {
+  const value = record?.[key];
+  return typeof value === "boolean" ? value : undefined;
 }
 
 interface TerminalSpec {

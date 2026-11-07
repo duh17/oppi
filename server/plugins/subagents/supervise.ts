@@ -237,6 +237,8 @@ export interface WaitRecord {
   status?: string;
   pendingDialogs?: number;
   last?: string;
+  /** A running background job or child will still start this session's next turn. */
+  pendingWake?: boolean;
 }
 
 export interface WaitReading {
@@ -384,10 +386,12 @@ function waitRecord(value: unknown): WaitRecord | null {
     stringField(record, "id");
   if (!id) return null;
   const dialogs = record.pending_dialogs ?? record.pendingDialogs;
+  const pendingWake = record.pending_wake ?? record.pendingWake;
   return {
     id,
     status: stringField(record, "status"),
     pendingDialogs: typeof dialogs === "number" ? dialogs : undefined,
+    pendingWake: pendingWake === true,
     last:
       stringField(record, "last") ??
       stringField(record, "output_delta") ??

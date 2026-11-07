@@ -1399,7 +1399,7 @@ describe("sessions module", () => {
     expect(JSON.parse(res.body)).toEqual({ ...mirrorCatchUp, live: true });
   });
 
-  it("marks a live events snapshot with a pending wake on every events route, and only then", async () => {
+  it("marks a live session snapshot with a pending wake on every events and generic get route", async () => {
     const stored = {
       id: "s1",
       workspaceId: "ws-1",
@@ -1449,6 +1449,7 @@ describe("sessions module", () => {
       "/workspaces/ws-1/sessions/s1/events",
       "/sessions/s1/events",
       "/control-sessions/control-1/events",
+      "/sessions/s1",
     ];
 
     for (const path of paths) {

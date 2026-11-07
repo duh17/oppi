@@ -42,7 +42,7 @@ graph TD
 
 - `Storage.saveSession` re-derives every `stopped` and `error` row from the stored outcome (persisted as `program_status_json`), so a stop of a disconnected mirror never leaves `working`/`blocked`; `starting` rows are excluded so a stop mid-start keeps the last outcome.
 - Lifecycle `Session.status` stays for controls; list summaries, pushes, and `oppi session wait` read program status. The `message` is never a prompt. `editor` dialogs count as blocking replies (`isPendingUserReplyRequest`).
-- `session.pendingWake` (`SessionManager.awaitsNextTurn`) is derived per request on the live events snapshot and never stored.
+- `session.pendingWake` (`SessionManager.awaitsNextTurn`) is derived per request on a live session snapshot and never stored.
 
 ## Push
 

@@ -396,7 +396,15 @@ export function createSessionTraceRouteHandlers(
   async function handleGenericGetSession(sessionId: string, res: ServerResponse): Promise<void> {
     const session = requireSession(sessionId, res);
     if (!session) return;
-    helpers.json(res, { session: ctx.ensureSessionContextWindow(session) });
+    // Same live check `/events` makes: a `ready` session a running background job or child will
+    // still wake is not settled. The subagent pill reads this to keep such a row Working.
+    const pendingWake = await ctx.sessionRuntimes.awaitsNextTurn(session.id);
+    helpers.json(res, {
+      session: {
+        ...ctx.ensureSessionContextWindow(session),
+        ...(pendingWake ? { pendingWake: true as const } : {}),
+      },
+    });
   }
 
   function traceTailFor(url: URL): { tail?: number; error?: string } {
