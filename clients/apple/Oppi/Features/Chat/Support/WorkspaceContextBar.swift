@@ -212,6 +212,8 @@ final class WorkspaceContextBarView: UIView {
         /// Shows a chat this bar's New Session or prompt template started. Nil
         /// pushes it onto `presenter`'s stack; a panel passes its host's push,
         /// so the new chat does not open inside the panel's sheet or column.
+        /// A commit or review pushed in the column (`hostedInPanel`) hands
+        /// its own started chats here too.
         var pushChat: ((ChatViewController) -> Void)?
         /// `presenter` is itself the trailing column's panel root (regular
         /// width): a commit, a review, or a touched file's session copy
@@ -1548,7 +1550,8 @@ final class WorkspaceContextBarView: UIView {
             connection: connection,
             apiClient: apiClient,
             navigation: navigation,
-            hostedInPanel: options.hostedInPanel
+            hostedInPanel: options.hostedInPanel,
+            pushChat: panelPushChat
         )
         // Pushed in the panel, the navigation controller's own back button
         // leads to it; only a sheet's root needs this screen's close control.
@@ -1594,12 +1597,20 @@ final class WorkspaceContextBarView: UIView {
             connection: connection,
             apiClient: apiClient,
             navigation: navigation,
-            hostedInPanel: options.hostedInPanel
+            hostedInPanel: options.hostedInPanel,
+            pushChat: panelPushChat
         )
         if !options.hostedInPanel {
             viewer.onClose = { [weak self] in self?.dismissReview() }
         }
         presentReview(viewer)
+    }
+
+    /// A commit or review pushed in the column starts its chats through the
+    /// panel's host, which closes the column and pushes the chat beside it;
+    /// a sheet's commit or review pushes them onto the sheet's own stack.
+    private var panelPushChat: ((ChatViewController) -> Void)? {
+        options.hostedInPanel ? options.pushChat : nil
     }
 
     /// A comment started in the review closes it first, so it reaches the
@@ -1612,10 +1623,10 @@ final class WorkspaceContextBarView: UIView {
     }
 
     /// Pushed in the panel's own navigation (`Options.hostedInPanel`), with a
-    /// back button to the panel; otherwise a router sheet with its own
-    /// navigation. Either way a commit or file review pushes its new-session
-    /// chat above `presenter` (`Options.pushChat`), never inside this
-    /// destination, and that chat its forks.
+    /// back button to the panel, its new-session chats going through
+    /// `Options.pushChat`; otherwise a router sheet with its own navigation,
+    /// where a commit or file review pushes its new-session chat, and that
+    /// chat its forks.
     private func presentReview(_ screen: UIViewController) {
         guard let presenter else { return }
         if options.hostedInPanel {

@@ -65,8 +65,8 @@ enum WorkspaceReviewFileDetailPhase: Equatable {
 /// the review's files, a file list (a column in regular width, or, hosted in
 /// a trailing column's own panel navigation, pushed there with a back button
 /// to this screen), sharing, and prompt templates that start a session about
-/// the file. Hosted in a panel, there is no overflow menu to start one from:
-/// it would have to push a whole chat into the column's own width.
+/// the file. Hosted in a panel, a started session's chat goes to `pushChat`,
+/// which closes the column and pushes the chat beside it.
 ///
 /// A new file shows its current bytes; a deleted one only its diff and is
 /// never recreated. While the File tab's editor is open it owns the bar, the
@@ -122,11 +122,11 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     }
     /// This screen is itself pushed in a trailing column's panel navigation
     /// (the Git panel's file review at regular width): its file list pushes
-    /// there too, instead of this screen's own column. New Session and the
-    /// prompt templates still push their chat onto this screen, which joins
-    /// the panel's own navigation the same way the Files panel's own
-    /// document pushes already do.
+    /// there too, instead of this screen's own column.
     private let hostedInPanel: Bool
+    /// Where a started session's chat goes; nil pushes it onto this screen's
+    /// own stack.
+    private let pushChat: ((ChatViewController) -> Void)?
 
     private let connection: ServerConnection
     private let apiClient: APIClient?
@@ -248,13 +248,15 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         connection: ServerConnection,
         apiClient: APIClient?,
         navigation: AppNavigation,
-        hostedInPanel: Bool = false
+        hostedInPanel: Bool = false,
+        pushChat: ((ChatViewController) -> Void)? = nil
     ) {
         self.configuration = configuration
         self.connection = connection
         self.apiClient = apiClient
         self.appNavigation = navigation
         self.hostedInPanel = hostedInPanel
+        self.pushChat = pushChat
         super.init(nibName: nil, bundle: nil)
         navigationItem.largeTitleDisplayMode = .never
     }
@@ -736,12 +738,8 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         // The viewer's Edit, left of Share.
         trailing.append(contentsOf: viewerBar?.trailingItems ?? [])
         setItems(leading: leading, trailing: trailing)
-        // Hosted in a panel, New Session and the prompt templates would have
-        // to push a whole chat into the column's own width: no overflow menu
-        // to start one from.
-        let overflow = hostedInPanel ? nil : actionMenu
-        if navigationItem.additionalOverflowItems !== overflow {
-            navigationItem.additionalOverflowItems = overflow
+        if navigationItem.additionalOverflowItems !== actionMenu {
+            navigationItem.additionalOverflowItems = actionMenu
         }
     }
 
@@ -820,7 +818,8 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
             selectedSessionId: configuration.selectedSessionId,
             presenter: self,
             isLaunching: { [weak self] in self?.launchActionInFlightTitle != nil },
-            setProgress: { [weak self] in self?.launchActionInFlightTitle = $0 }
+            setProgress: { [weak self] in self?.launchActionInFlightTitle = $0 },
+            push: pushChat
         )
     }
 

@@ -23,10 +23,9 @@ struct CommitDetailActionMenuState: Equatable {
 /// pushes its diff there, with a back button to this screen, since the
 /// column's width is already spoken for and its own trait reads compact.
 /// New Session and the prompt templates in the overflow menu start a session
-/// about the commit and push its chat onto this screen's stack; hosted in a
-/// panel, that stack is the one the Git panel's own navigation already owns,
-/// so there is no overflow menu to start one from (it would have to push a
-/// whole chat into the column's own width).
+/// about the commit and push its chat onto this screen's stack, or, hosted in
+/// a panel, hand it to `pushChat`, which closes the column and pushes the
+/// chat beside it instead of squeezing a whole chat into the column.
 @MainActor
 final class CommitDetailViewController: UIViewController {
     struct Configuration {
@@ -49,10 +48,10 @@ final class CommitDetailViewController: UIViewController {
     /// This screen is itself pushed in a trailing column's panel navigation
     /// (the Git panel's commit row at regular width): a selected file pushes
     /// its diff there too, instead of this screen's own column or sheet.
-    /// New Session and the prompt templates still push their chat onto this
-    /// screen, which joins the panel's own navigation the same way the Files
-    /// panel's own document pushes already do.
     private let hostedInPanel: Bool
+    /// Where a started session's chat goes; nil pushes it onto this screen's
+    /// own stack.
+    private let pushChat: ((ChatViewController) -> Void)?
 
     private let connection: ServerConnection
     private let apiClient: APIClient?
@@ -112,19 +111,19 @@ final class CommitDetailViewController: UIViewController {
         connection: ServerConnection,
         apiClient: APIClient?,
         navigation: AppNavigation,
-        hostedInPanel: Bool = false
+        hostedInPanel: Bool = false,
+        pushChat: ((ChatViewController) -> Void)? = nil
     ) {
         self.configuration = configuration
         self.connection = connection
         self.apiClient = apiClient
         self.appNavigation = navigation
         self.hostedInPanel = hostedInPanel
+        self.pushChat = pushChat
         super.init(nibName: nil, bundle: nil)
         title = String(localized: "Commit")
         navigationItem.largeTitleDisplayMode = .never
-        if !hostedInPanel {
-            navigationItem.additionalOverflowItems = actionMenu
-        }
+        navigationItem.additionalOverflowItems = actionMenu
     }
 
     @available(*, unavailable)
@@ -348,7 +347,8 @@ final class CommitDetailViewController: UIViewController {
             workspaceId: configuration.workspaceId,
             presenter: self,
             isLaunching: { [weak self] in self?.launchActionInFlightTitle != nil },
-            setProgress: { [weak self] in self?.launchActionInFlightTitle = $0 }
+            setProgress: { [weak self] in self?.launchActionInFlightTitle = $0 },
+            push: pushChat
         )
     }
 

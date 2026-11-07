@@ -1016,12 +1016,11 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
 
     // MARK: - Review modals
 
-    /// Compact width presents the commit as a sheet, today's behavior, with
-    /// New Session pushing its chat onto the sheet's own stack. Regular
-    /// width hosts the commit inside the Git panel's own trailing-column
-    /// navigation instead: a native Back leads to Git, and there is no New
-    /// Session there, since it would have to push a whole chat into the
-    /// column's own width.
+    /// Compact width presents the commit as a sheet, with New Session pushing
+    /// its chat onto the sheet's own stack. Regular width hosts the commit
+    /// inside the Git panel's own trailing-column navigation instead: a
+    /// native Back leads to Git, and New Session closes the column before
+    /// opening its chat on this chat's stack, after which Git reopens.
     func testGitPanelCommitPushesAChatAndShowsTheDiffPanel() {
         launch()
         openGitPanel()
@@ -1029,16 +1028,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         let commit = app.navigationBars["Commit"]
         XCTAssertTrue(commit.waitUntilExists(timeout: 5), "Commit did not open in a router navigation bar")
         guard usesSheets else {
-            XCTAssertFalse(app.buttons[closeLabel].exists, "A panel-hosted commit must not draw its own Close")
-            openAndCloseDiff(pushed: true)
-            XCTAssertFalse(
-                barButton(commit, NSPredicate(format: "label IN %@", ["More", "Actions"])).exists,
-                "A panel-hosted commit must not offer New Session"
-            )
-            barButton(commit, NSPredicate(format: "identifier == %@", "BackButton")).tap()
-            XCTAssertTrue(commit.waitUntilGone(timeout: 5), "Back must pop the commit")
-            app.buttons["git.panel.close"].tap()
-            assertRunning()
+            assertPanelCommitNewSessionOpensBesideAndGitReopens(commit)
             return
         }
         openAndCloseDiff(pushed: false)
@@ -1069,6 +1059,48 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(commit.waitUntilExists(timeout: 5))
         dragToBottom(commit)
         XCTAssertTrue(commit.waitUntilGone(timeout: 5), "Swipe-down must close the commit sheet")
+        assertRunning()
+    }
+
+    private func assertPanelCommitNewSessionOpensBesideAndGitReopens(_ commit: XCUIElement) {
+        let panel = app.navigationBars["Git"]
+        XCTAssertFalse(app.buttons[closeLabel].exists, "A panel-hosted commit must not draw its own Close")
+        openAndCloseDiff(pushed: true)
+        barButton(commit, NSPredicate(format: "label IN %@", ["More", "Actions"])).tap()
+        let newSession = app.buttons["New Session"].firstMatch
+        XCTAssertTrue(newSession.waitUntilExists(timeout: 5), "A panel-hosted commit must offer New Session")
+        newSession.tap()
+
+        let newChatTitle = app.buttons.matching(
+            NSPredicate(format: "label == %@ AND value == %@", "Rename session", "New routes session")
+        ).firstMatch
+        XCTAssertTrue(newChatTitle.waitUntilExists(timeout: 10), "New Session must open its chat")
+        XCTAssertTrue(commit.waitUntilGone(timeout: 5), "Starting a session must close the column's commit")
+        XCTAssertFalse(panel.exists, "Starting a session must close the Git panel")
+        let backButtons = app.buttons.matching(identifier: "chat.toolbar.back")
+        XCTAssertEqual(backButtons.count, 1, "The new chat must be the only chat on screen, not one inside the column")
+        XCTAssertEqual(
+            app.descendants(matching: .any)["chatRoutes.createdSessions"].value as? String, "1",
+            "The stub must have received the new session"
+        )
+        attachScreenshot("panel-commit-new-session-chat")
+        backButtons.element(boundBy: 0).tap()
+        let originalTitle = app.buttons.matching(
+            NSPredicate(format: "label == %@ AND value == %@", "Rename session", "Routes")
+        ).firstMatch
+        XCTAssertTrue(originalTitle.waitUntilExists(timeout: 5), "Back must return to the chat the panel was opened from")
+        hold()
+        XCTAssertFalse(panel.exists, "Back must not return to the Git panel")
+
+        // The column is gone cleanly: Git reopens, and its commit pushes again.
+        openGitPanel()
+        assertOpenInColumn("chat.toolbar.git")
+        tapCommitRow()
+        XCTAssertTrue(commit.waitUntilExists(timeout: 5), "The reopened panel must push its commit again")
+        barButton(commit, NSPredicate(format: "identifier == %@", "BackButton")).tap()
+        XCTAssertTrue(commit.waitUntilGone(timeout: 5), "Back must pop the commit")
+        app.buttons["git.panel.close"].tap()
+        XCTAssertTrue(panel.waitUntilGone(timeout: 5), "Close must close the Git panel")
         assertRunning()
     }
 
@@ -1167,6 +1199,10 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             // trailing-column navigation: a native Back, not a sheet, leads
             // back to Git.
             XCTAssertFalse(app.buttons[closeLabel].exists, "A panel-hosted review must not draw its own Close")
+            XCTAssertTrue(
+                review.buttons.matching(NSPredicate(format: "label IN %@", ["More", "Actions"])).count > 0,
+                "A panel-hosted review must keep its New Session and prompt templates"
+            )
             barButton(review, NSPredicate(format: "identifier == %@", "BackButton")).tap()
             XCTAssertTrue(review.waitUntilGone(timeout: 5), "Back must pop the review")
         }
