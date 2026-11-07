@@ -106,6 +106,7 @@ enum DebugHarnessLaunch {
                 order: [.outline, .files, .context, .git, .terminal], shown: Set(ChatTopBarAction.allCases)
             ))
         case "session-timeline": return SessionTimelinePreviewController(root: root)
+        case "markdown-tables": return MarkdownTablesPreviewController(root: root)
         // The files, terminal, and audio family: the motion captures, the
         // terminal's three fixture connections, and the script reader.
         case "file-browser-motion": return FileBrowserMotionPreviewController(review: false)
