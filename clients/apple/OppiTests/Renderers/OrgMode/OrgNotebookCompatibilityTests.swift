@@ -164,8 +164,32 @@ struct OrgNotebookCompatibilityTests {
 
     // MARK: - Conversion
 
+    /// Friday 2026-11-06, noon UTC, read in US English.
+    static let clock: OrgBadges.Clock = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US")
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 6, hour: 12))!
+        return OrgBadges.Clock(now: now, calendar: calendar)
+    }()
+
     private func convert(_ source: String, documentPath: String? = nil) -> [MarkdownBlock] {
-        OrgToMarkdownConverter.convert(parser.parse(source), documentPath: documentPath)
+        OrgToMarkdownConverter.convert(parser.parse(source), documentPath: documentPath, clock: Self.clock)
+    }
+
+    private func badges(_ inlines: [MarkdownInline]) -> [MarkdownBadge] {
+        inlines.compactMap { inline in
+            guard case let .html(raw) = inline else { return nil }
+            return MarkdownBadge(markup: raw)
+        }
+    }
+
+    private func badges(_ block: MarkdownBlock) -> [MarkdownBadge] {
+        switch block {
+        case let .heading(_, inlines), let .paragraph(inlines): badges(inlines)
+        case let .htmlBlock(html): MarkdownBadge.badges(inHTMLBlock: html) ?? []
+        default: []
+        }
     }
 
     private func headingInlines(_ block: MarkdownBlock) -> [MarkdownInline] {
@@ -173,48 +197,109 @@ struct OrgNotebookCompatibilityTests {
         return inlines
     }
 
-    @Test func doneStatesRenderAsDoneAndOpenStatesAsBold() {
+    @Test func headingLeadsWithOneBarAndTrailsItsTags() {
         let blocks = convert("""
         #+TODO: TODO NEXT WAIT | DONE CANCELLED
-        * NEXT Ship
-        * CANCELLED Old idea
+        * NEXT [#A] Ship Org [1/3] rendering :oppi:ios:
         """)
-        #expect(blocks.count == 2, "the #+TODO directive is not rendered")
-        #expect(headingInlines(blocks[0]) == [.strong([.text("NEXT")]), .text(" "), .text("Ship")])
-        #expect(headingInlines(blocks[1]) == [
-            .emphasis([.text("CANCELLED")]), .text(" "), .strikethrough([.text("Old idea")]),
+        #expect(blocks.count == 1, "the #+TODO directive is not rendered")
+        let next = MarkdownBadge(text: "NEXT", label: "Next", tone: .accent)
+        let priority = MarkdownBadge(text: "#A", label: "priority A", tone: .neutral)
+        let progress = MarkdownBadge(text: "1/3", label: "1 of 3 done", tone: .neutral)
+        let oppi = MarkdownBadge(text: "oppi", label: "tag oppi", tone: .quiet, shape: .capsule)
+        let ios = MarkdownBadge(text: "ios", label: "tag ios", tone: .quiet, shape: .capsule)
+        // The cookie moves into the bar and leaves no double space behind.
+        #expect(headingInlines(blocks[0]) == [
+            .html(next.markup), .html(priority.markup), .html(progress.markup),
+            .text(" "), .text("Ship Org rendering"),
+            .text(" "), .html(oppi.markup), .text(" "), .html(ios.markup),
         ])
+    }
+
+    @Test(arguments: [
+        ("TODO", MarkdownBadge.Tone.accent, false),
+        ("NEXT", .accent, false),
+        ("WAIT", .warning, false),
+        ("HOLD", .warning, false),
+        ("DONE", .success, true),
+        ("CANCELLED", .muted, true),
+    ])
+    func stateToneFollowsItsClassAndDoneTitlesAreStruck(
+        keyword: String, tone: MarkdownBadge.Tone, struck: Bool
+    ) {
+        let blocks = convert("#+TODO: TODO NEXT WAIT HOLD | DONE CANCELLED\n* \(keyword) Task")
+        #expect(badges(blocks[0]).map(\.tone) == [tone])
+        #expect(headingInlines(blocks[0]).last == (struck ? .strikethrough([.text("Task")]) : .text("Task")))
     }
 
     @Test func customDoneStateFollowsTheDeclaration() {
         let blocks = convert("#+TODO: QUEUED | SHIPPED\n* SHIPPED Out\n* QUEUED Next")
-        #expect(headingInlines(blocks[0]).first == .emphasis([.text("SHIPPED")]))
-        #expect(headingInlines(blocks[1]).first == .strong([.text("QUEUED")]))
+        #expect(badges(blocks[0]).map(\.tone) == [.success])
+        #expect(badges(blocks[1]).map(\.tone) == [.accent])
     }
 
-    @Test func planningLineIsOneQuietParagraphNotBodyText() {
-        let blocks = convert("* TODO Ship\nSCHEDULED: <2026-11-11 Wed> DEADLINE: <2026-11-13 Fri 17:00>")
-        #expect(blocks[1] == .paragraph([
-            .emphasis([.text("Scheduled 2026-11-11 Wed  ·  Deadline 2026-11-13 Fri 17:00")]),
-        ]))
+    @Test(arguments: [("1/3", MarkdownBadge.Tone.neutral, "1 of 3 done"), ("3/3", .success, "3 of 3 done"),
+                      ("40%", .neutral, "40 percent done"), ("100%", .success, "100 percent done")])
+    func progressReadsAsWordsAndCompleteReadsAsDone(cookie: String, tone: MarkdownBadge.Tone, label: String) {
+        let badge = badges(convert("* Release [\(cookie)]")[0]).first
+        #expect(badge?.tone == tone)
+        #expect(badge?.label == label)
     }
 
-    @Test func progressCookieRendersAsCodeSpan() {
-        let blocks = convert("* Release [2/5]")
-        #expect(headingInlines(blocks[0]) == [.text("Release "), .code("[2/5]")])
+    @Test func planningLineIsABarOfDatesAndAPassedDeadlineWarns() throws {
+        let blocks = convert("* TODO Ship\nSCHEDULED: <2026-11-11 Wed> DEADLINE: <2026-11-05 Thu 17:00>")
+        let bar = badges(blocks[1])
+        #expect(bar.map(\.tone) == [.neutral, .danger])
+        #expect(bar.map(\.symbol) == ["calendar", "exclamationmark.triangle.fill"])
+        #expect(bar[0].text == "Wed, Nov 11")
+        #expect(bar[0].label == "Scheduled Wednesday, November 11, 2026")
+        #expect(bar[1].label.hasPrefix("Deadline Thursday, November 5, 2026 at 5:00"))
+        #expect(bar[1].label.hasSuffix(", overdue"))
     }
 
-    @Test func cookieBeforeTagsKeepsTwoCodeSpans() {
-        let markdown = MarkdownBlockSerializer.serialize(convert("* Release [2/5] :oppi:"))
-        let parsed = parseCommonMark(markdown)
-        guard case let .heading(_, inlines) = parsed[0] else {
-            Issue.record("Expected heading, got \(parsed)")
+    @Test(arguments: [
+        "* DONE Ship\nDEADLINE: <2026-11-01 Sun>",
+        "* TODO Ship\nDEADLINE: <2026-11-06 Fri>",
+        "* TODO Ship\nDEADLINE: <2026-11-06 Fri 18:00>",
+    ])
+    func deadlineWarnsOnlyWhenOpenAndPassed(source: String) {
+        let bar = badges(convert(source)[1])
+        #expect(bar.map(\.tone) == [.neutral], "done headings, and a deadline later today, never warn")
+    }
+
+    @Test func repeaterAndAnotherYearShow() {
+        let bar = badges(convert("* TODO Ship\nSCHEDULED: <2026-11-12 Thu +1w> DEADLINE: <2027-01-04 Mon>")[1])
+        #expect(bar[0].text == "Thu, Nov 12 ↻1w")
+        #expect(bar[0].label.hasSuffix("repeats every 1 week"))
+        #expect(bar[1].text.contains("2027"))
+    }
+
+    @Test func listItemCookieIsTheSameBadgeAsAHeadingCookie() {
+        let blocks = convert("* Release [0/2]\n- Item [0/2]")
+        guard case let .unorderedList(items) = blocks[1] else {
+            Issue.record("Expected a list, got \(blocks)")
             return
         }
-        #expect(inlines.compactMap { inline -> String? in
-            if case let .code(code) = inline { return code }
-            return nil
-        } == ["[2/5]", "  :oppi:"])
+        #expect(badges(items[0][0]) == badges(blocks[0]))
+    }
+
+    @Test func badgesSurviveTheMarkdownRoundTrip() throws {
+        // A lone planning entry is a line of one tag, which CommonMark reads
+        // as an HTML block rather than a paragraph.
+        let source = """
+        #+TODO: TODO "Q&A"<1> | DONE
+        * "Q&A"<1> [#B] Say hi [1/2] :a_b:
+        CLOSED: [2026-11-06 Fri 14:00]
+        """
+        let blocks = convert(source)
+        let parsed = parseCommonMark(MarkdownBlockSerializer.serialize(blocks))
+        #expect(parsed.count == 2)
+        #expect(badges(parsed[0]) == badges(blocks[0]))
+        #expect(badges(parsed[1]) == badges(blocks[1]))
+        guard case .htmlBlock = parsed[1] else {
+            Issue.record("Expected the lone planning entry as an HTML block, got \(parsed[1])")
+            return
+        }
     }
 
     @Test func propertiesDrawerStaysOutOfTheReadingView() {
@@ -334,16 +419,50 @@ struct OrgNotebookCompatibilityTests {
         #expect(links.allSatisfy { $0.kind == .hostFile })
     }
 
-    @Test func fixtureReadsWithoutMetadataLeakingIntoBody() {
-        let markdown = DocumentRenderPipeline.orgToMarkdown(
-            OrgNotebookFixture.project, documentPath: OrgNotebookFixture.projectPath
-        )
-        for leaked in ["SCHEDULED:", "CLOSED:", "DEADLINE:", ":ID:", ":PROPERTIES:", "#+TODO", "<2026", "[2026"] {
-            #expect(!markdown.contains(leaked), "\(leaked) leaked into the reading view")
+    private func readerText(_ source: String) -> NSAttributedString {
+        let markdown = DocumentRenderPipeline.orgToMarkdown(source, documentPath: OrgNotebookFixture.projectPath)
+        let result = NSMutableAttributedString()
+        for case let .text(attributed) in FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark) {
+            result.append(NSAttributedString(attributed))
+            result.append(NSAttributedString(string: "\n"))
         }
-        #expect(markdown.contains("*Scheduled 2026-11-11 Wed  ·  Deadline 2026-11-13 Fri 17:00*"))
-        #expect(markdown.contains("**WAIT** Device check `[40%]`"))
-        #expect(markdown.contains("*DONE* ~~Draft the brief~~"))
-        #expect(markdown.contains("*CANCELLED* ~~Retire the old extension~~"))
+        return result
+    }
+
+    private func badgeAttachments(_ text: NSAttributedString) -> [MarkdownBadgeAttachment] {
+        var found: [MarkdownBadgeAttachment] = []
+        text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, _, _ in
+            if let badge = value as? MarkdownBadgeAttachment { found.append(badge) }
+        }
+        return found
+    }
+
+    @Test func fixtureReadsWithoutMetadataLeakingIntoBody() {
+        let text = readerText(OrgNotebookFixture.project).string
+        for leaked in ["SCHEDULED", "CLOSED", "DEADLINE", ":ID:", ":PROPERTIES:", "#+TODO", "2026-11-13", "2026-11-06", "oppi-badge", ":oppi:"] {
+            #expect(!text.contains(leaked), "\(leaked) leaked into the reading view")
+        }
+    }
+
+    @MainActor
+    @Test func textViewSpeaksBadgesAsWordsWhereTheySit() {
+        let textView = BaselineSafeTextView(usingTextLayoutManager: true)
+        textView.attributedText = readerText("#+TODO: NEXT | DONE\n* NEXT [#A] Ship [1/3] :oppi:")
+        #expect(textView.accessibilityLabel?.hasPrefix("Next, priority A, 1 of 3 done, Ship, tag oppi") == true)
+    }
+
+    @MainActor
+    @Test func readerDrawsTheHeadingBarAsJoinedSegmentsThatSpeakInWords() throws {
+        let palette = ThemeID.dark.palette
+        let text = readerText("#+TODO: TODO NEXT | DONE\n* NEXT [#A] Ship [1/3] :oppi:\nSCHEDULED: <2026-11-11 Wed>")
+        let attachments = badgeAttachments(text)
+        #expect(attachments.prefix(4).map(\.accessibilityLabel) == ["Next", "priority A", "1 of 3 done", "tag oppi"])
+        #expect(attachments.last?.accessibilityLabel?.hasPrefix("Scheduled ") == true)
+        // Each segment after the first starts with the arrow of the one before;
+        // only a bar's last segment ends in its own arrow. Tags stand alone.
+        #expect(attachments.map(\.style.joinFill) == [nil, palette.ui.blue, palette.ui.bgHighlight, nil, nil])
+        #expect(attachments.map(\.style.endsInArrow) == [false, false, true, false, true])
+        #expect(attachments.map(\.style.isCapsule) == [false, false, false, true, false])
     }
 }
+

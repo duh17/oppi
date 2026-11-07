@@ -6,16 +6,17 @@ import Foundation
 /// rendering pipeline. This ensures org mode files render identically to
 /// markdown: same fonts, colors, spacing, code blocks, and theme integration.
 ///
-/// The conversion is lossy: the Markdown renderer has no keyword badge, dim
-/// metadata or fold, so org-specific features are expressed with the styles it
-/// does have. TODO keywords are bold (done states italic, with a struck-through
-/// title), priority, tags and progress cookies are code spans, planning lines
-/// and timestamps are italic, and property drawers are left out of the reading
-/// view. The goal is visual parity with markdown, not round-trip fidelity.
+/// Org metadata travels as `MarkdownBadge` inline elements (see `OrgBadges`):
+/// a heading's TODO state, priority and progress cookie lead it as one bar,
+/// tags trail it, a done heading's title is struck through, and a planning
+/// line becomes a bar of dates. Property drawers stay out of the reading
+/// view, and timestamps in prose are italic. The goal is a reading view, not
+/// round-trip fidelity.
 enum OrgToMarkdownConverter {
 
     /// What the conversion needs to know about the whole document.
     private struct Context {
+        let clock: OrgBadges.Clock
         let todoKeywords: OrgTodoKeywords
         /// Last path component of the file being rendered. Links to the file
         /// itself (`[[*Heading]]`, an `id:` it declares) resolve to it.
@@ -31,11 +32,15 @@ enum OrgToMarkdownConverter {
     /// `documentPath` is the path of the file the blocks came from, when known.
     /// Links to other files resolve against its directory in the reader, and
     /// links to the document itself need its name.
-    static func convert(_ orgBlocks: [OrgBlock], documentPath: String? = nil) -> [MarkdownBlock] {
-        convert(orgBlocks, context: makeContext(orgBlocks, documentPath: documentPath))
+    static func convert(
+        _ orgBlocks: [OrgBlock],
+        documentPath: String? = nil,
+        clock: OrgBadges.Clock = .current
+    ) -> [MarkdownBlock] {
+        convert(orgBlocks, context: makeContext(orgBlocks, documentPath: documentPath, clock: clock))
     }
 
-    private static func makeContext(_ blocks: [OrgBlock], documentPath: String?) -> Context {
+    private static func makeContext(_ blocks: [OrgBlock], documentPath: String?, clock: OrgBadges.Clock) -> Context {
         var titles = Set<String>()
         var ids = Set<String>()
         for block in blocks {
@@ -54,6 +59,7 @@ enum OrgToMarkdownConverter {
             .map { ($0 as NSString).lastPathComponent }
             .flatMap { $0.isEmpty ? nil : $0 }
         return Context(
+            clock: clock,
             todoKeywords: OrgTodoKeywords.declared(in: blocks),
             documentName: name,
             headingTitles: titles,
@@ -77,6 +83,26 @@ enum OrgToMarkdownConverter {
         .trimmingCharacters(in: .whitespaces)
     }
 
+    /// A title with its cookies lifted out: no space left at either end, and
+    /// no double space where a cookie sat between words.
+    private static func tidiedTitle(_ inlines: [OrgInline]) -> [OrgInline] {
+        var tidied: [OrgInline] = []
+        for inline in inlines {
+            if case .text(let next) = inline, case .text(let previous) = tidied.last {
+                tidied[tidied.count - 1] = .text(previous + next)
+            } else {
+                tidied.append(inline)
+            }
+        }
+        return tidied.enumerated().compactMap { index, inline in
+            guard case .text(var text) = inline else { return inline }
+            while let range = text.range(of: "  ") { text.replaceSubrange(range, with: " ") }
+            if index == 0 { text = String(text.drop(while: { $0 == " " })) }
+            if index == tidied.count - 1 { text = String(text.reversed().drop(while: { $0 == " " }).reversed()) }
+            return text.isEmpty ? nil : .text(text)
+        }
+    }
+
     private static func isPropertiesDrawer(_ name: String) -> Bool {
         name.uppercased() == "PROPERTIES"
     }
@@ -84,39 +110,44 @@ enum OrgToMarkdownConverter {
     private static func convert(_ orgBlocks: [OrgBlock], context: Context) -> [MarkdownBlock] {
         var result: [MarkdownBlock] = []
         result.reserveCapacity(orgBlocks.count)
+        // Whether the heading a planning line sits under is done: a finished
+        // task's deadline never warns.
+        var headingIsDone = false
 
         for block in orgBlocks {
             switch block {
             case .heading(let level, let keyword, let priority, let title, let tags):
-                var inlines = [MarkdownInline]()
                 let isDone = keyword.map(context.todoKeywords.isDone) ?? false
+                headingIsDone = isDone
 
-                // Keyword: bold while open, italic once done.
-                if let keyword {
-                    inlines.append(isDone ? .emphasis([.text(keyword)]) : .strong([.text(keyword)]))
-                    inlines.append(.text(" "))
+                // State, priority and the title's progress cookies lead the
+                // heading as one bar, written back to back so they join.
+                var bar: [MarkdownBadge] = []
+                if let keyword { bar.append(OrgBadges.state(keyword, isDone: isDone)) }
+                if let priority { bar.append(OrgBadges.priority(String(priority))) }
+                var titleRest: [OrgInline] = []
+                for inline in title {
+                    if case .progress(let cookie) = inline {
+                        bar.append(OrgBadges.progress(cookie))
+                    } else {
+                        titleRest.append(inline)
+                    }
                 }
-
-                // Priority cookie.
-                if let priority {
-                    inlines.append(.code("[#\(priority)]"))
-                    inlines.append(.text(" "))
-                }
+                var inlines: [MarkdownInline] = bar.map { .html($0.markup) }
 
                 // Title content, struck through when the heading is done.
-                let titleInlines = convertInlines(title, context: context)
+                let titleInlines = convertInlines(tidiedTitle(titleRest), context: context)
+                if !bar.isEmpty, !titleInlines.isEmpty { inlines.append(.text(" ")) }
                 if isDone, !titleInlines.isEmpty {
                     inlines.append(.strikethrough(titleInlines))
                 } else {
                     inlines.append(contentsOf: titleInlines)
                 }
 
-                // Tags as dim suffix.
-                if !tags.isEmpty {
-                    // Two code spans with nothing between them serialize into one.
-                    if case .code = inlines.last { inlines.append(.text(" ")) }
-                    let tagStr = "  :" + tags.joined(separator: ":") + ":"
-                    inlines.append(.code(tagStr))
+                // Tags trail the title, one capsule each.
+                for tag in tags {
+                    inlines.append(.text(" "))
+                    inlines.append(.html(OrgBadges.tag(tag).markup))
                 }
 
                 result.append(.heading(level: min(level, 6), inlines: inlines))
@@ -192,10 +223,10 @@ enum OrgToMarkdownConverter {
                 }
 
             case .planning(let entries):
-                let text = entries
-                    .map { "\($0.kind.label) \($0.timestamp.text)" }
-                    .joined(separator: "  ·  ")
-                result.append(.paragraph([.emphasis([.text(text)])]))
+                let bar = entries.map {
+                    OrgBadges.planning($0, headingIsDone: headingIsDone, clock: context.clock)
+                }
+                result.append(.paragraph(bar.map { .html($0.markup) }))
 
             case .comment:
                 // Skip comments in rendered output.
@@ -232,7 +263,7 @@ enum OrgToMarkdownConverter {
         case .timestamp(let timestamp):
             return [.emphasis([.text(timestamp.text)])]
         case .progress(let cookie):
-            return [.code("[\(cookie)]")]
+            return [.html(OrgBadges.progress(cookie).markup)]
         case .link(let url, let description):
             let label = description.map { convertInlines($0, context: context) } ?? [.text(url)]
             guard let destination = linkDestination(url, context: context) else {

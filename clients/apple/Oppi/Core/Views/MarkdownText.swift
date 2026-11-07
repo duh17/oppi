@@ -2160,6 +2160,15 @@ enum FlatSegment: Sendable {
             return result
 
         case .htmlBlock(let html):
+            // A line of badges alone parses as an HTML block; it reads as the
+            // paragraph it is.
+            if let badges = MarkdownBadge.badges(inHTMLBlock: html) {
+                return attributedString(
+                    for: .paragraph(badges.map { .html($0.markup) }),
+                    palette: palette,
+                    defaultTextColor: defaultTextColor
+                )
+            }
             var result = AttributedString(html.trimmingCharacters(in: .whitespacesAndNewlines))
             result.uiKit.font = AppFont.mono
             result.uiKit.foregroundColor = palette.ui.comment
@@ -2202,10 +2211,10 @@ enum FlatSegment: Sendable {
         defaultColor: UIColor?
     ) -> AttributedString {
         // Wiki links to non-text files (image/audio/video/PDF/binary) render a
-        // leading file icon. Attachments can't be emitted by the range-based
-        // plain-text path below, so route such paragraphs through a direct-append
-        // renderer instead.
-        if containsWikiIconLink(inlines) {
+        // leading file icon, and badges draw as attachments. Attachments can't
+        // be emitted by the range-based plain-text path below, so route such
+        // paragraphs through a direct-append renderer instead.
+        if containsAttachmentInline(inlines) {
             return renderInlinesDirectAppend(inlines, palette: palette, defaultColor: defaultColor)
         }
         // Fast path: single text inline (most common paragraph).
@@ -2610,9 +2619,9 @@ enum FlatSegment: Sendable {
         return decorated
     }
 
-    /// Whether any inline (at any nesting depth) is a wiki link that should
-    /// render a leading file icon.
-    private static func containsWikiIconLink(_ inlines: [MarkdownInline]) -> Bool {
+    /// Whether any inline (at any nesting depth) draws as an attachment: a wiki
+    /// link with a leading file icon, or a badge.
+    private static func containsAttachmentInline(_ inlines: [MarkdownInline]) -> Bool {
         for inline in inlines {
             switch inline {
             case .link(_, let destination):
@@ -2620,17 +2629,19 @@ enum FlatSegment: Sendable {
             case .emphasis(let children),
                  .strong(let children),
                  .strikethrough(let children):
-                if containsWikiIconLink(children) { return true }
-            case .text, .code, .image, .videoEmbed, .audioEmbed, .usdzEmbed, .softBreak, .hardBreak, .html:
+                if containsAttachmentInline(children) { return true }
+            case .html(let raw):
+                if MarkdownBadge(markup: raw) != nil { return true }
+            case .text, .code, .image, .videoEmbed, .audioEmbed, .usdzEmbed, .softBreak, .hardBreak:
                 continue
             }
         }
         return false
     }
 
-    /// Direct-append inline renderer used only when a paragraph contains a wiki
-    /// link with a leading file icon. Mirrors `renderInlineLatexInlines` (minus
-    /// math parsing) so attachments can be emitted; the range-based path in
+    /// Direct-append inline renderer used only when a paragraph contains an
+    /// attachment inline. Mirrors `renderInlineLatexInlines` (minus math
+    /// parsing) so attachments can be emitted; the range-based path in
     /// `renderInlinesCore` builds from plain text and cannot carry attachments.
     private static func renderInlinesDirectAppend(
         _ inlines: [MarkdownInline],
@@ -2638,8 +2649,27 @@ enum FlatSegment: Sendable {
         defaultColor: UIColor?
     ) -> AttributedString {
         var result = AttributedString()
-        for inline in inlines {
-            result.append(renderInlineDirectAppend(inline, palette: palette, defaultColor: defaultColor))
+        // Badges written back to back join into one bar.
+        var previousSegment: MarkdownBadge?
+        for (index, inline) in inlines.enumerated() {
+            guard case .html(let raw) = inline, let badge = MarkdownBadge(markup: raw) else {
+                previousSegment = nil
+                result.append(renderInlineDirectAppend(inline, palette: palette, defaultColor: defaultColor))
+                continue
+            }
+            let next = inlines.index(after: index) < inlines.endIndex
+                ? inlines[inlines.index(after: index)] : nil
+            let nextIsSegment: Bool = {
+                guard case .html(let nextRaw) = next else { return false }
+                return MarkdownBadge(markup: nextRaw)?.shape == .segment
+            }()
+            result.append(MarkdownBadgeAttachment.attributedString(
+                badge,
+                joiningAfter: badge.shape == .segment ? previousSegment : nil,
+                endsBar: badge.shape == .segment && !nextIsSegment,
+                palette: palette
+            ))
+            previousSegment = badge.shape == .segment ? badge : nil
         }
         return result
     }

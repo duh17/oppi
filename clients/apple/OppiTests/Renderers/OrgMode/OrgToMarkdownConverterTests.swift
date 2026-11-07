@@ -107,41 +107,6 @@ struct OrgToMarkdownConverterTests {
         }
     }
 
-    // MARK: - Headings
-
-    @Test func headingWithTodoKeyword() {
-        let blocks = parser.parse("* TODO Fix the bug")
-        let mdBlocks = OrgToMarkdownConverter.convert(blocks)
-
-        guard case .heading(_, let inlines) = mdBlocks[0] else {
-            Issue.record("Expected heading")
-            return
-        }
-        // First inline should be strong (TODO keyword)
-        guard case .strong(let children) = inlines[0] else {
-            Issue.record("Expected strong for TODO keyword")
-            return
-        }
-        #expect(plainText(from: children) == "TODO")
-    }
-
-    @Test func headingWithTags() {
-        let blocks = parser.parse("* My Heading   :tag1:tag2:")
-        let mdBlocks = OrgToMarkdownConverter.convert(blocks)
-
-        guard case .heading(_, let inlines) = mdBlocks[0] else {
-            Issue.record("Expected heading")
-            return
-        }
-        // Last inline should be code with tags
-        guard case .code(let tagStr) = inlines.last else {
-            Issue.record("Expected code for tags")
-            return
-        }
-        #expect(tagStr.contains("tag1"))
-        #expect(tagStr.contains("tag2"))
-    }
-
     // MARK: - Coverage: conversion branches
 
     @Test func convertCoversListAndKeywordFallbackBranches() {

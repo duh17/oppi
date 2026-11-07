@@ -50,6 +50,30 @@ final class BaselineSafeTextView: UITextView, ReviewCommentSourceLineRangeResolv
         return super.gestureRecognizerShouldBegin(gestureRecognizer)
     }
 
+    // MARK: - Accessibility
+
+    /// UIKit drops attachments (badges, inline formulas) from a text view's
+    /// spoken text. Speak each attachment's own label where it sits instead.
+    override var accessibilityLabel: String? {
+        get {
+            guard let text = attributedText, text.length > 0,
+                  text.containsAttachments(in: NSRange(location: 0, length: text.length)) else {
+                return super.accessibilityLabel
+            }
+            var pieces: [String] = []
+            text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+                let piece = (value as? NSTextAttachment).map { $0.accessibilityLabel ?? "" }
+                    ?? (text.string as NSString).substring(with: range)
+                let trimmed = piece
+                    .replacingOccurrences(of: "\u{FFFC}", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { pieces.append(trimmed) }
+            }
+            return pieces.joined(separator: ", ")
+        }
+        set { super.accessibilityLabel = newValue }
+    }
+
     // MARK: - Baseline safety
 
     // periphery:ignore - @objc override of UIKit private baseline query; prevents assertion during detach

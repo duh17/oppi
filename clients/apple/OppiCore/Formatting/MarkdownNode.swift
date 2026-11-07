@@ -67,7 +67,7 @@ func plainText(from inlines: [MarkdownInline]) -> String {
         case .usdzEmbed(let embed): return embed.displayLabel
         case .softBreak: return " "
         case .hardBreak: return "\n"
-        case .html(let s): return s
+        case .html(let s): return MarkdownBadge(markup: s)?.text ?? s
         case .strikethrough(let children): return plainText(from: children)
         }
     }.joined()
