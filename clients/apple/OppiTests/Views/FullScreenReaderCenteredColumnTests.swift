@@ -53,6 +53,28 @@ struct FullScreenReaderCenteredColumnTests {
         #expect(abs(code[1].minX - prose.minX) <= 1 && abs(code[1].width - prose.width) <= 1, "short code keeps the prose column: \(code[1])")
     }
 
+    /// Too wide as clip text for the window, but narrower as a grid: the card
+    /// draws at the grid's width and must sit centered, not at the leading edge.
+    @Test("a table that fits only as a grid centers its card")
+    func gridFitTableCentersItsCard() async throws {
+        let markdown = """
+        \(Self.proseMarker) across a wide window, long enough to wrap in the column.
+
+        | Endpoint | Method | Latency p50 | Latency p95 | Error budget | Owner team | Region | Notes |
+        | --- | --- | --- | --- | --- | --- | --- | --- |
+        | /sessions | GET | 12 ms | 48 ms | 99.95% | Platform runtime | us-west-2 | steady |
+        | /sessions/:id | PATCH | 18 ms | 71 ms | 99.90% | Platform runtime | eu-central-1 | spiky at noon |
+        """
+        let window = try await makeWindow(content: .markdown(content: markdown, filePath: "wide.md"), width: 1032)
+        defer { hideTestWindow(window) }
+        let collection = try #require(collectionView(in: window))
+        let tableView = try #require(descendants(of: NativeTableBlockView.self, in: collection).first)
+        let cardView = try #require(tableView.subviews.first, "the table's card")
+        let card = cardView.convert(cardView.bounds, to: window)
+        #expect(card.width < window.bounds.width - 60, "Fixture must fit as a grid narrower than the window: \(card)")
+        #expect(abs(card.midX - window.bounds.midX) <= 1, "the card is centered: \(card)")
+    }
+
     @Test("a narrow window reads at the full width and widening it centers the column")
     func resizingFromNarrowToWideCentersTheColumn() async throws {
         let window = try await makeWindow(content: .markdown(content: Self.markdown, filePath: "report.md"), width: 393)
