@@ -51,11 +51,24 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
             .replacingOccurrences(of: "DEADLINE: <2026-11-20 Fri>", with: "CLOSED: [STAMP] DEADLINE: <2026-11-20 Fri>")
         waitForDisk(expected, after: "moving into a done state")
 
-        // 4. A date on a heading that has none, from its state menu.
-        tap("fileViewer.task.state.12")
-        let addDeadline = app.buttons["fileViewer.task.stateMenu.addDeadline"]
+        // 4. A plain heading draws no state; its text menu holds the state menu,
+        //    which sets a date the heading has none of.
+        XCTAssertFalse(app.buttons["fileViewer.task.state.12"].exists, "a plain heading stays plain")
+        let plain = app.staticTexts["Plain heading"]
+        XCTAssertTrue(plain.waitUntilExists(timeout: 10))
+        plain.press(forDuration: 1.0)
+        let state = app.descendants(matching: .any).matching(identifier: "fileViewer.task.textMenu.state").firstMatch
+        let stateEntry = state.waitUntilExists(timeout: 5) ? state : app.menuItems["State"]
+        XCTAssertTrue(stateEntry.waitUntilExists(timeout: 5), "the heading's text menu offers its state")
+        saveScreenshot(name: "reader-task-text-menu")
+        stateEntry.tap()
+        let addDeadline = app.descendants(matching: .any).matching(identifier: "fileViewer.task.stateMenu.addDeadline").firstMatch
         XCTAssertTrue(addDeadline.waitUntilExists(timeout: 10), "a heading without a deadline offers to set one")
-        XCTAssertTrue(app.buttons["fileViewer.task.stateMenu.addScheduled"].exists, "and a schedule")
+        XCTAssertTrue(
+            app.descendants(matching: .any).matching(identifier: "fileViewer.task.stateMenu.addScheduled").firstMatch.exists,
+            "and a schedule"
+        )
+        saveScreenshot(name: "reader-task-text-menu-state")
         addDeadline.tap()
         XCTAssertTrue(app.buttons["fileViewer.task.datePicker.done"].waitUntilExists(timeout: 10))
         pickDay("November 25")
@@ -134,7 +147,6 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
             "fileViewer.task.checkbox.5",
             "fileViewer.task.state.3",
             "fileViewer.task.scheduled.3",
-            "fileViewer.task.state.12",
         ] {
             XCTAssertFalse(app.buttons[id].exists, "\(id) must not be tappable in a read-only file")
         }

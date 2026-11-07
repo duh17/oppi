@@ -9,7 +9,8 @@ import Foundation
 /// reader draws them; any surface that does not knows to show `text`.
 ///
 /// `segment` badges written back to back form one bar of connected segments.
-/// A `capsule` stands alone.
+/// A `capsule` stands alone. A `marker` is never drawn: it only carries a
+/// control to a line that shows none.
 struct MarkdownBadge: Equatable, Sendable {
     enum Tone: String, Sendable {
         /// Open work.
@@ -31,6 +32,9 @@ struct MarkdownBadge: Equatable, Sendable {
     enum Shape: String, Sendable {
         case segment
         case capsule
+        /// Draws nothing and speaks nothing. It marks a line with a control the
+        /// reader offers off the page, such as giving a plain heading a state.
+        case marker
     }
 
     /// What the badge shows.
@@ -43,9 +47,6 @@ struct MarkdownBadge: Equatable, Sendable {
     let symbol: String?
     /// The source line this badge edits, for a reader that can save its file.
     let control: ReaderTaskControl?
-    /// Stands in for a control the document does not have yet (the state of a
-    /// heading without one). The reader draws it only where the control works.
-    let isPlaceholder: Bool
 
     init(
         text: String,
@@ -53,8 +54,7 @@ struct MarkdownBadge: Equatable, Sendable {
         tone: Tone,
         shape: Shape = .segment,
         symbol: String? = nil,
-        control: ReaderTaskControl? = nil,
-        isPlaceholder: Bool = false
+        control: ReaderTaskControl? = nil
     ) {
         self.text = text
         self.label = label
@@ -62,7 +62,6 @@ struct MarkdownBadge: Equatable, Sendable {
         self.shape = shape
         self.symbol = symbol
         self.control = control
-        self.isPlaceholder = isPlaceholder
     }
 
     private static let openTag = "<oppi-badge"
@@ -80,7 +79,6 @@ struct MarkdownBadge: Equatable, Sendable {
             attributes.append(("control", control.kindName))
             attributes.append(("line", String(control.line)))
         }
-        if isPlaceholder { attributes.append(("placeholder", "1")) }
         let body = attributes.map { "\($0.0)=\"\(Self.escape($0.1))\"" }.joined(separator: " ")
         return "\(Self.openTag) \(body)/>"
     }
@@ -102,8 +100,7 @@ struct MarkdownBadge: Equatable, Sendable {
             symbol: attributes["symbol"],
             control: attributes["control"].flatMap { name in
                 attributes["line"].flatMap { ReaderTaskControl(name: name, line: $0) }
-            },
-            isPlaceholder: attributes["placeholder"] == "1"
+            }
         )
     }
 

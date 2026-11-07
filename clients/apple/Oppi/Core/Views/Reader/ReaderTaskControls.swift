@@ -4,6 +4,13 @@ import UIKit
 /// task checkbox, an Org state or date badge).
 protocol ReaderTaskControlAttachment: NSTextAttachment {
     var control: ReaderTaskControl? { get }
+    /// Drawn nowhere (a plain heading's state): no touch area, and VoiceOver
+    /// reaches it as an action of its line, not as a button of its own.
+    var isMarker: Bool { get }
+}
+
+extension ReaderTaskControlAttachment {
+    var isMarker: Bool { false }
 }
 
 /// What touching a control does.
@@ -89,6 +96,7 @@ final class ReaderTaskControlElement: UIAccessibilityElement {
 struct ReaderLocatedTaskControl {
     let control: ReaderTaskControl
     let label: String
+    let isMarker: Bool
     /// Where the attachment is drawn, in the text view's coordinates.
     let glyphRect: CGRect
 
@@ -142,9 +150,10 @@ extension BaselineSafeTextView {
     }
 
     /// Whether the text speaks through lines of its own (it has badges or
-    /// checkboxes, which UIKit's lines leave out) rather than as one element.
+    /// checkboxes, which UIKit's lines leave out, or controls) rather than as
+    /// one element.
     var usesSpokenLines: Bool {
-        textLayoutManager != nil && scanTaskAttachments().holdsSpokenAttachments
+        textLayoutManager != nil && (scanTaskAttachments().holdsSpokenAttachments || allowsTaskControls)
     }
 
     func invalidateTaskControls() {
@@ -191,6 +200,7 @@ extension BaselineSafeTextView {
                 found.append(ReaderLocatedTaskControl(
                     control: control,
                     label: attachment.accessibilityLabel ?? "",
+                    isMarker: attachment.isMarker,
                     glyphRect: rect
                 ))
             }
@@ -211,7 +221,7 @@ extension BaselineSafeTextView {
         layout.enumerateTextLayoutFragments(from: first.rangeInElement.location, options: [.ensuresLayout]) { fragment in
             if fragment.layoutFragmentFrame.minY > local.y + reach { return false }
             for candidate in taskControls(in: nsRange(fragment.rangeInElement, in: content), layout: layout, content: content)
-            where candidate.touchRect.contains(point) {
+            where !candidate.isMarker && candidate.touchRect.contains(point) {
                 let distance = abs(candidate.glyphRect.midX - point.x)
                 if best == nil || distance < best?.distance ?? .infinity { best = (candidate, distance) }
             }
@@ -261,10 +271,28 @@ extension BaselineSafeTextView {
         return true
     }
 
+    /// The state menu of the heading the text menu was opened on, as one entry
+    /// of that menu. It is the way to a state control that is not drawn.
+    func taskStateMenu(forTextIn range: NSRange) -> UIMenu? {
+        guard allowsTaskControls, let handler = taskControlHandler, range.location <= textStorage.length else { return nil }
+        let line = (textStorage.string as NSString).paragraphRange(for: NSRange(location: range.location, length: 0))
+        var state: ReaderTaskControl?
+        textStorage.enumerateAttribute(.attachment, in: line, options: .longestEffectiveRangeNotRequired) { value, _, stop in
+            guard let control = (value as? ReaderTaskControlAttachment)?.control, control.kind == .state else { return }
+            state = control
+            stop.pointee = true
+        }
+        guard let state, case .menu(let menu) = handler.interaction(for: state, in: self) else { return nil }
+        let entry = UIMenu(title: String(localized: "State"), image: UIImage(systemName: "circle.dashed"), children: menu.children)
+        entry.accessibilityIdentifier = "fileViewer.task.textMenu.state"
+        return entry
+    }
+
     // MARK: VoiceOver
 
     /// One element per line, with each badge and checkbox spoken where it sits,
-    /// then one button per control; UIKit's own links stay as they were.
+    /// then one button per drawn control and one link element per link. A
+    /// control that is not drawn is an action of its line.
     func spokenElements() -> [Any] {
         guard let layout = textLayoutManager, let content = layout.textContentManager else { return [] }
         let key = TaskAccessibilityKey(
@@ -274,7 +302,7 @@ extension BaselineSafeTextView {
         )
         if let cache = taskAccessibilityCache, cache.key == key { return cache.elements }
 
-        var elements: [(frame: CGRect, element: UIAccessibilityElement)] = []
+        var elements: [UIAccessibilityElement] = []
         let controlsEnabled = key.controlsEnabled
         layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: [.ensuresLayout]) { fragment in
             let origin = fragment.layoutFragmentFrame.origin
@@ -286,33 +314,60 @@ extension BaselineSafeTextView {
                     dx: origin.x + textContainerInset.left,
                     dy: origin.y + textContainerInset.top
                 )
+                let controls = controlsEnabled ? taskControls(in: range, layout: layout, content: content) : []
                 if let label = spokenLabel(of: range) {
                     let element = UIAccessibilityElement(accessibilityContainer: self)
                     element.accessibilityLabel = label
                     element.accessibilityTraits = .staticText
                     element.accessibilityFrameInContainerSpace = frame
-                    elements.append((frame, element))
+                    element.accessibilityCustomActions = controls.filter(\.isMarker).map { located in
+                        UIAccessibilityCustomAction(name: located.control.accessibilityActionName) { [weak self] _ in
+                            self?.activateTaskControl(located.control) ?? false
+                        }
+                    }
+                    elements.append(element)
                 }
-                guard controlsEnabled else { continue }
-                for located in taskControls(in: range, layout: layout, content: content) {
-                    let element = ReaderTaskControlElement(
+                for located in controls where !located.isMarker {
+                    elements.append(ReaderTaskControlElement(
                         control: located.control,
                         label: located.label,
                         frame: located.touchRect,
                         textView: self
-                    )
-                    elements.append((located.touchRect, element))
+                    ))
                 }
+                elements += linkElements(in: range, layout: layout, content: content)
             }
             return true
         }
-        // The links UIKit made for the text keep their own elements.
-        let links = (super.accessibilityElements ?? []).filter {
-            ($0 as? NSObject)?.accessibilityTraits.contains(.link) == true
+        taskAccessibilityCache = TaskAccessibilityCache(key: key, elements: elements)
+        return elements
+    }
+
+    /// A link element for each link in `range`, over its words. A container
+    /// replaces the children UIKit would make, so the links are made here.
+    /// VoiceOver's activation taps the link's centre, the touch path a link
+    /// already takes.
+    private func linkElements(
+        in range: NSRange,
+        layout: NSTextLayoutManager,
+        content: NSTextContentManager
+    ) -> [UIAccessibilityElement] {
+        var links: [UIAccessibilityElement] = []
+        textStorage.enumerateAttribute(.link, in: range, options: []) { value, run, _ in
+            guard value != nil, let label = spokenLabel(of: run), let textRange = textRange(run, in: content) else { return }
+            var frame = CGRect.null
+            layout.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, segment, _, _ in
+                frame = frame.union(segment)
+                return true
+            }
+            guard !frame.isNull else { return }
+            let element = UIAccessibilityElement(accessibilityContainer: self)
+            element.accessibilityLabel = label
+            element.accessibilityTraits = .link
+            element.accessibilityFrameInContainerSpace = frame.offsetBy(dx: textContainerInset.left, dy: textContainerInset.top)
+            links.append(element)
         }
-        let result = elements.map(\.element) as [Any] + links
-        taskAccessibilityCache = TaskAccessibilityCache(key: key, elements: result)
-        return result
+        return links
     }
 
     /// The line's text with each attachment spoken as its own label, apart from

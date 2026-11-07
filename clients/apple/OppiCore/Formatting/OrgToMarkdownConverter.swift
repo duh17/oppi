@@ -25,7 +25,7 @@ enum OrgToMarkdownConverter {
         let headingTitles: Set<String>
         /// `:ID:` values a `[[id:…]]` link can point at.
         let ids: Set<String>
-        /// Whether a heading without a state carries a placeholder for adding one.
+        /// Whether a heading without a state carries an undrawn state control.
         let offersStateControl: Bool
     }
 
@@ -48,7 +48,7 @@ enum OrgToMarkdownConverter {
 
     /// Convert the blocks of a document the reader edits: task items, states and
     /// dates carry the source line they came from (`ReaderTaskControl`).
-    /// `offersStateControl` also gives a heading without a state a placeholder
+    /// `offersStateControl` also gives a heading without a state an undrawn marker
     /// for adding one.
     static func convert(
         located: [LocatedOrgBlock],
@@ -162,10 +162,11 @@ enum OrgToMarkdownConverter {
                 // State, priority and the title's progress cookies lead the
                 // heading as one bar, written back to back so they join.
                 var bar: [MarkdownBadge] = []
+                var marker: MarkdownBadge?
                 if let keyword {
                     bar.append(OrgBadges.state(keyword, isDone: isDone, line: line))
                 } else if context.offersStateControl, let line {
-                    bar.append(OrgBadges.addState(line: line))
+                    marker = OrgBadges.addState(line: line)
                 }
                 if let priority { bar.append(OrgBadges.priority(String(priority))) }
                 var titleRest: [OrgInline] = []
@@ -176,7 +177,8 @@ enum OrgToMarkdownConverter {
                         titleRest.append(inline)
                     }
                 }
-                var inlines: [MarkdownInline] = bar.map { .html($0.markup) }
+                // The marker leads the heading apart from the bar, so it never joins it.
+                var inlines: [MarkdownInline] = ((marker.map { [$0] } ?? []) + bar).map { .html($0.markup) }
 
                 // Title content, struck through when the heading is done.
                 let titleInlines = convertInlines(tidiedTitle(titleRest), context: context)

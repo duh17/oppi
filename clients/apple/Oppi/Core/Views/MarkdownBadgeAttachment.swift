@@ -28,6 +28,8 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
     private(set) var style: Style
     /// The source line this badge edits, when the reader can save its file.
     let control: ReaderTaskControl?
+    /// A `marker` badge: no size, nothing drawn, nothing spoken.
+    let isMarker: Bool
     private var spokenLabel: String
     /// Used when TextKit does not say which font the badge sits in.
     private let fallbackFont: UIFont
@@ -80,6 +82,7 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
         symbol = badge.symbol
         spokenLabel = badge.label
         control = badge.control
+        isMarker = badge.shape == .marker
         self.style = style
         self.fallbackFont = fallbackFont
         super.init(data: nil, ofType: nil)
@@ -105,6 +108,7 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
         static let fontSize = "oppi.badge.fontSize"
         static let control = "oppi.badge.control"
         static let line = "oppi.badge.line"
+        static let isMarker = "oppi.badge.isMarker"
     }
 
     required init?(coder: NSCoder) {
@@ -114,6 +118,7 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
         control = (coder.decodeObject(of: NSString.self, forKey: Key.control) as String?).flatMap { name in
             ReaderTaskControl(name: name, line: String(coder.decodeInteger(forKey: Key.line)))
         }
+        isMarker = coder.decodeBool(forKey: Key.isMarker)
         style = Style(
             fill: coder.decodeObject(of: UIColor.self, forKey: Key.fill) ?? .systemGray,
             ink: coder.decodeObject(of: UIColor.self, forKey: Key.ink) ?? .label,
@@ -139,6 +144,7 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
         coder.encode(Double(fallbackFont.pointSize), forKey: Key.fontSize)
         coder.encode(control?.kindName as NSString?, forKey: Key.control)
         coder.encode(control?.line ?? 0, forKey: Key.line)
+        coder.encode(isMarker, forKey: Key.isMarker)
     }
 
     // Segments build off the main actor, where `accessibilityLabel`'s setter is
@@ -207,6 +213,9 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
     /// Geometry for a badge in a line set in `font`, no wider than `lineWidth`.
     func layout(font: UIFont?, lineWidth: CGFloat) -> Layout {
         let lineFont = font ?? fallbackFont
+        if isMarker {
+            return Layout(bounds: .zero, textFont: lineFont, padding: 0, arrowDepth: 0, symbolWidth: 0, symbolGap: 0)
+        }
         // Smaller and bolder than the line, with figures that line up. Capsules
         // (tags) are quieter still.
         let scale: CGFloat = style.isCapsule ? 0.62 : 0.74
@@ -220,7 +229,7 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
         let arrowDepth = style.isCapsule ? 0 : height * 0.3
         let symbolImage = symbolImage(font: textFont)
         let symbolWidth = symbolImage?.size.width ?? 0
-        let symbolGap = symbolImage == nil || text.isEmpty ? 0 : size * 0.3
+        let symbolGap = symbolImage == nil ? 0 : size * 0.3
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: textFont]).width)
         let leading = style.joinFill == nil ? 0 : arrowDepth
         let trailing = style.endsInArrow ? arrowDepth : 0

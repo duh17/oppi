@@ -39,16 +39,16 @@ enum OrgBadges {
         )
     }
 
-    /// What a heading without a state offers a reader that can save its file:
-    /// the way to give it one.
+    /// The state control of a heading without a state, for a reader that can
+    /// save its file. It draws nothing, so plain headings stay plain: the reader
+    /// offers it from the heading's text menu and as a VoiceOver action.
     static func addState(line: Int) -> MarkdownBadge {
         MarkdownBadge(
             text: "",
-            label: "No state",
+            label: "",
             tone: .quiet,
-            symbol: "circle.dashed",
-            control: ReaderTaskControl(kind: .state, line: line),
-            isPlaceholder: true
+            shape: .marker,
+            control: ReaderTaskControl(kind: .state, line: line)
         )
     }
 

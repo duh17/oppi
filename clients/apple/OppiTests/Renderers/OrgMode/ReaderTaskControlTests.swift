@@ -41,7 +41,7 @@ struct ReaderTaskControlTests {
             ReaderTaskControl(kind: .state, line: 3),
             ReaderTaskControl(kind: .date(.scheduled), line: 3),
             ReaderTaskControl(kind: .date(.deadline), line: 3),
-            // `* Notes` has no state: the placeholder that adds one.
+            // `* Notes` has no state: the undrawn marker that gives it one.
             ReaderTaskControl(kind: .state, line: 8),
         ])
         let tasks = blocks.compactMap { block -> [MarkdownBlock.TaskItem]? in
@@ -53,12 +53,12 @@ struct ReaderTaskControlTests {
         #expect(!String(describing: tasks).contains("oppi-line"), "the marker never reaches the reader's text")
     }
 
-    @Test func aHeadingWithoutAStateGetsAPlaceholderOnlyWhereTheReaderCanSave() {
+    @Test func aHeadingWithoutAStateGetsAMarkerOnlyWhereTheReaderCanSave() {
         let source = "* Notes\n- [ ] a"
         let plain = DocumentRenderPipeline.orgToMarkdown(source, cancellationCheck: { false }) ?? ""
-        #expect(!plain.isEmpty && !plain.contains("placeholder"))
+        #expect(!plain.isEmpty && !plain.contains("marker"))
         let editable = DocumentRenderPipeline.orgToMarkdown(source, offersStateControl: true, cancellationCheck: { false }) ?? ""
-        #expect(editable.contains("placeholder"))
+        #expect(editable.contains("shape=\"marker\""))
     }
 
     @Test func markdownTaskItemsKnowTheirOwnLines() {
@@ -78,9 +78,8 @@ struct ReaderTaskControlTests {
     @Test func aBadgeKeepsItsControlThroughMarkup() {
         let badge = OrgBadges.state("NEXT", isDone: false, line: 12)
         #expect(MarkdownBadge(markup: badge.markup) == badge)
-        let placeholder = OrgBadges.addState(line: 4)
-        #expect(MarkdownBadge(markup: placeholder.markup) == placeholder)
-        #expect(MarkdownBadge(markup: placeholder.markup)?.isPlaceholder == true)
+        let marker = OrgBadges.addState(line: 4)
+        #expect(MarkdownBadge(markup: marker.markup) == marker)
         #expect(MarkdownBadge(markup: OrgBadges.state("NEXT", isDone: false).markup)?.control == nil)
     }
 
@@ -110,7 +109,7 @@ struct ReaderTaskControlTests {
         return found
     }
 
-    @Test func renderedTextCarriesTheControlsAndOnlyAnEditableReaderGetsPlaceholders() throws {
+    @Test func renderedTextCarriesTheControlsAndOnlyAnEditableReaderGetsMarkers() throws {
         let source = "#+TODO: NEXT | DONE\n* NEXT Plan\nSCHEDULED: <2026-11-11 Wed>\n- [ ] a\n* Notes"
         #expect(try controlAttachments(rendered(source)) == [
             ReaderTaskControl(kind: .state, line: 2),
@@ -118,7 +117,7 @@ struct ReaderTaskControlTests {
             ReaderTaskControl(kind: .checkbox, line: 4),
             ReaderTaskControl(kind: .state, line: 5),
         ])
-        // Without the flag there is no placeholder; the Org lines of the rest are kept.
+        // Without the flag there is no marker; the Org lines of the rest are kept.
         #expect(try controlAttachments(rendered(source, offering: false)).map(\.line) == [2, 2, 4])
     }
 
@@ -127,9 +126,12 @@ struct ReaderTaskControlTests {
     @MainActor
     private final class Handler: ReaderTaskControlHandling {
         var allowsTaskControls = true
+        /// The menu a state control opens, when set; otherwise every control acts.
+        var stateMenu: UIMenu?
         private(set) var touched: [ReaderTaskControl] = []
         func interaction(for control: ReaderTaskControl, in view: UIView) -> ReaderTaskInteraction {
-            .action { [weak self] in self?.touched.append(control) }
+            if control.kind == .state, let stateMenu { return .menu(stateMenu) }
+            return .action { [weak self] in self?.touched.append(control) }
         }
     }
 
@@ -158,10 +160,7 @@ struct ReaderTaskControlTests {
         // Walk down the checkbox column until a touch lands on the first box.
         var found: ReaderLocatedTaskControl?
         for y in stride(from: CGFloat(0), to: 300, by: 4) where found == nil {
-            // The heading above has no state: its placeholder is a control too.
-            if let candidate = view.taskControl(at: CGPoint(x: 20, y: y)), candidate.control.kind == .checkbox {
-                found = candidate
-            }
+            found = view.taskControl(at: CGPoint(x: 20, y: y))
         }
         let located = try #require(found)
         #expect(located.control == ReaderTaskControl(kind: .checkbox, line: 2))
@@ -225,5 +224,61 @@ struct ReaderTaskControlTests {
         let customAction = try #require(lastActions?.first)
         #expect(customAction.actionHandler?(customAction) == true)
         #expect(handler.touched.last == ReaderTaskControl(kind: .checkbox, line: 4))
+    }
+
+    @MainActor
+    @Test func aPlainHeadingsStateIsNotDrawnButIsInItsTextMenuAndAVoiceOverAction() throws {
+        let handler = Handler()
+        let (view, window) = try textView("* Notes\nprose", handler: handler)
+        _ = window
+        let marker = ReaderTaskControl(kind: .state, line: 1)
+        #expect(controlAttachments(view.textStorage) == [marker])
+        #expect(!stride(from: CGFloat(0), to: 200, by: 4).contains { y in
+            stride(from: CGFloat(0), to: 300, by: 10).contains { view.taskControl(at: CGPoint(x: $0, y: y)) != nil }
+        }, "nothing on the page answers a touch")
+
+        // VoiceOver: no button of its own, and the heading line's action is the owner's.
+        let elements = (view.accessibilityElements ?? []).compactMap { $0 as? UIAccessibilityElement }
+        #expect(!elements.contains { $0 is ReaderTaskControlElement })
+        let heading = try #require(elements.first { $0.accessibilityLabel == "Notes" }, "the heading speaks only its words")
+        let action = try #require(heading.accessibilityCustomActions?.first)
+        #expect(action.name == "Change state")
+        #expect(action.actionHandler?(action) == true)
+        #expect(handler.touched == [marker])
+
+        // The text menu on the heading offers the state menu; the prose's does not.
+        handler.stateMenu = UIMenu(children: [UIAction(title: "NEXT") { _ in }])
+        let headingMenu = view.taskStateMenu(forTextIn: NSRange(location: 2, length: 2))
+        #expect(headingMenu?.children.map(\.title) == ["NEXT"])
+        let prose = (view.textStorage.string as NSString).range(of: "prose")
+        #expect(view.taskStateMenu(forTextIn: prose) == nil)
+        handler.allowsTaskControls = false
+        #expect(view.taskStateMenu(forTextIn: NSRange(location: 2, length: 2)) == nil, "a reader that stopped saving offers none")
+    }
+
+    @MainActor
+    @Test func linksStayLinkElementsWhenTheTextSpeaksByLine() throws {
+        let (view, window) = try textView("* NEXT Plan\nRead [[https://example.com/docs][the docs]] first", handler: Handler())
+        _ = window
+        #expect(!view.isAccessibilityElement, "a badge makes the text a container")
+        let elements = (view.accessibilityElements ?? []).compactMap { $0 as? UIAccessibilityElement }
+        let links = elements.filter { $0.accessibilityTraits.contains(.link) }
+        let link = try #require(links.first, "got \(elements.map(\.accessibilityLabel))")
+        #expect(links.count == 1)
+        #expect(link.accessibilityLabel == "the docs")
+
+        // The element sits on the link's words, so VoiceOver's tap opens the link.
+        let linkRange = (view.textStorage.string as NSString).range(of: "the docs")
+        let frame = link.accessibilityFrameInContainerSpace
+        let start = try #require(view.position(from: view.beginningOfDocument, offset: linkRange.location))
+        let caret = view.caretRect(for: start)
+        #expect(frame.contains(CGPoint(x: caret.maxX + 1, y: caret.midY)), "frame \(frame), caret \(caret)")
+        #expect(view.textStorage.attribute(.link, at: linkRange.location, effectiveRange: nil) != nil)
+
+        // Text with no badge, checkbox or control stays one element, as UIKit makes it.
+        let plain = BaselineSafeTextView(usingTextLayoutManager: true)
+        let url = try #require(URL(string: "https://example.com"))
+        plain.attributedText = NSAttributedString(string: "Read the docs", attributes: [.link: url])
+        #expect(!plain.usesSpokenLines)
     }
 }

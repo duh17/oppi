@@ -2896,13 +2896,17 @@ extension NativeFullScreenMarkdownBody: UITextViewDelegate {
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
         guard let config = currentConfig else { return nil }
-        return ReviewCommentSelectionEditMenuSupport.buildMenu(
+        let menu = ReviewCommentSelectionEditMenuSupport.buildMenu(
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
             router: config.reviewCommentSelectionRouter,
             sourceContext: config.reviewCommentSourceContext
         )
+        // A heading's state, including a plain heading's, which draws no badge;
+        // first, so a narrow menu never pages it out of sight.
+        guard let state = (textView as? BaselineSafeTextView)?.taskStateMenu(forTextIn: range) else { return menu }
+        return UIMenu(children: [state] + (menu?.children ?? suggestedActions))
     }
 
     func textView(
