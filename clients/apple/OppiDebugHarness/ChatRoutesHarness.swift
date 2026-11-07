@@ -16,9 +16,10 @@ import UIKit
 /// `CHAT_ROUTES_SURFACE=tall` publishes a composable surface (a long table
 /// card, then an Actions card with Run again) whose drawer is taller than the
 /// space above the composer. `chatRoutes.surfaceActions` lists the surface
-/// actions the chat sent over its socket. `CHAT_ROUTES_SURFACE_FILE=<path>` publishes the surface
-/// JSON in that file instead (a server's rendered `ExtensionUISurface`, so a panel is shown as the
-/// phone receives it). `CHAT_ROUTES_WARNINGS=N` adds N warning rows
+/// actions the chat sent over its socket. `CHAT_ROUTES_SURFACE_FILE=<path>[,<path>...]` publishes the
+/// surface JSON in those files instead (a server's rendered `ExtensionUISurface`, so a panel is shown
+/// as the phone receives it). `CHAT_ROUTES_REVIEW_COMMENT=none` stages no review comment, leaving
+/// the strip to the surfaces. `CHAT_ROUTES_WARNINGS=N` adds N warning rows
 /// above the composer.
 /// `chatRoutes.createdSessions` counts the new sessions the stub received.
 /// Leading controls open the timeline's commit and file viewers through the
@@ -358,18 +359,20 @@ enum ChatRoutesFixture {
     /// `CHAT_ROUTES_SURFACE=tall`: a table card of 14 rows, then an Actions card, in one
     /// surface above the composer. Reseeded like Share, since the connect loop clears surfaces.
     @MainActor static func seedSurfaceIfNeeded(on connection: ServerConnection) {
-        let json: Data? = if let path = environment["CHAT_ROUTES_SURFACE_FILE"] {
-            FileManager.default.contents(atPath: path)
+        let documents: [Data] = if let paths = environment["CHAT_ROUTES_SURFACE_FILE"] {
+            paths.split(separator: ",").compactMap { FileManager.default.contents(atPath: String($0)) }
         } else if environment["CHAT_ROUTES_SURFACE"] == "tall" {
-            Data(tallSurfaceJSON.utf8)
+            [Data(tallSurfaceJSON.utf8)]
         } else {
-            nil
+            []
         }
-        guard let json,
-              connection.extensionSurfaces.surface(for: sessionId).state.composableSurfaces.isEmpty,
-              let surface = try? JSONDecoder().decode(ExtensionUISurface.self, from: json)
+        guard !documents.isEmpty,
+              connection.extensionSurfaces.surface(for: sessionId).state.composableSurfaces.isEmpty
         else { return }
-        connection.extensionSurfaces.apply(surface, sessionId: sessionId)
+        for json in documents {
+            guard let surface = try? JSONDecoder().decode(ExtensionUISurface.self, from: json) else { continue }
+            connection.extensionSurfaces.apply(surface, sessionId: sessionId)
+        }
     }
 
     /// Whether the session's activity clock ticks, repainting the footer (`CHAT_ROUTES_SURFACE=tall`).
@@ -421,6 +424,7 @@ enum ChatRoutesFixture {
         for comment in store.comments {
             store.delete(commentId: comment.id)
         }
+        guard environment["CHAT_ROUTES_REVIEW_COMMENT"] != "none" else { return }
         _ = try? store.create(
             workspaceId: workspace.id,
             sessionId: sessionId,
