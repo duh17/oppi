@@ -207,8 +207,9 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
         // priorities alone, a title stack beside an elapsed count and Stop tied with them and the
         // solver could collapse it to a few points (28 of 180 pt), wrapping its caption a character
         // a line while the rest of the row sat empty.
-        // A row too narrow for the floors stacks as a column (`shouldStack`).
-        flexibleFloors = isRow ? children.filter(Self.isFlexibleInRow).map { view in
+        // A row too narrow for the floors stacks as a column (`shouldStack`). A pill's row is one
+        // truncating line and keeps the priorities its text set for itself.
+        flexibleFloors = isRow && !inline ? children.filter(Self.isFlexibleInRow).map { view in
             view.setContentHuggingPriority(.defaultLow, for: .horizontal)
             view.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
             let floor = view.widthAnchor.constraint(greaterThanOrEqualToConstant: 0)
@@ -252,7 +253,7 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
         pairsLeadingGlyph = vertical && isRow && children.count >= 3 && children[0] is BlocksIconView
             && Self.isWords(children[1])
         arrangeChildren()
-        for entry in flexibleFloors { entry.1.isActive = !vertical && !inline }
+        for entry in flexibleFloors { entry.1.isActive = !vertical }
         guard !vertical else {
             stackLeading?.isActive = true
             stackTrailing?.isActive = true
@@ -364,7 +365,10 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
         let spacing = stack.spacing * CGFloat(max(0, children.count - 1))
         let natural = children.reduce(CGFloat.zero) { total, view in
             guard !view.isHidden else { return total }
-            return total + view.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
+            // Wrapped words measure at the width they last had, so a row laid out too narrow would
+            // measure as fitting: their floor counts as well.
+            let floor = flexibleFloors.first { $0.0 === view }?.1.constant ?? 0
+            return total + max(floor, view.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width)
         }
         return natural + spacing > available + 0.5
     }
