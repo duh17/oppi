@@ -8,8 +8,9 @@ import UIKit
 ///
 /// The viewport decides one more thing, and only through `plan`: when a table is
 /// wider than the viewport, its columns are fit to the viewport if every column
-/// can stay at least `minimumFitCharacterCount` characters wide, and the table
-/// scrolls sideways otherwise. A column whose natural width is at most
+/// can stay at least `minimumFitCharacterCount` characters wide and as wide as
+/// its longest unbreakable word (so an identifier like `rowFoldLimit` never wraps mid-word), and
+/// the table scrolls sideways otherwise. A column whose natural width is at most
 /// `protectedCharacterCount` characters is never narrowed, so a short value (a
 /// timestamp, a date, a count) cannot wrap. Squeezing short columns left stale
 /// heights and overlapping rows once (`ee911a546`), which is why the floor is per
@@ -69,6 +70,18 @@ enum MarkdownTableColumnLayout {
 
     // MARK: - Viewport plan
 
+    /// What the plan needs from a table's content.
+    struct NaturalColumns: Equatable {
+        /// Single-line width of each column.
+        let columnWidths: [CGFloat]
+        /// Each column's longest run that wrapping cannot break.
+        let longestWordWidths: [CGFloat]
+        /// Width of the clip-mode text.
+        let totalWidth: CGFloat
+
+        static let empty = NaturalColumns(columnWidths: [], longestWordWidths: [], totalWidth: 0)
+    }
+
     /// How a table is drawn at one viewport width.
     struct Plan: Equatable {
         enum Presentation: Equatable {
@@ -93,6 +106,8 @@ enum MarkdownTableColumnLayout {
     ///
     /// - Parameters:
     ///   - naturalWidths: single-line width of each column.
+    ///   - longestWordWidths: each column's widest run that line breaking cannot
+    ///     split (`longestUnbreakableLength`); a fitted column is never narrower.
     ///   - clipContentWidth: width of the clip-mode text for these columns.
     ///   - availableWidth: the card's maximum width, or nil when not yet known
     ///     (the content-only layout: no fitting, the table may scroll).
@@ -100,6 +115,7 @@ enum MarkdownTableColumnLayout {
     ///     table never overshoots the viewport by a rounding sliver.
     static func plan(
         naturalWidths: [CGFloat],
+        longestWordWidths: [CGFloat],
         clipContentWidth: CGFloat,
         availableWidth: CGFloat?,
         displayScale: CGFloat
@@ -127,7 +143,12 @@ enum MarkdownTableColumnLayout {
         let budget = available - chrome
         let protected = protectedColumnWidth
         let minimum = minimumFitColumnWidth
-        let floors = capped.map { $0 <= protected ? $0 : min($0, minimum) }
+        let floors = capped.indices.map { index -> CGFloat in
+            let width = capped[index]
+            guard width > protected else { return width }
+            let word = index < longestWordWidths.count ? longestWordWidths[index] : 0
+            return min(width, max(minimum, word))
+        }
         guard budget >= floors.reduce(0, +) else {
             // Even every column at its floor does not fit: scroll.
             return contentOnly
@@ -143,6 +164,27 @@ enum MarkdownTableColumnLayout {
             return ((floor + share) * scale).rounded(.down) / scale
         }
         return Plan(presentation: .grid, columnWidths: widths)
+    }
+
+    /// Length in characters of the longest run in `text` that a wrapped cell
+    /// cannot break inside: a run of ASCII letters, digits, and punctuation ends
+    /// at a space, and after a `/` or `-`, where line breaking may split a path
+    /// or a hyphenated word. Other scripts can break between characters, so they
+    /// end a run too. Cells are monospaced, so a run's width is its length times
+    /// the advance.
+    static func longestUnbreakableLength(_ text: String) -> Int {
+        var longest = 0
+        var run = 0
+        for scalar in text.unicodeScalars {
+            guard scalar.value > 0x20, scalar.value < 0x7F else {
+                run = 0
+                continue
+            }
+            run += 1
+            longest = max(longest, run)
+            if scalar == "/" || scalar == "-" { run = 0 }
+        }
+        return longest
     }
 
     // MARK: - Overflow
@@ -209,8 +251,9 @@ enum MarkdownTableColumnLayout {
 /// the plan on screen, and the width that plan was made for. A width change asks
 /// `replan` whether the plan differs; a view redraws only when it does.
 struct TablePlanning {
-    /// Natural single-line column widths and the clip text's width.
-    var natural: (columnWidths: [CGFloat], totalWidth: CGFloat) = ([], 0)
+    /// Natural single-line column widths, each column's longest unbreakable
+    /// word, and the clip text's width.
+    var natural = MarkdownTableColumnLayout.NaturalColumns.empty
     /// The plan on screen.
     var rendered: MarkdownTableColumnLayout.Plan?
     private var plannedWidth: CGFloat?
@@ -240,6 +283,7 @@ struct TablePlanning {
     private func plan(availableWidth: CGFloat?, displayScale: CGFloat) -> MarkdownTableColumnLayout.Plan {
         MarkdownTableColumnLayout.plan(
             naturalWidths: natural.columnWidths,
+            longestWordWidths: natural.longestWordWidths,
             clipContentWidth: natural.totalWidth,
             availableWidth: availableWidth,
             displayScale: displayScale

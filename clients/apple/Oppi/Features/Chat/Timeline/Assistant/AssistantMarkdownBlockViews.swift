@@ -908,11 +908,11 @@ final class NativeTableBlockView: UIView {
     /// The clip-mode text on screen, and the height of its laid-out text.
     private var clipText: MarkdownTableClipText?
     private var clipTextHeight: CGFloat = 0
-    /// Natural single-line widths of `currentHeaders` and of each row of
-    /// `currentRows`, kept so a tick only measures rows that changed. Valid for
-    /// the fonts they were measured in.
-    private var measuredHeaderWidths: [CGFloat] = []
-    private var measuredRowWidths: [[CGFloat]] = []
+    /// Measured widths of `currentHeaders` and of each row of `currentRows`,
+    /// kept so a tick only measures rows that changed. Valid for the fonts they
+    /// were measured in.
+    private var measuredHeaderWidths: [CellWidth] = []
+    private var measuredRowWidths: [[CellWidth]] = []
     private var measuredFonts: [UIFont] = []
 
     private lazy var longPressCopyGesture: UILongPressGestureRecognizer = {
@@ -1429,15 +1429,27 @@ final class NativeTableBlockView: UIView {
         max(headers.count, rows.first?.count ?? 0)
     }
 
-    private static func naturalCellWidths(_ cells: [[MarkdownInline]], font: UIFont) -> [CGFloat] {
-        cells.map { measuredTextWidth(plainText(from: $0), font: font) }
+    /// One cell's single-line width and its longest unbreakable word, in characters.
+    private struct CellWidth {
+        let natural: CGFloat
+        let wordLength: Int
+    }
+
+    private static func naturalCellWidths(_ cells: [[MarkdownInline]], font: UIFont) -> [CellWidth] {
+        cells.map { cell in
+            let text = plainText(from: cell)
+            return CellWidth(
+                natural: measuredTextWidth(text, font: font),
+                wordLength: MarkdownTableColumnLayout.longestUnbreakableLength(text)
+            )
+        }
     }
 
     /// Natural single-line column metrics used to choose clip vs grid.
     static func measureNaturalColumns(
         headers: [[MarkdownInline]],
         rows: [[[MarkdownInline]]]
-    ) -> (columnWidths: [CGFloat], totalWidth: CGFloat) {
+    ) -> MarkdownTableColumnLayout.NaturalColumns {
         naturalColumnMetrics(
             headerWidths: naturalCellWidths(headers, font: AppFont.monoMediumBold),
             rowWidths: rows.map { naturalCellWidths($0, font: AppFont.monoMedium) },
@@ -1448,23 +1460,24 @@ final class NativeTableBlockView: UIView {
     /// Column metrics from already measured cell widths; cells past
     /// `columnCount` are not rendered and do not count.
     private static func naturalColumnMetrics(
-        headerWidths: [CGFloat],
-        rowWidths: [[CGFloat]],
+        headerWidths: [CellWidth],
+        rowWidths: [[CellWidth]],
         columnCount colCount: Int
-    ) -> (columnWidths: [CGFloat], totalWidth: CGFloat) {
-        guard colCount > 0 else { return ([], 0) }
+    ) -> MarkdownTableColumnLayout.NaturalColumns {
+        guard colCount > 0 else { return .empty }
 
         let cellFont = AppFont.monoMedium
         var colWidths = [CGFloat](repeating: 0, count: colCount)
+        var wordLengths = [Int](repeating: 0, count: colCount)
 
-        for (index, width) in headerWidths.enumerated() where index < colCount {
-            colWidths[index] = max(colWidths[index], width)
-        }
-        for row in rowWidths {
+        func include(_ row: [CellWidth]) {
             for (index, width) in row.enumerated() where index < colCount {
-                colWidths[index] = max(colWidths[index], width)
+                colWidths[index] = max(colWidths[index], width.natural)
+                wordLengths[index] = max(wordLengths[index], width.wordLength)
             }
         }
+        include(headerWidths)
+        rowWidths.forEach(include)
 
         // Match clip-mode padding: lead + trail + separators between columns.
         let leadPadWidth = measuredTextWidth("  ", font: cellFont)
@@ -1474,7 +1487,12 @@ final class NativeTableBlockView: UIView {
         let content = colWidths.reduce(0, +) + buffer * CGFloat(colCount)
         let separators = sepWidth * CGFloat(max(0, colCount - 1))
         let total = leadPadWidth + content + separators + trailPadWidth
-        return (colWidths, ceil(total))
+        return MarkdownTableColumnLayout.NaturalColumns(
+            columnWidths: colWidths,
+            // SF Mono keeps one advance across weights, headers included.
+            longestWordWidths: wordLengths.map { ceil(CGFloat($0) * MarkdownTableColumnLayout.monoAdvanceWidth) },
+            totalWidth: ceil(total)
+        )
     }
 
     // internal for testing — called from TableColumnAlignmentTests

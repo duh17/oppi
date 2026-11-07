@@ -46,8 +46,10 @@ struct MarkdownTableColumnLayoutTests {
 
     // MARK: - Fit to the viewport
 
+    /// `words`: each column's longest unbreakable word; prose of short words by default.
     private static func plan(
         _ naturals: [CGFloat],
+        words: [CGFloat]? = nil,
         available: CGFloat?,
         scale: CGFloat = 3
     ) -> MarkdownTableColumnLayout.Plan {
@@ -55,6 +57,7 @@ struct MarkdownTableColumnLayoutTests {
         let clipWidth = naturals.reduce(0, +) + 40 * CGFloat(naturals.count)
         return MarkdownTableColumnLayout.plan(
             naturalWidths: naturals,
+            longestWordWidths: words ?? naturals.map { min($0, 40) },
             clipContentWidth: clipWidth,
             availableWidth: available,
             displayScale: scale
@@ -92,6 +95,30 @@ struct MarkdownTableColumnLayoutTests {
 
         #expect(plan == Self.plan(naturals, available: nil), "No fit: the content-only layout, which scrolls")
         #expect(plan.columnWidths == naturals)
+    }
+
+    @Test func fittedColumnsNeverBreakTheirLongestWord() {
+        let advance = MarkdownTableColumnLayout.monoAdvanceWidth
+        // An identifier column (16 characters, one word) beside a prose column.
+        let identifier = ceil(16 * advance)
+        let naturals: [CGFloat] = [identifier, 274]
+        let fitted = Self.plan(naturals, words: [identifier, 50], available: 300)
+        #expect(fitted.presentation == .grid)
+        #expect(fitted.columnWidths[0] >= identifier, "The identifier keeps its width: \(fitted.columnWidths)")
+        #expect(MarkdownTableColumnLayout.gridContentWidth(columnWidths: fitted.columnWidths) <= 300)
+
+        // Four such columns cannot all keep their words in 300pt: scroll instead.
+        let four = [CGFloat](repeating: identifier, count: 4)
+        let scrolled = Self.plan(four, words: four, available: 300)
+        #expect(scrolled == Self.plan(four, words: four, available: nil))
+    }
+
+    @Test func longestUnbreakableRunEndsAtSpacesSlashesHyphensAndOtherScripts() {
+        #expect(MarkdownTableColumnLayout.longestUnbreakableLength("chooses clip or grid") == 7)
+        #expect(MarkdownTableColumnLayout.longestUnbreakableLength("plan(width:)") == 12)
+        #expect(MarkdownTableColumnLayout.longestUnbreakableLength("src/views/TableChrome.swift") == 17)
+        #expect(MarkdownTableColumnLayout.longestUnbreakableLength("well-known") == 5)
+        #expect(MarkdownTableColumnLayout.longestUnbreakableLength("表格的列宽") == 0)
     }
 
     @Test func clipTableThatFitsStaysClipText() {
@@ -781,7 +808,7 @@ struct NativeTableFitAndChromeTests {
             palette: ThemeRuntimeState.currentPalette()
         )
 
-        for width in [390, 320, 390, 280, 360] as [CGFloat] {
+        for width in [390, 320, 390, 280, 360, 430] as [CGFloat] {
             let fitted = host.layout(at: width)
             let cells = visibleTableCells(in: host.table)
             #expect(!cells.isEmpty, "No cells at width \(width)")
@@ -791,12 +818,17 @@ struct NativeTableFitAndChromeTests {
                 #expect(cellIsSingleLine(cell), "Timestamp wrapped at width \(width): \(timelineRenderedText(of: cell))")
             }
 
-            // 2. The table fits: nothing is cut at the right edge and no scroll is needed.
+            // 2. At a phone's width the table fits: nothing is cut at the right
+            // edge and no scroll is needed. Narrower, `auth.refresh_succeeded`
+            // cannot stay whole in the room left, so the table scrolls instead
+            // of breaking the identifier mid-word.
             let scroll = timelineAllScrollViews(in: host.table).first { !($0 is UITextView) }
-            #expect(
-                (scroll?.contentSize.width ?? 0) <= (scroll?.bounds.width ?? 0) + 1,
-                "Table scrolls at width \(width): content \(scroll?.contentSize.width ?? 0) in \(scroll?.bounds.width ?? 0)"
-            )
+            let scrolls = (scroll?.contentSize.width ?? 0) > (scroll?.bounds.width ?? 0) + 1
+            if width >= 390 {
+                #expect(!scrolls, "Table scrolls at width \(width): content \(scroll?.contentSize.width ?? 0) in \(scroll?.bounds.width ?? 0)")
+            } else if width <= 320 {
+                #expect(scrolls, "Table fit at width \(width) by breaking an identifier")
+            }
 
             // 3. The measured height holds every cell, and is the height laid out.
             let frames = tableCellFrames(in: host.table)
