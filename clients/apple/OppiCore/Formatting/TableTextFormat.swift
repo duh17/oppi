@@ -1,7 +1,7 @@
 import Foundation
 
 /// The two text forms of a table that can be copied.
-enum TableCopyFormat: Equatable, Sendable {
+enum TableCopyFormat: Equatable, Sendable, CaseIterable {
     case markdown
     case tsv
 }

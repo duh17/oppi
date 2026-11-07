@@ -45,17 +45,13 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, UIColl
         // The parser may have dropped rows, columns, or characters: say so.
         let table = plan.table
         let partial = table.truncatedRows || table.truncatedColumns || table.truncatedCells
-        let note = partial ? " (" + String(localized: "displayed part only") + ")" : ""
-        return UIMenu(children: [
-            UIAction(title: String(localized: "Copy as TSV") + note, image: UIImage(systemName: "tablecells")) { [weak self] _ in
+        let subtitle = partial ? String(localized: "Only the part shown") : nil
+        return UIMenu(children: TableCopyFormat.allCases.map { format in
+            UIAction(title: format.menuTitle, subtitle: subtitle, image: UIImage(systemName: format.menuSymbol)) { [weak self] _ in
                 guard let self else { return }
-                didCopy(copyText(.tsv))
-            },
-            UIAction(title: String(localized: "Copy as Markdown") + note, image: UIImage(systemName: "text.alignleft")) { [weak self] _ in
-                guard let self else { return }
-                didCopy(copyText(.markdown))
-            },
-        ])
+                didCopy(copyText(format))
+            }
+        })
     }
 
     func displays(_ other: DelimitedTableViewerPlan) -> Bool {
@@ -236,15 +232,21 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, UIColl
             palette: palette,
             font: cellFont(isHeader: item.isHeader)
         )
-        let columnTitle = item.header.isEmpty ? "Column \(indexPath.item % max(plan.table.columnCount, 1) + 1)" : item.header
+        let title = columnTitle(of: item, at: indexPath)
         if item.isHeader {
-            cell.accessibilityLabel = columnTitle
+            cell.accessibilityLabel = title
             cell.accessibilityTraits = .header
         } else {
-            cell.accessibilityLabel = "\(columnTitle), row \(item.row), \(item.text)"
+            cell.accessibilityLabel = "\(title), row \(item.row), \(item.text)"
             cell.accessibilityTraits = allowsCellDetail ? .button : .staticText
         }
         return cell
+    }
+
+    /// The column's header, or "Column N" for a column without one.
+    private func columnTitle(of item: CellContent, at indexPath: IndexPath) -> String {
+        guard item.header.isEmpty else { return item.header }
+        return String(localized: "Column \(indexPath.item % max(plan.table.columnCount, 1) + 1)")
     }
 
     func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
@@ -261,11 +263,8 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, UIColl
             responder = current.next
         }
         guard let presenter = responder as? UIViewController else { return }
-        let title = item.header.isEmpty
-            ? String(localized: "Column \(indexPath.item % max(plan.table.columnCount, 1) + 1)")
-            : item.header
         presenter.present(TableCellDetailViewController.makeNavigationController(
-            title: title,
+            title: columnTitle(of: item, at: indexPath),
             text: item.text,
             palette: palette
         ), animated: true)

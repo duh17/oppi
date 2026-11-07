@@ -29,7 +29,7 @@ final class TableOverflowOverlayView: UIView {
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.accessibilityIdentifier = "markdown.table.moreColumns"
         pill.accessibilityTraits = .button
-        pill.accessibilityHint = String(localized: "Opens the table full screen")
+        pill.accessibilityHint = String(localized: "Opens table full screen")
         pill.alpha = 0
         pill.isHidden = true
         pill.addAction(UIAction { [weak self] _ in self?.onActivate?() }, for: .touchUpInside)
@@ -41,7 +41,9 @@ final class TableOverflowOverlayView: UIView {
             fadeView.trailingAnchor.constraint(equalTo: trailingAnchor),
             fadeView.widthAnchor.constraint(equalToConstant: Self.fadeWidth),
 
-            pill.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            // Bottom corner: at the top it would cover the header row, the one
+            // label that says what the cut column is.
+            pill.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
             pill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             pill.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 6),
         ])
@@ -100,9 +102,7 @@ final class TableOverflowOverlayView: UIView {
 
     private func applyTitle() {
         guard hiddenColumns > 0, var configuration = pill.configuration else { return }
-        let title = hiddenColumns == 1
-            ? String(localized: "1 more column")
-            : String(localized: "\(hiddenColumns) more columns")
+        let title = String(localized: "\(hiddenColumns) more columns")
         var attributes = AttributeContainer()
         attributes.font = AppFont.scaledSystem(11, .semibold, relativeTo: .caption2, maximumPointSize: 18)
         configuration.attributedTitle = AttributedString(title, attributes: attributes)
@@ -165,6 +165,23 @@ private final class TableTrailingFadeView: UIView {
     }
 }
 
+extension TableCopyFormat {
+    /// The copy menu item for this format, the same in chat and in the viewer.
+    var menuTitle: String {
+        switch self {
+        case .markdown: String(localized: "Copy as Markdown")
+        case .tsv: String(localized: "Copy as TSV")
+        }
+    }
+
+    var menuSymbol: String {
+        switch self {
+        case .markdown: "text.alignleft"
+        case .tsv: "tablecells"
+        }
+    }
+}
+
 /// "Show all N rows" bar at the foot of a table card that folded its long body.
 final class TableFoldFooterView: UIView {
     /// Fixed so folding adds the same height whatever the text size.
@@ -217,7 +234,7 @@ final class TableFoldFooterView: UIView {
         configuration.attributedTitle = AttributedString(title, attributes: attributes)
         button.configuration = configuration
         button.accessibilityLabel = title
-        button.accessibilityHint = String(localized: "Opens the table full screen")
+        button.accessibilityHint = String(localized: "Opens table full screen")
     }
 }
 
@@ -264,14 +281,11 @@ final class TableChrome {
         footer.isHidden = true
         overlay.onActivate = { [open] in open() }
         footer.onActivate = { [open] in open() }
-        overlay.setMenu(UIMenu(children: [
-            UIAction(title: String(localized: "Copy as Markdown"), image: UIImage(systemName: "doc.on.doc")) { [copy] _ in
-                copy(.markdown)
-            },
-            UIAction(title: String(localized: "Copy as TSV"), image: UIImage(systemName: "tablecells")) { [copy] _ in
-                copy(.tsv)
-            },
-        ]))
+        overlay.setMenu(UIMenu(children: TableCopyFormat.allCases.map { format in
+            UIAction(title: format.menuTitle, image: UIImage(systemName: format.menuSymbol)) { [copy] _ in
+                copy(format)
+            }
+        }))
         let toCard = scrollView.bottomAnchor.constraint(equalTo: card.bottomAnchor)
         scrollBottomToCard = toCard
         scrollBottomToFooter = scrollView.bottomAnchor.constraint(equalTo: footer.topAnchor)

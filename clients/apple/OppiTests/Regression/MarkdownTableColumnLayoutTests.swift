@@ -934,6 +934,11 @@ struct NativeTableFitAndChromeTests {
         scroll.contentOffset.x = scroll.contentSize.width - scroll.bounds.width
         #expect(!overlay.isCueVisible, "Nothing is hidden at the right end")
 
+        // Just short of the end, only the last column is cut: singular.
+        scroll.contentOffset.x = scroll.contentSize.width - scroll.bounds.width - 24
+        #expect(overlay.isCueVisible)
+        #expect(pill.accessibilityLabel == "1 more column")
+
         scroll.contentOffset.x = 0
         #expect(overlay.isCueVisible)
         #expect(pill.accessibilityLabel == atStart)

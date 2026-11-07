@@ -210,6 +210,28 @@
         }
       }
     },
+    "%lld more columns" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more column"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more columns"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld msgs" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -773,6 +795,9 @@
     "Collapsed" : {
 
     },
+    "Column %lld" : {
+
+    },
     "Compact" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1045,7 +1070,6 @@
       }
     },
     "Copy as Markdown" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1054,6 +1078,12 @@
           }
         }
       }
+    },
+    "Copy as TSV" : {
+
+    },
+    "Copy cell" : {
+
     },
     "Copy Command" : {
       "extractionState" : "stale",
@@ -2198,6 +2228,9 @@
     "Online Machines" : {
 
     },
+    "Only the part shown" : {
+
+    },
     "Only enabled servers load here. Web servers are called from your server, only to Allowed Hosts, and their sign-in stays there. Command servers run inside the VM, where the agent can read their settings; ones that use host secrets are blocked. A workspace Tools list hides MCP servers." : {
 
     },
@@ -2244,6 +2277,9 @@
 
     },
     "Oppi pairs with an Oppi server you run yourself on a Mac or Linux machine. Install the server, then pair this phone." : {
+
+    },
+    "Opens table full screen" : {
 
     },
     "Opens the public server setup and pairing guide" : {
@@ -3055,6 +3091,9 @@
       }
     },
     "Show %@ more" : {
+
+    },
+    "Show all %lld rows" : {
 
     },
     "Show less" : {
