@@ -93,6 +93,16 @@ Options apply to one content family and are stored on this device only: markdown
 
 The toolbar toggles Markdown (Reader / Source), HTML (Preview / Source), HTML diffs (Diff / Render), LaTeX, Org, and Mermaid (Rendered / Source), and GeoJSON and TopoJSON (Rendered / Source). Viewing Options apply to the mode on screen.
 
+## Tasks in Markdown and Org
+
+When the file reader can save a Markdown or Org file (it shows the pencil), the file's tasks work in place:
+
+- **Checkboxes.** Tap one to check or uncheck it. A progress cookie such as `[1/3]` or `[33%]` on the item above it, or else on the heading above, is recounted.
+- **States (Org).** Tap a heading's state to choose another of the file's `#+TODO` states (TODO, NEXT, WAITING, HOLD, DONE, and CANCELLED without one), or **No state**. Moving into a done state adds a `CLOSED:` stamp under the heading, and moving out of one removes it. The same menu sets a Scheduled or Deadline date the heading does not have yet. A heading without a state shows nothing extra: long-press its text and choose **State**.
+- **Dates (Org).** Tap a Scheduled or Deadline date to pick another day, add or remove a time, or **Clear** it. A repeater such as `+1w` and a warning period stay, and a time range keeps its length. Marking a repeating task done does not move it to its next date.
+
+Each tap saves at once, whatever Auto-Save says, and rewrites only the lines it changes. If the file changed on the server since it was read, nothing is overwritten: the editor opens with your change in it and offers the usual [conflict choices](#editing-workspace-files). A file the reader cannot save shows the same tasks, but tapping them does nothing. VoiceOver offers **Toggle**, **Change state**, and **Change date** as actions.
+
 ## Diagrams and maps
 
 **Mermaid.** Fenced `mermaid` blocks and `.mmd` / `.mermaid` files render flowchart (`graph`), sequence, class, state, ER, gantt, pie, mindmap, timeline (`timeline-beta`), xyChart, journey, quadrantChart, gitGraph, sankey (`sankey-beta`), and kanban diagrams. Unknown types show an unsupported placeholder.
