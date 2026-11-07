@@ -45,6 +45,37 @@ struct TableViewerTests {
         #expect(labels.contains("alpha"), "The header must stay mounted over the rows")
     }
 
+    /// Under floating bars the header pins below the top inset. Rows scrolled
+    /// past it must not show in the strip above it.
+    @Test func rowsScrolledPastThePinnedHeaderDoNotShowAboveIt() throws {
+        let (view, grid, window) = try makeGrid(rows: 400)
+        defer { window.isHidden = true }
+        grid.contentInset.top = 100
+        grid.contentOffset = CGPoint(x: 0, y: 3000)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        grid.layoutIfNeeded()
+        #expect(grid.visibleCells.contains { $0.frame.minY < grid.contentOffset.y + 90 }, "Fixture: rows sit under the inset")
+
+        let image = UIGraphicsImageRenderer(bounds: view.bounds, format: {
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            return format
+        }()).image { view.layer.render(in: $0.cgContext) }
+        let data = try #require(image.cgImage?.dataProvider?.data as Data?)
+        let bytesPerRow = try #require(image.cgImage?.bytesPerRow)
+        let reference = data[(10 * bytesPerRow) ..< (10 * bytesPerRow + 4)]
+        for y in 10 ..< 90 {
+            for x in stride(from: 0, to: Int(view.bounds.width) * 4, by: 4) {
+                let pixel = data[(y * bytesPerRow + x) ..< (y * bytesPerRow + x + 4)]
+                if pixel != reference {
+                    Issue.record("Row content shows above the pinned header at (\(x / 4), \(y))")
+                    return
+                }
+            }
+        }
+    }
+
     @Test func headerCellsAreHeadersForVoiceOverAndBodyCellsNameTheirColumnAndRow() throws {
         let (_, grid, window) = try makeGrid(rows: 5)
         defer { window.isHidden = true }

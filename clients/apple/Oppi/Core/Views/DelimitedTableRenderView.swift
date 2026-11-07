@@ -11,6 +11,9 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, UIColl
     private let layout = DelimitedTableGridLayout()
     private let collectionView: UICollectionView
     private let emptyLabel = UILabel()
+    /// Covers the strip between the grid's top edge and its pinned header (the
+    /// floating bars' inset), so rows scrolled past the header do not show above it.
+    private let headerBackdrop = UIView()
     private var palette: ThemePalette
     private var textScale: CGFloat = 1
 
@@ -118,8 +121,12 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, UIColl
         emptyLabel.isHidden = plan.table.displayedRowCount > 0
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        headerBackdrop.backgroundColor = palette.ui.bgDark
+        headerBackdrop.isUserInteractionEnabled = false
+
         addSubview(summaryLabel)
         addSubview(collectionView)
+        addSubview(headerBackdrop)
         addSubview(emptyLabel)
 
         let summaryVisible = plan.truncationSummary != nil
@@ -140,6 +147,22 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, UIColl
             emptyLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             emptyLabel.topAnchor.constraint(equalTo: collectionView.topAnchor, constant: 16),
         ])
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let grid = collectionView.frame
+        headerBackdrop.frame = CGRect(
+            x: grid.minX,
+            y: grid.minY,
+            width: grid.width,
+            height: max(0, collectionView.adjustedContentInset.top)
+        )
+    }
+
+    override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        setNeedsLayout()
     }
 
     private func reloadMetrics() {
