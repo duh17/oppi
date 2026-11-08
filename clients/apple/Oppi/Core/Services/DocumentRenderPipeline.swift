@@ -718,10 +718,13 @@ enum DocumentRenderPipeline {
     /// Task items, states and dates in the Markdown carry their Org source line.
     /// `offersStateControl` is for a reader that can save the file: a heading
     /// without a state then carries the control that adds one.
+    /// `foldingHeadings` is for a reader that folds: the headings it has folded
+    /// hide their sections, and each heading with a section leads with a chevron.
     static func orgToMarkdown(
         _ source: String,
         documentPath: String? = nil,
         offersStateControl: Bool = false,
+        foldingHeadings: OrgToMarkdownConverter.FoldState? = nil,
         cancellationCheck: @escaping @Sendable () -> Bool
     ) -> String? {
         guard !cancellationCheck() else { return nil }
@@ -730,7 +733,8 @@ enum DocumentRenderPipeline {
         let mdBlocks = OrgToMarkdownConverter.convert(
             located: orgBlocks,
             documentPath: documentPath,
-            offersStateControl: offersStateControl
+            offersStateControl: offersStateControl,
+            foldingHeadings: foldingHeadings
         )
         guard !cancellationCheck() else { return nil }
         let markdown = MarkdownBlockSerializer.serialize(mdBlocks)

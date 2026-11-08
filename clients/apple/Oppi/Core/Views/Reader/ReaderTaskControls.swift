@@ -27,15 +27,28 @@ protocol ReaderTaskControlHandling: AnyObject {
     /// Whether controls act right now. False for a file the reader cannot save,
     /// and while an edit is being saved.
     var allowsTaskControls: Bool { get }
+    /// Whether a heading folds when tapped. Folding edits nothing, so a file
+    /// the reader cannot save still folds.
+    var allowsFolding: Bool { get }
     /// What touching `control`, which sits in `view`, does. A sheet the control
     /// opens is presented from `view`.
     func interaction(for control: ReaderTaskControl, in view: UIView) -> ReaderTaskInteraction
+}
+
+extension ReaderTaskControlHandling {
+    var allowsFolding: Bool { false }
+
+    /// Whether `control` acts right now.
+    func allows(_ control: ReaderTaskControl) -> Bool {
+        control.isFold ? allowsFolding : allowsTaskControls
+    }
 }
 
 extension ReaderTaskControl {
     /// The VoiceOver custom action that does what a tap does.
     var accessibilityActionName: String {
         switch kind {
+        case .fold(let isExpanded): isExpanded ? String(localized: "Collapse") : String(localized: "Expand")
         case .checkbox: String(localized: "Toggle")
         case .state: String(localized: "Change state")
         case .date: String(localized: "Change date")
@@ -76,6 +89,11 @@ final class ReaderTaskControlElement: UIAccessibilityElement {
         accessibilityLabel = label
         accessibilityIdentifier = control.accessibilityIdentifier
         accessibilityTraits = .button
+        if case .fold(let isExpanded) = control.kind {
+            // The heading itself is the control: its state is its value.
+            accessibilityTraits = [.header, .button]
+            accessibilityValue = isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed")
+        }
         accessibilityFrameInContainerSpace = frame
         accessibilityCustomActions = [
             UIAccessibilityCustomAction(name: control.accessibilityActionName) { [weak self] _ in
@@ -147,7 +165,8 @@ extension BaselineSafeTextView {
     }
 
     var allowsTaskControls: Bool {
-        taskControlHandler?.allowsTaskControls == true && scanTaskAttachments().holdsControls
+        guard let handler = taskControlHandler, handler.allowsTaskControls || handler.allowsFolding else { return false }
+        return scanTaskAttachments().holdsControls
     }
 
     /// Whether the text speaks through lines of its own (it has badges or
@@ -222,13 +241,41 @@ extension BaselineSafeTextView {
         layout.enumerateTextLayoutFragments(from: first.rangeInElement.location, options: [.ensuresLayout]) { fragment in
             if fragment.layoutFragmentFrame.minY > local.y + reach { return false }
             for candidate in taskControls(in: nsRange(fragment.rangeInElement, in: content), layout: layout, content: content)
-            where !candidate.isMarker && candidate.touchRect.contains(point) {
+            where !candidate.isMarker && !candidate.control.isFold
+                && taskControlHandler?.allows(candidate.control) == true
+                && candidate.touchRect.contains(point) {
                 let distance = abs(candidate.glyphRect.midX - point.x)
                 if best == nil || distance < best?.distance ?? .infinity { best = (candidate, distance) }
             }
             return true
         }
         return best?.control
+    }
+
+    // MARK: Heading fold
+
+    /// The fold control of the heading whose paragraph holds `point`, unless
+    /// `point` is on a link in it: the whole heading folds it, and a link in
+    /// the title still opens.
+    func foldControl(at point: CGPoint) -> ReaderTaskControl? {
+        guard allowsTaskControls,
+              taskControlHandler?.allowsFolding == true,
+              // A badge on the heading (its state, a date) keeps its own touch.
+              taskControl(at: point) == nil,
+              let layout = textLayoutManager,
+              let content = layout.textContentManager else { return nil }
+        let local = CGPoint(x: point.x - textContainerInset.left, y: point.y - textContainerInset.top)
+        guard let fragment = layout.textLayoutFragment(for: local),
+              fragment.layoutFragmentFrame.contains(local) else { return nil }
+        guard let fold = taskControls(in: nsRange(fragment.rangeInElement, in: content), layout: layout, content: content)
+            .first(where: { $0.control.isFold })?.control else { return nil }
+        if let position = closestPosition(to: point) {
+            let index = offset(from: beginningOfDocument, to: position)
+            for candidate in [index - 1, index] where candidate >= 0 && candidate < textStorage.length {
+                if textStorage.attribute(.link, at: candidate, effectiveRange: nil) != nil { return nil }
+            }
+        }
+        return fold
     }
 
     // MARK: Touch and activation
@@ -266,7 +313,8 @@ extension BaselineSafeTextView {
                   in: NSRange(location: 0, length: textStorage.length),
                   layout: layout,
                   content: content
-              ).first(where: { $0.control == control }) else { return false }
+              ).first(where: { $0.control == control }),
+              taskControlHandler?.allows(control) == true else { return false }
         aimTaskTouchTarget(at: located)
         taskTouchTarget.performPrimaryAction()
         return true
@@ -275,7 +323,8 @@ extension BaselineSafeTextView {
     /// The state menu of the heading the text menu was opened on, as one entry
     /// of that menu. It is the way to a state control that is not drawn.
     func taskStateMenu(forTextIn range: NSRange) -> UIMenu? {
-        guard allowsTaskControls, let handler = taskControlHandler, range.location <= textStorage.length else { return nil }
+        guard let handler = taskControlHandler, handler.allowsTaskControls,
+              range.location <= textStorage.length else { return nil }
         let line = (textStorage.string as NSString).paragraphRange(for: NSRange(location: range.location, length: 0))
         var state: ReaderTaskControl?
         textStorage.enumerateAttribute(.attachment, in: line, options: .longestEffectiveRangeNotRequired) { value, _, stop in
@@ -299,7 +348,8 @@ extension BaselineSafeTextView {
         let key = TaskAccessibilityKey(
             length: textStorage.length,
             size: bounds.size,
-            controlsEnabled: allowsTaskControls
+            controlsEnabled: allowsTaskControls,
+            editsEnabled: taskControlHandler?.allowsTaskControls == true
         )
         if let cache = taskAccessibilityCache, cache.key == key { return cache.elements }
 
@@ -315,20 +365,35 @@ extension BaselineSafeTextView {
                     dx: origin.x + textContainerInset.left,
                     dy: origin.y + textContainerInset.top
                 )
-                let controls = controlsEnabled ? taskControls(in: range, layout: layout, content: content) : []
+                let controls = (controlsEnabled ? taskControls(in: range, layout: layout, content: content) : [])
+                    .filter { taskControlHandler?.allows($0.control) == true }
                 if let label = spokenLabel(of: range) {
-                    let element = UIAccessibilityElement(accessibilityContainer: self)
-                    element.accessibilityLabel = label
-                    element.accessibilityTraits = .staticText
-                    element.accessibilityFrameInContainerSpace = frame
-                    element.accessibilityCustomActions = controls.filter(\.isMarker).map { located in
+                    let markerActions = controls.filter(\.isMarker).map { located in
                         UIAccessibilityCustomAction(name: located.control.accessibilityActionName) { [weak self] _ in
                             self?.activateTaskControl(located.control) ?? false
                         }
                     }
-                    elements.append(element)
+                    if let fold = controls.first(where: { $0.control.isFold }) {
+                        // A foldable heading is one element: its words, its
+                        // state as the value, and the fold as its action.
+                        let element = ReaderTaskControlElement(
+                            control: fold.control,
+                            label: label,
+                            frame: frame,
+                            textView: self
+                        )
+                        element.accessibilityCustomActions = (element.accessibilityCustomActions ?? []) + markerActions
+                        elements.append(element)
+                    } else {
+                        let element = UIAccessibilityElement(accessibilityContainer: self)
+                        element.accessibilityLabel = label
+                        element.accessibilityTraits = .staticText
+                        element.accessibilityFrameInContainerSpace = frame
+                        element.accessibilityCustomActions = markerActions
+                        elements.append(element)
+                    }
                 }
-                for located in controls where !located.isMarker {
+                for located in controls where !located.isMarker && !located.control.isFold {
                     elements.append(ReaderTaskControlElement(
                         control: located.control,
                         label: located.label,
@@ -377,6 +442,8 @@ extension BaselineSafeTextView {
         var pieces: [String] = []
         let text = textStorage
         text.enumerateAttribute(.attachment, in: range, options: .longestEffectiveRangeNotRequired) { value, run, _ in
+            // A fold's state is the heading's value, not words of its line.
+            if let control = (value as? ReaderTaskControlAttachment)?.control, control.isFold { return }
             let piece = (value as? NSTextAttachment).map { $0.accessibilityLabel ?? "" }
                 ?? (text.string as NSString).substring(with: run)
             let trimmed = piece
@@ -392,9 +459,65 @@ struct TaskAccessibilityKey: Equatable {
     let length: Int
     let size: CGSize
     let controlsEnabled: Bool
+    let editsEnabled: Bool
 }
 
 struct TaskAccessibilityCache {
     let key: TaskAccessibilityKey
     let elements: [Any]
+}
+
+/// A tap on a foldable heading folds it. It sits on `host` (a reader cell),
+/// beside the text views' own gestures rather than on them, so selecting a
+/// heading's words and opening its links work as before.
+@MainActor
+final class ReaderFoldTap: UITapGestureRecognizer, UIGestureRecognizerDelegate {
+    private weak var host: UIView?
+    private let textViews: () -> [BaselineSafeTextView]
+
+    init(host: UIView, textViews: @escaping () -> [BaselineSafeTextView]) {
+        self.host = host
+        self.textViews = textViews
+        super.init(target: nil, action: nil)
+        addTarget(self, action: #selector(tapped))
+        cancelsTouchesInView = false
+        delegate = self
+    }
+
+    private func target(at point: CGPoint) -> (textView: BaselineSafeTextView, control: ReaderTaskControl)? {
+        guard let host else { return nil }
+        for textView in textViews() {
+            let local = host.convert(point, to: textView)
+            if textView.bounds.contains(local), let control = textView.foldControl(at: local) {
+                return (textView, control)
+            }
+        }
+        return nil
+    }
+
+    @objc private func tapped() {
+        guard state == .ended, let host, let target = target(at: location(in: host)) else { return }
+        target.textView.activateTaskControl(target.control)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard let host else { return false }
+        return target(at: touch.location(in: host)) != nil
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+    ) -> Bool {
+        true
+    }
+
+    /// A press on the heading is the text view's (selection, the text menu with
+    /// the state menu in it): the fold waits for its long press to fail.
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRequireFailureOf other: UIGestureRecognizer
+    ) -> Bool {
+        other is UILongPressGestureRecognizer && other.view is BaselineSafeTextView
+    }
 }

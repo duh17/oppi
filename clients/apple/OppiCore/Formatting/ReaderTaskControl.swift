@@ -52,6 +52,10 @@ struct ReaderTaskControl: Equatable, Hashable, Sendable {
         case state
         /// An Org heading's Scheduled or Deadline stamp.
         case date(OrgPlanningKind)
+        /// An Org heading's disclosure: tapping the heading folds or unfolds
+        /// its section. Unlike the rest it edits nothing, so it works in a
+        /// file the reader cannot save.
+        case fold(isExpanded: Bool)
     }
 
     let kind: Kind
@@ -66,13 +70,20 @@ struct ReaderTaskControl: Equatable, Hashable, Sendable {
         case .date(.scheduled): "scheduled"
         case .date(.deadline): "deadline"
         case .date(.closed): "closed"
+        case .fold(let isExpanded): isExpanded ? "fold-expanded" : "fold-collapsed"
         }
+    }
+
+    var isFold: Bool {
+        if case .fold = kind { return true }
+        return false
     }
 
     /// `fileViewer.task.<kind>.<line>`: the line is the control's stable key in
     /// the document, so a test finds the same control after the view redraws.
     var accessibilityIdentifier: String {
-        "fileViewer.task.\(kindName).\(line)"
+        // A fold's name carries its state, which an identifier must not.
+        isFold ? "fileViewer.heading.fold.\(line)" : "fileViewer.task.\(kindName).\(line)"
     }
 
     init(kind: Kind, line: Int) {
@@ -87,6 +98,8 @@ struct ReaderTaskControl: Equatable, Hashable, Sendable {
         case "state": self.init(kind: .state, line: line)
         case "scheduled": self.init(kind: .date(.scheduled), line: line)
         case "deadline": self.init(kind: .date(.deadline), line: line)
+        case "fold-expanded": self.init(kind: .fold(isExpanded: true), line: line)
+        case "fold-collapsed": self.init(kind: .fold(isExpanded: false), line: line)
         default: return nil
         }
     }

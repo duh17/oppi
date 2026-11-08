@@ -45,8 +45,13 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         return recognizer
     }()
 
+    private lazy var foldTap = ReaderFoldTap(host: contentView) { [weak self] in
+        self?.stackView.arrangedSubviews.compactMap { $0 as? BaselineSafeTextView } ?? []
+    }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
+        contentView.addGestureRecognizer(foldTap)
         contentView.backgroundColor = .clear
         contentView.clipsToBounds = true
         backgroundColor = .clear
@@ -425,6 +430,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     /// Set when the reader can save the document: its checkboxes, Org states
     /// and dates then work.
     private let taskEditing: ReaderTaskEditing?
+    /// An Org document's controls: heading folds, then the task controls above.
+    private let orgControls: OrgReaderControls?
     private let lineAnchor: SourceLineAnchor?
     private let lineAnchorResolution: SourceLineAnchorResolution?
     private let maximumViewportHeight: CGFloat?
@@ -526,6 +533,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.resourceAccess = resourceAccess
         self.sourceFilePath = sourceFilePath
         self.taskEditing = taskEditing
+        self.orgControls = sourceFormat == .orgMode ? OrgReaderControls(editing: taskEditing) : nil
         self.centersReadingColumn = centersReadingColumn
         self.lineAnchor = lineAnchor
         let initialText = content
@@ -616,6 +624,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             lineAnchorHighlightView.bottomAnchor.constraint(equalTo: collectionView.bottomAnchor),
         ])
 
+        orgControls?.onFoldChange = { [weak self] in self?.scheduleOrgModeSourcePreparation(source: content) }
         if sourceFormat == .orgMode {
             installDeferredRenderPlaceholder(palette: palette)
             scheduleOrgModeSourcePreparation(source: content)
@@ -734,7 +743,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     nonisolated private static func prepareOrgModeSource(
         _ source: String,
         documentPath: String?,
-        editable: Bool
+        editable: Bool,
+        folded: Set<Int>
     ) -> PreparedOrgModeSource? {
         let started = DispatchTime.now().uptimeNanoseconds
         let ranOnMainThread = Thread.isMainThread
@@ -742,6 +752,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             source,
             documentPath: documentPath,
             offersStateControl: editable,
+            foldingHeadings: .init(folded: folded),
             cancellationCheck: { Task<Never, Never>.isCancelled }
         ) else { return nil }
         return PreparedOrgModeSource(
@@ -754,11 +765,12 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private func scheduleOrgModeSourcePreparation(source: String) {
         let documentPath = sourceFilePath
         let editable = taskEditing != nil
+        let folded = orgControls?.folded ?? []
         sourcePreparationTask?.cancel()
         sourcePreparationTask = Task { @MainActor [weak self] in
             let prepared: PreparedOrgModeSource? = await withCancellableDetachedTask(priority: .userInitiated) {
                 guard !Task.isCancelled else { return nil }
-                return Self.prepareOrgModeSource(source, documentPath: documentPath, editable: editable)
+                return Self.prepareOrgModeSource(source, documentPath: documentPath, editable: editable, folded: folded)
             }
             guard let self, let prepared, !Task.isCancelled else { return }
             self.sourcePreparationTask = nil
@@ -1215,7 +1227,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             lineAnchorModeEnabled: lineAnchor != nil,
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
-            taskControlHandler: taskEditing,
+            taskControlHandler: orgControls ?? taskEditing,
             readingInset: readingInset(forItem: indexPath.item)
         )
         cell.appliedItemIndex = indexPath.item
@@ -1796,7 +1808,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             lineAnchorModeEnabled: lineAnchor != nil,
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
-            taskControlHandler: taskEditing,
+            taskControlHandler: orgControls ?? taskEditing,
             readingInset: readingInset(forItem: item)
         )
         cell.appliedItemIndex = item

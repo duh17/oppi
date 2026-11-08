@@ -35,6 +35,8 @@ struct MarkdownBadge: Equatable, Sendable {
         /// Draws nothing and speaks nothing. It marks a line with a control the
         /// reader offers off the page, such as giving a plain heading a state.
         case marker
+        /// A chevron drawn alone before a heading. It joins no bar.
+        case disclosure
     }
 
     /// What the badge shows.

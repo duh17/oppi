@@ -8,8 +8,8 @@ import UIKit
 /// through the app's own edit path and lands in a real file, and the readout
 /// strip shows what that file holds, so a UI test checks the bytes on disk.
 ///
-/// `OPPI_READER_TASK_FILE` picks the file (`tasks.org` by default, or
-/// `notes.md`), and `OPPI_READER_TASK_LONG=1` adds a screenful of prose and a
+/// `OPPI_READER_TASK_FILE` picks the file (`tasks.org` by default, `notebook.org`,
+/// or `notes.md`), and `OPPI_READER_TASK_LONG=1` adds a screenful of prose and a
 /// last task under the Org seed. "Change file on disk" is a second writer, for
 /// the conflict path.
 enum ReaderTaskEditFixture {
@@ -30,6 +30,41 @@ enum ReaderTaskEditFixture {
 
     * Plain heading
     Some prose.
+    """
+
+    /// A notebook-style file for heading folds: three levels, drawers, links.
+    static let notebookSeed = """
+    #+TITLE: Oppi project
+    #+TODO: TODO NEXT WAIT | DONE CANCELLED
+
+    * NEXT [#A] Ship Org rendering [1/3] :oppi:ios:
+    SCHEDULED: <2026-11-11 Wed> DEADLINE: <2026-11-13 Fri>
+    :PROPERTIES:
+    :ID: 3f2a9c1e-7b64-4d0a-9d1e-0c5a2b7e8f10
+    :END:
+    Parser, converter and reader. See [[file:release.org::*Checklist][the release checklist]].
+    - [X] Parse planning lines
+    - [ ] Render progress cookies
+    ** DONE Draft the brief :oppi:
+    CLOSED: [2026-11-06 Fri 14:00]
+    Scope was agreed in the planning thread.
+    ** WAIT Device check [40%]
+    SCHEDULED: <2026-11-12 Thu>
+    Waiting on a simulator slot.
+    *** TODO Record the screenshots
+    - [ ] iPhone
+    - [ ] iPad mini
+    ** CANCELLED Retire the old extension
+    CLOSED: [2026-11-05 Thu 09:30]
+    * TODO Write the release notes
+    DEADLINE: <2026-11-20 Fri>
+    :PROPERTIES:
+    :ID: 9d1c4e7a-2b08-4c63-8a5f-6e3b1d0f7a22
+    :END:
+    Draft after the device check.
+    * Notes
+    - No dev install until Wednesday.
+    - See [[*Ship Org rendering][the task above]] and [[https://example.com][the docs]].
     """
 
     static let markdownSeed = """
@@ -62,6 +97,7 @@ enum ReaderTaskEditFixture {
             org += "\n\n* TODO Bottom\n- [ ] bottom box\n- [ ] second box"
         }
         try? Data(org.utf8).write(to: url(for: "tasks.org"), options: .atomic)
+        try? Data(notebookSeed.utf8).write(to: url(for: "notebook.org"), options: .atomic)
         try? Data(markdownSeed.utf8).write(to: url(for: "notes.md"), options: .atomic)
     }
 

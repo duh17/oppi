@@ -53,6 +53,9 @@ final class ReaderTaskEditing: ReaderTaskControlHandling {
                 guard let view else { return }
                 self?.presentDatePicker(kind: kind, line: control.line, from: view)
             }
+        case .fold:
+            // Folding is the reader's, not an edit; `OrgReaderControls` answers it.
+            return .action {}
         }
     }
 

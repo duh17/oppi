@@ -33,6 +33,10 @@ enum OrgToMarkdownConverter {
         /// cmark-gfm makes no task list of `> - [ ]`: a marker there would
         /// show as raw text beside the literal box.
         var marksTaskItems: Bool
+        /// Headings a fold control leads, by source line, and which of them
+        /// are folded. Empty for a reader that does not fold.
+        var foldableHeadings: Set<Int> = []
+        var foldedHeadings: Set<Int> = []
     }
 
     /// Convert org blocks to markdown blocks.
@@ -62,20 +66,35 @@ enum OrgToMarkdownConverter {
         located: [LocatedOrgBlock],
         documentPath: String? = nil,
         clock: OrgBadges.Clock = .current,
-        offersStateControl: Bool = false
+        offersStateControl: Bool = false,
+        foldingHeadings: FoldState? = nil
     ) -> [MarkdownBlock] {
-        let blocks = located.map(\.block)
-        return convert(
-            blocks,
-            lines: located.map(\.line),
-            context: makeContext(
-                blocks,
-                documentPath: documentPath,
-                clock: clock,
-                offersStateControl: offersStateControl,
-                marksTaskItems: true
-            )
+        var context = makeContext(
+            located.map(\.block),
+            documentPath: documentPath,
+            clock: clock,
+            offersStateControl: offersStateControl,
+            marksTaskItems: true
         )
+        var shown = located
+        if let foldingHeadings {
+            let sections = OrgFolding.sections(of: located)
+            context.foldableHeadings = Set(sections.keys)
+            context.foldedHeadings = foldingHeadings.folded
+            shown = OrgFolding.visibleIndices(of: located, sections: sections, folded: foldingHeadings.folded)
+                .map { located[$0] }
+        }
+        return convert(shown.map(\.block), lines: shown.map(\.line), context: context)
+    }
+
+    /// A reader that folds headings: which it has folded, by source line.
+    /// Every heading with a section under it then leads with a chevron.
+    struct FoldState: Sendable {
+        var folded: Set<Int>
+
+        init(folded: Set<Int> = []) {
+            self.folded = folded
+        }
     }
 
     private static func makeContext(
@@ -232,7 +251,11 @@ enum OrgToMarkdownConverter {
                     }
                 }
                 // The marker leads the heading apart from the bar, so it never joins it.
-                var inlines: [MarkdownInline] = ((marker.map { [$0] } ?? []) + bar).map { .html($0.markup) }
+                var leading: [MarkdownBadge] = []
+                if let line, context.foldableHeadings.contains(line) {
+                    leading.append(OrgBadges.fold(line: line, isExpanded: !context.foldedHeadings.contains(line)))
+                }
+                var inlines: [MarkdownInline] = (leading + (marker.map { [$0] } ?? []) + bar).map { .html($0.markup) }
 
                 // Title content, struck through when the heading is done.
                 let titleInlines = convertInlines(tidiedTitle(titleRest), context: context)
@@ -341,8 +364,8 @@ enum OrgToMarkdownConverter {
 
             case .drawer(let name, let properties):
                 // A property drawer is bookkeeping (`:ID:` for links): Org
-                // folds it, and the reader has no fold, so it stays out of the
-                // reading view. Other drawers show their entries as code.
+                // folds it, and the reader folds only headings, so it stays
+                // out of the reading view. Other drawers show their entries as code.
                 if !isPropertiesDrawer(name), !properties.isEmpty {
                     let lines = properties.map { ":\($0.key): \($0.value)" }
                     let content = lines.joined(separator: "\n")

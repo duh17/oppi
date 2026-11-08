@@ -30,6 +30,8 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
     let control: ReaderTaskControl?
     /// A `marker` badge: no size, nothing drawn, nothing spoken.
     let isMarker: Bool
+    /// A chevron drawn alone, sized to the line's text.
+    let isDisclosure: Bool
     private var spokenLabel: String
     /// Used when TextKit does not say which font the badge sits in.
     private let fallbackFont: UIFont
@@ -83,6 +85,7 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
         spokenLabel = badge.label
         control = badge.control
         isMarker = badge.shape == .marker
+        isDisclosure = badge.shape == .disclosure
         self.style = style
         self.fallbackFont = fallbackFont
         super.init(data: nil, ofType: nil)
@@ -109,6 +112,7 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
         static let control = "oppi.badge.control"
         static let line = "oppi.badge.line"
         static let isMarker = "oppi.badge.isMarker"
+        static let isDisclosure = "oppi.badge.isDisclosure"
     }
 
     required init?(coder: NSCoder) {
@@ -119,6 +123,7 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
             ReaderTaskControl(name: name, line: String(coder.decodeInteger(forKey: Key.line)))
         }
         isMarker = coder.decodeBool(forKey: Key.isMarker)
+        isDisclosure = coder.decodeBool(forKey: Key.isDisclosure)
         style = Style(
             fill: coder.decodeObject(of: UIColor.self, forKey: Key.fill) ?? .systemGray,
             ink: coder.decodeObject(of: UIColor.self, forKey: Key.ink) ?? .label,
@@ -145,6 +150,7 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
         coder.encode(control?.kindName as NSString?, forKey: Key.control)
         coder.encode(control?.line ?? 0, forKey: Key.line)
         coder.encode(isMarker, forKey: Key.isMarker)
+        coder.encode(isDisclosure, forKey: Key.isDisclosure)
     }
 
     // Segments build off the main actor, where `accessibilityLabel`'s setter is
@@ -216,6 +222,22 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
         if isMarker {
             return Layout(bounds: .zero, textFont: lineFont, padding: 0, arrowDepth: 0, symbolWidth: 0, symbolGap: 0)
         }
+        if isDisclosure {
+            // The chevron is a little smaller than the line's text and leaves a
+            // gap before the heading's words. Both chevrons share one width.
+            let font = UIFont.systemFont(ofSize: lineFont.pointSize * 0.7, weight: .bold)
+            let side = ceil(lineFont.pointSize * 0.9)
+            let gap = ceil(lineFont.pointSize * 0.3)
+            let height = ceil(font.lineHeight)
+            return Layout(
+                bounds: CGRect(x: 0, y: ((lineFont.capHeight - height) / 2).rounded(), width: side + gap, height: height),
+                textFont: font,
+                padding: 0,
+                arrowDepth: 0,
+                symbolWidth: side,
+                symbolGap: gap
+            )
+        }
         // Smaller and bolder than the line, with figures that line up. Capsules
         // (tags) are quieter still.
         let scale: CGFloat = style.isCapsule ? 0.62 : 0.74
@@ -265,6 +287,15 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
 
     private func draw(_ layout: Layout, in rect: CGRect) {
         let height = rect.height
+        if isDisclosure {
+            if let image = symbolImage(font: layout.textFont) {
+                image.draw(at: CGPoint(
+                    x: (layout.symbolWidth - image.size.width) / 2,
+                    y: (height - image.size.height) / 2
+                ))
+            }
+            return
+        }
         let depth = layout.arrowDepth
         let body = UIBezierPath()
         if style.isCapsule {
