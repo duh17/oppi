@@ -317,7 +317,8 @@ describe("sharedCacheArguments", () => {
     expect(before).not.toContain("-clonedSourcePackagesDirPath");
 
     // sim-pool resolves one clone per Package.resolved hash; once it has, the build reuses it.
-    const hashDir = join(env.OPPI_XCODE_CACHE_DIR, "spm", createHash("sha256").update('{"pins":[]}').digest("hex").slice(0, 16));
+    // OPPI_XCODE_CACHE_DIR is the parent: the per-Xcode folder still separates cache generations.
+    const hashDir = join(env.OPPI_XCODE_CACHE_DIR, "Xcode-9.app", "spm", createHash("sha256").update('{"pins":[]}').digest("hex").slice(0, 16));
     mkdirSync(hashDir, { recursive: true });
     markPackagesResolved(hashDir);
     const after = sharedCacheArguments(env, appleDir, derived);

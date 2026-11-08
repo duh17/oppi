@@ -155,7 +155,8 @@ export function slotlessBuildSettings(argv: string[]): string[] {
  *   lock, read by builds under a shared lock with resolution and updates off.
  * Prefix mapping compiles #filePath to /^src/...; the architecture rule
  * ios-test-no-source-paths keeps tests from opening files through it.
- * OPPI_SIM_POOL_COMPILATION_CACHE=0 turns it off; OPPI_XCODE_CACHE_DIR moves it.
+ * OPPI_SIM_POOL_COMPILATION_CACHE=0 turns it off. OPPI_XCODE_CACHE_DIR replaces the parent
+ * (default ~/Library/Caches/oppi-xcode), so a cache moved to another volume keeps one folder per Xcode.
  */
 export type CompilationCache = { root: string; args: string[]; settings: string[]; packages?: string };
 
@@ -166,9 +167,11 @@ export function compilationCache(
   argv: string[],
 ): CompilationCache | undefined {
   if (env.OPPI_SIM_POOL_COMPILATION_CACHE === "0") return undefined;
-  // DEVELOPER_DIR is <Xcode>.app/Contents/Developer; a new Xcode gets a fresh cache.
+  // DEVELOPER_DIR is <Xcode>.app/Contents/Developer; a new Xcode gets a fresh cache, also under
+  // an OPPI_XCODE_CACHE_DIR parent.
   const xcode = basename(dirname(dirname(env.DEVELOPER_DIR ?? "/Applications/Xcode.app/Contents/Developer"))).replace(/[^\w.-]/g, "_");
-  const root = env.OPPI_XCODE_CACHE_DIR ?? join(env.HOME ?? homedir(), "Library", "Caches", "oppi-xcode", xcode);
+  const parent = env.OPPI_XCODE_CACHE_DIR ?? join(env.HOME ?? homedir(), "Library", "Caches", "oppi-xcode");
+  const root = join(parent, xcode);
   const settings = [
     "COMPILATION_CACHE_ENABLE_CACHING=YES",
     `COMPILATION_CACHE_CAS_PATH=${join(root, "cas")}`,
