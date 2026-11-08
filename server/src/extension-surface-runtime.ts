@@ -60,7 +60,7 @@ export type ExtensionUISurfaceAudience = "elapsed" | "blocks" | "composites" | "
 /** The audiences that draw a tree of primitives. */
 const TREE_AUDIENCES: readonly ExtensionUISurfaceAudience[] = ["elapsed", "blocks"];
 
-/** Every audience, v1 widgets first: the order a surface's frames are emitted in. */
+/** Every audience; the filters over it keep this order, so each emitted list is stable. */
 const ALL_AUDIENCES: readonly ExtensionUISurfaceAudience[] = [
   "v1-projection",
   ...TREE_AUDIENCES,
