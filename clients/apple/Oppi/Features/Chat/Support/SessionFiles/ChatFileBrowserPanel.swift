@@ -231,7 +231,7 @@ final class ChatFilePanelViewController: UIViewController {
 
     // MARK: Bar and search
 
-    /// The browser's folder over the panel; Done leading; View Options,
+    /// The browser's folder over the panel; Close leading; View Options,
     /// Forward, and Back trailing, always there while it browses so the bar
     /// holds still, Back and Forward disabled when there is nowhere to go;
     /// the search in the bar, with Everywhere / this folder below the root.
@@ -244,10 +244,11 @@ final class ChatFilePanelViewController: UIViewController {
         if key != barKey {
             barKey = key
             navigationItem.title = key.title
-            navigationItem.leftBarButtonItems = [UIBarButtonItem(
-                title: String(localized: "Done"),
-                primaryAction: UIAction { [weak self] _ in self?.onClose() }
-            )]
+            let close = UIBarButtonItem(systemItem: .close, primaryAction: UIAction { [weak self] _ in
+                self?.onClose()
+            })
+            close.accessibilityIdentifier = "fileBrowser.close"
+            navigationItem.leftBarButtonItems = [close]
             // Rightmost first: Back sits left of Forward, View Options rightmost.
             navigationItem.rightBarButtonItems = browses ? [viewOptionsItem, forwardItem, backItem] : nil
         }

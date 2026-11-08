@@ -42,13 +42,13 @@ struct ChatFilePanelFolderNavigationTests {
             window.rootViewController = nil
         }
 
-        // Done alone leads; Back, Forward, then View Options trail; Back and
+        // Close alone leads; Back, Forward, then View Options trail; Back and
         // Forward are off at the root.
         _ = await waitForMainActorCondition(timeout: .seconds(2)) {
             window.layoutIfNeeded()
             return panel.navigationItem.rightBarButtonItems != nil
         }
-        #expect(panel.navigationItem.leftBarButtonItems?.map(\.title) == ["Done"])
+        #expect(panel.navigationItem.leftBarButtonItems?.map(\.accessibilityIdentifier) == ["fileBrowser.close"])
         #expect(panel.navigationItem.rightBarButtonItems?.map(\.accessibilityIdentifier)
             == ["fileBrowser.viewOptions", Self.forwardID, Self.backID])
         #expect(try enabled(in: panel) == [false, false])

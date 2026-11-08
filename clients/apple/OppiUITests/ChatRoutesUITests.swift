@@ -404,9 +404,9 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         app.buttons["fileBrowser.inlineBack"].tap()
         XCTAssertTrue(files.waitUntilExists(timeout: 5), "Back must return to the root")
 
-        if app.buttons["Done"].exists {
-            app.buttons["Done"].tap()
-            XCTAssertTrue(files.waitUntilGone(timeout: 5), "Done must close the files panel")
+        if app.buttons["fileBrowser.close"].exists {
+            app.buttons["fileBrowser.close"].tap()
+            XCTAssertTrue(files.waitUntilGone(timeout: 5), "Close must close the files panel")
         } else {
             app.buttons["chat.toolbar.files"].tap()
             XCTAssertTrue(files.waitUntilGone(timeout: 5), "The files button must close the column")
