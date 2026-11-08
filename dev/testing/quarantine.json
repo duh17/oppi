@@ -14,5 +14,13 @@
     "reason": "Fails in full unit shards (the transition reported a grid size other than the keyboard-up or resting one) and passes on rerun in 10 land gates; 55 isolated and loaded runs and 6 whole-suite runs did not reproduce it. Suspected cause: a resize from before the bar settled, or another suite's keyboard notification (the observer takes any screen's), landing inside the transition window. Awaiting for the resting size before the keyboard goes up changes the hit-test state the test asserts, so the test needs a rework, not a one-line wait.",
     "addedAt": "2026-11-08",
     "expires": "2026-12-07"
+  },
+  {
+    "id": "OppiTests/FullScreenMarkdownStressCorpusTests/reservedHeightsMatchFittingAndVisibleAnchorStaysPut()",
+    "owner": "lead",
+    "backlog": "reader/stress-corpus-anchor-flake",
+    "reason": "Flaked in 3 land gates in the full unit shards (visible anchor item and screen Y moved after a deferred pass; one run also timed out waiting for the reader's deferred work to settle) and passed on rerun. 15 isolated repetitions pass in 8 s, so it needs the shard's load; the gate log keeps only the assertion line, not the stage. Rework: make the stage name the failing assertion's stage and the reader's pending-work state, then reproduce under the shard.",
+    "addedAt": "2026-11-08",
+    "expires": "2026-12-07"
   }
 ]
