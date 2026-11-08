@@ -214,8 +214,11 @@ final class TrailingColumnResizeHandle: UIView {
         accessibilityIdentifier = "trailingColumn.resizeHandle"
         accessibilityLabel = String(localized: "Resize panel")
         accessibilityTraits = .adjustable
-        grabber.backgroundColor = .separator
-        grabber.layer.cornerRadius = 2
+        // Readable on a dark theme: `.separator` all but vanishes, and in
+        // portrait on the iPad mini this mark is the only cue that the pane
+        // can be dragged.
+        grabber.backgroundColor = .tertiaryLabel
+        grabber.layer.cornerRadius = 2.5
         grabber.isUserInteractionEnabled = false
         addSubview(grabber)
         addGestureRecognizer(pan)
@@ -232,7 +235,7 @@ final class TrailingColumnResizeHandle: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let grabberSize = CGSize(width: 4, height: 36)
+        let grabberSize = CGSize(width: 5, height: 48)
         grabber.frame = CGRect(
             x: (bounds.width - grabberSize.width) / 2,
             y: (bounds.height - grabberSize.height) / 2,

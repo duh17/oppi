@@ -66,7 +66,7 @@ struct ChatTimelineDestinationPresenter {
     /// Back closes the modal.
     private func presentWorkspaceFile(for pill: UserMessagePathPill, request: ChatTimelineDestinationRequest) {
         guard connection.apiClient != nil else { return }
-        var configuration = fileContent(for: pill, request: request)
+        var configuration = fileContent(for: pill, source: request.sidePanelTarget)
         configuration.reviewCommentSelectionScope = request.reviewCommentSelectionScope
         let viewer = FileViewerViewController(configuration: configuration, services: .init(connection: connection))
         Router.present(
@@ -76,31 +76,66 @@ struct ChatTimelineDestinationPresenter {
         )
     }
 
+    /// The destination as the root of the chat's trailing column, beside the
+    /// chat instead of over it (regular width). `onClose` closes the panel;
+    /// `pushChat` is where a session started from a commit opens.
+    func panelScreen(
+        for target: ChatTimelineSidePanelTarget,
+        navigation: AppNavigation,
+        pushChat: @escaping (ChatViewController) -> Void,
+        onClose: @escaping () -> Void
+    ) -> UIViewController {
+        switch target.destination {
+        case .commitDetail(let sha):
+            let viewer = CommitDetailViewController(
+                configuration: .init(
+                    workspaceId: target.workspaceId,
+                    sha: sha,
+                    reviewCommentSelectionScope: target.reviewCommentSelectionScope,
+                    closeAccessibilityIdentifier: "chat.commit-detail.dismiss"
+                ),
+                connection: connection,
+                apiClient: connection.apiClient,
+                navigation: navigation,
+                hostedInPanel: true,
+                pushChat: pushChat
+            )
+            viewer.onClose = onClose
+            return viewer
+        case .workspaceFile(let pill):
+            var configuration = fileContent(for: pill, source: target)
+            configuration.reviewCommentSelectionScope = target.reviewCommentSelectionScope
+            let viewer = FileViewerViewController(configuration: configuration, services: .init(connection: connection))
+            viewer.onBackNavigation = onClose
+            return viewer
+        }
+    }
+
     /// Upload pills open the session-origin copy the server materialized in
     /// the session's checkout. Review and repo pills open the workspace file in
     /// the session's checkout, so Edit writes where the agent works.
     func fileContent(
         for pill: UserMessagePathPill,
-        request: ChatTimelineDestinationRequest
+        source target: ChatTimelineSidePanelTarget
     ) -> FileViewerViewController.Configuration {
         let source: FileBrowserContentSource
         if MarkdownWikiLinkRewriter.resolvedHostPath(pill.path) != nil {
             source = .hostFile
         } else if pill.kind == .uploadedFile {
-            source = .sessionFile(sessionId: request.sessionId)
+            source = .sessionFile(sessionId: target.sessionId)
         } else {
             source = .workspaceFile
         }
-        let session = connection.sessionStore.session(id: request.sessionId)
-        let sessionWorktreeId = session?.workspaceId == request.workspaceId ? session?.worktreeId : nil
+        let session = connection.sessionStore.session(id: target.sessionId)
+        let sessionWorktreeId = session?.workspaceId == target.workspaceId ? session?.worktreeId : nil
         return FileViewerViewController.Configuration(
-            workspaceId: request.workspaceId,
+            workspaceId: target.workspaceId,
             worktreeId: source == .workspaceFile ? sessionWorktreeId : nil,
-            serverId: request.serverId,
+            serverId: target.serverId,
             filePath: pill.path,
             fileName: pill.label,
             source: source,
-            sessionId: request.sessionId
+            sessionId: target.sessionId
         )
     }
 }

@@ -71,8 +71,8 @@ extension ChatViewController {
     /// the window after Back, so the bar's buttons changed the model with no
     /// update pass to show a panel again. A sheet (compact width) has no
     /// column to wait for.
-    private func closeSidePanelThenPush(_ chat: ChatViewController) {
-        model.showGit = false
+    func closeSidePanelThenPush(_ chat: ChatViewController) {
+        showSidePanel(nil)
         updateSidePanels()
         trailingColumn.whenClosed { [weak self] in
             guard let self else { return }

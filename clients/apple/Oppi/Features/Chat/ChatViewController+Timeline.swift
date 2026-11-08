@@ -49,7 +49,15 @@ extension ChatViewController {
     /// holds no app services.
     private var timelineDestinationAction: ChatTimelineOpenDestination {
         let presenter = ChatTimelineDestinationPresenter(connection: connection)
-        return { presenter.open($0) }
+        // Regular width opens it beside the chat, like the reader; narrow
+        // width keeps the modal.
+        return { [weak self] request in
+            if let self, usesTrailingSidePanel {
+                showSidePanel(.timeline(request.sidePanelTarget))
+            } else {
+                presenter.open(request)
+            }
+        }
     }
 
     /// Older history pages load through this chat's own session runtime, rebound to the

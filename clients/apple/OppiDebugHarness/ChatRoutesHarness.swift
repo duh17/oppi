@@ -98,13 +98,12 @@ final class ChatRoutesPreviewController: PreviewRootController {
     override func viewDidLoad() {
         super.viewDidLoad()
         let controls = UIStackView(arrangedSubviews: [
-            control("chatRoutes.openCommitViewer") { [connection] in
-                ChatRoutesFixture.openFromTimeline(.commitDetail(sha: ChatRoutesFixture.commitSha), connection: connection)
+            control("chatRoutes.openCommitViewer") {
+                ChatRoutesFixture.openFromTimeline(.commitDetail(sha: ChatRoutesFixture.commitSha))
             },
-            control("chatRoutes.openFileViewer") { [connection] in
+            control("chatRoutes.openFileViewer") {
                 ChatRoutesFixture.openFromTimeline(
-                    .workspaceFile(UserMessagePathPill(kind: .repoFile, path: ChatRoutesFixture.changedPath)),
-                    connection: connection
+                    .workspaceFile(UserMessagePathPill(kind: .repoFile, path: ChatRoutesFixture.changedPath))
                 )
             },
         ])
@@ -689,13 +688,14 @@ enum ChatRoutesFixture {
         )
     }
 
-    /// What a timeline pill tap does: the chat's destination presenter, from
-    /// the timeline.
-    @MainActor static func openFromTimeline(_ destination: ChatTimelineDestination, connection: ServerConnection) {
+    /// What a timeline pill tap does: the destination action the chat gave its
+    /// timeline (a modal or the trailing column, by width).
+    @MainActor static func openFromTimeline(_ destination: ChatTimelineDestination) {
         guard let timeline = timelineCollectionInWindows(),
+              let open = (timeline.delegate as? ChatTimelineController)?.openDestination,
               let presenter = sequence(first: timeline as UIResponder, next: \.next)
                 .lazy.compactMap({ $0 as? UIViewController }).first else { return }
-        ChatTimelineDestinationPresenter(connection: connection).open(ChatTimelineDestinationRequest(
+        open(ChatTimelineDestinationRequest(
             destination: destination,
             serverId: serverId,
             workspaceId: workspace.id,

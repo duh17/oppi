@@ -55,6 +55,9 @@ final class ChatScreenModel {
     /// full screen) shown in the trailing column at regular width, instead of
     /// the narrow width's pushed `.chatReader` route.
     var sidePanelReaderTarget: ChatReaderNavTarget?
+    /// A timeline file or commit pill shown in the trailing column at regular
+    /// width, where narrow width presents it as a modal.
+    var sidePanelTimelineTarget: ChatTimelineSidePanelTarget?
     var showModelPicker = false
     /// The control that opened the picker, which its popover points at.
     @ObservationIgnored private(set) weak var modelPickerSource: UIView?

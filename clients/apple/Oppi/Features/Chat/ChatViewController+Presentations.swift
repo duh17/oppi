@@ -154,12 +154,14 @@ extension ChatViewController {
             model.sidePanelReaderTarget = nil
             appNavigation.openChatReader(target)
         }
+        if !AdaptiveWidth.isWide(traitCollection) { model.sidePanelTimelineTarget = nil }
         let panel: ChatSidePanel? = {
             guard usesTrailingSidePanel else { return nil }
             // Share wins: it is a deliberate action from the title menu, not
             // a toggle, and used to draw over every other panel full screen.
             if model.showShareRedactionSheet { return .share }
             if let target = model.sidePanelReaderTarget { return .reader(target) }
+            if let target = model.sidePanelTimelineTarget { return .timeline(target) }
             if model.isFilePanelVisible { return .files }
             if model.showOutline { return .outline }
             if model.showGit { return .git }
@@ -192,6 +194,7 @@ extension ChatViewController {
         case .context: contextController()
         case .share: shareRedactionController()
         case .reader(let target): readerPanelController(target)
+        case .timeline(let target): timelinePanelController(target)
         }
     }
 
@@ -200,7 +203,34 @@ extension ChatViewController {
     private func panelWidth(_ panel: ChatSidePanel) -> (minimum: CGFloat, ideal: CGFloat, maximum: CGFloat) {
         switch panel {
         case .files, .outline, .git, .context: (320, 400, 640)
-        case .reader, .share: (360, 520, 820)
+        case .reader, .share, .timeline: (360, 520, 820)
+        }
+    }
+
+    /// A file or commit pill's destination as the column's root, built by
+    /// the same presenter the narrow-width modal uses.
+    private func timelinePanelController(_ target: ChatTimelineSidePanelTarget) -> () -> UIViewController {
+        { [weak self] in
+            guard let self else {
+                preconditionFailure("The timeline panel presents only while its chat is alive")
+            }
+            let closePanel: () -> Void = { [weak self] in self?.showSidePanel(nil) }
+            let target = ChatTimelineSidePanelTarget(
+                destination: target.destination,
+                serverId: target.serverId,
+                workspaceId: target.workspaceId,
+                sessionId: target.sessionId,
+                reviewCommentSelectionScope: SessionFilePages.closingPanelScope(
+                    target.reviewCommentSelectionScope,
+                    closePanel: closePanel
+                )
+            )
+            return ChatTimelineDestinationPresenter(connection: connection).panelScreen(
+                for: target,
+                navigation: appNavigation,
+                pushChat: { [weak self] chat in self?.closeSidePanelThenPush(chat) },
+                onClose: closePanel
+            )
         }
     }
 

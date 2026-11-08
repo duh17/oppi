@@ -89,11 +89,19 @@ final class CommitDetailViewController: UIViewController {
     }
 
     private lazy var closeItem: UIBarButtonItem = {
+        let action = UIAction { [weak self] _ in self?.onClose?() }
+        if hostedInPanel {
+            // A pane closes with the X every other pane uses; the chevron is
+            // the sheet's dismiss.
+            let item = UIBarButtonItem(systemItem: .close, primaryAction: action)
+            item.accessibilityIdentifier = configuration.closeAccessibilityIdentifier
+            return item
+        }
         let mode = FullScreenViewerNavigationChrome.DismissMode.modal
         let item = UIBarButtonItem(
             title: mode.accessibilityLabel,
             image: UIImage(systemName: mode.systemImageName),
-            primaryAction: UIAction { [weak self] _ in self?.onClose?() }
+            primaryAction: action
         )
         item.accessibilityLabel = mode.accessibilityLabel
         item.accessibilityIdentifier = configuration.closeAccessibilityIdentifier

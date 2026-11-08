@@ -771,7 +771,7 @@ struct UserTimelineRowContentTests {
 
         for kind in [UserMessagePathPill.Kind.repoFile, .reviewFile] {
             let pill = UserMessagePathPill(kind: kind, path: "docs/notes.md")
-            let reader = presenter.fileContent(for: pill, request: request(pill))
+            let reader = presenter.fileContent(for: pill, source: request(pill).sidePanelTarget)
             #expect(reader.source == .workspaceFile, "\(kind)")
             #expect(reader.worktreeId == "wt-agent", "\(kind) must not open main")
             #expect(reader.serverId == "server-1", "\(kind)")
@@ -779,7 +779,7 @@ struct UserTimelineRowContentTests {
 
         let otherWorkspace = UserMessagePathPill(kind: .repoFile, path: "docs/notes.md")
         #expect(
-            presenter.fileContent(for: otherWorkspace, request: request(otherWorkspace, workspaceId: "ws-other"))
+            presenter.fileContent(for: otherWorkspace, source: request(otherWorkspace, workspaceId: "ws-other").sidePanelTarget)
                 .worktreeId == nil,
             "A worktree from a different workspace must not be applied"
         )
@@ -788,7 +788,7 @@ struct UserTimelineRowContentTests {
             kind: .uploadedFile,
             path: ".pi/attachments/\(sessionId)/turn/photo.txt"
         )
-        let upload = presenter.fileContent(for: uploadPill, request: request(uploadPill))
+        let upload = presenter.fileContent(for: uploadPill, source: request(uploadPill).sidePanelTarget)
         #expect(upload.source == .sessionFile(sessionId: sessionId))
         #expect(upload.worktreeId == nil)
     }

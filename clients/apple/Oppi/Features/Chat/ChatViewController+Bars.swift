@@ -761,6 +761,7 @@ extension ChatViewController {
             model.showGit = false
             model.showContextInspector = false
             closeSidePanelReader()
+            model.sidePanelTimelineTarget = nil
             closeShareRedactionSheet()
         }
     }
@@ -801,6 +802,11 @@ extension ChatViewController {
             model.sidePanelReaderTarget = target
         } else {
             closeSidePanelReader()
+        }
+        if case .timeline(let target) = panel {
+            model.sidePanelTimelineTarget = target
+        } else {
+            model.sidePanelTimelineTarget = nil
         }
         if panel == .share {
             model.showShareRedactionSheet = true
@@ -868,6 +874,7 @@ extension ChatViewController {
 enum ChatSidePanel: Hashable {
     case files, outline, git, context, share
     case reader(ChatReaderNavTarget)
+    case timeline(ChatTimelineSidePanelTarget)
 }
 
 extension ChatViewController {

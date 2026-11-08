@@ -1295,8 +1295,10 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
-    /// What a commit pill and a file pill open, through the chat's destination
-    /// presenter (harness controls; a test tap on the pill does not reach it).
+    /// What a commit pill and a file pill open, through the destination action
+    /// the chat gave its timeline (harness controls; a test tap on the pill does
+    /// not reach it). Compact width presents a modal; regular width opens the
+    /// trailing column, with the chat still beside it.
     func testTimelineCommitAndFileViewers() {
         launch()
         XCTAssertTrue(
@@ -1306,7 +1308,8 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         app.buttons["chatRoutes.openCommitViewer"].tap()
         let commit = app.navigationBars["Commit"]
         XCTAssertTrue(commit.waitUntilExists(timeout: 5), "Commit viewer did not open in a router navigation bar")
-        openAndCloseDiff(pushed: false)
+        assertChatBesideTimelineViewer("commit")
+        openAndCloseDiff(pushed: !usesSheets)
         app.buttons["chat.commit-detail.dismiss"].tap()
         XCTAssertTrue(commit.waitUntilGone(timeout: 5), "Close must close the commit viewer")
         assertRunning()
@@ -1314,6 +1317,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         app.buttons["chatRoutes.openFileViewer"].tap()
         let back = app.buttons["fullScreen.code.close"]
         XCTAssertTrue(back.waitUntilExists(timeout: 10), "File viewer did not open with its back control")
+        assertChatBesideTimelineViewer("file")
         attachScreenshot("file-viewer")
         back.tap()
         XCTAssertTrue(back.waitUntilGone(timeout: 5), "Back at the viewer's root must close it")
@@ -1438,6 +1442,24 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         hold()
         XCTAssertTrue(app.navigationBars["Commit"].exists, "Closing the diff must keep the commit")
         assertRunning()
+    }
+
+    /// Regular width opens a timeline viewer in the trailing column: the chat's
+    /// timeline keeps its own width and stays hittable beside it. Compact width
+    /// covers the chat with a sheet, so there is nothing to check.
+    private func assertChatBesideTimelineViewer(_ name: String, file: StaticString = #filePath, line: UInt = #line) {
+        guard !usesSheets else { return }
+        attachScreenshot("timeline-\(name)-beside-chat")
+        let timeline = app.collectionViews["chat.timeline"]
+        XCTAssertTrue(timeline.exists, "The chat's timeline must stay on screen beside the \(name) viewer", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(
+            timeline.frame.width, 375,
+            "The chat keeps its minimum width beside the \(name) viewer", file: file, line: line
+        )
+        XCTAssertLessThan(
+            timeline.frame.width, app.windows.firstMatch.frame.width,
+            "The \(name) viewer must share the window with the chat, not cover it", file: file, line: line
+        )
     }
 
     /// Whether the chat named `title` is on screen. Its title button says so; the
