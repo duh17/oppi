@@ -341,8 +341,10 @@ struct FileShareArtifactTests {
 
             // Source content should match the original text
             let originalText = extractText(from: content)
-            #expect(roundTripped == originalText,
-                    "\(name): round-trip mismatch")
+            #expect(
+                roundTripped == originalText,
+                "\(name): round-trip mismatch\n  expected: \(originalText.debugDescription)\n  actual:   \(roundTripped.debugDescription)"
+            )
         }
 
         FileShareService.cleanupTempFiles()
@@ -388,8 +390,20 @@ struct FileShareArtifactTests {
             return t
         case .code(let t, _, _):
             return t
-        case .diff:
-            return ""
+        case .diff(let hunks, _):
+            // A diff exports as unified text: each hunk header, then its lines
+            // prefixed by kind.
+            return hunks.map { hunk in
+                ([hunk.headerText] + hunk.lines.map { line in
+                    let prefix: String
+                    switch line.kind {
+                    case .context: prefix = " "
+                    case .added: prefix = "+"
+                    case .removed: prefix = "-"
+                    }
+                    return prefix + line.text
+                }).joined(separator: "\n")
+            }.joined(separator: "\n")
         case .imageData, .pdfData:
             return ""
         }
