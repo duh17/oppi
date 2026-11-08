@@ -185,7 +185,8 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
         ListScreen.buttonRow(
             cell,
             identifier: "schedules.row.\(schedule.id)",
-            label: "\(schedule.name), \(timing), \(schedule.status.rawValue)"
+            label: "\(schedule.name), \(timing), \(schedule.status.rawValue)",
+            contextMenu: rowMenu(for: item)
         ) { [weak self] in
             self?.openSchedule(schedule.id)
         }
@@ -208,37 +209,19 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
         ])
     }
 
-    override func trailingSwipeActions(for item: Item) -> UISwipeActionsConfiguration? {
+    override func rowActions(for item: Item) -> [ListRowAction] {
         guard case .schedule(let id) = item,
-              let schedule = visibleSchedules.first(where: { $0.id == id }) else { return nil }
+              let schedule = visibleSchedules.first(where: { $0.id == id }) else { return [] }
         let palette = palette
-        let action: UIContextualAction
-        switch schedule.status {
-        case .active:
-            action = UIContextualAction(style: .normal, title: "Pause") { [weak self] _, _, done in
-                self?.mutate(schedule, .pause)
-                done(true)
-            }
-            action.image = UIImage(systemName: "pause.fill")
-            action.backgroundColor = palette.ui.orange
-        case .paused:
-            action = UIContextualAction(style: .normal, title: "Resume") { [weak self] _, _, done in
-                self?.mutate(schedule, .resume)
-                done(true)
-            }
-            action.image = UIImage(systemName: "play.fill")
-            action.backgroundColor = palette.ui.green
-        case .archived:
-            action = UIContextualAction(style: .normal, title: "Restore") { [weak self] _, _, done in
-                self?.mutate(schedule, .restore)
-                done(true)
-            }
-            action.image = UIImage(systemName: "arrow.uturn.backward")
-            action.backgroundColor = palette.ui.blue
+        let (title, image, tint, change): (String, String, UIColor, SummaryMutation) = switch schedule.status {
+        case .active: ("Pause", "pause.fill", palette.ui.orange, .pause)
+        case .paused: ("Resume", "play.fill", palette.ui.green, .resume)
+        case .archived: ("Restore", "arrow.uturn.backward", palette.ui.blue, .restore)
         }
-        let config = UISwipeActionsConfiguration(actions: [action])
-        config.performsFirstActionWithFullSwipe = true
-        return config
+        return [ListRowAction(title: title, systemImage: image, tint: tint) { [weak self] done in
+            self?.mutate(schedule, change)
+            done(true)
+        }]
     }
 
     // MARK: - Actions

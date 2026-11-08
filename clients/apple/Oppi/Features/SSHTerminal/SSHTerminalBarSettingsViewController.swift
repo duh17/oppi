@@ -288,21 +288,29 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
         present(key, isNew: false)
     }
 
-    override func trailingSwipeActions(for item: Item) -> UISwipeActionsConfiguration? {
-        guard case .bar(let bar) = item, case .customKey(let id) = bar, let key = key(bar) else { return nil }
-        let delete = UIContextualAction(style: .destructive, title: String(localized: "Delete")) { [weak self] _, _, done in
-            self?.store.delete(id)
-            self?.setNeedsUpdateProperties()
-            done(true)
-        }
-        delete.accessibilityLabel = String(localized: "Delete \(key.displayName)")
-        let edit = UIContextualAction(style: .normal, title: String(localized: "Edit")) { [weak self] _, _, done in
-            self?.present(key, isNew: false)
-            done(true)
-        }
-        edit.backgroundColor = SettingsStyle.current.accent
+    override func rowActions(for item: Item) -> [ListRowAction] {
+        guard case .bar(let bar) = item, case .customKey(let id) = bar, let key = key(bar) else { return [] }
         // A full swipe deletes, as in any list; the key is cheap to make again.
-        return UISwipeActionsConfiguration(actions: [delete, edit])
+        return [
+            ListRowAction(
+                title: String(localized: "Delete"),
+                systemImage: "trash",
+                style: .destructive,
+                accessibilityLabel: String(localized: "Delete \(key.displayName)")
+            ) { [weak self] done in
+                self?.store.delete(id)
+                self?.setNeedsUpdateProperties()
+                done(true)
+            },
+            ListRowAction(
+                title: String(localized: "Edit"),
+                systemImage: "slider.horizontal.3",
+                tint: SettingsStyle.current.accent
+            ) { [weak self] done in
+                self?.present(key, isNew: false)
+                done(true)
+            },
+        ]
     }
 
     private func present(_ key: SSHTerminalCustomKey, isNew: Bool) {

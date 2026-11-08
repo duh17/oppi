@@ -143,19 +143,21 @@ final class ServerPairedDevicesViewController: ListScreenController<ServerPaired
 
     // MARK: - Revoke
 
-    override func trailingSwipeActions(for item: Item) -> UISwipeActionsConfiguration? {
-        guard case .device(let id) = item, let row = row(id), row.canRevoke, !model.isRevokingDevice else { return nil }
-        let revoke = UIContextualAction(style: .destructive, title: String(localized: "Revoke")) { [weak self] _, _, done in
+    override func rowActions(for item: Item) -> [ListRowAction] {
+        guard case .device(let id) = item, let row = row(id), row.canRevoke, !model.isRevokingDevice else { return [] }
+        // A destructive action never runs on a full swipe: it only asks.
+        return [ListRowAction(
+            title: String(localized: "Revoke"),
+            systemImage: "person.crop.circle.badge.minus",
+            style: .destructive,
+            accessibilityLabel: String(localized: "Revoke \(row.title)"),
+            performsWithFullSwipe: false
+        ) { [weak self] done in
             guard let self else { return done(false) }
             // The sheet asks; nothing is revoked until it is confirmed.
             confirmRevoke(row, from: indexPath(for: item).flatMap { collectionView.cellForItem(at: $0) })
             done(false)
-        }
-        revoke.accessibilityLabel = String(localized: "Revoke \(row.title)")
-        let configuration = UISwipeActionsConfiguration(actions: [revoke])
-        // A destructive action never runs on a full swipe: it only asks.
-        configuration.performsFirstActionWithFullSwipe = false
-        return configuration
+        }]
     }
 
     /// What asks before a device loses access.

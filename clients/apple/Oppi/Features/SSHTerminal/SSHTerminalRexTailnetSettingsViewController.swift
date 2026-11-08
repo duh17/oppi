@@ -107,16 +107,18 @@ final class SSHTerminalRexTailnetSettingsViewController: ListScreenController<
         }
     }
 
-    override func trailingSwipeActions(for item: Item) -> UISwipeActionsConfiguration? {
-        guard case .rex(let dnsName) = item else { return nil }
-        let remove = UIContextualAction(style: .destructive, title: String(localized: "Remove")) { [weak self] _, _, done in
+    override func rowActions(for item: Item) -> [ListRowAction] {
+        guard case .rex(let dnsName) = item else { return [] }
+        return [ListRowAction(
+            title: String(localized: "Remove"),
+            systemImage: "trash",
+            style: .destructive,
+            accessibilityLabel: String(localized: "Remove Rex"),
+            performsWithFullSwipe: false
+        ) { [weak self] done in
             self?.remove(dnsName: dnsName)
             done(true)
-        }
-        remove.accessibilityLabel = String(localized: "Remove Rex")
-        let config = UISwipeActionsConfiguration(actions: [remove])
-        config.performsFirstActionWithFullSwipe = false
-        return config
+        }]
     }
 
     /// Removes one saved name: what its row's swipe runs.

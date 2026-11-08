@@ -181,7 +181,8 @@ final class WorkspaceListViewController: ListScreenController<
             colors: ComposerThemeColors(palette: ThemeRuntimeState.currentPalette()),
             assetCache: connection?.iconAssetCache,
             identifier: "server.workspace.\(workspace.id)",
-            customActions: isDeleting ? [] : [delete]
+            customActions: isDeleting ? [] : [delete],
+            menu: rowMenu(for: item)
         ) { [weak self] in self?.open(workspace) }
     }
 
@@ -193,17 +194,18 @@ final class WorkspaceListViewController: ListScreenController<
         collectionView.dequeueConfiguredReusableCell(using: workspaceRow, for: indexPath, item: item)
     }
 
-    override func trailingSwipeActions(for item: Item) -> UISwipeActionsConfiguration? {
-        guard !isDeleting, let workspace = workspace(item) else { return nil }
-        let delete = UIContextualAction(style: .normal, title: String(localized: "Delete")) { [weak self] _, _, completion in
+    override func rowActions(for item: Item) -> [ListRowAction] {
+        guard !isDeleting, let workspace = workspace(item) else { return [] }
+        return [ListRowAction(
+            title: String(localized: "Delete"),
+            systemImage: "trash",
+            style: .destructive,
+            tint: ThemeRuntimeState.currentPalette().red,
+            // A delete asks first, so a long swipe must not run it.
+            performsWithFullSwipe: false
+        ) { [weak self] completion in
             completion(self?.confirmDelete(workspace) ?? false)
-        }
-        delete.image = UIImage(systemName: "trash")
-        delete.backgroundColor = ThemeRuntimeState.currentPalette().red
-        let configuration = UISwipeActionsConfiguration(actions: [delete])
-        // A delete asks first, so a long swipe must not run it.
-        configuration.performsFirstActionWithFullSwipe = false
-        return configuration
+        }]
     }
 
     // MARK: - Actions

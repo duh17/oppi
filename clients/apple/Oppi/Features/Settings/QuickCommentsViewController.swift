@@ -127,13 +127,16 @@ final class QuickCommentsViewController: ListScreenController<QuickCommentsViewC
         }
     }
 
-    override func trailingSwipeActions(for item: Item) -> UISwipeActionsConfiguration? {
-        guard case .template(let id) = item else { return nil }
-        let delete = UIContextualAction(style: .destructive, title: String(localized: "Delete")) { [weak self] _, _, done in
+    override func rowActions(for item: Item) -> [ListRowAction] {
+        guard case .template(let id) = item else { return [] }
+        return [ListRowAction(
+            title: String(localized: "Delete"),
+            systemImage: "trash",
+            style: .destructive
+        ) { [weak self] done in
             self?.delete(id)
             done(true)
-        }
-        return UISwipeActionsConfiguration(actions: [delete])
+        }]
     }
 
     // MARK: - Changes

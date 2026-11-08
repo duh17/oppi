@@ -468,6 +468,14 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         reveal(app.buttons["server.manageWorkspaces"]).tap()
         let workspaces = app.navigationBars["Workspaces"]
         XCTAssertTrue(workspaces.waitUntilExists(timeout: 5), "Server Settings did not push Workspaces")
+        // The row's only swipe action, Delete, is also in its context menu (a
+        // pointer's secondary click); a second tap outside closes the menu.
+        app.buttons["server.workspace.oppi"].press(forDuration: 1.0)
+        let delete = app.descendants(matching: .any).matching(identifier: "Delete").firstMatch
+        XCTAssertTrue(delete.waitUntilExists(timeout: 5), "The workspace row's context menu has no Delete")
+        attachScreenshot("workspace-row-context-menu")
+        workspaces.tap()
+        XCTAssertTrue(delete.waitUntilGone(timeout: 5), "The context menu must close")
         app.buttons["server.workspace.oppi"].tap()
         XCTAssertTrue(settings.waitUntilExists(timeout: 10), "Workspaces did not push the workspace's settings")
         pushAndReturn(row: "workspace.edit.instructions", title: "Instructions", to: settings)

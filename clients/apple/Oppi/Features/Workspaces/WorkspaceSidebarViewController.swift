@@ -350,6 +350,7 @@ final class WorkspaceSidebarViewController: UIViewController {
         let registration = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
             cell.element.onActivate = { [weak self] in self?.activate(item) }
             cell.element.onHighlightChange = { [weak cell] in cell?.setNeedsUpdateConfiguration() }
+            cell.hoverStyle = UIHoverStyle(effect: .highlight, shape: .rect(cornerRadius: 12))
             self?.configure(cell, item: item)
         }
         return UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in

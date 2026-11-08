@@ -301,6 +301,27 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
 
     // MARK: Schedules
 
+    /// A pointer's secondary click (a long press here) offers the swipe's
+    /// Pause, and choosing it runs the same mutation.
+    func testScheduleRowContextMenuPauses() {
+        launch(page: "schedules")
+        let row = app.buttons["schedules.row.schedule-nightly"]
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "Schedules list did not load")
+        XCTAssertTrue(row.label.hasSuffix("active"), "The fixture's nightly schedule starts active: \(row.label)")
+        row.press(forDuration: 1.0)
+        let pause = app.descendants(matching: .any).matching(identifier: "Pause").firstMatch
+        XCTAssertTrue(pause.waitUntilExists(timeout: 5), "The row's context menu has no Pause: \(app.debugDescription)")
+        // The row's swipe offers one action for its state, and so does the menu.
+        for other in ["Resume", "Restore"] {
+            XCTAssertFalse(app.descendants(matching: .any).matching(identifier: other).firstMatch.exists, "An active schedule's menu must not offer \(other)")
+        }
+        attachScreenshot("schedule-row-context-menu")
+        pause.tap()
+        XCTAssertTrue(pause.waitUntilGone(timeout: 5), "Choosing Pause must close the menu")
+        // The list shows Active schedules, so a paused one leaves it.
+        XCTAssertTrue(row.waitUntilGone(timeout: 10), "The schedule did not pause")
+    }
+
     func testScheduleDetailModals() {
         launch(page: "schedules")
         let row = app.buttons["schedules.row.schedule-nightly"]

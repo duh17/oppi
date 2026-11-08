@@ -793,6 +793,11 @@ final class SettingsSweepPreviewController: PreviewRootController {
                     return nil
                 }
             }
+            if path == "/schedules/\(schedule.id)/pause", method == "POST" {
+                var paused = scheduleSummary
+                paused.status = .paused
+                return json(ScheduleSummaryBody(schedule: paused))
+            }
             if path == "/schedules/\(schedule.id)" {
                 switch method {
                 case "GET":

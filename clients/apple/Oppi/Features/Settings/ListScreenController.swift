@@ -1,5 +1,52 @@
 import UIKit
 
+/// An action on a list row, offered both as the row's trailing swipe and in its
+/// context menu. `handler` reports whether it acted, as a swipe's completion does.
+struct ListRowAction {
+    enum Style {
+        case normal
+        /// Red in the swipe and the menu. An action that asks first still has
+        /// this style: the confirmation is its handler's.
+        case destructive
+    }
+
+    var title: String
+    var systemImage: String
+    var style = Style.normal
+    /// The swipe button's color; nil takes the style's.
+    var tint: UIColor?
+    var accessibilityLabel: String?
+    /// A long swipe runs the first action unless it asks first.
+    var performsWithFullSwipe = true
+    var handler: @MainActor (_ completion: @escaping (Bool) -> Void) -> Void
+
+    var contextualAction: UIContextualAction {
+        // A destructive swipe with its own color keeps the normal style, which
+        // does not animate the row away before the confirmation.
+        let action = UIContextualAction(
+            style: style == .destructive && tint == nil ? .destructive : .normal,
+            title: title
+        ) { _, _, completion in
+            // UIKit calls this on the main thread.
+            nonisolated(unsafe) let completion = completion
+            MainActor.assumeIsolated { handler(completion) }
+        }
+        action.image = UIImage(systemName: systemImage)
+        action.backgroundColor = tint
+        action.accessibilityLabel = accessibilityLabel
+        return action
+    }
+
+    var menuAction: UIAction {
+        let action = UIAction(
+            title: title,
+            image: UIImage(systemName: systemImage),
+            attributes: style == .destructive ? .destructive : []
+        ) { _ in handler { _ in } }
+        return action
+    }
+}
+
 /// One section of a list screen: its rows, and the header and footer text the
 /// section shows. A page returns these from `sections()` and the base list owns
 /// the snapshot, the headings, and the redraw.
@@ -629,8 +676,25 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// leaves the row without a menu.
     func copyText(of item: Item) -> String? { nil }
 
-    /// The swipe actions at a row's trailing edge.
-    func trailingSwipeActions(for item: Item) -> UISwipeActionsConfiguration? { nil }
+    /// The actions a row offers at its trailing swipe and in its context menu
+    /// (a trackpad's secondary click, a long press): one handler for both.
+    func rowActions(for item: Item) -> [ListRowAction] { [] }
+
+    /// `rowActions` as a menu, for a row whose own button owns the context
+    /// menu (a button row takes it as its `menu`); nil without actions.
+    func rowMenu(for item: Item) -> UIMenu? {
+        let actions = rowActions(for: item)
+        return actions.isEmpty ? nil : UIMenu(children: actions.map(\.menuAction))
+    }
+
+    /// The swipe actions at a row's trailing edge. By default `rowActions`.
+    func trailingSwipeActions(for item: Item) -> UISwipeActionsConfiguration? {
+        let actions = rowActions(for: item)
+        guard !actions.isEmpty else { return nil }
+        let configuration = UISwipeActionsConfiguration(actions: actions.map(\.contextualAction))
+        configuration.performsFirstActionWithFullSwipe = actions[0].performsWithFullSwipe
+        return configuration
+    }
 
     /// Adjusts a section's header after the base filled its text: an icon.
     func decorate(header content: inout UIListContentConfiguration, section: Section) {}
@@ -986,20 +1050,22 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         select(item)
     }
 
-    /// Long press on an info row copies its value.
+    /// Long press or secondary click: the row's actions (the swipe's, so a
+    /// pointer reaches them) and, on an info row, Copy for its value.
     func collectionView(
         _ collectionView: UICollectionView,
         contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
         point: CGPoint
     ) -> UIContextMenuConfiguration? {
-        guard let indexPath = indexPaths.first,
-              let item = pageItem(at: indexPath),
-              let text = copyText(of: item), !text.isEmpty else { return nil }
-        return UIContextMenuConfiguration(actionProvider: { _ in
-            UIMenu(children: [UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { _ in
+        guard let indexPath = indexPaths.first, let item = pageItem(at: indexPath) else { return nil }
+        var children: [UIMenuElement] = rowActions(for: item).map(\.menuAction)
+        if let text = copyText(of: item), !text.isEmpty {
+            children.append(UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { _ in
                 UIPasteboard.general.string = text
-            }])
-        })
+            })
+        }
+        guard !children.isEmpty else { return nil }
+        return UIContextMenuConfiguration(actionProvider: { _ in UIMenu(children: children) })
     }
 
     /// A row dragged by its handle stays in its own section.

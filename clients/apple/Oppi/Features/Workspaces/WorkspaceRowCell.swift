@@ -88,6 +88,7 @@ final class WorkspaceRowCell: UICollectionViewListCell {
         assetCache: IconAssetCache?,
         identifier: String,
         customActions: [UIAccessibilityCustomAction] = [],
+        menu: UIMenu? = nil,
         action: @escaping () -> Void
     ) {
         icon.apply(
@@ -112,6 +113,8 @@ final class WorkspaceRowCell: UICollectionViewListCell {
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
         button.accessibilityCustomActions = customActions
+        button.menu = menu
+        button.isContextMenuInteractionEnabled = menu != nil
         button.setTapAction(action)
     }
 

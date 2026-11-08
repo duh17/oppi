@@ -186,6 +186,7 @@ final class RouterNavigationController: UINavigationController, RouterModalConta
         applyNavigationBar(forIncoming: viewController, animated: animated)
     }
 
+
     override func updateProperties() {
         super.updateProperties()
         // Observation tracking re-runs this when the theme store changes.

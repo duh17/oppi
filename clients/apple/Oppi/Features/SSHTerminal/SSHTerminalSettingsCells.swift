@@ -168,8 +168,13 @@ final class SSHTerminalHostRowCell: UICollectionViewListCell {
         enabled: Bool,
         onConnect: @escaping () -> Void,
         onEdit: @escaping () -> Void,
-        onDelete: @escaping () -> Void
+        onDelete: @escaping () -> Void,
+        contextMenu: UIMenu? = nil
     ) {
+        // The row's own button covers it, so the row's context menu (a
+        // pointer's secondary click) is the button's.
+        connectButton.menu = contextMenu
+        connectButton.isContextMenuInteractionEnabled = contextMenu != nil
         var conf = UIButton.Configuration.plain()
         conf.title = profile.endpointLabel
         conf.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
@@ -244,6 +249,8 @@ final class SSHTerminalHostRowCell: UICollectionViewListCell {
             self.tapAction = nil
         }
         connectButton.accessibilityIdentifier = nil
+        connectButton.menu = nil
+        connectButton.isContextMenuInteractionEnabled = false
         menuButton.menu = nil
         menuButton.accessibilityIdentifier = nil
     }

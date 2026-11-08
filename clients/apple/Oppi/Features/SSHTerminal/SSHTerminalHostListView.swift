@@ -378,7 +378,8 @@ final class SSHTerminalHostListViewController:
             enabled: !self.session.connecting && !self.session.passwordPrompt,
             onConnect: { [weak self] in self?.open(profile) },
             onEdit: { [weak self] in self?.openEditor(profileID: profile.id) },
-            onDelete: { [weak self] in self?.confirmDelete(profile) }
+            onDelete: { [weak self] in self?.confirmDelete(profile) },
+            contextMenu: self.rowMenu(for: item)
         )
     }
 
@@ -498,19 +499,21 @@ final class SSHTerminalHostListViewController:
         return true
     }
 
-    override func trailingSwipeActions(for item: Item) -> UISwipeActionsConfiguration? {
-        if case .rexRow(let hostID, let id) = item { return rexSwipeActions(host: hostID, id: id) }
-        guard case .host(let id) = item, let profile = profiles.first(where: { $0.id == id }) else { return nil }
-        let delete = UIContextualAction(style: .destructive, title: "Delete Host") { [weak self] _, _, done in
-            self?.confirmDelete(profile)
-            done(true)
-        }
-        delete.accessibilityLabel = "Delete Host"
+    override func rowActions(for item: Item) -> [ListRowAction] {
+        if case .rexRow(let hostID, let id) = item { return rexRowActions(host: hostID, id: id) }
+        guard case .host(let id) = item, let profile = profiles.first(where: { $0.id == id }) else { return [] }
         // UIContextualAction is not UIAccessibilityIdentification: there is no
         // public accessibilityIdentifier (SwiftUI swipe had sshTerminal.host.delete).
-        let config = UISwipeActionsConfiguration(actions: [delete])
-        config.performsFirstActionWithFullSwipe = false
-        return config
+        return [ListRowAction(
+            title: "Delete Host",
+            systemImage: "trash",
+            style: .destructive,
+            accessibilityLabel: "Delete Host",
+            performsWithFullSwipe: false
+        ) { [weak self] done in
+            self?.confirmDelete(profile)
+            done(true)
+        }]
     }
 
     // MARK: - Bar items
@@ -1161,20 +1164,27 @@ final class SSHTerminalHostListViewController:
     /// A session's swipe: Rename, and Close, which asks first (so a full swipe
     /// must not run it, and the row stays until the person confirms). Only
     /// while Rex can be changed.
-    private func rexSwipeActions(host hostID: UUID, id: String) -> UISwipeActionsConfiguration? {
-        guard manageableSession(host: hostID, id: id) != nil else { return nil }
-        let rename = UIContextualAction(style: .normal, title: "Rename") { [weak self] _, _, done in
-            self?.renameRexSession(host: hostID, id: id)
-            done(false)
-        }
-        rename.backgroundColor = sshTerminalThemeID.palette.ui.blue
-        let close = UIContextualAction(style: .destructive, title: "Close") { [weak self] _, _, done in
-            self?.closeRexSession(host: hostID, id: id)
-            done(false)
-        }
-        let config = UISwipeActionsConfiguration(actions: [close, rename])
-        config.performsFirstActionWithFullSwipe = false
-        return config
+    private func rexRowActions(host hostID: UUID, id: String) -> [ListRowAction] {
+        guard manageableSession(host: hostID, id: id) != nil else { return [] }
+        return [
+            ListRowAction(
+                title: "Close",
+                systemImage: "xmark.circle",
+                style: .destructive,
+                performsWithFullSwipe: false
+            ) { [weak self] done in
+                self?.closeRexSession(host: hostID, id: id)
+                done(false)
+            },
+            ListRowAction(
+                title: "Rename",
+                systemImage: "textformat",
+                tint: sshTerminalThemeID.palette.ui.blue
+            ) { [weak self] done in
+                self?.renameRexSession(host: hostID, id: id)
+                done(false)
+            },
+        ]
     }
 
     // MARK: - Hosts

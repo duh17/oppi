@@ -165,13 +165,16 @@ final class SettingsPrivacyViewController: ListScreenController<SettingsPrivacyV
         }
     }
 
-    override func trailingSwipeActions(for item: Item) -> UISwipeActionsConfiguration? {
-        guard let grant = grant(for: item) else { return nil }
-        let withdraw = UIContextualAction(style: .destructive, title: String(localized: "Withdraw")) { [weak self] _, _, done in
+    override func rowActions(for item: Item) -> [ListRowAction] {
+        guard let grant = grant(for: item) else { return [] }
+        return [ListRowAction(
+            title: String(localized: "Withdraw"),
+            systemImage: "hand.raised.slash",
+            style: .destructive
+        ) { [weak self] done in
             self?.withdraw(grant)
             done(true)
-        }
-        return UISwipeActionsConfiguration(actions: [withdraw])
+        }]
     }
 
     override func configure(_ cell: UICollectionViewListCell, item: Item) {

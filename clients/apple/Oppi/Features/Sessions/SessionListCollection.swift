@@ -368,6 +368,9 @@ final class SessionListCollection<
             cell.backgroundConfiguration = rowBackground()
             // No tap highlight, as the rows have always had none.
             cell.automaticallyUpdatesBackgroundConfiguration = false
+            // A pointer over the row highlights it, which a tap never does. The
+            // rows are plain and full width: the system's own shape fits them.
+            cell.hoverStyle = UIHoverStyle(effect: .highlight)
         }
         let rowCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
             guard let self, let row = current.rows[item] else { return }

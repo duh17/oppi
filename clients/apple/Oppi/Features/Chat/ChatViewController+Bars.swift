@@ -62,6 +62,7 @@ final class ChatBarItems {
         let button = GitBarButton(textStyle: .subheadline) { [weak self] in self?.chat?.runTopBarAction(.git) }
         button.accessibilityIdentifier = ChatTopBarAction.git.accessibilityIdentifier
         button.accessibilityLabel = ChatTopBarAction.git.accessibilityLabel
+        button.toolTip = ChatTopBarAction.git.accessibilityLabel
         return button
     }()
     private lazy var git = ActionControls(rail: makeRailItem(.git), button: gitButton)
@@ -465,6 +466,9 @@ final class ChatBarItems {
         ])
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = label
+        // An icon names itself under a pointer.
+        button.toolTip = label
+        button.isPointerInteractionEnabled = true
         return button
     }
 

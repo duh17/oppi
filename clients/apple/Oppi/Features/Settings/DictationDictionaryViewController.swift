@@ -331,14 +331,17 @@ final class DictationDictionaryViewController: ListScreenController<DictationDic
         }
     }
 
-    override func trailingSwipeActions(for item: Item) -> UISwipeActionsConfiguration? {
+    override func rowActions(for item: Item) -> [ListRowAction] {
         guard case .phrase(let scope, let value, let occurrence) = item,
-              let index = index(of: value, occurrence: occurrence, scope: scope) else { return nil }
-        let delete = UIContextualAction(style: .destructive, title: String(localized: "Delete")) { [weak self] _, _, done in
+              let index = index(of: value, occurrence: occurrence, scope: scope) else { return [] }
+        return [ListRowAction(
+            title: String(localized: "Delete"),
+            systemImage: "trash",
+            style: .destructive
+        ) { [weak self] done in
             self?.model.deletePhrase(workspaceScope: scope == .workspace, index: index)
             done(true)
-        }
-        return UISwipeActionsConfiguration(actions: [delete])
+        }]
     }
 
     // MARK: - Helpers
