@@ -754,6 +754,7 @@ class E2ETestCase: XCTestCase {
     // MARK: - Session Helpers
 
     /// Creates a new session by tapping the + button and waits for the app to open it.
+    @MainActor
     func createSession() {
         if chatSessionSurfaceExists(in: app) {
             return
@@ -806,6 +807,7 @@ class E2ETestCase: XCTestCase {
     }
 
     /// Taps a specific session row by stable session id and waits for chat input.
+    @MainActor
     func enterSession(id sessionId: String) {
         let sessionList = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(
@@ -852,6 +854,7 @@ class E2ETestCase: XCTestCase {
     /// The toolbar element itself spans the whole screen. Its bounds are the
     /// bar's content: the first element of it that sits in the lower half of the
     /// list and is smaller than the list is the bar's top edge.
+    @MainActor
     private func sessionRowTapBand(in list: XCUIElement) -> ClosedRange<CGFloat> {
         let listFrame = list.frame
         var top = listFrame.minY
@@ -860,10 +863,19 @@ class E2ETestCase: XCTestCase {
         if navigationBar.exists {
             top = max(top, navigationBar.frame.maxY)
         }
-        for toolbar in app.toolbars.allElementsBoundByIndex where toolbar.exists {
-            let parts = [toolbar] + toolbar.descendants(matching: .any).allElementsBoundByIndex
-            for part in parts {
-                let frame = part.frame
+        // One snapshot per toolbar: the bar's elements come and go while it
+        // settles after a screen change, and re-resolving each of them by index
+        // fails the read ("No matches found for Element at index N") when one
+        // has gone since the list was taken.
+        for index in 0..<app.toolbars.count {
+            guard let snapshot = try? app.toolbars.element(boundBy: index).snapshot() else { continue }
+            var parts: [any XCUIElementSnapshot] = [snapshot]
+            var next = 0
+            while next < parts.count {
+                parts.append(contentsOf: parts[next].children)
+                next += 1
+            }
+            for frame in parts.map(\.frame) {
                 if frame.height > 0, frame.height < listFrame.height / 2,
                    frame.minY > listFrame.midY, frame.intersects(listFrame)
                 {
@@ -885,6 +897,7 @@ class E2ETestCase: XCTestCase {
     /// row by its frame against the tap band, and drags the list without
     /// momentum by the distance that is missing.
     /// Returns false when the row could not be placed (the list cannot scroll further).
+    @MainActor
     @discardableResult
     private func scrollSessionRowIntoView(_ row: XCUIElement, in list: XCUIElement) -> Bool {
         var lastMinY: CGFloat?
@@ -931,6 +944,7 @@ class E2ETestCase: XCTestCase {
     }
 
     /// Creates a new session and enters it.
+    @MainActor
     func createAndEnterSession() {
         createSession()
     }

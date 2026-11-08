@@ -6,6 +6,7 @@ import XCTest
 /// rather than inferring transport state from incidental UI.
 final class WebSocketLifecycleE2ETests: E2ETestCase {
 
+    @MainActor
     func testNavigationKeepsWorkspaceListOnHTTPAndUsesBoundSessionStreams() throws {
         waitForRequiredSplitStreamCapabilities()
 
@@ -37,6 +38,7 @@ final class WebSocketLifecycleE2ETests: E2ETestCase {
         waitForNoDesiredSubscription(sessionId: sessionB)
     }
 
+    @MainActor
     func testRapidSessionSwitchingKeepsOnlyFocusedSessionOnFullStream() throws {
         waitForRequiredSplitStreamCapabilities()
 

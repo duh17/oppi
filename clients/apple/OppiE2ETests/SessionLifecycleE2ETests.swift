@@ -9,6 +9,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
 
     // MARK: - Tests
 
+    @MainActor
     func testStopMidStream() throws {
         createAndEnterSession()
 
@@ -45,6 +46,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         )
     }
 
+    @MainActor
     func testSlashCommandSuggestionsRemainAvailableMidTurn() throws {
         createAndEnterSession()
 
@@ -88,6 +90,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         tap(stopButton, named: "stop button")
     }
 
+    @MainActor
     func testBusyModePickerUsesStablePopoverOrderAndSelection() throws {
         createAndEnterSession()
 
@@ -127,6 +130,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         tap(stopButton, named: "stop button")
     }
 
+    @MainActor
     func testContextToolbarControlUsesAFullHitTargetAndOpensContext() throws {
         createAndEnterSession()
         sendMessageAndWaitForResponse(localEchoPrompt("CONTEXT_TOOLBAR_LAYOUT_READY"))
@@ -243,6 +247,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         )
     }
 
+    @MainActor
     func testMultiTurnConversation() throws {
         createAndEnterSession()
 
@@ -268,6 +273,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         )
     }
 
+    @MainActor
     func testTreeNavigationSwitchesBranchWithoutSummary() throws {
         createAndEnterSession()
 
@@ -329,6 +335,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         }
     }
 
+    @MainActor
     func testSessionSwitching() throws {
         // Create session A, then go back and create session B.
         createSession()
