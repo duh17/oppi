@@ -100,3 +100,20 @@ private func makeReviewFile(path: String) -> WorkspaceReviewFile {
         selectedSessionTouched: true
     )
 }
+
+@MainActor
+@Suite("Review file list theme")
+struct ReviewFileListThemeTests {
+    @Test("The file list paints the theme's background, not the system grouped black")
+    func listTakesTheThemeBackground() {
+        let list = ReviewFileListViewController(
+            files: [makeReviewFile(path: "a/alpha.md")], currentPath: nil, onSelect: { _ in }, onHide: {}
+        )
+        let window = makeSceneWindow()
+        window.rootViewController = list
+        window.makeKeyAndVisible()
+        defer { hideTestWindow(window) }
+        list.view.layoutIfNeeded()
+        #expect(list.collectionView.backgroundColor == ThemeRuntimeState.currentThemeID().palette.ui.bg)
+    }
+}

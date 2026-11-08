@@ -1005,6 +1005,7 @@ final class ReviewFileListViewController: UICollectionViewController {
     private let onSelect: (WorkspaceReviewFile) -> Void
     private let onHide: () -> Void
     private var dataSource: UICollectionViewDiffableDataSource<Int, String>?
+    private var themeID: ThemeID?
 
     init(
         files: [WorkspaceReviewFile],
@@ -1017,9 +1018,11 @@ final class ReviewFileListViewController: UICollectionViewController {
         self.currentPath = currentPath
         self.onSelect = onSelect
         self.onHide = onHide
-        super.init(collectionViewLayout: UICollectionViewCompositionalLayout.list(
-            using: UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        ))
+        // Clear, so the theme's background set in `updateProperties` shows
+        // behind the cards instead of the system grouped black.
+        var layout = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
+        layout.backgroundColor = .clear
+        super.init(collectionViewLayout: UICollectionViewCompositionalLayout.list(using: layout))
         title = String(localized: "Files")
         if !hostedInPanel {
             let hide = UIBarButtonItem(
@@ -1041,6 +1044,17 @@ final class ReviewFileListViewController: UICollectionViewController {
         self.files = files
         self.currentPath = currentPath
         applySnapshot(reconfiguring: reconfigure)
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        // Observation tracking re-runs this when the theme store changes.
+        let current = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        guard current != themeID else { return }
+        themeID = current
+        overrideUserInterfaceStyle = current.preferredColorScheme == .light ? .light : .dark
+        view.backgroundColor = current.palette.ui.bg
+        collectionView.backgroundColor = current.palette.ui.bg
     }
 
     override func viewDidLoad() {
