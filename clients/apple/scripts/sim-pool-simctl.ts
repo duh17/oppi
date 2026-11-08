@@ -126,27 +126,32 @@ export function shouldSkipPoolSlot(found: {
   return found.match == null && found.mismatches.length > 0;
 }
 
-// Order in which to try slots. A slot whose DerivedData is already built for this
-// checkout (`warm`: slot -> recency in ms) comes first, newest first, because it
-// skips a cold compile; then slots with a matching simulator device; then the
-// rest. Each group keeps the caller's slot order. Only the order changes: the
-// slot lock still decides whether a run may use a slot and its DerivedData.
+// Order in which to try slots: a matching simulator that is already booted, then a
+// matching one that is shut down, then the rest. Each group keeps the caller's slot
+// order. Booted first because the booted ceiling (OPPI_SIM_POOL_MAX_BOOTED) is below
+// the slot count: taking a cold low slot while a higher one idles booted would shut
+// one simulator down only to boot another. Only the order changes: the slot lock
+// still decides whether a run may use a slot.
 export function preferredAcquireSlots(
   slots: number[],
   devices: SimulatorDevice[],
   runtime: string,
   deviceType: string,
 ): number[] {
-  const preferred: number[] = [];
+  const booted: number[] = [];
+  const matching: number[] = [];
   const fallback: number[] = [];
   for (const slot of slots) {
-    if (findMatchingPoolDevice(devices, slot, runtime, deviceType).match) {
-      preferred.push(slot);
+    const match = findMatchingPoolDevice(devices, slot, runtime, deviceType).match;
+    if (match && (match.state === "Booted" || match.state === "Booting")) {
+      booted.push(slot);
+    } else if (match) {
+      matching.push(slot);
     } else {
       fallback.push(slot);
     }
   }
-  return [...preferred, ...fallback];
+  return [...booted, ...matching, ...fallback];
 }
 
 export function deviceState(devices: SimulatorDevice[], udid: string): string | undefined {

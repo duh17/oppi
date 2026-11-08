@@ -139,20 +139,20 @@ describe("sim-pool-simctl", () => {
     ).toEqual([1, 0]);
   });
 
-  test("acquire order is matching device, then the rest", () => {
+  test("acquire order is booted matching device, then shut-down matching device, then the rest", () => {
     const runtime = "com.apple.CoreSimulator.SimRuntime.iOS-27-0";
     const deviceType = "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro";
-    const device = (slot: number) => ({
+    const device = (slot: number, state = "Shutdown") => ({
       udid: `U${slot}`,
       name: `Oppi-Pool-${slot}`,
-      state: "Shutdown",
+      state,
       isAvailable: true,
       deviceTypeIdentifier: deviceType,
       runtime,
     });
-    const devices = [device(2), device(5)];
+    const devices = [device(1), device(2), device(4, "Booted"), device(5, "Booting")];
     const slots = [0, 1, 2, 3, 4, 5];
-    expect(preferredAcquireSlots(slots, devices, runtime, deviceType)).toEqual([2, 5, 0, 1, 3, 4]);
+    expect(preferredAcquireSlots(slots, devices, runtime, deviceType)).toEqual([4, 5, 1, 2, 0, 3]);
   });
 
   test("latest-stable skips beta runtimes", () => {
