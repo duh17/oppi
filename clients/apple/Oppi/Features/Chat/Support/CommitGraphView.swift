@@ -118,8 +118,14 @@ enum CommitGraphView {
     }
 
     struct Chip {
+        enum Icon {
+            case symbol(String)
+            /// A branch or commit another checkout has out (`WorktreeGlyph`).
+            case worktree
+        }
+
         let text: String
-        let symbol: String?
+        let icon: Icon?
         let color: UIColor
         let accessibility: String
     }
@@ -136,41 +142,41 @@ enum CommitGraphView {
             switch ref.kind {
             case .head:
                 head.append(Chip(
-                    text: "HEAD", symbol: nil, color: palette.ui.orange,
+                    text: "HEAD", icon: nil, color: palette.ui.orange,
                     accessibility: String(localized: "detached HEAD")
                 ))
             case .branch where ref.isHead == true:
                 head.append(Chip(
-                    text: ref.name, symbol: "arrow.branch", color: palette.ui.cyan,
+                    text: ref.name, icon: .symbol("arrow.branch"), color: palette.ui.cyan,
                     accessibility: String(localized: "current branch \(ref.name)")
                 ))
             case .branch:
                 if let worktree = marks.byBranch[ref.name] {
                     branches.append(Chip(
-                        text: ref.name, symbol: "folder", color: palette.ui.green,
+                        text: ref.name, icon: .worktree, color: palette.ui.green,
                         accessibility: String(localized: "branch \(ref.name), checked out in \(worktree.displayName)")
                     ))
                 } else {
                     branches.append(Chip(
-                        text: ref.name, symbol: nil, color: palette.ui.purple,
+                        text: ref.name, icon: nil, color: palette.ui.purple,
                         accessibility: String(localized: "branch \(ref.name)")
                     ))
                 }
             case .tag:
                 tags.append(Chip(
-                    text: ref.name, symbol: "tag", color: palette.ui.yellow,
+                    text: ref.name, icon: .symbol("tag"), color: palette.ui.yellow,
                     accessibility: String(localized: "tag \(ref.name)")
                 ))
             case .remote:
                 remotes.append(Chip(
-                    text: ref.name, symbol: "cloud", color: palette.ui.comment,
+                    text: ref.name, icon: .symbol("cloud"), color: palette.ui.comment,
                     accessibility: String(localized: "remote \(ref.name)")
                 ))
             }
         }
         let detached = marks.detachedAt(commit).map { worktree in
             Chip(
-                text: worktree.name, symbol: "folder", color: palette.ui.green,
+                text: worktree.name, icon: .worktree, color: palette.ui.green,
                 accessibility: String(localized: "worktree \(worktree.name)")
             )
         }
@@ -287,9 +293,15 @@ enum CommitGraphView {
 
         private static func chipView(_ chip: Chip, font: UIFont) -> UIView {
             var items: [UIView] = []
-            if let symbol = chip.symbol {
-                let icon = UIImageView(image: UIImage(systemName: symbol))
-                icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: font, scale: .small)
+            if let chipIcon = chip.icon {
+                let icon = UIImageView()
+                switch chipIcon {
+                case .symbol(let name):
+                    icon.image = UIImage(systemName: name)
+                    icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: font, scale: .small)
+                case .worktree:
+                    icon.image = WorktreeGlyph.image(font: font, scale: .small)
+                }
                 icon.tintColor = chip.color
                 icon.contentMode = .center
                 icon.setContentHuggingPriority(.required, for: .horizontal)

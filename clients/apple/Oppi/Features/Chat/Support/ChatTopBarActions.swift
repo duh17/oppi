@@ -55,9 +55,9 @@ enum ChatTopBarAction: String, CaseIterable, Identifiable, Hashable {
     /// button (`.subheadline`), the rail item and the Settings → Top Bar row
     /// (`.body`), and the … menu item (nil, below). `isActive` is the open state a
     /// control shows (Files draws filled while its panel is open). Git is the
-    /// Git logo, not `arrow.triangle.branch`, which means a worktree elsewhere
-    /// in the app; the rest are SF Symbols. Every image is a template, so it
-    /// takes its control's tint.
+    /// Git logo, not `arrow.triangle.branch`, which means a branch or a fork
+    /// elsewhere in the app; the rest are SF Symbols. Every image is a template,
+    /// so it takes its control's tint.
     ///
     /// A nil `textStyle` is the overflow menu: an unconfigured symbol, which the
     /// menu sizes itself, and the logo at the size the menu draws its symbols.

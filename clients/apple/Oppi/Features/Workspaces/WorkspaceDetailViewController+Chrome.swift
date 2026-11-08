@@ -125,7 +125,7 @@ extension WorkspaceDetailViewController {
 
         if bars.joinsRail {
             // The principal title is a wide custom view; the rail keeps the
-            // system title and a labeled worktree symbol with the same menu.
+            // system title and a labeled worktree glyph with the same menu.
             navigationItem.titleView = nil
             if bars.isSplit {
                 // Split detail has no system Back.
@@ -287,7 +287,7 @@ extension WorkspaceDetailViewController {
             : String(localized: "Current worktree \(title.worktreeName)")
     }
 
-    /// The rail's worktree control: the title's menu on a labeled branch symbol.
+    /// The rail's worktree control: the title's menu on a labeled worktree glyph.
     private func worktreeRailItem(_ title: TitleState, tint: UIColor) -> UIBarButtonItem {
         let item = UIBarButtonItem(
             title: String(localized: "Worktree"),
