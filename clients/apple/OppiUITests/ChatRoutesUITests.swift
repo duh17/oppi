@@ -114,7 +114,15 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         for id in ids {
             XCTAssertTrue(app.buttons["chat.toolbar.\(id)"].waitUntilExists(timeout: 15), "\(id) must be on the bar")
         }
-        assertLeftToRight(ids.map { app.buttons["chat.toolbar.\($0)"] }, "The reordered bar")
+        // The Duo's vertical rail (`chat.rail.session`) runs the order down the
+        // screen, so every position below is read along the bar's own axis.
+        let onRail = app.buttons["chat.rail.session"].exists
+        let buttons = ids.map { app.buttons["chat.toolbar.\($0)"] }
+        if onRail {
+            assertTopToBottom(buttons, "The reordered rail")
+        } else {
+            assertLeftToRight(buttons, "The reordered bar")
+        }
 
         let git = app.buttons["chat.toolbar.git"]
         XCTAssertTrue(
@@ -122,16 +130,21 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             waitFor((git.value as? String)?.contains("121 changed files") == true, timeout: 10),
             "The Git button must say the full count: \(git.value ?? "nil")"
         )
+        let terminal = app.buttons["chat.toolbar.terminal"]
         XCTAssertLessThanOrEqual(
-            git.frame.maxX, app.buttons["chat.toolbar.terminal"].frame.minX,
+            onRail ? git.frame.maxY : git.frame.maxX, onRail ? terminal.frame.minY : terminal.frame.minX,
             "The badge's button must end before Terminal starts"
         )
-        let centers = (ids + ["more"]).map { app.buttons["chat.toolbar.\($0)"].frame.midX }.sorted()
-        let pitches = zip(centers.dropFirst(), centers).map { $0 - $1 }
-        XCTAssertLessThan(
-            (pitches.max() ?? 0) - (pitches.min() ?? 0), 1,
-            "The bar's controls must sit on one pitch: \(pitches)"
-        )
+        // The rail's spacing is the system's, set by each item's own size: only the
+        // bar this layout draws promises one even pitch.
+        if !onRail {
+            let centers = (ids + ["more"]).map { app.buttons["chat.toolbar.\($0)"].frame.midX }.sorted()
+            let pitches = zip(centers.dropFirst(), centers).map { $0 - $1 }
+            XCTAssertLessThan(
+                (pitches.max() ?? 0) - (pitches.min() ?? 0), 1,
+                "The bar's controls must sit on one pitch: \(pitches)"
+            )
+        }
         attachScreenshot("chat-top-bar-reordered")
         XCTAssertFalse(
             app.descendants(matching: .any)["feature-tip.chat-top-bar-more.tip"].waitForExistence(timeout: 4),
@@ -765,8 +778,12 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             drawer.frame.maxY, composer.frame.minY,
             "The drawer must end above the composer: \(drawer.frame) vs \(composer.frame)"
         )
+        // The Duo's rail stands beside the chat, so nothing sits above the drawer but the screen's edge.
+        let aboveDrawer = app.buttons["chat.rail.session"].exists
+            ? app.windows.firstMatch.frame.minY
+            : app.buttons["chat.toolbar.context"].frame.maxY
         XCTAssertGreaterThanOrEqual(
-            drawer.frame.minY, app.buttons["chat.toolbar.context"].frame.maxY,
+            drawer.frame.minY, aboveDrawer,
             "The drawer must start below the bar: \(drawer.frame)"
         )
 
@@ -1082,10 +1099,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(newSession.waitUntilExists(timeout: 5), "A panel-hosted commit must offer New Session")
         newSession.tap()
 
-        let newChatTitle = app.buttons.matching(
-            NSPredicate(format: "label == %@ AND value == %@", "Rename session", "New routes session")
-        ).firstMatch
-        XCTAssertTrue(newChatTitle.waitUntilExists(timeout: 10), "New Session must open its chat")
+        XCTAssertTrue(waitFor(chatIsShown(title: "New routes session")), "New Session must open its chat")
         XCTAssertTrue(commit.waitUntilGone(timeout: 5), "Starting a session must close the column's commit")
         XCTAssertFalse(panel.exists, "Starting a session must close the Git panel")
         let backButtons = app.buttons.matching(identifier: "chat.toolbar.back")
@@ -1103,10 +1117,10 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         )
         attachScreenshot("panel-commit-new-session-chat")
         backButtons.element(boundBy: 0).tap()
-        let originalTitle = app.buttons.matching(
-            NSPredicate(format: "label == %@ AND value == %@", "Rename session", "Routes")
-        ).firstMatch
-        XCTAssertTrue(originalTitle.waitUntilExists(timeout: 5), "Back must return to the chat the panel was opened from")
+        XCTAssertTrue(
+            waitFor(chatIsShown(title: "Routes")),
+            "Back must return to the chat the panel was opened from"
+        )
         hold()
         XCTAssertFalse(panel.exists, "Back must not return to the Git panel")
 
@@ -1255,10 +1269,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(newSession.waitUntilExists(timeout: 5), "Selecting must offer New Session")
         newSession.tap()
 
-        let newChatTitle = app.buttons.matching(
-            NSPredicate(format: "label == %@ AND value == %@", "Rename session", "New routes session")
-        ).firstMatch
-        XCTAssertTrue(newChatTitle.waitUntilExists(timeout: 10), "New Session must open its chat")
+        XCTAssertTrue(waitFor(chatIsShown(title: "New routes session")), "New Session must open its chat")
         XCTAssertTrue(panel.waitUntilGone(timeout: 10), "Starting a session must close the Git panel")
         let created = app.descendants(matching: .any)["chatRoutes.createdSessions"]
         XCTAssertEqual(created.value as? String, "1", "The stub must have received the new session")
@@ -1267,10 +1278,10 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         let backButtons = app.buttons.matching(identifier: "chat.toolbar.back")
         XCTAssertEqual(backButtons.count, 1, "The new chat must be the only chat on screen, not one inside a sheet")
         backButtons.element(boundBy: 0).tap()
-        let originalTitle = app.buttons.matching(
-            NSPredicate(format: "label == %@ AND value == %@", "Rename session", "Routes")
-        ).firstMatch
-        XCTAssertTrue(originalTitle.waitUntilExists(timeout: 5), "Back must return to the chat the panel was opened from")
+        XCTAssertTrue(
+            waitFor(chatIsShown(title: "Routes")),
+            "Back must return to the chat the panel was opened from"
+        )
         hold()
         XCTAssertFalse(panel.exists, "Back must not return to the Git panel")
         // The panel closed cleanly: it opens again.
@@ -1423,6 +1434,16 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         hold()
         XCTAssertTrue(app.navigationBars["Commit"].exists, "Closing the diff must keep the commit")
         assertRunning()
+    }
+
+    /// Whether the chat named `title` is on screen. Its title button says so; the
+    /// Duo's vertical rail has none, so its session item's value names the chat.
+    private func chatIsShown(title: String) -> Bool {
+        let named = app.buttons.matching(
+            NSPredicate(format: "label == %@ AND value == %@", "Rename session", title)
+        ).firstMatch
+        if named.exists { return true }
+        return app.buttons["chat.rail.session"].exists && app.buttons["chat.rail.session"].value as? String == title
     }
 
     /// The Git panel's commit row: one button across the row.
