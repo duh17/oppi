@@ -49,6 +49,7 @@ extension QuickSessionViewController: ChatComposerSource {
 
     private func composerActionRow(colors: ComposerThemeColors) -> ComposerActionRow {
         let presentation = model.modelPresentation
+        let wide = usesWideLayout
         let toolbar = ComposerActionRow.sessionToolbar(
             modelTitle: shortModelName(model.effectiveModelId ?? presentation.pillText),
             modelProvider: presentation.pillProvider,
@@ -56,10 +57,13 @@ extension QuickSessionViewController: ChatComposerSource {
             thinkingTint: thinkingTint,
             supportedThinkingLevels: model.supportedThinkingLevels,
             colors: colors,
+            chrome: wide ? .popUp : .toolbar,
             onModelTap: { [weak self] in self?.model.openModelPicker(from: $0) },
             onThinkingSelect: { [weak self] in self?.model.selectThinkingLevel($0) },
             onSaveThinkingAsDefault: nil
         )
+        // The wide bar holds the Agent; the composer keeps model and thinking.
+        if wide { return ComposerActionRow(trailing: toolbar.trailing) }
         let agent = model.selectedAgent
         let agentAction = ComposerAction.agent(
             agentName: agent?.name,

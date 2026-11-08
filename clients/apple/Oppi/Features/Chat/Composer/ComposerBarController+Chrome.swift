@@ -82,8 +82,15 @@ extension ComposerBarController {
         trailingAttachButton.setHiddenIfChanged(!trailingAttach || !showActionRow)
         attachButton.isEnabled = !content.isSending
         trailingAttachButton.isEnabled = !content.isSending
-        attachButton.apply(title: nil, systemImage: "plus", colors: colors, symbolPointSize: 11)
-        trailingAttachButton.apply(title: nil, systemImage: "plus", colors: colors, symbolPointSize: 11)
+        // A row of pop-up buttons (regular width) takes the "+" in the same style.
+        let popUpRow = (content.actionRow.leading + content.actionRow.trailing).contains { $0.chrome == .popUp }
+        for button in [attachButton, trailingAttachButton] {
+            if popUpRow {
+                button.applyPopUpStyle(colors: colors, systemImage: "plus")
+            } else {
+                button.apply(title: nil, systemImage: "plus", colors: colors, symbolPointSize: 11)
+            }
+        }
 
         overlayExpand.tintColor = colors.comment
         expandInActionRow.tintColor = colors.comment
@@ -168,7 +175,7 @@ extension ComposerBarController {
 
     private func pillView(for action: ComposerAction, colors: ComposerThemeColors) -> UIView {
         let tint = action.tint ?? colors.fg
-        let icon = image(for: action.icon, tint: tint)
+        let icon = action.chrome == .popUp ? popUpImage(for: action.icon) : image(for: action.icon, tint: tint)
         if let existing = pillViews[action.id] {
             configure(existing, action: action, icon: icon, tint: tint, colors: colors)
             return existing
@@ -178,6 +185,8 @@ extension ComposerBarController {
         case .toolbar:
             let button = ComposerToolbarPillButton()
             view = button
+        case .popUp:
+            view = ComposerPopUpButton()
         case .chip:
             let button = ComposerActionChipButton()
             view = button
@@ -210,6 +219,17 @@ extension ComposerBarController {
                 tint: tint,
                 showsChevron: action.showsChevron,
                 colors: colors
+            )
+        case .popUp:
+            var hasMenu = false
+            if case .menu = action.kind { hasMenu = true }
+            (view as? ComposerPopUpButton)?.apply(
+                title: action.title,
+                icon: icon,
+                tint: tint,
+                fill: ComposerPopUpButton.fill(for: colors),
+                collapsible: action.collapsesToIcon,
+                hasMenu: hasMenu
             )
         case .chip:
             (view as? ComposerActionChipButton)?.apply(
@@ -266,6 +286,39 @@ extension ComposerBarController {
         case nil:
             return nil
         }
+    }
+
+    /// A pop-up button's icon: a symbol at body size that takes the button's
+    /// tint, or the image as given (a provider mark).
+    private func popUpImage(for icon: ComposerAction.Icon?) -> UIImage? {
+        if case .symbol(let name) = icon {
+            return UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(textStyle: .body))
+        }
+        return image(for: icon, tint: .label)
+    }
+
+    /// Fits the pop-up controls to the width the trailing stack has left once
+    /// the row's other controls are placed (`ComposerPopUpFit`). Derived from
+    /// those widths and the buttons' full sizes, never from the buttons' own
+    /// current size, so it settles in one pass.
+    func fitPopUpActions() {
+        let all = trailingStack.arrangedSubviews.compactMap { $0 as? ComposerPopUpButton }
+        guard !all.isEmpty, !trailingStack.isHidden, actionRowStack.bounds.width > 0 else { return }
+        // Controls that can drop to an icon give up room first.
+        let items = all.map(\.fitItem)
+        let order = all.indices.filter { items[$0].iconOnly != nil } + all.indices.filter { items[$0].iconOnly == nil }
+        // The spacer's width is slack, not occupied room.
+        let others = actionRowStack.arrangedSubviews.filter { !$0.isHidden && $0 !== trailingStack && $0 !== spacer }
+        let gaps = actionRowStack.spacing * CGFloat(others.count + 1)
+        let margins = actionRowStack.layoutMargins
+        let available = actionRowStack.bounds.width - margins.left - margins.right
+            - others.reduce(0) { $0 + $1.bounds.width } - gaps
+        let results = ComposerPopUpFit.resolve(
+            order.map { items[$0] },
+            available: available,
+            spacing: trailingStack.spacing
+        )
+        for (position, index) in order.enumerated() { all[index].setDisplay(results[position]) }
     }
 
     private func symbolName(_ icon: ComposerAction.Icon?) -> String? {

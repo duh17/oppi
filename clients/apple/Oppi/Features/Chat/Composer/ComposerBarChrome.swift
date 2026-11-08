@@ -230,7 +230,20 @@ final class ComposerGlassPillButton: UIButton {
         sendSubviewToBack(glassView)
     }
 
+    /// True once `applyPopUpStyle` ran: a circle the height of the row's pop-up
+    /// buttons, with no glass of its own. `apply` puts the glass pill back.
+    private var usesPopUpStyle = false {
+        didSet {
+            guard usesPopUpStyle != oldValue else { return }
+            glassView.isHidden = usesPopUpStyle
+            invalidateIntrinsicContentSize()
+        }
+    }
+
     override var intrinsicContentSize: CGSize {
+        if usesPopUpStyle {
+            return CGSize(width: ComposerPopUpButton.height, height: ComposerPopUpButton.height)
+        }
         if configuration?.title == nil, configuration?.image != nil {
             return CGSize(width: 36, height: 23)
         }
@@ -241,6 +254,20 @@ final class ComposerGlassPillButton: UIButton {
         ComposerHitTarget.contains(point, in: bounds)
     }
 
+    /// The "+" in a row of pop-up buttons (`ComposerAction.Chrome.popUp`): the
+    /// same gray capsule and height, so the row reads as one set.
+    func applyPopUpStyle(colors: ComposerThemeColors, systemImage: String) {
+        usesPopUpStyle = true
+        var config = ComposerPopUpButton.baseConfiguration(
+            tint: colors.fg,
+            fill: ComposerPopUpButton.fill(for: colors)
+        )
+        config.image = UIImage(systemName: systemImage, withConfiguration: UIImage.SymbolConfiguration(textStyle: .body))
+        config.contentInsets = .zero
+        configuration = config
+        isPointerInteractionEnabled = true
+    }
+
     func apply(
         title: String?,
         systemImage: String?,
@@ -249,6 +276,8 @@ final class ComposerGlassPillButton: UIButton {
         symbolPointSize: CGFloat = 13,
         weight: UIImage.SymbolWeight = .semibold
     ) {
+        usesPopUpStyle = false
+        isPointerInteractionEnabled = false
         var config = UIButton.Configuration.plain()
         config.background.backgroundColor = .clear
         config.baseForegroundColor = colors.fg

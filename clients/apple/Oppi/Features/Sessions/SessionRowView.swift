@@ -208,7 +208,7 @@ final class SessionRowView: UIView {
         let worktree = SessionWorktreeIndicatorPresentation(session: session)
         worktreeIcon.setHiddenIfChanged(worktree == nil)
         if let worktree {
-            worktreeIcon.image = UIImage.scaledSymbol("arrow.triangle.branch", style: .caption2, weight: .semibold)
+            worktreeIcon.image = WorktreeGlyph.image(textStyle: .caption2)
             worktreeIcon.tintColor = colors.purple
             worktreeIcon.accessibilityLabel = worktree.accessibilityLabel
             worktreeIcon.accessibilityValue = worktree.worktreeId

@@ -10,6 +10,8 @@ final class IconChoiceUIView: UIView {
         case choice(IconChoice?, purpose: Purpose, sandbox: Bool)
         case piAvatar
         case symbol(String, color: UIColor, style: UIFont.TextStyle, weight: UIFont.Weight)
+        /// The worktree mark (`WorktreeGlyph`).
+        case worktree(color: UIColor, style: UIFont.TextStyle)
 
         enum Purpose: Equatable {
             case agent
@@ -82,6 +84,8 @@ final class IconChoiceUIView: UIView {
             imageView.image = EntityIcon.image(.pi, size: frameSize)
         case .symbol(let name, let color, let style, let weight):
             imageView.image = UIImage.scaledSymbol(name, style: style, weight: weight, color: color)
+        case .worktree(let color, let style):
+            imageView.image = WorktreeGlyph.image(textStyle: style)?.withTintColor(color, renderingMode: .alwaysOriginal)
         case .choice(let choice, let purpose, let sandbox):
             let entity: IconEntity = switch purpose {
             case .agent: .agent(choice)

@@ -741,6 +741,11 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         }
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        fitPopUpActions()
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         attemptFocusIfRequested()

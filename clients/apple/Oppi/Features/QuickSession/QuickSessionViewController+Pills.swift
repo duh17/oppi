@@ -18,89 +18,172 @@ extension QuickSessionViewController {
         errorPanel.setHiddenIfChanged(false)
     }
 
+    /// The destination controls of one layout: the compact pills, or the
+    /// wide bar's buttons. Both are drawn on every pass so a live size-class
+    /// change finds the other set current.
+    struct DestinationControls {
+        let workspace: QuickSessionPillButton
+        let worktree: QuickSessionPillButton
+        let engine: QuickSessionPillButton
+        let incognito: QuickSessionPillButton
+    }
+
+    var compactDestinationControls: DestinationControls {
+        DestinationControls(workspace: workspacePill, worktree: worktreePill, engine: enginePill, incognito: incognitoPill)
+    }
+
+    var wideDestinationControls: DestinationControls {
+        DestinationControls(
+            workspace: wideBar.workspace, worktree: wideBar.worktree, engine: wideBar.engine, incognito: wideBar.incognito
+        )
+    }
+
+    /// The Agent's control in the current layout: the wide bar's, the accessibility-size panel's.
+    var agentControl: QuickSessionPillButton {
+        usesWideLayout ? wideBar.agent : agentPill
+    }
+
     func updateDestinationRow(colors: ComposerThemeColors) {
+        let wide = usesWideLayout
+        destinationRowContainer.setHiddenIfChanged(wide)
+        wideBarContainer.setHiddenIfChanged(!wide)
+        updateDestinationControls(compactDestinationControls, colors: colors)
+        updateDestinationControls(wideDestinationControls, colors: colors)
+        updateBarAgent(colors: colors)
+        wideBar.refreshGroups()
+    }
+
+    private func updateDestinationControls(_ controls: DestinationControls, colors: ComposerThemeColors) {
         let enabled = model.isInitialized
+        let bar = controls.workspace.style == .bar
+        let symbolStyle: UIFont.TextStyle = bar ? .body : .caption2
         let workspace = model.selectedWorkspace
-        workspacePill.apply(QuickSessionPillButton.Content(
+        controls.workspace.apply(QuickSessionPillButton.Content(
             icon: .choice(workspace?.icon, purpose: .workspace, sandbox: workspace?.runtime == .sandbox),
             iconAssetCache: model.selectedServerIconAssetCache,
             title: workspace?.name ?? "Workspace",
             titleColor: colors.fg,
             trailingSymbol: "chevron.down"
         ), colors: colors)
-        workspacePill.accessibilityLabel = workspace.map { "Workspace picker, current workspace \($0.name)" }
+        controls.workspace.accessibilityLabel = workspace.map { "Workspace picker, current workspace \($0.name)" }
             ?? "Workspace picker"
-        workspacePill.isEnabled = enabled
+        controls.workspace.isEnabled = enabled
 
-        worktreePill.setHiddenIfChanged(!model.showsWorktreePicker)
+        controls.worktree.setHiddenIfChanged(!model.showsWorktreePicker)
         if model.showsWorktreePicker {
             let worktree = model.selectedWorktree
             let name = worktree?.displayName ?? "Main"
-            worktreePill.apply(QuickSessionPillButton.Content(
-                icon: .symbol(
-                    worktree?.isMain == false ? "arrow.triangle.branch" : "house",
-                    color: colors.purple,
-                    style: .caption2,
-                    weight: .semibold
-                ),
+            controls.worktree.apply(QuickSessionPillButton.Content(
+                icon: worktree?.isMain == false
+                    ? .worktree(color: colors.purple, style: symbolStyle)
+                    : .symbol("house", color: colors.purple, style: symbolStyle, weight: .semibold),
                 title: name,
                 titleColor: colors.fg,
                 trailingSymbol: "chevron.down"
             ), colors: colors)
-            worktreePill.accessibilityLabel = "Worktree picker, current worktree \(name)"
-            worktreePill.isEnabled = enabled
+            controls.worktree.accessibilityLabel = "Worktree picker, current worktree \(name)"
+            controls.worktree.isEnabled = enabled
         }
 
-        updateEnginePill(colors: colors, enabled: enabled)
+        updateEnginePill(controls.engine, colors: colors, enabled: enabled)
 
         // Incognito for this launch: the session keeps no history and is deleted
         // when its chat closes. Off it is only the symbol, so it costs the
-        // destination row little width; on it spells itself out.
-        incognitoPill.setHiddenIfChanged(!model.offersIncognito)
+        // destination row little width; on it spells itself out. The wide bar
+        // keeps the symbol alone and shows the state as its fill.
+        controls.incognito.setHiddenIfChanged(!model.offersIncognito)
         if model.offersIncognito {
             let on = model.incognitoChosen
-            incognitoPill.apply(QuickSessionPillButton.Content(
-                icon: .symbol(on ? "eye.slash.fill" : "eye.slash", color: on ? colors.purple : colors.comment, style: .caption2, weight: .semibold),
-                title: on ? "Incognito" : nil,
+            controls.incognito.apply(QuickSessionPillButton.Content(
+                icon: .symbol(
+                    on ? "eye.slash.fill" : "eye.slash",
+                    color: on ? colors.purple : colors.comment,
+                    style: symbolStyle,
+                    weight: .semibold
+                ),
+                title: on && !bar ? "Incognito" : nil,
                 titleColor: colors.purple,
                 fill: on ? colors.purple.withAlphaComponent(0.14) : nil
             ), colors: colors)
-            incognitoPill.accessibilityValue = on ? "On" : "Off"
-            incognitoPill.isEnabled = enabled
+            controls.incognito.accessibilityLabel = "Incognito"
+            controls.incognito.accessibilityHint = "An incognito session keeps no history and is deleted when you leave it"
+            controls.incognito.accessibilityValue = on ? "On" : "Off"
+            controls.incognito.toolTip = "Incognito"
+            controls.incognito.isEnabled = enabled
             // Fixed traits replace the button's own, which would have said "dimmed".
-            incognitoPill.accessibilityTraits = enabled ? [.button, .toggleButton] : [.button, .toggleButton, .notEnabled]
+            controls.incognito.accessibilityTraits = enabled ? [.button, .toggleButton] : [.button, .toggleButton, .notEnabled]
         }
     }
 
     /// Durable Sessions: the engine this launch uses. A toggle between
     /// Durable and Classic, or a fixed Classic with its reason when the server
     /// would refuse durable for this launch.
-    private func updateEnginePill(colors: ComposerThemeColors, enabled: Bool) {
+    private func updateEnginePill(_ pill: QuickSessionPillButton, colors: ComposerThemeColors, enabled: Bool) {
         let decision = model.engineDecision
-        enginePill.setHiddenIfChanged(!decision.showsPill)
+        pill.setHiddenIfChanged(!decision.showsPill)
         guard decision.showsPill else { return }
         let isDurable = decision.engine == .durable
-        enginePill.apply(QuickSessionPillButton.Content(
-            icon: isDurable ? .symbol("infinity", color: colors.fg, style: .caption2, weight: .semibold) : nil,
-            title: isDurable ? "Durable" : "Classic",
-            titleColor: isDurable ? colors.fg : colors.comment,
-            detail: decision.classicReason.map { "\u{00B7} \($0)" }
-        ), colors: colors)
+        let bar = pill.style == .bar
+        if bar && decision.canToggle {
+            // A symbol toggle: lit while Durable.
+            pill.apply(QuickSessionPillButton.Content(
+                icon: .symbol(
+                    "infinity",
+                    color: isDurable ? colors.blue : colors.comment,
+                    style: .body,
+                    weight: .semibold
+                ),
+                title: nil,
+                titleColor: colors.fg,
+                fill: isDurable ? colors.blue.withAlphaComponent(0.16) : nil
+            ), colors: colors)
+        } else {
+            pill.apply(QuickSessionPillButton.Content(
+                icon: isDurable ? .symbol("infinity", color: colors.fg, style: bar ? .body : .caption2, weight: .semibold) : nil,
+                title: isDurable ? "Durable" : "Classic",
+                titleColor: isDurable ? colors.fg : colors.comment,
+                detail: decision.classicReason.map { "\u{00B7} \($0)" }
+            ), colors: colors)
+        }
         // A fixed Classic still takes its touches, as a label; its tap does
         // nothing (`toggleEngine`). Passed on, the touch landed on the row's
         // empty space, whose tap closes Quick Session.
-        enginePill.dimsWhenPressed = decision.canToggle
+        pill.dimsWhenPressed = decision.canToggle
         if decision.canToggle {
-            enginePill.accessibilityTraits = enabled ? .button : [.button, .notEnabled]
-            enginePill.accessibilityLabel = isDurable ? "Durable session" : "Classic session"
-            enginePill.accessibilityHint = isDurable ? "Switches this session to Classic" : "Switches this session to Durable"
-            enginePill.isEnabled = enabled
+            pill.accessibilityTraits = enabled ? .button : [.button, .notEnabled]
+            pill.accessibilityLabel = isDurable ? "Durable session" : "Classic session"
+            pill.accessibilityHint = isDurable ? "Switches this session to Classic" : "Switches this session to Durable"
+            pill.toolTip = pill.accessibilityLabel
+            pill.isEnabled = enabled
         } else {
-            enginePill.isEnabled = true
-            enginePill.accessibilityTraits = .staticText
-            enginePill.accessibilityLabel = "Classic session. Durable is unavailable with \(decision.classicReason ?? "this launch")."
-            enginePill.accessibilityHint = nil
+            pill.isEnabled = true
+            pill.accessibilityTraits = .staticText
+            pill.accessibilityLabel = "Classic session. Durable is unavailable with \(decision.classicReason ?? "this launch")."
+            pill.accessibilityHint = nil
+            pill.toolTip = nil
         }
+    }
+
+    /// The Agent's control, drawn from `agentContent` for the bar and the panel alike.
+    private func updateBarAgent(colors: ComposerThemeColors) {
+        wideBar.agent.apply(agentContent(colors: colors), colors: colors)
+        wideBar.agent.accessibilityLabel = agentAccessibilityLabel
+        wideBar.agent.isEnabled = model.isInitialized
+    }
+
+    private func agentContent(colors: ComposerThemeColors) -> QuickSessionPillButton.Content {
+        let agent = model.selectedAgent
+        return QuickSessionPillButton.Content(
+            icon: agent.map { .choice($0.icon, purpose: .agent, sandbox: false) } ?? .piAvatar,
+            iconAssetCache: model.selectedServerIconAssetCache,
+            title: agent?.name,
+            titleColor: colors.fg,
+            trailingSymbol: "chevron.down"
+        )
+    }
+
+    private var agentAccessibilityLabel: String {
+        model.selectedAgent.map { "Agent picker, current agent \($0.name)" } ?? "Agent picker, Pi with no agent"
     }
 
     /// At accessibility text sizes the Agent, model, and thinking pills do not
@@ -129,16 +212,8 @@ extension QuickSessionViewController {
             pill.accessibilityTraits = model.isInitialized ? .button : [.button, .notEnabled]
         }
 
-        let agent = model.selectedAgent
-        agentPill.apply(QuickSessionPillButton.Content(
-            icon: agent.map { .choice($0.icon, purpose: .agent, sandbox: false) } ?? .piAvatar,
-            iconAssetCache: model.selectedServerIconAssetCache,
-            title: agent?.name,
-            titleColor: colors.fg,
-            trailingSymbol: "chevron.down"
-        ), colors: colors)
-        agentPill.accessibilityLabel = agent.map { "Agent picker, current agent \($0.name)" }
-            ?? "Agent picker, Pi with no agent"
+        agentPill.apply(agentContent(colors: colors), colors: colors)
+        agentPill.accessibilityLabel = agentAccessibilityLabel
 
         let presentation = model.modelPresentation
         let modelId = model.effectiveModelId ?? presentation.pillText

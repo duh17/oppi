@@ -16,6 +16,10 @@ struct ComposerAction: Identifiable {
 
     enum Chrome {
         case toolbar
+        /// Regular width: a body-size pop-up button (`ComposerPopUpButton`). Its
+        /// `collapsesToIcon` marks a control that may give up its title for its
+        /// icon when the row is crowded.
+        case popUp
         case chip
         case cancel
     }
@@ -46,6 +50,7 @@ struct ComposerAction: Identifiable {
     var accessibilityValue: String?
     var showsChevron = true
     var chrome: Chrome = .toolbar
+    var collapsesToIcon = false
     var kind: Kind
 }
 
@@ -103,17 +108,18 @@ extension ComposerAction {
         title: String,
         provider: String?,
         colors: ComposerThemeColors,
+        chrome: Chrome = .toolbar,
         onTap: @escaping (UIView) -> Void
     ) -> ComposerAction {
         ComposerAction(
             id: "session.toolbar.model",
-            icon: provider.map { .image(EntityIcon.image(.provider($0), size: 11)) },
+            icon: provider.map { .image(EntityIcon.image(.provider($0), size: chrome == .popUp ? 18 : 11)) },
             title: title,
             tint: colors.fg,
             accessibilityLabel: "Model",
             accessibilityValue: title,
             showsChevron: true,
-            chrome: .toolbar,
+            chrome: chrome,
             kind: .tap(.init(fromControl: onTap))
         )
     }
@@ -123,10 +129,31 @@ extension ComposerAction {
         supported: [ThinkingLevel],
         tint: UIColor,
         colors: ComposerThemeColors,
+        chrome: Chrome = .toolbar,
         onSelect: @escaping (ThinkingLevel) -> Void,
         onSaveDefault: (() -> Void)?
     ) -> ComposerAction {
-        ComposerAction(
+        if chrome == .popUp {
+            // A pop-up button's own menu: the levels, the current one checked.
+            let menu = UIMenu(children: supported.map { option in
+                UIAction(title: option.displayTitle, state: option == level ? .on : .off) { _ in
+                    onSelect(option)
+                }
+            })
+            return ComposerAction(
+                id: "session.toolbar.thinking",
+                icon: .symbol("sparkle"),
+                title: level.displayTitle,
+                tint: tint,
+                accessibilityLabel: "Thinking level",
+                accessibilityValue: level.displayTitle,
+                showsChevron: true,
+                chrome: .popUp,
+                collapsesToIcon: true,
+                kind: .menu(menu)
+            )
+        }
+        return ComposerAction(
             id: "session.toolbar.thinking",
             icon: .symbol("sparkle"),
             title: level.compactTitle,
@@ -273,18 +300,20 @@ extension ComposerActionRow {
         thinkingTint: UIColor,
         supportedThinkingLevels: [ThinkingLevel],
         colors: ComposerThemeColors,
+        chrome: ComposerAction.Chrome = .toolbar,
         onModelTap: @escaping (UIView) -> Void,
         onThinkingSelect: @escaping (ThinkingLevel) -> Void,
         onSaveThinkingAsDefault: (() -> Void)?
     ) -> ComposerActionRow {
         ComposerActionRow(
             trailing: [
-                .model(title: modelTitle, provider: modelProvider, colors: colors, onTap: onModelTap),
+                .model(title: modelTitle, provider: modelProvider, colors: colors, chrome: chrome, onTap: onModelTap),
                 .thinking(
                     level: thinkingLevel,
                     supported: supportedThinkingLevels,
                     tint: thinkingTint,
                     colors: colors,
+                    chrome: chrome,
                     onSelect: onThinkingSelect,
                     onSaveDefault: onSaveThinkingAsDefault
                 ),

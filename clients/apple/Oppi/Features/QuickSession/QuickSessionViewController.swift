@@ -10,9 +10,11 @@ import UIKit
 /// chat screen is for its own composer.
 ///
 /// This file holds the layout and lifecycle. `+Pills` draws the destination
-/// row, the error, and the accessibility-size panel; `+Pickers` presents the
-/// workspace, worktree, Agent, thinking, and model pickers; `+Composer` is the
-/// composer's source.
+/// row (the compact pills, or at regular width `QuickSessionWideBar`), the
+/// error, and the accessibility-size panel; `+Pickers` presents the workspace,
+/// worktree, Agent, thinking, and model pickers; `+Composer` is the composer's
+/// source. At regular width the bar holds workspace, worktree, Agent, Durable,
+/// and Incognito, and the composer's bottom right holds model and thinking.
 ///
 /// Only the scrim fills edge to edge. The pills and composer stay inside the
 /// safe area, so they never sit under a vertical rail on the leading or
@@ -34,11 +36,14 @@ final class QuickSessionViewController: UIViewController {
     private let viewport = UIScrollView()
     let contentStack = UIStackView()
     let errorPanel = QuickSessionErrorPanel()
-    private let destinationRowContainer = UIView()
+    let destinationRowContainer = UIView()
     private let destinationRow = UIStackView()
     let workspacePill = QuickSessionPillButton()
     let worktreePill = QuickSessionPillButton()
     let enginePill = QuickSessionPillButton()
+    /// Regular width (`usesWideLayout`): the bar replaces the destination row.
+    let wideBar = QuickSessionWideBar()
+    let wideBarContainer = UIView()
     let incognitoPill = QuickSessionPillButton(minimumWidth: ComposerInputMetrics.controlDiameter)
     let stackedPanel = UIView()
     private let stackedGlass = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
@@ -105,9 +110,14 @@ final class QuickSessionViewController: UIViewController {
         layout()
         installPresenters()
         dismissSwipe.install(on: view)
+        installEscapeKey()
         emptySpaceTap.delegate = self
         viewport.addGestureRecognizer(emptySpaceTap)
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (controller: Self, _: UITraitCollection) in
+        // The destination row and the composer's controls differ by width.
+        registerForTraitChanges([
+            UITraitPreferredContentSizeCategory.self,
+            UITraitHorizontalSizeClass.self,
+        ]) { (controller: Self, _: UITraitCollection) in
             controller.setNeedsUpdateProperties()
             controller.composer.setNeedsUpdateProperties()
         }
@@ -194,6 +204,13 @@ final class QuickSessionViewController: UIViewController {
         traitCollection.preferredContentSizeCategory.isAccessibilityCategory
     }
 
+    /// Regular width: the destination bar above the composer, and model and
+    /// thinking as pop-up buttons at the composer's bottom right. Accessibility
+    /// text sizes keep the compact pills and the stacked panel, which wrap.
+    var usesWideLayout: Bool {
+        AdaptiveWidth.isWide(traitCollection) && !stacksActionControls
+    }
+
     override func updateProperties() {
         super.updateProperties()
         let colors = colors
@@ -262,23 +279,18 @@ final class QuickSessionViewController: UIViewController {
         contentStack.addArrangedSubview(errorPanel)
 
         // Workspace and worktree sit above the capsule so destination is
-        // chosen before compose. Agent/model/thinking stay in the action row.
+        // chosen before compose. Compact width keeps Agent, model, and thinking
+        // in the action row; regular width moves the Agent into `wideBar`.
         destinationRow.axis = .horizontal
         destinationRow.alignment = .center
         destinationRow.spacing = 6
         destinationRow.translatesAutoresizingMaskIntoConstraints = false
-        workspacePill.accessibilityIdentifier = "quickSession.workspacePicker"
+        wireDestinationControls(compactDestinationControls)
+        wireDestinationControls(wideDestinationControls)
         workspacePill.setTitleCompressionResistance(.defaultHigh)
-        workspacePill.addAction(UIAction { [weak self] _ in self?.model.showWorkspacePicker.toggle() }, for: .primaryActionTriggered)
-        worktreePill.accessibilityIdentifier = "quickSession.worktreePicker"
-        worktreePill.addAction(UIAction { [weak self] _ in self?.model.showWorktreePicker.toggle() }, for: .primaryActionTriggered)
-        enginePill.accessibilityIdentifier = "quickSession.durableEngine"
-        enginePill.addAction(UIAction { [weak self] _ in self?.model.toggleEngine() }, for: .primaryActionTriggered)
-        incognitoPill.accessibilityIdentifier = "quickSession.incognito"
-        incognitoPill.accessibilityLabel = "Incognito"
-        incognitoPill.accessibilityHint = "An incognito session keeps no history and is deleted when you leave it"
         incognitoPill.setContentCompressionResistancePriority(.required, for: .horizontal)
-        incognitoPill.addAction(UIAction { [weak self] _ in self?.model.toggleIncognito() }, for: .primaryActionTriggered)
+        wideBar.agent.accessibilityIdentifier = "quickSession.agentPicker"
+        wideBar.agent.addAction(UIAction { [weak self] _ in self?.model.showAgentPicker.toggle() }, for: .primaryActionTriggered)
         for pill in [workspacePill, worktreePill, enginePill, incognitoPill] {
             destinationRow.addArrangedSubview(pill)
         }
@@ -291,10 +303,33 @@ final class QuickSessionViewController: UIViewController {
         ])
         contentStack.addArrangedSubview(destinationRowContainer)
 
+        wideBar.translatesAutoresizingMaskIntoConstraints = false
+        wideBarContainer.addSubview(wideBar)
+        NSLayoutConstraint.activate([
+            wideBar.leadingAnchor.constraint(equalTo: wideBarContainer.leadingAnchor, constant: 16),
+            wideBar.trailingAnchor.constraint(equalTo: wideBarContainer.trailingAnchor, constant: -16),
+            wideBar.topAnchor.constraint(equalTo: wideBarContainer.topAnchor),
+            wideBar.bottomAnchor.constraint(equalTo: wideBarContainer.bottomAnchor),
+        ])
+        wideBarContainer.isHidden = true
+        contentStack.addArrangedSubview(wideBarContainer)
+
         composer.source = self
         addChild(composer)
         contentStack.addArrangedSubview(composer.view)
         composer.didMove(toParent: self)
+    }
+
+    /// A destination control's identifier and action, the same in both layouts.
+    private func wireDestinationControls(_ controls: DestinationControls) {
+        controls.workspace.accessibilityIdentifier = "quickSession.workspacePicker"
+        controls.workspace.addAction(UIAction { [weak self] _ in self?.model.showWorkspacePicker.toggle() }, for: .primaryActionTriggered)
+        controls.worktree.accessibilityIdentifier = "quickSession.worktreePicker"
+        controls.worktree.addAction(UIAction { [weak self] _ in self?.model.showWorktreePicker.toggle() }, for: .primaryActionTriggered)
+        controls.engine.accessibilityIdentifier = "quickSession.durableEngine"
+        controls.engine.addAction(UIAction { [weak self] _ in self?.model.toggleEngine() }, for: .primaryActionTriggered)
+        controls.incognito.accessibilityIdentifier = "quickSession.incognito"
+        controls.incognito.addAction(UIAction { [weak self] _ in self?.model.toggleIncognito() }, for: .primaryActionTriggered)
     }
 
     private func buildStackedPanel() {
@@ -415,7 +450,7 @@ extension QuickSessionViewController: UIGestureRecognizerDelegate {
     /// A tap that stops a decelerating viewport only stops it.
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard model.isInitialized, !viewport.isDecelerating, let touched = touch.view else { return false }
-        return [viewport, contentStack, destinationRowContainer, destinationRow].contains { $0 === touched }
+        return [viewport, contentStack, destinationRowContainer, destinationRow, wideBarContainer, wideBar].contains { $0 === touched }
     }
 }
 

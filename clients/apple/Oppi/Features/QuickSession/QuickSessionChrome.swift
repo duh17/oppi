@@ -10,8 +10,17 @@ import UIKit
 /// The capsule is 21 pt tall and centered in a 44 pt button, which is the
 /// touch target. A `UIButton`, so touch, VoiceOver, and Full Keyboard Access
 /// all send its primary action.
+///
+/// The `.bar` style is the same control at regular width, inside
+/// `QuickSessionWideBar`'s glass group: a 44 pt button with a body-size title
+/// and the pop-up indicator, no glass of its own, and a pointer hover.
 @MainActor
 final class QuickSessionPillButton: UIButton {
+    enum Style {
+        case pill
+        case bar
+    }
+
     struct Content {
         var icon: IconChoiceUIView.Content?
         var iconAssetCache: IconAssetCache?
@@ -32,11 +41,18 @@ final class QuickSessionPillButton: UIButton {
     private let captionLabel = UILabel()
     private let detailLabel = UILabel()
     private let trailingView = UIImageView()
+    let style: Style
 
     /// `iconFrame` is the icon's square; a symbol-only pill keeps its glyph's own size.
-    init(iconSize: CGFloat = 12, iconFrame: CGFloat = 16, minimumWidth: CGFloat = 0) {
-        iconView = IconChoiceUIView(size: iconSize, frameSize: iconFrame)
+    init(style: Style = .pill, iconSize: CGFloat? = nil, iconFrame: CGFloat? = nil, minimumWidth: CGFloat = 0) {
+        self.style = style
+        let isBar = style == .bar
+        iconView = IconChoiceUIView(size: iconSize ?? (isBar ? 20 : 12), frameSize: iconFrame ?? (isBar ? 26 : 16))
         super.init(frame: .zero)
+        if isBar {
+            isPointerInteractionEnabled = true
+            showsLargeContentViewer = true
+        }
         capsule.isUserInteractionEnabled = false
         capsule.translatesAutoresizingMaskIntoConstraints = false
         addSubview(capsule)
@@ -45,6 +61,8 @@ final class QuickSessionPillButton: UIButton {
             view.clipsToBounds = true
             view.translatesAutoresizingMaskIntoConstraints = false
             capsule.addSubview(view)
+            // The bar's group draws the glass.
+            if isBar, view === glassView { view.isHidden = true }
             NSLayoutConstraint.activate([
                 view.leadingAnchor.constraint(equalTo: capsule.leadingAnchor),
                 view.trailingAnchor.constraint(equalTo: capsule.trailingAnchor),
@@ -52,17 +70,18 @@ final class QuickSessionPillButton: UIButton {
                 view.bottomAnchor.constraint(equalTo: capsule.bottomAnchor),
             ])
         }
-        captionLabel.font = UIFont.scaled(.caption2, .semibold)
+        let labelFont = isBar ? UIFont.scaled(.body, .regular) : UIFont.scaled(.caption2, .semibold)
+        captionLabel.font = labelFont
         captionLabel.lineBreakMode = .byTruncatingTail
         captionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        detailLabel.font = UIFont.scaled(.caption2, .semibold)
+        detailLabel.font = labelFont
         detailLabel.lineBreakMode = .byTruncatingTail
         detailLabel.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
         trailingView.contentMode = .center
         trailingView.setContentCompressionResistancePriority(.required, for: .horizontal)
         stack.axis = .horizontal
         stack.alignment = .center
-        stack.spacing = 4
+        stack.spacing = isBar ? 6 : 4
         stack.isUserInteractionEnabled = false
         stack.translatesAutoresizingMaskIntoConstraints = false
         for view in [iconView, captionLabel, detailLabel, trailingView] as [UIView] {
@@ -74,7 +93,9 @@ final class QuickSessionPillButton: UIButton {
         let restingHeight = heightAnchor.constraint(equalToConstant: ComposerInputMetrics.controlDiameter)
         restingHeight.priority = .defaultLow
         let fitsCapsule = widthAnchor.constraint(equalTo: capsule.widthAnchor)
-        fitsCapsule.priority = .defaultLow
+        // In the bar, the capsule must follow its title as it is squeezed (the
+        // title's compression resistance is below this).
+        fitsCapsule.priority = isBar ? .defaultHigh : .defaultLow
         NSLayoutConstraint.activate([
             heightAnchor.constraint(greaterThanOrEqualToConstant: ComposerInputMetrics.controlDiameter),
             restingHeight,
@@ -84,11 +105,11 @@ final class QuickSessionPillButton: UIButton {
             capsule.centerXAnchor.constraint(equalTo: centerXAnchor),
             capsule.centerYAnchor.constraint(equalTo: centerYAnchor),
             capsule.topAnchor.constraint(greaterThanOrEqualTo: topAnchor),
-            stack.leadingAnchor.constraint(equalTo: capsule.leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: capsule.trailingAnchor, constant: -8),
-            stack.topAnchor.constraint(equalTo: capsule.topAnchor, constant: 2),
-            stack.bottomAnchor.constraint(equalTo: capsule.bottomAnchor, constant: -2),
-            stack.heightAnchor.constraint(greaterThanOrEqualToConstant: 17),
+            stack.leadingAnchor.constraint(equalTo: capsule.leadingAnchor, constant: isBar ? 12 : 8),
+            stack.trailingAnchor.constraint(equalTo: capsule.trailingAnchor, constant: isBar ? -12 : -8),
+            stack.topAnchor.constraint(equalTo: capsule.topAnchor, constant: isBar ? 0 : 2),
+            stack.bottomAnchor.constraint(equalTo: capsule.bottomAnchor, constant: isBar ? 0 : -2),
+            stack.heightAnchor.constraint(greaterThanOrEqualToConstant: isBar ? ComposerInputMetrics.controlDiameter : 17),
         ])
     }
 
@@ -96,6 +117,20 @@ final class QuickSessionPillButton: UIButton {
     /// The workspace pill keeps its name; the others truncate first.
     func setTitleCompressionResistance(_ priority: UILayoutPriority) {
         captionLabel.setContentCompressionResistancePriority(priority, for: .horizontal)
+    }
+
+    /// The same for the detail text after the title (the fixed Classic engine's reason).
+    func setDetailCompressionResistance(_ priority: UILayoutPriority) {
+        detailLabel.setContentCompressionResistancePriority(priority, for: .horizontal)
+    }
+
+    /// The narrowest the title may be squeezed to: a few letters and an
+    /// ellipsis, so a crowded bar never leaves one letter.
+    func setMinimumTitleWidth(_ width: CGFloat) {
+        // Not required: a hidden title (an icon-only button) takes no width.
+        let minimum = captionLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: width)
+        minimum.priority = UILayoutPriority(999)
+        minimum.isActive = true
     }
 
     @available(*, unavailable)
@@ -149,8 +184,8 @@ final class QuickSessionPillButton: UIButton {
         if let symbol = content.trailingSymbol {
             trailingView.isHidden = false
             trailingView.image = UIImage.scaledSymbol(
-                symbol,
-                style: .caption2,
+                style == .bar && symbol == "chevron.down" ? "chevron.up.chevron.down" : symbol,
+                style: style == .bar ? .footnote : .caption2,
                 weight: .semibold,
                 color: content.trailingColor ?? colors.comment
             )

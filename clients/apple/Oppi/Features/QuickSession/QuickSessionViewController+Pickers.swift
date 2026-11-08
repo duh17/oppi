@@ -9,10 +9,58 @@ extension QuickSessionViewController {
         [modelPicker, workspacePicker, worktreePicker, agentPicker, thinkingPicker]
     }
 
+    /// Hardware Esc: close what is open over Quick Session first (a picker,
+    /// the expanded composer, or a popover the composer presented), then
+    /// Quick Session itself. A menu that is open takes Esc for itself.
+    func installEscapeKey() {
+        let escape = UIKeyCommand(
+            title: String(localized: "Close Quick Session"),
+            action: #selector(handleEscapeKey),
+            input: UIKeyCommand.inputEscape
+        )
+        escape.wantsPriorityOverSystemBehavior = true
+        addKeyCommand(escape)
+    }
+
+    @objc private func handleEscapeKey() {
+        if closeOpenPickers() || dismissPresentedModal() { return }
+        close()
+    }
+
+    /// Clears the model's picker requests, so each presenter dismisses its own
+    /// and the flags stay true to what is on screen. False when none was open.
+    private func closeOpenPickers() -> Bool {
+        let wasOpen = model.showModelPicker || model.showWorkspacePicker || model.showWorktreePicker
+            || model.showAgentPicker || model.showExpandedComposer || showsThinkingPicker
+        guard wasOpen else { return false }
+        model.showModelPicker = false
+        model.showWorkspacePicker = false
+        model.showWorktreePicker = false
+        model.showAgentPicker = false
+        model.showExpandedComposer = false
+        showsThinkingPicker = false
+        return true
+    }
+
+    /// A modal the composer presented itself (its own popovers): the first
+    /// presentation found in this controller or the ones inside it.
+    private func dismissPresentedModal() -> Bool {
+        var pending: [UIViewController] = [self]
+        while let controller = pending.popLast() {
+            if let presented = controller.presentedViewController {
+                presented.dismiss(animated: true)
+                return true
+            }
+            pending.append(contentsOf: controller.children)
+        }
+        return false
+    }
+
     /// A picker's content is built only while it is up: its screen closure
     /// runs only for a request, so the reads in it re-run this only then.
     func updatePresenters(colors: ComposerThemeColors) {
         let pickerPopover = ModalPresentation.popover.keepsPopoverInCompactWidth()
+        let destinationControls = usesWideLayout ? wideDestinationControls : compactDestinationControls
         modelPicker.update(
             id: model.showModelPicker ? "model-picker" : nil,
             presentation: .popoverOrSheet(detents: [.large()]).inNavigation(),
@@ -24,7 +72,7 @@ extension QuickSessionViewController {
         workspacePicker.update(
             id: model.showWorkspacePicker ? "workspace-picker" : nil,
             presentation: pickerPopover,
-            source: workspacePill,
+            source: destinationControls.workspace,
             root: root,
             clear: { [weak self] in self?.model.showWorkspacePicker = false },
             screen: {
@@ -36,7 +84,7 @@ extension QuickSessionViewController {
         worktreePicker.update(
             id: model.showWorktreePicker && model.showsWorktreePicker ? "worktree-picker" : nil,
             presentation: pickerPopover,
-            source: worktreePill,
+            source: destinationControls.worktree,
             root: root,
             clear: { [weak self] in self?.model.showWorktreePicker = false },
             screen: {
@@ -47,10 +95,12 @@ extension QuickSessionViewController {
         )
 
         let stacks = stacksActionControls
+        // The Agent's list is a picker of its own when its control is not in the
+        // composer's row: in the wide bar, or the accessibility-size panel.
         agentPicker.update(
-            id: stacks && model.showAgentPicker ? "agent-picker" : nil,
+            id: (stacks || usesWideLayout) && model.showAgentPicker ? "agent-picker" : nil,
             presentation: pickerPopover,
-            source: agentPill,
+            source: agentControl,
             root: root,
             clear: { [weak self] in self?.model.showAgentPicker = false },
             screen: {
@@ -153,12 +203,9 @@ extension QuickSessionViewController {
         return .sections([QuickSessionPickerSection(title: nil, rows: worktrees.map { worktree in
             QuickSessionPickerRow(
                 id: worktree.id,
-                icon: .symbol(
-                    worktree.isMain ? "house" : "arrow.triangle.branch",
-                    color: colors.purple,
-                    style: .caption1,
-                    weight: .semibold
-                ),
+                icon: worktree.isMain
+                    ? .symbol("house", color: colors.purple, style: .caption1, weight: .semibold)
+                    : .worktree(color: colors.purple, style: .caption1),
                 title: WorkspaceWorktreeMenuFormatting.title(for: worktree),
                 subtitle: Self.worktreeSubtitle(for: worktree),
                 isSelected: worktree.id == selectedId,

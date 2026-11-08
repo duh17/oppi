@@ -267,10 +267,10 @@ extension WorkspaceDetailViewController {
             if let count = WorkspaceWorktreeMenuFormatting.sessionCountText(for: worktree) {
                 label += " · \(count)"
             }
-            let symbol = title.selectedWorktreeId == worktree.id
-                ? "checkmark"
-                : worktree.isMain ? "house" : "point.3.connected.trianglepath.dotted"
-            let action = UIAction(title: label, image: UIImage(systemName: symbol)) { [weak self] _ in
+            let image = title.selectedWorktreeId == worktree.id
+                ? UIImage(systemName: "checkmark")
+                : worktree.isMain ? UIImage(systemName: "house") : WorktreeGlyph.image(textStyle: nil)
+            let action = UIAction(title: label, image: image) { [weak self] _ in
                 self?.selectWorktree(worktree)
             }
             action.accessibilityIdentifier = "workspace.worktree.\(worktree.id)"
@@ -291,7 +291,7 @@ extension WorkspaceDetailViewController {
     private func worktreeRailItem(_ title: TitleState, tint: UIColor) -> UIBarButtonItem {
         let item = UIBarButtonItem(
             title: String(localized: "Worktree"),
-            image: UIImage(systemName: "arrow.triangle.branch"),
+            image: WorktreeGlyph.image(textStyle: .body),
             primaryAction: nil,
             menu: title.canSwitch ? worktreeMenu(title) : nil
         )
