@@ -543,9 +543,13 @@ final class WorkspaceContextBarView: UIView {
         branchIcon.image = UIImage(systemName: "arrow.branch")
         branchGroup.addArrangedSubview(branchIcon)
         branchGroup.addArrangedSubview(branchLabel)
-        branchLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // The branch outranks the counts when the row is tight: the counts
+        // shorten first, and only a branch too long for the row truncates,
+        // in the middle so its start and end stay readable.
+        branchLabel.lineBreakMode = .byTruncatingMiddle
+        branchLabel.setContentCompressionResistancePriority(.defaultLow + 2, for: .horizontal)
         changedLabel.setContentCompressionResistancePriority(.defaultLow + 1, for: .horizontal)
-        branchGroup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        branchGroup.setContentCompressionResistancePriority(.defaultLow + 2, for: .horizontal)
         linesGroup.addArrangedSubview(addedLabel)
         linesGroup.addArrangedSubview(removedLabel)
         aheadGroup.addArrangedSubview(aheadLabel)
