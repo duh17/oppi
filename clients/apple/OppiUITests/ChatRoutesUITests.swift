@@ -787,8 +787,12 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             "The drawer must start below the bar: \(drawer.frame)"
         )
 
+        // The drawer's own scroll view takes the swipe: among warnings the viewport is a band
+        // inside the drawer (its title row and padding stay put), and a swipe aimed at the
+        // whole drawer's center can start on the title row, where nothing scrolls.
+        let viewport = drawer.scrollViews.firstMatch
         for _ in 0..<8 where !(again.exists && again.isHittable) {
-            drawer.swipeUp(velocity: .slow)
+            viewport.swipeUp(velocity: .slow)
         }
         XCTAssertTrue(again.isHittable, "Run again must scroll into reach: \(again.frame)")
         XCTAssertLessThanOrEqual(
