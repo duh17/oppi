@@ -944,7 +944,7 @@ final class SessionInboxViewController: UIViewController {
     }
 
     private func openFiles() {
-        guard let serverId = coordinator.activeServerId else { return }
+        guard isFrontOfNavigationStack, let serverId = coordinator.activeServerId else { return }
         navigation.openWorkspaceFileBrowser(FileBrowserNavTarget.hostHome(serverId: serverId))
     }
 

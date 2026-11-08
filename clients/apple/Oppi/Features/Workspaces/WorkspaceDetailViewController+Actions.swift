@@ -250,6 +250,7 @@ extension WorkspaceDetailViewController {
     }
 
     func openWorkspaceFiles() {
+        guard isFrontOfNavigationStack else { return }
         let target = FileBrowserNavTarget(
             serverId: serverId,
             workspaceId: workspaceId,

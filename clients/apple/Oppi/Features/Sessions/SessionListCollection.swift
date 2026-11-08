@@ -1018,9 +1018,9 @@ enum SessionListBarItems {
 
 extension UIViewController {
     /// This screen is the top of its navigation stack and nothing is moving it.
-    /// The session lists keep their Message and Now Playing controls installed
-    /// under a pushed chat, where a tap meant for the chat's composer can reach
-    /// them; their actions run only while the list is in front.
+    /// The session lists keep their bottom bar (Message, Now Playing, Files)
+    /// installed under a pushed chat, where a tap meant for the chat's composer
+    /// can reach it; its actions run only while the list is in front.
     var isFrontOfNavigationStack: Bool {
         guard let navigationController else { return false }
         return navigationController.topViewController === self

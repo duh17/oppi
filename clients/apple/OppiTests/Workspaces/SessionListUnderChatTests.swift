@@ -106,6 +106,50 @@ struct SessionListUnderChatTests {
         #expect(!root.navigation.showQuickSession, "a workspace list under a chat started Quick Session")
     }
 
+    @Test("a covered All Sessions list opens no file browser over the chat")
+    func coveredListOpensNoFiles() async throws {
+        let serverId = "sha256:list-under-chat-\(UUID().uuidString)"
+        // The list's own refreshes fail as an unreachable server's do.
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            if ["/workspaces", "/skills", "/sessions/recent"].contains(request.url?.path ?? "") {
+                throw URLError(.cannotConnectToHost)
+            }
+            return nil
+        })
+        let root = try await makeTestAppRoot(
+            readyServerId: serverId, apiClient: makeTestURLProtocolClient(host: "ready-server.test")
+        )
+        let fixture = try await makeFixture(root: root)
+        let list = fixture.list
+        func tapFiles() throws {
+            let files = try #require(list.toolbarItems?.first { $0.accessibilityIdentifier == "workspace.files.open" })
+            try #require(files.primaryAction).performWithSender(files, target: nil)
+        }
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            list.toolbarItems?.contains { $0.accessibilityIdentifier == "workspace.files.open" && $0.isEnabled } == true
+        })
+
+        fixture.navigation.pushViewController(ChatStandIn(), animated: false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { fixture.navigation.transitionCoordinator == nil })
+        try tapFiles()
+        #expect(root.navigation.workspaceStackRouteElements.isEmpty, "Files under the chat opened the file browser over it")
+
+        // The control: back in front, Files opens the server's files.
+        fixture.navigation.popViewController(animated: false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            fixture.navigation.topViewController === list && fixture.navigation.transitionCoordinator == nil
+        })
+        try tapFiles()
+        #expect(
+            root.navigation.workspaceStackRouteElements == [.fileBrowser(.hostHome(serverId: serverId))],
+            "the control: the list in front must open the server's files"
+        )
+        // Leaving the screen starts refreshes of its own: let them ask before the handler goes.
+        hideTestWindow(fixture.window)
+        _ = await routes.settle(quiet: .seconds(1.5))
+        routes.end()
+    }
+
     @Test("a covered All Sessions list opens no player over the chat")
     func coveredListOpensNoPlayer() async throws {
         let serverId = "sha256:list-under-chat-\(UUID().uuidString)"
