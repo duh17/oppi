@@ -500,14 +500,17 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// What the list says when it has nothing to show and nothing failed.
     func emptyState() -> LoadState? { nil }
 
-    /// The one identifier the base's state row carries, whatever it shows: the
-    /// list's own name (`skills.list` → `skills.state`).
-    var stateRowIdentifier: String {
-        let name = listIdentifier.hasSuffix(".list")
+    /// The list's own name, the scope of its rows' identifiers (`skills.list` →
+    /// `skills`).
+    var listName: String {
+        listIdentifier.hasSuffix(".list")
             ? String(listIdentifier.dropLast(".list".count))
             : listIdentifier
-        return "\(name).state"
     }
+
+    /// The one identifier the base's state row carries, whatever it shows: the
+    /// list's own name (`skills.list` → `skills.state`).
+    var stateRowIdentifier: String { "\(listName).state" }
 
     /// The list's one state row: a load in flight where the rows will be (a Retry
     /// keeps its row and turns it into this one), the failure with one Retry, and

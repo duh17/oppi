@@ -5,26 +5,26 @@ import UIKit
 /// the file list the browser opens.
 ///
 /// A `ServerResourceDetailScreenController`: the base owns the server switch,
-/// the detail load, the switch's save, and the whole-screen state. The catalog
-/// row shows at once; the detail request adds the file list, and a newer detail
-/// summary wins over a stale catalog row until a mutation settles.
+/// the detail load, the switch's save, the whole-screen state, and the rows the
+/// extension page shares (title, Server Default, status, load error, warnings).
+/// The catalog row shows at once; the detail request adds the file list, and a
+/// newer detail summary wins over a stale catalog row until a mutation settles.
 @MainActor
 final class ServerSkillDetailViewController: ServerResourceDetailScreenController<
     ServerSkillSummary, ServerSkillDetail, ServerSkillDetailViewController.Section, ServerSkillDetailViewController.Item
 > {
-    enum Section: Hashable, Sendable {
+    enum Section: ServerResourceDetailSection {
         case summary, serverDefault, source, validation, loading, contents
     }
 
-    enum Item: Hashable, Sendable {
-        case title
-        case enabled
-        case mutationError
+    enum Item: ServerResourceDetailItem {
+        case resource(ServerResourceRow)
         case detail(String)
-        case status
-        case warning(String)
-        case loadError(String)
         case browse
+
+        var resourceRow: ServerResourceRow? {
+            if case .resource(let row) = self { row } else { nil }
+        }
     }
 
     /// `connection`: the Skill's server when the caller already has it ready;
@@ -40,6 +40,7 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
                 title: String(localized: "Skill"),
                 listIdentifier: "skills.detail.list",
                 loadingCaption: String(localized: "Loading skill…"),
+                unreadableReason: String(localized: "Pi could not read this Skill."),
                 failureTitle: String(localized: "Couldn't Load Contents"),
                 showsConnecting: true,
                 catalog: .skills,
@@ -62,21 +63,12 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
     override func sections() -> [ListSection<Section, Item>] {
         guard let state else { return [] }
         var sections: [ListSection<Section, Item>] = [
-            ListSection(.summary, items: [.title]),
-            ListSection(
-                .serverDefault,
-                header: "Server Default",
-                footer: "New sessions use this setting. Reload an active session to apply it now.",
-                items: state.mutationError == nil ? [.enabled] : [.enabled, .mutationError]
-            ),
+            summarySection(),
+            serverDefaultSection(),
             ListSection(.source, header: "Source", items: sourceItems),
-            ListSection(.validation, header: "Validation", items: validationItems),
+            ListSection(.validation, header: "Validation", items: statusItems()),
         ]
-        // The contents' place: the kit's compact loading row until the detail
-        // arrives, and its one failed row with Retry when the request failed.
-        if let row = stateRow(hasContent: state.detail != nil, isLoading: isLoading, failure: loadFailure) {
-            sections.append(ListSection(.loading, items: [], state: row))
-        }
+        if let loading = loadingSection() { sections.append(loading) }
         if state.detail != nil {
             sections.append(ListSection(.contents, header: "Contents", items: [.browse]))
         }
@@ -89,54 +81,18 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
         return items + [.detail("Provenance"), .detail("Scope"), .detail("Files")]
     }
 
-    /// What the load found: what Pi makes of the Skill — its state, why it could
-    /// not read it, and each warning once (a diffable list traps on a repeated
-    /// row). These are facts about the Skill, not a failed request.
-    private var validationItems: [Item] {
-        guard let state else { return [] }
-        let summary = state.summary
-        var items: [Item] = [.status]
-        if let reason = summary.loadError ?? unreadableReason(summary) { items.append(.loadError(reason)) }
-        return items + Self.unique(summary.warnings).map(Item.warning)
-    }
-
-    /// Why Pi could not read the Skill it listed, when it says nothing itself.
-    private func unreadableReason(_ summary: ServerSkillSummary) -> String? {
-        summary.state == .error || summary.state == .unknown
-            ? String(localized: "Pi could not read this Skill.")
-            : nil
-    }
-
-    /// The contents are what the detail request fetches: until they are here the
-    /// list shows the compact loading row in the Contents place.
-    override func hasContent() -> Bool { state?.detail != nil }
-
     override func loadingCaption() -> String? { String(localized: "Loading skill contents…") }
 
-    /// The group headings are the ones this page wrote, so only the sections
-    /// with one show it.
-    override func showsHeader(for section: Section) -> Bool {
-        section != .summary && section != .loading
-    }
-
-    /// What a row draws from, besides its own identity: a replaced switch would
-    /// drop a save in flight.
+    /// What a row draws from, besides its own identity.
     override func inputs(of item: Item) -> AnyHashable {
         guard let state else { return AnyHashable(0) }
         let summary = state.summary
         return switch item {
-        case .title: resourceRowInputs(.title)
-        case .enabled: resourceRowInputs(.serverDefault)
-        case .mutationError: resourceRowInputs(.mutationError)
-        case .status: resourceRowInputs(.status)
-        case .loadError(let reason): AnyHashable(reason)
         case .detail: AnyHashable([
             AnyHashable(summary.packageName), AnyHashable(summary.provenance.label), AnyHashable(summary.editable),
         ])
         case .browse: AnyHashable([AnyHashable(summary.name), AnyHashable(state.detail?.files.count)])
-        // A warning, Retry, or loading row holds nothing a reconfigure would
-        // disturb, so the kit's default draws it again.
-        default: super.inputs(of: item)
+        case .resource: super.inputs(of: item)
         }
     }
 
@@ -147,69 +103,17 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
         guard let state else { return }
         let summary = state.summary
         switch item {
-        case .title:
-            ListScreen.staticRow(cell, identifier: "skills.detail.title")
-            var content = UIListContentConfiguration.subtitleCell()
-            content.text = summary.name
-            // Bold title2, still a text style, so it scales with the setting.
-            let title2 = UIFont.preferredFont(forTextStyle: .title2)
-            content.textProperties.font = title2.fontDescriptor.withSymbolicTraits(.traitBold)
-                .map { UIFont(descriptor: $0, size: 0) } ?? title2
-            content.textProperties.color = palette.ui.fg
-            if !summary.description.isEmpty {
-                content.secondaryText = summary.description
-                content.secondaryTextProperties.font = .preferredFont(forTextStyle: .body)
-                content.secondaryTextProperties.color = palette.ui.comment
-            }
-            cell.contentConfiguration = content
-        case .enabled:
-            serverDefaultRow(cell, identifier: "skills.detail.enabled", savingIdentifier: "skills.detail.saving")
-        case .mutationError:
-            ListScreen.staticRow(cell, identifier: "skills.detail.mutationError")
-            cell.contentConfiguration = Self.noteContent(
-                mutationFailureMessage, systemImage: "exclamationmark.triangle.fill",
-                color: palette.ui.orange, imageColor: palette.ui.orange
-            )
+        case .resource:
+            super.configureCard(cell, item: item)
         case .detail(let title):
-            ListScreen.staticRow(cell, identifier: "skills.detail.source.\(title.lowercased())")
             let value = switch title {
             case "Package": summary.packageName ?? ""
             case "Provenance": summary.provenance.label
             case "Scope": "Server default"
             default: summary.editable ? "Editable" : "Read-only"
             }
-            var content = UIListContentConfiguration.valueCell()
-            content.text = title
-            content.textProperties.color = palette.ui.comment
-            content.secondaryText = value
-            content.secondaryTextProperties.color = palette.ui.fg
-            cell.contentConfiguration = content
-            // One element, so a path reads as a label and its value.
-            cell.isAccessibilityElement = true
-            cell.accessibilityLabel = title
-            cell.accessibilityValue = value
-        case .status:
-            ListScreen.staticRow(cell, identifier: "skills.detail.status")
-            let hasError = summary.state == .error || summary.state == .unknown
-            let label = hasError ? "Error" : "Loaded"
-            var content = UIListContentConfiguration.cell()
-            content.text = label
-            content.textProperties.color = palette.ui.fg
-            content.image = UIImage(systemName: hasError ? "exclamationmark.triangle.fill" : "checkmark.circle")
-            content.imageProperties.tintColor = palette.ui.fg
-            cell.contentConfiguration = content
-        case .loadError(let reason):
-            ListScreen.staticRow(cell, identifier: "skills.detail.loadError")
-            var content = UIListContentConfiguration.cell()
-            content.text = reason
-            content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = palette.ui.orange
-            cell.contentConfiguration = content
-        case .warning(let warning):
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = Self.noteContent(
-                warning, systemImage: "exclamationmark.circle",
-                color: palette.ui.fg, imageColor: palette.ui.fg
+            resourceFactRow(
+                cell, identifier: "skills.detail.source.\(title.lowercased())", title: title, value: value
             )
         case .browse:
             let count = state.detail?.files.count ?? 0
@@ -232,22 +136,6 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             cell.contentConfiguration = content
             cell.accessories = [.disclosureIndicator()]
         }
-    }
-
-    /// A footnote with a symbol: a warning, or a failed save.
-    private static func noteContent(
-        _ text: String,
-        systemImage: String,
-        color: UIColor,
-        imageColor: UIColor
-    ) -> UIListContentConfiguration {
-        var content = UIListContentConfiguration.cell()
-        content.text = text
-        content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-        content.textProperties.color = color
-        content.image = UIImage(systemName: systemImage)
-        content.imageProperties.tintColor = imageColor
-        return content
     }
 
     // MARK: - Actions

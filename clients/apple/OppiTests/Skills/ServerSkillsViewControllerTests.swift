@@ -163,10 +163,60 @@ struct ServerSkillsViewControllerTests {
                 "an unknown Skill is not a failed request")
         let validation = try #require(screen.sections().first { $0.id == .validation })
         let reason = validation.items.compactMap { item -> String? in
-            if case .loadError(let reason) = item { return reason }
+            if case .resource(.loadError(let reason)) = item { return reason }
             return nil
         }.first
         #expect(reason == String(localized: "Pi could not read this Skill."))
+    }
+
+    /// A Skill that is on says it is loaded; one that is off says so, not "Loaded".
+    @Test("the status row says what Pi made of the Skill", arguments: [
+        (ServerSkillState.enabled, "Loaded"),
+        (ServerSkillState.disabled, "Disabled"),
+        (ServerSkillState.error, "Error"),
+    ])
+    func statusRowSaysTheSkillsState(state: ServerSkillState, label: String) async throws {
+        let screen = try await mountDetail(skill(state: state))
+        defer { hide(screen.window) }
+
+        #expect(await RowProbe.waitForRow("skills.detail.status", in: screen.page.view))
+        let words = RowProbe.texts(in: "skills.detail.status", of: screen.page.view)
+            .map { $0.trimmingCharacters(in: CharacterSet.letters.inverted) }
+        #expect(words == [label])
+        let toggle = try #require(RowProbe.row("skills.detail.enabled", in: screen.page.view) as? UISwitch)
+        #expect(toggle.isOn == (state == .enabled))
+    }
+
+    @Test("the title, source values, and findings are drawn like the extension page's")
+    func sharedRowsMatchTheExtensionPage() async throws {
+        let summary = ServerSkillSummary(
+            id: "release", name: "release", description: "Review release readiness.",
+            provenance: .init(kind: .piAgent, label: "~/.pi/agent/skills"), path: nil,
+            state: .unknown, loadError: nil, warnings: ["stale", "stale", "slow"], editable: false
+        )
+        let screen = try await mountDetail(summary)
+        defer { hide(screen.window) }
+        let view: UIView = screen.page.view
+
+        #expect(await RowProbe.waitForRow("skills.detail.status", in: view))
+        #expect(RowProbe.texts(in: "skills.detail.title", of: view) == ["release", "Review release readiness."])
+        #expect(RowProbe.texts(in: "skills.detail.loadError", of: view) == ["Pi could not read this Skill."])
+        let sections = screen.page.sections()
+        let validation = try #require(sections.first { $0.id == .validation })
+        #expect(validation.header == "Validation")
+        #expect(validation.items == [
+            .resource(.status), .resource(.loadError("Pi could not read this Skill.")),
+            .resource(.warning("stale")), .resource(.warning("slow")),
+        ], "each warning once, after the state and why")
+        let serverDefault = try #require(sections.first { $0.id == .serverDefault })
+        #expect(serverDefault.header == "Server Default")
+        #expect(serverDefault.footer == "New sessions use this setting. Reload an active session to apply it now.")
+        #expect(sections.first { $0.id == .summary }?.header == nil)
+
+        // The source values are text the person can select and copy.
+        #expect(RowProbe.selectableTexts(in: "skills.detail.source.provenance", of: view) == ["~/.pi/agent/skills"])
+        #expect(RowProbe.selectableTexts(in: "skills.detail.source.scope", of: view) == ["Server default"])
+        #expect(RowProbe.selectableTexts(in: "skills.detail.source.files", of: view) == ["Read-only"])
     }
 
     @Test("Retry on an unavailable Skills catalog says why, sends one new request, and loads the list")
@@ -317,6 +367,24 @@ struct ServerSkillsViewControllerTests {
            """)
     }
 
+    /// The detail page over `summary`'s catalog row, in a window tall enough that
+    /// every row is loaded. Offline, so only the row fills it.
+    private func mountDetail(
+        _ summary: ServerSkillSummary
+    ) async throws -> (page: ServerSkillDetailViewController, window: UIWindow) {
+        let root = try await makeRoot()
+        let connection = try #require(root.coordinator.connection(for: serverId))
+        connection.serverResourceStore.replaceSkills([summary], serverId: serverId)
+        connection.setAPIClientForTesting(nil)
+        let page = ServerSkillDetailViewController(
+            target: ServerResourceDetailNavTarget(serverId: serverId, kind: .skill, resourceId: summary.id),
+            root: root,
+            connection: connection
+        )
+        let window = try show(UINavigationController(rootViewController: page), height: 2000)
+        return (page, window)
+    }
+
     private func makeRoot() async throws -> AppRootEnvironment {
         try await makeTestAppRoot(
             readyServerId: serverId,
@@ -324,10 +392,10 @@ struct ServerSkillsViewControllerTests {
         )
     }
 
-    private func show(_ controller: UIViewController) throws -> UIWindow {
+    private func show(_ controller: UIViewController, height: CGFloat = 844) throws -> UIWindow {
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: height)
         window.rootViewController = controller
         window.makeKeyAndVisible()
         return window

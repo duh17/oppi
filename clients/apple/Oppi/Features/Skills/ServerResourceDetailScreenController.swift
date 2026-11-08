@@ -8,17 +8,41 @@ protocol ServerResourceDetailSummary {
     var detailName: String { get }
     var detailDescription: String { get }
     var detailLoadError: String? { get }
+    var detailWarnings: [String] { get }
     /// The catalog's state, whatever its own type: the rows redraw on it.
     var detailState: AnyHashable { get }
+    /// What the Status row says of the state: "Enabled", "Disabled", "Error".
+    var detailStatusLabel: String { get }
+    /// Pi listed the resource but could not read it (an error or a state the
+    /// client does not know): the Status row warns, and the page gives a reason
+    /// when the server sent none.
+    var isUnreadable: Bool { get }
     var isServerDefaultOn: Bool { get }
     var canToggleServerDefault: Bool { get }
+    /// What the Server Default section says instead of its usual footer, when
+    /// this resource cannot follow it.
+    var serverDefaultNote: String? { get }
+}
+
+extension ServerResourceDetailSummary {
+    var serverDefaultNote: String? { nil }
 }
 
 extension ServerSkillSummary: ServerResourceDetailSummary {
     var detailName: String { name }
     var detailDescription: String { description }
     var detailLoadError: String? { loadError }
+    var detailWarnings: [String] { warnings }
     var detailState: AnyHashable { AnyHashable(state) }
+    /// A Skill that is on is "Loaded": Pi read it and puts it in new sessions.
+    var detailStatusLabel: String {
+        switch state {
+        case .enabled: "Loaded"
+        case .disabled: "Disabled"
+        case .error, .unknown: "Error"
+        }
+    }
+    var isUnreadable: Bool { state == .error || state == .unknown }
     var isServerDefaultOn: Bool { state == .enabled }
     var canToggleServerDefault: Bool { state != .error && state != .unknown }
 }
@@ -27,7 +51,15 @@ extension ServerExtensionSummary: ServerResourceDetailSummary {
     var detailName: String { name }
     var detailDescription: String { description ?? "" }
     var detailLoadError: String? { loadError }
+    var detailWarnings: [String] { warnings }
     var detailState: AnyHashable { AnyHashable(state) }
+    var detailStatusLabel: String { ServerExtensionListPresentation.stateLabel(for: state) }
+    var isUnreadable: Bool { state == .error || state == .unknown }
+    var serverDefaultNote: String? {
+        plugin?.required == true
+            ? String(localized: "Part of the durable session runtime, so it’s always on in durable sessions.")
+            : nil
+    }
     /// A plugin whose reload failed but kept its previous code is on while that code runs: its
     /// row says `error`, its plugin `enabled`. A row being switched off shows off.
     var isServerDefaultOn: Bool { state == .on || (state == .error && isKeptRunning) }
@@ -38,6 +70,29 @@ extension ServerExtensionSummary: ServerResourceDetailSummary {
     }
 
     private var isKeptRunning: Bool { plugin?.kept == true && plugin?.enabled == true }
+}
+
+/// A row both pages have, drawn by the base. A page's item type holds one as
+/// `.resource(row)`; its rows are scoped by the list's name
+/// (`skills.detail.status`, `server.extension.status`).
+enum ServerResourceRow: Hashable, Sendable {
+    case title, enabled, mutationError, status
+    /// Why Pi could not read the resource.
+    case loadError(String)
+    case warning(String)
+}
+
+/// A page's items: its own, and the rows it shares with the other page.
+protocol ServerResourceDetailItem: Hashable, Sendable {
+    static func resource(_ row: ServerResourceRow) -> Self
+    var resourceRow: ServerResourceRow? { get }
+}
+
+/// A page's sections: its own, and the three the base builds for both pages.
+protocol ServerResourceDetailSection: Hashable, Sendable {
+    static var summary: Self { get }
+    static var serverDefault: Self { get }
+    static var loading: Self { get }
 }
 
 /// A detail response carries its own newer copy of the catalog's row.
@@ -69,6 +124,8 @@ struct ServerResourceDetailPage<Detail: ServerResourceDetailAnswer> {
     var title: String
     var listIdentifier: String
     var loadingCaption: String
+    /// Why Pi could not read the resource, when the server gave no reason of its own.
+    var unreadableReason: String
     /// The title of a failed load: "Couldn't Load Skill", over the request's reason.
     var failureTitle: String
     /// Whether the page says "Connecting…" until it has its server; a page that
@@ -100,8 +157,8 @@ struct ServerResourceDetailPage<Detail: ServerResourceDetailAnswer> {
 class ServerResourceDetailScreenController<
     Summary: ServerResourceDetailSummary,
     Detail: ServerResourceDetailAnswer,
-    Section: Hashable & Sendable,
-    Item: Hashable & Sendable
+    Section: ServerResourceDetailSection,
+    Item: ServerResourceDetailItem
 >: ListScreenController<Section, Item> where Detail.Summary == Summary {
     let target: ServerResourceDetailNavTarget
     let root: AppRootEnvironment
@@ -255,24 +312,100 @@ class ServerResourceDetailScreenController<
     /// `configureCard(_:item:)`; the handler also dims a pressed button row.
     override var rowStyle: ListRowStyle { .card }
 
-    /// Fills one of the page's rows. The cell arrives as a themed card.
-    override func configureCard(_ cell: SidebarListCell, item: Item) {}
-
-    /// The rows a resource-detail page has, whose inputs are the same on both:
-    /// the resource itself, a save in flight, and the load. A page's own rows
-    /// add their own.
-    enum ResourceRow {
-        case title, serverDefault, mutationError, status
+    /// Fills the rows both pages share; a page's own rows call `super` for
+    /// `.resource` and draw the rest themselves. The cell arrives as a themed card.
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
+        guard let row = item.resourceRow, let state else { return }
+        let palette = palette
+        let summary = state.summary
+        switch row {
+        case .title:
+            ListScreen.staticRow(cell, identifier: "\(listName).title")
+            let description = summary.detailDescription
+            cell.contentConfiguration = ControlViewContent(insets: .init(top: 12, leading: 0, bottom: 12, trailing: 0)) {
+                var views = [ControlRowViews.label(
+                    summary.detailName, style: .title2, weight: .bold, color: palette.ui.fg
+                )]
+                if !description.isEmpty {
+                    views.append(ControlRowViews.label(description, style: .body, color: palette.ui.comment))
+                }
+                return ControlRowViews.stack(views, spacing: 6)
+            }
+        case .enabled:
+            serverDefaultRow(cell, state: state)
+        case .mutationError:
+            ListScreen.staticRow(cell, identifier: "\(listName).mutationError")
+            let message = mutationFailureMessage
+            cell.contentConfiguration = ControlViewContent {
+                ControlRowViews.symbolLabel(
+                    message,
+                    systemImage: "exclamationmark.triangle.fill",
+                    style: .footnote,
+                    color: palette.ui.orange
+                )
+            }
+        case .status:
+            ListScreen.staticRow(cell, identifier: "\(listName).status")
+            // A resource that is on shows a check, one that is off a minus.
+            let icon = summary.isUnreadable
+                ? "exclamationmark.triangle.fill"
+                : (summary.isServerDefaultOn ? "checkmark.circle" : "minus.circle")
+            let label = summary.detailStatusLabel
+            cell.contentConfiguration = ControlViewContent {
+                let row = ControlRowViews.symbolLabel(label, systemImage: icon, style: .body, color: palette.ui.fg)
+                row.accessibilityLabel = label
+                return row
+            }
+        case .loadError(let reason):
+            ListScreen.staticRow(cell, identifier: "\(listName).loadError")
+            cell.contentConfiguration = ControlViewContent {
+                ControlRowViews.label(reason, style: .footnote, color: palette.ui.orange)
+            }
+        case .warning(let warning):
+            ListScreen.staticRow(cell)
+            cell.contentConfiguration = ControlViewContent {
+                ControlRowViews.symbolLabel(
+                    warning,
+                    systemImage: "exclamationmark.circle",
+                    style: .footnote,
+                    color: palette.ui.fg
+                )
+            }
+        }
     }
 
-    /// What one of the shared rows draws from.
-    func resourceRowInputs(_ row: ResourceRow) -> AnyHashable {
+    /// A fact about the resource: its title and value side by side with the
+    /// value selectable, and under them, for a long one, its path.
+    func resourceFactRow(
+        _ cell: SidebarListCell,
+        identifier: String,
+        title: String,
+        value: String,
+        path: String? = nil
+    ) {
+        ListScreen.staticRow(cell, identifier: identifier)
+        let palette = palette
+        cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
+            let valueRow = ControlRowViews.valueRow(title, value, palette: palette, style: .body)
+            guard let path, !path.isEmpty else { return valueRow }
+            // The path under the label: long, so it wraps the row's width.
+            let pathText = ControlRowViews.selectableText(path, style: .footnote, color: palette.ui.comment)
+            pathText.accessibilityLabel = String(localized: "Path")
+            pathText.accessibilityValue = path
+            return ControlRowViews.stack([valueRow, pathText], spacing: 4)
+        }
+    }
+
+    /// What a shared row draws from, besides its own identity: a replaced switch
+    /// would drop a save in flight. A page's own rows add their own.
+    override func inputs(of item: Item) -> AnyHashable {
         guard let state else { return AnyHashable(0) }
+        guard let row = item.resourceRow else { return super.inputs(of: item) }
         let summary = state.summary
         return switch row {
         case .title:
             AnyHashable([AnyHashable(summary.detailName), AnyHashable(summary.detailDescription)])
-        case .serverDefault:
+        case .enabled:
             // A refused change sets only the mutation error; redraw so the switch snaps back.
             AnyHashable([
                 AnyHashable(summary.detailName), summary.detailState, AnyHashable(state.isPending),
@@ -286,7 +419,62 @@ class ServerResourceDetailScreenController<
             ])
         case .status:
             AnyHashable([summary.detailState])
+        case .loadError(let reason):
+            AnyHashable(reason)
+        // A warning holds nothing a reconfigure would disturb, so the kit's
+        // default draws it again.
+        case .warning:
+            super.inputs(of: item)
         }
+    }
+
+    // MARK: - Sections
+
+    /// The page's title and description.
+    func summarySection() -> ListSection<Section, Item> {
+        ListSection(.summary, items: [.resource(.title)])
+    }
+
+    /// The Server Default section: the switch and, after a failed save, why.
+    func serverDefaultSection() -> ListSection<Section, Item> {
+        ListSection(
+            .serverDefault,
+            header: "Server Default",
+            footer: state?.summary.serverDefaultNote
+                ?? "New sessions use this setting. Reload an active session to apply it now.",
+            items: state?.mutationError == nil ? [.resource(.enabled)] : [.resource(.enabled), .resource(.mutationError)]
+        )
+    }
+
+    /// What Pi makes of the resource — its state, why it could not read it, the
+    /// page's own findings (`extra`), and each warning once (a diffable list traps
+    /// on a repeated row). These are facts about the resource, not a failed request.
+    func statusItems(extra: [Item] = []) -> [Item] {
+        guard let summary = state?.summary else { return [] }
+        var items: [Item] = [.resource(.status)]
+        if let reason = summary.detailLoadError ?? (summary.isUnreadable ? page.unreadableReason : nil) {
+            items.append(.resource(.loadError(reason)))
+        }
+        return items + extra + Self.unique(summary.detailWarnings).map { .resource(.warning($0)) }
+    }
+
+    /// The contents' place: the kit's compact loading row until the detail
+    /// arrives, and its one failed row with Retry when the request failed.
+    func loadingSection() -> ListSection<Section, Item>? {
+        guard let state,
+              let row = stateRow(hasContent: state.detail != nil, isLoading: isLoading, failure: loadFailure)
+        else { return nil }
+        return ListSection(.loading, items: [], state: row)
+    }
+
+    /// The contents are what the detail request fetches: until they are here the
+    /// list shows the compact loading row in the contents' place.
+    override func hasContent() -> Bool { state?.detail != nil }
+
+    /// The group headings are the ones the page wrote, so only the sections
+    /// with one show it.
+    override func showsHeader(for section: Section) -> Bool {
+        section != .summary && section != .loading
     }
 
     /// The repeated words a row of either page shows.
@@ -297,15 +485,14 @@ class ServerResourceDetailScreenController<
 
     /// "Couldn’t enable release on mac-studio. <reason>": the row that says a
     /// save failed.
-    var mutationFailureMessage: String {
+    private var mutationFailureMessage: String {
         guard let state else { return "" }
         return "Couldn’t \(mutationVerb ?? "update") \(state.summary.detailName) on \(state.serverName). \(state.mutationError ?? "")"
     }
 
     /// The server default's row: its switch, a spinner while a save is in
     /// flight, and the save itself.
-    func serverDefaultRow(_ cell: SidebarListCell, identifier: String, savingIdentifier: String) {
-        guard let state else { return }
+    private func serverDefaultRow(_ cell: SidebarListCell, state: ServerResourceDetailState<Summary, Detail>) {
         ListScreen.staticRow(cell)
         var content = UIListContentConfiguration.cell()
         content.text = "Enabled"
@@ -314,7 +501,7 @@ class ServerResourceDetailScreenController<
         let toggle = UISwitch()
         toggle.isOn = state.summary.isServerDefaultOn
         toggle.isEnabled = !state.isPending && state.mutationsAllowed && state.summary.canToggleServerDefault
-        toggle.accessibilityIdentifier = identifier
+        toggle.accessibilityIdentifier = "\(listName).enabled"
         toggle.accessibilityLabel = "Enable \(state.summary.detailName) on \(state.serverName)"
         toggle.addAction(UIAction { [weak self, weak toggle] _ in
             guard let self, let toggle else { return }
@@ -330,7 +517,7 @@ class ServerResourceDetailScreenController<
             let spinner = UIActivityIndicatorView(style: .medium)
             spinner.startAnimating()
             spinner.accessibilityLabel = "Saving"
-            spinner.accessibilityIdentifier = savingIdentifier
+            spinner.accessibilityIdentifier = "\(listName).saving"
             accessories.append(.customView(configuration: .init(customView: spinner, placement: .trailing())))
         }
         accessories.append(.customView(configuration: .init(customView: toggle, placement: .trailing())))

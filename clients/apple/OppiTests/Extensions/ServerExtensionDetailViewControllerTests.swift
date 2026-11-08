@@ -168,6 +168,71 @@ struct ServerExtensionDetailViewControllerTests {
                 "listed once, from the detail rather than the plugin's names")
     }
 
+    @Test(arguments: [
+        (ServerExtensionState.on, "Enabled"),
+        (ServerExtensionState.off, "Disabled"),
+    ])
+    func theStatusRowSaysTheStateOfTheExtension(state: ServerExtensionState, label: String) async throws {
+        let row = askRow(sections: [], state: state)
+        let page = try await mount(row: row, detail: ServerExtensionDetail(summary: row))
+        defer { page.close() }
+
+        #expect(await page.waitForCell("server.extension.status"))
+        #expect(page.words(in: "server.extension.status") == [label])
+        let toggle = try #require(page.cell("server.extension.enabled") as? UISwitch)
+        #expect(toggle.isOn == (state == .on))
+    }
+
+    @Test func theTitleStateFindingsAndAboutValuesAreDrawnFromTheRow() async throws {
+        let row = askRow(
+            sections: [], path: "/opt/oppi/plugins/ask/server.js", state: .error, description: "Asks the user questions.",
+            warnings: ["slow start", "slow start", "old api"]
+        )
+        let page = try await mount(row: row, detail: ServerExtensionDetail(summary: row))
+        defer { page.close() }
+
+        #expect(await page.waitForCell("server.extension.status"))
+        #expect(page.texts(in: "server.extension.title") == ["ask", "Asks the user questions."])
+        #expect(page.words(in: "server.extension.status") == ["Error"])
+        #expect(page.texts(in: "server.extension.loadError") == ["Pi could not load this extension."],
+                "an error the server gave no reason for still says why")
+        let toggle = try #require(page.cell("server.extension.enabled") as? UISwitch)
+        #expect(!toggle.isOn)
+        #expect(!toggle.isEnabled, "a broken extension's default cannot be changed")
+
+        let sections = page.controller.sections()
+        let status = try #require(sections.first { $0.id == .status })
+        #expect(status.header == "Status")
+        #expect(status.items == [
+            .resource(.status), .resource(.loadError("Pi could not load this extension.")),
+            .resource(.warning("slow start")), .resource(.warning("old api")),
+        ], "each warning once, after the state and why")
+        let serverDefault = try #require(sections.first { $0.id == .serverDefault })
+        #expect(serverDefault.header == "Server Default")
+        #expect(serverDefault.footer == "New sessions use this setting. Reload an active session to apply it now.")
+        #expect(sections.first { $0.id == .summary }?.header == nil)
+
+        // The About values are text the person can select and copy.
+        #expect(page.selectableTexts(in: "server.extension.about.type") == ["Built-in plugin"])
+        #expect(page.selectableTexts(in: "server.extension.about.from") == ["Oppi", "/opt/oppi/plugins/ask/server.js"])
+    }
+
+    @Test func aRequiredPluginsServerDefaultFooterSaysItIsAlwaysOn() async throws {
+        let row = summary(
+            id: "ask", name: "ask", kind: .builtIn, provenance: .init(kind: .builtIn, label: "Oppi"),
+            path: nil, kinds: [.plugin], source: .builtIn,
+            plugin: plugin(runtimes: ["host"], tools: ["ask"], required: true)
+        )
+        let page = try await mount(row: row, detail: ServerExtensionDetail(summary: row))
+        defer { page.close() }
+
+        #expect(await page.waitForCell("server.extension.enabled"))
+        #expect(page.controller.sections().first { $0.id == .serverDefault }?.footer
+            == "Part of the durable session runtime, so it’s always on in durable sessions.")
+        let toggle = try #require(page.cell("server.extension.enabled") as? UISwitch)
+        #expect(!toggle.isEnabled)
+    }
+
     @Test func aToolPageSaysItTakesNoArgumentsOnlyForAnEmptyPropertyList() {
         let root = makeTestAppRoot()
         let footer = { (schema: JSONValue) in
@@ -184,11 +249,18 @@ struct ServerExtensionDetailViewControllerTests {
 
     // MARK: - Harness
 
-    private func askRow(sections: [String]) -> ServerExtensionSummary {
+    private func askRow(
+        sections: [String],
+        path: String? = nil,
+        state: ServerExtensionState = .on,
+        description: String? = nil,
+        warnings: [String] = []
+    ) -> ServerExtensionSummary {
         summary(
             id: "ask", name: "ask", kind: .builtIn, provenance: .init(kind: .builtIn, label: "Oppi"),
-            path: nil, kinds: [.plugin], source: .builtIn,
-            plugin: plugin(runtimes: ["host"], tools: ["ask"], sections: sections)
+            path: path, kinds: [.plugin], source: .builtIn,
+            plugin: plugin(runtimes: ["host"], tools: ["ask"], sections: sections),
+            state: state, description: description, warnings: warnings
         )
     }
 
@@ -230,18 +302,23 @@ struct ServerExtensionDetailViewControllerTests {
         packageName: String? = nil,
         kinds: [ServerExtensionRowKind],
         source: ServerExtensionSource,
-        plugin: ServerPluginSummary? = nil
+        plugin: ServerPluginSummary? = nil,
+        state: ServerExtensionState = .on,
+        description: String? = nil,
+        warnings: [String] = []
     ) -> ServerExtensionSummary {
         ServerExtensionSummary(
-            id: id, name: name, description: nil, kind: kind, provenance: provenance, path: path,
-            packageName: packageName, state: .on, loadError: nil, warnings: [], isRemovable: false,
+            id: id, name: name, description: description, kind: kind, provenance: provenance, path: path,
+            packageName: packageName, state: state, loadError: nil, warnings: warnings, isRemovable: false,
             kinds: kinds, source: source, plugin: plugin
         )
     }
 
-    private func plugin(runtimes: [String], tools: [String], sections: [String] = []) -> ServerPluginSummary {
+    private func plugin(
+        runtimes: [String], tools: [String], sections: [String] = [], required: Bool = false
+    ) -> ServerPluginSummary {
         ServerPluginSummary(
-            extensionName: "plugin", required: false, enabled: true, runtimes: runtimes, tools: tools,
+            extensionName: "plugin", required: required, enabled: true, runtimes: runtimes, tools: tools,
             hooks: [], sections: sections, wraps: [], tasks: [], loadError: nil, kept: false
         )
     }
@@ -274,6 +351,16 @@ struct MountedDetailPage {
     /// The row's text in reading order.
     func texts(in identifier: String) -> [String] {
         RowProbe.texts(in: identifier, of: controller.view)
+    }
+
+    /// The row's words without the symbol drawn before them.
+    func words(in identifier: String) -> [String] {
+        texts(in: identifier).map { $0.trimmingCharacters(in: CharacterSet.letters.inverted) }
+    }
+
+    /// The row's text a person can select and copy.
+    func selectableTexts(in identifier: String) -> [String] {
+        RowProbe.selectableTexts(in: identifier, of: controller.view)
     }
 
     /// Taps the row button `identifier` on `screen` (the detail page by default) and
@@ -313,6 +400,19 @@ enum RowProbe {
         guard let row = row(identifier, in: root) else { return [] }
         let cell = sequence(first: row, next: \.superview).first { $0 is UICollectionViewCell } ?? row
         return texts(in: cell)
+    }
+
+    /// The row's text views that select: the values a person can copy.
+    static func selectableTexts(in identifier: String, of root: UIView) -> [String] {
+        guard let row = row(identifier, in: root) else { return [] }
+        let cell = sequence(first: row, next: \.superview).first { $0 is UICollectionViewCell } ?? row
+        return selectableTexts(in: cell)
+    }
+
+    private static func selectableTexts(in view: UIView) -> [String] {
+        if view.isHidden { return [] }
+        if let text = view as? UITextView { return text.isSelectable ? [text.text] : [] }
+        return view.subviews.flatMap(selectableTexts(in:))
     }
 
     private static func find(_ identifier: String, in view: UIView) -> UIView? {
