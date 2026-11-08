@@ -310,8 +310,10 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
         NSLayoutConstraint.activate([
             root.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             root.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            root.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            root.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            // The Duo's vertical rail takes a side of the safe area; chrome pinned to the view's
+            // edge ran under Close, the segmented control's end, and the filter row's count.
+            root.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            root.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
         ])
         showLayout()
     }
