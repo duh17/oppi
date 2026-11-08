@@ -10,6 +10,44 @@ enum QuickSessionPresentationSource: String, Sendable {
     case intent = "intent"
 }
 
+/// The screens in front in the foreground window, read from UIKit. The route
+/// state behind `diagnosticScreenLabel` can lag a push, so a Quick Session
+/// request logs this too: whether a chat was on top when a control opened it.
+@MainActor
+struct FrontScreens {
+    let chatOnTop: Bool
+    /// Class names of the front screens, comma separated.
+    let names: String
+
+    static func current() -> FrontScreens {
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }?.keyWindow
+        var fronts: [UIViewController] = []
+        if let root = window?.rootViewController { collect(root, into: &fronts) }
+        return FrontScreens(
+            chatOnTop: fronts.contains { $0 is ChatRouteViewController },
+            names: fronts.map { String(describing: type(of: $0)) }.joined(separator: ",")
+        )
+    }
+
+    /// What shows: a presented screen over its presenter, a stack's top, each
+    /// column of a split, and a screen with no children of its own.
+    private static func collect(_ screen: UIViewController, into fronts: inout [UIViewController]) {
+        if let presented = screen.presentedViewController {
+            collect(presented, into: &fronts)
+        } else if screen is ChatRouteViewController {
+            fronts.append(screen)
+        } else if let navigation = screen as? UINavigationController {
+            if let top = navigation.topViewController { collect(top, into: &fronts) }
+        } else if screen.children.isEmpty {
+            fronts.append(screen)
+        } else {
+            for child in screen.children { collect(child, into: &fronts) }
+        }
+    }
+}
+
 /// Size-class and window measurement that chose stack vs split.
 struct WorkspaceNavigationMeasurement: Equatable, Sendable {
     var horizontalSizeClass: String

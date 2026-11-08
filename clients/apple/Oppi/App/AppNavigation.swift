@@ -341,9 +341,10 @@ final class AppNavigation {
         )
     }
 
-    /// Present Quick Session with `start` and record which control opened it. The
-    /// screen is captured before the flag flips, because the diagnostic label then
-    /// becomes `quick_session`.
+    /// Present Quick Session with `start` and record which control opened it, and
+    /// whether a chat was the top view controller when it asked (a list bar's tap
+    /// under a chat, or the intent path). The screen is captured before the flag
+    /// flips, because the diagnostic label then becomes `quick_session`.
     func presentQuickSession(
         _ start: QuickSessionStart = QuickSessionStart(),
         from source: QuickSessionPresentationSource
@@ -351,6 +352,7 @@ final class AppNavigation {
         guard !showQuickSession else { return }
         let screen = diagnosticScreenLabel()
         let presentation = workspaceNavigationPresentation.telemetryLabel
+        let front = FrontScreens.current()
         pendingQuickSessionStart = start
         showQuickSession = true
         ClientLog.info(
@@ -361,6 +363,8 @@ final class AppNavigation {
                 "mode": start.mode.rawValue,
                 "screen": screen,
                 "presentation": presentation,
+                "chatOnTop": String(front.chatOnTop),
+                "top": front.names,
             ],
             flush: true
         )
