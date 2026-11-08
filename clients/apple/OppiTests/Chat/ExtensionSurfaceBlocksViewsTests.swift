@@ -930,9 +930,26 @@ struct ExtensionSurfaceBlocksViewsTests {
 
     // MARK: - Pill
 
+    /// A narrow strip draws a pill's summary without its `caption` line, and the pill follows a
+    /// width change in place, with no content update to rebuild it.
+    @Test func aPillDropsItsCaptionTextWhileNarrowAndReturnsWhenTheWidthGrows() throws {
+        let panel = makePanel(try surface("blocks-panel.json"), sizeClass: .compact)
+        let id = "extension-strip-aboveEditor-pill-surface-blocks_2dpanel"
+        let compact = shownLabelTexts(in: try testUnwrap(control(id, in: panel)))
+        #expect(!compact.contains("web → prod"), "the caption line is left out while narrow: \(compact)")
+        #expect(compact.contains("running"), "the summary's badge stays: \(compact)")
+
+        let window = try testUnwrap(panel.window)
+        window.traitOverrides.horizontalSizeClass = .regular
+        window.layoutIfNeeded()
+        panel.layoutIfNeeded()
+        let wide = shownLabelTexts(in: try testUnwrap(control(id, in: panel)))
+        #expect(wide.contains("web → prod"), "the caption line returns when the width grows: \(wide)")
+    }
+
     @Test func aComposedPillDrawsItsContentRowInsteadOfTheHeaderTitle() throws {
         let surface = try surface("blocks-panel.json")
-        let panel = makePanel(surface)
+        let panel = makePanel(surface, sizeClass: .regular)
 
         let pill = try testUnwrap(
             control("extension-strip-aboveEditor-pill-surface-blocks_2dpanel", in: panel) as? UIControl
@@ -1181,7 +1198,8 @@ struct ExtensionSurfaceBlocksViewsTests {
 
     private func makePanel(
         _ surface: ExtensionUISurface,
-        onAction: ((ExtensionSurfaceActionIntent) -> Void)? = nil
+        onAction: ((ExtensionSurfaceActionIntent) -> Void)? = nil,
+        sizeClass: UIUserInterfaceSizeClass? = nil
     ) -> ExtensionSurfacePanelView {
         let state = ExtensionSurfaceState(composableSurfaces: [
             surface.id: ExtensionComposableSurfaceState(surface: surface, order: 1),
@@ -1196,19 +1214,20 @@ struct ExtensionSurfaceBlocksViewsTests {
             themeID: themeID,
             collapseRequestID: 0
         ))
-        show(panel, inset: 0)
+        show(panel, inset: 0, sizeClass: sizeClass)
         panel.layoutIfNeeded()
         return panel
     }
 
     /// Puts `view` in a real window at 320 pt, inset to the drawer's inner width. Each call closes
     /// the previous window so one test cannot read another's layout.
-    private func show(_ view: UIView, inset: CGFloat = 28) {
+    private func show(_ view: UIView, inset: CGFloat = 28, sizeClass: UIUserInterfaceSizeClass? = nil) {
         for window in Self.windows { window.isHidden = true }
         Self.windows.removeAll()
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 2400))
         let host = UIViewController()
         window.rootViewController = host
+        if let sizeClass { window.traitOverrides.horizontalSizeClass = sizeClass }
         window.makeKeyAndVisible()
         view.translatesAutoresizingMaskIntoConstraints = false
         host.view.addSubview(view)

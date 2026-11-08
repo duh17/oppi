@@ -1176,6 +1176,10 @@ final class ExtensionSurfacePanelView: UIView {
             stripRow.trailingAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.trailingAnchor),
             stripScroll.frameLayoutGuide.heightAnchor.constraint(equalTo: stripRow.heightAnchor),
         ])
+        // A split resized or a device turned: the pills' summary-only form follows the width.
+        registerForTraitChanges([UITraitHorizontalSizeClass.self]) { (panel: Self, _) in
+            panel.lastContent.map(panel.apply)
+        }
     }
 
     @available(*, unavailable)
