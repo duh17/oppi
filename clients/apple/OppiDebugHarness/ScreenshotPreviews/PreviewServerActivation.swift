@@ -10,9 +10,15 @@ extension ConnectionCoordinator {
     /// `server.host`. Give preview servers a reserved `.invalid` host (RFC 6761):
     /// it never resolves, so those requests fail as unreachable instead of
     /// reaching a real machine, whose refusal would fail the route closed.
+    /// `durableSessions` advertises Durable sessions in that `/server/info`.
     @discardableResult
-    func activatePreviewServer(_ server: PairedServer, apiClient: APIClient? = nil) -> ServerConnection {
-        _serverInfoBootstrapForTesting = { _, _ in Self.previewServerInfo }
+    func activatePreviewServer(
+        _ server: PairedServer,
+        apiClient: APIClient? = nil,
+        durableSessions: Bool = false
+    ) -> ServerConnection {
+        let info = Self.previewServerInfo(durableSessions: durableSessions)
+        _serverInfoBootstrapForTesting = { _, _ in info }
         _initialLANEndpointForTesting = { _ in nil }
         if let apiClient {
             _apiClientFactoryForTesting = { _, _ in apiClient }
@@ -25,32 +31,35 @@ extension ConnectionCoordinator {
         return connection
     }
 
-    private static let previewServerInfo = ServerInfo(
-        name: "Preview",
-        version: ServerReleaseVersion.minimumSupported,
-        uptime: 1,
-        os: "darwin",
-        arch: "arm64",
-        hostname: "preview.invalid",
-        nodeVersion: "22",
-        piVersion: "1",
-        configVersion: 1,
-        identity: nil,
-        uploadProtocol: nil,
-        images: nil,
-        capabilities: .init(
-            sessionStream: .init(version: 1),
-            dictationStream: nil,
-            appEventStream: nil,
-            extensionNativeUI: nil
-        ),
-        stats: .init(
-            workspaceCount: 0,
-            activeSessionCount: 0,
-            totalSessionCount: 0,
-            skillCount: 0,
-            modelCount: 0
+    private static func previewServerInfo(durableSessions: Bool) -> ServerInfo {
+        ServerInfo(
+            name: "Preview",
+            version: ServerReleaseVersion.minimumSupported,
+            uptime: 1,
+            os: "darwin",
+            arch: "arm64",
+            hostname: "preview.invalid",
+            nodeVersion: "22",
+            piVersion: "1",
+            configVersion: 1,
+            identity: nil,
+            uploadProtocol: nil,
+            images: nil,
+            capabilities: .init(
+                sessionStream: .init(version: 1),
+                dictationStream: nil,
+                appEventStream: nil,
+                extensionNativeUI: nil,
+                durableSessions: durableSessions ? .init(version: 1) : nil
+            ),
+            stats: .init(
+                workspaceCount: 0,
+                activeSessionCount: 0,
+                totalSessionCount: 0,
+                skillCount: 0,
+                modelCount: 0
+            )
         )
-    )
+    }
 }
 #endif

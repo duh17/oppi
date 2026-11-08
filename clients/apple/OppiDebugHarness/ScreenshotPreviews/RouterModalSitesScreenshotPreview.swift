@@ -1,4 +1,5 @@
 #if DEBUG
+import Synchronization
 import UIKit
 
 /// Real presenters whose modals the router owns, over fixture services and an
@@ -13,6 +14,10 @@ import UIKit
 /// presenters and their modals share one app root over the fixture server, in
 /// the dark theme. Quick Session starts on plain Pi: an Agent an earlier run
 /// remembered would load its default from the stub server, which fails.
+///
+/// Quick Session is shown as the app shows it: mounted over the real workspace
+/// shell and its sessions, opened from oppi's `router-fix` worktree, on a
+/// server that offers Durable sessions and stars a default model.
 final class RouterModalSitesPreviewController: PreviewRootController {
     init() {
         let environment = ProcessInfo.processInfo.environment
@@ -23,7 +28,17 @@ final class RouterModalSitesPreviewController: PreviewRootController {
         // default from the stub server, which fails.
         UserDefaults.standard.removeObject(forKey: "\(AppIdentifiers.subsystem).quickSession.lastAgentId")
         let site = environment["SCREENSHOT_MODAL_SITE"] ?? "quick-session"
+        let quickSession = site == "quick-session"
         let navigation = AppNavigation()
+        if quickSession {
+            // Opened from a linked worktree, as a workspace screen opens it.
+            navigation.pendingQuickSessionStart = QuickSessionStart(context: QuickSessionLaunchContext(
+                serverId: RouterModalSitesFixtures.serverId,
+                workspaceId: "oppi",
+                worktreeId: "router-fix"
+            ))
+            navigation.showQuickSession = true
+        }
         // A thread link's handoff, as the opener leaves it: the list opens this
         // thread root in place.
         if let rootId = environment["SCREENSHOT_THREAD_FOCUS"] {
@@ -34,7 +49,8 @@ final class RouterModalSitesPreviewController: PreviewRootController {
         let root = AppRootEnvironment(
             coordinator: RouterModalSitesFixtures.makeCoordinator(
                 playing: site.hasSuffix("now-playing"),
-                threads: site == "inbox-threads"
+                threads: site == "inbox-threads" || quickSession,
+                durable: quickSession
             ),
             navigation: navigation,
             themeStore: ThemeStore(),
@@ -50,8 +66,8 @@ final class RouterModalSitesPreviewController: PreviewRootController {
     required init?(coder: NSCoder) { nil }
 
     /// The presenter the site names, at the root of a router stack the way the
-    /// router hosts a screen; Quick Session is the window root itself, the way
-    /// the app mounts it, and handles the safe area and the keyboard itself.
+    /// router hosts a screen; Quick Session mounts over the shell the way the
+    /// app root mounts it, and handles the safe area and the keyboard itself.
     private static func page(site: String, root: AppRootEnvironment) -> UIViewController {
         switch site {
         case "root":
@@ -69,7 +85,7 @@ final class RouterModalSitesPreviewController: PreviewRootController {
                 )
             }
         default:
-            let quickSession = QuickSessionViewController(root: root, onDismiss: {})
+            let quickSession = QuickSessionOverShellController(root: root)
             // `SCREENSHOT_QUICK_SESSION_WIDTH=<pt>` runs it in a window of that
             // width, as a Split View or Stage Manager window does (still regular
             // width from about 640 pt).
@@ -77,6 +93,41 @@ final class RouterModalSitesPreviewController: PreviewRootController {
                 .flatMap(Double.init).map({ CGFloat($0) }) else { return quickSession }
             return NarrowWindowHostController(content: quickSession, width: width)
         }
+    }
+}
+
+/// The real workspace shell with Quick Session over it, mounted by
+/// `QuickSessionPresentation` while `AppNavigation.showQuickSession` is set.
+/// The shell goes inert under it, as under `AppRootViewController`.
+@MainActor
+private final class QuickSessionOverShellController: UIViewController {
+    private let root: AppRootEnvironment
+    private let shell: WorkspaceShellController
+    private lazy var presentation = QuickSessionPresentation(root: root, host: self)
+
+    init(root: AppRootEnvironment) {
+        self.root = root
+        shell = WorkspaceShellController(root: root)
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        PreviewHost.fill(self, with: shell)
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        presentation.update()
+        if let quickSessionView = presentation.controller?.view {
+            view.bringSubviewToFront(quickSessionView)
+        }
+        let showsQuickSession = root.navigation.showQuickSession
+        shell.view.isUserInteractionEnabled = !showsQuickSession
+        shell.view.accessibilityElementsHidden = showsQuickSession
     }
 }
 
@@ -225,7 +276,8 @@ private enum RouterModalSitesFixtures {
     static let workspaces = [workspace(id: "oppi", icon: "iphone"), workspace(id: "kypu", icon: "figure.run")]
     static let serverId = "sha256:router-modal-sites"
 
-    static func makeCoordinator(playing: Bool, threads: Bool = false) -> ConnectionCoordinator {
+    /// `durable` advertises Durable sessions, as a current server does.
+    static func makeCoordinator(playing: Bool, threads: Bool = false, durable: Bool = false) -> ConnectionCoordinator {
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         guard let server = PairedServer(from: ServerCredentials(
             host: "router-modal-sites.invalid",
@@ -237,12 +289,16 @@ private enum RouterModalSitesFixtures {
             tlsCertFingerprint: "sha256:router-modal-sites-leaf"
         )) else { return coordinator }
         coordinator.serverStore.replaceServersForPreview([server])
-        let connection = coordinator.activatePreviewServer(server, apiClient: api)
+        // A site with sessions also answers the list refreshes, so the shell
+        // reads as synced rather than showing cached data.
+        let sessions = threads ? threadSessions : nil
+        RouterModalSitesURLProtocol.serveLists(sessions: sessions, workspaces: workspaces)
+        let connection = coordinator.activatePreviewServer(server, apiClient: api, durableSessions: durable)
         for workspace in workspaces {
             connection.workspaceStore.upsert(workspace, serverId: server.id)
         }
         connection.sessionStore.switchServer(to: server.id)
-        if threads { connection.sessionStore.sessions = threadSessions }
+        if let sessions { connection.sessionStore.sessions = sessions }
         if playing {
             connection.audioPlayer._setPlaybackStateForTesting(playing: "router-modal-sites-audio", loading: nil)
             connection.audioPlayer._setNowPlayingItemTitleForTesting("Fixture narration")
@@ -327,11 +383,31 @@ private enum RouterModalSitesFixtures {
     }
 }
 
-/// Answers models, worktrees, and Agents; everything else is a 404.
+/// Answers models, worktrees, and Agents, and the session, workspace, and skill
+/// lists when the site serves sessions; everything else is a 404. The catalog stars
+/// Opus 5.5 as the server's default, so a plain Pi launch shows it; the two
+/// fixture models are what the UI tests pick.
 private final class RouterModalSitesURLProtocol: URLProtocol {
+    private struct Sessions: Encodable { let sessions: [Session] }
+    private struct Workspaces: Encodable { let workspaces: [Workspace] }
     private struct Models: Encodable { let models: [ModelInfo] }
     private struct Worktrees: Encodable { let worktrees: [WorkspaceWorktree] }
     private struct Agents: Encodable { let agents: [AgentDefinitionSummary] }
+    /// The list answers by path, encoded on the main actor; requests load off it.
+    private static let lists = Mutex<[String: Data]>([:])
+
+    /// Nil `sessions` leaves the session and workspace lists unanswered.
+    static func serveLists(sessions: [Session]?, workspaces: [Workspace]) {
+        let encoder = JSONEncoder()
+        var answers: [String: Data] = [:]
+        if let sessions {
+            answers["/sessions/recent"] = try? encoder.encode(Sessions(sessions: sessions))
+            answers["/workspaces"] = try? encoder.encode(Workspaces(workspaces: workspaces))
+            // The workspace catalog loads with the skills; either failing marks the sync failed.
+            answers["/skills"] = Data(#"{"skills":[]}"#.utf8)
+        }
+        lists.withLock { $0 = answers }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool {
         request.url?.host == "router-modal-sites.oppi"
@@ -343,9 +419,17 @@ private final class RouterModalSitesURLProtocol: URLProtocol {
 
     override func startLoading() {
         let encoder = JSONEncoder()
-        let response: Data? = switch (request.httpMethod, request.url?.path ?? "") {
+        let path = request.url?.path ?? ""
+        let list = request.httpMethod == "GET" ? Self.lists.withLock { $0[path] } : nil
+        let response: Data? = switch (request.httpMethod, path) {
+        case ("GET", _) where list != nil:
+            list
         case ("GET", "/models"):
             try? encoder.encode(Models(models: [
+                ModelInfo(
+                    id: "claude-opus-5-5", name: "Claude Opus 5.5", provider: "anthropic",
+                    contextWindow: 1_000_000, isDefault: true
+                ),
                 ModelInfo(id: "fixture-swift", name: "Fixture Swift", provider: "fixture", contextWindow: 200_000),
                 ModelInfo(id: "fixture-steady", name: "Fixture Steady", provider: "fixture", contextWindow: 200_000),
             ]))
