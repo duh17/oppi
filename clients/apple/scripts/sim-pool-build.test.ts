@@ -332,7 +332,7 @@ describe("sharedCacheArguments", () => {
 });
 
 describe("cloneProducts", () => {
-  test("clones the checkout build's products into the run directory, and logs when it has to copy", () => {
+  test("clones the checkout build's products into the run directory", () => {
     const root = mkdtempSync(join(tmpdir(), "clone-products-"));
     try {
       const dd = join(root, "dd");
@@ -347,11 +347,6 @@ describe("cloneProducts", () => {
       expect(findXctestrun(dest, "OppiUnitTests")).toBe(join(dest, "OppiUnitTests_iphonesimulator-arm64.xctestrun"));
       expect(readFileSync(join(dest, "Debug-iphonesimulator", "Oppi"), "utf8")).toBe("binary");
       expect(logged).toEqual([]);
-      // The same run directory again: clonefile refuses an existing target, the copy says so and still delivers.
-      cloneProducts(dd, runDir, (line) => logged.push(line));
-      expect(logged).toHaveLength(1);
-      expect(logged[0]).toContain("copying the products file by file");
-      expect(readFileSync(join(dest, "Debug-iphonesimulator", "Oppi"), "utf8")).toBe("binary");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -5,6 +5,9 @@ import { spawnSync } from "node:child_process";
 // One clonefile(2) on a directory clones the whole tree and emits a few file-system events (about
 // three), where `cp -c -R` clones file by file and emits events for every one of them (about 726
 // for a test run's products), each of which fseventsd and Spotlight then process.
+// clonefile(2)'s man page discourages directory clones in favor of copyfile(3), but copyfile clones
+// file by file like cp. The call is atomic (all or nothing), so a failure leaves no partial tree for
+// the copy below to merge into. Flags 0: symlinks inside the tree are cloned as links.
 const libc = dlopen(`libc.${suffix}`, {
   clonefile: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
   // The address of this thread's errno; bun:ffi has no errno of its own.
