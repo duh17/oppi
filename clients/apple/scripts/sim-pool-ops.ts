@@ -88,6 +88,8 @@ export type PoolConfig = {
   runtime: string;
   runtimePolicy: RuntimePolicy;
   waitSeconds: number;
+  /** The wait for a machine-wide ui-suite token: OPPI_SIM_POOL_WAIT when set, else the gate wait. */
+  testSlotWaitSeconds: number;
   bootTimeout: number;
   bootRetries: number;
   silenceTimeout: number;
@@ -459,6 +461,10 @@ export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: strin
     runtime: env.OPPI_SIM_RUNTIME ?? profile?.runtime ?? "",
     runtimePolicy: normalizeRuntimePolicy(env.OPPI_SIM_RUNTIME_POLICY ?? ""),
     waitSeconds: parsePositiveInt(env.OPPI_SIM_POOL_WAIT ?? defaultWaitSeconds(env), "OPPI_SIM_POOL_WAIT", 0),
+    // A busy ui-suite token is the machine being throttled on purpose, not a full pool: every
+    // holder is a running test phase that ends, so a plain run queues like a gate run instead of
+    // failing after a minute and being retried into the same queue (xcode-build waits unbounded).
+    testSlotWaitSeconds: parsePositiveInt(env.OPPI_SIM_POOL_WAIT ?? String(GATE_POOL_WAIT_SECONDS), "OPPI_SIM_POOL_WAIT", 0),
     bootTimeout: parsePositiveInt(env.OPPI_SIM_POOL_BOOT_TIMEOUT ?? "120", "OPPI_SIM_POOL_BOOT_TIMEOUT", 1),
     bootRetries: parsePositiveInt(env.OPPI_SIM_POOL_BOOT_RETRIES ?? "1", "OPPI_SIM_POOL_BOOT_RETRIES", 0),
     silenceTimeout: parsePositiveInt(
@@ -1133,8 +1139,7 @@ export async function prepareSimulator(
 }
 
 /**
- * Take a machine-wide heavy.sh slot of `heavyClass`, waiting at most OPPI_SIM_POOL_WAIT seconds and
- * logging the wait. Dies when the wait times out, the run is canceled, or the caller is gone.
+ * Take a machine-wide heavy.sh slot of `heavyClass`, waiting at most `waitSeconds` and logging the wait. Dies when the wait times out, the run is canceled, or the caller is gone.
  * `heldEnv` is what a child must carry so a nested heavy.sh of the class does not wait on us; an
  * ancestor that already holds the class (OPPI_HEAVY_HELD) leaves no lock of ours to release.
  */
@@ -1143,12 +1148,13 @@ async function takeHeavyGate(
   config: PoolConfig,
   heavyClass: Parameters<typeof acquireHeavySlot>[0],
   purpose: string,
+  waitSeconds: number,
 ): Promise<{ lock: HeldLock; heldEnv: string; waitedSeconds: number }> {
   let heavy: Awaited<ReturnType<typeof acquireHeavySlot>>;
   try {
-    heavy = await acquireHeavySlot(heavyClass, process.env, session, log, config.waitSeconds * 1000);
+    heavy = await acquireHeavySlot(heavyClass, process.env, session, log, waitSeconds * 1000);
   } catch (error) {
-    return die(`${error instanceof Error ? error.message : String(error)} (OPPI_SIM_POOL_WAIT=${config.waitSeconds})`);
+    return die(`${error instanceof Error ? error.message : String(error)} (OPPI_SIM_POOL_WAIT=${waitSeconds})`);
   }
   if (!heavy) {
     return die(session.canceled ? `canceled while waiting for the ${heavyClass} slot` : `caller is gone; not ${purpose}`);
@@ -1160,7 +1166,7 @@ async function takeHeavyGate(
 }
 
 async function takeFirstBootGate(session: CommandSession, config: PoolConfig): Promise<HeldLock> {
-  return (await takeHeavyGate(session, config, "sim-first-boot", "booting a new simulator")).lock;
+  return (await takeHeavyGate(session, config, "sim-first-boot", "booting a new simulator", config.waitSeconds)).lock;
 }
 
 /** The app the pool resets between runs (project.yml `Oppi` target; sim-pool-ops.test.ts checks they agree). */
@@ -2216,8 +2222,11 @@ export async function commandRun(
     }
     // The machine-wide cap on concurrent test phases. Taken before the simulator slot, so a run
     // that waits for it holds no simulator and boots nothing; held until the run's cleanup.
+    // Lock order: (checkout dd.lock shared) -> ui-suite -> simulator slot -> sim-first-boot. No
+    // holder of a later lock waits for an earlier one, and the build phase has released its
+    // xcode-build slot and exclusive checkout lock by now, so tokens cannot deadlock with either.
     const tokenStart = nowEpoch();
-    testToken = await takeHeavyGate(session, config, "ui-suite", "starting a queued test run");
+    testToken = await takeHeavyGate(session, config, "ui-suite", "starting a queued test run", config.testSlotWaitSeconds);
     testTokenWait = nowEpoch() - tokenStart;
     slotWaitStartHolder.value = nowEpoch();
     const acquired = await acquireRunSlot(config, ["run", ...args], session);
@@ -2808,7 +2817,8 @@ checkout (clients/apple/.build/dd) for a generic arm64 simulator, under a
 checkout lock and one of the machine-wide heavy.sh xcode-build slots
 (OPPI_HEAVY_XCODE_BUILD, default 2). Every test phase takes one of the
 machine-wide ui-suite slots (OPPI_HEAVY_UI_SUITE, default 4) before it takes a
-simulator, waiting at most OPPI_SIM_POOL_WAIT seconds and logging the wait. A build with no test action
+simulator, waiting at most OPPI_SIM_POOL_WAIT seconds (default 1800) and logging
+the wait. A build with no test action
 (build, build-for-testing) takes no simulator at all. A test run builds, clones
 the products into .build/runs/<run> (APFS clone), then acquires a pool slot
 only for test-without-building -xctestrun on that clone, so every slot and

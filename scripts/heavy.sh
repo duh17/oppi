@@ -28,7 +28,8 @@
 # flock(2) on these same slot files, the same env knobs, the same gate markers), so `sim-pool run`
 # needs no heavy.sh wrapper. Its ui-suite slot covers the test phase only (ui-shards, unit-shards and
 # e2e.sh all run their tests through `sim-pool run`).
-# A wait for a ui-suite slot gives up after OPPI_SIM_POOL_WAIT seconds, like a wait for a simulator.
+# sim-pool's wait for a ui-suite slot gives up after OPPI_SIM_POOL_WAIT seconds (default 1800, the
+# gate wait, even for a plain run).
 #
 # The kernel holds each slot through lockf(1) exactly as long as the command runs; a crashed
 # holder frees its slot at once, so there is no stale-lock takeover logic. The command's exit

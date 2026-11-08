@@ -13,6 +13,7 @@ import {
   extractBuildTimingSummary,
   extractCompilerLinkerErrors,
   extractPoolFlags,
+  GATE_POOL_WAIT_SECONDS,
   loadConfig,
   normalizeCommandArgs,
   normalizeOppiRoot,
@@ -105,9 +106,11 @@ Test Suite 'All tests' started.
     expect(timing).not.toContain("Test Suite");
   });
 
-  test("pool defaults keep few simulators booted: 6 booted, idle after 15 minutes, 2 kept warm", () => {
-    const config = loadConfig({}, process.cwd(), scriptDir);
-    expect([config.maxBooted, config.idleMinutes, config.keepWarm]).toEqual([6, 15, 2]);
+  test("a plain run queues for a ui-suite token as long as a gate run; an explicit OPPI_SIM_POOL_WAIT wins", () => {
+    const plain = loadConfig({}, process.cwd(), scriptDir);
+    expect([plain.waitSeconds, plain.testSlotWaitSeconds]).toEqual([60, GATE_POOL_WAIT_SECONDS]);
+    const explicit = loadConfig({ OPPI_SIM_POOL_WAIT: "5" }, process.cwd(), scriptDir);
+    expect([explicit.waitSeconds, explicit.testSlotWaitSeconds]).toEqual([5, 5]);
   });
 
   test("index store injection respects overrides", () => {

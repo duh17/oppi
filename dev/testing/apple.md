@@ -88,7 +88,7 @@ Each of these has cost a false red or a false green.
 - **Slimming:** background daemons are disabled after boot unless `OPPI_SIM_SLIM=0`; Maps navigation (`com.apple.navd`) stays enabled because a missing navigationService floods diagnostics on iOS 27.2.
 - **Hang detection:** `OPPI_SIM_POOL_SILENCE_TIMEOUT` (180 s) counts log growth, DerivedData mtime, and the xcodebuild tree's CPU (CPU alone extends at most five windows, `alive-on-cpu-only=`). A Swift runtime crash (`Fatal error:`) fails at once without retry; so does a stall before `Resolve Package Graph`, usually Xcode.app holding the project.
 - **Finished runs:** after a test summary, sim-pool waits at most `OPPI_SIM_POOL_COMPLETION_TIMEOUT` (30 s; 5 s after Swift Testing) and keeps the result (`completion_hang_detected`); result bundles and coverage may then be incomplete.
-- **Slot ownership:** `flock(2)` on `$OPPI_SIM_POOL_LOCK_DIR/slot-N.lock`; a dead wrapper pid alone never authorizes reuse, and a surviving orphan (other than a leftover `simctl io`) keeps the slot. First boots take the `sim-first-boot` heavy slot, and every test phase takes a `ui-suite` heavy slot before it takes a simulator (`OPPI_SIM_POOL_WAIT` bounds the wait).
+- **Slot ownership:** `flock(2)` on `$OPPI_SIM_POOL_LOCK_DIR/slot-N.lock`; a dead wrapper pid alone never authorizes reuse, and a surviving orphan (other than a leftover `simctl io`) keeps the slot. First boots take the `sim-first-boot` heavy slot, and every test phase takes a `ui-suite` heavy slot before it takes a simulator, waiting up to `OPPI_SIM_POOL_WAIT` (default 30 minutes, gate or not).
 - **Cache pruning:** `./scripts/sim-pool.sh prune-cache` (dry run), `--apply`, `--keep-slots 0-5`. Never copy `.build` between checkouts.
 
 ## iOS coverage gate
