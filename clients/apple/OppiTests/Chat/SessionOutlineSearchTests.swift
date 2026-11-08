@@ -87,3 +87,20 @@ struct SessionOutlineSearchTests {
         return root.subviews.flatMap { entryCells(in: $0) }
     }
 }
+
+@Suite("Session outline summaries")
+@MainActor
+struct SessionOutlineSummaryTests {
+    @Test("A user turn's outline row shows its text, not the composer's attachment markup")
+    func userRowHidesAttachmentMarkup() {
+        let marker = "[[oppi-attachments:p:gitCommit=abc1234;p:repoFile=Sources%2FApp%2Eswift]]"
+        let items: [ChatItem] = [
+            .userMessage(id: "u1", text: "\(marker)\nReview the routes", timestamp: Date()),
+            .userMessage(id: "u2", text: marker, timestamp: Date()),
+        ]
+        let summaries = SessionOutlineIndex
+            .entries(items: items, toolArgsStore: ToolArgsStore(), toolDetails: { _ in nil })
+            .map(\.summary)
+        #expect(summaries == ["Review the routes", "Attachment"])
+    }
+}
