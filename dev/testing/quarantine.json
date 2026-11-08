@@ -6,5 +6,13 @@
     "reason": "iPad only: fails and passes on rerun in three separate gates, including one with no launch reuse, so it is a flake of its own and not a leak from a neighbour. It fails in under 0.3 s: the test reads the pane pill's position before the layout settles. The test waits for its own layout instead of racing it after the release.",
     "addedAt": "2026-11-02",
     "expires": "2026-11-30"
+  },
+  {
+    "id": "OppiTests/SSHTerminalTests/floatingControlsReplaceTheBarAndStepAsideForTheKeyboard()",
+    "owner": "lead",
+    "backlog": "terminal/floating-controls-keyboard-transition-geometry",
+    "reason": "Fails in full unit shards (the transition reported a grid size other than the keyboard-up or resting one) and passes on rerun in 10 land gates; 55 isolated and loaded runs and 6 whole-suite runs did not reproduce it. Suspected cause: a resize from before the bar settled, or another suite's keyboard notification (the observer takes any screen's), landing inside the transition window. Awaiting for the resting size before the keyboard goes up changes the hit-test state the test asserts, so the test needs a rework, not a one-line wait.",
+    "addedAt": "2026-11-08",
+    "expires": "2026-12-07"
   }
 ]
