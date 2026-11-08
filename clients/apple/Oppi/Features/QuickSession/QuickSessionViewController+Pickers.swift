@@ -110,12 +110,10 @@ extension QuickSessionViewController {
         )
 
         let stacks = stacksActionControls
-        // The Agent's list is a picker of its own when its control is not in the
-        // composer's row: in the wide bar, or the accessibility-size panel.
         agentPicker.update(
-            id: (stacks || usesWideLayout) && model.showAgentPicker ? "agent-picker" : nil,
+            id: stacks && model.showAgentPicker ? "agent-picker" : nil,
             presentation: pickerPopover,
-            source: agentControl,
+            source: agentPill,
             root: root,
             clear: { [weak self] in self?.model.showAgentPicker = false },
             screen: {

@@ -38,18 +38,12 @@ extension QuickSessionViewController {
         )
     }
 
-    /// The Agent's control in the current layout: the wide bar's, the accessibility-size panel's.
-    var agentControl: QuickSessionPillButton {
-        usesWideLayout ? wideBar.agent : agentPill
-    }
-
     func updateDestinationRow(colors: ComposerThemeColors) {
         let wide = usesWideLayout
         destinationRowContainer.setHiddenIfChanged(wide)
         wideBarContainer.setHiddenIfChanged(!wide)
         updateDestinationControls(compactDestinationControls, colors: colors)
         updateDestinationControls(wideDestinationControls, colors: colors)
-        updateBarAgent(colors: colors)
         wideBar.refreshGroups()
     }
 
@@ -164,28 +158,6 @@ extension QuickSessionViewController {
         }
     }
 
-    /// The Agent's control, drawn from `agentContent` for the bar and the panel alike.
-    private func updateBarAgent(colors: ComposerThemeColors) {
-        wideBar.agent.apply(agentContent(colors: colors), colors: colors)
-        wideBar.agent.accessibilityLabel = agentAccessibilityLabel
-        wideBar.agent.isEnabled = model.isInitialized
-    }
-
-    private func agentContent(colors: ComposerThemeColors) -> QuickSessionPillButton.Content {
-        let agent = model.selectedAgent
-        return QuickSessionPillButton.Content(
-            icon: agent.map { .choice($0.icon, purpose: .agent, sandbox: false) } ?? .piAvatar,
-            iconAssetCache: model.selectedServerIconAssetCache,
-            title: agent?.name,
-            titleColor: colors.fg,
-            trailingSymbol: "chevron.down"
-        )
-    }
-
-    private var agentAccessibilityLabel: String {
-        model.selectedAgent.map { "Agent picker, current agent \($0.name)" } ?? "Agent picker, Pi with no agent"
-    }
-
     /// At accessibility text sizes the Agent, model, and thinking pills do not
     /// fit the composer's action row; they sit in a panel below the composer.
     func updateStackedPanel(colors: ComposerThemeColors) {
@@ -212,8 +184,16 @@ extension QuickSessionViewController {
             pill.accessibilityTraits = model.isInitialized ? .button : [.button, .notEnabled]
         }
 
-        agentPill.apply(agentContent(colors: colors), colors: colors)
-        agentPill.accessibilityLabel = agentAccessibilityLabel
+        let agent = model.selectedAgent
+        agentPill.apply(QuickSessionPillButton.Content(
+            icon: agent.map { .choice($0.icon, purpose: .agent, sandbox: false) } ?? .piAvatar,
+            iconAssetCache: model.selectedServerIconAssetCache,
+            title: agent?.name,
+            titleColor: colors.fg,
+            trailingSymbol: "chevron.down"
+        ), colors: colors)
+        agentPill.accessibilityLabel = agent.map { "Agent picker, current agent \($0.name)" }
+            ?? "Agent picker, Pi with no agent"
 
         let presentation = model.modelPresentation
         let modelId = model.effectiveModelId ?? presentation.pillText

@@ -312,7 +312,8 @@ extension ComposerBarController {
     func fitPopUpActions() {
         let all = trailingStack.arrangedSubviews.compactMap { $0 as? ComposerPopUpButton }
         guard !all.isEmpty, !trailingStack.isHidden, actionRowStack.bounds.width > 0 else { return }
-        // Controls that can drop to an icon give up room first.
+        // Controls that can drop to an icon give up room first, then the rest
+        // from the leading end (Quick Session: the Agent before the model).
         let items = all.map(\.fitItem)
         let order = all.indices.filter { items[$0].iconOnly != nil } + all.indices.filter { items[$0].iconOnly == nil }
         // The spacer's width is slack, not occupied room.

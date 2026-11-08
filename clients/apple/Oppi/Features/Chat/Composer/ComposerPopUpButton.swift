@@ -175,7 +175,8 @@ final class ComposerPopUpButton: UIButton {
 /// `items` come in the order they give up room: the first loses its title for
 /// its icon (if it has one) before the next is touched; a control with no icon
 /// stage is cut short instead, down to its `minimum`. The order for Quick
-/// Session's row is thinking (icon only), then the model (cut short).
+/// Session's row is thinking (icon only), then the Agent's name, then the
+/// model (each cut short).
 enum ComposerPopUpFit {
     struct Item: Equatable {
         var full: CGFloat

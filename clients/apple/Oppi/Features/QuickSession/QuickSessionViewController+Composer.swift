@@ -62,21 +62,23 @@ extension QuickSessionViewController: ChatComposerSource {
             onThinkingSelect: { [weak self] in self?.model.selectThinkingLevel($0) },
             onSaveThinkingAsDefault: nil
         )
-        // The wide bar holds the Agent; the composer keeps model and thinking.
-        if wide { return ComposerActionRow(trailing: toolbar.trailing) }
         let agent = model.selectedAgent
         let agentAction = ComposerAction.agent(
             agentName: agent?.name,
             icon: EntityIcon.image(
                 agent.map { IconEntity.agent($0.icon) } ?? .pi,
-                size: 16,
+                size: wide ? 18 : 16,
                 assets: model.selectedServerIconAssetCache
             ),
             colors: colors,
+            chrome: wide ? .popUp : .toolbar,
             rows: agentPickerRows,
             isLoading: model.isLoadingAgents,
             onSelect: { [weak self] in self?.model.selectAgent($0) }
         )
+        // Regular width groups who runs the launch at the bottom right:
+        // Agent, model, thinking. Compact keeps the Agent at the leading end.
+        if wide { return ComposerActionRow(trailing: [agentAction] + toolbar.trailing) }
         return ComposerActionRow(leading: [agentAction], trailing: toolbar.trailing)
     }
 

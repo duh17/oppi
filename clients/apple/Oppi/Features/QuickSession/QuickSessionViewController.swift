@@ -13,8 +13,9 @@ import UIKit
 /// row (the compact pills, or at regular width `QuickSessionWideBar`), the
 /// error, and the accessibility-size panel; `+Pickers` presents the workspace,
 /// worktree, Agent, thinking, and model pickers; `+Composer` is the composer's
-/// source. At regular width the bar holds workspace, worktree, Agent, Durable,
-/// and Incognito, and the composer's bottom right holds model and thinking.
+/// source. At regular width the bar holds workspace and worktree on the left
+/// and Durable and Incognito on the right; the composer's bottom right holds
+/// Agent, model, and thinking.
 ///
 /// Only the scrim fills edge to edge. The pills and composer stay inside the
 /// safe area, so they never sit under a vertical rail on the leading or
@@ -279,8 +280,8 @@ final class QuickSessionViewController: UIViewController {
         contentStack.addArrangedSubview(errorPanel)
 
         // Workspace and worktree sit above the capsule so destination is
-        // chosen before compose. Compact width keeps Agent, model, and thinking
-        // in the action row; regular width moves the Agent into `wideBar`.
+        // chosen before compose. Agent, model, and thinking stay in the action
+        // row; regular width swaps these pills for `wideBar`.
         destinationRow.axis = .horizontal
         destinationRow.alignment = .center
         destinationRow.spacing = 6
@@ -289,8 +290,6 @@ final class QuickSessionViewController: UIViewController {
         wireDestinationControls(wideDestinationControls)
         workspacePill.setTitleCompressionResistance(.defaultHigh)
         incognitoPill.setContentCompressionResistancePriority(.required, for: .horizontal)
-        wideBar.agent.accessibilityIdentifier = "quickSession.agentPicker"
-        wideBar.agent.addAction(UIAction { [weak self] _ in self?.model.showAgentPicker.toggle() }, for: .primaryActionTriggered)
         for pill in [workspacePill, worktreePill, enginePill, incognitoPill] {
             destinationRow.addArrangedSubview(pill)
         }

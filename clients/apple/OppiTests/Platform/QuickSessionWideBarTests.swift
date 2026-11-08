@@ -3,52 +3,63 @@ import UIKit
 @testable import Oppi
 
 /// What a crowded Quick Session row gives up, and in what order: thinking
-/// loses its title for its icon, then the model is cut short, and neither
-/// shrinks to a single letter.
+/// loses its title for its icon, then the Agent's name is cut short, then the
+/// model, and none shrinks to a single letter.
 @Suite("Composer pop-up fit")
 struct ComposerPopUpFitTests {
-    private let model = ComposerPopUpFit.Item(full: 150, iconOnly: nil, minimum: 100)
     private let thinking = ComposerPopUpFit.Item(full: 130, iconOnly: 50, minimum: 100)
+    private let agent = ComposerPopUpFit.Item(full: 120, iconOnly: nil, minimum: 90)
+    private let model = ComposerPopUpFit.Item(full: 150, iconOnly: nil, minimum: 100)
 
-    // Items arrive in the order they give up room: thinking, then the model.
+    // Items arrive in the order they give up room: thinking, the Agent, the model.
     private func resolve(available: CGFloat) -> [ComposerPopUpFit.Result] {
-        ComposerPopUpFit.resolve([thinking, model], available: available, spacing: 8)
+        ComposerPopUpFit.resolve([thinking, agent, model], available: available, spacing: 8)
     }
 
-    @Test("Nothing changes while both fit")
-    func bothFit() {
-        let results = resolve(available: 288)
-        #expect(results.map(\.display) == [.full, .full])
-        #expect(results.map(\.width) == [130, 150])
+    @Test("Nothing changes while all three fit")
+    func allFit() {
+        let results = resolve(available: 416)
+        #expect(results.map(\.display) == [.full, .full, .full])
+        #expect(results.map(\.width) == [130, 120, 150])
     }
 
-    @Test("Thinking drops to its icon before the model is touched")
+    @Test("Thinking drops to its icon before a name is touched")
     func thinkingGoesFirst() {
-        let results = resolve(available: 287)
+        let results = resolve(available: 415)
         #expect(results[0] == .init(display: .iconOnly, width: 50))
-        #expect(results[1] == .init(display: .full, width: 150))
+        #expect(results[1] == .init(display: .full, width: 120))
+        #expect(results[2] == .init(display: .full, width: 150))
     }
 
-    @Test("The model is cut short only once thinking is an icon, to the room left")
-    func modelGoesSecond() {
-        let results = resolve(available: 180)
+    @Test("The Agent's name is cut short to the room left while the model keeps its title")
+    func agentGoesSecond() {
+        let results = resolve(available: 320)
         #expect(results[0].display == .iconOnly)
-        #expect(results[1].display == .truncated)
-        // 180 - 50 (thinking) - 8 (gap)
-        #expect(results[1].width == 122)
+        // 320 - 50 (thinking) - 150 (model) - 16 (gaps)
+        #expect(results[1] == .init(display: .truncated, width: 104))
+        #expect(results[2] == .init(display: .full, width: 150))
     }
 
-    @Test("Neither control goes below its minimum, however narrow the row")
+    @Test("The model is cut short only once the Agent is at its minimum")
+    func modelGoesLast() {
+        let results = resolve(available: 300)
+        #expect(results[1] == .init(display: .truncated, width: 90))
+        // 300 - 50 - 90 - 16
+        #expect(results[2] == .init(display: .truncated, width: 144))
+    }
+
+    @Test("No control goes below its minimum, however narrow the row")
     func floors() {
         let results = resolve(available: 40)
         #expect(results[0] == .init(display: .iconOnly, width: 50))
-        #expect(results[1] == .init(display: .truncated, width: 100))
+        #expect(results[1] == .init(display: .truncated, width: 90))
+        #expect(results[2] == .init(display: .truncated, width: 100))
     }
 }
 
-/// The destination bar's own truncation: the Classic reason and the Agent give
-/// up room before the worktree, the worktree before the workspace, and none
-/// shrinks to a single letter.
+/// The destination bar's own truncation: the Classic reason gives up room
+/// before the worktree, the worktree before the workspace, and no name shrinks
+/// to a single letter.
 @Suite("Quick Session wide bar truncation")
 @MainActor
 struct QuickSessionWideBarTruncationTests {
@@ -66,7 +77,6 @@ struct QuickSessionWideBarTruncationTests {
         let colors = ComposerThemeColors.placeholder
         bar.workspace.apply(content("a-rather-long-workspace-name", symbol: "folder"), colors: colors)
         bar.worktree.apply(content("feature/a-rather-long-worktree-branch", symbol: "house"), colors: colors)
-        bar.agent.apply(content("Reviewer with a long name", symbol: "person"), colors: colors)
         bar.engine.apply(content("Classic", symbol: "infinity", detail: "\u{00B7} Durable is unavailable here"), colors: colors)
         bar.incognito.apply(content("", symbol: "eye.slash"), colors: colors)
         bar.refreshGroups()
@@ -84,20 +94,20 @@ struct QuickSessionWideBarTruncationTests {
     }
 
     private func widths(_ bar: QuickSessionWideBar, _ host: UIView, at width: CGFloat)
-        -> (workspace: CGFloat, worktree: CGFloat, agent: CGFloat, engine: CGFloat)
+        -> (workspace: CGFloat, worktree: CGFloat, engine: CGFloat)
     {
         host.frame.size.width = width
         host.setNeedsLayout()
         host.layoutIfNeeded()
-        return (bar.workspace.bounds.width, bar.worktree.bounds.width, bar.agent.bounds.width, bar.engine.bounds.width)
+        return (bar.workspace.bounds.width, bar.worktree.bounds.width, bar.engine.bounds.width)
     }
 
-    /// The bar's natural width: every control, the groups' padding, and the
-    /// two gaps at their minimum.
-    private func neededWidth(_ bar: QuickSessionWideBar, _ natural: (workspace: CGFloat, worktree: CGFloat, agent: CGFloat, engine: CGFloat))
+    /// The bar's natural width: every control, the two groups' padding, and
+    /// the gap at its minimum.
+    private func neededWidth(_ bar: QuickSessionWideBar, _ natural: (workspace: CGFloat, worktree: CGFloat, engine: CGFloat))
         -> CGFloat
     {
-        natural.workspace + natural.worktree + natural.agent + natural.engine + bar.incognito.bounds.width + 3 * 8 + 2 * 8
+        natural.workspace + natural.worktree + natural.engine + bar.incognito.bounds.width + 2 * 8 + 8
     }
 
     /// The label in `view` showing `text`.
@@ -116,31 +126,29 @@ struct QuickSessionWideBarTruncationTests {
         // The reason gave up the room; "Classic" itself is whole.
         let classic = try #require(label("Classic", in: bar.engine))
         #expect(classic.bounds.width >= classic.intrinsicContentSize.width - 0.5, "\(detail)")
-        #expect(abs(tight.agent - natural.agent) < 1, "\(detail)")
         #expect(abs(tight.worktree - natural.worktree) < 1, "\(detail)")
         #expect(abs(tight.workspace - natural.workspace) < 1, "\(detail)")
     }
 
-    @Test("Past the Classic reason, the Agent then the worktree give up room while the workspace keeps its width")
-    func agentThenWorktreeBeforeWorkspace() {
+    @Test("Past the Classic reason, the worktree gives up room while the workspace keeps its width")
+    func worktreeBeforeWorkspace() {
         let (bar, host) = makeBar()
         let natural = widths(bar, host, at: 2000)
-        let pressed = widths(bar, host, at: neededWidth(bar, natural) - 500)
+        let pressed = widths(bar, host, at: neededWidth(bar, natural) - 350)
         let detail = "natural \(natural), pressed \(pressed)"
         #expect(abs(pressed.workspace - natural.workspace) < 1, "\(detail)")
         #expect(pressed.worktree < natural.worktree - 10, "\(detail)")
-        #expect(pressed.agent < natural.agent - 10, "\(detail)")
     }
 
-    @Test("Under heavy pressure the workspace is cut last, and no title shrinks to a single letter")
+    @Test("Under heavy pressure the workspace is cut last, and no name shrinks to a single letter")
     func workspaceLastAndFloors() {
         let (bar, host) = makeBar()
         let natural = widths(bar, host, at: 2000)
-        let squeezed = widths(bar, host, at: 640)
+        let squeezed = widths(bar, host, at: 540)
         let detail = "natural \(natural), squeezed \(squeezed)"
-        // The Agent and worktree sit on the same floor (a title's minimum beside its icon and indicator).
-        #expect(abs(squeezed.worktree - squeezed.agent) < 1, "\(detail)")
-        #expect(squeezed.agent >= QuickSessionWideBar.minimumTitleWidth + 40, "\(detail)")
+        // The worktree sits on its floor: a title's minimum beside its icon and indicator.
+        #expect(squeezed.worktree >= QuickSessionWideBar.minimumTitleWidth + 40, "\(detail)")
+        #expect(squeezed.worktree < QuickSessionWideBar.minimumTitleWidth + 90, "\(detail)")
         // Only now does the workspace give up room, and it keeps more than the floor.
         #expect(squeezed.workspace < natural.workspace - 10, "\(detail)")
         #expect(squeezed.workspace > squeezed.worktree, "\(detail)")
@@ -148,7 +156,8 @@ struct QuickSessionWideBarTruncationTests {
 }
 
 /// Quick Session at regular width: the destination bar above the composer
-/// replaces the compact pills, and the composer's row keeps model and thinking.
+/// replaces the compact pills, and the composer's bottom right holds Agent,
+/// model, and thinking.
 @Suite("Quick Session wide bar")
 @MainActor
 struct QuickSessionWideBarTests {
@@ -179,13 +188,32 @@ struct QuickSessionWideBarTests {
         #expect(!wide.wideBarContainer.isHidden)
         #expect(wide.destinationRowContainer.isHidden)
         #expect(!wide.wideBar.workspace.isHidden)
-        #expect(!wide.wideBar.agent.isHidden)
 
         let (compact, compactWindow) = try await makeController(regular: false)
         defer { compact.tearDown(); compactWindow.isHidden = true; compactWindow.rootViewController = nil }
         #expect(!compact.usesWideLayout)
         #expect(compact.wideBarContainer.isHidden)
         #expect(!compact.destinationRowContainer.isHidden)
+    }
+
+    @Test("Regular width puts the named Agent before model and thinking; compact keeps it leading")
+    func agentJoinsModelAndThinkingWhenWide() async throws {
+        let (wide, wideWindow) = try await makeController(regular: true)
+        defer { wide.tearDown(); wideWindow.isHidden = true; wideWindow.rootViewController = nil }
+        wide.composer.view.layoutIfNeeded()
+        let popUps = wide.composer.bar.trailingStack.arrangedSubviews.compactMap { $0 as? ComposerPopUpButton }
+        #expect(popUps.map(\.accessibilityIdentifier) == [
+            "quickSession.agentPicker", "session.toolbar.model", "session.toolbar.thinking",
+        ])
+        // Pi with no Agent is named, not an icon alone.
+        #expect(popUps.first?.configuration?.title == "Pi")
+
+        let (compact, compactWindow) = try await makeController(regular: false)
+        defer { compact.tearDown(); compactWindow.isHidden = true; compactWindow.rootViewController = nil }
+        compact.composer.view.layoutIfNeeded()
+        let trailing = compact.composer.bar.trailingStack.arrangedSubviews.map(\.accessibilityIdentifier)
+        #expect(!trailing.contains("quickSession.agentPicker"))
+        #expect(compact.composer.bar.trailingStack.arrangedSubviews.allSatisfy { !($0 is ComposerPopUpButton) })
     }
 
     @Test("A bar control keeps its identifier and a VoiceOver label")
@@ -195,10 +223,9 @@ struct QuickSessionWideBarTests {
         let bar = controller.wideBar
         #expect(bar.workspace.accessibilityIdentifier == "quickSession.workspacePicker")
         #expect(bar.worktree.accessibilityIdentifier == "quickSession.worktreePicker")
-        #expect(bar.agent.accessibilityIdentifier == "quickSession.agentPicker")
         #expect(bar.engine.accessibilityIdentifier == "quickSession.durableEngine")
         #expect(bar.incognito.accessibilityIdentifier == "quickSession.incognito")
-        for control in [bar.workspace, bar.agent, bar.incognito] {
+        for control in [bar.workspace, bar.incognito] {
             #expect(control.accessibilityLabel?.isEmpty == false)
         }
         #expect(bar.incognito.accessibilityTraits.contains(.toggleButton))

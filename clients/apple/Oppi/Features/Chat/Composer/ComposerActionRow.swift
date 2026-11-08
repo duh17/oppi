@@ -172,11 +172,13 @@ extension ComposerAction {
         )
     }
 
-    /// `agentName` nil is Pi: the pill shows only the Pi mark.
+    /// `agentName` nil is Pi: the toolbar pill shows only the Pi mark; a
+    /// pop-up button spells out "Pi" beside it.
     static func agent(
         agentName: String?,
         icon: UIImage,
         colors: ComposerThemeColors,
+        chrome: Chrome = .toolbar,
         rows: [ComposerOptionRow],
         isLoading: Bool,
         onSelect: @escaping (String?) -> Void
@@ -184,13 +186,13 @@ extension ComposerAction {
         ComposerAction(
             id: "quickSession.agentPicker",
             icon: .image(icon),
-            title: agentName ?? "",
+            title: agentName ?? (chrome == .popUp ? "Pi" : ""),
             tint: colors.fg,
             accessibilityLabel: agentName.map { "Agent picker, current agent \($0)" }
                 ?? "Agent picker, Pi with no agent",
             accessibilityValue: agentName ?? "Pi",
             showsChevron: true,
-            chrome: .toolbar,
+            chrome: chrome,
             kind: .picker(ComposerActionPopover(
                 preferredWidth: 280,
                 make: {
