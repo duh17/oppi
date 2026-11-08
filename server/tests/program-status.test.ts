@@ -63,6 +63,35 @@ describe("program status derivation", () => {
     });
   });
 
+  it("a ready session awaiting a wake is working until its next turn starts, then settles to done", () => {
+    const host = makeHost(makeSession({ status: "ready" }));
+    feed(host, { type: "agent_start" }, assistantEnd("stop"), { type: "agent_settled" });
+    expect(status(host).state).toBe("done");
+
+    programRunFor(host).awaitingWake = true;
+    expect(status(host)).toEqual({ state: "working", message: "Fix login" });
+
+    // The wake's turn: working on its own, and the hold is gone when it settles.
+    host.session.status = "busy";
+    feed(host, { type: "agent_start" });
+    expect(status(host).state).toBe("working");
+    host.session.status = "ready";
+    feed(host, assistantEnd("stop"), { type: "agent_settled" });
+    expect(status(host).state).toBe("done");
+  });
+
+  it("a wake hold never hides a blocking dialog or a stop", () => {
+    const blocked = makeHost(makeSession({ status: "ready" }), [
+      { method: "confirm", title: "Run rm?" },
+    ]);
+    programRunFor(blocked).awaitingWake = true;
+    expect(status(blocked).state).toBe("blocked");
+
+    const stopped = makeHost(makeSession({ status: "stopped" }));
+    programRunFor(stopped).awaitingWake = true;
+    expect(status(stopped).state).toBe("idle");
+  });
+
   it("stopping with an active turn is working; without one it falls through to the outcome", () => {
     const active = makeSession({ status: "stopping", currentTurnStartedAt: 10 });
     expect(status(makeHost(active)).state).toBe("working");

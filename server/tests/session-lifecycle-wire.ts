@@ -62,20 +62,10 @@ export interface LifecycleCheckpoint {
   pendingWake: boolean;
 }
 
-/**
- * A decided lifecycle change that alters a row on purpose. The change that lands updates the
- * row's expectation and drops its tag.
- * - `waiting-shows-working`: program status says working while a background job will wake the
- *   session, matching the CLI wait.
- */
-export type PlannedChange = "waiting-shows-working";
-
 export interface LifecycleScenario {
   id: string;
   engine: LifecycleEngine;
   description: string;
-  /** Set where a planned change alters this row on purpose. */
-  plannedChange?: PlannedChange;
   frames: RecordedFrame[];
   checkpoints: LifecycleCheckpoint[];
 }
@@ -166,7 +156,6 @@ export interface WorldOptions {
   id: string;
   engine: LifecycleEngine;
   description: string;
-  plannedChange?: LifecycleScenario["plannedChange"];
 }
 
 /**
@@ -273,9 +262,19 @@ export class LifecycleRecorder {
   }
 
   /** Run one step, let async work settle, and record where the session stands. */
-  async step(label: string, action: () => unknown | Promise<unknown>): Promise<void> {
+  async step(
+    label: string,
+    action: () => unknown | Promise<unknown>,
+    /** Timer-driven work the step starts (the wake watch): wait until its effect shows, then record. */
+    until?: (live: Session | undefined) => boolean,
+  ): Promise<void> {
     this.currentStep = label;
     await action();
+    await flush();
+    const deadline = Date.now() + 5_000;
+    while (until && !until(this.liveSession()) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
     await flush();
     await this.checkpoint(label);
   }
@@ -337,7 +336,6 @@ export class LifecycleRecorder {
       id: this.options.id,
       engine: this.options.engine,
       description: this.options.description,
-      ...(this.options.plannedChange ? { plannedChange: this.options.plannedChange } : {}),
       frames: this.frames,
       checkpoints: this.checkpoints,
     };
@@ -473,14 +471,24 @@ async function beginRun(world: ClassicWorld, label = "agent_start"): Promise<voi
   });
 }
 
-async function settleRun(world: ClassicWorld, text = "Done", prefix = ""): Promise<void> {
+async function settleRun(
+  world: ClassicWorld,
+  text = "Done",
+  prefix = "",
+  /** The settle starts the wake watch: the step records after its first read has landed. */
+  heldForWake = false,
+): Promise<void> {
   const { recorder } = world;
   await recorder.step(`${prefix}message_end`, () => world.emit(assistantEnd(text)));
   await recorder.step(`${prefix}agent_end`, () => world.emit({ type: "agent_end", messages: [] }));
-  await recorder.step(`${prefix}agent_settled`, () => {
-    setStreaming(world, false);
-    world.emit({ type: "agent_settled" });
-  });
+  await recorder.step(
+    `${prefix}agent_settled`,
+    () => {
+      setStreaming(world, false);
+      world.emit({ type: "agent_settled" });
+    },
+    heldForWake ? (live) => programOf(live)?.state === "working" : undefined,
+  );
 }
 
 async function runClassic(
@@ -823,17 +831,13 @@ export const CLASSIC_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         id: "classic.wake_hold",
         engine: "classic",
         description:
-          "A settled session with a background job still pending: ready on the wire and Done in program status, while the CLI wait says it is not idle. The wake's turn then settles it.",
-        // Program status will say working while the wake is pending, as the CLI wait already
-        // does; Working was chosen over Done. That settle's summary, and the program status in
-        // the checkpoints that hold the wake, change with it.
-        plannedChange: "waiting-shows-working",
+          "A settled session with a background job still pending: ready on the wire and working in program status (after the settle's own Done summary), while the CLI wait says it is not idle. The wake's turn then settles it.",
       },
       async (world) => {
         await startAndAttach(world);
         await beginRun(world);
         vi.mocked(world.backend.sdkBackend.hasPendingWake).mockResolvedValue(true);
-        await settleRun(world);
+        await settleRun(world, "Done", "", true);
         vi.mocked(world.backend.sdkBackend.hasPendingWake).mockResolvedValue(false);
         await beginRun(world, "wake_agent_start");
         await settleRun(world, "Report", "wake_");

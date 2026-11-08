@@ -27,6 +27,7 @@ import {
   type SessionLifecycleCoordinatorDeps,
   type SessionLifecycleSessionState,
 } from "../src/session-lifecycle.js";
+import { programRunFor, syncProgramStatus, trackProgramRunEvent } from "../src/program-status.js";
 import { TurnDedupeCache } from "../src/turn-cache.js";
 import { Storage } from "../src/storage.js";
 import type { ServerConfig, ServerMessage, Session, Workspace } from "../src/types.js";
@@ -2697,6 +2698,61 @@ describe("SessionLifecycleCoordinator.resetIdleTimer", () => {
     await vi.advanceTimersByTimeAsync(300_000);
 
     expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+  });
+});
+
+describe("SessionLifecycleCoordinator wake watch", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("holds working program status while a wake is pending and flips to done when it clears", async () => {
+    const active = makeLifecycleActiveSession({ status: "ready" });
+    let pending = true;
+    active.sdkBackend.hasPendingWake = vi.fn(async () => pending) as never;
+    // Like the broadcaster: a state frame syncs program status first.
+    const states: Array<string | undefined> = [];
+    const deps = makeLifecycleDeps(active, {
+      broadcast: vi.fn(() => {
+        syncProgramStatus(active as never);
+        states.push(active.session.programStatus?.state);
+      }),
+    });
+    const coordinator = new SessionLifecycleCoordinator(deps);
+    // A finished run, so the resting outcome is done.
+    trackProgramRunEvent(programRunFor(active), { type: "agent_start" });
+    trackProgramRunEvent(programRunFor(active), { type: "agent_settled" });
+
+    coordinator.handleSessionSettled("key");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(states).toEqual(["working"]);
+
+    // Still pending: no new frame.
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(states).toEqual(["working"]);
+
+    pending = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(states).toEqual(["working", "done"]);
+
+    // The watch ended with the wake: no more reads.
+    const reads = vi.mocked(active.sdkBackend.hasPendingWake).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(vi.mocked(active.sdkBackend.hasPendingWake).mock.calls.length).toBe(reads);
+  });
+
+  it("sends nothing for a settled session with no wake", async () => {
+    const active = makeLifecycleActiveSession({ status: "ready" });
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.handleSessionSettled("key");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(deps.broadcast).not.toHaveBeenCalled();
   });
 });
 

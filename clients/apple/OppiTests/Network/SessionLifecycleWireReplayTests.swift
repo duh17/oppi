@@ -17,20 +17,9 @@ import Testing
 /// - `background`: the same frames as the stream delivers them for a session another session
 ///   has focus over (`routeStreamMessage` → cross-session routing).
 /// - `app`: the app-event frames through `handleAppEvent`.
-///
-/// Scenarios tagged `plannedChange` in the fixture are not replayed: a later server change
-/// alters their frames on purpose.
 @Suite("Session lifecycle wire replay")
 @MainActor
 struct SessionLifecycleWireReplayTests {
-    /// Scenario ids whose server behaviour a later slice changes on purpose. `classic.stop_during_start`
-    /// left this set once the starting phase started owning its own stop race: it now broadcasts no
-    /// frames on either path (nothing is ever live), so unskipping it adds no replay differences.
-    /// The mirror rows left once its stop went through the shared stop states.
-    static let plannedScenarios: Set<String> = [
-        "classic.wake_hold",
-    ]
-
     // MARK: - Named disagreements
 
     /// Every difference between the client row and the server, by name. `matches` sees the path,
@@ -100,16 +89,15 @@ struct SessionLifecycleWireReplayTests {
 
     // MARK: - Tests
 
-    @Test func fixtureHoldsEveryScenarioAndTheExpectedPlannedTags() throws {
+    @Test func fixtureHoldsEveryScenario() throws {
         let scenarios = try LifecycleFixture.load()
         #expect(scenarios.count == 22)
-        #expect(Set(scenarios.filter { $0.plannedChange != nil }.map(\.id)) == Self.plannedScenarios)
     }
 
     @Test func everyClientServerDifferenceIsNamedAndPinned() async throws {
         var unexplained: [String] = []
         var fires: [String: Int] = [:]
-        for scenario in try LifecycleFixture.load() where scenario.plannedChange == nil {
+        for scenario in try LifecycleFixture.load() {
             for path in LifecycleReplayPath.allCases {
                 for observation in try await LifecycleReplay.run(scenario, path: path) {
                     for (field, difference) in observation.differences.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
@@ -321,7 +309,6 @@ struct LifecycleScenario {
     }
 
     let id: String
-    let plannedChange: String?
     /// The row the client held before the first frame: the first checkpoint's saved row.
     let seedStatus: SessionStatus
     let seedProgram: String
@@ -353,7 +340,6 @@ enum LifecycleFixture {
             }
             return LifecycleScenario(
                 id: id,
-                plannedChange: item["plannedChange"] as? String,
                 seedStatus: SessionStatus(rawValue: row["status"] as? String ?? "") ?? .error,
                 seedProgram: (row["programStatus"] as? [String: Any])?["state"] as? String ?? "none",
                 frames: frames

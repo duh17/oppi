@@ -25,10 +25,8 @@ import {
 } from "./session-lifecycle-wire.js";
 
 // Characterisation of the session lifecycle as a client and the CLI see it today, across the
-// classic, durable, and mirror engines. It pins observed behaviour, including behaviour a decided
-// change alters on purpose: those rows carry the change's tag (`PlannedChange` in
-// `session-lifecycle-wire.ts`), and the change that lands edits the expectation here. Nothing in
-// this file asserts what the lifecycle should be.
+// classic, durable, and mirror engines. It pins observed behaviour; nothing in this file asserts
+// what the lifecycle should be.
 //
 // Every scenario runs against the real SessionManager, storage, app-event mux, and CLI wait loop;
 // only the Pi runtime is replaced (a stub backend for classic, a faux provider for durable, a fake
@@ -130,7 +128,7 @@ function steps(found: LifecycleScenario): string[] {
 
 // What a client receives, per scenario. `ws` is the focused session stream, `app` the app-event
 // stream, `steps` the server's own standing (row, program status, CLI wait, saves) after each step.
-// A row says what happens today; a comment says where a planned change will alter it.
+// A row says what happens today.
 const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }> = {
   "classic.prompt_settle": {
     ws: [
@@ -436,10 +434,9 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "compaction_end: ready/done wait:idle",
     ],
   },
-  // `waiting-shows-working` DELIBERATELY CHANGES the `agent_settled` step of this row. A session
-  // idle and waiting on a background job shows Done today (ready/done) while the CLI wait says it
-  // is not idle. Working was chosen over Done, so ready/done becomes ready/working in the frames
-  // and the steps below, and the wait answer is unchanged.
+  // `waiting-shows-working` changed this row: a session idle and waiting on a background job
+  // shows Working, as the CLI wait already says it is not idle. The settle's own summary still
+  // says Done; the wake watch's first read follows at once with a state frame that says working.
   "classic.wake_hold": {
     ws: [
       "state ready/idle",
@@ -450,6 +447,7 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "summary busy/working",
       "agent_settled",
       "summary ready/done",
+      "state ready/working",
       "agent_start",
       "summary busy/working",
       "state busy/working",
@@ -461,13 +459,14 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
     app: [
       "summary busy/working",
       "summary ready/done",
+      "summary ready/working",
       "summary busy/working",
       "summary ready/done",
     ],
     steps: [
       "start: ready/idle wait:idle saved:starting>ready",
       "agent_start: busy/working wait:waiting",
-      "agent_settled: ready/done wait:waiting wake saved:ready",
+      "agent_settled: ready/working wait:waiting wake saved:ready",
       "wake_agent_start: busy/working wait:waiting",
       "wake_agent_settled: ready/done wait:idle saved:ready",
     ],
@@ -671,17 +670,6 @@ describe("recorded fixture", () => {
 
   it("has an expectation for every scenario and a scenario for every expectation", () => {
     expect(wire.scenarios.map((found) => found.id).sort()).toEqual(Object.keys(EXPECTED).sort());
-  });
-
-  it("names the rows a planned change alters on purpose, and only those", () => {
-    const planned = Object.fromEntries(
-      wire.scenarios
-        .filter((found) => found.plannedChange)
-        .map((found) => [found.id, found.plannedChange]),
-    );
-    expect(planned).toEqual({
-      "classic.wake_hold": "waiting-shows-working",
-    });
   });
 
   it("carries the server's own status on every state and summary frame it delivers", () => {

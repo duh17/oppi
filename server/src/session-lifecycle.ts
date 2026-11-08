@@ -15,6 +15,7 @@ import {
   type StopState,
 } from "./session-lifecycle-state.js";
 import { safeErrorMessage } from "./log-utils.js";
+import { programRunFor, type ProgramRunTracker } from "./program-status.js";
 
 export interface SessionLifecycleSessionState extends ExtensionUIState {
   session: Session;
@@ -22,6 +23,8 @@ export interface SessionLifecycleSessionState extends ExtensionUIState {
   workspaceId: string;
   /** Composable surfaces a plugin published here, if any. */
   surfaces?: SessionSurfaces;
+  /** Event-folded run state behind `session.programStatus`; the wake watch sets `awaitingWake`. */
+  programRun?: ProgramRunTracker;
 }
 
 export interface SessionLifecycleCoordinatorDeps {
@@ -52,11 +55,35 @@ export interface AutoStopGuard {
 const log = createLogger({ base: { component: "session_lifecycle" } });
 
 /**
+ * Whether a `ready` live session will start its next turn: a background job or supervised
+ * child still waits to wake it, or the turn it started is not running yet. A job or child
+ * clears its wake as it starts that turn, but status turns `busy` only on `agent_start`,
+ * after Pi's before-start hooks, so the pending-work check closes that gap (auto-stop reads
+ * the same pair). Any other status skips the backend read. A failed check reads as no wake:
+ * a supervisor's wait must settle, not hang.
+ */
+export async function activeAwaitsNextTurn(active: SessionLifecycleSessionState): Promise<boolean> {
+  if (lifecyclePhase(active.session).name !== "idle") return false;
+  try {
+    return (await active.sdkBackend.hasPendingWake()) || (await active.sdkBackend.hasPendingWork());
+  } catch (error) {
+    log.warn("sessions.pending_wake_check_failed", {
+      sessionId: active.session.id,
+      error: safeErrorMessage(error),
+    });
+    return false;
+  }
+}
+
+/**
  * How long a running turn may go without a single event before the idle timeout stops it
  * anyway. A quiet tool or MCP call is live work, but a turn this quiet is almost surely wedged (a
  * hung provider stream or tool); unbounded, it would hold the session and its sandbox VM forever.
  */
 const QUIET_RUNNING_TURN_LIMIT_MS = 2 * 60 * 60_000;
+
+/** How often a settled session re-reads its pending wake. */
+const WAKE_WATCH_INTERVAL_MS = 1000;
 
 export class SessionLifecycleCoordinator {
   private idleTimers: Map<string, NodeJS.Timeout> = new Map();
@@ -68,6 +95,8 @@ export class SessionLifecycleCoordinator {
   private quietTurnSince: Map<string, number> = new Map();
   /** Stops idle expiry already held once; one still under way at the next expiry is stuck. */
   private heldStops = new WeakSet<StopState>();
+  /** Settled sessions whose pending wake is being watched, by session key. */
+  private wakeWatches: Map<string, NodeJS.Timeout> = new Map();
 
   constructor(private readonly deps: SessionLifecycleCoordinatorDeps) {}
 
@@ -146,6 +175,8 @@ export class SessionLifecycleCoordinator {
     }
 
     this.clearIdleTimer(key);
+    clearTimeout(this.wakeWatches.get(key));
+    this.wakeWatches.delete(key);
     this.autoStopChecks.delete(key);
     try {
       this.deps.releaseSession({
@@ -210,6 +241,7 @@ export class SessionLifecycleCoordinator {
       return;
     }
 
+    this.watchWake(key);
     // Auto-stop sessions keep the idle timeout too: one attached again for work that never
     // comes, or held for a wake that ends without a turn, still stops.
     this.resetIdleTimer(key);
@@ -291,6 +323,36 @@ export class SessionLifecycleCoordinator {
       key,
       outcome: stopping ? "stopping" : "kept",
     });
+  }
+
+  /**
+   * A settled session that a background job or child will wake keeps `working` program status
+   * (`ProgramRunTracker.awaitingWake`), so its row and subagent pill do not read Done while work
+   * is on the way. Polls while the session is ready, since the extensions' wake count has no
+   * change channel the durable engine shares; stops once the wake clears (a new settle
+   * restarts it), the turn starts, or the session ends. Broadcasts `state` only on a change.
+   */
+  private watchWake(key: string, delayMs = 0): void {
+    clearTimeout(this.wakeWatches.get(key));
+    const tick = async (): Promise<void> => {
+      const active = this.deps.getActiveSession(key);
+      if (!active) return;
+      const awaiting = active.session.status === "ready" && (await activeAwaitsNextTurn(active));
+      // Another settle, the session's end, or a new turn replaced this watch while it read.
+      if (this.deps.getActiveSession(key) !== active || this.wakeWatches.get(key) !== timer) return;
+      this.wakeWatches.delete(key);
+      // A turn that began while the read ran owns the status; it already cleared the hold.
+      if (active.session.status !== "ready" && awaiting) return;
+      const tracker = programRunFor(active);
+      if (tracker.awaitingWake !== awaiting) {
+        tracker.awaitingWake = awaiting;
+        this.deps.broadcast(key, { type: "state", session: active.session });
+      }
+      if (awaiting) this.watchWake(key, WAKE_WATCH_INTERVAL_MS);
+    };
+    const timer: NodeJS.Timeout = setTimeout(() => void tick(), delayMs);
+    timer.unref();
+    this.wakeWatches.set(key, timer);
   }
 
   resetIdleTimer(key: string): void {

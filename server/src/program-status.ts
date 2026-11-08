@@ -34,6 +34,12 @@ export interface ProgramRunTracker {
   runResult: RestingOutcome;
   /** Outcome while no run is active. */
   resting: RestingOutcome;
+  /**
+   * A settled session still has a background job or child that will start its next turn.
+   * Set by the lifecycle coordinator's wake watch; cleared when that turn starts. Never
+   * persisted: a restart drops the work the flag stands for.
+   */
+  awaitingWake: boolean;
 }
 
 /** Pending dialog fields the derivation reads; satisfied by `ExtensionUIRequest`. */
@@ -93,7 +99,13 @@ export function newProgramRunTracker(persisted?: ProgramStatus): ProgramRunTrack
       : persisted?.state === "error"
         ? errorOutcome(persisted.message)
         : { state: "idle" };
-  return { runActive: false, compacting: false, runResult: { state: "done" }, resting };
+  return {
+    runActive: false,
+    compacting: false,
+    runResult: { state: "done" },
+    resting,
+    awaitingWake: false,
+  };
 }
 
 /** Pi event shapes this tracker reads. Loose on purpose: the mirror forwards raw JSON from older and newer Pi TUIs. */
@@ -109,6 +121,7 @@ export function trackProgramRunEvent(tracker: ProgramRunTracker, event: ProgramR
   switch (event.type) {
     case "agent_start":
       tracker.runActive = true;
+      tracker.awaitingWake = false;
       tracker.runResult = { state: "done" };
       return;
     case "message_end":
@@ -234,7 +247,10 @@ function deriveBody(input: {
     session.status === "busy" ||
     (session.status === "stopping" &&
       (session.currentTurnStartedAt !== undefined || tracker.runActive));
-  if (working) return withMessage("working", oneLine(session.name));
+  // A ready session that a background job will wake is still working, not done.
+  if (working || (session.status === "ready" && tracker.awaitingWake)) {
+    return withMessage("working", oneLine(session.name));
+  }
 
   // A run the lifecycle already calls settled but whose `agent_settled` we never saw (a mirrored
   // TUI that reported idle first) ends with its own result, not the previous run's.
