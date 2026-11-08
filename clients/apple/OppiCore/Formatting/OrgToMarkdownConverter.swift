@@ -179,6 +179,15 @@ enum OrgToMarkdownConverter {
         return blocks
     }
 
+    /// A title that starts with the `COMMENT` keyword (after any TODO state and
+    /// priority, which the parser has already taken off): Org leaves the whole
+    /// subtree out of exports.
+    private static func isCommented(_ title: [OrgInline]) -> Bool {
+        guard case .text(let text)? = title.first, text.hasPrefix("COMMENT") else { return false }
+        guard let next = text.dropFirst("COMMENT".count).first else { return title.count == 1 }
+        return next == " " || next == "\t"
+    }
+
     /// `lines` holds each block's source line, when the reader can edit it.
     private static func convert(_ orgBlocks: [OrgBlock], lines: [Int]?, context: Context) -> [MarkdownBlock] {
         var result: [MarkdownBlock] = []
@@ -187,9 +196,17 @@ enum OrgToMarkdownConverter {
         // task's deadline never warns.
         var headingIsDone = false
         var headingLine: Int?
+        // The level of the `COMMENT` heading whose subtree is being left out:
+        // everything up to the next heading of the same or a higher level.
+        var commentLevel: Int?
 
         for (index, block) in orgBlocks.enumerated() {
             let line = lines?[index]
+            if case .heading(let level, _, _, let title, _) = block {
+                if let open = commentLevel, level <= open { commentLevel = nil }
+                if commentLevel == nil, isCommented(title) { commentLevel = level }
+            }
+            if commentLevel != nil { continue }
             switch block {
             case .heading(let level, let keyword, let priority, let title, let tags):
                 let isDone = keyword.map(context.todoKeywords.isDone) ?? false
