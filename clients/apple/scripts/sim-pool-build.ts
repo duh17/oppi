@@ -170,7 +170,8 @@ export function compilationCache(
   // DEVELOPER_DIR is <Xcode>.app/Contents/Developer; a new Xcode gets a fresh cache, also under
   // an OPPI_XCODE_CACHE_DIR parent.
   const xcode = basename(dirname(dirname(env.DEVELOPER_DIR ?? "/Applications/Xcode.app/Contents/Developer"))).replace(/[^\w.-]/g, "_");
-  const parent = env.OPPI_XCODE_CACHE_DIR ?? join(env.HOME ?? homedir(), "Library", "Caches", "oppi-xcode");
+  // An empty value falls back too: join("", xcode) would put the cache in the working directory.
+  const parent = env.OPPI_XCODE_CACHE_DIR || join(env.HOME ?? homedir(), "Library", "Caches", "oppi-xcode");
   const root = join(parent, xcode);
   const settings = [
     "COMPILATION_CACHE_ENABLE_CACHING=YES",
