@@ -910,10 +910,13 @@ final class ExtensionSurfacePillContentView: UIView, BlocksColumnFillable {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func apply(_ content: ExtensionSurfacePillContent, identifierRoot: String) {
+    /// `summaryOnly` draws the row without its secondary line (`caption` text, the style the
+    /// server sends for a pill's free-text status), for a strip too narrow to show it whole. The
+    /// words VoiceOver reads and the drawer the pill opens still carry it.
+    func apply(_ content: ExtensionSurfacePillContent, identifierRoot: String, summaryOnly: Bool) {
         let node = content.pill.content
         let view = renderer.render(
-            node,
+            summaryOnly ? Self.withoutSecondaryText(node) : node,
             path: "0",
             environment: ExtensionSurfaceBlocksEnvironment(
                 context: content.context,
@@ -937,6 +940,18 @@ final class ExtensionSurfacePillContentView: UIView, BlocksColumnFillable {
         }
         self.node = node
         startsWithIcon = Self.leadsWithIcon(node)
+    }
+
+    private static func withoutSecondaryText(_ node: ExtensionUISurfaceNode) -> ExtensionUISurfaceNode {
+        guard case .row(let row) = node else { return node }
+        let kept = row.children.filter {
+            if case .text(let text) = $0 { return text.style != "caption" }
+            return true
+        }
+        return .row(ExtensionUISurfaceLayoutNode(
+            base: row.base, children: kept, spacing: row.spacing, align: row.align,
+            selected: row.selected, disabled: row.disabled, action: row.action
+        ))
     }
 
     override func accessibilityActivate() -> Bool {

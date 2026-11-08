@@ -666,7 +666,8 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
         isActive: Bool,
         placement: ExtensionSurfacePlacementGroup,
         palette: ThemePalette,
-        pill: ExtensionSurfacePillContent?
+        pill: ExtensionSurfacePillContent?,
+        summaryOnly: Bool
     ) {
         let tone = entry.stateTone.color(palette)
         if let image = entry.leadingSystemImage {
@@ -678,7 +679,7 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
             dot.isHidden = false
             marker.isHidden = true
         }
-        applyPill(pill)
+        applyPill(pill, summaryOnly: summaryOnly)
         // A composed pill replaces the words the strip would have derived from the header: the
         // surface said what its one line is.
         let showsContent = pill != nil
@@ -756,7 +757,7 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
         return pill.context.surface.actions[action.id]?.title
     }
 
-    private func applyPill(_ pill: ExtensionSurfacePillContent?) {
+    private func applyPill(_ pill: ExtensionSurfacePillContent?, summaryOnly: Bool) {
         guard let pill else {
             content.isHidden = true
             onPillAction = nil
@@ -768,7 +769,8 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
             identifierRoot: ExtensionSurfaceIdentity.composite(
                 surfaceId: pill.context.surface.id,
                 compositeId: ExtensionSurfacePillContent.compositeId
-            )
+            ),
+            summaryOnly: summaryOnly
         )
         switch pill.pill.tap {
         case .drawer:
@@ -1217,6 +1219,8 @@ final class ExtensionSurfacePanelView: UIView {
 
         var arranged: [UIView] = leadingViews
         var keptPills: [String: ExtensionSurfaceStripPill] = [:]
+        // A narrow strip has no room for a pill's free-text line; the drawer it opens has it.
+        let summaryOnly = !AdaptiveWidth.isWide(traitCollection)
         for entry in entries {
             let pill = pills[entry.id] ?? ExtensionSurfaceStripPill()
             pill.apply(
@@ -1224,7 +1228,8 @@ final class ExtensionSurfacePanelView: UIView {
                 isActive: entry.id == expandedEntryID,
                 placement: placement,
                 palette: palette,
-                pill: pillContent(for: entry, content: content)
+                pill: pillContent(for: entry, content: content),
+                summaryOnly: summaryOnly
             )
             let id = entry.id
             pill.onTap = { [weak self] in self?.toggle(id) }
