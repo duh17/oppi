@@ -824,8 +824,11 @@ class E2ETestCase: XCTestCase {
         )
 
         dismissKeyboardIfPresent()
+        var placement = "not attempted"
         for attempt in 0..<2 {
-            scrollSessionRowIntoView(row, in: sessionList)
+            let placed = scrollSessionRowIntoView(row, in: sessionList)
+            let band = sessionRowTapBand(in: sessionList)
+            placement = "placed=\(placed) row=\(row.frame) tapBand=\(band.lowerBound)...\(band.upperBound)"
             tap(row, named: "session row \(sessionId)")
             if waitForChatSessionSurface(in: app, timeout: attempt == 0 ? 8 : 30) {
                 return
@@ -835,8 +838,40 @@ class E2ETestCase: XCTestCase {
 
         XCTAssertTrue(
             waitForChatSessionSurface(in: app, timeout: 5),
-            "Chat input did not appear after entering session \(sessionId)"
+            "Chat input did not appear after entering session \(sessionId) (\(placement))"
         )
+    }
+
+    /// The vertical span of the session list that takes row taps: below the
+    /// navigation bar and above the floating bottom bar (Message, Now Playing,
+    /// Files). The list scrolls under both, and XCUITest still reports a row
+    /// under the bottom bar as hittable, so `isHittable` cannot tell a row that
+    /// takes the tap from one the bar covers: the tap would open Files or the
+    /// Quick Session composer instead of the session.
+    ///
+    /// The toolbar element itself spans the whole screen. Its bounds are the
+    /// bar's content: the first element of it that sits in the lower half of the
+    /// list and is smaller than the list is the bar's top edge.
+    private func sessionRowTapBand(in list: XCUIElement) -> ClosedRange<CGFloat> {
+        let listFrame = list.frame
+        var top = listFrame.minY
+        var bottom = listFrame.maxY
+        let navigationBar = app.navigationBars.firstMatch
+        if navigationBar.exists {
+            top = max(top, navigationBar.frame.maxY)
+        }
+        for toolbar in app.toolbars.allElementsBoundByIndex where toolbar.exists {
+            let parts = [toolbar] + toolbar.descendants(matching: .any).allElementsBoundByIndex
+            for part in parts {
+                let frame = part.frame
+                if frame.height > 0, frame.height < listFrame.height / 2,
+                   frame.minY > listFrame.midY, frame.intersects(listFrame)
+                {
+                    bottom = min(bottom, frame.minY)
+                }
+            }
+        }
+        return top...max(top, bottom)
     }
 
     /// Brings a session row into the part of the list that takes taps.
@@ -844,15 +879,55 @@ class E2ETestCase: XCTestCase {
     /// A collection view prepares cells just outside its viewport: they exist in
     /// the accessibility tree while `isHittable` stays false, and `tap()` then
     /// falls back to a coordinate tap that lands beside the list and opens
-    /// nothing. A newly created session sits at the top, so search up first.
-    private func scrollSessionRowIntoView(_ row: XCUIElement, in list: XCUIElement) {
-        guard row.exists, !row.isHittable else { return }
-        for _ in 0..<8 where !row.isHittable {
-            list.swipeDown()
+    /// nothing. A row beside the bottom bar is the reverse trap: hittable, but
+    /// the bar's touch area reaches above its drawn edge and takes the tap, so a
+    /// row must sit above the bar by at least its own height. This places the
+    /// row by its frame against the tap band, and drags the list without
+    /// momentum by the distance that is missing.
+    /// Returns false when the row could not be placed (the list cannot scroll further).
+    @discardableResult
+    private func scrollSessionRowIntoView(_ row: XCUIElement, in list: XCUIElement) -> Bool {
+        var lastMinY: CGFloat?
+        for _ in 0..<12 {
+            guard row.exists else { return false }
+            let band = sessionRowTapBand(in: list)
+            let frame = row.frame
+            if let lastMinY, abs(frame.minY - lastMinY) < 1 { return false }
+
+            // Allowed range for the row's top edge; the middle of it is the goal. A band
+            // too short for that (compact height) centers the row in the band instead.
+            let lowest = band.lowerBound
+            let highest = band.upperBound - 2 * frame.height
+            let goal = highest >= lowest
+                ? (lowest + highest) / 2
+                : (band.lowerBound + band.upperBound - frame.height) / 2
+            let inRange = highest >= lowest
+                ? (lowest...highest).contains(frame.minY)
+                : abs(frame.minY - goal) < 1
+            if inRange {
+                if row.isHittable { return true }
+                // Inside the band yet not hittable: the list is still settling.
+                RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+                continue
+            }
+
+            // The content follows the finger. One drag stays inside the band.
+            let bandHeight = band.upperBound - band.lowerBound
+            let drag = max(-bandHeight * 0.6, min(bandHeight * 0.6, goal - frame.minY))
+            let middle = (band.lowerBound + band.upperBound) / 2
+            func point(atY y: CGFloat) -> XCUICoordinate {
+                list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
+                    .withOffset(CGVector(dx: 0, dy: y - list.frame.minY))
+            }
+            lastMinY = frame.minY
+            point(atY: middle - drag / 2).press(
+                forDuration: 0.05,
+                thenDragTo: point(atY: middle + drag / 2),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.3
+            )
         }
-        for _ in 0..<8 where !row.isHittable {
-            list.swipeUp()
-        }
+        return false
     }
 
     /// Creates a new session and enters it.
