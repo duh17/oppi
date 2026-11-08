@@ -104,14 +104,17 @@ enum OrgBadges {
                 control: control
             )
         }
-        let overdue = entry.kind == .deadline && !headingIsDone && date.hasPassed(clock: clock)
+        let open = entry.kind == .deadline && !headingIsDone
+        let overdue = open && date.hasPassed(clock: clock)
+        let dueSoon = open && !overdue && date.isWarning(clock: clock)
         let tone: MarkdownBadge.Tone = switch entry.kind {
         case .scheduled: .neutral
-        case .deadline: overdue ? .danger : .neutral
+        case .deadline: overdue ? .danger : dueSoon ? .warning : .neutral
         case .closed: .quiet
         }
         var label = "\(entry.kind.label) \(date.spoken(clock: clock))"
         if overdue { label += ", overdue" }
+        if dueSoon { label += ", due soon" }
         return MarkdownBadge(
             text: date.shown(clock: clock),
             label: label,
@@ -137,6 +140,9 @@ private struct OrgDate {
     let hasTime: Bool
     /// `+1w`, `.+1d`, `++1m`.
     let repeater: String?
+    /// The warning period (`-2d`, `--1w`): how long before a deadline it starts
+    /// to warn.
+    let warning: (count: Int, unit: Calendar.Component)?
 
     init?(_ text: String, calendar: Calendar) {
         let tokens = text.split(separator: " ")
@@ -145,8 +151,11 @@ private struct OrgDate {
         var components = DateComponents(year: day[0], month: day[1], day: day[2])
         var hasTime = false
         var repeater: String?
+        var warning: (count: Int, unit: Calendar.Component)?
         for token in tokens.dropFirst() {
-            if token.first == "+" || token.hasPrefix(".+") {
+            if token.first == "-" {
+                warning = Self.warningPeriod(token)
+            } else if token.first == "+" || token.hasPrefix(".+") {
                 repeater = String(token)
             } else if !hasTime, let colon = token.firstIndex(of: ":"),
                       let hour = Int(token[..<colon]),
@@ -160,6 +169,34 @@ private struct OrgDate {
         self.date = date
         self.hasTime = hasTime
         self.repeater = repeater
+        self.warning = warning
+    }
+
+    /// `-2d` or `--2d`; nil for any other `-` token (a time range's tail has
+    /// no leading dash, so only a warning gets here).
+    private static func warningPeriod(_ token: Substring) -> (count: Int, unit: Calendar.Component)? {
+        let body = token.drop(while: { $0 == "-" })
+        guard token.count - body.count <= 2, let last = body.last,
+              let count = Int(body.dropLast()), count >= 0 else { return nil }
+        let unit: Calendar.Component
+        switch last {
+        case "h": unit = .hour
+        case "d": unit = .day
+        case "w": unit = .weekOfYear
+        case "m": unit = .month
+        case "y": unit = .year
+        default: return nil
+        }
+        return (count, unit)
+    }
+
+    /// Whether `now` is inside the warning period that precedes the date.
+    /// Without a warning period nothing warns early.
+    func isWarning(clock: OrgBadges.Clock) -> Bool {
+        guard let warning,
+              let start = clock.calendar.date(byAdding: warning.unit, value: -warning.count, to: date)
+        else { return false }
+        return clock.now >= start
     }
 
     /// A date without a time lasts the whole day.
