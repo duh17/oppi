@@ -384,7 +384,7 @@ struct FileShareArtifactTests {
     private func extractText(from content: FileShareService.ShareableContent) -> String {
         switch content {
         case .mermaid(let t, _), .latex(let t, _), .markdown(let t, _),
-             .orgMode(let t, _), .html(let t, _), .json(let t, _), .plainText(let t, _):
+             .orgMode(let t, _, _), .html(let t, _), .json(let t, _), .plainText(let t, _):
             return t
         case .code(let t, _, _):
             return t

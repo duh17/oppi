@@ -63,7 +63,8 @@ enum FileShareService {
         case mermaid(String, fileName: String? = nil)
         case latex(String, fileName: String? = nil)
         case markdown(String, fileName: String? = nil)
-        case orgMode(String, fileName: String? = nil)
+        /// `documentPath` resolves the file links of an image or PDF export; `fileName` stays the bare name.
+        case orgMode(String, fileName: String? = nil, documentPath: String? = nil)
         case code(String, language: String?, fileName: String? = nil)
         case html(String, fileName: String? = nil)
         case json(String, fileName: String? = nil)
@@ -78,7 +79,7 @@ enum FileShareService {
             case .mermaid(_, let fileName),
                  .latex(_, let fileName),
                  .markdown(_, let fileName),
-                 .orgMode(_, let fileName),
+                 .orgMode(_, let fileName, _),
                  .html(_, let fileName),
                  .json(_, let fileName),
                  .plainText(_, let fileName):
@@ -108,7 +109,7 @@ enum FileShareService {
             case .html: return .html(text, fileName: fileName)
             case .json: return .json(text, fileName: fileName)
             case .latex: return .latex(text, fileName: fileName)
-            case .orgMode: return .orgMode(text, fileName: fileName)
+            case .orgMode: return .orgMode(text, fileName: fileName, documentPath: filePath)
             case .mermaid: return .mermaid(text, fileName: fileName)
             case .graphviz: return .code(text, language: "dot", fileName: fileName)
             case .code(let lang): return .code(text, language: lang.displayName, fileName: fileName)
@@ -360,8 +361,8 @@ enum FileShareService {
             image = renderLatexToImage(source)
         case .markdown(let source, _):
             image = renderMarkdownToImage(source)
-        case .orgMode(let source, _):
-            image = renderOrgModeToImage(source)
+        case .orgMode(let source, _, let path):
+            image = renderOrgModeToImage(source, documentPath: path)
         case .code(let source, let language, _):
             image = renderCodeToImage(source, language: language)
         case .html(let source, _):
@@ -446,8 +447,8 @@ enum FileShareService {
         )
     }
 
-    private static func renderOrgModeToImage(_ source: String) -> UIImage {
-        renderMarkdownToImage(DocumentRenderPipeline.orgToMarkdown(source))
+    private static func renderOrgModeToImage(_ source: String, documentPath: String?) -> UIImage {
+        renderMarkdownToImage(DocumentRenderPipeline.orgToMarkdown(source, documentPath: documentPath))
     }
 
     /// Render HTML image export through the PDF pipeline.
@@ -823,8 +824,8 @@ enum FileShareService {
             return .pdf(data, filename: fileName(fromPath: name) ?? name)
         case .markdown(let source, _):
             pdfData = await renderMarkdownToPDF(source)
-        case .orgMode(let source, _):
-            pdfData = await renderMarkdownToPDF(DocumentRenderPipeline.orgToMarkdown(source))
+        case .orgMode(let source, _, let path):
+            pdfData = await renderMarkdownToPDF(DocumentRenderPipeline.orgToMarkdown(source, documentPath: path))
         case .code(let source, let language, _):
             pdfData = renderCodeToPDF(source, language: language)
         case .json(let source, _):
@@ -1103,7 +1104,7 @@ enum FileShareService {
             return .file(writeTempFile(content: text, filename: filename))
         case .markdown(let text, _):
             return .file(writeTempFile(content: text, filename: filename))
-        case .orgMode(let text, _):
+        case .orgMode(let text, _, _):
             return .file(writeTempFile(content: text, filename: filename))
         case .code(let text, _, _):
             return .file(writeTempFile(content: text, filename: filename))

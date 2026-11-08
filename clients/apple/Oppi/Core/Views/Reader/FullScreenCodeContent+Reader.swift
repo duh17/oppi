@@ -213,7 +213,7 @@ extension FullScreenCodeContent {
         case .markdown(let text, let filePath, _, let rawText, _):
             if showingSource, let raw = completeRaw ?? rawText { return .plainText(raw, fileName: filePath) }
             return .markdown(text, fileName: filePath)
-        case .orgMode(let text, let filePath): return .orgMode(text, fileName: filePath)
+        case .orgMode(let text, let filePath): return .orgMode(text, fileName: filePath, documentPath: filePath)
         case .html(let text, let filePath): return .html(text, fileName: filePath)
         case .graphviz(let text, let filePath): return .code(text, language: "dot", fileName: filePath)
         case .document(let family): return family.shareableContent(fileName: family.filePath)
