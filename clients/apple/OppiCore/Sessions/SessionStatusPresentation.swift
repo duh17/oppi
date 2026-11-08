@@ -113,7 +113,8 @@ extension SessionStatusKind {
     /// the server's value, and covers a missing or unknown program status (older servers,
     /// rows from before the feature): a stopped session cannot be working or blocked; a
     /// starting or busy session is working unless it is blocked or still awaiting its first
-    /// prompt; a `working` value on a settled session is a stale local hint.
+    /// prompt; a `working` value on an errored session is a stale local hint. A ready session reads
+    /// `working` as is: a pending wake keeps it working.
     /// `pendingAskCount` only matters without program status.
     static func resolve(
         session: Session,
@@ -151,7 +152,8 @@ extension SessionStatusKind {
         case .stopping:
             return resolve(programStatus: programStatus, seenAt: seenAt)
         case .ready:
-            if programStatus.state == .working { return nil }
+            // The server holds `working` on a ready session while a background job will wake it.
+            // Builds that predate this read it as settled and keep showing Done or Idle.
             return resolve(programStatus: programStatus, seenAt: seenAt)
         case .error:
             switch programStatus.state {

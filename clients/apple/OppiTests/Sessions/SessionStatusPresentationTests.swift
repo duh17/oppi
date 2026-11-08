@@ -99,14 +99,22 @@ struct SessionStatusPresentationTests {
         #expect(SessionStatusKind.resolve(session: draft, seenAt: nil) == .idle)
     }
 
-    @Test(arguments: [SessionStatus.ready, .error])
-    func workingOnASettledSessionIsAStaleLocalHint(lifecycle: SessionStatus) {
-        // A local agent_settled update flips lifecycle before the server's summary arrives.
+    @Test func workingOnAFailedSessionIsAStaleLocalHint() {
         let status = SessionStatusKind.resolve(
-            session: session(lifecycle, program: program(.working)),
+            session: session(.error, program: program(.working)),
             seenAt: seenAfter
         )
         #expect(status != .working)
+    }
+
+    @Test(arguments: [Date?.some(seenBefore), seenAfter, nil])
+    func aReadySessionWithWorkingProgramIsWorkingWhateverWasSeen(seenAt: Date?) {
+        // The server holds working while a background job will wake the session.
+        let status = SessionStatusKind.resolve(
+            session: session(.ready, program: program(.working)),
+            seenAt: seenAt
+        )
+        #expect(status == .working)
     }
 
     @Test func aStoppedSessionIsNeverWorkingOrBlocked() {
