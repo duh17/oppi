@@ -43,7 +43,9 @@ final class QuickSessionWideBar: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         // Longest-lived title last: a lower resistance gives up room first.
+        // "Classic" itself is one short fixed word and outlasts every name.
         engine.setDetailCompressionResistance(UILayoutPriority(251))
+        engine.setTitleCompressionResistance(UILayoutPriority(255))
         agent.setTitleCompressionResistance(UILayoutPriority(252))
         worktree.setTitleCompressionResistance(UILayoutPriority(253))
         workspace.setTitleCompressionResistance(UILayoutPriority(254))

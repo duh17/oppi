@@ -100,13 +100,22 @@ struct QuickSessionWideBarTruncationTests {
         natural.workspace + natural.worktree + natural.agent + natural.engine + bar.incognito.bounds.width + 3 * 8 + 2 * 8
     }
 
+    /// The label in `view` showing `text`.
+    private func label(_ text: String, in view: UIView) -> UILabel? {
+        if let label = view as? UILabel, label.text == text { return label }
+        return view.subviews.lazy.compactMap { label(text, in: $0) }.first
+    }
+
     @Test("A small shortfall costs the Classic reason first, nothing else")
-    func smallShortfallCostsTheEngineFirst() {
+    func smallShortfallCostsTheEngineFirst() throws {
         let (bar, host) = makeBar()
         let natural = widths(bar, host, at: 2000)
         let tight = widths(bar, host, at: neededWidth(bar, natural) - 24)
         let detail = "natural \(natural), tight \(tight)"
         #expect(tight.engine < natural.engine - 10, "\(detail)")
+        // The reason gave up the room; "Classic" itself is whole.
+        let classic = try #require(label("Classic", in: bar.engine))
+        #expect(classic.bounds.width >= classic.intrinsicContentSize.width - 0.5, "\(detail)")
         #expect(abs(tight.agent - natural.agent) < 1, "\(detail)")
         #expect(abs(tight.worktree - natural.worktree) < 1, "\(detail)")
         #expect(abs(tight.workspace - natural.workspace) < 1, "\(detail)")
@@ -209,5 +218,24 @@ struct QuickSessionWideBarTests {
 
         controller.perform(escape.action)
         #expect(closed == 1)
+    }
+
+    @Test("Esc steps aside while an input method is composing in the composer")
+    func escapeLeavesMarkedTextToTheInputMethod() async throws {
+        let (controller, window) = try await makeController(regular: true)
+        defer { controller.tearDown(); window.isHidden = true; window.rootViewController = nil }
+        let escape = try #require(controller.keyCommands?.first { $0.input == UIKeyCommand.inputEscape })
+        let action = try #require(escape.action)
+        #expect(controller.canPerformAction(action, withSender: escape))
+
+        let textView = controller.composer.bar.textView
+        textView.markedTextRangeOverrideForTesting = textView.textRange(
+            from: textView.beginningOfDocument,
+            to: textView.beginningOfDocument
+        )
+        #expect(!controller.canPerformAction(action, withSender: escape))
+
+        textView.markedTextRangeOverrideForTesting = nil
+        #expect(controller.canPerformAction(action, withSender: escape))
     }
 }

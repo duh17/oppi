@@ -13,7 +13,7 @@ import UIKit
 ///
 /// The `.bar` style is the same control at regular width, inside
 /// `QuickSessionWideBar`'s glass group: a 44 pt button with a body-size title
-/// and the pop-up indicator, no glass of its own, and a pointer hover.
+/// and the pop-up indicator, no glass of its own, and a capsule pointer hover.
 @MainActor
 final class QuickSessionPillButton: UIButton {
     enum Style {
@@ -51,7 +51,9 @@ final class QuickSessionPillButton: UIButton {
         super.init(frame: .zero)
         if isBar {
             isPointerInteractionEnabled = true
-            showsLargeContentViewer = true
+            pointerStyleProvider = { button, effect, _ in
+                UIPointerStyle(effect: effect, shape: .roundedRect(button.frame, radius: button.bounds.height / 2))
+            }
         }
         capsule.isUserInteractionEnabled = false
         capsule.translatesAutoresizingMaskIntoConstraints = false
@@ -72,9 +74,11 @@ final class QuickSessionPillButton: UIButton {
         }
         let labelFont = isBar ? UIFont.scaled(.body, .regular) : UIFont.scaled(.caption2, .semibold)
         captionLabel.font = labelFont
+        captionLabel.adjustsFontForContentSizeCategory = true
         captionLabel.lineBreakMode = .byTruncatingTail
         captionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         detailLabel.font = labelFont
+        detailLabel.adjustsFontForContentSizeCategory = true
         detailLabel.lineBreakMode = .byTruncatingTail
         detailLabel.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
         trailingView.contentMode = .center

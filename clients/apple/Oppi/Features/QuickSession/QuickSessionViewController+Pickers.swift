@@ -11,7 +11,13 @@ extension QuickSessionViewController {
 
     /// Hardware Esc: close what is open over Quick Session first (a picker,
     /// the expanded composer, or a popover the composer presented), then
-    /// Quick Session itself. A menu that is open takes Esc for itself.
+    /// Quick Session itself.
+    ///
+    /// The command reaches this controller through the responder chain from
+    /// the composer's text view, and takes priority over text input so a focused
+    /// composer does not swallow it. It steps aside (`canPerformAction`) while
+    /// the composer keeps Esc: an input method's marked text, or an open
+    /// pop-up menu. UIKit then hands the key on to them.
     func installEscapeKey() {
         let escape = UIKeyCommand(
             title: String(localized: "Close Quick Session"),
@@ -25,6 +31,11 @@ extension QuickSessionViewController {
     @objc private func handleEscapeKey() {
         if closeOpenPickers() || dismissPresentedModal() { return }
         close()
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(handleEscapeKey) { return !composer.bar.keepsEscapeKey }
+        return super.canPerformAction(action, withSender: sender)
     }
 
     /// Clears the model's picker requests, so each presenter dismisses its own
@@ -59,7 +70,11 @@ extension QuickSessionViewController {
     /// A picker's content is built only while it is up: its screen closure
     /// runs only for a request, so the reads in it re-run this only then.
     func updatePresenters(colors: ComposerThemeColors) {
-        let pickerPopover = ModalPresentation.popover.keepsPopoverInCompactWidth()
+        // The wide bar's pickers open upward, over the empty space above the
+        // bar: a sideways popover would cover the controls beside its own.
+        let pickerPopover = usesWideLayout
+            ? ModalPresentation.popover.arrowDirections(.down).keepsPopoverInCompactWidth()
+            : ModalPresentation.popover.keepsPopoverInCompactWidth()
         let destinationControls = usesWideLayout ? wideDestinationControls : compactDestinationControls
         modelPicker.update(
             id: model.showModelPicker ? "model-picker" : nil,

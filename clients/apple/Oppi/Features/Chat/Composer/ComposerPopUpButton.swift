@@ -22,6 +22,9 @@ final class ComposerPopUpButton: UIButton {
     private static let minimumTitleWidth: CGFloat = 56
 
     private(set) var display = Display.full
+    /// True while this button's menu is up, so a hardware Esc goes to the
+    /// menu and not to the screen's own Esc (`ComposerBarController.keepsEscapeKey`).
+    private(set) var isMenuOpen = false
     private var title = ""
     private var icon: UIImage?
     private var tint = UIColor.label
@@ -29,11 +32,13 @@ final class ComposerPopUpButton: UIButton {
     private var collapsible = false
     private var truncatedWidth: CGFloat?
     private var widthCap: NSLayoutConstraint?
+    /// The widths `fitItem` measured for the current content. `apply` clears
+    /// it; a Dynamic Type change re-runs `apply`.
+    private var measuredFit: ComposerPopUpFit.Item?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isPointerInteractionEnabled = true
-        showsLargeContentViewer = true
         heightAnchor.constraint(equalToConstant: Self.height).isActive = true
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -61,20 +66,41 @@ final class ComposerPopUpButton: UIButton {
         fillColor = fill
         self.collapsible = collapsible && icon != nil
         showsMenuAsPrimaryAction = hasMenu
-        largeContentTitle = title
-        largeContentImage = icon
+        measuredFit = nil
         refresh()
     }
 
-    /// What `ComposerPopUpFit` needs: the widths of each display.
+    /// What `ComposerPopUpFit` needs: the widths of each display. Measured
+    /// once per content, not on every layout pass that asks.
     var fitItem: ComposerPopUpFit.Item {
+        if let measuredFit { return measuredFit }
         let full = width(for: configuration(for: .full))
         let iconOnly = width(for: configuration(for: .iconOnly))
-        return ComposerPopUpFit.Item(
+        let item = ComposerPopUpFit.Item(
             full: full,
             iconOnly: collapsible ? iconOnly : nil,
             minimum: min(full, iconOnly + Self.minimumTitleWidth)
         )
+        measuredFit = item
+        return item
+    }
+
+    override func contextMenuInteraction(
+        _ interaction: UIContextMenuInteraction,
+        willDisplayMenuFor configuration: UIContextMenuConfiguration,
+        animator: (any UIContextMenuInteractionAnimating)?
+    ) {
+        super.contextMenuInteraction(interaction, willDisplayMenuFor: configuration, animator: animator)
+        isMenuOpen = true
+    }
+
+    override func contextMenuInteraction(
+        _ interaction: UIContextMenuInteraction,
+        willEndFor configuration: UIContextMenuConfiguration,
+        animator: (any UIContextMenuInteractionAnimating)?
+    ) {
+        super.contextMenuInteraction(interaction, willEndFor: configuration, animator: animator)
+        isMenuOpen = false
     }
 
     func setDisplay(_ result: ComposerPopUpFit.Result) {

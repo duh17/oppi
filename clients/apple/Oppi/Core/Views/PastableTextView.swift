@@ -491,6 +491,12 @@ class PastableUITextView: UITextView {
         return markedTextRange
     }
 
+    /// An input method is composing (marked text). Until it commits or
+    /// cancels, keys such as Esc are its own.
+    var isComposingMarkedText: Bool {
+        effectiveMarkedTextRange != nil
+    }
+
     static func shouldDeferStyledTextUpdateWhileComposing(
         hasMarkedText: Bool,
         currentText: String,

@@ -297,6 +297,14 @@ extension ComposerBarController {
         return image(for: icon, tint: .label)
     }
 
+    /// True while a hardware Esc belongs to the composer itself: an input
+    /// method's marked text, or a pop-up button's menu that is open. A screen's
+    /// own Esc command steps aside then (Quick Session's `canPerformAction`).
+    var keepsEscapeKey: Bool {
+        textView.isComposingMarkedText
+            || trailingStack.arrangedSubviews.contains { ($0 as? ComposerPopUpButton)?.isMenuOpen == true }
+    }
+
     /// Fits the pop-up controls to the width the trailing stack has left once
     /// the row's other controls are placed (`ComposerPopUpFit`). Derived from
     /// those widths and the buttons' full sizes, never from the buttons' own
