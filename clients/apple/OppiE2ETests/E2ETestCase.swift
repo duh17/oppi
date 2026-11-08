@@ -35,6 +35,10 @@ class E2ETestCase: XCTestCase {
     /// runs these UI tests serially in the harness.
     nonisolated(unsafe) private static var _app: XCUIApplication?
 
+    /// The chat style the shared app was launched with (`e2eChatStyle`). Only
+    /// meaningful while `_app` is set.
+    nonisolated(unsafe) private static var launchedChatStyle: String?
+
     /// Launch configurations that never reached their first surface.
     nonisolated(unsafe) private static var launchLedger = E2ELaunchFailureLedger()
 
@@ -71,6 +75,18 @@ class E2ETestCase: XCTestCase {
     /// Override in tests that need the workspace detail list without paying for a throwaway chat session.
     var e2eAutoCreatesSessionOnLaunch: Bool {
         true
+    }
+
+    /// The chat style every launch pins (`full`, `compact`, `chat`). Settings
+    /// saves the style in the app's defaults, which survive relaunch for the
+    /// whole E2E process, so a case that picks Compact would hide the tool rows
+    /// of every later case. The argument domain wins over the saved value and
+    /// lasts for that launch only, so no case depends on what another left.
+    /// A case that drives the Settings picker itself returns nil to launch
+    /// against the saved value; the next case that wants a pinned style
+    /// relaunches the app.
+    var e2eChatStyle: String? {
+        "full"
     }
 
     /// Override for tests that must control launch-only state such as pending app-group handoff data.
@@ -131,7 +147,7 @@ class E2ETestCase: XCTestCase {
         // hints.
         configureSharedLaunchHints()
 
-        if e2eRequiresFreshLaunch {
+        if e2eRequiresFreshLaunch || (Self._app != nil && Self.launchedChatStyle != e2eChatStyle) {
             Self._app?.terminate()
             Self._app = nil
         }
@@ -215,6 +231,9 @@ class E2ETestCase: XCTestCase {
             "-dev.chenda.Oppi.browser.linkOpeningMode",
             "inApp",
         ] + ChatTopBarTestLayout.panelButtons
+        if let style = e2eChatStyle {
+            application.launchArguments += ["-dev.chenda.Oppi.chatDisplay.style", style]
+        }
         application.launchEnvironment["PI_E2E_INVITE_URL"] = inviteURL
         // Beat a leftover runner/SIMCTL invite. Offline two-server tests already
         // documented that the UI runner does not inherit the host env.
@@ -252,6 +271,7 @@ class E2ETestCase: XCTestCase {
         defer { Self.launchLedger.recordSuccess(for: launchKey) }
         application.launch()
         Self._app = application
+        Self.launchedChatStyle = e2eChatStyle
 
         // Dismiss springboard alerts (notification permissions, etc.)
         // 0.5s is enough to detect — no need to block 2s when no alert is present.

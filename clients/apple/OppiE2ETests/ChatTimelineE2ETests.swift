@@ -9,36 +9,10 @@ import XCTest
 @MainActor
 final class ChatTimelineE2ETests: E2ETestCase {
 
-    nonisolated private var usesChatStyleFixture: Bool {
-        name.contains("testQuietModeFinishedTurnAndControlsStaySynchronized")
-    }
-
-    override func setUpWithError() throws {
-        let shouldResetChatStyle = usesChatStyleFixture
-        if shouldResetChatStyle {
-            terminateSharedApp()
-        }
-
-        do {
-            try super.setUpWithError()
-        } catch {
-            if shouldResetChatStyle {
-                terminateSharedApp()
-                resetChatStylePreference()
-            }
-            throw error
-        }
-    }
-
-    override func tearDownWithError() throws {
-        if usesChatStyleFixture {
-            // XCTest still calls teardown after an assertion aborts. Stop the
-            // process before resetting its persisted defaults, then invalidate
-            // the shared handle so the next E2E must launch and read the reset.
-            terminateSharedApp()
-            resetChatStylePreference()
-        }
-        try super.tearDownWithError()
+    /// This case drives the Settings Chat Style picker, so it launches against
+    /// the saved style instead of the pinned Full the other cases get.
+    override var e2eChatStyle: String? {
+        name.contains("testQuietModeFinishedTurnAndControlsStaySynchronized") ? nil : super.e2eChatStyle
     }
 
     func testSendMessageAndReceiveResponse() throws {
@@ -365,26 +339,5 @@ final class ChatTimelineE2ETests: E2ETestCase {
             to: directory.appendingPathComponent("\(name).png"),
             options: .atomic
         )
-    }
-
-    nonisolated private func resetChatStylePreference() {
-        let environment = ProcessInfo.processInfo.environment
-        guard let simulatorUDID = environment["SIMULATOR_UDID"] ?? environment["TARGET_DEVICE_IDENTIFIER"],
-              !simulatorUDID.isEmpty else {
-            XCTFail("No simulator identifier available for the chat style reset")
-            return
-        }
-
-        // iOS XCTest cannot spawn simctl. The host E2E harness deletes the
-        // persisted key before this process launches the app.
-        do {
-            _ = try e2eLabAPIJSON(
-                method: "POST",
-                path: "/e2e/ui/reset-chat-style",
-                body: ["simulatorUDID": simulatorUDID]
-            )
-        } catch {
-            XCTFail("Could not reset the chat style: \(error.localizedDescription)")
-        }
     }
 }
