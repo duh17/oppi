@@ -341,6 +341,12 @@ final class AppNavigation {
         )
     }
 
+    /// Shows or hides the split shell's sidebar column: the sidebar toggle's
+    /// action, and the Toggle Sidebar keyboard command's.
+    func toggleSplitSidebar() {
+        splitColumnVisibility = splitColumnVisibility == .detailOnly ? .all : .detailOnly
+    }
+
     /// Present Quick Session with `start` and record which control opened it, and
     /// whether a chat was the top view controller when it asked (a list bar's tap
     /// under a chat, or the intent path). The screen is captured before the flag

@@ -6,9 +6,12 @@ import UIKit
 /// to the window's `AppOpener`.
 ///
 /// @MainActor keeps the delegate on the main thread, where UIKit calls it.
+///
+/// A `UIResponder` so it ends the responder chain: the main menu's keyboard
+/// commands (`KeyboardCommandMenu`) reach it from wherever focus is.
 @main
 @MainActor
-final class AppDelegate: NSObject, UIApplicationDelegate {
+final class AppDelegate: UIResponder, UIApplicationDelegate {
     /// Created at launch, after the process start time and App Lock cover.
     private(set) var app: OppiApp?
     private var sceneAdoption: NSObjectProtocol?

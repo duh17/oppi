@@ -192,8 +192,7 @@ final class ChatRouteViewController: UIViewController {
             title: "Hide Sidebar",
             image: UIImage(systemName: "sidebar.leading"),
             primaryAction: UIAction { [weak self] _ in
-                guard let navigation = self?.root.navigation else { return }
-                navigation.splitColumnVisibility = navigation.splitColumnVisibility == .detailOnly ? .all : .detailOnly
+                self?.root.navigation.toggleSplitSidebar()
             }
         )
         toggle.accessibilityIdentifier = "workspace.split.sidebarToggle"

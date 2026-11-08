@@ -310,6 +310,9 @@ final class TrailingColumnController: UIViewController {
     private var panelID: AnyHashable?
     private var root: AppRootEnvironment?
     private var container: RouterNavigationController?
+    /// The screen in front inside the open panel, for Find and the other
+    /// commands that ask what the panel shows.
+    var frontScreen: UIViewController? { container?.topViewController }
     private var overlay: TrailingColumnOverlayView?
     /// The controller whose safe area makes room for the column, and the
     /// trailing inset this column added to it.

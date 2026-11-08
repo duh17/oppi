@@ -86,6 +86,9 @@ final class SessionInboxViewController: UIViewController {
 
     /// The listed sessions' context and routing, by session id.
     private var itemsById: [String: InboxItem] = [:]
+    /// The sessions in the order the list shows them: the search's matches
+    /// while searching, else Your Turn then Working.
+    private var liveSessionIds: [String] = []
     private var lastThemeID: ThemeID?
 
     // Bars.
@@ -653,6 +656,7 @@ final class SessionInboxViewController: UIViewController {
     private func applySnapshot(_ state: InboxState) {
         let data = viewData(state)
         itemsById = data.itemsById
+        liveSessionIds = (state.hasSearchQuery ? data.searchMatches : data.yourTurn + data.working).map(\.session.id)
         // A thread link's root that sits in a collapsed stopped day would stay out of sight.
         if let rootId = pendingThreadScroll,
            let group = data.stoppedGroups.first(where: { $0.items.contains { $0.id == rootId } }),
@@ -883,6 +887,15 @@ final class SessionInboxViewController: UIViewController {
             ),
             workspace: workspaceTarget
         )
+    }
+
+    /// The Next and Previous Session commands: opens the session `offset`
+    /// places from `sessionId` in this list's order, the way tapping its row does.
+    /// Nil when this list has no such session to open.
+    func openerForAdjacentSession(to sessionId: String?, offset: Int) -> (@MainActor () -> Void)? {
+        guard let id = SessionAdjacency.neighbor(of: sessionId, in: liveSessionIds, offset: offset),
+              let item = itemsById[id] else { return nil }
+        return { [weak self] in self?.open(item) }
     }
 
     private func toggleThread(_ root: Session) {
@@ -1259,6 +1272,25 @@ enum SessionInboxHostChange {
     ) -> (searchText: String, expandedStoppedGroupIDs: Set<String>, collapsedStoppedGroupIDs: Set<String>) {
         searchStore.clear()
         return ("", [], [])
+    }
+}
+
+/// Which session the Next and Previous Session commands move to.
+enum SessionAdjacency {
+    /// The id `offset` places from `current` in `ids`, wrapping at the ends.
+    /// A current session the list does not hold (a stopped one, a thread
+    /// child) starts at the first id going forward and the last going back.
+    /// Nil when moving would land on `current` itself or `ids` is empty.
+    static func neighbor(of current: String?, in ids: [String], offset: Int) -> String? {
+        guard !ids.isEmpty, offset != 0 else { return nil }
+        let target: String
+        if let current, let index = ids.firstIndex(of: current) {
+            let count = ids.count
+            target = ids[((index + offset) % count + count) % count]
+        } else {
+            target = offset > 0 ? ids[0] : ids[ids.count - 1]
+        }
+        return target == current ? nil : target
     }
 }
 

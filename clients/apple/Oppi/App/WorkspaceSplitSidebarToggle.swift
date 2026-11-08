@@ -9,8 +9,7 @@ enum WorkspaceSplitSidebarToggle {
     static func makeItem(root: AppRootEnvironment) -> UIBarButtonItem {
         let item = UIBarButtonItem(image: UIImage(systemName: "sidebar.leading"), style: .plain, target: nil, action: nil)
         item.primaryAction = UIAction(image: UIImage(systemName: "sidebar.leading")) { [weak item] _ in
-            let navigation = root.navigation
-            navigation.splitColumnVisibility = navigation.splitColumnVisibility == .detailOnly ? .all : .detailOnly
+            root.navigation.toggleSplitSidebar()
             if let item { sync(item, root: root) }
         }
         item.accessibilityIdentifier = "workspace.split.sidebarToggle"

@@ -8,6 +8,8 @@ enum QuickSessionPresentationSource: String, Sendable {
     case agents = "agents"
     /// App Intent / control widget, presented by the app root.
     case intent = "intent"
+    /// The New Session keyboard command (`KeyboardCommand.newSession`).
+    case keyboard = "keyboard"
 }
 
 /// The screens in front in the foreground window, read from UIKit. The route
@@ -20,21 +22,33 @@ struct FrontScreens {
     let names: String
 
     static func current() -> FrontScreens {
-        let window = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }?.keyWindow
-        var fronts: [UIViewController] = []
-        if let root = window?.rootViewController { collect(root, into: &fronts) }
+        let fronts = screens()
         return FrontScreens(
             chatOnTop: fronts.contains { $0 is ChatRouteViewController },
             names: fronts.map { String(describing: type(of: $0)) }.joined(separator: ",")
         )
     }
 
+    /// The foreground scene's key window.
+    static func keyWindow() -> UIWindow? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }?.keyWindow
+    }
+
+    /// The screens in front in the key window, the topmost presented screen's
+    /// first; empty without a window.
+    static func screens() -> [UIViewController] {
+        var fronts: [UIViewController] = []
+        if let root = keyWindow()?.rootViewController { collect(root, into: &fronts) }
+        return fronts
+    }
+
     /// What shows: a presented screen over its presenter, a stack's top, each
     /// column of a split, and a screen with no children of its own.
     private static func collect(_ screen: UIViewController, into fronts: inout [UIViewController]) {
-        if let presented = screen.presentedViewController {
+        // An active search is presented by UIKit but is not a screen of its own.
+        if let presented = screen.presentedViewController, !(presented is UISearchController) {
             collect(presented, into: &fronts)
         } else if screen is ChatRouteViewController {
             fronts.append(screen)

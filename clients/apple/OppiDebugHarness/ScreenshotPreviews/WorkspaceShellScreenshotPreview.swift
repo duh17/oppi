@@ -8,7 +8,10 @@ import UIKit
 final class WorkspaceShellPreviewController: PreviewRootController {
     init() {
         let root = AppRootEnvironment.preview(coordinator: Self.makeCoordinator())
-        super.init(root: root, themeStore: root.themeStore, content: WorkspaceShellController(root: root))
+        // A paired shell, as the window shows it, so the keyboard commands and
+        // Quick Session (which `AppRootViewController` hosts) work here.
+        root.navigation.revealPairedServerShell()
+        super.init(root: root, themeStore: root.themeStore, content: QuickSessionOverShellController(root: root))
     }
 
     @available(*, unavailable)

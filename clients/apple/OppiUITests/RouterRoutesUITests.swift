@@ -509,6 +509,81 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// Presses Cmd-F until `element` has the cursor. The first key press after a
+    /// launch can arrive before UIKit has built and validated the app's menu, so
+    /// it is repeated (Find is idempotent) a few times before this fails.
+    private func pressFind(focusing element: XCUIElement, _ message: String) {
+        func hasFocus() -> Bool { (element.value(forKey: "hasKeyboardFocus") as? Bool) == true }
+        for _ in 0..<4 where !hasFocus() {
+            app.typeKey("f", modifierFlags: .command)
+            let deadline = Date().addingTimeInterval(2)
+            while Date() < deadline, !hasFocus() {
+                _ = XCTWaiter().wait(for: [XCTestExpectation()], timeout: 0.2)
+            }
+        }
+        attachScreenshot("key-focus-\(message.prefix(12))")
+        XCTAssertTrue(hasFocus(), message)
+    }
+
+    /// iPad with a hardware keyboard: Cmd-N opens Quick Session while a search
+    /// is active (an active search is no modal that blocks app commands).
+    func testNewSessionKeyWorksWhileSearching() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "The key commands are proven on the iPad mini")
+        launchShell()
+        // Quick Session stays up (its Esc needs focus in its composer), so the
+        // next test gets a fresh launch.
+        addTeardownBlock { [app] in app?.terminate() }
+        pressFind(focusing: app.searchFields.firstMatch, "Cmd-F must put the cursor in the session search")
+        app.typeKey("n", modifierFlags: .command)
+        XCTAssertTrue(
+            app.buttons["quickSession.workspacePicker"].waitUntilExists(timeout: 5),
+            "Cmd-N must open Quick Session while a search is active"
+        )
+    }
+
+    /// iPad with a hardware keyboard: real key presses reach the app's menu
+    /// commands. Cmd-F focuses the front search; Cmd-W cancels the search, then
+    /// closes a pane (Option-Command-1 opened Files); Cmd-L focuses the composer.
+    /// Cmd-F and Cmd-W are checked in the session list and in the Files panel.
+    func testHardwareKeyCommandsDriveSearchPanesAndSheets() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "The key commands are proven on the iPad mini")
+        launchShell()
+
+        let sessionSearch = app.searchFields.firstMatch
+        pressFind(focusing: sessionSearch, "Cmd-F must put the cursor in the session search")
+
+        app.typeKey("w", modifierFlags: .command)
+        let session = app.buttons["session.nav.rail-2"]
+        XCTAssertTrue(session.waitUntilExists(timeout: 5), "The session list must show after the search ends")
+        assertKeyboardFocusLost(sessionSearch, "Cmd-W must cancel the session search")
+        session.tap()
+        XCTAssertTrue(app.buttons["chat.toolbar.back"].waitUntilExists(timeout: 10), "The chat did not open")
+
+        app.typeKey("1", modifierFlags: [.option, .command])
+        let files = app.navigationBars["Files"]
+        XCTAssertTrue(files.waitUntilExists(timeout: 5), "Option-Command-1 must open Files")
+        let fileSearch = app.searchFields["Search files"]
+        pressFind(focusing: fileSearch, "Cmd-F must focus the Files panel's search")
+        app.typeKey("w", modifierFlags: .command)
+        assertKeyboardFocusLost(fileSearch, "The first Cmd-W must cancel the search")
+        XCTAssertTrue(files.exists, "The first Cmd-W must leave the pane open")
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(files.waitUntilGone(timeout: 5), "The second Cmd-W must close the pane")
+
+        app.typeKey("l", modifierFlags: .command)
+        let modelPill = app.buttons["session.toolbar.model"]
+        XCTAssertTrue(modelPill.waitUntilExists(timeout: 10), "Cmd-L must focus the composer")
+        assertRunning()
+    }
+
+    private func assertKeyboardFocusLost(_ element: XCUIElement, _ message: String) {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, (element.value(forKey: "hasKeyboardFocus") as? Bool) != false {
+            _ = XCTWaiter().wait(for: [XCTestExpectation()], timeout: 0.2)
+        }
+        XCTAssertEqual(element.value(forKey: "hasKeyboardFocus") as? Bool, false, message)
+    }
+
     /// iPad: a section header's title stays level with the rows' text when the sidebar hides
     /// and shows again. The secondary column extends under the sidebar, so a header that
     /// takes its inset from the safe area would carry the sidebar's width into the title.

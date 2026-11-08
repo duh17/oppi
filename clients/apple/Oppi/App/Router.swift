@@ -529,6 +529,23 @@ final class ScreenSearchController: NSObject, UISearchResultsUpdating, UISearchC
         searchController.hidesNavigationBarDuringPresentation = !AdaptiveWidth.windowIsWide(searchController.searchBar)
     }
 
+    /// The search `screen` owns while it is on screen: Find's surface. Its bar
+    /// may be scrolled out of sight (`begin` brings it back).
+    static func search(on screen: UIViewController) -> UISearchController? {
+        guard screen.viewIfLoaded?.window != nil else { return nil }
+        return screen.navigationItem.searchController
+    }
+
+    /// Starts the search and puts the cursor in the field, as tapping the bar
+    /// does. A bar that hides while the content scrolls is shown first.
+    static func begin(_ search: UISearchController, on screen: UIViewController) {
+        if screen.navigationItem.hidesSearchBarWhenScrolling {
+            screen.navigationItem.hidesSearchBarWhenScrolling = false
+        }
+        search.isActive = true
+        search.searchBar.becomeFirstResponder()
+    }
+
     /// Takes the bar off `host` again (the screen stopped asking for search).
     func uninstall(from host: UIViewController) {
         guard host.navigationItem.searchController === searchController else { return }

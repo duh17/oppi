@@ -249,6 +249,13 @@ final class ChatBarItems {
         )
     }
 
+    /// Whether the chat offers `action` now, in the bar or the … menu. The
+    /// keyboard commands ask the same question the controls do.
+    func isAvailable(_ action: ChatTopBarAction) -> Bool {
+        guard let chat else { return false }
+        return currentAvailability(of: chat).contains(action)
+    }
+
     /// "main, 3 changed files": the Git button's value, from the count the
     /// panel opens with.
     static func gitAccessibilityValue(_ summary: (branch: String?, changedFiles: Int)) -> String {

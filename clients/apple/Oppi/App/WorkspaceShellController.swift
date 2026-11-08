@@ -451,6 +451,20 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
         stack.view.isUserInteractionEnabled = progress == 0
     }
 
+    /// The drawer opens from the stack's root only (as the edge drag does) and
+    /// closes from anywhere. Toggle Sidebar's availability and action.
+    var canToggleSidebar: Bool { isOpen || stack.viewControllers.count == 1 }
+    var isSidebarOpen: Bool { isOpen }
+
+    func toggleSidebar() {
+        settle(open: !isOpen)
+    }
+
+    func closeSidebar() {
+        guard isOpen else { return }
+        settle(open: false)
+    }
+
     private func settle(open: Bool) {
         // One light tap when the drawer lands open: edge swipe and the
         // toolbar button both settle here.

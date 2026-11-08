@@ -140,6 +140,22 @@ extension ChatViewController {
         }, update: { $0.currentModel = current })
     }
 
+    /// The panel the trailing column shows, or nil at a width that presents
+    /// them as sheets or when none is open.
+    var activeSidePanel: ChatSidePanel? {
+        guard usesTrailingSidePanel else { return nil }
+        // Share wins: it is a deliberate action from the title menu, not
+        // a toggle, and used to draw over every other panel full screen.
+        if model.showShareRedactionSheet { return .share }
+        if let target = model.sidePanelReaderTarget { return .reader(target) }
+        if let target = model.sidePanelTimelineTarget { return .timeline(target) }
+        if model.isFilePanelVisible { return .files }
+        if model.showOutline { return .outline }
+        if model.showGit { return .git }
+        if model.showContextInspector { return .context }
+        return nil
+    }
+
     /// Side panels slide in as a trailing column in regular width (iPad, the
     /// Duo's inner display) and are sheets in compact width. A size-class
     /// change while a panel is open moves it between the column and the
@@ -160,19 +176,7 @@ extension ChatViewController {
             ChatTimelineDestinationPresenter(connection: connection)
                 .open(target.request(sourceView: view, presenter: self))
         }
-        let panel: ChatSidePanel? = {
-            guard usesTrailingSidePanel else { return nil }
-            // Share wins: it is a deliberate action from the title menu, not
-            // a toggle, and used to draw over every other panel full screen.
-            if model.showShareRedactionSheet { return .share }
-            if let target = model.sidePanelReaderTarget { return .reader(target) }
-            if let target = model.sidePanelTimelineTarget { return .timeline(target) }
-            if model.isFilePanelVisible { return .files }
-            if model.showOutline { return .outline }
-            if model.showGit { return .git }
-            if model.showContextInspector { return .context }
-            return nil
-        }()
+        let panel = activeSidePanel
         trailingColumn.show(
             panel.map { panel in
                 let width = panelWidth(panel)

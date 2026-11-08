@@ -100,7 +100,7 @@ final class RouterModalSitesPreviewController: PreviewRootController {
 /// `QuickSessionPresentation` while `AppNavigation.showQuickSession` is set.
 /// The shell goes inert under it, as under `AppRootViewController`.
 @MainActor
-private final class QuickSessionOverShellController: UIViewController {
+final class QuickSessionOverShellController: UIViewController {
     private let root: AppRootEnvironment
     private let shell: WorkspaceShellController
     private lazy var presentation = QuickSessionPresentation(root: root, host: self)
