@@ -230,6 +230,7 @@ extension WorkspaceDetailViewController {
     }
 
     func startQuickSession(dictate: Bool) {
+        guard isFrontOfNavigationStack else { return }
         navigation.presentQuickSession(
             QuickSessionStart(
                 context: QuickSessionLaunchContext(
@@ -244,7 +245,7 @@ extension WorkspaceDetailViewController {
     }
 
     func openNowPlaying() {
-        guard let player = connection?.audioPlayer else { return }
+        guard isFrontOfNavigationStack, let player = connection?.audioPlayer else { return }
         InAppNowPlayingChrome.presentPlayer(player, from: self)
     }
 

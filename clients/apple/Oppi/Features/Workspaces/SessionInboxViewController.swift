@@ -90,7 +90,7 @@ final class SessionInboxViewController: UIViewController {
 
     // Bars.
     private var barState: BarState?
-    private lazy var bottomBar = SessionListBottomBar(
+    lazy var bottomBar = SessionListBottomBar(
         root: root,
         onStart: { [weak self] in self?.startQuickSession(dictate: false) },
         onDictate: { [weak self] in self?.startQuickSession(dictate: true) },
@@ -927,15 +927,17 @@ final class SessionInboxViewController: UIViewController {
         navigation.showAllWorkspaceSessions()
     }
 
-    private func startQuickSession(dictate: Bool) {
+    func startQuickSession(dictate: Bool) {
+        guard isFrontOfNavigationStack else { return }
         navigation.presentQuickSession(
             QuickSessionStart(mode: dictate ? .dictation : .message),
             from: .sessionListBar
         )
     }
 
-    private func openNowPlaying() {
-        guard let player = coordinator.activeServerId.flatMap({ coordinator.connection(for: $0) })?.audioPlayer else {
+    func openNowPlaying() {
+        guard isFrontOfNavigationStack,
+              let player = coordinator.activeServerId.flatMap({ coordinator.connection(for: $0) })?.audioPlayer else {
             return
         }
         InAppNowPlayingChrome.presentPlayer(player, from: self)

@@ -1016,6 +1016,18 @@ enum SessionListBarItems {
     }
 }
 
+extension UIViewController {
+    /// This screen is the top of its navigation stack and nothing is moving it.
+    /// The session lists keep their Message and Now Playing controls installed
+    /// under a pushed chat, where a tap meant for the chat's composer can reach
+    /// them; their actions run only while the list is in front.
+    var isFrontOfNavigationStack: Bool {
+        guard let navigationController else { return false }
+        return navigationController.topViewController === self
+            && navigationController.transitionCoordinator == nil
+    }
+}
+
 /// A session list's Message and Now Playing controls. On the horizontal
 /// bottom bar they are the Message capsule and the Now Playing pill, kept
 /// across passes so they update in place instead of rebuilding the bar
