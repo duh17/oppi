@@ -8,10 +8,9 @@ import {
 import {
   extensionUISurfaceProjectionClearRequest,
   extensionUISurfaceProjectionRequest,
-  extensionUISurfaceUsesBlocks,
 } from "./extension-surface.js";
 import {
-  audienceDrawsTrees,
+  audienceDrawsWhole,
   ExtensionSurfaceRuntime,
   surfaceForAudience,
   type ExtensionUISurfaceAudience,
@@ -134,8 +133,7 @@ export class SessionSurfaces {
     return this.runtime
       .snapshot()
       .map((surface) =>
-        audience !== "v1-projection" &&
-        (audienceDrawsTrees(audience) || !extensionUISurfaceUsesBlocks(surface))
+        audienceDrawsWhole(audience, surface)
           ? buildExtensionUISurfaceMessage(
               this.options.sessionId,
               surfaceForAudience(surface, audience, now),
@@ -187,7 +185,7 @@ export class SessionSurfaces {
     if (!this.runtime) return [];
     return this.runtime
       .snapshot()
-      .filter((surface) => audienceDrawsTrees(audience) || !extensionUISurfaceUsesBlocks(surface))
+      .filter((surface) => audienceDrawsWhole(audience, surface))
       .map((surface) =>
         buildExtensionUINotificationMessage(extensionUISurfaceProjectionClearRequest(surface.id)),
       );

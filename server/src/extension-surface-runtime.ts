@@ -60,8 +60,31 @@ export type ExtensionUISurfaceAudience = "elapsed" | "blocks" | "composites" | "
 /** The audiences that draw a tree of primitives. */
 const TREE_AUDIENCES: readonly ExtensionUISurfaceAudience[] = ["elapsed", "blocks"];
 
-export function audienceDrawsTrees(audience: ExtensionUISurfaceAudience): boolean {
+/** Every audience, v1 widgets first: the order a surface's frames are emitted in. */
+const ALL_AUDIENCES: readonly ExtensionUISurfaceAudience[] = [
+  "v1-projection",
+  ...TREE_AUDIENCES,
+  "composites",
+];
+
+function audienceDrawsTrees(audience: ExtensionUISurfaceAudience): boolean {
   return TREE_AUDIENCES.includes(audience);
+}
+
+/**
+ * Whether this audience is sent the surface whole and can act on it, rather than only its v1
+ * projection. The one rule behind live sends, widget sends, replay on subscribe, the clears at an
+ * upgrade, and a refused tap: a v2 client that draws trees, or any v2 client when the surface has
+ * no tree or pill. A new node-kind rung changes it here.
+ */
+export function audienceDrawsWhole(
+  audience: ExtensionUISurfaceAudience,
+  surface: ExtensionUISurface,
+): boolean {
+  return (
+    audience !== "v1-projection" &&
+    (audienceDrawsTrees(audience) || !extensionUISurfaceUsesBlocks(surface))
+  );
 }
 
 /** Whether a `blocks` client is sent a rewritten copy of this surface. */
@@ -84,6 +107,13 @@ export function surfaceForAudience(
   if (extensionUISurfaceUsesElapsed(shaped)) shaped = withStaticElapsed(shaped, now);
   if (extensionUISurfacePillUsesHeadline(shaped)) shaped = withPillHeadlinesAsCaption(shaped);
   return shaped;
+}
+
+/** The answer to a tap from a client that cannot act on the surface it names. */
+function cannotAct(action: ExtensionUISurfaceActionMessage): ExtensionUISurfaceActionAnswer {
+  return {
+    error: { compositeId: action.compositeId, message: "This client cannot act on a surface." },
+  };
 }
 
 export const EXTENSION_UI_SURFACE_COALESCE_MS = 250;
@@ -294,14 +324,8 @@ export class ExtensionSurfaceRuntime {
     clientId: string,
     audience: ExtensionUISurfaceAudience,
   ): Promise<ExtensionUISurfaceActionAnswer> {
-    if (audience === "v1-projection") {
-      return {
-        error: {
-          compositeId: message.compositeId,
-          message: "This client cannot act on a surface.",
-        },
-      };
-    }
+    // A client that sees only the v1 projection never drew the card: refused before any lookup.
+    if (audience === "v1-projection") return cannotAct(message);
 
     this.flush(message.surfaceId);
     const surface = this.surfaces.get(message.surfaceId);
@@ -309,13 +333,7 @@ export class ExtensionSurfaceRuntime {
       return this.refuse(undefined, message, { message: "This surface is gone." });
     // A client that draws only the closed composites was sent the projection of a tree, never the
     // card, so a tap from it cannot be one this surface offered.
-    if (audience === "composites" && extensionUISurfaceUsesBlocks(surface))
-      return {
-        error: {
-          compositeId: message.compositeId,
-          message: "This client cannot act on a surface.",
-        },
-      };
+    if (!audienceDrawsWhole(audience, surface)) return cannotAct(message);
 
     if (!this.hasComposite(surface, message.compositeId))
       return this.refuse(undefined, message, { message: "This card is gone." });
@@ -622,17 +640,13 @@ export class ExtensionSurfaceRuntime {
   }
 
   /** The v2 audiences that can draw this surface whole. */
-  private v2Audiences(surface: ExtensionUISurface): readonly ExtensionUISurfaceAudience[] {
-    return extensionUISurfaceUsesBlocks(surface)
-      ? TREE_AUDIENCES
-      : [...TREE_AUDIENCES, "composites"];
+  private v2Audiences(surface: ExtensionUISurface): ExtensionUISurfaceAudience[] {
+    return ALL_AUDIENCES.filter((audience) => audienceDrawsWhole(audience, surface));
   }
 
   /** The audiences that can only draw this surface's v1 projection. */
   private projectedAudiences(surface: ExtensionUISurface): ExtensionUISurfaceAudience[] {
-    return extensionUISurfaceUsesBlocks(surface)
-      ? ["v1-projection", "composites"]
-      : ["v1-projection"];
+    return ALL_AUDIENCES.filter((audience) => !audienceDrawsWhole(audience, surface));
   }
 
   // ── revisions ──

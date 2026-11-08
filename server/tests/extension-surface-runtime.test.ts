@@ -620,13 +620,22 @@ describe("the shape each client draws", () => {
       "old-phone",
       "v1-projection",
     );
-    expect(answer).toMatchObject({
-      error: { message: "This client cannot act on a surface." },
+    expect(answer).toEqual({
+      error: { compositeId: "status", message: "This client cannot act on a surface." },
     });
     expect(calls).toBe(0);
     expect(h.patches()).toHaveLength(0);
     // A refusal is still an answer: a tap that sent a request id learns its round trip is over.
     expect(h.settled().map((message) => message.id)).toEqual(["action-1"]);
+  });
+
+  it("refuses a v1-projection tap before looking the surface up", async () => {
+    const h = harness({ runAction: async () => ({ patch: {} }) });
+    // Nothing is published: a client allowed to look would be told the surface is gone.
+    const answer = await h.act(action("retry"), "old-phone", "v1-projection");
+    expect(answer).toEqual({
+      error: { compositeId: "status", message: "This client cannot act on a surface." },
+    });
   });
 });
 
@@ -847,7 +856,9 @@ describe("who can draw a blocks surface", () => {
       "old-phone",
       "composites",
     );
-    expect(answer).toMatchObject({ error: { message: "This client cannot act on a surface." } });
+    expect(answer).toEqual({
+      error: { compositeId: "panel", message: "This client cannot act on a surface." },
+    });
     expect(calls).toBe(0);
   });
 
