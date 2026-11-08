@@ -554,8 +554,10 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             dragToBottom(models)
             XCTAssertTrue(models.waitUntilGone(timeout: 5), "Swipe-down must close the model picker")
         } else {
-            // A popover at the pill: narrower than half the window, with the chat still visible.
-            XCTAssertLessThan(models.frame.width, app.windows.firstMatch.frame.width / 2, "Regular width shows the picker as a popover")
+            // A popover at the pill, with the chat still visible. A width check alone misreads
+            // the iPad mini in portrait, where a 380 pt popover is over half the window.
+            XCTAssertTrue(app.otherElements["PopoverDismissRegion"].exists, "Regular width shows the picker as a popover")
+            XCTAssertLessThan(models.frame.width, app.windows.firstMatch.frame.width, "The popover must not span the window")
             XCTAssertTrue(app.buttons["chat.toolbar.outline"].exists, "The chat's bar stays visible beside the popover")
             cancelButton.tap()
             XCTAssertTrue(models.waitUntilGone(timeout: 5), "Cancel must close the popover")
