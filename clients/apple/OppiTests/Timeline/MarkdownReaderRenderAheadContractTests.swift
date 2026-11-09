@@ -812,6 +812,62 @@ struct MarkdownReaderRenderAheadContractTests {
     }
 
     @MainActor
+    @Test(
+        "a line anchor deeper than the opening runway opens scrolled and highlighted",
+        arguments: [45, 160]
+    )
+    func deepLineAnchorOpensFocused(targetParagraph: Int) async throws {
+        // Every fifth block is a code fence, whose real height is far from its
+        // estimate. The reader settles about 1.5 viewports when it opens; the target
+        // is far past that, so its place on first open is an estimate unless the
+        // reader measures what lies above it.
+        var lines: [String] = []
+        var targetLine = 1
+        for n in 0..<(targetParagraph + 40) {
+            if n == targetParagraph { targetLine = lines.count + 1 }
+            if n % 5 == 4 {
+                lines += ["```swift", "let value\(n) = \(n)", "let other\(n) = value\(n) + 1", "```", ""]
+            } else {
+                lines += ["Paragraph \(n) has enough prose to wrap onto a second line on a phone screen, and then some.", ""]
+            }
+        }
+        let anchor = try #require(SourceLineAnchor(startLine: targetLine, endLine: targetLine))
+        let body = NativeFullScreenMarkdownBody(
+            content: lines.joined(separator: "\n"),
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            sourceFilePath: "docs/deep.md",
+            lineAnchor: anchor
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        window.addSubview(body)
+        body.frame = window.bounds
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        body.layoutIfNeeded()
+        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
+        let opened = await waitForTimelineCondition(timeoutMs: 3_000) { @MainActor in
+            body.layoutIfNeeded()
+            collection.layoutIfNeeded()
+            return collection.contentOffset.y > 0
+        }
+        await settle(body: body, collection: collection)
+
+        let viewport = body.debugLineAnchorViewportHeightForTesting
+        let frame = try #require(body.debugLineAnchorFirstTargetFrameForTesting)
+        let focusY = try #require(body.debugLineAnchorFirstVisibleTargetMidYForTesting)
+        #expect(frame.minY > viewport * 4 / 3, "the fixture is not deeper than the opening runway: \(frame.minY)")
+        #expect(opened, "offset stayed at \(collection.contentOffset.y)")
+        #expect(body.debugLineAnchorVisibleHighlightGeometryCountForTesting == 1)
+        #expect(
+            abs(focusY - viewport / 3) <= viewport * 0.18,
+            "target midY \(focusY) of a \(viewport) pt viewport"
+        )
+    }
+
+    @MainActor
     @Test("chat publishes raster metadata geometry before joined decode completes")
     func chatPublishesRasterMetadataBeforeDecode() async throws {
         NativeMarkdownImageView.debugResetPreparedArtifactsForTesting()
