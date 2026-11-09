@@ -494,7 +494,7 @@ const TAGS = {
   provider: {
     kind: "name",
     description:
-      "LLM provider from the session-configured canonical `provider/modelId` route. Omitted when missing or malformed.",
+      "LLM provider from the session-configured canonical `provider/modelId` route, or the provider whose usage quota was fetched. Omitted when missing or malformed.",
   },
   model: {
     kind: "name",
@@ -1599,6 +1599,13 @@ const EVENTS = {
       path_pattern: { required: true },
       status_code: { required: true },
     },
+  },
+  "server.provider_quota_fetch": {
+    description:
+      "How long did one provider's usage-quota upstream fetch take, and did it fail? Cache hits are not fetches.",
+    group: "server_ops",
+    fields: { duration_ms: "ms" },
+    tags: { provider: { required: true }, status: { required: true, values: ["ok", "error"] } },
   },
   "server.mcp_connect": {
     description:

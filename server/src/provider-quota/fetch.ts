@@ -2,6 +2,7 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { safeErrorMessage } from "../log-utils.js";
 import { defaultProviderQuotaAdapters } from "./adapters/registry.js";
 import { withLegacyCodexPlanQuota } from "./adapters/openai.js";
+import { QUOTA_DEADLINE_MS } from "./cache.js";
 import { emptyProviderQuota, finalizeProviderQuota } from "./shared.js";
 import type {
   FetchProviderQuotasOptions,
@@ -24,12 +25,14 @@ async function fetchAdapterQuota(
   options: FetchProviderQuotasOptions,
   fetchedAt: number,
 ): Promise<ProviderQuota> {
+  const now = options.now ?? Date.now;
+  const startedAt = now();
+  let quota: ProviderQuota;
   try {
-    const quota = await adapter.fetch(options);
-    return finalizeProviderQuota(stampAdapterIdentity(adapter, quota));
+    quota = finalizeProviderQuota(stampAdapterIdentity(adapter, await adapter.fetch(options)));
   } catch (error) {
     // One bad adapter must not hide healthy providers from /server/provider-quotas.
-    return finalizeProviderQuota(
+    quota = finalizeProviderQuota(
       emptyProviderQuota(
         adapter.providerId,
         adapter.displayName,
@@ -39,6 +42,25 @@ async function fetchAdapterQuota(
       ),
     );
   }
+  options.onAdapterFetched?.({
+    providerId: adapter.providerId,
+    durationMs: Math.max(0, now() - startedAt),
+    ok: !quota.error,
+  });
+  return quota;
+}
+
+/** The provider never answered within the deadline; its fetch keeps running in the background. */
+function deadlineQuota(adapter: ProviderQuotaAdapter, fetchedAt: number): ProviderQuota {
+  return finalizeProviderQuota(
+    emptyProviderQuota(
+      adapter.providerId,
+      adapter.displayName,
+      fetchedAt,
+      true,
+      `${adapter.displayName} usage is still loading. Pull to refresh in a moment.`,
+    ),
+  );
 }
 
 /** Registration metadata the Pi ModelRuntime already keeps; absent means assume ownership. */
@@ -98,8 +120,15 @@ export async function fetchProviderQuotas(
   const now = options.now ?? Date.now;
   const fetchedAt = now();
   const adapters = options.adapters ?? defaultProviderQuotaAdapters;
+  const { cache, deadlineMs = QUOTA_DEADLINE_MS } = options;
   const providers = await Promise.all(
-    adapters.map((adapter) => fetchAdapterQuota(adapter, options, fetchedAt)),
+    adapters.map(async (adapter) => {
+      const load = (): Promise<ProviderQuota> => fetchAdapterQuota(adapter, options, fetchedAt);
+      if (!cache) return load();
+      return (
+        (await cache.get(adapter.providerId, load, deadlineMs)) ?? deadlineQuota(adapter, fetchedAt)
+      );
+    }),
   );
 
   return {

@@ -109,6 +109,8 @@ export interface ExtensionProviderDiscoveryOptions {
   cwd: string;
   /** pi agent dir (e.g. ~/.pi/agent) holding global extensions and packages. */
   agentDir: string;
+  /** Called after a reload changed (or failed to rebuild) the registered providers. */
+  onProvidersChanged?: () => void;
 }
 
 function fileStamp(path: string): string {
@@ -274,6 +276,7 @@ export class ExtensionProviderCatalog {
       this.quotaGeneration = new AbortController();
       this.quotaSources = quotaSources;
       this.lastFingerprint = fingerprint;
+      this.options.onProvidersChanged?.();
 
       for (const diagnostic of diagnostics) {
         log.warn("extension_model_discovery.diagnostic", {
@@ -302,6 +305,7 @@ export class ExtensionProviderCatalog {
       // Remember the stamp so a broken source is not reloaded on every GET /models.
       // force:true or a later fingerprint change still retries.
       this.lastFingerprint = fingerprint;
+      this.options.onProvidersChanged?.();
       const message = errorMessage(error);
       log.warn("extension_model_discovery.sync_failed", { error: message });
       return {

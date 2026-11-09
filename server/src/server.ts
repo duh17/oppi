@@ -155,6 +155,7 @@ import { DictationDictionaryStore } from "./storage/dictation-dictionary-store.j
 import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 import { McpService } from "./mcp-service.js";
+import { ProviderQuotaCache } from "./provider-quota/cache.js";
 import { fetchProviderQuotas, quotaAdaptersForProviders } from "./provider-quota.js";
 import {
   garbageCollectUploadStore,
@@ -475,6 +476,8 @@ export class Server {
   private modelRegistry!: ModelRegistry;
   private models!: ModelCatalog;
   private extensionProviderCatalog!: ExtensionProviderCatalog;
+  /** Usage snapshots for GET /server/provider-quotas; dropped when credentials or providers change. */
+  private readonly providerQuotaCache = new ProviderQuotaCache();
   private providerAuth!: ProviderAuthManager;
   private mcp!: McpService;
 
@@ -900,6 +903,7 @@ export class Server {
     this.extensionProviderCatalog = new ExtensionProviderCatalog(this.modelRuntime, {
       cwd: process.cwd(),
       agentDir,
+      onProvidersChanged: () => this.providerQuotaCache.invalidate(),
     });
     try {
       await this.extensionProviderCatalog.sync();
@@ -943,7 +947,10 @@ export class Server {
 
         return [...knownApiKeyProviders];
       },
-      onCredentialsChanged: () => this.models.refresh(),
+      onCredentialsChanged: () => {
+        this.providerQuotaCache.invalidate();
+        return this.models.refresh();
+      },
     });
 
     // Durable extensions (auto-name) name their own Session through this. Pi's session_info entry
@@ -979,6 +986,13 @@ export class Server {
         return fetchProviderQuotas({
           modelRuntime: this.modelRuntime,
           openaiUseCodexPlan: this.storage.getConfig().providerQuotas?.openaiUseCodexPlan === true,
+          cache: this.providerQuotaCache,
+          onAdapterFetched: ({ providerId, durationMs, ok }) =>
+            this.opsMetrics.record(
+              "server.provider_quota_fetch",
+              { duration_ms: durationMs },
+              { provider: providerId, status: ok ? "ok" : "error" },
+            ),
           adapters: quotaAdaptersForProviders(
             this.extensionProviderCatalog.getRegisteredProviderIds(),
             this.extensionProviderCatalog.getQuotaAdapters(this.modelRuntime),

@@ -1,5 +1,6 @@
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { Credential } from "@earendil-works/pi-ai";
+import type { ProviderQuotaCache } from "./cache.js";
 
 export type ProviderQuotaWindowKey = "five_hour" | "weekly" | "monthly" | string;
 export type ProviderQuotaPacingSource = "snapshot" | "observed" | "unknown";
@@ -73,6 +74,12 @@ export interface FetchProviderQuotasOptions {
    * plan-wide windows on the official `openai` OAuth row. Default false.
    */
   openaiUseCodexPlan?: boolean;
+  /** Serve snapshots from here and refresh stale ones in the background. */
+  cache?: ProviderQuotaCache;
+  /** Longest wait for a provider with no snapshot yet (cache only). Default 4 s. */
+  deadlineMs?: number;
+  /** Called once per upstream fetch, never for a cache hit. */
+  onAdapterFetched?: (fetch: { providerId: string; durationMs: number; ok: boolean }) => void;
 }
 
 /**

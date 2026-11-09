@@ -175,7 +175,8 @@ describe("GET /server/provider-quotas OpenAI Codex plan opt-in", () => {
       displayName: "OpenAI",
       windows: [],
     });
-    expect(usageRequests).toHaveLength(1);
+    // Answered from the server's 60 s quota cache: no second upstream request.
+    expect(usageRequests).toHaveLength(0);
 
     await server.stop();
     await startServer();

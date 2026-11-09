@@ -192,6 +192,27 @@ function xaiBillingFailureQuota(
   );
 }
 
+/** Optional enrichment: never rejects, null when the settings call fails. */
+async function fetchXaiPlanType(fetchImpl: FetchLike, headers: Headers): Promise<string | null> {
+  try {
+    const response = await fetchImpl(XAI_SETTINGS_URL, {
+      method: "GET",
+      headers,
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    const text = await readResponseText(response);
+    if (!response.ok) return null;
+    const settings = asRecord(parseMaybeJson(text));
+    return (
+      readString(settings?.subscription_tier_display) ??
+      readString(settings?.subscription_tier) ??
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchXaiProviderQuota(
   options: FetchProviderQuotasOptions,
 ): Promise<ProviderQuota> {
@@ -233,6 +254,8 @@ export async function fetchXaiProviderQuota(
     // Billing is required; settings only enriches planType. Fetch credits + plain
     // billing in parallel: credits carries the weekly percent when present, plain
     // carries monthly used/limit. A settings failure never erases a billing snapshot.
+    // Settings runs alongside billing so the plan label adds no round trip.
+    const planTypePromise = fetchXaiPlanType(fetchImpl, headers);
     const [creditsBilling, plainBilling] = await Promise.all([
       fetchXaiBillingConfig(fetchImpl, XAI_BILLING_CREDITS_URL, headers),
       fetchXaiBillingConfig(fetchImpl, XAI_BILLING_PLAIN_URL, headers),
@@ -256,24 +279,7 @@ export async function fetchXaiProviderQuota(
       readCentValue(plainConfig?.prepaidBalance) ??
       null;
 
-    let planType: string | null = null;
-    try {
-      const settingsResponse = await fetchImpl(XAI_SETTINGS_URL, {
-        method: "GET",
-        headers,
-        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-      });
-      const settingsText = await readResponseText(settingsResponse);
-      if (settingsResponse.ok) {
-        const settings = asRecord(parseMaybeJson(settingsText));
-        planType =
-          readString(settings?.subscription_tier_display) ??
-          readString(settings?.subscription_tier) ??
-          null;
-      }
-    } catch {
-      // Optional enrichment only.
-    }
+    const planType = await planTypePromise;
 
     return finalizeProviderQuota({
       providerId: XAI_PROVIDER_ID,
