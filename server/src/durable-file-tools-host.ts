@@ -16,6 +16,7 @@ import {
 } from "./gondolin-ops.js";
 import { shouldShadowSandboxWorkspacePath } from "./gondolin-manager.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
+import { internalUrls } from "./durable-internal-urls.js";
 
 // The host side of the `oppi.file-tools` built-in (`plugins/file-tools`), bound through
 // `oppi/v1`. Schemas and descriptions are Pi's. Each call runs where the invocation's env
@@ -29,6 +30,7 @@ type FindArgs = Parameters<typeof find.execute>[1];
 type GrepArgs = Parameters<typeof grep.execute>[1];
 
 export const fileToolsHost: OppiFileToolsHost = {
+  internalUrls,
   ls: {
     description: ls.description,
     parameters: ls.parameters,

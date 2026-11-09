@@ -1,0 +1,139 @@
+import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
+import type { ToolExecutionApi } from "@earendil-works/pi-durable";
+import { afterEach, describe, expect, it } from "vitest";
+import { bindInternalUrls, internalUrls } from "../src/durable-internal-urls.js";
+import { pageText, parseInternalUrl } from "../src/internal-urls.js";
+import type { Session } from "../src/types.js";
+
+const row = (id: string, extra: Partial<Session> = {}): Session =>
+  ({ id, status: "ready", lastActivity: 1, workspaceId: "w", ...extra }) as Session;
+
+function bindSessions(sessions: Session[]): void {
+  bindInternalUrls({
+    storage: {
+      getSession: (id) => sessions.find((session) => session.id === id),
+      listAllWorkspaceSessionSnapshots: (workspaceId) =>
+        sessions.filter((session) => session.workspaceId === workspaceId),
+    },
+    sessions: {
+      getServerDurableTrace: async (id) =>
+        id === "classic-1"
+          ? null
+          : [{ id: "e1", type: "assistant", timestamp: "", text: `answer of ${id}` }],
+    },
+    callerSessionId: () => "caller",
+  });
+}
+
+const read = (path: string, api: Partial<ToolExecutionApi> = {}) =>
+  internalUrls.read({ path }, api as ToolExecutionApi, context);
+const textOf = async (path: string, api?: Partial<ToolExecutionApi>) => {
+  const result = await read(path, api);
+  return result?.output?.map((part) => (part.type === "text" ? part.text : "")).join("");
+};
+
+afterEach(() => bindSessions([]));
+
+describe("internal URL resolution", () => {
+  it("leaves file paths alone and splits an id from its path", () => {
+    expect(parseInternalUrl("src/a.ts")).toBeUndefined();
+    expect(parseInternalUrl("proc://bash-1/streams")).toMatchObject({
+      scheme: "proc",
+      id: "bash-1",
+      path: "/streams",
+    });
+  });
+
+  it("matches an id by exact value or unique prefix and lists ids otherwise", async () => {
+    bindSessions([row("caller"), row("aaa1"), row("aaa2"), row("bbb1")]);
+    expect(await textOf("history://bbb")).toContain("answer of bbb1");
+    // An exact id wins over a longer id it prefixes.
+    bindSessions([row("caller"), row("aaa"), row("aaa2")]);
+    expect(await textOf("history://aaa")).toContain("answer of aaa");
+    bindSessions([row("caller"), row("aaa1"), row("aaa2")]);
+    await expect(read("history://aaa")).rejects.toThrow(
+      /Ambiguous session id prefix "aaa": aaa1, aaa2/,
+    );
+    await expect(read("history://zzz")).rejects.toThrow(/No session "zzz". Valid ids: .*aaa1/);
+  });
+
+  it("refuses other workspaces and non-durable transcripts with a way forward", async () => {
+    bindSessions([
+      row("caller"),
+      row("classic-1"),
+      row("foreign-1", { workspaceId: "other", launch: { parentSessionId: "caller" } }),
+    ]);
+    await expect(read("history://foreign-1")).rejects.toThrow(/No session "foreign-1"/);
+    await expect(read("agent://foreign-1")).rejects.toThrow(/No child session/);
+    await expect(read("history://classic-1")).rejects.toThrow(/oppi session trace classic-1/);
+  });
+
+  it("reports a still-running child as progress, and a finished one as its answer", async () => {
+    bindSessions([
+      row("caller"),
+      row("busy-1", { status: "busy", launch: { parentSessionId: "caller" } }),
+      row("done-1", { launch: { parentSessionId: "busy-1" } }),
+    ]);
+    expect(await textOf("agent://busy-1")).toContain("Still working");
+    // A grandchild is still this session's descendant.
+    expect(await textOf("agent://done-1")).toContain("answer of done-1");
+  });
+
+  it("names the tool that does the job for schemes Oppi does not serve", async () => {
+    bindSessions([]);
+    await expect(read("issue://4")).rejects.toThrow("gh issue view");
+    await expect(read("ssh://box/etc/hosts")).rejects.toThrow("ssh <host> cat");
+    await expect(read("omp://x")).rejects.toThrow("not available");
+    await expect(read("local://notes.md")).rejects.toThrow("no shared scratch");
+    await expect(read("skill://x")).rejects.toThrow(
+      /Unknown URL scheme "skill:\/\/". Supported: .*agent:\/\//,
+    );
+  });
+
+  it("does not let a plugin take a scheme the server serves", () => {
+    expect(() => internalUrls.register("history", async () => "")).toThrow("server's own");
+  });
+
+  it("reads an MCP resource through the session's resource tools", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const api = {
+      executeTool: async (name: string, args: unknown) => {
+        calls.push([name, args]);
+        return name === "list_mcp_resources"
+          ? {
+              isError: false,
+              diagnostics: [],
+              structuredOutput: JSON.stringify({
+                resources: [{ server: "notes", uri: "test://a", name: "A" }],
+              }),
+            }
+          : {
+              isError: false,
+              diagnostics: [],
+              structuredOutput: "hello resource",
+            };
+      },
+    };
+    expect(await textOf("mcp://test://a", api)).toBe("hello resource");
+    expect(calls.at(-1)).toEqual(["read_mcp_resource", { server: "notes", uri: "test://a" }]);
+    expect(await textOf("mcp://", api)).toContain("notes  test://a  A");
+    await expect(read("mcp://test://b", api)).rejects.toThrow(
+      'No MCP resource "test://b". Available: test://a',
+    );
+    const offered = {
+      executeTool: async () => Promise.reject(new Error("Tool x is not available")),
+    };
+    await expect(read("mcp://test://a", offered)).rejects.toThrow(
+      /MCP resource tools, which are not available/,
+    );
+  });
+
+  it("pages like the read tool and says where to continue", () => {
+    const text = Array.from({ length: 5 }, (_, i) => `line ${i + 1}`).join("\n");
+    expect(pageText(text, 2, 2)).toBe(
+      "line 2\nline 3\n\n[Showing lines 2-3 of 5. Use offset=4 to continue.]",
+    );
+    expect(pageText(text, 4)).toBe("line 4\nline 5");
+    expect(() => pageText(text, 9)).toThrow("beyond the end");
+  });
+});

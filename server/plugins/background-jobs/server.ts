@@ -24,12 +24,14 @@ import {
   DurableUI,
   Extensions,
   oppiHost,
+  type SchemeReader,
   type SurfacePublisher,
 } from "oppi/v1";
 import {
   BACKGROUND_POLICY,
   backgroundDisposition,
   bashBackgroundAdvice,
+  displayCommand,
   formatBackgroundNotice,
   formatForegroundResult,
   POLL_RULE,
@@ -870,6 +872,38 @@ const bash = defineTool({
     };
   },
 });
+// `proc://` for `read`: this conversation's background jobs, as `background_job` reports them. A
+// running job shows its live tail, a finished one its output until it is delivered (the delivery
+// carries it from then on). Read only; `background_job cancel` stops a job.
+const readProc: SchemeReader = async (target, api, context) => {
+  if (target.path !== "" && target.path !== "/")
+    throw new Error(`proc://${target.id} has no sub-paths. Read proc://${target.id}.`);
+  const jobs = (await api.snapshot(DurableJobs, api.conversationId, context))?.jobs ?? [];
+  const shown = jobs.filter((job) => job.decision !== "foreground");
+  if (target.id === "")
+    return shown.length === 0
+      ? "No background jobs."
+      : `Background jobs (read proc://<id> for output):\n${shown
+          .map((job) => `${job.id}  ${job.status}  ${displayCommand(job.command)}`)
+          .join("\n")}`;
+  const id = target.pick(
+    "background job",
+    shown.map((job) => job.id),
+  );
+  const job = jobById(shown, id);
+  const state =
+    job.status === "running" ? "running" : `${job.status} (exit ${job.exitCode ?? "none"})`;
+  const head = `${job.id}  ${state}\ncommand: ${job.command}\ncwd: ${job.cwd}\nstarted: ${new Date(job.startedAt).toISOString()}`;
+  if (job.status === "running") {
+    const live = liveTails.get(job.taskId)?.();
+    return `${head}\n\n${live ? `Output${live.truncated ? " (latest part)" : ""}:\n${live.output}` : "No output yet."}`;
+  }
+  const saved = job.delivered
+    ? undefined
+    : await api.snapshot(JobOutput, job.taskId, context).catch(() => undefined);
+  return `${head}\n\n${saved ? saved.output : "The output was delivered to the conversation when the job finished."}`;
+};
+
 export const DurableBackgroundJobs = defineExtension({
   name: "background-jobs",
   runtimes: ["host", "sandbox"],
@@ -891,4 +925,7 @@ export const DurableBackgroundJobs = defineExtension({
  * The plugin facet. A built-in: the plugin host skips the owner's copy of this package (a link
  * in `~/.pi/agent/extensions`) and lets its classic ID stand for this one.
  */
-export default defineFacet((_host, self) => self.contribute(Extensions, DurableBackgroundJobs));
+export default defineFacet((_host, self) => {
+  oppiHost().files.internalUrls.register("proc", readProc);
+  return self.contribute(Extensions, DurableBackgroundJobs);
+});

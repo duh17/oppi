@@ -13,6 +13,9 @@ import type { SurfacePublisher } from "./durable-surface.js";
 import type { Job } from "../plugins/background-jobs/contract.js";
 import type { SubagentWorktree } from "../plugins/subagents/contract.js";
 import type { NotifyInput, NotifyOutcome } from "../plugins/notify/contract.js";
+import type { SchemeReader } from "./internal-urls.js";
+
+export type { InternalTarget, SchemeReader } from "./internal-urls.js";
 
 /**
  * The host API a plugin reaches through `oppi/v1` (`oppi-v1.ts` re-exports this module) for what
@@ -192,7 +195,8 @@ export function bindOppiHost(host: OppiDurableHost): void {
   if (Object.hasOwn(globalThis, HOST))
     throw new Error("oppi/v1: the Oppi durable host is already bound");
   // Freeze is shallow: freeze each object a built-in calls through.
-  for (const tool of [host.files.ls, host.files.find, host.files.grep]) Object.freeze(tool);
+  for (const tool of [host.files.ls, host.files.find, host.files.grep, host.files.internalUrls])
+    Object.freeze(tool);
   Object.freeze(host.files);
   Object.freeze(host);
   Object.defineProperty(globalThis, HOST, {
@@ -457,4 +461,24 @@ export interface OppiFileToolsHost {
     api: ToolExecutionApi,
     context: Context,
   ): Promise<Pick<ToolExecutionResult, "output"> | undefined>;
+  /** Internal URLs the `read` tool resolves. */
+  readonly internalUrls: OppiInternalUrlsHost;
+}
+
+/**
+ * `agent://`, `history://`, and `mcp://` are the server's; a built-in registers the scheme of the
+ * state it owns (`proc://`). Resolution is read only.
+ */
+export interface OppiInternalUrlsHost {
+  /**
+   * The text of `args.path` when it is an internal URL, paged by `offset` and `limit` (lines);
+   * undefined for a file path. Throws for a URL that names nothing or a scheme Oppi does not serve.
+   */
+  read(
+    args: { path: string; offset?: number; limit?: number },
+    api: ToolExecutionApi,
+    context: Context,
+  ): Promise<Pick<ToolExecutionResult, "output" | "structuredOutput"> | undefined>;
+  /** Serve `scheme://` with `reader`, replacing an earlier registration. Throws for a server scheme. */
+  register(scheme: string, reader: SchemeReader): void;
 }
