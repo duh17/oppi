@@ -345,8 +345,23 @@ extension ChatViewController {
                     sessionId: self.sessionId
                 )
             },
-            onClose: { [weak self] in self?.model.showOutline = false }
+            onClose: { [weak self] in self?.closeOutline() }
         )
+    }
+
+    /// A row picked in the outline jumps first, then the outline closes. In
+    /// the trailing column that close ends the outline's search and slides the
+    /// column out, which replaces the landed row's cell, so the jump's arrival
+    /// waits until the column is gone. A sheet's close already holds it
+    /// (the timeline waits while a presentation covers the chat).
+    private func closeOutline() {
+        model.showOutline = false
+        guard usesTrailingSidePanel else { return }
+        timeline.holdsNavigationArrival = true
+        updateSidePanels()
+        trailingColumn.whenClosed { [weak self] in
+            self?.timeline.holdsNavigationArrival = false
+        }
     }
 
     /// The Context panel. It reads this chat's session row live, so its window

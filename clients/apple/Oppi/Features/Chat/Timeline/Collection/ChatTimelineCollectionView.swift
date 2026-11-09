@@ -2520,22 +2520,39 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
               currentIDs.contains(command.id) else {
             return
         }
+        arriveWhenVisible(command.id, in: collectionView, attempt: 0)
+    }
 
-        func tryApplyHighlight(attempt: Int) {
-            collectionView.layoutIfNeeded()
+    private func arriveWhenVisible(_ itemID: String, in collectionView: UICollectionView, attempt: Int) {
+        // Played, cancelled (a touch, leaving the chat), or replaced by a
+        // newer jump, which runs its own loop: nothing left to arrive.
+        guard scrollController?.pendingNavigationHighlightItemID == itemID else { return }
+        collectionView.layoutIfNeeded()
 
-            if applyPendingNavigationHighlightIfVisible(for: command.id, in: collectionView) {
-                return
-            }
-
-            // Covers a router sheet's dismissal, which can outlast the jump.
-            guard attempt < 60 else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                tryApplyHighlight(attempt: attempt + 1)
-            }
+        if applyPendingNavigationHighlightIfVisible(for: itemID, in: collectionView) {
+            return
         }
 
-        tryApplyHighlight(attempt: 0)
+        // Covers a router sheet's dismissal, which can outlast the jump, and
+        // a trailing column closing (`holdsNavigationArrival`), whose release
+        // starts a fresh loop.
+        guard attempt < 60 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak collectionView] in
+            guard let self, let collectionView else { return }
+            self.arriveWhenVisible(itemID, in: collectionView, attempt: attempt + 1)
+        }
+    }
+
+    /// Set by the chat while its trailing column closes beside the timeline.
+    /// Ending the column's search re-dequeues the landed row into a new cell,
+    /// so an arrival started before then played on the orphaned cell and the
+    /// row never lit. Releasing the hold arrives on the row's settled cell.
+    var holdsNavigationArrival = false {
+        didSet {
+            guard oldValue, !holdsNavigationArrival, let collectionView,
+                  let itemID = scrollController?.pendingNavigationHighlightItemID else { return }
+            arriveWhenVisible(itemID, in: collectionView, attempt: 0)
+        }
     }
 
     @discardableResult
@@ -2549,9 +2566,11 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             return false
         }
 
-        // The outline sheet closes while the jump runs under it. Arrive
-        // once the chat is uncovered, or the lift plays behind the sheet.
-        guard !Self.isCoveredByPresentation(collectionView) else { return false }
+        // The outline closes while the jump runs under it. Arrive once the
+        // chat is uncovered (a sheet) and the trailing column has finished
+        // closing (`holdsNavigationArrival`), or the lift plays behind the
+        // sheet or on a cell the column's close replaces.
+        guard !holdsNavigationArrival, !Self.isCoveredByPresentation(collectionView) else { return false }
 
         let indexPath = IndexPath(item: itemIndex, section: 0)
         guard let cell = collectionView.cellForItem(at: indexPath) as? SafeSizingCell else {
