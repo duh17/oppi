@@ -7,7 +7,6 @@ final class PendingTurnSend {
     let command: String
     let requestId: String
     let clientTurnId: String
-    private let onAckStage: ((TurnAckStage) -> Void)?
 
     var latestStage: TurnAckStage?
     var waiter = SendAckWaiter()
@@ -17,21 +16,15 @@ final class PendingTurnSend {
     init(
         command: String,
         requestId: String,
-        clientTurnId: String,
-        onAckStage: ((TurnAckStage) -> Void)?
+        clientTurnId: String
     ) {
         self.command = command
         self.requestId = requestId
         self.clientTurnId = clientTurnId
-        self.onAckStage = onAckStage
     }
 
     func resetWaiter() {
         waiter = SendAckWaiter()
-    }
-
-    func notifyStage(_ stage: TurnAckStage) {
-        onAckStage?(stage)
     }
 }
 

@@ -8,32 +8,11 @@ struct TurnSendTrackingTests {
 
     // MARK: - PendingTurnSend
 
-    @Test func pendingTurnSendTracksStages() {
-        var observedStages: [TurnAckStage] = []
-        let turn = PendingTurnSend(
-            command: "prompt",
-            requestId: "req1",
-            clientTurnId: "turn1",
-            onAckStage: { stage in observedStages.append(stage) }
-        )
-
-        #expect(turn.latestStage == nil)
-
-        turn.latestStage = .accepted
-        turn.notifyStage(.accepted)
-
-        turn.latestStage = .dispatched
-        turn.notifyStage(.dispatched)
-
-        #expect(observedStages == [.accepted, .dispatched])
-    }
-
     @Test func pendingTurnSendProperties() {
         let turn = PendingTurnSend(
             command: "steer",
             requestId: "req2",
-            clientTurnId: "turn2",
-            onAckStage: nil
+            clientTurnId: "turn2"
         )
 
         #expect(turn.command == "steer")
@@ -45,8 +24,7 @@ struct TurnSendTrackingTests {
         let turn = PendingTurnSend(
             command: "prompt",
             requestId: "req1",
-            clientTurnId: "turn1",
-            onAckStage: nil
+            clientTurnId: "turn1"
         )
 
         let waiter1 = turn.waiter

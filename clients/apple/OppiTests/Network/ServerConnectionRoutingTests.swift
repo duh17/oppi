@@ -932,18 +932,6 @@ func makeEventFlowAckTestConnection(
     return (connection, pipeline)
 }
 
-actor EventFlowAckStageRecorder {
-    private var stages: [TurnAckStage] = []
-
-    func record(_ stage: TurnAckStage) {
-        stages.append(stage)
-    }
-
-    func snapshot() -> [TurnAckStage] {
-        stages
-    }
-}
-
 // MARK: - Private helpers
 
 private struct GetCommandsPayload {

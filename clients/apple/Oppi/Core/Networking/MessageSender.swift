@@ -152,7 +152,6 @@ final class MessageSender {
         clientTurnId: String,
         command: String,
         sessionIdOverride: String? = nil,
-        onAckStage: ((TurnAckStage) -> Void)? = nil,
         message: () -> ClientMessage
     ) async throws {
         if _sendMessageForTesting == nil {
@@ -167,8 +166,7 @@ final class MessageSender {
         let pending = PendingTurnSend(
             command: command,
             requestId: requestId,
-            clientTurnId: clientTurnId,
-            onAckStage: onAckStage
+            clientTurnId: clientTurnId
         )
         commands.registerTurnSend(pending)
 
@@ -444,8 +442,7 @@ final class MessageSender {
         attachments: [ChatAttachmentRef]? = nil,
         streamingBehavior: StreamingBehavior? = nil,
         clientTurnId providedClientTurnId: String? = nil,
-        sessionIdOverride: String? = nil,
-        onAckStage: ((TurnAckStage) -> Void)? = nil
+        sessionIdOverride: String? = nil
     ) async throws {
         let requestId = UUID().uuidString
         let clientTurnId = providedClientTurnId ?? UUID().uuidString
@@ -463,8 +460,7 @@ final class MessageSender {
                 requestId: requestId,
                 clientTurnId: clientTurnId,
                 command: "prompt",
-                sessionIdOverride: sessionIdOverride,
-                onAckStage: onAckStage
+                sessionIdOverride: sessionIdOverride
             ) {
                 .prompt(
                     message: text,

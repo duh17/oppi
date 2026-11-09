@@ -112,7 +112,7 @@ struct LANFirstConnectionPolicyTests {
             connection.sessionStore.upsert(session)
         case .pendingTurnSend:
             connection.commands.registerTurnSend(
-                PendingTurnSend(command: "prompt", requestId: "req", clientTurnId: "turn", onAckStage: nil)
+                PendingTurnSend(command: "prompt", requestId: "req", clientTurnId: "turn")
             )
         case .dictation:
             dictation = try #require(connection.makeDictationStreamClient())

@@ -22,7 +22,6 @@ final class ChatActionHandler {
 
     private(set) var isStopping = false
     private(set) var isSending = false
-    private(set) var sendAckStage: TurnAckStage?
     private(set) var reconnectFailureMessage: String?
     /// Set when the chat leaves (`cleanup()`), cleared by the next send. Leaving
     /// closes the chat's stream, which fails a just-sent turn's ack wait.
@@ -159,9 +158,7 @@ final class ChatActionHandler {
                     // only when queued, and the server paints the user row (classic:
                     // `queue_item_started` when queued, `message_end` when prompted;
                     // durable: the replica's committed user entry).
-                    try await connection.sendPrompt(trimmed, attachments: queuedAttachments, streamingBehavior: busyStreamingBehavior, clientTurnId: queueTurnId, sessionIdOverride: sessionId, onAckStage: { stage in
-                        self.updateSendAckStage(stage)
-                    })
+                    try await connection.sendPrompt(trimmed, attachments: queuedAttachments, streamingBehavior: busyStreamingBehavior, clientTurnId: queueTurnId, sessionIdOverride: sessionId)
                     self.clearUnconfirmedTurn(clientTurnId: queueTurnId)
                     onSendSucceeded?()
                     let queueStore = connection.messageQueueStore
@@ -186,7 +183,6 @@ final class ChatActionHandler {
                         id: optimisticQueueItem.id,
                         messageFallback: trimmed
                     )
-                    self.clearSendStageNow()
                     self.recordUnconfirmedTurnIfNeeded(
                         error,
                         sessionId: sessionId,
@@ -250,9 +246,7 @@ final class ChatActionHandler {
                 // seconds after the message is already visible.
                 onDispatchStarted?()
                 do {
-                    try await connection.sendPrompt(trimmed, attachments: sendAttachments, clientTurnId: promptTurnId, sessionIdOverride: sessionId, onAckStage: { stage in
-                        self.updateSendAckStage(stage)
-                    })
+                    try await connection.sendPrompt(trimmed, attachments: sendAttachments, clientTurnId: promptTurnId, sessionIdOverride: sessionId)
                     self.clearUnconfirmedTurn(clientTurnId: promptTurnId)
                     onSendSucceeded?()
                 } catch {
@@ -261,7 +255,6 @@ final class ChatActionHandler {
                         self.isSending = false
                         return
                     }
-                    self.clearSendStageNow()
                     self.recordUnconfirmedTurnIfNeeded(
                         error,
                         sessionId: sessionId,
@@ -330,7 +323,6 @@ final class ChatActionHandler {
                 )
                 onSendSucceeded?()
             } catch {
-                self.clearSendStageNow()
                 log.error("SHARE session FAILED: \(error.localizedDescription, privacy: .public)")
                 ClientLog.error(
                     "Action",
@@ -471,7 +463,6 @@ final class ChatActionHandler {
     func resetStopState() {
         isStopping = false
         reconnectFailureMessage = nil
-        clearSendStageNow()
     }
 
     // MARK: - Model / Thinking / Context
@@ -781,7 +772,6 @@ final class ChatActionHandler {
         sessionId: String,
         reducer: TimelineReducer
     ) {
-        clearSendStageNow()
         log.error("SEND \(command, privacy: .public) NOT DISPATCHED: \(error.localizedDescription, privacy: .public)")
         ClientLog.error(
             "Action",
@@ -802,17 +792,8 @@ final class ChatActionHandler {
     }
 
     private func beginSendTracking() {
-        sendAckStage = nil
         reconnectFailureMessage = nil
         isSending = true
-    }
-
-    private func updateSendAckStage(_ stage: TurnAckStage) {
-        sendAckStage = stage
-    }
-
-    private func clearSendStageNow() {
-        sendAckStage = nil
     }
 
     func clearReconnectFailure() {
@@ -859,7 +840,6 @@ final class ChatActionHandler {
 
     func cleanup() {
         reconnectFailureMessage = nil
-        clearSendStageNow()
         isSending = false
         isAwaitingSendReadiness = false
         hasLeftChat = true

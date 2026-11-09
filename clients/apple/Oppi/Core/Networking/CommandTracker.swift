@@ -149,7 +149,6 @@ final class CommandTracker {
         }
 
         pending.latestStage = stage
-        pending.notifyStage(stage)
 
         if stage.rank >= requiredStage.rank {
             pending.waiter.resolve(.success(()))
@@ -174,7 +173,6 @@ final class CommandTracker {
         if success {
             if pending.latestStage == nil {
                 pending.latestStage = .dispatched
-                pending.notifyStage(.dispatched)
                 pending.waiter.resolve(.success(()))
             }
         } else {

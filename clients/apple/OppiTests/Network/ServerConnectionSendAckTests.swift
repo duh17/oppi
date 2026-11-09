@@ -74,62 +74,6 @@ struct ServerConnectionSendAckTests {
         try await conn.sendPrompt("hello")
     }
 
-    @Test func sendAckStageCallbackReceivesProgressStages() async throws {
-        let (conn, pipe) = makeEventFlowAckTestConnection()
-
-        let stageRecorder = EventFlowAckStageRecorder()
-
-        conn._sendMessageForTesting = { message in
-            guard let sent = extractEventFlowAckRequest(from: message),
-                  let clientTurnId = sent.clientTurnId,
-                  let requestId = sent.requestId else {
-                Issue.record("Expected turn command with requestId/clientTurnId")
-                return
-            }
-
-            pipe.handle(
-                .turnAck(
-                    command: sent.command,
-                    clientTurnId: clientTurnId,
-                    stage: .accepted,
-                    requestId: requestId,
-                    duplicate: false
-                ),
-                sessionId: "s1"
-            )
-
-            pipe.handle(
-                .turnAck(
-                    command: sent.command,
-                    clientTurnId: clientTurnId,
-                    stage: .dispatched,
-                    requestId: requestId,
-                    duplicate: false
-                ),
-                sessionId: "s1"
-            )
-
-            pipe.handle(
-                .turnAck(
-                    command: sent.command,
-                    clientTurnId: clientTurnId,
-                    stage: .started,
-                    requestId: requestId,
-                    duplicate: false
-                ),
-                sessionId: "s1"
-            )
-        }
-
-        try await conn.sendPrompt("hello", onAckStage: { stage in
-            Task { await stageRecorder.record(stage) }
-        })
-
-        #expect(await waitForTestCondition(timeoutMs: 500) {
-            await stageRecorder.snapshot() == [.accepted, .dispatched, .started]
-        })
-    }
-
     @Test func sendRetryReusesClientTurnId() async throws {
         let (conn, pipe) = makeEventFlowAckTestConnection()
 

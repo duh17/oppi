@@ -13,7 +13,6 @@ struct ChatActionHandlerTests {
         let handler = ChatActionHandler()
         #expect(!handler.isStopping)
         #expect(!handler.isSending)
-        #expect(handler.sendAckStage == nil)
         #expect(handler.sendProgressText == nil)
     }
 
@@ -26,7 +25,6 @@ struct ChatActionHandlerTests {
 
         #expect(!handler.isStopping)
         #expect(!handler.isSending)
-        #expect(handler.sendAckStage == nil)
         #expect(handler.sendProgressText == nil)
     }
 
@@ -437,123 +435,6 @@ struct ChatActionHandlerTests {
             return false
         }.count
         #expect(userCount == 1)
-    }
-
-    @Test func sendPromptDoesNotExposeTurnAckOrSendingProgressText() async {
-        let handler = ChatActionHandler()
-        let reducer = TimelineReducer()
-        let connection = ServerConnection()
-        connection._setActiveSessionIdForTesting("s1")
-        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
-
-        connection._sendMessageForTesting = { message in
-            guard case .prompt(_, _, _, let requestId, let clientTurnId) = message,
-                  let requestId,
-                  let clientTurnId else {
-                return
-            }
-
-            try await Task.sleep(for: .milliseconds(20))
-            pipe.handle(
-                .turnAck(
-                    command: "prompt",
-                    clientTurnId: clientTurnId,
-                    stage: .accepted,
-                    requestId: requestId,
-                    duplicate: false
-                ),
-                sessionId: "s1"
-            )
-
-            try await Task.sleep(for: .milliseconds(40))
-            pipe.handle(
-                .turnAck(
-                    command: "prompt",
-                    clientTurnId: clientTurnId,
-                    stage: .dispatched,
-                    requestId: requestId,
-                    duplicate: false
-                ),
-                sessionId: "s1"
-            )
-
-            try await Task.sleep(for: .milliseconds(40))
-            pipe.handle(
-                .turnAck(
-                    command: "prompt",
-                    clientTurnId: clientTurnId,
-                    stage: .started,
-                    requestId: requestId,
-                    duplicate: false
-                ),
-                sessionId: "s1"
-            )
-        }
-
-        _ = handler.sendPrompt(
-            text: "stage me",
-            attachments: [],
-            isBusy: false,
-            connection: connection,
-            reducer: reducer,
-            sessionId: "s1"
-        )
-
-        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.isSending } }
-        #expect(handler.sendProgressText == nil)
-
-        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.sendAckStage == .accepted } }
-        #expect(handler.sendProgressText == nil)
-
-        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.sendAckStage == .dispatched } }
-        #expect(handler.sendProgressText == nil)
-
-        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.sendAckStage == .started } }
-        #expect(handler.sendProgressText == nil)
-
-        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { !handler.isSending } }
-        #expect(handler.sendProgressText == nil)
-    }
-
-    @Test func sendPromptFailureClearsAckStage() async {
-        let handler = ChatActionHandler()
-        let reducer = TimelineReducer()
-        let connection = ServerConnection()
-        connection._setActiveSessionIdForTesting("s1")
-        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
-
-        connection._sendMessageForTesting = { message in
-            guard case .prompt(_, _, _, let requestId, let clientTurnId) = message,
-                  let requestId,
-                  let clientTurnId else {
-                return
-            }
-
-            pipe.handle(
-                .turnAck(
-                    command: "prompt",
-                    clientTurnId: clientTurnId,
-                    stage: .accepted,
-                    requestId: requestId,
-                    duplicate: false
-                ),
-                sessionId: "s1"
-            )
-            throw WebSocketError.notConnected
-        }
-
-        _ = handler.sendPrompt(
-            text: "fail me",
-            attachments: [],
-            isBusy: false,
-            connection: connection,
-            reducer: reducer,
-            sessionId: "s1"
-        )
-
-        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { !handler.isSending } }
-        #expect(handler.sendAckStage == nil)
-        #expect(handler.sendProgressText == nil)
     }
 
     /// The chat still reads busy, and the turn really is streaming: the send is
