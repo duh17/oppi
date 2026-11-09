@@ -195,7 +195,17 @@ From the CLI, `oppi session create --workspace <id> --prompt <text> --engine dur
 
 A durable session can start helper sessions with its `subagent` tool. Each child opens from the tool row or the **Subagents** pill above the composer and is listed in All Sessions. The pill's title counts every child and its subtitle says how many are working or need you. It shows up to eight children as Working, Needs attention, Done, or Error, with model and context use (those that need you first, then the working ones, then the newest done ones); expand it to see what each child is doing now, and tap its last row, **All N in thread**, to open the whole thread. A child reports each answer back to its parent as a card that names the sender and kind (report, task, or message), folded to its first lines; tap the card to read it all, or the sender's name to open the child. A child can start its own children only when its parent allows it, and can work in a git worktree of its own on a branch named after it, so an editing child never touches its parent's checkout.
 
-A durable session's `read` tool also opens internal URLs, read only: `agent://<id>` is the latest answer of a session it launched (progress while the child still works), `history://<id>` is the transcript of a session in the same workspace, `proc://<id>` is a background job's status and output, `mcp://<resource-uri>` is an MCP resource, and `ssh://<host>/<path>` is a file (UTF-8, up to 1 MiB) or a directory listing on a host the server account's own `ssh` reaches (`/~` is the remote home). `ssh://` never prompts: it uses that account's keys and `~/.ssh/config`, fails on an unknown host key, and is off in sandbox sessions; the Terminal tab's hosts and keys never leave the device. The bare scheme lists what can be read, and an id may be a unique prefix. Sessions in other workspaces are never readable. `history://` and `agent://` read server-durable sessions only; for any other session use `oppi session trace`.
+A durable session's `read` tool can also read these internal URLs. They are read only.
+
+- `agent://<id>`: the latest answer of a session it started, directly or through its children. While that session still works, `read` returns its recent progress instead.
+- `history://<id>`: the transcript of a session in the same workspace.
+- `proc://<id>`: the status and output of one of its background jobs.
+- `mcp://<resource-uri>`: a resource from one of the session's MCP servers.
+- `ssh://[user@]host[:port]/<path>`: a UTF-8 file of up to 1 MiB, or a directory listing, read with the server account's `ssh`. `/~` is the remote home folder.
+
+A bare scheme, such as `agent://`, lists what the session can read, and an id can be a unique prefix. Sessions in other workspaces are never readable. `history://` and `agent://` read only server-durable sessions; for other sessions, use `oppi session trace`.
+
+`ssh://` uses the server account's keys, SSH agent, and `~/.ssh/config`. It never prompts for a password or a host key, so a host that needs one fails with an error. It does not use the hosts or keys saved for [Terminal](ssh-terminal.md), and it is off in sandbox sessions.
 
 ## Models and quota
 

@@ -77,6 +77,7 @@ The file reader gets Org folding and badges, task controls, EPUB books, and bett
 - **Server:** `oppi server restart --drain` restarts the server when running turns finish, and holds new prompts until after the restart. See [Restart when turns finish](docs/server-configuration.md#restart-when-turns-finish).
 - **Client/Server:** Durable sessions show prompt-cache miss notices when Pi's `showCacheMissNotices` setting is on. In all sessions, notices now also show after a server restart and when a chat reloads its history.
 - **Server:** The command list of a durable session includes `/compact` and `/share`.
+- **Server:** A durable session's `read` tool also reads internal URLs: a child session's answer (`agent://`), a transcript from the same workspace (`history://`), a background job's output (`proc://`), an MCP resource (`mcp://`), and a file or folder over the server account's `ssh` (`ssh://`). See [Durable Sessions](docs/usage.md#durable-sessions).
 - **Client/Server:** Extension authors can publish composable surfaces: panels and strip pills built from blocks (rows, text, badges, tables, charts, code, buttons, toggles, menus, and live elapsed timers) that the app draws natively and whose taps reach the plugin. Clients that cannot draw them get a v1 widget. See [Composable surfaces](docs/extension-native-ui.md#composable-surfaces-version-2).
 
 ### Changed
