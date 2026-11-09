@@ -117,11 +117,29 @@ class TestURLProtocol: URLProtocol, @unchecked Sendable {
             return
         }
         Self.lastRequest.withLockUnchecked { $0[owner] = .now }
+        respond(to: request, owner: owner, with: handler)
+    }
+
+    /// A handler that throws `Held` is asked again once the hold is over. It must never block
+    /// instead: URLSession runs `startLoading` on a thread the session's other requests need,
+    /// so a blocked request starves the ones the test expects to be answered meanwhile.
+    struct Held: Error {
+        /// Calls `resume` once, when the request may be answered (at once if already over).
+        let until: @Sendable (_ resume: @escaping @Sendable () -> Void) -> Void
+    }
+
+    private func respond(to request: URLRequest, owner: String, with handler: @escaping Handler) {
         do {
             let (data, response) = try handler(request)
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)
+        } catch let held as Held {
+            nonisolated(unsafe) let this = self
+            nonisolated(unsafe) let handler = handler
+            held.until {
+                DispatchQueue.global().async { this.respond(to: request, owner: owner, with: handler) }
+            }
         } catch let unplanned as UnplannedRoute {
             Self.report(unplanned.route, to: owner)
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))

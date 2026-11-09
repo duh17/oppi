@@ -312,12 +312,19 @@ private final class ProviderHostAnswers: @unchecked Sendable {
     /// Fails the next usage reads instead of answering them.
     var failQuotas = false
 
-    private let quotaGate = DispatchSemaphore(value: 0)
     private var holdsQuotas = false
+    private var heldQuotaReads: [@Sendable () -> Void] = []
 
     /// Keeps usage reads unanswered until `releaseQuotas()`.
     func holdQuotas() { lock.withLock { holdsQuotas = true } }
-    func releaseQuotas() { quotaGate.signal() }
+    func releaseQuotas() {
+        let waiting = lock.withLock {
+            holdsQuotas = false
+            defer { heldQuotaReads = [] }
+            return heldQuotaReads
+        }
+        for resume in waiting { resume() }
+    }
 
     func answer(for request: URLRequest) throws -> (Data, HTTPURLResponse)? {
         switch request.url?.path {
@@ -330,7 +337,16 @@ private final class ProviderHostAnswers: @unchecked Sendable {
             if cancels { throw URLError(.cancelled) }
             return try mockJSONResponse(encoding: Envelope(providers: providers), for: request)
         case let path? where path.hasSuffix("/server/provider-quotas"):
-            if lock.withLock({ holdsQuotas }) { quotaGate.wait() }
+            // Held reads wait off the URLSession thread, which the status read needs.
+            if lock.withLock({ holdsQuotas }) {
+                throw TestURLProtocol.Held { [self] resume in
+                    let now = lock.withLock {
+                        if holdsQuotas { heldQuotaReads.append(resume) }
+                        return !holdsQuotas
+                    }
+                    if now { resume() }
+                }
+            }
             if failQuotas { throw URLError(.badServerResponse) }
             return try mockJSONResponse(encoding: quotas, for: request)
         default:
