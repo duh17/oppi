@@ -197,7 +197,13 @@ final class MessageQueueView: UIView {
         errorRow.isHidden = error == nil
         if error != timedError {
             timedError = error
-            if error == nil { errorTimer.cancel(0) } else { errorTimer.start(0) }
+            // Kept and announced under VoiceOver: the error used to stay until
+            // the next queue action, and a timed-out error nobody heard is lost.
+            if let error {
+                errorTimer.start(0, keepsUntilDismissed: true, announcement: error)
+            } else {
+                errorTimer.cancel(0)
+            }
         }
 
         let expanded = presentation == .drawer || isExpanded

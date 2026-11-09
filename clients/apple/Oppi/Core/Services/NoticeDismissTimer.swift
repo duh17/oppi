@@ -38,7 +38,8 @@ enum NoticeDismiss {
 ///   pause outlives `start` until `cancel`, so a notice replaced while
 ///   expanded stays put.
 /// - `cancel` is the explicit dismiss: it drops the timer and the pause.
-/// - A notice that carries an action passes `keepsUntilDismissed`: with
+/// - A notice that carries an action, or an error the person must read (one
+///   that used to stay until cleared), passes `keepsUntilDismissed`: with
 ///   VoiceOver running it is announced and never auto-dismissed. Apple's
 ///   Accessibility HIG asks apps to minimize time-boxed UI because people
 ///   who need longer to process it lose it, and `UIAccessibility.announcement`
