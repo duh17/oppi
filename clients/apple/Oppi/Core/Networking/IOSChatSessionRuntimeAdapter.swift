@@ -454,11 +454,11 @@ final class IOSChatSessionRuntimeAdapter:
         )
     }
 
-    /// Networking-boundary owner for iOS trace-page fallback. 404/405/409 mean
-    /// the paged route is missing or stale; callers load a full session trace.
+    /// Networking-boundary owner for iOS trace-page fallback. 409 means the page
+    /// cursor is stale; callers load a full session trace.
     static func shouldFallbackToFullTrace(_ error: any Error) -> Bool {
         guard case APIError.server(let status, _) = error else { return false }
-        return status == 404 || status == 405 || status == 409
+        return status == 409
     }
 
     private static func seqDefaultsKey(sessionId: String) -> String {

@@ -21,8 +21,6 @@ struct ChatSessionManagerTests {
 
     @Test func staleTracePageFallsBackToFullSessionTrace() {
         let cases: [(status: Int, shouldFallback: Bool)] = [
-            (404, true),
-            (405, true),
             (409, true),
             (500, false),
         ]
@@ -614,7 +612,7 @@ struct ChatSessionManagerTests {
         #expect(manager.reducer.items.isEmpty)
     }
 
-    @Test func forceHistoryReloadFallsBackToFullTraceWhenTracePageRouteIsMissing() async {
+    @Test func forceHistoryReloadFallsBackToFullTraceWhenTracePageCursorIsStale() async {
         defer { TestURLProtocol.handler = nil }
 
         let sessionId = "trace-page-fallback"
@@ -626,7 +624,7 @@ struct ChatSessionManagerTests {
 
         TestURLProtocol.handler = { request in
             if request.url?.path == "/workspaces/w1/sessions/\(sessionId)/trace-page" {
-                return try mockJSONResponse(status: 404, json: #"{"error":"Not found"}"#, for: request)
+                return try mockJSONResponse(status: 409, json: #"{"error":"Stale cursor"}"#, for: request)
             }
 
             #expect(request.url?.path == "/workspaces/w1/sessions/\(sessionId)")
@@ -635,7 +633,7 @@ struct ChatSessionManagerTests {
             {
                 "session":{"id":"\(sessionId)","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":2,"tokens":{"input":10,"output":5},"cost":0},
                 "trace":[
-                    {"id":"u1","type":"user","timestamp":"2025-01-01T00:00:00Z","text":"Old server"},
+                    {"id":"u1","type":"user","timestamp":"2025-01-01T00:00:00Z","text":"Stale page"},
                     {"id":"a1","type":"assistant","timestamp":"2025-01-01T00:00:01Z","text":"Full trace"}
                 ]
             }
