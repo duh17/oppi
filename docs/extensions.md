@@ -152,6 +152,7 @@ return {
 | --- | --- |
 | `expandedText` | Text shown when the user expands the tool row |
 | `presentationFormat: "markdown"` / `"json"` / `"diff"` | Render `expandedText` as Markdown, formatted JSON, or a unified diff |
+| `presentationFormat: "org"` | Render `expandedText` as Org (TODO states, priorities, tags, dates, links), read-only |
 | `presentationFormat: "code"` with `language` or `filePath` | Syntax-highlighted code |
 | `startLine` | First code line number |
 | `media` | Stored image and video rows ([Attachment rendering](attachment-rendering.md)) |

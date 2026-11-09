@@ -218,6 +218,16 @@ struct ToolCallDocumentTests {
         #expect(empty.text.contains("| Field | Value |"))
     }
 
+    @Test func orgExpandedTextRendersThroughTheOrgReadingView() throws {
+        let org = "* TODO [#B] Ship it :ios:\n:PROPERTIES:\n:ID: task-1\n:END:\nSee [[https://example.com][docs]]."
+        let text = try doc("raw", details: .object(["expandedText": .string(org), "presentationFormat": "org"])).text
+        #expect(text.contains("Ship it"))
+        #expect(text.contains("docs"))
+        #expect(!text.contains("* TODO"))
+        #expect(!text.contains(":PROPERTIES:"))
+        #expect(!text.contains("```"))
+    }
+
     @Test @MainActor func fullScreenOpensTheSameArgumentCellAndCopyStaysRaw() throws {
         let context = ToolPresentationBuilder.Context(args: ["source": "text(1)", "unused": .null],
             expandedItemIDs: ["t"], fullOutput: "{\"z\":1}", isLoadingOutput: false)

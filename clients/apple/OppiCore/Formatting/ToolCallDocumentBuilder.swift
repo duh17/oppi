@@ -125,6 +125,8 @@ enum ToolCallDocumentBuilder {
         }
         switch format?.lowercased() {
         case "markdown": return text
+        // Same Org reading view as the share/chat path (headings are not linked).
+        case "org": return MarkdownBlockSerializer.serialize(OrgToMarkdownConverter.convert(located: OrgParser().parseLocated(text)))
         case "code":
             let hint = language ?? filePath.flatMap { FileType.detect(from: $0).syntaxLanguage?.displayName.lowercased() } ?? "text"
             return fence(text, language: safeLanguage(hint))
