@@ -30,6 +30,12 @@ final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextViewDeleg
     var appliedItemIndex: Int?
     var appliedSegmentID: MarkdownReaderSegmentID?
     var parkHandler: ((FullScreenMarkdownSegmentCell) -> Void)?
+    /// The reader's current find match, when it is in this segment. Handed to
+    /// the segment's text view on every layout, so a text view the cell gets
+    /// later (a new apply, parked views coming back) is marked too.
+    var findMark: BaselineSafeTextView.FindMark? {
+        didSet { if findMark != oldValue { setNeedsLayout() } }
+    }
     private(set) var isGeometryPresentationReady = true
     /// Guards against re-entrant self-sizing. UICollectionView calls
     /// `preferredLayoutAttributesFitting` inside its own layout pass; when the
@@ -81,6 +87,7 @@ final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextViewDeleg
         appliedItemIndex = nil
         appliedSegmentID = nil
         parkHandler = nil
+        findMark = nil
         setGeometryPresentationReady(true)
         textViewDelegate = nil
         doubleTapActivation = nil
@@ -92,6 +99,7 @@ final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextViewDeleg
         for view in views {
             stackView.removeArrangedSubview(view)
             view.removeFromSuperview()
+            (view as? BaselineSafeTextView)?.findMark = nil
         }
         segmentApplier.releaseVideoViewOwnership()
         return views
@@ -203,6 +211,16 @@ final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextViewDeleg
         stackView.invalidateIntrinsicContentSize()
         contentView.invalidateIntrinsicContentSize()
         setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // The segment's text is its first text view; the find range indexes it.
+        var mark = findMark
+        for case let textView as BaselineSafeTextView in stackView.arrangedSubviews {
+            textView.findMark = mark
+            mark = nil
+        }
     }
 
     override func preferredLayoutAttributesFitting(

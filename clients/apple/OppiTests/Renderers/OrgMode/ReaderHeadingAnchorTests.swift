@@ -313,10 +313,19 @@ struct ReaderHeadingAnchorTests {
 
         /// The text the find highlight marks, when that text is on screen.
         func visibleHighlightedText() -> String? {
-            guard let fill = body.findState.fills.first, let textView = fill.superview as? UITextView else { return nil }
-            let rect = body.collectionView.convert(fill.frame, from: textView)
+            guard let mark = currentMatchMark, !mark.bounds.isEmpty else { return nil }
+            let rect = body.collectionView.convert(mark.bounds, from: mark)
             let visible = body.collectionView.bounds.inset(by: body.collectionView.adjustedContentInset)
-            return visible.contains(rect) ? fill.accessibilityLabel : nil
+            return visible.contains(rect) ? mark.accessibilityLabel : nil
+        }
+
+        /// The view marking the current find match, in the cells on screen.
+        var currentMatchMark: UIView? {
+            func mark(in view: UIView) -> UIView? {
+                if view.accessibilityIdentifier == "fileViewer.find.currentMatch" { return view }
+                return view.subviews.lazy.compactMap(mark(in:)).first
+            }
+            return body.collectionView.visibleCells.lazy.compactMap(mark(in:)).first
         }
 
         /// How far below the top of the screen the item sits.
@@ -406,7 +415,7 @@ struct ReaderHeadingAnchorTests {
         #expect(matches.first?.section == 14, "Deep target is the 14th heading")
         reader.body.revealFindMatch(try #require(matches.first))
         try await reader.settle("the sections opening") { reader.folded == [5] }
-        try await reader.settle("the scroll") { reader.offset > 100 && !reader.body.findState.fills.isEmpty }
+        try await reader.settle("the scroll") { reader.offset > 100 && reader.currentMatchMark != nil }
         #expect(reader.folded == [5], "an unrelated fold is left alone")
     }
 
@@ -427,6 +436,10 @@ struct ReaderHeadingAnchorTests {
         let match = try #require(index?.matches(for: query).first)
         reader.body.revealFindMatch(match)
         try await reader.settle("the match on screen, marked") { reader.visibleHighlightedText() == query }
+        // The reader configures and lays out its cells again (a new document
+        // layout does this at the largest text size): the mark comes back.
+        reader.body.collectionView.reloadData()
+        try await reader.settle("the match marked again") { reader.visibleHighlightedText() == query }
     }
 
     @MainActor
@@ -451,7 +464,7 @@ struct ReaderHeadingAnchorTests {
         let matches = try #require(index).matches(for: "lonely")
         #expect(matches.count == 1)
         reader.body.revealFindMatch(try #require(matches.first))
-        try await reader.settle("the scroll") { reader.offset > 100 && !reader.body.findState.fills.isEmpty }
+        try await reader.settle("the scroll") { reader.offset > 100 && reader.currentMatchMark != nil }
     }
 
     @MainActor

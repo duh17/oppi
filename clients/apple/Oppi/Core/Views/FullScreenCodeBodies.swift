@@ -983,7 +983,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             #endif
         }
         updateGeometryPresentation(on: cell, item: indexPath.item)
-        remarkFindMatch(in: cell)
         return cell
     }
 
@@ -992,8 +991,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         willDisplay cell: UICollectionViewCell,
         forItemAt indexPath: IndexPath
     ) {
-        guard let cell = cell as? FullScreenMarkdownSegmentCell,
-              itemHeights.indices.contains(indexPath.item) else { return }
+        guard let cell = cell as? FullScreenMarkdownSegmentCell else { return }
+        // UIKit can show a cell again without configuring it: take the mark here.
+        cell.findMark = findMark(forSegment: cell.appliedSegmentID)
+        guard itemHeights.indices.contains(indexPath.item) else { return }
         updateGeometryPresentation(on: cell, item: indexPath.item)
         if renderedSegmentIDs.indices.contains(indexPath.item),
            let canonicalWidth = preparedCanonicalWidth,

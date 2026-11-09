@@ -10,11 +10,9 @@ struct ReaderFindState {
     var waiting: [@MainActor (ReaderFindIndex) -> Void] = []
     /// A match waiting for its section to open and draw.
     var pending: ReaderFindMatch?
-    /// The segment and range the current match is marked at, kept so a cell
-    /// configured again (a reload, a new document layout) marks it again.
+    /// The segment and range of the current match. The one source of its mark:
+    /// every cell shown takes its mark from this (`findMark(forSegment:)`).
     var marked: (segment: MarkdownReaderSegmentID, range: NSRange)?
-    /// The marks drawn behind the current match's words, in its text view.
-    var fills: [UIView] = []
     /// The reader arrived and has not yet become the first responder.
     var wantsFocus = false
     /// Extra room under the page while the keyboard and find bar cover its end.
@@ -225,8 +223,7 @@ extension NativeFullScreenMarkdownBody: UIFindInteractionDelegate {
         }
         findState.pending = nil
         guard renderedSegments.indices.contains(item) else { return }
-        removeFindHighlightRendering()
-        findState.marked = renderedSegmentIDs.indices.contains(item) ? (renderedSegmentIDs[item], match.range) : nil
+        setFindMark(renderedSegmentIDs.indices.contains(item) ? (renderedSegmentIDs[item], match.range) : nil)
         let path = IndexPath(item: item, section: 0)
         updateFindKeyboardInset()
         collectionView.layoutIfNeeded()
@@ -235,7 +232,6 @@ extension NativeFullScreenMarkdownBody: UIFindInteractionDelegate {
         collectionView.layoutIfNeeded()
         guard let textView = Self.textView(in: collectionView.cellForItem(at: path)) else { return }
         settleMatchInView(match.range, in: textView)
-        highlight(match.range, in: textView)
     }
 
     /// Brings the match itself into the upper third of what shows above the
@@ -263,50 +259,22 @@ extension NativeFullScreenMarkdownBody: UIFindInteractionDelegate {
     // MARK: Highlight
 
     func clearFindHighlight() {
-        findState.marked = nil
-        removeFindHighlightRendering()
+        setFindMark(nil)
     }
 
-    /// A configured cell gets new text views when the document lays out again,
-    /// and the old ones take the mark with them: mark the match again.
-    func remarkFindMatch(in cell: FullScreenMarkdownSegmentCell) {
-        guard let marked = findState.marked, cell.appliedSegmentID == marked.segment,
-              let textView = Self.textView(in: cell) else { return }
-        highlight(marked.range, in: textView)
+    /// The mark a cell showing `segment` draws. Cells take it as they are
+    /// displayed, and the cells on screen take it again when it changes; each
+    /// lays it out on its own text whenever that text lays out, so a cell
+    /// configured or laid out again after the match is found keeps it.
+    func findMark(forSegment segment: MarkdownReaderSegmentID?) -> BaselineSafeTextView.FindMark? {
+        guard let marked = findState.marked, segment == marked.segment else { return nil }
+        return .init(range: marked.range, color: themeID.palette.ui.yellow.withAlphaComponent(0.45))
     }
 
-    private func removeFindHighlightRendering() {
-        findState.fills.forEach { $0.removeFromSuperview() }
-        findState.fills = []
-    }
-
-    /// Draws the mark as views behind the text, one per line the match spans.
-    /// TextKit's own rendering attributes are lost when the text lays out
-    /// again, which a section opening makes it do after the match is marked.
-    private func highlight(_ range: NSRange, in textView: UITextView) {
-        removeFindHighlightRendering()
-        guard let start = textView.position(from: textView.beginningOfDocument, offset: range.location),
-              let end = textView.position(from: start, offset: range.length),
-              let textRange = textView.textRange(from: start, to: end) else { return }
-        // At large text sizes the match's lines are not laid out yet: lay them out, or there are no rects.
-        if let layout = textView.textLayoutManager, let content = layout.textContentManager,
-           let from = content.location(content.documentRange.location, offsetBy: range.location),
-           let to = content.location(from, offsetBy: range.length), let laidOut = NSTextRange(location: from, end: to) {
-            layout.ensureLayout(for: laidOut)
-        }
-        for selection in textView.selectionRects(for: textRange) where selection.rect.width > 0 && selection.rect.height > 0 {
-            let fill = UIView(frame: selection.rect.insetBy(dx: -1, dy: 0))
-            fill.backgroundColor = themeID.palette.ui.yellow.withAlphaComponent(0.45)
-            fill.layer.cornerRadius = 3
-            fill.isUserInteractionEnabled = false
-            if findState.fills.isEmpty {
-                // The first line stands for the match: the words, for VoiceOver and for tests.
-                fill.isAccessibilityElement = true
-                fill.accessibilityIdentifier = "fileViewer.find.currentMatch"
-                fill.accessibilityLabel = (textView.text as NSString).substring(with: range)
-            }
-            textView.insertSubview(fill, at: 0)
-            findState.fills.append(fill)
+    private func setFindMark(_ marked: (segment: MarkdownReaderSegmentID, range: NSRange)?) {
+        findState.marked = marked
+        for case let cell as FullScreenMarkdownSegmentCell in collectionView.visibleCells {
+            cell.findMark = findMark(forSegment: cell.appliedSegmentID)
         }
     }
 

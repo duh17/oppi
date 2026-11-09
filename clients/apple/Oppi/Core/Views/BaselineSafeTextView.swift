@@ -107,7 +107,61 @@ final class BaselineSafeTextView: UITextView, ReviewCommentSourceLineRangeResolv
                 contentOffset = desiredOffset
             }
         }
+        layoutFindMark()
+    }
 
+    // MARK: - Find mark
+
+    /// A reader's current find match in this text, marked behind its words.
+    struct FindMark: Equatable {
+        var range: NSRange
+        var color: UIColor
+    }
+
+    /// Set by the owner from its find state whenever it configures or lays out
+    /// the text. The mark is placed again on every layout of this view, so new
+    /// text or a new width moves it with the words.
+    var findMark: FindMark? {
+        didSet { if findMark != oldValue { setNeedsLayout() } }
+    }
+    /// No stored list: `init(usingTextLayoutManager:)` skips Swift's property
+    /// initializers, so only properties whose zero value is valid are safe here.
+    private final class FindMarkView: UIView {}
+
+    /// One view per line the match spans, behind the text. The first stands
+    /// for the match: its words, for VoiceOver and for tests.
+    private func layoutFindMark() {
+        var rects: [CGRect] = []
+        if let mark = findMark, NSMaxRange(mark.range) <= textStorage.length,
+           let start = position(from: beginningOfDocument, offset: mark.range.location),
+           let end = position(from: start, offset: mark.range.length),
+           let range = textRange(from: start, to: end) {
+            // At large text sizes the match's lines may not be laid out yet, and unlaid lines have no rects.
+            if let layout = textLayoutManager, let content = layout.textContentManager,
+               let from = content.location(content.documentRange.location, offsetBy: mark.range.location),
+               let to = content.location(from, offsetBy: mark.range.length),
+               let laidOut = NSTextRange(location: from, end: to) {
+                layout.ensureLayout(for: laidOut)
+            }
+            rects = selectionRects(for: range).map(\.rect).filter { $0.width > 0 && $0.height > 0 }
+        }
+        var views = subviews.compactMap { $0 as? FindMarkView }
+        while views.count > rects.count { views.removeLast().removeFromSuperview() }
+        while views.count < rects.count {
+            let view = FindMarkView()
+            view.layer.cornerRadius = 3
+            view.isUserInteractionEnabled = false
+            insertSubview(view, at: views.count)
+            views.append(view)
+        }
+        guard let mark = findMark, let first = views.first else { return }
+        for (view, rect) in zip(views, rects) {
+            view.frame = rect.insetBy(dx: -1, dy: 0)
+            view.backgroundColor = mark.color
+        }
+        first.isAccessibilityElement = true
+        first.accessibilityIdentifier = "fileViewer.find.currentMatch"
+        first.accessibilityLabel = (textStorage.string as NSString).substring(with: mark.range)
     }
 
     /// Non-scrollable cells (paragraph markdown, table clip/wrap) still install a
