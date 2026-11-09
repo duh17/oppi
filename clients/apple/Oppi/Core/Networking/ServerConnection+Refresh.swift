@@ -516,42 +516,16 @@ extension ServerConnection {
 
         // 4. Refresh active session metadata (not timeline — ChatSessionManager owns that)
         guard let sessionId = focusedSessionId else { return }
-        guard let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId,
-              !workspaceId.isEmpty else {
-            logger.error("Missing workspaceId for active session \(sessionId)")
-            return
-        }
-
         let streamAttached = sessionEventContinuations[sessionId] != nil
-        let streamAlive: Bool
-        if streamAttached {
-            switch wsClient?.status {
-            case .connected, .connecting, .reconnecting:
-                streamAlive = true
-            default:
-                streamAlive = false
-            }
-        } else {
-            streamAlive = false
-        }
 
-        if !streamAlive {
-            // AskCard and sheet-backed extension dialogs already live in their
-            // canonical pending stores and will restore when focus returns.
-
-            do {
-                let (session, _) = try await apiClient.getWorkspaceSession(workspaceId: workspaceId, sessionId: sessionId, traceView: .context)
-                applyFetchedSessionState(session)
-            } catch {
-                logger.error("Failed to refresh session \(sessionId): \(error)")
-            }
-        } else {
-            do {
-                let (session, _) = try await apiClient.getWorkspaceSession(workspaceId: workspaceId, sessionId: sessionId, traceView: .context)
-                applyFetchedSessionState(session)
-            } catch {
-                logger.error("Failed to refresh session metadata: \(error)")
-            }
+        // AskCard and sheet-backed extension dialogs already live in their
+        // canonical pending stores and will restore when focus returns. Only the
+        // session record is needed here, so skip the trace the workspace route would read.
+        do {
+            let session = try await apiClient.getSessionRecord(sessionId: sessionId)
+            applyFetchedSessionState(session)
+        } catch {
+            logger.error("Failed to refresh session \(sessionId): \(error)")
         }
 
         // 4. Ask server for freshest state once the active stream is connected.

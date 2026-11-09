@@ -387,11 +387,7 @@ final class IOSChatSessionRuntimeAdapter:
         scope: SessionRouteScope,
         sessionId: String
     ) async throws -> Session {
-        let result = try await requireAPIClient().getSession(
-            scope: scope,
-            sessionId: sessionId
-        )
-        return result.session
+        try await requireAPIClient().getSessionRecord(sessionId: sessionId)
     }
 
     func applyFetchedSessionState(_ session: Session) {

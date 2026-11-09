@@ -302,11 +302,11 @@ extension APIClientEndpoint {
         APIClientEndpoint("getSessionEvents(scope:)") {
             _ = try? await $0.getSessionEvents(scope: .control, id: Placeholder.session, since: 0)
         },
-        APIClientEndpoint("getWorkspaceSession") {
-            _ = try? await $0.getWorkspaceSession(workspaceId: Placeholder.workspace, sessionId: Placeholder.session)
+        APIClientEndpoint("getSession(scope:workspace)") {
+            _ = try? await $0.getSession(scope: .workspace(Placeholder.workspace), sessionId: Placeholder.session, traceView: .context)
         },
         APIClientEndpoint("getSession") {
-            _ = try? await $0.getSession(scope: .control, sessionId: Placeholder.session)
+            _ = try? await $0.getSession(scope: .control, sessionId: Placeholder.session, traceView: .context)
         },
         APIClientEndpoint("getSessionRecord") {
             _ = try? await $0.getSessionRecord(sessionId: Placeholder.session)

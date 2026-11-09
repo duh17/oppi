@@ -298,7 +298,7 @@ extension QuickSessionModel {
                             )
                         )
                     }
-                    session = try await api.getSession(scope: scope, sessionId: launchedSessionId).session
+                    session = try await api.getSessionRecord(sessionId: launchedSessionId)
                     agentSubmitAttempt = nil
                     autoSendMessage = nil
                     autoSendAttachments = nil

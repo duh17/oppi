@@ -637,19 +637,13 @@ actor APIClient: ClientLogUploading {
         }
     }
 
-    /// Get a workspace session with trace events for either context or full timeline view.
-    func getWorkspaceSession(
-        workspaceId: String,
-        sessionId: String,
-        traceView: SessionTraceView = .context
-    ) async throws -> (session: Session, trace: [TraceEvent]) {
-        try await getSession(scope: .workspace(workspaceId), sessionId: sessionId, traceView: traceView)
-    }
-
+    /// Fetches a session together with its trace. The trace read is the expensive part of
+    /// the route, so `traceView` has no default: a caller that needs only the session
+    /// record uses `getSessionRecord(sessionId:)`.
     func getSession(
         scope: SessionRouteScope,
         sessionId: String,
-        traceView: SessionTraceView = .context
+        traceView: SessionTraceView
     ) async throws -> (session: Session, trace: [TraceEvent]) {
         let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))?view=\(traceView.rawValue)")
         struct Response: Decodable { let session: Session; let trace: [TraceEvent] }
@@ -740,7 +734,7 @@ actor APIClient: ClientLogUploading {
         struct Response: Decodable { let session: Session? }
         let response = try JSONDecoder().decode(Response.self, from: data)
         if let session = response.session { return session }
-        return try await getSession(scope: scope, sessionId: sessionId).session
+        return try await getSessionRecord(sessionId: sessionId)
     }
 
     /// Delete a workspace session permanently.

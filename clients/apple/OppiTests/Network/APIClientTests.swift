@@ -920,7 +920,7 @@ struct APIClientTests {
             """)
         }
 
-        let (session, trace) = try await client.getWorkspaceSession(workspaceId: "w1", sessionId: "s1")
+        let (session, trace) = try await client.getSession(scope: .workspace("w1"), sessionId: "s1", traceView: .context)
         #expect(session.id == "s1")
         #expect(trace.count == 1)
         #expect(trace[0].type == .user)
@@ -943,7 +943,7 @@ struct APIClientTests {
             """)
         }
 
-        let (_, trace) = try await client.getWorkspaceSession(workspaceId: "w1", sessionId: "s1", traceView: .full)
+        let (_, trace) = try await client.getSession(scope: .workspace("w1"), sessionId: "s1", traceView: .full)
         #expect(trace.count == 1)
     }
 
