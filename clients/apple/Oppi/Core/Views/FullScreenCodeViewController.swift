@@ -73,6 +73,7 @@ final class FullScreenCodeViewController: UIViewController {
     private let lineAnchor: SourceLineAnchor?
     /// Set when the reader's owner can save the document.
     private let taskEditing: ReaderTaskEditing?
+    private let orgFolds: OrgFoldMemory?
     private let lineAnchorNotice: (@MainActor @Sendable (String) -> Void)?
     private var lineAnchorNoticeDelivered = false
     private var editItems: [UIBarButtonItem]
@@ -128,10 +129,12 @@ final class FullScreenCodeViewController: UIViewController {
         markdownViewportIntent: FullScreenMarkdownViewportIntent? = nil,
         onMarkdownViewportIntentChange: ((FullScreenMarkdownViewportIntent) -> Void)? = nil,
         taskEditing: ReaderTaskEditing? = nil,
+        orgFolds: OrgFoldMemory? = nil,
         addToChatDestination: ComposerCanvasDestination? = nil
     ) {
         self.content = content
         self.taskEditing = taskEditing
+        self.orgFolds = orgFolds
         self.presentationMode = presentationMode
         self.reviewCommentSelectionContext = reviewCommentSelectionContext
             ?? ReviewCommentSelectionContext(
@@ -1026,6 +1029,7 @@ final class FullScreenCodeViewController: UIViewController {
             lineAnchor: lineAnchor,
             focusLineAnchor: focusLineAnchor,
             taskEditing: taskEditing,
+            orgFolds: orgFolds,
             adoptTrace: { [weak self] observation in
                 self?.traceObservation = observation
             },

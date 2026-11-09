@@ -33,9 +33,10 @@ enum OrgToMarkdownConverter {
         /// cmark-gfm makes no task list of `> - [ ]`: a marker there would
         /// show as raw text beside the literal box.
         var marksTaskItems: Bool
-        /// Headings a fold control leads, by source line, and which of them
-        /// are folded. Empty for a reader that does not fold.
-        var foldableHeadings: Set<Int> = []
+        /// The ordinal (`OrgFolding`) of each heading a fold control leads, by
+        /// source line, and the source lines of those folded. Empty for a
+        /// reader that does not fold.
+        var foldableHeadings: [Int: Int] = [:]
         var foldedHeadings: Set<Int> = []
     }
 
@@ -79,16 +80,18 @@ enum OrgToMarkdownConverter {
         var shown = located
         if let foldingHeadings {
             let sections = OrgFolding.sections(of: located)
-            context.foldableHeadings = Set(sections.keys)
-            context.foldedHeadings = foldingHeadings.folded
-            shown = OrgFolding.visibleIndices(of: located, sections: sections, folded: foldingHeadings.folded)
+            let ordinals = OrgFolding.ordinals(of: located)
+            context.foldableHeadings = ordinals.filter { sections[$0.key] != nil }
+            context.foldedHeadings = Set(ordinals.filter { foldingHeadings.folded.contains($0.value) }.keys)
+            shown = OrgFolding.visibleIndices(of: located, sections: sections, folded: context.foldedHeadings)
                 .map { located[$0] }
         }
         return convert(shown.map(\.block), lines: shown.map(\.line), context: context)
     }
 
-    /// A reader that folds headings: which it has folded, by source line.
-    /// Every heading with a section under it then leads with a chevron.
+    /// A reader that folds headings: which it has folded, by ordinal
+    /// (`OrgFolding`). Every heading with a section under it then leads with a
+    /// chevron, and a folded one ends in a mark.
     struct FoldState: Sendable {
         var folded: Set<Int>
 
@@ -252,8 +255,9 @@ enum OrgToMarkdownConverter {
                 }
                 // The marker leads the heading apart from the bar, so it never joins it.
                 var leading: [MarkdownBadge] = []
-                if let line, context.foldableHeadings.contains(line) {
-                    leading.append(OrgBadges.fold(line: line, isExpanded: !context.foldedHeadings.contains(line)))
+                let foldOrdinal = line.flatMap { context.foldableHeadings[$0] }
+                if let line, let foldOrdinal {
+                    leading.append(OrgBadges.fold(ordinal: foldOrdinal, isExpanded: !context.foldedHeadings.contains(line)))
                 }
                 var inlines: [MarkdownInline] = (leading + (marker.map { [$0] } ?? []) + bar).map { .html($0.markup) }
 
@@ -270,6 +274,10 @@ enum OrgToMarkdownConverter {
                 for tag in tags {
                     inlines.append(.text(" "))
                     inlines.append(.html(OrgBadges.tag(tag).markup))
+                }
+                if let line, foldOrdinal != nil, context.foldedHeadings.contains(line) {
+                    inlines.append(.text(" "))
+                    inlines.append(.html(OrgBadges.foldedMark.markup))
                 }
 
                 result.append(.heading(level: min(level, 6), inlines: inlines))

@@ -55,7 +55,7 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
         //    which sets a date the heading has none of.
         XCTAssertFalse(app.buttons["fileViewer.task.state.12"].exists, "a plain heading stays plain")
         // It has prose under it, so it is a foldable heading: one element with its words as the label.
-        let plain = fold(12)
+        let plain = fold(3)
         reveal(plain)
         XCTAssertTrue(plain.waitUntilExists(timeout: 10))
         plain.press(forDuration: 1.0)
@@ -164,46 +164,90 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
     /// heading's value.
     func testHeadingsFoldAndUnfoldTheirSections() throws {
         launch(file: "notebook.org")
-        XCTAssertEqual(foldValue(4), "Expanded", "a file opens with everything expanded")
+        XCTAssertEqual(foldValue(1), "Expanded", "a file opens with everything expanded")
         XCTAssertTrue(app.buttons["fileViewer.task.checkbox.19"].exists)
         saveScreenshot(name: "org-fold-1-expanded")
 
         // A level-2 heading folds its own section only: its checkboxes go, its
         // parent and its next sibling stay.
-        tapHeading(15)
+        tapHeading(3)
         XCTAssertTrue(app.buttons["fileViewer.task.checkbox.19"].waitUntilGone(timeout: 10), "the folded section is hidden")
-        XCTAssertTrue(waitForFold(15, "Collapsed"))
+        XCTAssertTrue(waitForFold(3, "Collapsed"))
         XCTAssertTrue(app.buttons["fileViewer.task.checkbox.10"].exists, "the parent's own body stays")
-        XCTAssertTrue(fold(21).exists, "the next heading of the same level stays")
-        XCTAssertFalse(fold(18).exists, "a heading inside the fold goes with it")
+        XCTAssertTrue(fold(5).exists, "the next heading of the same level stays")
+        XCTAssertFalse(fold(4).exists, "a heading inside the fold goes with it")
         saveScreenshot(name: "org-fold-2-device-check-collapsed")
 
         // The top heading hides every level below it, up to the next top heading.
-        tapHeading(4)
+        tapHeading(1)
         XCTAssertTrue(app.buttons["fileViewer.task.checkbox.10"].waitUntilGone(timeout: 10))
-        for line in [12, 15, 21] { XCTAssertFalse(fold(line).exists, "line \(line) is inside the top fold") }
-        XCTAssertTrue(fold(23).exists, "the next top-level heading stays")
+        for ordinal in [2, 3, 5] { XCTAssertFalse(fold(ordinal).exists, "heading \(ordinal) is inside the top fold") }
+        XCTAssertTrue(fold(6).exists, "the next top-level heading stays")
         saveScreenshot(name: "org-fold-3-top-collapsed")
 
         // Opening it again returns the section as it was: the inner fold is kept.
-        tapHeading(4)
+        tapHeading(1)
         XCTAssertTrue(app.buttons["fileViewer.task.checkbox.10"].waitUntilExists(timeout: 10))
-        XCTAssertTrue(waitForFold(15, "Collapsed"))
+        XCTAssertTrue(waitForFold(3, "Collapsed"))
         XCTAssertFalse(app.buttons["fileViewer.task.checkbox.19"].exists)
-        tapHeading(15)
+        tapHeading(3)
         XCTAssertTrue(app.buttons["fileViewer.task.checkbox.19"].waitUntilExists(timeout: 10))
-        XCTAssertTrue(waitForFold(15, "Expanded"))
+        XCTAssertTrue(waitForFold(3, "Expanded"))
         saveScreenshot(name: "org-fold-4-expanded-again")
+    }
+
+    /// A folded heading in light mode, at the default and at the largest text
+    /// size: the chevron, the mark and the heading stay readable and tappable.
+    func testAFoldedHeadingAtTheLargestTextSizeAndInLightMode() throws {
+        let device = UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
+        XCUIDevice.shared.orientation = .portrait
+        let sizes = [("default", "UICTContentSizeCategoryL"), ("xxxl", "UICTContentSizeCategoryAccessibilityXXXL")]
+        for (name, category) in sizes {
+            launch(file: "notebook.org", colorScheme: "light", arguments: ["-UIPreferredContentSizeCategoryName", category])
+            tapHeading(3)
+            XCTAssertTrue(waitForFold(3, "Collapsed"), "\(name): the heading folds")
+            XCTAssertTrue(fold(4).waitUntilGone(timeout: 10), "\(name): its sub-heading goes with it")
+            saveScreenshot(name: "org-fold-\(device)-light-\(name)-folded")
+            tapHeading(3)
+            XCTAssertTrue(waitForFold(3, "Expanded"), "\(name): and unfolds again")
+        }
+    }
+
+    /// A saved edit mounts a new reader; the folds stay as the person left them,
+    /// and the box they ticked stays where it was on screen.
+    func testFoldsAndPositionSurviveASavedEdit() throws {
+        launch(file: "notebook.org")
+        tapHeading(3)
+        XCTAssertTrue(app.buttons["fileViewer.task.checkbox.19"].waitUntilGone(timeout: 10))
+        let box = app.buttons["fileViewer.task.checkbox.32"]
+        let visibleBottom = app.windows.firstMatch.frame.maxY - 30
+        for _ in 0..<10 where !(box.exists && box.frame.maxY < visibleBottom && box.frame.minY > 100) { app.swipeUp() }
+        XCTAssertTrue(box.exists && box.frame.maxY < visibleBottom, "the last box is on screen")
+        let before = box.frame
+        box.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        // `disk` shows each CLOSED time as a fixed stamp; the seed's are the same.
+        let ticked = Self.notebookSeed
+            .replacingOccurrences(of: "- [ ] Review the screenshots", with: "- [X] Review the screenshots")
+            .replacingOccurrences(of: #"CLOSED: \[\d{4}-\d{2}-\d{2} [A-Za-z]{3} \d{2}:\d{2}\]"#, with: "CLOSED: [STAMP]", options: .regularExpression)
+        waitForDisk(ticked, after: "ticking the last box")
+
+        XCTAssertTrue(waitForFold(3, "Collapsed"), "the fold survives the save")
+        XCTAssertFalse(app.buttons["fileViewer.task.checkbox.19"].exists)
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, abs(box.frame.minY - before.minY) >= 4 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertEqual(box.frame.minY, before.minY, accuracy: 4, "the box stays where it was")
     }
 
     /// Folding edits nothing, so a file the server cannot save still folds,
     /// and still shows no edit control.
     func testAReadOnlyFileFolds() throws {
         launch(file: "notebook.org", readOnly: true)
-        XCTAssertTrue(fold(29).waitUntilExists(timeout: 20), "the heading offers a fold")
+        XCTAssertTrue(fold(7).waitUntilExists(timeout: 20), "the heading offers a fold")
         XCTAssertFalse(app.buttons["fileViewer.task.checkbox.10"].exists, "no edit control")
-        tapHeading(29, at: 0.5)
-        XCTAssertTrue(waitForFold(29, "Collapsed"))
+        tapHeading(7, at: 0.5)
+        XCTAssertTrue(waitForFold(7, "Collapsed"))
         XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'No dev install'")).firstMatch.waitUntilExists(timeout: 2))
     }
 
@@ -226,12 +270,12 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
 
     // MARK: Helpers
 
-    private func fold(_ line: Int) -> XCUIElement {
-        app.descendants(matching: .any)["fileViewer.heading.fold.\(line)"]
+    private func fold(_ ordinal: Int) -> XCUIElement {
+        app.descendants(matching: .any)["fileViewer.heading.fold.\(ordinal)"]
     }
 
-    private func foldValue(_ line: Int) -> String? {
-        let element = fold(line)
+    private func foldValue(_ ordinal: Int) -> String? {
+        let element = fold(ordinal)
         return element.waitUntilExists(timeout: 15) ? element.value as? String : nil
     }
 
@@ -241,22 +285,28 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
         for _ in 0..<8 where element.frame.maxY > bottom { app.swipeUp() }
     }
 
-    private func waitForFold(_ line: Int, _ value: String, timeout: TimeInterval = 10) -> Bool {
+    private func waitForFold(_ ordinal: Int, _ value: String, timeout: TimeInterval = 10) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if fold(line).exists, fold(line).value as? String == value { return true }
+            if fold(ordinal).exists, fold(ordinal).value as? String == value { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        return fold(line).value as? String == value
+        return fold(ordinal).value as? String == value
     }
 
-    /// Taps the end of the heading's line, past any state badge, which a touch
-    /// on it would use for its own menu.
-    private func tapHeading(_ line: Int, at dx: CGFloat = 0.97) {
-        let element = fold(line)
-        XCTAssertTrue(element.waitUntilExists(timeout: 15), "fold \(line) exists")
+    /// Taps the heading's chevron, at the start of its line: a touch on a state
+    /// badge would open that badge's menu, and a long heading wraps its badges
+    /// anywhere along the line. `at` taps that far across the line instead.
+    private func tapHeading(_ ordinal: Int, at dx: CGFloat? = nil) {
+        let element = fold(ordinal)
+        XCTAssertTrue(element.waitUntilExists(timeout: 15), "fold \(ordinal) exists")
         reveal(element)
-        element.coordinate(withNormalizedOffset: CGVector(dx: dx, dy: 0.5)).tap()
+        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+        if let dx {
+            element.coordinate(withNormalizedOffset: CGVector(dx: dx, dy: 0.5)).tap()
+        } else {
+            start.withOffset(CGVector(dx: 10, dy: 0)).tap()
+        }
     }
 
     private static let orgSeed = """
@@ -279,6 +329,41 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
     private static let longTail = (1...60).map { "\n\nParagraph \($0) of filler prose that makes the file long enough to scroll." }.joined()
         + "\n\n* TODO Bottom\n- [ ] bottom box\n- [ ] second box"
 
+    private static let notebookSeed = """
+    #+TITLE: Oppi project
+    #+TODO: TODO NEXT WAIT | DONE CANCELLED
+
+    * NEXT [#A] Ship Org rendering [1/3] :oppi:ios:
+    SCHEDULED: <2026-11-11 Wed> DEADLINE: <2026-11-13 Fri>
+    :PROPERTIES:
+    :ID: 3f2a9c1e-7b64-4d0a-9d1e-0c5a2b7e8f10
+    :END:
+    Parser, converter and reader. See [[file:release.org::*Checklist][the release checklist]].
+    - [X] Parse planning lines
+    - [ ] Render progress cookies
+    ** DONE Draft the brief :oppi:
+    CLOSED: [2026-11-06 Fri 14:00]
+    Scope was agreed in the planning thread.
+    ** WAIT Device check [40%]
+    SCHEDULED: <2026-11-12 Thu>
+    Waiting on a simulator slot.
+    *** TODO Record the screenshots
+    - [ ] iPhone
+    - [ ] iPad mini
+    ** CANCELLED Retire the old extension
+    CLOSED: [2026-11-05 Thu 09:30]
+    * TODO Write the release notes
+    DEADLINE: <2026-11-20 Fri>
+    :PROPERTIES:
+    :ID: 9d1c4e7a-2b08-4c63-8a5f-6e3b1d0f7a22
+    :END:
+    Draft after the device check.
+    * Notes
+    - No dev install until Wednesday.
+    - See [[*Ship Org rendering][the task above]] and [[https://example.com][the docs]].
+    - [ ] Review the screenshots
+    """
+
     private static let markdownSeed = """
     # Release plan [1/3]
 
@@ -288,11 +373,17 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
       - [ ] Reviewer one
     """
 
-    private func launch(file: String, readOnly: Bool = false, long: Bool = false) {
+    private func launch(
+        file: String,
+        readOnly: Bool = false,
+        long: Bool = false,
+        colorScheme: String? = nil,
+        arguments: [String] = []
+    ) {
         var environment = ["OPPI_READER_TASK_FILE": file]
         if readOnly { environment["OPPI_READER_TASK_READONLY"] = "1" }
         if long { environment["OPPI_READER_TASK_LONG"] = "1" }
-        launchPreview(screen: "reader-task-edit", environment: environment, readyTimeout: 20)
+        launchPreview(screen: "reader-task-edit", environment: environment, colorScheme: colorScheme, arguments: arguments, readyTimeout: 20)
         if !readOnly {
             let first = switch file {
             case "tasks.org": "fileViewer.task.checkbox.5"

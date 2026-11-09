@@ -728,7 +728,24 @@ enum DocumentRenderPipeline {
         cancellationCheck: @escaping @Sendable () -> Bool
     ) -> String? {
         guard !cancellationCheck() else { return nil }
-        let orgBlocks = OrgParser().parseLocated(source)
+        return orgToMarkdown(
+            located: OrgParser().parseLocated(source),
+            documentPath: documentPath,
+            offersStateControl: offersStateControl,
+            foldingHeadings: foldingHeadings,
+            cancellationCheck: cancellationCheck
+        )
+    }
+
+    /// The same conversion from blocks already parsed: a reader that folds
+    /// parses once and converts again for each fold.
+    static func orgToMarkdown(
+        located orgBlocks: [LocatedOrgBlock],
+        documentPath: String? = nil,
+        offersStateControl: Bool = false,
+        foldingHeadings: OrgToMarkdownConverter.FoldState? = nil,
+        cancellationCheck: @escaping @Sendable () -> Bool
+    ) -> String? {
         guard !cancellationCheck() else { return nil }
         let mdBlocks = OrgToMarkdownConverter.convert(
             located: orgBlocks,

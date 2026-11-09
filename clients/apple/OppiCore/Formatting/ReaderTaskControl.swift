@@ -60,6 +60,8 @@ struct ReaderTaskControl: Equatable, Hashable, Sendable {
 
     let kind: Kind
     /// 1-based source line: the task line, or the heading the control belongs to.
+    /// A fold names its heading by ordinal instead (`OrgFolding`), which a save
+    /// does not move.
     let line: Int
 
     /// The control's name in the badge markup and in accessibility identifiers.

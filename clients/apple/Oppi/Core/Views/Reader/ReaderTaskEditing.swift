@@ -54,7 +54,8 @@ final class ReaderTaskEditing: ReaderTaskControlHandling {
                 self?.presentDatePicker(kind: kind, line: control.line, from: view)
             }
         case .fold:
-            // Folding is the reader's, not an edit; `OrgReaderControls` answers it.
+            // Folding is the reader's, not an edit: `OrgReaderControls` answers it.
+            assertionFailure("ReaderTaskEditing was asked about a fold")
             return .action {}
         }
     }

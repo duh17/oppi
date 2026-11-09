@@ -357,7 +357,7 @@ struct ReaderTaskControlTests {
 
         change(view, by: path, to: plain(likeLengthOf: withControls))
         #expect(view.textStorage.length == withControls.length, "the replacement is the same length, so only an invalidation can tell")
-        #expect(!view.allowsTaskControls)
+        #expect(!view.allowsReaderControls)
         #expect(!view.usesSpokenLines)
         #expect(!touchesAControl(view), "\(path): a control that left the text still answers a touch")
         #expect(!(view.accessibilityElements ?? []).contains { $0 is ReaderTaskControlElement }, "\(path)")
@@ -372,12 +372,12 @@ struct ReaderTaskControlTests {
         let (view, window) = try textView("x", handler: handler)
         _ = (window, handler) // the view holds its handler weakly
         change(view, by: path, to: plain(likeLengthOf: withControls))
-        #expect(!view.allowsTaskControls)
+        #expect(!view.allowsReaderControls)
         #expect(!view.usesSpokenLines)
         #expect(!(view.accessibilityElements ?? []).contains { $0 is ReaderTaskControlElement })
 
         change(view, by: path, to: withControls)
-        #expect(view.allowsTaskControls)
+        #expect(view.allowsReaderControls)
         #expect(touchesAControl(view), "\(path)")
         #expect((view.accessibilityElements ?? []).contains { $0 is ReaderTaskControlElement }, "\(path)")
     }

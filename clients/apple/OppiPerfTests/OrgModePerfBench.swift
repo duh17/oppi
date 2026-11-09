@@ -82,8 +82,14 @@ struct OrgModePerfBench {
         .timeLimit(.minutes(1))
     )
     func largeDocumentReaderUsesMarkdownViewport() async throws {
+        // The reader draws a fold chevron on each heading that has a section.
         let expectedMarkdown = await Task.detached(priority: .userInitiated) {
-            DocumentRenderPipeline.orgToMarkdown(Self.orgManualDoc, documentPath: "org-manual.org")
+            DocumentRenderPipeline.orgToMarkdown(
+                Self.orgManualDoc,
+                documentPath: "org-manual.org",
+                foldingHeadings: .init(),
+                cancellationCheck: { false }
+            ) ?? ""
         }.value
         #expect(Self.orgManualDoc.utf8.count == 853_547)
         #expect(expectedMarkdown.contains("orgtbl-radio-table-templates"))
@@ -152,6 +158,110 @@ struct OrgModePerfBench {
         #expect(sourceController.installedBodyViewForTesting is NativeFullScreenCodeBody)
         sourceController.toggleSourceForTesting()
         #expect(sourceController.installedBodyViewForTesting is NativeFullScreenMarkdownBody)
+    }
+
+    /// A fold converts the kept parse again and renders the visible part again.
+    /// The first toggle also parses; the later ones, which a person makes, do not.
+    @MainActor
+    @Test("Fold toggle — org-manual", .timeLimit(.minutes(2)))
+    func foldToggleOrgManual() async throws {
+        try await measureFoldToggle(doc: Self.orgManualDoc, label: "org_manual")
+    }
+
+    /// A notebook file as the notebook keeps them: about 150 lines, 12 KB, with
+    /// states, planning lines, property drawers, links and checkboxes.
+    private static let notebookDoc: String = {
+        var text = "#+TITLE: Notebook\n#+TODO: TODO NEXT WAIT | DONE CANCELLED\n\n"
+        for n in 1 ... 6 {
+            text += """
+            * NEXT [#A] Project \(n) milestone [1/3] :oppi:ios:
+            SCHEDULED: <2026-11-11 Wed> DEADLINE: <2026-11-13 Fri>
+            :PROPERTIES:
+            :ID: 3f2a9c1e-7b64-4d0a-9d1e-0c5a2b7e8f1\(n)
+            :END:
+            Parser, converter and reader for project \(n). See [[file:release.org::*Checklist][the release checklist]] and [[id:3f2a9c1e-7b64-4d0a-9d1e-0c5a2b7e8f1\(n)][this task]].
+            - [X] Parse planning lines
+            - [ ] Render progress cookies
+            - [ ] Open file links from the reader, relative to the document
+            ** DONE Draft the brief :oppi:
+            CLOSED: [2026-11-06 Fri 14:00]
+            Scope was agreed in the planning thread, and the notes are kept with the project.
+            ** WAIT Device check [40%]
+            SCHEDULED: <2026-11-12 Thu>
+            Waiting on a simulator slot; the run takes a few minutes once one frees up.
+            *** TODO Record the screenshots
+            - [ ] iPhone
+            - [ ] iPad mini
+            ** CANCELLED Retire the old extension
+            CLOSED: [2026-11-05 Thu 09:30]
+            * Notes \(n)
+            - No dev install until Wednesday. See [[*Project \(n) milestone][the task above]].
+
+            """
+        }
+        return text
+    }()
+
+    @MainActor
+    @Test("Fold toggle — notebook-sized file", .timeLimit(.minutes(2)))
+    func foldToggleNotebook() async throws {
+        try await measureFoldToggle(doc: Self.notebookDoc, label: "notebook")
+    }
+
+    @MainActor
+    @Test("Fold toggle — Doom", .timeLimit(.minutes(2)))
+    func foldToggleDoom() async throws {
+        try await measureFoldToggle(doc: Self.doomDoc, label: "doom")
+    }
+
+    @MainActor
+    private func measureFoldToggle(doc: String, label: String) async throws {
+        let controller = FullScreenCodeViewController.makeHarnessController(
+            content: .orgMode(content: doc, filePath: "\(label).org"),
+            reviewCommentSelectionContext: nil
+        )
+        let window = try Self.makeTestWindow()
+        let openStarted = DispatchTime.now().uptimeNanoseconds
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.loadViewIfNeeded()
+        defer { window.isHidden = true }
+        let body = try #require(controller.installedBodyViewForTesting as? NativeFullScreenMarkdownBody)
+        let controls = try #require(body.debugOrgControlsForTesting)
+        await body.debugWaitForSourcePreparationForTesting()
+        print("ORG_FOLD_METRIC \(label) open_to_converted_us=\((DispatchTime.now().uptimeNanoseconds - openStarted) / 1_000)")
+        await body.debugWaitForDocumentPreparationForTesting()
+        window.layoutIfNeeded()
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+        print("ORG_FOLD_METRIC \(label) open_to_rendered_us=\((DispatchTime.now().uptimeNanoseconds - openStarted) / 1_000) phases: \(body.debugFirstPaintDiagnosticsForTesting)")
+        let openMarkdown = try #require(body.debugRenderedSourceTextForTesting)
+
+        // Folds hide a section each; the ordinal is the manual's first heading.
+        print("ORG_FOLD_METRIC \(label) bytes=\(doc.utf8.count) lines=\(doc.split(separator: "\n", omittingEmptySubsequences: false).count)")
+        var toggleUs: [UInt64] = []
+        var firstContentUs: [UInt64] = []
+        var conversionUs: [UInt64] = []
+        for _ in 0 ..< 6 {
+            let started = DispatchTime.now().uptimeNanoseconds
+            controls.toggleFold(ordinal: 1)
+            await body.debugWaitForSourcePreparationForTesting()
+            firstContentUs.append((DispatchTime.now().uptimeNanoseconds - started) / 1_000)
+            await body.debugWaitForDocumentPreparationForTesting()
+            window.layoutIfNeeded()
+            body.debugLayoutVisibleMarkdownCellsForTesting()
+            toggleUs.append((DispatchTime.now().uptimeNanoseconds - started) / 1_000)
+            conversionUs.append(body.debugSourcePreparationDurationUsForTesting)
+        }
+        #expect(controls.folded.isEmpty, "an even number of toggles leaves the document open")
+        #expect(body.debugRenderedSourceTextForTesting == openMarkdown)
+        toggleUs.sort()
+        firstContentUs.sort()
+        conversionUs.sort()
+        let phases = body.debugFirstPaintDiagnosticsForTesting
+        print("ORG_FOLD_METRIC \(label) last_toggle phases: \(phases)")
+        print("ORG_FOLD_METRIC \(label) toggle_to_converted_and_rendered_median_us=\(firstContentUs[firstContentUs.count / 2])")
+        print("ORG_FOLD_METRIC \(label) toggle_to_render_median_us=\(toggleUs[toggleUs.count / 2]) max_us=\(toggleUs.last ?? 0)")
+        print("ORG_FOLD_METRIC \(label) conversion_median_us=\(conversionUs[conversionUs.count / 2])")
     }
 
     @Test("Org conversion skips later stages when cancelled after parsing")

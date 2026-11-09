@@ -22,8 +22,8 @@ struct OrgHeadingFoldTests {
     * Gamma
     """
 
-    // Source lines of the headings above.
-    private let alpha = 1, alphaOne = 3, alphaOneDeep = 5, alphaTwo = 7, beta = 9, gamma = 11
+    // The headings above, by ordinal.
+    private let alpha = 1, alphaOne = 2, alphaOneDeep = 3, alphaTwo = 4, beta = 5, gamma = 6
 
     private func shown(folding folded: Set<Int>, _ source: String = outline) throws -> String {
         let markdown = DocumentRenderPipeline.orgToMarkdown(
@@ -120,7 +120,7 @@ struct OrgHeadingFoldTests {
 
     @Test func skippedLevelsAndTextBeforeTheFirstHeadingFoldAsOrgReadsThem() throws {
         let source = "preamble\n*** Deep start\ndeep text\n* Top\ntop text\n** Sub\nsub text"
-        let markdown = try shown(folding: [2, 6], source)
+        let markdown = try shown(folding: [1, 3], source)
         #expect(markdown.contains("preamble"))
         #expect(!markdown.contains("deep text"), "a level-3 heading ends at the level-1 heading after it")
         #expect(markdown.contains("top text"))
@@ -131,6 +131,35 @@ struct OrgHeadingFoldTests {
         let converted = DocumentRenderPipeline.orgToMarkdown(Self.outline, cancellationCheck: { false })
         let markdown = try #require(converted)
         #expect(folds(markdown).isEmpty)
+    }
+
+    @Test func aFoldNamesItsHeadingByOrdinalSoASaveDoesNotMoveIt() throws {
+        let source = "#+TODO: NEXT | DONE\n* NEXT Plan\nplan body\n* Notes\nnotes body"
+        // A done state writes a CLOSED line under the heading: every line below moves down.
+        let saved = "#+TODO: NEXT | DONE\n* DONE Plan\nCLOSED: [2026-11-06 Fri 14:00]\nplan body\n* Notes\nnotes body"
+        let before = try shown(folding: [2], source)
+        let after = try shown(folding: [2], saved)
+        #expect(!before.contains("notes body") && before.contains("plan body"))
+        #expect(!after.contains("notes body") && after.contains("plan body"), "the same heading stays folded")
+    }
+
+    @Test func aFoldedHeadingEndsInAMarkAndAnOpenOneDoesNot() throws {
+        func marks(_ markdown: String) -> Int { markdown.components(separatedBy: "text=\"…\"").count - 1 }
+        #expect(try marks(shown(folding: [alphaOne])) == 1)
+        #expect(try marks(shown(folding: [])) == 0)
+        // Hidden headings show no mark of their own.
+        #expect(try marks(shown(folding: [alpha, alphaOne])) == 1)
+    }
+
+    @Test func parsingOnceServesEveryFold() throws {
+        let document = OrgReaderDocument(source: Self.outline, documentPath: nil, offersStateControl: false)
+        let openResult = document.markdown(folded: [], cancellationCheck: { false })
+        let foldedResult = document.markdown(folded: [alpha], cancellationCheck: { false })
+        let open = try #require(openResult)
+        let folded = try #require(foldedResult)
+        #expect(try open == shown(folding: []))
+        #expect(try folded == shown(folding: [alpha]))
+        #expect(document.markdown(folded: [], cancellationCheck: { true }) == nil)
     }
 
     // MARK: - Text view
@@ -202,10 +231,10 @@ struct OrgHeadingFoldTests {
     @MainActor
     @Test func aHeadingSpeaksItsWordsAndStateAndTheFoldActionIsTheTap() throws {
         let owner = Owner()
-        let (view, window) = try textView("* Alpha\nalpha body\n** Inner\ninner body", owner: owner, folded: [3])
+        let (view, window) = try textView("* Alpha\nalpha body\n** Inner\ninner body", owner: owner, folded: [2])
         _ = window
         let elements = (view.accessibilityElements ?? []).compactMap { $0 as? ReaderTaskControlElement }
-        #expect(elements.map(\.accessibilityIdentifier) == ["fileViewer.heading.fold.1", "fileViewer.heading.fold.3"])
+        #expect(elements.map(\.accessibilityIdentifier) == ["fileViewer.heading.fold.1", "fileViewer.heading.fold.2"])
         #expect(elements.map(\.accessibilityLabel) == ["Alpha", "Inner"], "the chevron adds no words to the line")
         #expect(elements.map(\.accessibilityValue) == ["Expanded", "Collapsed"])
         #expect(elements.map { $0.accessibilityCustomActions?.map(\.name) } == [["Collapse"], ["Expand"]])
@@ -223,9 +252,34 @@ struct OrgHeadingFoldTests {
         let owner = Owner()
         let (view, window) = try textView("#+TODO: NEXT | DONE\n* NEXT Plan\n- [ ] a", owner: owner)
         _ = window
-        #expect(view.allowsTaskControls, "folding alone makes the heading live")
+        #expect(view.allowsReaderControls, "folding alone makes the heading live")
         let ids = (view.accessibilityElements ?? []).compactMap { ($0 as? ReaderTaskControlElement)?.accessibilityIdentifier }
-        #expect(ids == ["fileViewer.heading.fold.2"], "no state or checkbox button while edits are off")
+        #expect(ids == ["fileViewer.heading.fold.1"], "no state or checkbox button while edits are off")
         #expect(view.taskStateMenu(forTextIn: NSRange(location: 2, length: 2)) == nil)
+    }
+
+    @MainActor
+    @Test func theOwnerHearsEachFoldAndANewReaderStartsFromThem() {
+        var heard: [Set<Int>] = []
+        let memory = OrgFoldMemory(folded: [2]) { heard.append($0) }
+        let controls = OrgReaderControls(source: Self.outline, documentPath: nil, editing: nil, memory: memory)
+        #expect(controls.folded == [2], "a new reader starts from what the last one left")
+        var renders = 0
+        controls.onFoldChange = { renders += 1 }
+        controls.toggleFold(ordinal: 5)
+        controls.toggleFold(ordinal: 2)
+        #expect(heard == [[2, 5], [5]])
+        #expect(controls.folded == [5])
+        #expect(renders == 2)
+    }
+
+    @MainActor
+    @Test func voiceOverIsSentToTheHeadingTheFoldChanged() throws {
+        let owner = Owner()
+        let (view, window) = try textView("* Alpha\nalpha body\n** Inner\ninner body", owner: owner, folded: [2])
+        let element = try #require(OrgReaderControls.foldElement(ordinal: 2, in: window))
+        #expect(element.accessibilityValue == "Collapsed")
+        #expect(OrgReaderControls.foldElement(ordinal: 9, in: window) == nil)
+        _ = view
     }
 }

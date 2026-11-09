@@ -55,16 +55,20 @@ enum OrgBadges {
     /// The chevron before a heading that has a section under it. Tapping the
     /// heading folds or unfolds the section; VoiceOver hears the state as the
     /// heading's value, not as words of its own.
-    static func fold(line: Int, isExpanded: Bool) -> MarkdownBadge {
+    static func fold(ordinal: Int, isExpanded: Bool) -> MarkdownBadge {
         MarkdownBadge(
             text: "",
             label: isExpanded ? "Expanded" : "Collapsed",
             tone: .quiet,
             shape: .disclosure,
             symbol: isExpanded ? "chevron.down" : "chevron.right",
-            control: ReaderTaskControl(kind: .fold(isExpanded: isExpanded), line: line)
+            control: ReaderTaskControl(kind: .fold(isExpanded: isExpanded), line: ordinal)
         )
     }
+
+    /// Trails a folded heading's title, as Emacs does: something is hidden here.
+    /// It is a mark, not words: the heading's value already says "Collapsed".
+    static let foldedMark = MarkdownBadge(text: "…", label: "", tone: .quiet, shape: .capsule)
 
     static func priority(_ priority: String) -> MarkdownBadge {
         MarkdownBadge(text: "#\(priority)", label: "priority \(priority)", tone: .neutral)

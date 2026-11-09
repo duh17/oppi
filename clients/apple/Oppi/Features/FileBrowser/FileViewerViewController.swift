@@ -147,6 +147,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     var onEditingChange: ((Bool) -> Void)?
     /// The browser's shared positions, else the viewer's own: a remount (a task save) keeps the place.
     var markdownViewportRestore = FileBrowserViewportRestore()
+    /// The Org headings folded in each file this viewer has shown, by ordinal.
+    /// A save mounts a new reader, which starts from these.
+    private var orgFolds: [String: Set<Int>] = [:]
 
     // MARK: State
 
@@ -682,6 +685,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             markdownViewportIntent: markdownViewportRestore.state[path],
             onMarkdownViewportIntentChange: { [weak self] in self?.markdownViewportRestore.state[path] = $0 },
             taskEditing: editOwner.makeReaderTaskEditing(path: path) { [weak self] text in if self?.isCurrentFile(path) == true { self?.content = .text(text) } },
+            orgFolds: OrgFoldMemory(folded: orgFolds[path] ?? []) { [weak self] in self?.orgFolds[path] = $0 },
             addToChatDestination: configuration.addToChatDestination
         )
         reader.setLeadingFloatingAccessoryCount(leadingAccessoryCount)

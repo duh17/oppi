@@ -447,6 +447,7 @@ extension FullScreenCodeContent {
                 ),
                 sourceFilePath: filePath,
                 taskEditing: context.taskEditing,
+                orgFolds: context.orgFolds,
                 centersReadingColumn: true,
                 readerPreferences: readerPreferences,
                 perfSurface: .fullScreenMarkdown
@@ -612,6 +613,8 @@ struct ReaderBodyContext {
     /// Set when the reader's owner can save the document: Markdown and Org
     /// bodies then draw working task controls.
     let taskEditing: ReaderTaskEditing?
+    /// Where an Org body keeps its folds between readers of the same file.
+    let orgFolds: OrgFoldMemory?
     /// Keeps the trace observation of the body being built; the reader ends it
     /// when that body leaves.
     let adoptTrace: (ReaderTraceToken) -> Void

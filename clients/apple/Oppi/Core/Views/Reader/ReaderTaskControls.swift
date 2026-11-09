@@ -164,7 +164,8 @@ extension BaselineSafeTextView {
         return scan
     }
 
-    var allowsTaskControls: Bool {
+    /// Whether the text holds a control that acts now: an edit, or a fold.
+    var allowsReaderControls: Bool {
         guard let handler = taskControlHandler, handler.allowsTaskControls || handler.allowsFolding else { return false }
         return scanTaskAttachments().holdsControls
     }
@@ -173,7 +174,7 @@ extension BaselineSafeTextView {
     /// checkboxes, which UIKit's lines leave out, or controls) rather than as
     /// one element.
     var usesSpokenLines: Bool {
-        textLayoutManager != nil && (scanTaskAttachments().holdsSpokenAttachments || allowsTaskControls)
+        textLayoutManager != nil && (scanTaskAttachments().holdsSpokenAttachments || allowsReaderControls)
     }
 
     func invalidateTaskControls() {
@@ -231,7 +232,7 @@ extension BaselineSafeTextView {
     /// The control whose touch area holds `point`, nearest its centre when the
     /// areas of two overlap. Reads only the lines near the point.
     func taskControl(at point: CGPoint) -> ReaderLocatedTaskControl? {
-        guard allowsTaskControls,
+        guard allowsReaderControls,
               let layout = textLayoutManager,
               let content = layout.textContentManager else { return nil }
         let reach = MarkdownTaskCheckbox.hitSize / 2
@@ -258,7 +259,7 @@ extension BaselineSafeTextView {
     /// `point` is on a link in it: the whole heading folds it, and a link in
     /// the title still opens.
     func foldControl(at point: CGPoint) -> ReaderTaskControl? {
-        guard allowsTaskControls,
+        guard allowsReaderControls,
               taskControlHandler?.allowsFolding == true,
               // A badge on the heading (its state, a date) keeps its own touch.
               taskControl(at: point) == nil,
@@ -306,7 +307,7 @@ extension BaselineSafeTextView {
     /// VoiceOver's way to the same owner action a touch reaches.
     @discardableResult
     func activateTaskControl(_ control: ReaderTaskControl) -> Bool {
-        guard allowsTaskControls,
+        guard allowsReaderControls,
               let layout = textLayoutManager,
               let content = layout.textContentManager,
               let located = taskControls(
@@ -348,7 +349,7 @@ extension BaselineSafeTextView {
         let key = TaskAccessibilityKey(
             length: textStorage.length,
             size: bounds.size,
-            controlsEnabled: allowsTaskControls,
+            controlsEnabled: allowsReaderControls,
             editsEnabled: taskControlHandler?.allowsTaskControls == true
         )
         if let cache = taskAccessibilityCache, cache.key == key { return cache.elements }

@@ -4,7 +4,21 @@ import Foundation
 /// headings are folded. A heading's section is everything after it up to the
 /// next heading of the same or a higher level (a lower star count), so a
 /// folded heading hides its sub-headings with its body.
+///
+/// A heading is named by its ordinal: its 1-based place among the document's
+/// top-level headings. Unlike a source line, an ordinal survives a task edit
+/// (a checkbox, a state, a planning line) that moves the lines below it, so a
+/// reader keeps its folds across a save.
 enum OrgFolding {
+    /// Each top-level heading's ordinal, by the source line it starts on.
+    static func ordinals(of blocks: [LocatedOrgBlock]) -> [Int: Int] {
+        var ordinals: [Int: Int] = [:]
+        for located in blocks {
+            if case .heading = located.block { ordinals[located.line] = ordinals.count + 1 }
+        }
+        return ordinals
+    }
+
     /// The blocks under each foldable heading, keyed by the heading's source
     /// line. A heading with nothing under it is not foldable and is left out.
     static func sections(of blocks: [LocatedOrgBlock]) -> [Int: Range<Int>] {

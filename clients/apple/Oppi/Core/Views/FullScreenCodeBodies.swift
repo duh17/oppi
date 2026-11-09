@@ -509,6 +509,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         resourceAccess: MarkdownResourceAccess = .empty,
         sourceFilePath: String? = nil,
         taskEditing: ReaderTaskEditing? = nil,
+        orgFolds: OrgFoldMemory? = nil,
         centersReadingColumn: Bool = false,
         lineAnchor: SourceLineAnchor? = nil,
         focusLineAnchor: Bool = true,
@@ -533,7 +534,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.resourceAccess = resourceAccess
         self.sourceFilePath = sourceFilePath
         self.taskEditing = taskEditing
-        self.orgControls = sourceFormat == .orgMode ? OrgReaderControls(editing: taskEditing) : nil
+        self.orgControls = sourceFormat == .orgMode ? OrgReaderControls(source: content, documentPath: sourceFilePath, editing: taskEditing, memory: orgFolds) : nil
         self.centersReadingColumn = centersReadingColumn
         self.lineAnchor = lineAnchor
         let initialText = content
@@ -624,10 +625,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             lineAnchorHighlightView.bottomAnchor.constraint(equalTo: collectionView.bottomAnchor),
         ])
 
-        orgControls?.onFoldChange = { [weak self] in self?.scheduleOrgModeSourcePreparation(source: content) }
+        orgControls?.onFoldChange = { [weak self] in self?.scheduleOrgModeSourcePreparation() }
         if sourceFormat == .orgMode {
             installDeferredRenderPlaceholder(palette: palette)
-            scheduleOrgModeSourcePreparation(source: content)
+            scheduleOrgModeSourcePreparation()
         } else if shouldDeferInitialRender(snapshot: initialSnapshot) {
             installDeferredRenderPlaceholder(palette: palette)
             scheduleDeferredInitialRender(snapshot: initialSnapshot)
@@ -741,18 +742,13 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 
     nonisolated private static func prepareOrgModeSource(
-        _ source: String,
-        documentPath: String?,
-        editable: Bool,
+        _ document: OrgReaderDocument,
         folded: Set<Int>
     ) -> PreparedOrgModeSource? {
         let started = DispatchTime.now().uptimeNanoseconds
         let ranOnMainThread = Thread.isMainThread
-        guard let markdown = DocumentRenderPipeline.orgToMarkdown(
-            source,
-            documentPath: documentPath,
-            offersStateControl: editable,
-            foldingHeadings: .init(folded: folded),
+        guard let markdown = document.markdown(
+            folded: folded,
             cancellationCheck: { Task<Never, Never>.isCancelled }
         ) else { return nil }
         return PreparedOrgModeSource(
@@ -762,15 +758,14 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         )
     }
 
-    private func scheduleOrgModeSourcePreparation(source: String) {
-        let documentPath = sourceFilePath
-        let editable = taskEditing != nil
+    private func scheduleOrgModeSourcePreparation() {
+        guard let document = orgControls?.document else { return }
         let folded = orgControls?.folded ?? []
         sourcePreparationTask?.cancel()
         sourcePreparationTask = Task { @MainActor [weak self] in
             let prepared: PreparedOrgModeSource? = await withCancellableDetachedTask(priority: .userInitiated) {
                 guard !Task.isCancelled else { return nil }
-                return Self.prepareOrgModeSource(source, documentPath: documentPath, editable: editable, folded: folded)
+                return Self.prepareOrgModeSource(document, folded: folded)
             }
             guard let self, let prepared, !Task.isCancelled else { return }
             self.sourcePreparationTask = nil
@@ -781,6 +776,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             self.collectionView.backgroundView = nil
             self.applyPreparedDocument(prepared.markdown)
             self.applyPendingMutableTransitionViewportIntentIfReady()
+            self.orgControls?.announceFold(in: self)
         }
     }
 
@@ -2571,6 +2567,9 @@ extension NativeFullScreenMarkdownBody {
     var debugAsyncMarkdownBuildRanOnMainThreadForTesting: Bool? {
         debugAsyncMarkdownBuildRanOnMainThread
     }
+
+    var debugOrgControlsForTesting: OrgReaderControls? { orgControls }
+    func debugWaitForSourcePreparationForTesting() async { await sourcePreparationTask?.value }
 
     func debugWaitForDocumentPreparationForTesting() async {
         await sourcePreparationTask?.value

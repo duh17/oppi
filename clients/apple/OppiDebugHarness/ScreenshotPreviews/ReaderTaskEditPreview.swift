@@ -65,6 +65,7 @@ enum ReaderTaskEditFixture {
     * Notes
     - No dev install until Wednesday.
     - See [[*Ship Org rendering][the task above]] and [[https://example.com][the docs]].
+    - [ ] Review the screenshots
     """
 
     static let markdownSeed = """
@@ -208,6 +209,8 @@ final class ReaderTaskEditPreviewController: PreviewRootController {
     private var timer: Timer?
 
     init() {
+        // The dark default holds unless the capture names a theme.
+        ScreenshotVolatileDefaults.applyThemeScheme(ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"])
         ReaderTaskEditFixture.seed()
         let root = AppRootEnvironment.preview(
             coordinator: ConnectionCoordinator(serverStore: ServerStore()),
