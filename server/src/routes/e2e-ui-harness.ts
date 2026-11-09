@@ -30,7 +30,6 @@ const MAX_E2E_UI_MESSAGE_BYTES = 2 * 1024 * 1024;
 const MAX_E2E_FIXTURE_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_E2E_FIXTURE_BODY_BYTES = 8 * 1024 * 1024;
 const MAX_E2E_STOPPED_SESSION_FIXTURES = 500;
-const e2eStoppedSessionFixtureIds = new Set<string>();
 
 export function createE2EUIHarnessRoutes(
   ctx: RouteContext,
@@ -88,25 +87,21 @@ export function createE2EUIHarnessRoutes(
 
     const stoppedSessionsFixtureMatch = path.match(/^\/e2e\/ui\/fixtures\/stopped-sessions$/);
     if (stoppedSessionsFixtureMatch) {
-      if (method === "POST") {
-        await handleStoppedSessionsFixture(ctx, helpers, req, res);
-      } else if (method === "DELETE") {
-        await handleDeleteStoppedSessionsFixture(ctx, helpers, req, res);
-      } else {
+      if (method !== "POST") {
         helpers.error(res, 405, "Method not allowed");
+        return true;
       }
+      await handleStoppedSessionsFixture(ctx, helpers, req, res);
       return true;
     }
 
     const sessionThreadsFixtureMatch = path.match(/^\/e2e\/ui\/fixtures\/session-threads$/);
     if (sessionThreadsFixtureMatch) {
-      if (method === "POST") {
-        await handleSessionThreadsFixture(ctx, helpers, req, res);
-      } else if (method === "DELETE") {
-        handleDeleteSessionThreadsFixture(ctx, helpers, res);
-      } else {
+      if (method !== "POST") {
         helpers.error(res, 405, "Method not allowed");
+        return true;
       }
+      await handleSessionThreadsFixture(ctx, helpers, req, res);
       return true;
     }
 
@@ -418,62 +413,13 @@ async function handleStoppedSessionsFixture(
     session.lastActivity = lastActivityMs;
     session.messageCount = 1;
     ctx.storage.saveSession(session);
-    e2eStoppedSessionFixtureIds.add(session.id);
     sessionIds.push(session.id);
   }
 
   helpers.json(res, { ok: true, count: sessionIds.length, sessionIds });
 }
 
-async function handleDeleteStoppedSessionsFixture(
-  ctx: RouteContext,
-  helpers: RouteHelpers,
-  req: IncomingMessage,
-  res: ServerResponse,
-): Promise<void> {
-  const body = await helpers.parseBody<Record<string, unknown>>(req, {
-    maxBytes: MAX_E2E_FIXTURE_BODY_BYTES,
-  });
-  const workspaceId = stringField(body.workspaceId)?.trim();
-  const sessionIds = stringArrayField(body.sessionIds);
-  if (
-    !workspaceId ||
-    !sessionIds ||
-    sessionIds.length < 1 ||
-    sessionIds.length > MAX_E2E_STOPPED_SESSION_FIXTURES
-  ) {
-    helpers.error(
-      res,
-      400,
-      `Fixture cleanup requires workspaceId and 1-${MAX_E2E_STOPPED_SESSION_FIXTURES} sessionIds`,
-    );
-    return;
-  }
-
-  const sessions = sessionIds.map((sessionId) => ctx.storage.getSession(sessionId));
-  const ownsEverySession = sessionIds.every(
-    (sessionId, index) =>
-      e2eStoppedSessionFixtureIds.has(sessionId) &&
-      sessions[index]?.workspaceId === workspaceId &&
-      sessions[index]?.status === "stopped",
-  );
-  if (!ownsEverySession) {
-    helpers.error(res, 409, "Fixture cleanup only deletes owned stopped sessions");
-    return;
-  }
-
-  let deletedCount = 0;
-  for (const sessionId of sessionIds) {
-    if (ctx.storage.deleteSession(sessionId)) {
-      deletedCount += 1;
-      e2eStoppedSessionFixtureIds.delete(sessionId);
-    }
-  }
-  helpers.json(res, { ok: true, deletedCount });
-}
-
 const E2E_THREAD_STATUSES = new Set<Session["status"]>(["busy", "ready", "stopped", "error"]);
-const e2eSessionThreadFixtureIds = new Set<string>();
 
 /**
  * Seed a stored session-thread snapshot: sessions linked by launch parent. Times are
@@ -553,7 +499,6 @@ async function handleSessionThreadsFixture(
     if (status === "busy") session.currentTurnStartedAt = nowMs + activityOffset;
     else session.lastAgentReplyAt = nowMs + activityOffset;
     idsByKey.set(key, session.id);
-    e2eSessionThreadFixtureIds.add(session.id);
     let agent: { agentId: string; agentIcon?: IconChoice } | undefined;
     const agentId = stringField(item.agentId)?.trim();
     if (agentId) {
@@ -592,19 +537,6 @@ async function handleSessionThreadsFixture(
   }
 
   helpers.json(res, { ok: true, sessionIds: Object.fromEntries(idsByKey) });
-}
-
-function handleDeleteSessionThreadsFixture(
-  ctx: RouteContext,
-  helpers: RouteHelpers,
-  res: ServerResponse,
-): void {
-  let deletedCount = 0;
-  for (const sessionId of e2eSessionThreadFixtureIds) {
-    if (ctx.storage.deleteSession(sessionId)) deletedCount += 1;
-  }
-  e2eSessionThreadFixtureIds.clear();
-  helpers.json(res, { ok: true, deletedCount });
 }
 
 function randomTraceEntryId(): string {

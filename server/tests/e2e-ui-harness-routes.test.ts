@@ -205,41 +205,6 @@ describe("E2E UI harness routes", () => {
           }),
         ]),
       );
-
-      fixtureSessions.push({
-        id: "unowned-stopped-session",
-        workspaceId: "workspace-dense",
-        status: "stopped",
-      });
-      const rejectedCleanupResponse = makeResponse();
-      await dispatch({
-        method: "DELETE",
-        path: "/e2e/ui/fixtures/stopped-sessions",
-        url: new URL("http://localhost/e2e/ui/fixtures/stopped-sessions"),
-        req: makeRequest({
-          workspaceId: "workspace-dense",
-          sessionIds: ["unowned-stopped-session"],
-        }),
-        res: rejectedCleanupResponse as never,
-      });
-      expect(rejectedCleanupResponse.statusCode).toBe(409);
-      expect(fixtureSessions.pop()?.id).toBe("unowned-stopped-session");
-
-      const cleanupResponse = makeResponse();
-      await dispatch({
-        method: "DELETE",
-        path: "/e2e/ui/fixtures/stopped-sessions",
-        url: new URL("http://localhost/e2e/ui/fixtures/stopped-sessions"),
-        req: makeRequest({
-          workspaceId: "workspace-dense",
-          sessionIds: createBody.sessionIds,
-        }),
-        res: cleanupResponse as never,
-      });
-
-      expect(cleanupResponse.statusCode).toBe(200);
-      expect(JSON.parse(cleanupResponse.body)).toEqual({ ok: true, deletedCount: 3 });
-      expect(fixtureSessions).toHaveLength(0);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
