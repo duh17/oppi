@@ -494,7 +494,7 @@ const TAGS = {
   provider: {
     kind: "name",
     description:
-      "LLM provider from the session-configured canonical `provider/modelId` route, or the provider whose usage quota was fetched. Omitted when missing or malformed.",
+      "LLM provider from the session-configured canonical `provider/modelId` route. Omitted when missing or malformed.",
   },
   model: {
     kind: "name",
@@ -887,13 +887,11 @@ const EVENTS = {
     slo: [{ field: "duration_ms", tm99: 1_000, label: "Workspace load" }],
   },
   "app.model_providers_load": {
-    description:
-      "How long from a Model Providers load starting until the connection was ready, the providers showed, and the usage filled in? A failed usage read is `error` and still reports usage_ms.",
+    description: "How long until Model Providers was connected, listed, and showed usage?",
     group: "ux",
     fields: { ready_ms: "ms", providers_ms: "ms", usage_ms: "ms" },
     tags: { status: { required: true, values: ["ok", "error"] } },
     emit: [{ field: "providers_ms", max: LOAD_CEILING_MS }],
-    slo: [{ field: "providers_ms", tm99: 1_000, label: "Model Providers load" }],
   },
 
   // ─── App: connection, commands, and queue ───
@@ -1608,13 +1606,6 @@ const EVENTS = {
       path_pattern: { required: true },
       status_code: { required: true },
     },
-  },
-  "server.provider_quota_fetch": {
-    description:
-      "How long did one provider's usage-quota upstream fetch take, and did it fail? Cache hits are not fetches.",
-    group: "server_ops",
-    fields: { duration_ms: "ms" },
-    tags: { provider: { required: true }, status: { required: true, values: ["ok", "error"] } },
   },
   "server.mcp_connect": {
     description:

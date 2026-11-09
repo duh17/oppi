@@ -107,7 +107,7 @@ User-visible wait time. Do not put full agent work duration in this group.
 | `app.session_switch` | How long from tapping a session row until chat content was visible? | `duration_ms` ms<br>`cached` bool | none | emit `duration_ms` < 60000<br>SLO `duration_ms` TM99 ≤ 600 |
 | `app.trace_fetch` | How long did fetching and decoding a trace page take? | `duration_ms` ms<br>`trace_events` count (optional) | `status`*: `ok`, `error`<br>`error_kind` | SLO `duration_ms` TM99 ≤ 1500 when status=ok |
 | `app.workspace_load` | How long until the workspace screen was usable? | `duration_ms` ms | `load_path`*: `open`, `return_from_chat` | emit `duration_ms` < 60000<br>SLO `duration_ms` TM99 ≤ 1000 |
-| `app.model_providers_load` | How long from a Model Providers load starting until the connection was ready, the providers showed, and the usage filled in? A failed usage read is `error` and still reports usage_ms. | `ready_ms` ms<br>`providers_ms` ms<br>`usage_ms` ms | `status`*: `ok`, `error` | emit `providers_ms` < 60000<br>SLO `providers_ms` TM99 ≤ 1000 |
+| `app.model_providers_load` | How long until Model Providers was connected, listed, and showed usage? | `ready_ms` ms<br>`providers_ms` ms<br>`usage_ms` ms | `status`*: `ok`, `error` | emit `providers_ms` < 60000 |
 
 #### Connection Reliability
 
@@ -250,7 +250,6 @@ HTTP routes, WebSocket plumbing, push, MCP, schedules, and session lifecycle dri
 | `server.sdk_session_setup` | How did classic SDK session creation split between SDK setup and extension bind? | `sdk_ms` ms<br>`bind_ms` ms | none | none |
 | `server.session_end` | Why did sessions end? | none | `reason`*: `completed`, `stopped`, `error`, `idle_timeout`, `server_restart`, `store_failed`, `other` | none |
 | `server.http_request` | How long did an HTTP request take and how many body bytes did it write? Fast successful routine routes are omitted. | `duration_ms` ms<br>`response_bytes` bytes (optional) | `method`*<br>`path_pattern`*<br>`status_code`* | none |
-| `server.provider_quota_fetch` | How long did one provider's usage-quota upstream fetch take, and did it fail? Cache hits are not fetches. | `duration_ms` ms | `provider`*<br>`status`*: `ok`, `error` | none |
 | `server.mcp_connect` | How long did a durable session's first connect to an MCP server take, at session start or at the first call of a codemode-only server, and did it fail? | `duration_ms` ms | `status`*: `ok`, `error`<br>`error_kind`: `auth`, `connect`, `config` | none |
 | `server.schedule_run` | How long did dispatching a schedule run take, and why did it fail? | `duration_ms` ms | `run_kind`*<br>`status`*: `ok`, `error`<br>`reason`: `lease_lost`, `not_found`, `launch_in_progress`, `other` | none |
 | `server.push` | How did a push send resolve, and how long did seal-and-relay take? | `send_ms` ms (optional) | `notification`*<br>`result`*: `delivered`, `gone`, `rejected`, `unavailable`, `failed`, `throttled`, `no_activity` | none |

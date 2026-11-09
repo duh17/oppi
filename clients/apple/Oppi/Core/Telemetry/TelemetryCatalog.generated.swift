@@ -949,7 +949,7 @@ struct AppWorkspaceLoad: TelemetryEvent {
     }
 }
 
-/// How long from a Model Providers load starting until the connection was ready, the providers showed, and the usage filled in? A failed usage read is `error` and still reports usage_ms.
+/// How long until Model Providers was connected, listed, and showed usage?
 struct AppModelProvidersLoad: TelemetryEvent {
     static let name = "app.model_providers_load"
 

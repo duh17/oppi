@@ -155,8 +155,7 @@ import { DictationDictionaryStore } from "./storage/dictation-dictionary-store.j
 import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 import { McpService } from "./mcp-service.js";
-import { ProviderQuotaCache } from "./provider-quota/cache.js";
-import { fetchProviderQuotas, quotaAdaptersForProviders } from "./provider-quota.js";
+import { ProviderQuotaService } from "./provider-quota/service.js";
 import {
   garbageCollectUploadStore,
   resolveUploadStoreConfig,
@@ -477,7 +476,11 @@ export class Server {
   private models!: ModelCatalog;
   private extensionProviderCatalog!: ExtensionProviderCatalog;
   /** Usage snapshots for GET /server/provider-quotas; dropped when credentials or providers change. */
-  private readonly providerQuotaCache = new ProviderQuotaCache();
+  private readonly providerQuotas = new ProviderQuotaService({
+    catalog: () => this.extensionProviderCatalog,
+    modelRuntime: () => this.modelRuntime,
+    openaiUseCodexPlan: () => this.storage.getConfig().providerQuotas?.openaiUseCodexPlan === true,
+  });
   private providerAuth!: ProviderAuthManager;
   private mcp!: McpService;
 
@@ -903,7 +906,7 @@ export class Server {
     this.extensionProviderCatalog = new ExtensionProviderCatalog(this.modelRuntime, {
       cwd: process.cwd(),
       agentDir,
-      onProvidersChanged: () => this.providerQuotaCache.invalidate(),
+      onProvidersChanged: () => this.providerQuotas.invalidate(),
     });
     try {
       await this.extensionProviderCatalog.sync();
@@ -948,7 +951,7 @@ export class Server {
         return [...knownApiKeyProviders];
       },
       onCredentialsChanged: () => {
-        this.providerQuotaCache.invalidate();
+        this.providerQuotas.invalidate();
         return this.models.refresh();
       },
     });
@@ -981,25 +984,7 @@ export class Server {
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
       refreshModelCatalog: (options) => this.refreshModelCatalog(options),
       getModelCatalog: () => this.models.getAll(),
-      getProviderQuotasStatus: async () => {
-        await this.extensionProviderCatalog.sync();
-        return fetchProviderQuotas({
-          modelRuntime: this.modelRuntime,
-          openaiUseCodexPlan: this.storage.getConfig().providerQuotas?.openaiUseCodexPlan === true,
-          cache: this.providerQuotaCache,
-          onAdapterFetched: ({ providerId, durationMs, ok }) =>
-            this.opsMetrics.record(
-              "server.provider_quota_fetch",
-              { duration_ms: durationMs },
-              { provider: providerId, status: ok ? "ok" : "error" },
-            ),
-          adapters: quotaAdaptersForProviders(
-            this.extensionProviderCatalog.getRegisteredProviderIds(),
-            this.extensionProviderCatalog.getQuotaAdapters(this.modelRuntime),
-            this.modelRuntime,
-          ),
-        });
-      },
+      getProviderQuotasStatus: () => this.providerQuotas.status(),
       getProviderAuth: async (providerId) => this.modelRuntime?.getAuth(providerId),
       voiceBackendHealth: this.voiceBackendHealth,
       searchIndex: this.searchIndex ?? undefined,
