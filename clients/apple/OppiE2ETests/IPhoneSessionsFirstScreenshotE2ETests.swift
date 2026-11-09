@@ -800,6 +800,12 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             "All Sessions back button never settled after opening the workspace"
         )
         swipeBackFromLeadingEdge()
+        // A pop that stalls part way keeps the workspace's back button in the tree
+        // while the root's title is already there, so wait for the pop to finish.
+        XCTAssertTrue(
+            app.buttons["All Sessions"].waitForNonExistence(timeout: 5),
+            "Edge swipe did not finish popping to All Sessions"
+        )
         XCTAssertTrue(app.staticTexts["All Sessions"].waitForExistence(timeout: 5), "Edge swipe did not return to All Sessions")
     }
 
