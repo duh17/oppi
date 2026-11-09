@@ -1,18 +1,25 @@
 import UIKit
 
-/// The book's table of contents in a sheet: one row per entry that names a
-/// chapter in the reading order, indented by how deeply the book nests it, with
-/// the chapter on screen marked and scrolled into view.
+/// A table of contents in a sheet: one row per entry, indented by how deeply
+/// the document nests it, with the entry on screen marked and scrolled into
+/// view. A book lists its chapters; a file reader lists its headings
+/// (`ReaderOutline`), under its own identifier prefix.
 @MainActor
 final class BookTableOfContentsViewController: UIViewController {
     struct Row: Equatable {
         let title: String
-        /// Nesting depth from the book's own table of contents.
+        /// Nesting depth from the document's own table of contents.
         let level: Int
-        /// Index in the book's reading order.
+        /// Index in the book's reading order, or the heading's ordinal.
         let chapter: Int
+        /// An Org TODO state that leads the title, and whether it is a done one.
+        var keyword: String?
+        var isDone = false
+        /// Names this row for automation; rows share one identifier without it.
+        var identifier: String?
     }
 
+    private let identifierPrefix: String
     private let bookTitle: String
     private let rows: [Row]
     private let currentChapter: Int
@@ -32,8 +39,10 @@ final class BookTableOfContentsViewController: UIViewController {
         currentChapter: Int,
         palette: ThemePalette,
         appearance: BookReaderAppearance = BookReaderAppearance(),
+        identifierPrefix: String = "fullScreen.book.tocSheet",
         onSelect: @escaping (Int) -> Void
     ) {
+        self.identifierPrefix = identifierPrefix
         self.bookTitle = bookTitle
         self.rows = rows
         self.currentChapter = currentChapter
@@ -53,20 +62,20 @@ final class BookTableOfContentsViewController: UIViewController {
         // The sheet's own labels are system colours; on a light page they must be
         // the light-appearance ones.
         overrideUserInterfaceStyle = ReaderPaper.isLight(paper) ? .light : .dark
-        view.accessibilityIdentifier = "fullScreen.book.tocSheet"
+        view.accessibilityIdentifier = identifierPrefix
 
         titleLabel.text = bookTitle
         titleLabel.font = .scaled(.headline)
         titleLabel.textColor = appearance.textColor(in: palette)
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.numberOfLines = 2
-        titleLabel.accessibilityIdentifier = "fullScreen.book.tocSheet.title"
+        titleLabel.accessibilityIdentifier = "\(identifierPrefix).title"
 
         doneButton.setTitle(String(localized: "Done"), for: .normal)
         doneButton.titleLabel?.font = .scaled(.body, .semibold)
         doneButton.tintColor = appearance.linkColor(in: palette)
         doneButton.addTarget(self, action: #selector(done), for: .touchUpInside)
-        doneButton.accessibilityIdentifier = "fullScreen.book.tocSheet.done"
+        doneButton.accessibilityIdentifier = "\(identifierPrefix).done"
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.dataSource = self
@@ -74,7 +83,7 @@ final class BookTableOfContentsViewController: UIViewController {
         tableView.backgroundColor = paper
         tableView.separatorInset = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 0)
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "toc")
-        tableView.accessibilityIdentifier = "fullScreen.book.tocSheet.list"
+        tableView.accessibilityIdentifier = "\(identifierPrefix).list"
 
         for view in [titleLabel, doneButton, tableView] {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -121,22 +130,36 @@ extension BookTableOfContentsViewController: UITableViewDataSource, UITableViewD
         let cell = tableView.dequeueReusableCell(withIdentifier: "toc", for: indexPath)
         let row = rows[indexPath.row]
         var content = UIListContentConfiguration.cell()
-        content.text = row.title
-        content.textProperties.font = .scaled(row.level == 0 ? .body : .subheadline)
-        content.textProperties.color = row.chapter == currentChapter
-            ? appearance.linkColor(in: palette)
-            : appearance.textColor(in: palette)
+        let font = UIFont.scaled(row.level == 0 ? .body : .subheadline)
+        let ink = row.chapter == currentChapter ? appearance.linkColor(in: palette) : appearance.textColor(in: palette)
+        if let keyword = row.keyword {
+            // The state leads the title, quieter once it is done.
+            let text = NSMutableAttributedString(
+                string: keyword + " ",
+                attributes: [
+                    .font: UIFont.scaled(.caption1, .semibold),
+                    .foregroundColor: row.isDone ? palette.ui.fgDim : palette.ui.blue,
+                ]
+            )
+            text.append(NSAttributedString(string: row.title, attributes: [.font: font, .foregroundColor: ink]))
+            content.attributedText = text
+        } else {
+            content.text = row.title
+            content.textProperties.font = font
+            content.textProperties.color = ink
+        }
         content.textProperties.numberOfLines = 2
         content.directionalLayoutMargins.leading = 20 + CGFloat(min(row.level, 5)) * 16
         cell.contentConfiguration = content
         cell.backgroundColor = .clear
         cell.accessoryType = row.chapter == currentChapter ? .checkmark : .none
         cell.tintColor = appearance.linkColor(in: palette)
-        cell.accessibilityIdentifier = "fullScreen.book.tocSheet.row"
-        // One stop per row: the title, and whether it is the chapter on screen.
+        cell.accessibilityIdentifier = row.identifier ?? "\(identifierPrefix).row"
+        // One stop per row: the state and title, and whether it is the chapter on screen.
+        let spoken = row.keyword.map { "\($0), \(row.title)" } ?? row.title
         cell.accessibilityLabel = row.chapter == currentChapter
-            ? String(localized: "\(row.title), current chapter")
-            : row.title
+            ? String(localized: "\(spoken), current chapter")
+            : spoken
         cell.accessibilityTraits = row.chapter == currentChapter ? [.button, .selected] : .button
         return cell
     }

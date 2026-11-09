@@ -496,11 +496,12 @@ enum OrgToMarkdownConverter {
         return nil
     }
 
-    /// A link to this document: the reader scrolls to the heading in place. Nil
+    /// A link to this document: the reader scrolls to the heading in place
+    /// (`oppi-heading:#title=…`, `ReaderHeadingAnchor.linkDestination`). Nil
     /// without the document's name, as before, so a render that cannot open
     /// files shows the label alone.
     private static func inDocument(_ anchor: ReaderHeadingAnchor, _ context: Context) -> String? {
-        context.documentName == nil ? nil : "#" + anchor.fragment
+        context.documentName == nil ? nil : anchor.linkDestination
     }
 
     /// The file of a `file:` link, with the heading its `::*Heading` or

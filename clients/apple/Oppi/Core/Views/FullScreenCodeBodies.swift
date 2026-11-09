@@ -108,7 +108,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     /// merges into one text view otherwise, which is expensive to lay out and
     /// leaves no block to restore a reading position to.
     private let mergesAdjacentTextSegments: Bool
-    private let themeID: ThemeID
+    let themeID: ThemeID
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
     private var textSelectionEnabled: Bool
@@ -122,7 +122,11 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     /// An Org document's controls: heading folds, then the task controls above.
     let orgControls: OrgReaderControls?
     /// Where each heading is, for jumping to one (`NativeFullScreenMarkdownBody+Headings`).
-    var headingPlacement = ReaderHeadingPlacement()
+    var headingPlacement = ReaderHeadingPlacement() {
+        didSet { if oldValue.hasHeadings != headingPlacement.hasHeadings { onOutlineChange?() } }
+    }
+    /// The document gained or lost its headings: the reader shows or hides Outline.
+    var onOutlineChange: (() -> Void)?
     private let lineAnchor: SourceLineAnchor?
     private let lineAnchorResolution: SourceLineAnchorResolution?
     private let maximumViewportHeight: CGFloat?

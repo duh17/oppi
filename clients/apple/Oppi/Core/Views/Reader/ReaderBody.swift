@@ -48,6 +48,15 @@ protocol ReaderBody: UIView {
 
     /// The body's paper changed (the person picked another reading theme).
     var onContentSurfaceChange: ((ReaderContentSurface?) -> Void)? { get set }
+
+    /// Whether the document has headings to list in an Outline.
+    var hasOutline: Bool { get }
+
+    /// `hasOutline` changed; the reader shows or hides its Outline button.
+    var onOutlineChange: (() -> Void)? { get set }
+
+    /// Lists the headings, presented from `sourceItem`; choosing one scrolls to it.
+    func presentOutline(from host: UIViewController, sourceItem: UIBarButtonItem)
 }
 
 /// A page's own paper and the ink that holds on it.
@@ -78,6 +87,15 @@ extension ReaderBody {
         get { nil }
         set {}
     }
+
+    var hasOutline: Bool { false }
+
+    var onOutlineChange: (() -> Void)? {
+        get { nil }
+        set {}
+    }
+
+    func presentOutline(from host: UIViewController, sourceItem: UIBarButtonItem) {}
 
     var viewportIntent: FullScreenMarkdownViewportIntent? { nil }
 

@@ -80,8 +80,11 @@ enum ReaderTaskEditFixture {
         #+TODO: TODO NEXT WAIT | DONE CANCELLED
 
         * Index
-        Jump to [[*Deep dive][the deep dive]], [[id:5b0c7d2e-4f1a-4a5e-9c3d-1e2f3a4b5c6d][the shipping plan]],
-        [[#release-notes][the release notes]] or [[*Missing heading][a heading that is gone]].
+        Jump to:
+        - [[*Deep dive][Go to the deep dive]]
+        - [[id:5b0c7d2e-4f1a-4a5e-9c3d-1e2f3a4b5c6d][Go to the shipping plan]]
+        - [[#release-notes][Go to the release notes]]
+        - [[*Missing heading][A heading that is gone]]
 
         """
         text += "* NEXT Planning\n\(section(1))\n\n** DONE Goals\n\(section(2))\n\n"
@@ -299,8 +302,9 @@ final class ReaderTaskEditPreviewController: PreviewRootController {
             readout.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             readout.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             readout.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            change.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
-            change.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            // Bottom-leading: the top trailing corner is the reader's bar.
+            change.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
+            change.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
         ])
         refreshReadout()
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in

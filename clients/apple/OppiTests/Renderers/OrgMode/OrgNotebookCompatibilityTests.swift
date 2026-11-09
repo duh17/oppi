@@ -367,7 +367,9 @@ struct OrgNotebookCompatibilityTests {
         :END:
         See [[*Ship Org rendering]], [[id:abc-123]], [[#ship]], [[*Missing]], [[id:zzz]] and [[#nope]].
         """
-        #expect(linkDestinations(source) == ["#title=Ship%20Org%20rendering", "#id=abc-123", "#custom=ship"])
+        #expect(linkDestinations(source) == [
+            "oppi-heading:#title=Ship%20Org%20rendering", "oppi-heading:#id=abc-123", "oppi-heading:#custom=ship",
+        ])
         #expect(linkDestinations(source, documentPath: nil).isEmpty)
     }
 

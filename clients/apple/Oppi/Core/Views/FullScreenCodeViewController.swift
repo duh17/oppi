@@ -71,6 +71,8 @@ final class FullScreenCodeViewController: UIViewController {
     private var pendingMarkdownViewportIntent: FullScreenMarkdownViewportIntent?
     private let onMarkdownViewportIntentChange: ((FullScreenMarkdownViewportIntent) -> Void)?
     private let lineAnchor: SourceLineAnchor?
+    /// Tells an owner that draws the bar (a tree pane) that Outline came or went.
+    private let onOutlineChange: (@MainActor () -> Void)?
     /// The heading the reader opens at, until a restored reading position outranks it.
     private let headingAnchor: ReaderHeadingAnchor?
     /// Set when the reader's owner can save the document.
@@ -85,6 +87,8 @@ final class FullScreenCodeViewController: UIViewController {
     private var completeRawText: String?
     private var rawSidecarTask: Task<Void, Never>?
     private var copyButton: UIBarButtonItem?
+    /// Lists the open file's headings; present only while the body has some.
+    private var outlineBarItem: UIBarButtonItem?
     private var floatingViewingOptionsButton: UIButton?
     private weak var viewingOptionsController: FullScreenViewingOptionsController?
     private weak var contentHostController: UIViewController?
@@ -127,6 +131,7 @@ final class FullScreenCodeViewController: UIViewController {
         reviewCommentSourceLabel: String? = nil,
         lineAnchor: SourceLineAnchor? = nil,
         lineAnchorNotice: (@MainActor @Sendable (String) -> Void)? = nil,
+        onOutlineChange: (@MainActor () -> Void)? = nil,
         headingAnchor: ReaderHeadingAnchor? = nil,
         editItems: [UIBarButtonItem] = [],
         markdownViewportIntent: FullScreenMarkdownViewportIntent? = nil,
@@ -146,6 +151,7 @@ final class FullScreenCodeViewController: UIViewController {
                 sourceLabel: reviewCommentSourceLabel
             )
         self.lineAnchor = lineAnchor
+        self.onOutlineChange = onOutlineChange
         self.headingAnchor = headingAnchor
         self.lineAnchorNotice = lineAnchorNotice
         self.editItems = editItems
@@ -449,6 +455,12 @@ final class FullScreenCodeViewController: UIViewController {
         // A body on its own paper paints the chrome over it in that paper.
         contentSurface = bodyView.contentSurface
         bodyView.onContentSurfaceChange = { [weak self] surface in self?.setContentSurface(surface) }
+        bodyView.onOutlineChange = { [weak self] in
+            guard let self else { return }
+            self.onOutlineChange?()
+            guard let host = self.contentHostController else { return }
+            self.installRightBarItems(on: host, palette: self.bodyThemeID.palette)
+        }
         applyContentSurface()
         // The new body draws its own chrome, so the reader's starts shown until
         // that body says otherwise.
@@ -656,6 +668,19 @@ final class FullScreenCodeViewController: UIViewController {
         copy.accessibilityIdentifier = "fullscreen-code.copy"
         copyButton = copy
         rightItems.append(copy)
+
+        outlineBarItem = nil
+        if installedBodyView?.hasOutline == true {
+            let outline = railItem(
+                symbol: "list.bullet.indent",
+                title: String(localized: "Outline"),
+                action: #selector(showOutline)
+            )
+            outline.accessibilityIdentifier = "fileViewer.outline.button"
+            outline.tintColor = palette.ui.fgDim
+            outlineBarItem = outline
+            rightItems.append(outline)
+        }
 
         if let shareable = shareableContent() {
             rightItems.append(
@@ -1083,6 +1108,18 @@ final class FullScreenCodeViewController: UIViewController {
         case .contentOnly(let onBackSwipe):
             onBackSwipe?()
         }
+    }
+
+    @objc private func showOutline() {
+        guard let item = outlineBarItem else { return }
+        presentOutline(sourceItem: item)
+    }
+
+    /// Whether the open file has headings to list.
+    var hasOutline: Bool { installedBodyView?.hasOutline == true }
+
+    func presentOutline(sourceItem: UIBarButtonItem) {
+        installedBodyView?.presentOutline(from: contentHostController ?? self, sourceItem: sourceItem)
     }
 
     @objc private func copyTapped() {

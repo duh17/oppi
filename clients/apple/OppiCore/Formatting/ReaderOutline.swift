@@ -18,6 +18,18 @@ enum ReaderHeadingAnchor: Hashable, Sendable {
     /// A Markdown `#anchor`: the GitHub slug of a heading's text.
     case slug(String)
 
+    /// The scheme of a link to a heading in the document the reader shows. The
+    /// renderer links only URLs with a scheme, so a bare `#fragment` would not be one.
+    static let linkScheme = "oppi-heading"
+
+    var linkDestination: String { "\(Self.linkScheme):#\(fragment)" }
+
+    /// The anchor a link made by `linkDestination` names.
+    init?(linkURL url: URL) {
+        guard url.scheme == Self.linkScheme, let fragment = url.fragment else { return nil }
+        self.init(fragment: fragment)
+    }
+
     /// The text after `#` in a link destination. A slug is written bare, as
     /// Markdown writes it; the rest carry a `kind=` prefix and a percent-encoded value.
     var fragment: String {

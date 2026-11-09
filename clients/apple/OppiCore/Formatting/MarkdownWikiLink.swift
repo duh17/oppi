@@ -1418,7 +1418,7 @@ enum MarkdownWikiLinkRewriter {
         "mailto",
         "oppi",
         "oppi-session-file",
-        ResourceReferenceURL.scheme,
+        ReaderHeadingAnchor.linkScheme, ResourceReferenceURL.scheme,
     ]
 
     /// GitHub-style file links share the wiki-link tap pipeline. Unknown and

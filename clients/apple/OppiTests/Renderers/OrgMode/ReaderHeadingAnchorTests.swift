@@ -139,14 +139,12 @@ struct ReaderHeadingAnchorTests {
         }
         let destination = try #require(destinations.first, "\(link) is a link")
         let url = try #require(URL(string: destination))
-        #expect(url.path.isEmpty && url.scheme == nil, "\(link) stays in the reader")
-        let anchor = try #require(Self.anchor(in: url))
+        let anchor = try #require(ReaderHeadingAnchor(linkURL: url), "\(link) stays in the reader")
         return orgOutline().resolve(anchor)
     }
 
     private static func anchor(in url: URL?) -> ReaderHeadingAnchor? {
-        guard let fragment = url?.fragment else { return nil }
-        return ReaderHeadingAnchor(fragment: fragment)
+        url.flatMap { ReaderHeadingAnchor(linkURL: $0) }
     }
 
     @Test func eachOrgLinkFormJumpsToItsHeading() throws {
@@ -167,6 +165,18 @@ struct ReaderHeadingAnchorTests {
         let anchor = try #require(Self.anchor(in: URL(string: destination)))
         let outline = ReaderOutline.org(OrgParser().parseLocated(source))
         #expect(outline.resolve(anchor)?.ordinal == 1)
+    }
+
+    @Test func aLinkToAHeadingOfTheOpenFileSurvivesRendering() throws {
+        let markdown = try markdown(of: "* Target\n- [[*Target][Go to target]]\nSee [[*Target][again]].")
+        let segments = FlatSegment.build(
+            from: parseCommonMark(markdown), themeID: .dark, serverID: "s", workspaceID: "w", sourceDirectory: "/notes"
+        )
+        let anchors = segments.flatMap { segment -> [ReaderHeadingAnchor] in
+            guard case .text(let text) = segment else { return [] }
+            return text.runs.compactMap(\.link).compactMap { ReaderHeadingAnchor(linkURL: $0) }
+        }
+        #expect(anchors == [.title("Target"), .title("Target")], "markdown: \(markdown)")
     }
 
     @Test func aLinkToAnotherFileCarriesItsHeadingToTheOpenRequest() throws {
@@ -316,6 +326,19 @@ struct ReaderHeadingAnchorTests {
     }
 
     @MainActor
+    @Test func tappingALinkToAHeadingRunsTheReadersOwnAction() async throws {
+        let reader = Mounted(source: Self.long)
+        try await reader.settle("first draw") { !reader.body.renderedSegments.isEmpty }
+        let link = try #require(URL(string: ReaderHeadingAnchor.title("Section 7").linkDestination))
+        let fallback = UIAction { _ in Issue.record("the default action ran") }
+        let action = try #require(reader.body.primaryAction(for: link, from: UITextView(), defaultAction: fallback))
+        action.performWithSender(nil, target: nil)
+        try await reader.settle("the scroll") { reader.offset > 100 }
+        let item = try #require(reader.body.headingPlacement.segment(forOrdinal: 7))
+        #expect(abs(try #require(reader.topOfItem(item))) < 24)
+    }
+
+    @MainActor
     @Test func aMarkdownReaderScrollsToASlug() async throws {
         let source = (1...10).map { n in
             "## Part \(n)\n\n" + (1...6).map { _ in "Filler prose for part \(n), long enough to make the part tall on a phone." }
@@ -323,7 +346,8 @@ struct ReaderHeadingAnchorTests {
         }.joined(separator: "\n\n")
         let reader = Mounted(source: source, format: .markdown, path: "notes.md")
         try await reader.settle("first draw") { !reader.body.renderedSegments.isEmpty }
-        #expect(reader.body.headingAction(for: try #require(URL(string: "#part-8"))) != nil)
+        let own = try #require(URL(string: ReaderHeadingAnchor.slug("part-8").linkDestination))
+        #expect(reader.body.headingAction(for: own) != nil)
         #expect(reader.body.headingAction(for: try #require(URL(string: "https://example.com/#part-8"))) == nil)
         #expect(reader.body.headingAction(for: try #require(URL(string: "notes.md#part-8"))) == nil)
         #expect(reader.body.scrollToHeading(.slug("part-8")))

@@ -2,30 +2,6 @@ import Network
 import PDFKit
 import UIKit
 
-/// The bar a file viewer asks for: its title and trailing items, and whether
-/// the editor owns it. A viewer at the top of a stack applies it to its own
-/// navigation item; a screen that embeds one (a route, a review, a file list)
-/// reads it in `updateProperties()` and shows the items in its own bar.
-@MainActor @Observable
-final class FileViewerBar {
-    fileprivate(set) var title = ""
-    /// In `rightBarButtonItems` order: the first is the trailing-most.
-    fileprivate(set) var trailingItems: [UIBarButtonItem] = []
-    /// The text editor is open; its status, Preview, and Done own the bar.
-    fileprivate(set) var isEditing = false
-
-    /// Shows the title and items on `navigationItem`. Assigns only what
-    /// changed, so open menus and glass groups survive.
-    func apply(to navigationItem: UINavigationItem) {
-        if navigationItem.title != title {
-            navigationItem.title = title
-        }
-        if !(navigationItem.rightBarButtonItems ?? []).elementsEqual(trailingItems, by: ===) {
-            navigationItem.rightBarButtonItems = trailingItems
-        }
-    }
-}
-
 /// One file, read from where it lives and shown by type: text in the UIKit
 /// reader (`FullScreenCodeViewController`) or the code editor, images, video,
 /// audio, PDF, and 3D scenes. Large text files ask before loading.
@@ -202,7 +178,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     /// Hosted SwiftUI leaves report their height through these; a leaf
     /// nothing holds stops resizing its slot.
     private var mountedBackSwipe: HorizontalBackSwipeGestureInstaller?
-    private weak var reader: FullScreenCodeViewController?
+    weak var reader: FullScreenCodeViewController?
     private var sizeWarning: FileViewerSizeWarningView?
     /// The unavailable or failed state on screen, kept to repaint on a theme change.
     private var stateView: (view: UIContentUnavailableView, state: LoadState)?
@@ -223,6 +199,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 
     // Bar items, kept while their inputs hold.
     private var shareItem: UIBarButtonItem?
+    /// The Outline entry a bar this viewer feeds shows (`FileViewerViewController+Outline`).
+    var outlineItem: UIBarButtonItem?
     private var shareItemKey: Int?
 
     init(configuration: Configuration, services: Services) {
@@ -682,6 +660,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             reviewCommentSelectionContext: readerSelectionContext,
             lineAnchor: activeSelection == nil ? configuration.lineAnchor : nil,
             lineAnchorNotice: onLineAnchorNotice,
+            onOutlineChange: { [weak self] in self?.updateBar() },
             headingAnchor: activeSelection == nil ? configuration.headingAnchor : nil,
             editItems: editOwner.barItems,
             markdownViewportIntent: markdownViewportRestore.state[path],
@@ -1048,6 +1027,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             // trailing-first, so they go in reversed.
             if !sharesReaderBar, !loading {
                 items.append(contentsOf: editOwner.barItems.reversed())
+                items.append(contentsOf: outlineBarItems())
             }
             if configuration.chromeMode == .pushed, !isUsingFileViewer, let share = shareBarItem() {
                 items.append(share)

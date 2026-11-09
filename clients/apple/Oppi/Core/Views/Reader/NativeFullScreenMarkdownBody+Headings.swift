@@ -49,11 +49,10 @@ extension NativeFullScreenMarkdownBody {
         return true
     }
 
-    /// The tap action of an in-document link (`#title=…`, `#custom=…`,
-    /// `#some-heading`), or nil for any other link.
+    /// The tap action of a link to a heading of this document
+    /// (`ReaderHeadingAnchor.linkDestination`), or nil for any other link.
     func headingAction(for url: URL) -> UIAction? {
-        guard offersHeadingNavigation, url.scheme == nil, url.host == nil, url.path.isEmpty,
-              let fragment = url.fragment, let anchor = ReaderHeadingAnchor(fragment: fragment) else { return nil }
+        guard offersHeadingNavigation, let anchor = ReaderHeadingAnchor(linkURL: url) else { return nil }
         return UIAction { [weak self] _ in self?.scrollToHeading(anchor) }
     }
 
@@ -83,5 +82,61 @@ extension NativeFullScreenMarkdownBody {
         if let cell = collectionView.cellForItem(at: IndexPath(item: item, section: 0)) {
             UIAccessibility.post(notification: .layoutChanged, argument: cell)
         }
+    }
+}
+
+// MARK: - Outline
+
+extension ReaderHeadingPlacement {
+    /// Whether the document has a heading the reader can scroll to.
+    var hasHeadings: Bool {
+        if let orgOrdinals { return orgOrdinals.contains { $0 != nil } }
+        return segments.contains { $0 != nil }
+    }
+}
+
+extension NativeFullScreenMarkdownBody {
+    var hasOutline: Bool { headingPlacement.hasHeadings }
+
+    /// One row per heading, indented from the shallowest level present.
+    func outlineRows() -> [BookTableOfContentsViewController.Row] {
+        let outline = readerOutline
+        let top = outline.headings.map(\.level).min() ?? 1
+        return outline.headings.map { heading in
+            BookTableOfContentsViewController.Row(
+                title: heading.title.isEmpty ? String(localized: "Untitled") : heading.title,
+                level: heading.level - top,
+                chapter: heading.ordinal,
+                keyword: heading.keyword,
+                isDone: heading.isDone,
+                identifier: "fileViewer.outline.row.\(heading.ordinal)"
+            )
+        }
+    }
+
+    func presentOutline(from host: UIViewController, sourceItem: UIBarButtonItem) {
+        let rows = outlineRows()
+        guard !rows.isEmpty else { return }
+        let list = BookTableOfContentsViewController(
+            bookTitle: String(localized: "Outline"),
+            rows: rows,
+            currentChapter: -1,
+            palette: themeID.palette,
+            identifierPrefix: "fileViewer.outline"
+        ) { [weak self] ordinal in
+            self?.scrollToHeading(.ordinal(ordinal))
+        }
+        // A popover from the bar button where the window is wide (iPad); at a
+        // narrow width UIKit adapts it to a sheet, which opens at medium height
+        // so the page stays in view.
+        list.modalPresentationStyle = .popover
+        list.preferredContentSize = CGSize(width: 380, height: 560)
+        if let popover = list.popoverPresentationController {
+            popover.sourceItem = sourceItem
+            popover.permittedArrowDirections = .up
+            popover.adaptiveSheetPresentationController.detents = [.medium(), .large()]
+            popover.adaptiveSheetPresentationController.prefersGrabberVisible = true
+        }
+        (host.presentedViewController ?? host).present(list, animated: true)
     }
 }
