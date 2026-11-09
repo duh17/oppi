@@ -133,7 +133,7 @@ struct ExtensionNotifyChipStoreTests {
     }
 
     @Test func sessionsDoNotLeakChipState() {
-        let store = ExtensionNotifyChipStore(clock: hangingClock())
+        let store = ExtensionNotifyChipStore(environment: hangingClock())
         store.apply(message: "A", notifyType: "info", displayName: "One", sessionId: "s1")
         store.apply(message: "B", notifyType: "error", displayName: "Two", sessionId: "s2")
 
@@ -146,7 +146,7 @@ struct ExtensionNotifyChipStoreTests {
     }
 
     @Test func keepsNewestFirstAndCapsAtFive() {
-        let store = ExtensionNotifyChipStore(clock: hangingClock())
+        let store = ExtensionNotifyChipStore(environment: hangingClock())
         for index in 1...6 {
             store.apply(
                 message: "m\(index)",
@@ -164,10 +164,10 @@ struct ExtensionNotifyChipStoreTests {
 
     @Test func autoDismissClearsTheSession() async throws {
         let store = ExtensionNotifyChipStore(
-            clock: ExtensionNotifyClock(
+            environment: NoticeTimerEnvironment(
                 now: { ContinuousClock().now },
                 sleep: { duration in
-                    #expect(duration == ExtensionNotifyChipStore.autoDismissDuration)
+                    #expect(duration == NoticeDismiss.duration)
                 }
             )
         )
@@ -178,7 +178,7 @@ struct ExtensionNotifyChipStoreTests {
     @Test func newerNotifyResetsTheTimer() async throws {
         var sleepDurations: [Duration] = []
         let store = ExtensionNotifyChipStore(
-            clock: ExtensionNotifyClock(
+            environment: NoticeTimerEnvironment(
                 now: { ContinuousClock().now },
                 sleep: { duration in
                     sleepDurations.append(duration)
@@ -192,8 +192,8 @@ struct ExtensionNotifyChipStoreTests {
 
         try await waitUntil { sleepDurations.count == 2 }
         #expect(sleepDurations == [
-            ExtensionNotifyChipStore.autoDismissDuration,
-            ExtensionNotifyChipStore.autoDismissDuration,
+            NoticeDismiss.duration,
+            NoticeDismiss.duration,
         ])
         #expect(store.state(for: "s1")?.newest.message == "second")
         #expect(store.state(for: "s1")?.count == 2)
@@ -205,7 +205,7 @@ struct ExtensionNotifyChipStoreTests {
         var offset: Duration = .zero
         var sleepDurations: [Duration] = []
         let store = ExtensionNotifyChipStore(
-            clock: ExtensionNotifyClock(
+            environment: NoticeTimerEnvironment(
                 now: { origin + offset },
                 sleep: { duration in
                     sleepDurations.append(duration)
@@ -229,7 +229,7 @@ struct ExtensionNotifyChipStoreTests {
     @Test func hidingExpandedSessionRearmsAutoDismiss() async throws {
         var sleepDurations: [Duration] = []
         let store = ExtensionNotifyChipStore(
-            clock: ExtensionNotifyClock(
+            environment: NoticeTimerEnvironment(
                 now: { ContinuousClock().now },
                 sleep: { duration in
                     sleepDurations.append(duration)
@@ -315,7 +315,7 @@ struct ExtensionNotifyChipStoreTests {
     }
 
     @Test func emptyMessageIsIgnored() {
-        let store = ExtensionNotifyChipStore(clock: hangingClock())
+        let store = ExtensionNotifyChipStore(environment: hangingClock())
         store.apply(message: "   ", notifyType: "info", displayName: "Ext", sessionId: "s1")
         store.apply(message: nil, notifyType: "info", displayName: "Ext", sessionId: "s1")
         #expect(store.state(for: "s1") == nil)
@@ -366,8 +366,8 @@ private func notifyNotification(
 }
 
 @MainActor
-private func hangingClock() -> ExtensionNotifyClock {
-    ExtensionNotifyClock(
+private func hangingClock() -> NoticeTimerEnvironment {
+    NoticeTimerEnvironment(
         now: { ContinuousClock().now },
         sleep: { _ in try await Task.sleep(for: .seconds(3_600)) }
     )

@@ -1,20 +1,12 @@
 import Foundation
 import Observation
 
-/// Clock seam for the notify-chip auto-dismiss timer.
-@MainActor
-struct ExtensionNotifyClock {
-    var now: () -> ContinuousClock.Instant = { ContinuousClock().now }
-    var sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
-}
-
 /// Per-session, ephemeral extension `notify` chip state.
 ///
 /// App-originated `extensionToast` sheets are a separate path.
 @MainActor
 @Observable
 final class ExtensionNotifyChipStore {
-    static let autoDismissDuration: Duration = .seconds(6)
     static let maxEntries = 5
     static let fallbackDisplayName = "Extension"
 
@@ -35,13 +27,12 @@ final class ExtensionNotifyChipStore {
 
     private(set) var states: [String: SessionState] = [:]
 
-    private var remaining: [String: Duration] = [:]
-    private var startedAt: [String: ContinuousClock.Instant] = [:]
-    private var tasks: [String: Task<Void, Never>] = [:]
-    private let clock: ExtensionNotifyClock
+    @ObservationIgnored private var timer: NoticeDismissTimer<String>!
 
-    init(clock: ExtensionNotifyClock = ExtensionNotifyClock()) {
-        self.clock = clock
+    init(environment: NoticeTimerEnvironment = NoticeTimerEnvironment()) {
+        timer = NoticeDismissTimer(environment: environment) { [weak self] sessionId in
+            self?.dismiss(sessionId: sessionId)
+        }
     }
 
     func state(for sessionId: String) -> SessionState? {
@@ -75,19 +66,14 @@ final class ExtensionNotifyChipStore {
             session.entries = Array(session.entries.prefix(Self.maxEntries))
         }
         states[sessionId] = session
-        remaining[sessionId] = Self.autoDismissDuration
-        restartTimerIfNeeded(sessionId: sessionId)
+        timer.start(sessionId)
     }
 
     func setExpanded(_ expanded: Bool, sessionId: String) {
         guard var session = states[sessionId], session.isExpanded != expanded else { return }
         session.isExpanded = expanded
         states[sessionId] = session
-        if expanded {
-            pauseTimer(sessionId: sessionId)
-        } else {
-            restartTimerIfNeeded(sessionId: sessionId)
-        }
+        timer.setPaused(expanded, for: sessionId)
     }
 
     /// Chat for this session is no longer on screen. Collapse so auto-dismiss
@@ -97,47 +83,7 @@ final class ExtensionNotifyChipStore {
     }
 
     func dismiss(sessionId: String) {
-        cancelTimer(sessionId: sessionId)
+        timer.cancel(sessionId)
         states.removeValue(forKey: sessionId)
-        remaining.removeValue(forKey: sessionId)
-        startedAt.removeValue(forKey: sessionId)
-    }
-
-    private func pauseTimer(sessionId: String) {
-        if let start = startedAt[sessionId] {
-            let elapsed = clock.now() - start
-            let current = remaining[sessionId] ?? .zero
-            remaining[sessionId] = current > elapsed ? current - elapsed : .zero
-        }
-        startedAt[sessionId] = nil
-        cancelTimer(sessionId: sessionId)
-    }
-
-    private func restartTimerIfNeeded(sessionId: String) {
-        guard states[sessionId] != nil else { return }
-        guard states[sessionId]?.isExpanded != true else { return }
-
-        cancelTimer(sessionId: sessionId)
-        let duration = remaining[sessionId] ?? Self.autoDismissDuration
-        if duration <= .zero {
-            dismiss(sessionId: sessionId)
-            return
-        }
-
-        startedAt[sessionId] = clock.now()
-        tasks[sessionId] = Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await self.clock.sleep(duration)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            self.dismiss(sessionId: sessionId)
-        }
-    }
-
-    private func cancelTimer(sessionId: String) {
-        tasks.removeValue(forKey: sessionId)?.cancel()
     }
 }

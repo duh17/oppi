@@ -118,7 +118,8 @@ extension ChatViewController {
                 try await self.connection.removeQueuedMessage(itemId: itemId, sessionIdOverride: self.sessionId)
             },
             onEditInComposer: { [weak self] in try await self?.restoreQueuedMessagesToComposer() },
-            error: model.messageQueueError
+            error: model.messageQueueError,
+            onDismissError: { [weak self] in self?.model.messageQueueError = nil }
         )
     }
 

@@ -853,12 +853,29 @@ final class ComposerAttachmentFilePillView: UIView {
     }
 }
 
+/// The "Dictation stopped" notice. Retry starts a new take; Dismiss (and the
+/// manager's auto-dismiss timer) clears the notice, and the draft is already
+/// restored, so neither loses anything. Touching the notice holds the timer.
 final class ComposerDictationFailureView: UIView {
     var onRetry: (() -> Void)?
+    var onDismiss: (() -> Void)?
+    var onInteractionChange: ((Bool) -> Void)?
 
     private let titleLabel = UILabel()
     private let messageLabel = UILabel()
     private let retryButton = UIButton(type: .system)
+    private lazy var dismissButton = NoticeChrome.dismissButton(identifier: "composer.dictationFailure.dismiss") { [weak self] in
+        self?.onDismiss?()
+    }
+    private var touchHold: NoticeTouchHold?
+
+    /// Wires Retry, Dismiss, and the touch-hold to whichever manager the host
+    /// has now.
+    func connect(manager: @escaping () -> VoiceInputManager?, retry: @escaping () -> Void) {
+        onRetry = retry
+        onDismiss = { manager()?.dismissCaptureFailure() }
+        onInteractionChange = { manager()?.setCaptureFailureInteracting($0) }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -884,7 +901,13 @@ final class ComposerDictationFailureView: UIView {
         retryButton.accessibilityLabel = "Retry dictation"
         retryButton.addAction(UIAction { [weak self] _ in self?.onRetry?() }, for: .touchUpInside)
 
-        let stack = UIStackView(arrangedSubviews: [titleLabel, messageLabel, retryButton])
+
+        let header = UIStackView(arrangedSubviews: [titleLabel, dismissButton])
+        header.axis = .horizontal
+        header.alignment = .top
+        header.spacing = 8
+
+        let stack = UIStackView(arrangedSubviews: [header, messageLabel, retryButton])
         stack.axis = .vertical
         stack.alignment = .leading
         stack.spacing = 6
@@ -895,10 +918,13 @@ final class ComposerDictationFailureView: UIView {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 12),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            header.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
             retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
         layer.cornerRadius = 12
         layer.cornerCurve = .continuous
+
+        touchHold = NoticeTouchHold(view: self) { [weak self] in self?.onInteractionChange?($0) }
     }
 
     @available(*, unavailable)
@@ -916,6 +942,7 @@ final class ComposerDictationFailureView: UIView {
         titleLabel.textColor = colors.fg
         messageLabel.textColor = colors.fg
         retryButton.configuration?.baseForegroundColor = colors.fg
+        dismissButton.tintColor = colors.comment
         backgroundColor = colors.bgDark
         titleLabel.preferredMaxLayoutWidth = 320
         messageLabel.preferredMaxLayoutWidth = 320

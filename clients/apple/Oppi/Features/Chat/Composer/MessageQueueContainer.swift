@@ -5,6 +5,8 @@ struct MessageQueueSurfaceConfiguration {
     let onRemove: (String) async throws -> Void
     let onEditInComposer: () async throws -> Void
     var error: String? = nil
+    /// Clears `error` at its source: the error auto-dismisses and has a Dismiss button.
+    var onDismissError: () -> Void = {}
 
     var hasVisibleEntry: Bool { !queue.steering.isEmpty || !queue.followUp.isEmpty }
 }
@@ -35,6 +37,13 @@ final class MessageQueueView: UIView {
     private let toggleCount = ExtensionChromeFont.label(.caption2)
     private let toggleChevron = UIImageView()
     private let errorLabel = ExtensionChromeFont.label(.caption1, lines: 0)
+    private let errorRow = UIStackView()
+    private lazy var errorDismissButton = NoticeChrome.dismissButton(identifier: "chat.messageQueue.error.dismiss") { [weak self] in
+        self?.dismissError()
+    }
+    private lazy var errorTimer = NoticeDismissTimer<Int> { [weak self] _ in self?.dismissError() }
+    private var errorTouchHold: NoticeTouchHold?
+    private var timedError: String?
     private let sections = UIStackView()
     private lazy var sectionsViewport = CappedScrollView(
         content: sections,
@@ -100,7 +109,15 @@ final class MessageQueueView: UIView {
             stack.addArrangedSubview(toggle)
         }
         errorLabel.accessibilityIdentifier = "chat.messageQueue.error"
-        stack.addArrangedSubview(errorLabel)
+        errorRow.axis = .horizontal
+        errorRow.alignment = .top
+        errorRow.spacing = 8
+        errorRow.addArrangedSubview(errorLabel)
+        errorRow.addArrangedSubview(errorDismissButton)
+        stack.addArrangedSubview(errorRow)
+        errorTouchHold = NoticeTouchHold(view: errorRow) { [weak self] held in
+            self?.errorTimer.setPaused(held, for: 0)
+        }
         sections.axis = .vertical
         sections.alignment = .fill
         sections.spacing = 8
@@ -169,7 +186,12 @@ final class MessageQueueView: UIView {
         let error = configuration.error ?? errorText
         errorLabel.text = error
         errorLabel.textColor = palette.ui.red
-        errorLabel.isHidden = error == nil
+        errorDismissButton.tintColor = palette.ui.comment
+        errorRow.isHidden = error == nil
+        if error != timedError {
+            timedError = error
+            if error == nil { errorTimer.cancel(0) } else { errorTimer.start(0) }
+        }
 
         let expanded = presentation == .drawer || isExpanded
         sectionsViewport.isHidden = !expanded
@@ -340,6 +362,15 @@ final class MessageQueueView: UIView {
         }
 
         @objc private func fire() { action() }
+    }
+
+    /// The Dismiss button and the auto-dismiss timer: clear the error here
+    /// and at the screen that owns it.
+    private func dismissError() {
+        errorText = nil
+        configuration?.error = nil
+        configuration?.onDismissError()
+        render()
     }
 
     private func run(_ operation: @escaping () async throws -> Void) {

@@ -210,7 +210,7 @@ extension ComposerBarController {
             self?.host?.removeRepoPointer(id: id)
             self?.applyChrome()
         }
-        failureView.onRetry = { [weak self] in
+        failureView.connect(manager: { [weak self] in self?.host?.content.voiceInputManager }) { [weak self] in
             self?.handleMicTap()
         }
     }

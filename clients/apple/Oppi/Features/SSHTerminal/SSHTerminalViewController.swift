@@ -1434,7 +1434,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
         let dictation = ComposerDictationFailureView()
         dictation.isHidden = true
-        dictation.onRetry = { [weak session] in session?.retryVoice() }
+        dictation.connect(manager: { [weak self] in self?.composerSession?.voiceManager }) { [weak session] in
+            session?.retryVoice()
+        }
 
         let failure = UILabel()
         failure.font = UIFont.preferredFont(forTextStyle: .caption1)

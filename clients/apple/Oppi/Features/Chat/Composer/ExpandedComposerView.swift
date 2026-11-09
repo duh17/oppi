@@ -234,7 +234,9 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
         headerLabel.numberOfLines = 0
         pin(headerLabel, in: headerWrap, insets: UIEdgeInsets(top: 12, left: 16, bottom: 12, right: 16))
 
-        failureView.onRetry = { [weak self] in self?.handleMicTap() }
+        failureView.connect(manager: { [weak self] in self?.configuration.voiceInputManager }) { [weak self] in
+            self?.handleMicTap()
+        }
         pin(failureView, in: failureWrap, insets: UIEdgeInsets(top: 8, left: 16, bottom: 0, right: 16))
 
         textView.delegate = self

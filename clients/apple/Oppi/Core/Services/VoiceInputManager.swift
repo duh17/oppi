@@ -69,7 +69,7 @@ struct VoiceComposerOwner: Equatable, Sendable {
 
 /// Identity of one capture take. `composerGeneration` is the owner at start,
 /// not whoever later claims the shared manager.
-struct VoiceCaptureTakeIdentity: Equatable, Sendable {
+struct VoiceCaptureTakeIdentity: Hashable, Sendable {
     let requestID: Int
     let composerGeneration: Int
 }
@@ -472,10 +472,38 @@ final class VoiceInputManager {
             screenAwakeController?.setVoiceInputActive(state.ownsCaptureAudioSession)
         }
     }
-    private(set) var captureFailure: VoiceCaptureFailure?
+    /// The failed take's notice. It auto-dismisses like every transient notice
+    /// (kept under VoiceOver because it offers Retry) and the person can
+    /// dismiss it. Neither loses anything: the earlier draft was already
+    /// restored when the take failed.
+    private(set) var captureFailure: VoiceCaptureFailure? {
+        didSet {
+            guard captureFailure != oldValue else { return }
+            if let oldValue { captureFailureTimer.cancel(oldValue.take) }
+            if let captureFailure {
+                captureFailureTimer.start(
+                    captureFailure.take,
+                    keepsUntilDismissed: true,
+                    announcement: captureFailure.message
+                )
+            }
+        }
+    }
     var currentComposerCaptureFailure: VoiceCaptureFailure? {
         guard captureFailure?.take.composerGeneration == composerGeneration else { return nil }
         return captureFailure
+    }
+    @ObservationIgnored private var captureFailureTimer: NoticeDismissTimer<VoiceCaptureTakeIdentity>!
+
+    /// The person dismissed the failure notice (or its timer ran out).
+    func dismissCaptureFailure() {
+        captureFailure = nil
+    }
+
+    /// The failure notice is being touched: hold its auto-dismiss.
+    func setCaptureFailureInteracting(_ interacting: Bool) {
+        guard let take = captureFailure?.take else { return }
+        captureFailureTimer.setPaused(interacting, for: take)
     }
     @ObservationIgnored private var captureFailureHandler: (@MainActor () -> Void)?
     private struct CaptureReleaseObserver {
@@ -698,13 +726,18 @@ final class VoiceInputManager {
         routeResolver: VoiceInputRouteResolver = VoiceInputRouteResolver(),
         sessionMonitor: VoiceInputSessionMonitor = VoiceInputSessionMonitor(),
         systemAccess: any VoiceInputSystemAccessing = VoiceInputSystemAccess.live,
-        screenAwakeController: ScreenAwakeController? = nil
+        screenAwakeController: ScreenAwakeController? = nil,
+        noticeEnvironment: NoticeTimerEnvironment = NoticeTimerEnvironment()
     ) {
         self.providerRegistry = providerRegistry
         self.routeResolver = routeResolver
         self.sessionMonitor = sessionMonitor
         self.systemAccess = systemAccess
         self.screenAwakeController = screenAwakeController
+        captureFailureTimer = NoticeDismissTimer(environment: noticeEnvironment) { [weak self] take in
+            guard self?.captureFailure?.take == take else { return }
+            self?.dismissCaptureFailure()
+        }
         loadPreferences()
         #if os(iOS)
         observeAudioRouteChanges()

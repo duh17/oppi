@@ -103,7 +103,7 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
         view.addSubview(stack)
 
         failureView.isHidden = true
-        failureView.onRetry = { [weak self] in
+        failureView.connect(manager: { [weak self] in self?.current?.voiceInputManager }) { [weak self] in
             Task { await self?.startOwnedVoiceInput(owner: .inlineComposer) }
         }
         stack.addArrangedSubview(failureView)
