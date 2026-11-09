@@ -24,6 +24,7 @@ host=$1; shift
 case "$host" in
   badkey) echo "Host key verification failed." >&2; exit 255 ;;
   noauth) echo "user@noauth: Permission denied (publickey,password)." >&2; exit 255 ;;
+  banner) echo "Welcome to the box" ;;
   nohost) echo "ssh: Could not resolve hostname nohost: Name or service not known" >&2; exit 255 ;;
 esac
 exec sh -c "$*"
@@ -67,10 +68,11 @@ describe("ssh:// through the server's ssh", () => {
     mkdirSync(join(home, ".ssh"));
     writeFileSync(
       join(home, ".ssh", "config"),
-      "Host *\n  User x\nHost box staging\n  HostName 10.0.0.2\nHost !blocked dev-?\nhost Lower\n",
+      "Host *\n  User x\nHost box staging\n  HostName 10.0.0.2\nHost !blocked dev-?\nhost Lower\nHost=eq # trailing comment\n# Host commented\nHostname 10.9.9.9\nInclude conf.d/*\n",
     );
     const listing = await read("ssh://");
-    expect(listing).toContain("box\nstaging\nLower");
+    expect(listing).toContain("box\nstaging\nLower\neq");
+    expect(listing).not.toMatch(/commented|trailing|10\.9|Include/);
     expect(listing).not.toMatch(/\*|blocked|dev-\?/);
   });
 
@@ -126,6 +128,13 @@ describe("ssh:// through the server's ssh", () => {
     await expect(read("ssh://nohost/etc/hosts")).rejects.toThrow(/cannot resolve nohost/);
     await expect(read("ssh://-oProxyCommand=id/etc/hosts")).rejects.toThrow("needs a host");
     await expect(read("ssh://box:99999/etc/hosts")).rejects.toThrow("not a valid port");
+  });
+
+  it("fails when the login shell prints before the read, instead of returning it as content", async () => {
+    writeFileSync(join(home, "f.txt"), "real");
+    await expect(read("ssh://banner/~/f.txt")).rejects.toThrow(
+      /printed output before the read.*startup files/,
+    );
   });
 
   it("passes user and port as ssh arguments", async () => {

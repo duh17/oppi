@@ -28,7 +28,7 @@ const SCRIPT = [
   "else echo M; fi",
 ].join("\n");
 
-/** `value` as one word of a POSIX, bash, zsh, or fish command line. */
+/** `value` as one word of a POSIX sh, bash, or zsh command line; fish and csh quote differently. */
 export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
@@ -43,7 +43,8 @@ export function sshConfigHosts(path = join(homedir(), ".ssh", "config")): string
   }
   const hosts = new Set<string>();
   for (const line of text.split("\n")) {
-    const match = /^\s*Host\s+(.+)$/i.exec(line);
+    // `Host alias` and `Host=alias` both parse; `Include` is not followed.
+    const match = /^\s*Host(?:\s*=\s*|\s+)(.+)$/i.exec(line.replace(/\s#.*$|^\s*#.*$/, ""));
     if (!match) continue;
     for (const alias of (match[1] ?? "").split(/\s+/))
       if (alias && !/[*?!]/.test(alias)) hosts.add(alias);
@@ -171,9 +172,15 @@ export function createSshReader(): SchemeReader {
     const body = newline < 0 ? Buffer.alloc(0) : out.subarray(newline + 1);
     const where = `ssh://${target.id}${target.path}`;
     if (marker === "M") throw new Error(`${where} is not a file or directory on ${host}.`);
-    if (marker.startsWith("L"))
+    if (/^L \d+$/.test(marker))
       throw new Error(
         `${where} is ${marker.slice(2)} bytes, over the 1 MiB limit; read a part with bash.`,
+      );
+    // The script's first line is always one of the markers; anything else is the account's shell
+    // printing before it (a startup file's banner or echo), which would pass for file content.
+    if (marker !== "D" && marker !== "F")
+      throw new Error(
+        `ssh to ${host} printed output before the read; check the login shell's startup files (non-interactive ssh must print nothing).`,
       );
     let text: string;
     try {
