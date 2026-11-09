@@ -11,7 +11,6 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         let workspaceName = "e2e-ui-\(suffix)"
         let updatedWorkspaceName = "\(workspaceName)-updated"
         let hostPath = "/tmp"
-
         navigateToWorkspaceHome()
         openWorkspaceCreateSheet()
         createWorkspaceWithNewFolder(
@@ -149,14 +148,16 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
 
         let manageWorkspaces = app.buttons["server.manageWorkspaces"]
         tap(manageWorkspaces, named: "manage workspaces button", timeout: 15)
-        XCTAssertTrue(
-            app.collectionViews["server.workspaceList"].waitForExistence(timeout: 10),
-            "Server workspace management list did not appear"
-        )
+        let manageList = app.collectionViews["server.workspaceList"]
+        XCTAssertTrue(manageList.waitForExistence(timeout: 10), "Server workspace management list did not appear")
 
+        // The manage list builds only the rows near the screen, so scroll to the row by its id.
         let workspaceId = try e2eWorkspaceId(named: workspaceName)
         let row = app.descendants(matching: .any)["server.workspace.\(workspaceId)"]
-        XCTAssertTrue(row.waitForExistence(timeout: 15), "Workspace row \(workspaceName) not found in manage list")
+        XCTAssertTrue(
+            scrollToElement(row, in: manageList),
+            "Workspace row \(workspaceName) not found in manage list"
+        )
         row.swipeLeft()
 
         let deleteButton = app.buttons["Delete"]

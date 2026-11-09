@@ -310,7 +310,7 @@ final class QuickSessionE2ETests: E2ETestCase {
         // Clear first, then assert: a draft an earlier case left behind must not fail this one,
         // and the assertion still proves the clear worked.
         clearQuickSessionDraft()
-        XCTAssertEqual(chatInput.value as? String, "", "Quick Session did not open with an empty composer")
+        XCTAssertEqual(chatInput.value as? String, "", "Clearing the Quick Session draft left text in the composer")
         let overlay = app.buttons["quickSession.overlay"].firstMatch
         XCTAssertTrue(overlay.waitForExistence(timeout: 5), "Quick Session overlay not visible")
         XCTAssertFalse(
@@ -370,7 +370,7 @@ final class QuickSessionE2ETests: E2ETestCase {
         let input = app.textViews["chat.input"]
         XCTAssertTrue(input.waitForExistence(timeout: 10), "Quick Session input not visible in compact height")
         clearQuickSessionDraft()
-        XCTAssertEqual(input.value as? String, "", "Quick Session did not open with an empty composer")
+        XCTAssertEqual(input.value as? String, "", "Clearing the Quick Session draft left text in the composer")
         tap(input, named: "quick session input", timeout: 5)
         input.typeText("one\ntwo\nthree\nfour\nfive\nsix")
 
@@ -575,7 +575,7 @@ final class QuickSessionCoveredLauncherE2ETests: E2ETestCase {
             waitForSeededRow(rootRow, in: inbox),
             "Root session row missing for \(rootId). \(visibleControlIDs())"
         )
-        rootRow.tap()
+        tap(rootRow, named: "root session row")
         assertChatPushedWithoutLauncher(from: "all sessions")
         assertComposerBandTapDoesNothing(whileChatPushedFrom: "all sessions")
         returnToInbox()
@@ -584,14 +584,14 @@ final class QuickSessionCoveredLauncherE2ETests: E2ETestCase {
 
         // A child row of an expanded thread covers the list the same way.
         let thread = app.buttons["thread.nav.\(rootId)"]
-        XCTAssertTrue(thread.waitForExistence(timeout: 15), "Thread strip missing")
+        XCTAssertTrue(revealSessionRow(thread, in: inbox), "Thread strip missing")
         thread.tap()
-        // The thread's only member is stopped, so it is behind the thread's Stopped row.
-        let stoppedRow = app.buttons["thread.stopped.\(rootId)"]
-        XCTAssertTrue(stoppedRow.waitForExistence(timeout: 15), "Expanding the thread did not list its Stopped row")
-        stoppedRow.tap()
+        // A thread with nothing live opens with its stopped members listed directly: the strip's
+        // chevron is its only fold, so there is no separate Stopped row to open first. The
+        // expansion lands through an animated snapshot apply: wait for the row beside the strip.
         let childRow = app.descendants(matching: .any)["session.nav.\(childId)"]
         XCTAssertTrue(childRow.waitForExistence(timeout: 15), "Expanding the thread did not list its child")
+        XCTAssertTrue(revealSessionRow(childRow, in: inbox), "Child row did not scroll into reach")
         assertLauncherPresent(on: "expanded thread")
         childRow.tap()
         assertChatPushedWithoutLauncher(from: "expanded thread")
@@ -667,18 +667,14 @@ final class QuickSessionCoveredLauncherE2ETests: E2ETestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed, "Quick Session did not dismiss")
     }
 
-    /// Fixture sessions are stored before launch. Pull to refresh if the first
-    /// snapshot raced an empty store, and expand today's stopped group if it is collapsed.
+    /// Fixture sessions are stored before launch. Scroll to the row by its id, retry while the
+    /// first snapshot may have raced an empty store, and expand today's stopped group if it is
+    /// collapsed. The 30 seconds bound the whole wait, scrolling included.
     @MainActor
     private func waitForSeededRow(_ row: XCUIElement, in list: XCUIElement) -> Bool {
         let deadline = Date().addingTimeInterval(30)
-        var refreshed = false
         while Date() < deadline {
-            if row.exists { return true }
-            if !refreshed {
-                list.swipeDown()
-                refreshed = true
-            }
+            if revealSessionRow(row, in: list, timeout: max(1, deadline.timeIntervalSinceNow)) { return true }
             let collapsed = app.buttons.matching(
                 NSPredicate(format: "identifier BEGINSWITH %@ AND value == %@",
                             "workspace.sessionList.", "Collapsed")

@@ -45,7 +45,7 @@ final class PairedDevicesE2ETests: E2ETestCase {
         XCTAssertTrue(list.waitForExistence(timeout: 10), "Paired Devices page did not appear")
 
         let revoke = app.buttons["server.pairedDevices.revoke.\(throwawayId)"]
-        scrollUntilHittable(revoke, in: list)
+        XCTAssertTrue(scrollToElement(revoke, in: list), "Other device has no Revoke button in the roster")
         XCTAssertTrue(revoke.exists, "Other device has no Revoke button")
         XCTAssertEqual(revoke.label, "Revoke \(throwawayDeviceName)", "Revoke button is not labelled for VoiceOver")
         let throwawayRow = rosterRow("server.pairedDevices.row.\(throwawayId)")

@@ -14,7 +14,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     nonisolated(unsafe) private var swipeRegressionStoppedSessionId: String?
     nonisolated(unsafe) private var themeSwitchSessionId: String?
     nonisolated(unsafe) private var recentStoppedSessionId: String?
-    nonisolated(unsafe) private var scrollWorkspaceIds: [String] = []
     nonisolated(unsafe) private var activeScheduleId: String?
     nonisolated(unsafe) private var archivedScheduleId: String?
     nonisolated(unsafe) private var nativeEditorAgentId: String?
@@ -108,7 +107,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             try createLabSessions(count: 1, workspaceId: anchorWorkspaceId, stopAfterCreate: false)
         } else if name.contains("testIPhoneWorkspaceSidebarScrolls") {
             for index in 1...18 {
-                scrollWorkspaceIds.append(try createLabWorkspace(named: "Scroll Workspace \(index)"))
+                try createLabWorkspace(named: "Scroll Workspace \(index)")
             }
         } else if name.contains("testNativeAgentEditorSavesReplacePromptAndThinking") {
             let agentName = "Native editor reviewer \(UUID().uuidString.prefix(8))"
@@ -165,20 +164,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         }
     }
 
-    /// The 18 workspaces would push the anchor workspace below the fold of every
-    /// later case's sidebar, and the running app keeps them in its catalog until
-    /// it relaunches.
-    override func tearDownWithError() throws {
-        if !scrollWorkspaceIds.isEmpty {
-            for id in scrollWorkspaceIds {
-                _ = try? e2eLabAPIJSON(method: "DELETE", path: "/workspaces/\(id)")
-            }
-            scrollWorkspaceIds = []
-            terminateSharedApp()
-        }
-        try super.tearDownWithError()
-    }
-
     func testSessionRowLeadingSwipeDoesNotNavigate() throws {
         let sessionId = try XCTUnwrap(swipeRegressionSessionId, "Swipe regression session was not seeded")
         let stoppedSessionId = try XCTUnwrap(
@@ -187,10 +172,9 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         )
         let sessionList = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "iPhone sessions inbox did not appear")
-        sessionList.swipeDown()
 
         let row = app.buttons["session.nav.\(sessionId)"]
-        XCTAssertTrue(row.waitForExistence(timeout: 15), "Seeded session row did not appear")
+        XCTAssertTrue(revealSessionRow(row, in: sessionList), "Seeded session row did not appear")
 
         row.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.50))
             .press(
@@ -219,13 +203,8 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         )
         closeSwipe(row)
 
-        // Earlier cases in a run leave sessions above it, and the list builds
-        // only the rows near the screen, so scroll down to it.
         let stoppedRow = app.buttons["session.nav.\(stoppedSessionId)"]
-        for _ in 0..<14 where !stoppedRow.waitForExistence(timeout: 0.5) {
-            sessionList.swipeUp()
-        }
-        XCTAssertTrue(stoppedRow.waitForExistence(timeout: 10), "Seeded stopped session row did not appear")
+        XCTAssertTrue(revealSessionRow(stoppedRow, in: sessionList), "Seeded stopped session row did not appear")
         stoppedRow.swipeLeft()
         XCTAssertTrue(
             app.buttons["Resume"].waitForExistence(timeout: 5),
@@ -244,10 +223,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         }
         XCTAssertFalse(swipeActions.contains(where: \.exists), "A swiped-open row did not close")
 
-        // Built rows reach past the screen, so wait for one that can take the tap.
-        for _ in 0..<14 where !(row.exists && row.isHittable) {
-            sessionList.swipeDown()
-        }
+        XCTAssertTrue(revealSessionRow(row, in: sessionList), "Seeded session row never scrolled into reach")
         XCTAssertTrue(row.isHittable, "Seeded session row never scrolled into reach")
         tap(row, named: "session row")
         XCTAssertTrue(
@@ -302,20 +278,19 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         let sessionId = try XCTUnwrap(themeSwitchSessionId, "Theme-switch session was not seeded")
         let sessionRow = app.buttons["session.nav.\(sessionId)"]
         // A relaunch after an earlier failure shows the inbox before it has
-        // fetched this case's session, and the list builds only nearby rows.
+        // fetched this case's session.
         let inbox = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(inbox.waitForExistence(timeout: 15), "iPhone sessions inbox did not appear")
-        inbox.swipeDown()
-        for _ in 0..<14 where !sessionRow.waitForExistence(timeout: 0.5) {
-            inbox.swipeUp()
-        }
-        XCTAssertTrue(sessionRow.waitForExistence(timeout: 15), "Theme-switch session row did not appear")
+        XCTAssertTrue(scrollToElement(sessionRow, in: inbox), "Theme-switch session row did not appear")
 
         try selectManualTheme("oled")
         openWorkspaceSidebar()
 
         let workspaceRow = app.buttons["workspace.open.Theme Switch Workspace"]
-        XCTAssertTrue(workspaceRow.waitForExistence(timeout: 10), "Theme-switch workspace row did not appear")
+        XCTAssertTrue(
+            revealWorkspace(named: "Theme Switch Workspace") && workspaceRow.exists,
+            "Theme-switch workspace row did not appear"
+        )
         XCTAssertGreaterThan(
             pixelFraction(in: workspaceRow.screenshot().image, crop: CGRect(x: 0.20, y: 0, width: 0.58, height: 1)) { $0 > 0.35 },
             0.005,
@@ -330,7 +305,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         )
 
         try selectManualTheme("light")
-        XCTAssertTrue(sessionRow.waitForExistence(timeout: 10), "Session row did not return after theme switch")
+        XCTAssertTrue(scrollToElement(sessionRow, in: inbox), "Session row did not return after theme switch")
         XCTAssertGreaterThan(
             pixelFraction(in: sessionRow.screenshot().image, crop: CGRect(x: 0.03, y: 0, width: 0.70, height: 0.42)) { $0 < 0.35 },
             0.005,
@@ -342,18 +317,16 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     func testIPhoneRecentStoppedSessionsInboxScreenshot() throws {
         let sessionList = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "iPhone sessions inbox did not appear")
-        sessionList.swipeDown()
 
         let stoppedHeader = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "workspace.sessionList.stopped-day-")
         ).firstMatch
-        XCTAssertTrue(stoppedHeader.waitForExistence(timeout: 15), "Recent stopped section did not appear")
+        XCTAssertTrue(scrollToElement(stoppedHeader, in: sessionList), "Recent stopped section did not appear")
 
-        // Earlier tests in a run leave sessions with the same fixture title, so
-        // find this test's stopped session by id.
+        // The Lab sessions share one title, so find this test's stopped session by id.
         let stoppedSessionId = try XCTUnwrap(recentStoppedSessionId, "Stopped session was not seeded")
         let stoppedRowTitle = app.buttons["session.nav.\(stoppedSessionId)"]
-        XCTAssertTrue(stoppedRowTitle.waitForExistence(timeout: 10), "Today's stopped session was not expanded")
+        XCTAssertTrue(scrollToElement(stoppedRowTitle, in: sessionList), "Today's stopped session was not expanded")
         XCTAssertFalse(
             app.staticTexts[stoppedIncognitoSessionName].exists,
             "Stopped incognito session should disappear from All Sessions"
@@ -364,6 +337,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         )
         try saveLabScreenshot(name: "iphone-recent-stopped-sessions-inbox-e2e")
 
+        XCTAssertTrue(revealSessionRow(stoppedHeader, in: sessionList), "Recent stopped section scrolled out of reach")
         tap(stoppedHeader, named: "recent stopped section")
         let rowCollapsed = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"),
@@ -377,9 +351,10 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
 
         // The collapse lives in the inbox screen, which the shared app keeps for
         // later tests, so expand the section again.
+        XCTAssertTrue(revealSessionRow(stoppedHeader, in: sessionList), "Recent stopped section scrolled out of reach")
         tap(stoppedHeader, named: "recent stopped section")
         XCTAssertTrue(
-            stoppedRowTitle.waitForExistence(timeout: 5),
+            scrollToElement(stoppedRowTitle, in: sessionList),
             "Recent stopped section did not expand again"
         )
     }

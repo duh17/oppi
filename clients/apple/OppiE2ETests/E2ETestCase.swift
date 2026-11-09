@@ -141,6 +141,7 @@ class E2ETestCase: XCTestCase {
         try super.setUpWithError()
         continueAfterFailure = false
         resetDeviceOrientation()
+        try resetServerToBaseline()
         try seedE2EFixtures()
         // The app (and its launch environment) is shared across classes, so a
         // case that relaunches it must not inherit another class's auto-open
@@ -170,6 +171,42 @@ class E2ETestCase: XCTestCase {
             // Navigate back to workspace detail if a previous test left the app elsewhere.
             try ensureAtWorkspaceDetail()
         }
+    }
+
+    /// Every case starts from the same server: no session, and no workspace but the anchor
+    /// `e2e-workspace`. What earlier cases left (a session holding a pending ask or a scripted turn
+    /// that never ended, a lab workspace, whatever a case that died mid-way did not clean up)
+    /// would otherwise fill the lists and push the rows this case seeds below the fold.
+    ///
+    /// The running app drops a deleted session from its lists within a moment, but it keeps an
+    /// open chat on a deleted session, and it never drops a deleted workspace from its catalog
+    /// or from the detail screen it is in. So the app terminates first, and the case relaunches
+    /// it, when the reset deletes a workspace, when a chat is open, or when the case starts in the
+    /// auto-created chat (which the reset deletes). Deleting only sessions under a list needs no
+    /// relaunch. It runs before the case seeds and before any launch: the launch's auto-open needs
+    /// only the anchor, and its auto-created session is made after.
+    private func resetServerToBaseline() throws {
+        let started = Date()
+        let surplus = try e2eLabSurplus()
+        if !surplus.undeletable.isEmpty {
+            print("E2E-RESET skipping rows an earlier reset could not delete, or found orphaned: \(surplus.undeletable.joined(separator: ", "))")
+        }
+        guard !surplus.isEmpty else { return }
+
+        var relaunches = false
+        if let shared = Self._app, shared.state != .notRunning,
+           e2eRequiresFreshLaunch || !surplus.workspaceIds.isEmpty || e2eStartsInAutoCreatedChat
+            || chatSessionSurfaceExists(in: shared)
+        {
+            terminateSharedApp()
+            relaunches = true
+        }
+        try removeE2ELabSurplus(surplus)
+        print(String(
+            format: "E2E-RESET sessions=%d workspaces=%d relaunch=%@ seconds=%.2f",
+            surplus.sessions.count, surplus.workspaceIds.count, relaunches ? "yes" : "no",
+            Date().timeIntervalSince(started)
+        ))
     }
 
     /// Every test starts in `e2eOrientation`. The simulator keeps whatever
@@ -635,13 +672,18 @@ class E2ETestCase: XCTestCase {
         return chatSessionSurfaceExists(in: application)
     }
 
-    /// Ensures the app is at the workspace detail screen before each test.
+    /// Ensures the app is at the detail screen of `e2eAutoOpenWorkspaceName` before each test.
     /// Handles recovery from chat sessions, workspace list, or unknown states.
+    ///
+    /// Another class's workspace detail (its own name, its own sessions) must not
+    /// satisfy this: a session created for this case lives in the expected
+    /// workspace, so its row never shows in the other workspace's list. That
+    /// means a relaunch, which opens the expected workspace.
     private func ensureAtWorkspaceDetail() throws {
         dismissExtensionSheetIfNeeded(timeout: 0.2)
 
         if workspaceDetailSurfaceExists(in: app) {
-            clearSessionSearchIfNeeded()
+            try settleOnExpectedWorkspaceDetail()
             return
         }
 
@@ -650,28 +692,42 @@ class E2ETestCase: XCTestCase {
         if let backButton = navigationBackButton(), backButton.exists {
             tap(backButton, named: "navigation back button", timeout: 1)
             if waitForWorkspaceDetailSurface(in: app, timeout: 6) {
-                clearSessionSearchIfNeeded()
+                try settleOnExpectedWorkspaceDetail()
                 return
             }
         }
 
         if waitForWorkspaceDetailSurface(in: app, timeout: 1) {
-            clearSessionSearchIfNeeded()
+            try settleOnExpectedWorkspaceDetail()
             return
         }
 
-        // Might be at the workspace list — open e2e-workspace
-        let openWorkspaceButton = app.buttons["workspace.open.e2e-workspace"]
-        if waitForElementToExist(openWorkspaceButton, timeout: 3) {
-            tap(openWorkspaceButton, named: "e2e-workspace open button", timeout: 1)
-            if waitForWorkspaceDetailSurface(in: app, timeout: 8) {
-                clearSessionSearchIfNeeded()
-                return
+        // Might be at the workspace list — open the expected workspace.
+        if waitForWorkspaceList(in: app, timeout: 1) {
+            let openWorkspaceButton = app.buttons["workspace.open.\(e2eAutoOpenWorkspaceName)"]
+            scrollToElement(openWorkspaceButton, in: workspaceListElement(in: app), timeout: 15)
+            if openWorkspaceButton.exists {
+                tap(openWorkspaceButton, named: "\(e2eAutoOpenWorkspaceName) open button", timeout: 1)
+                if waitForWorkspaceDetailSurface(in: app, timeout: 8) {
+                    try settleOnExpectedWorkspaceDetail()
+                    return
+                }
             }
         }
 
         // Unknown state — force relaunch
         Self._app = nil
+        try launchAndPair()
+    }
+
+    /// Finishes `ensureAtWorkspaceDetail` on a workspace detail screen: clears a leftover
+    /// search, or relaunches when the screen belongs to another workspace.
+    private func settleOnExpectedWorkspaceDetail() throws {
+        if app.navigationBars[e2eAutoOpenWorkspaceName].waitForExistence(timeout: 3) {
+            clearSessionSearchIfNeeded()
+            return
+        }
+        terminateSharedApp()
         try launchAndPair()
     }
 
@@ -749,26 +805,110 @@ class E2ETestCase: XCTestCase {
         }
     }
 
+    /// Scrolls the workspace list to the named workspace's open button. The list builds only the
+    /// rows near the viewport, so a workspace below the fold does not exist for XCUITest.
     func revealWorkspace(named workspaceName: String, timeout: TimeInterval = 20) -> Bool {
         guard waitForWorkspaceList(in: app, timeout: min(5, timeout)) else { return false }
-        let workspaceList = workspaceListElement(in: app)
-
-        let title = app.staticTexts[workspaceName]
         let openButton = app.buttons["workspace.open.\(workspaceName)"]
-        if title.exists || openButton.exists { return true }
+        if scrollToElement(openButton, in: workspaceListElement(in: app), timeout: timeout) { return true }
+        return app.staticTexts[workspaceName].exists || openButton.exists
+    }
 
+    /// Scrolls `list` until `element` lies inside it. It looks where the list already is first,
+    /// then scrolls up to the top and then down, so the search does not depend on where an earlier
+    /// screen of the case left the list. A collection view builds only the rows near the viewport,
+    /// so a row beyond the fold does not exist for XCUITest. Look rows up by their id with this,
+    /// not by their title and not with a swipe loop of the case's own.
+    ///
+    /// Every move is a drag without momentum, so no row flies past unseen, and nothing pulls to
+    /// refresh before the element is looked for. The scroll up stops at the first drag that moves
+    /// nothing; that one drag can bounce at the top, which is all the refresh the search ever
+    /// causes. Returns false once the list ends, or the timeout runs out, without the element.
+    @discardableResult
+    func scrollToElement(_ element: XCUIElement, in list: XCUIElement, timeout: TimeInterval = 90) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
-        for _ in 0..<3 where Date() < deadline {
-            workspaceList.swipeDown()
-            if title.waitForExistence(timeout: 0.5) || openButton.exists { return true }
+        func elementFrame() -> CGRect? {
+            guard element.exists, let frame = snapshotFrame(of: element), !frame.isEmpty else { return nil }
+            return frame
+        }
+        func isInList() -> Bool {
+            guard let frame = elementFrame() else { return false }
+            return list.frame.contains(frame)
+        }
+        // The first and last built cell tell whether a drag moved the list.
+        func edgeSignature() -> String {
+            let cells = list.cells
+            let count = cells.count
+            guard count > 0 else { return "" }
+            return [0, count - 1].map { index in
+                snapshotFrame(of: cells.element(boundBy: index)).map { "\(Int($0.minY))" } ?? "-"
+            }.joined(separator: "/") + "#\(count)"
         }
 
-        while Date() < deadline {
-            if title.exists || openButton.exists { return true }
-            workspaceList.swipeUp()
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        if isInList() { return true }
+        guard waitForElementToExist(list, timeout: 5) else { return false }
+
+        let step = list.frame.height * 0.4
+        var signature = edgeSignature()
+        for _ in 0..<60 where Date() < deadline {
+            dragListContent(list, by: step)
+            if isInList() { return true }
+            let next = edgeSignature()
+            if next == signature { break }
+            signature = next
         }
-        return title.exists || openButton.exists
+
+        var unmoved = 0
+        while Date() < deadline {
+            if isInList() { return true }
+            var distance = -step
+            if let frame = elementFrame() {
+                // Built, but beyond the list's edge: bring it to the middle. A drag of at most
+                // half the list stays inside it.
+                let listFrame = list.frame
+                distance = max(-listFrame.height / 2, min(listFrame.height / 2, listFrame.midY - frame.midY))
+            }
+            dragListContent(list, by: distance)
+            let next = edgeSignature()
+            unmoved = next == signature ? unmoved + 1 : 0
+            if unmoved >= 2 { break }
+            signature = next
+        }
+        return isInList()
+    }
+
+    /// An element's frame from one snapshot, nil when it has gone: a recycled cell must not
+    /// fail the case between the existence check and the read.
+    private func snapshotFrame(of element: XCUIElement) -> CGRect? {
+        MainActor.assumeIsolated { try? element.snapshot().frame }
+    }
+
+    /// Drags the list's content by `distance` points (positive moves it down) without momentum,
+    /// the drag centered on `centerY` (the list's middle by default).
+    private func dragListContent(_ list: XCUIElement, by distance: CGFloat, centeredAt centerY: CGFloat? = nil) {
+        let frame = list.frame
+        let middle = centerY ?? frame.midY
+        func point(atY y: CGFloat) -> XCUICoordinate {
+            list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
+                .withOffset(CGVector(dx: 0, dy: y - frame.minY))
+        }
+        point(atY: middle - distance / 2).press(
+            forDuration: 0.05,
+            thenDragTo: point(atY: middle + distance / 2),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.3
+        )
+    }
+
+    /// Scrolls to a session row by its id and places it where a tap lands on it. Use for rows a
+    /// case taps or swipes; `scrollToElement` alone leaves a row at the list's edge, where the
+    /// bottom bar can take the touch.
+    @MainActor
+    @discardableResult
+    func revealSessionRow(_ row: XCUIElement, in list: XCUIElement, timeout: TimeInterval = 90) -> Bool {
+        guard scrollToElement(row, in: list, timeout: timeout) else { return false }
+        scrollSessionRowIntoView(row, in: list)
+        return row.exists
     }
 
     // MARK: - Session Helpers
@@ -837,9 +977,8 @@ class E2ETestCase: XCTestCase {
 
         let rowIdentifier = "session.nav.\(sessionId)"
         let row = app.descendants(matching: .any)[rowIdentifier]
-        for _ in 0..<14 where !waitForElementToExist(row, timeout: 0.5) {
-            sessionList.swipeUp()
-        }
+        // The list may be scrolled anywhere: an earlier screen of this case left it down.
+        scrollToElement(row, in: sessionList)
         XCTAssertTrue(
             waitForElementToExist(row, timeout: 10),
             "Session row \(sessionId) did not appear"
@@ -947,18 +1086,8 @@ class E2ETestCase: XCTestCase {
             // The content follows the finger. One drag stays inside the band.
             let bandHeight = band.upperBound - band.lowerBound
             let drag = max(-bandHeight * 0.6, min(bandHeight * 0.6, goal - frame.minY))
-            let middle = (band.lowerBound + band.upperBound) / 2
-            func point(atY y: CGFloat) -> XCUICoordinate {
-                list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
-                    .withOffset(CGVector(dx: 0, dy: y - list.frame.minY))
-            }
             lastMinY = frame.minY
-            point(atY: middle - drag / 2).press(
-                forDuration: 0.05,
-                thenDragTo: point(atY: middle + drag / 2),
-                withVelocity: .slow,
-                thenHoldForDuration: 0.3
-            )
+            dragListContent(list, by: drag, centeredAt: (band.lowerBound + band.upperBound) / 2)
         }
         return false
     }

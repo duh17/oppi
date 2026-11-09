@@ -26,18 +26,31 @@ final class ServerResourcesE2ETests: E2ETestCase {
     }
 
     /// The shell mounts the Extensions list for the paired server and loads its
-    /// catalog. The E2E server has no Pi extensions, so the list says so; a row
-    /// opening its detail is proven in `ServerExtensionsViewControllerTests`.
+    /// catalog. The E2E server's catalog holds the Oppi built-in extensions and its
+    /// configured `auto-name` package, which the list shows below them (so the
+    /// "no Pi extensions" notice never appears here); a row opening its detail is
+    /// proven in `ServerExtensionsViewControllerTests`.
     func testIPhoneExtensionsListLoadsServerCatalog() throws {
         openCompactSidebar()
         tap(app.buttons["workspace.extensions.open"], named: "Extensions sidebar destination")
         XCTAssertTrue(app.navigationBars["Extensions"].waitForExistence(timeout: 10))
         assertServerScope()
-        XCTAssertTrue(
-            app.staticTexts["extensions.noPi"].waitForExistence(timeout: 15),
-            "The server's empty extension catalog did not load"
-        )
+        let list = app.collectionViews["extensions.list"]
+        XCTAssertTrue(list.waitForExistence(timeout: 15), "The extensions list did not appear")
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "extensions.row."))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 15), "The server's extension catalog did not load")
         XCTAssertTrue(app.searchFields["Search extensions"].exists)
+        // The package row is the last one, below the built-ins: the catalog loaded in full. The
+        // row's identifier is `extensions.row.<id>`, with the id the server's own catalog gives it.
+        let catalog = try e2eLabAPIJSON(method: "GET", path: "/server/resources/extensions?plugins=true")
+        let packageId = try XCTUnwrap(
+            (catalog["extensions"] as? [[String: Any]])?.first { $0["name"] as? String == "auto-name" }?["id"] as? String,
+            "The server's catalog does not list its configured auto-name package"
+        )
+        XCTAssertTrue(
+            scrollToElement(app.buttons["extensions.row.\(packageId)"], in: list),
+            "The server's configured package is missing from the extensions list"
+        )
         try saveLabScreenshot(name: "iphone-server-resources-extensions-e2e")
     }
 

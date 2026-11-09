@@ -34,18 +34,112 @@ struct E2ELabGitWorktreeFixture {
     let branchName: String
 }
 
+/// What the shared E2E server holds beyond its baseline: every session, and every workspace but
+/// the anchor `e2e-workspace`.
+///
+/// All cases share one server for the run. A session or workspace an earlier case left behind
+/// (including one that died mid-way) stays in every later case's lists and pushes the rows it
+/// seeds below the fold, so `E2ETestCase.setUpWithError` resets the server to the baseline
+/// before it seeds anything.
+struct E2ELabSurplus {
+    /// Each session's id and its workspace; a control session has none.
+    var sessions: [(id: String, workspaceId: String?)] = []
+    var workspaceIds: [String] = []
+    /// Rows an earlier reset could not delete, and orphans (a session whose workspace is gone).
+    /// They stay out of `sessions` and `workspaceIds`, so the run goes on.
+    var undeletable: [String] = []
+
+    var isEmpty: Bool { sessions.isEmpty && workspaceIds.isEmpty }
+}
+
+enum E2ELabBaseline {
+    /// Ids of rows the reset failed to delete or found orphaned, for the rest of the run.
+    nonisolated(unsafe) static var undeletable: Set<String> = []
+    /// The server answered a harness-only route, so wiping it is the E2E server's own baseline.
+    nonisolated(unsafe) static var harnessVerified = false
+}
+
 extension E2ETestCase {
-    /// Swipes `list` up until `element` is on screen inside it. A collection view only builds the rows
-    /// near the viewport, and a page's height depends on what it loaded (an offline server's page is
-    /// taller, with error rows), so one swipe cannot be assumed to reach a row at the bottom. An
-    /// element can report itself hittable while the viewport edge still hides it, so its frame must
-    /// lie within the list's.
-    func scrollUntilHittable(_ element: XCUIElement, in list: XCUIElement, maxSwipes: Int = 8) {
-        func isOnScreen() -> Bool {
-            element.exists && element.isHittable && list.frame.contains(element.frame)
+    /// What the server holds beyond the baseline. The anchor is the first workspace named
+    /// `e2e-workspace`; it must exist, since the launch opens it by name.
+    func e2eLabSurplus() throws -> E2ELabSurplus {
+        try verifyE2EHarnessServer()
+        let workspaces = try XCTUnwrap(
+            try e2eLabAPIJSON(method: "GET", path: "/workspaces")["workspaces"] as? [[String: Any]],
+            "Workspaces response missing workspaces"
+        )
+        guard let anchor = workspaces.first(where: { $0["name"] as? String == "e2e-workspace" }),
+              let anchorId = anchor["id"] as? String
+        else {
+            throw E2ELabAPIError.missingAnchorWorkspace
         }
-        for _ in 0..<maxSwipes where !isOnScreen() {
-            list.swipeUp()
+        var surplus = E2ELabSurplus()
+        let skip = E2ELabBaseline.undeletable
+        surplus.workspaceIds = workspaces.compactMap { $0["id"] as? String }.filter { $0 != anchorId }
+        let sessions = try XCTUnwrap(
+            try e2eLabAPIJSON(method: "GET", path: "/sessions")["sessions"] as? [[String: Any]],
+            "Sessions response missing sessions"
+        )
+        surplus.sessions = sessions.compactMap { session in
+            (session["id"] as? String).map { ($0, session["workspaceId"] as? String) }
+        }
+        surplus.undeletable = surplus.workspaceIds.filter(skip.contains) + surplus.sessions.map(\.id).filter(skip.contains)
+        surplus.workspaceIds.removeAll(where: skip.contains)
+        surplus.sessions.removeAll { skip.contains($0.id) }
+        return surplus
+    }
+
+    /// Wiping a server is only the baseline of the E2E server, which alone answers `/e2e/ui/...`
+    /// (the routes exist only with `OPPI_E2E_UI_HARNESS=1`). Anything else must not be wiped.
+    private func verifyE2EHarnessServer() throws {
+        guard !E2ELabBaseline.harnessVerified else { return }
+        do {
+            _ = try e2eLabAPIJSON(method: "GET", path: "/e2e/ui/sessions/baseline-check/subscribers")
+        } catch {
+            throw E2ELabAPIError.notHarnessServer("\(error)")
+        }
+        E2ELabBaseline.harnessVerified = true
+    }
+
+    /// Deletes the surplus: sessions first (the workspace delete route removes only the
+    /// workspace file), then the workspaces. Every delete is tried. A 404 is a row that is
+    /// already gone. A session whose workspace is gone is an orphan no route can delete; the
+    /// session lists cover only existing workspaces, so it cannot hide a row of any case, and it
+    /// is remembered and skipped (the `E2E-RESET` line names it), not failed. Any other failure is
+    /// collected, remembered so later resets skip the row, and thrown once at the end, so the case
+    /// that hit it fails and the cases after it still run.
+    func removeE2ELabSurplus(_ surplus: E2ELabSurplus) throws {
+        var failures: [(id: String, reason: String)] = []
+        var orphans: [String] = []
+        for session in surplus.sessions {
+            let path = session.workspaceId.map { "/workspaces/\($0)/sessions/\(session.id)" }
+                ?? "/control-sessions/\(session.id)"
+            do {
+                _ = try e2eLabAPIJSON(method: "DELETE", path: path)
+            } catch E2ELabAPIError.httpStatus(404, let body) where !body.contains("Workspace not found") {
+                continue
+            } catch E2ELabAPIError.httpStatus(404, _) {
+                E2ELabBaseline.undeletable.insert(session.id)
+                orphans.append(session.id)
+            } catch {
+                failures.append((session.id, "\(error)"))
+            }
+        }
+        for id in surplus.workspaceIds {
+            do {
+                _ = try e2eLabAPIJSON(method: "DELETE", path: "/workspaces/\(id)")
+            } catch E2ELabAPIError.httpStatus(404, _) {
+                continue
+            } catch {
+                failures.append((id, "\(error)"))
+            }
+        }
+        if !orphans.isEmpty {
+            print("E2E-RESET orphaned sessions (workspace gone, no route deletes them), skipped from now on: \(orphans.joined(separator: ", "))")
+        }
+        guard failures.isEmpty else {
+            E2ELabBaseline.undeletable.formUnion(failures.map(\.id))
+            throw E2ELabAPIError.baselineResetFailed(failures.map { "\($0.id): \($0.reason)" })
         }
     }
 
@@ -247,28 +341,6 @@ extension E2ETestCase {
             response["sessionIds"] as? [String],
             "Stopped-session fixture response missing sessionIds"
         )
-    }
-
-    func deleteStoppedSessionFixtures(sessionIds: [String], workspaceId: String) throws {
-        guard !sessionIds.isEmpty else { return }
-        let response = try e2eLabAPIJSON(
-            method: "DELETE",
-            path: "/e2e/ui/fixtures/stopped-sessions",
-            body: [
-                "workspaceId": workspaceId,
-                "sessionIds": sessionIds,
-            ]
-        )
-        let deletedCount = try XCTUnwrap(
-            response["deletedCount"] as? Int,
-            "Stopped-session cleanup response missing deletedCount"
-        )
-        guard deletedCount == sessionIds.count else {
-            throw E2ELabAPIError.fixtureCleanupMismatch(
-                expected: sessionIds.count,
-                actual: deletedCount
-            )
-        }
     }
 
     /// The stored session whose messages contain `marker`, from the lab server's search:
@@ -785,7 +857,9 @@ private enum E2ELabAPIError: Error, CustomStringConvertible {
     case missingHTTPResponse
     case httpStatus(Int, String)
     case timeout(String)
-    case fixtureCleanupMismatch(expected: Int, actual: Int)
+    case missingAnchorWorkspace
+    case notHarnessServer(String)
+    case baselineResetFailed([String])
 
     var description: String {
         switch self {
@@ -799,8 +873,13 @@ private enum E2ELabAPIError: Error, CustomStringConvertible {
             return "HTTP \(status): \(body)"
         case .timeout(let path):
             return "Timed out waiting for \(path)"
-        case .fixtureCleanupMismatch(let expected, let actual):
-            return "Fixture cleanup deleted \(actual) of \(expected) stopped sessions"
+        case .missingAnchorWorkspace:
+            return "The E2E server has no workspace named e2e-workspace to keep as the baseline"
+        case .notHarnessServer(let reason):
+            return "The server does not answer the E2E harness routes, so it is not wiped to a baseline: \(reason)"
+        case .baselineResetFailed(let failures):
+            return "The baseline reset could not delete \(failures.count) row(s); later cases skip them:\n"
+                + failures.joined(separator: "\n")
         }
     }
 }

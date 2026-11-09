@@ -36,7 +36,7 @@ final class ExtensionAttentionE2ETests: E2ETestCase {
         XCTAssertEqual(waitForFocusedSessionId(focusedSession, timeout: 5), focusedSession)
         navigateBackToWorkspace()
 
-        XCTAssertTrue(waitForElementToExist(app.staticTexts["Your Turn"], timeout: 20), "Your Turn section did not appear")
+        assertShowsAttentionRow(for: backgroundSession)
         XCTAssertTrue(
             waitForElementToExist(app.descendants(matching: .any)["session.nav.\(backgroundSession)"], timeout: 20),
             "Background session did not appear in the session list"
@@ -113,7 +113,7 @@ final class ExtensionAttentionE2ETests: E2ETestCase {
         XCTAssertEqual(waitForFocusedSessionId(focusedSession, timeout: 5), focusedSession)
         navigateBackToWorkspace()
 
-        XCTAssertTrue(waitForElementToExist(app.staticTexts["Your Turn"], timeout: 20), "Your Turn section did not appear")
+        assertShowsAttentionRow(for: backgroundSession)
         openSessionDeepLink(id: backgroundSession)
         XCTAssertEqual(waitForFocusedSessionId(backgroundSession, timeout: 20), backgroundSession)
         waitForWebSocketConnected()
@@ -185,6 +185,42 @@ final class ExtensionAttentionE2ETests: E2ETestCase {
             waitForTimelineTextContaining("NOTIFY_TAP_TIMELINE_OK", timeout: 20),
             "Warm open from another chat must show the target timeline, not a blank thread"
         )
+    }
+
+    /// The session shows its pending ask under the Your Turn header: the section is there, and the
+    /// session's own attention row sits inside it, below its header and above the next section's.
+    /// The list keeps the scroll position the last chat left it at, so the row is found by its
+    /// id, not by whatever the screen shows.
+    @MainActor
+    private func assertShowsAttentionRow(for sessionId: String) {
+        let sessionList = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(waitForElementToExist(sessionList, timeout: 20), "Session list did not appear")
+        let attention = app.staticTexts["session.attentionPreview.\(sessionId)"]
+        XCTAssertTrue(
+            scrollToElement(attention, in: sessionList),
+            "Session \(sessionId) did not show its pending ask in the session list"
+        )
+
+        let yourTurn = app.staticTexts["Your Turn"]
+        XCTAssertTrue(yourTurn.exists, "Your Turn section header is not above the session's pending ask")
+        XCTAssertGreaterThanOrEqual(
+            attention.frame.minY,
+            yourTurn.frame.maxY,
+            "The pending ask is above the Your Turn header, not under it"
+        )
+        // The next section (Working, or a stopped day) must start below the row.
+        let stoppedDays = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "workspace.sessionList.stopped-day-")
+        ).allElementsBoundByIndex
+        for nextHeader in [app.staticTexts["Working"]] + stoppedDays where nextHeader.exists {
+            if nextHeader.frame.minY > yourTurn.frame.minY {
+                XCTAssertLessThanOrEqual(
+                    attention.frame.maxY,
+                    nextHeader.frame.minY,
+                    "The pending ask is below the next section's header, not inside Your Turn"
+                )
+            }
+        }
     }
 
     /// Open `oppi://session/<id>` through the system into the running app,

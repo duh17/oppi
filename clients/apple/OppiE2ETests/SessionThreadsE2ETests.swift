@@ -121,12 +121,8 @@ final class SessionThreadsE2ETests: E2ETestCase {
             agentIds = []
             try? super.tearDownWithError()
         }
-        terminateSharedApp()
-        _ = try? e2eLabAPIJSON(method: "DELETE", path: "/e2e/ui/fixtures/session-threads")
-        for id in workspaceIds {
-            _ = try? e2eLabAPIJSON(method: "DELETE", path: "/workspaces/\(id)")
-        }
-        // Agent names are unique among active Agents; archive so the next test can seed them again.
+        // The sessions and workspaces go with the next case's server reset. Agent names are
+        // unique among active Agents; archive so the next test can seed them again.
         for id in agentIds {
             _ = try? e2eLabAPIJSON(method: "DELETE", path: "/agents/\(id)")
         }

@@ -1,6 +1,5 @@
 import XCTest
 
-private let worktreeWorkspaceName = "Worktree Navigation Lab"
 private let worktreeBranchName = "feature/native-worktree-e2e"
 
 /// Paired-server proof for native worktree navigation.
@@ -10,7 +9,8 @@ private let worktreeBranchName = "feature/native-worktree-e2e"
 /// instead of screenshot-preview mocks.
 @MainActor
 final class WorkspaceWorktreeE2ETests: E2ETestCase {
-    nonisolated(unsafe) private static var workspaceId: String?
+    nonisolated(unsafe) private var workspaceId: String?
+    nonisolated(unsafe) private var worktreeWorkspaceName = ""
 
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
 
@@ -23,15 +23,16 @@ final class WorkspaceWorktreeE2ETests: E2ETestCase {
 
     override var e2eAutoOpenWorkspaceName: String { worktreeWorkspaceName }
 
-    /// Seeds once per run: the launch hint opens the workspace by name, so a
-    /// second same-named workspace would shadow the id the cases look up.
+    /// Seeds per case: the next case's server reset deletes the workspace, so no case sees
+    /// another's. The name is the case's own because the launch hint opens the workspace by name.
     override func seedE2EFixtures() throws {
-        guard Self.workspaceId == nil else { return }
+        let suffix = UUID().uuidString.prefix(8).lowercased()
+        worktreeWorkspaceName = "Worktree Navigation Lab \(suffix)"
         let fixture = try createLabGitWorktreeFixture(
-            directoryName: "native-worktree-e2e",
+            directoryName: "native-worktree-e2e-\(suffix)",
             branchName: worktreeBranchName
         )
-        Self.workspaceId = try createLabWorkspace(
+        workspaceId = try createLabWorkspace(
             named: worktreeWorkspaceName,
             hostMount: fixture.hostMount
         )
@@ -51,7 +52,7 @@ final class WorkspaceWorktreeE2ETests: E2ETestCase {
     }
 
     func testWorktreeSelectionCreatesSessionInLinkedWorktree() throws {
-        let workspaceId = try XCTUnwrap(Self.workspaceId, "Worktree fixture workspace was not seeded")
+        let workspaceId = try XCTUnwrap(workspaceId, "Worktree fixture workspace was not seeded")
         dismissExtensionSheetIfNeeded(timeout: 3)
         XCTAssertTrue(
             app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 20),

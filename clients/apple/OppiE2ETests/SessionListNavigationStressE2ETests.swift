@@ -8,9 +8,7 @@ import XCTest
 @MainActor
 final class SessionListNavigationStressE2ETests: E2ETestCase {
     private let workspaceName = "Dense Navigation \(UUID().uuidString.prefix(8))"
-    nonisolated(unsafe) private var workspaceId: String?
     nonisolated(unsafe) private var activeSessionId: String?
-    nonisolated(unsafe) private var stoppedSessionIds: [String] = []
 
     override var e2eLaunchesSessionsInboxOnly: Bool {
         true
@@ -24,7 +22,6 @@ final class SessionListNavigationStressE2ETests: E2ETestCase {
         guard name.contains("testDenseWorkspace") else { return }
 
         let workspaceId = try createLabWorkspace(named: workspaceName)
-        self.workspaceId = workspaceId
         activeSessionId = try createLabSessions(
             count: 1,
             workspaceId: workspaceId,
@@ -37,62 +34,30 @@ final class SessionListNavigationStressE2ETests: E2ETestCase {
         let twoDaysAgo = try XCTUnwrap(calendar.date(byAdding: .day, value: -2, to: today))
         let threeDaysAgo = try XCTUnwrap(calendar.date(byAdding: .day, value: -3, to: today))
 
-        stoppedSessionIds += try createStoppedSessionFixtures(
+        try createStoppedSessionFixtures(
             count: 20,
             workspaceId: workspaceId,
             lastActivity: today,
             namePrefix: "Dense Today"
         )
-        stoppedSessionIds += try createStoppedSessionFixtures(
+        try createStoppedSessionFixtures(
             count: 52,
             workspaceId: workspaceId,
             lastActivity: yesterday,
             namePrefix: "Dense Yesterday"
         )
-        stoppedSessionIds += try createStoppedSessionFixtures(
+        try createStoppedSessionFixtures(
             count: 52,
             workspaceId: workspaceId,
             lastActivity: twoDaysAgo,
             namePrefix: "Dense Two Days Ago"
         )
-        stoppedSessionIds += try createStoppedSessionFixtures(
+        try createStoppedSessionFixtures(
             count: 24,
             workspaceId: workspaceId,
             lastActivity: threeDaysAgo,
             namePrefix: "Dense Three Days Ago"
         )
-    }
-
-    override func tearDownWithError() throws {
-        defer {
-            workspaceId = nil
-            activeSessionId = nil
-            stoppedSessionIds = []
-            try? super.tearDownWithError()
-        }
-
-        // Remove server fixtures only after the app is gone. Deleting 148 rows
-        // while their workspace list is mounted creates teardown churn that is
-        // unrelated to the navigation transition under test. Clearing the base
-        // class handle ensures the next E2E setup performs a real relaunch.
-        terminateSharedApp()
-
-        guard let workspaceId else { return }
-        if let activeSessionId {
-            _ = try e2eLabAPIJSON(
-                method: "POST",
-                path: "/workspaces/\(workspaceId)/sessions/\(activeSessionId)/stop"
-            )
-            _ = try e2eLabAPIJSON(
-                method: "DELETE",
-                path: "/workspaces/\(workspaceId)/sessions/\(activeSessionId)"
-            )
-        }
-        try deleteStoppedSessionFixtures(
-            sessionIds: stoppedSessionIds,
-            workspaceId: workspaceId
-        )
-        _ = try e2eLabAPIJSON(method: "DELETE", path: "/workspaces/\(workspaceId)")
     }
 
     func testDenseWorkspaceExpandsTodayOnlyAndNavigatesWithoutStalling() throws {
