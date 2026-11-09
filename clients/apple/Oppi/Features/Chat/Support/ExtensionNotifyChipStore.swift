@@ -66,7 +66,7 @@ final class ExtensionNotifyChipStore {
             session.entries = Array(session.entries.prefix(Self.maxEntries))
         }
         states[sessionId] = session
-        timer.start(sessionId)
+        timer.start(sessionId, message: trimmed)
     }
 
     func setExpanded(_ expanded: Bool, sessionId: String) {

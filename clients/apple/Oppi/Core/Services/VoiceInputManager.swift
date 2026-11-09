@@ -483,6 +483,7 @@ final class VoiceInputManager {
             if let captureFailure {
                 captureFailureTimer.start(
                     captureFailure.take,
+                    message: captureFailure.message,
                     keepsUntilDismissed: true,
                     announcement: captureFailure.message
                 )

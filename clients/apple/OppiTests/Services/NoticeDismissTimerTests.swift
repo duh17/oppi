@@ -18,7 +18,11 @@ final class ManualNoticeClock {
 
     /// Every duration a timer asked to sleep, in order.
     private(set) var requested: [Duration] = []
-    var voiceOverRunning = false
+    /// VoiceOver or Switch Control; setting it tells the timers, as the system would.
+    var voiceOverRunning = false {
+        didSet { for handler in assistiveHandlers { handler() } }
+    }
+    private var assistiveHandlers: [@MainActor () -> Void] = []
     private(set) var announcements: [String] = []
 
     var sleeperCount: Int { sleepers.count }
@@ -27,7 +31,11 @@ final class ManualNoticeClock {
         NoticeTimerEnvironment(
             now: { [self] in origin + elapsed },
             sleep: { [self] in try await sleep($0) },
-            isVoiceOverRunning: { [self] in voiceOverRunning },
+            isAssistiveTechnologyRunning: { [self] in voiceOverRunning },
+            observeAssistiveStatus: { [self] handler in
+                assistiveHandlers.append(handler)
+                return []
+            },
             announce: { [self] in announcements.append($0) }
         )
     }
@@ -186,6 +194,42 @@ struct NoticeDismissTimerTests {
         #expect(clock.announcements.isEmpty)
         clock.advance(by: NoticeDismiss.duration)
         #expect(await waitForMainActorCondition { expired == ["a"] })
+    }
+
+    @Test func assistiveTechnologyTurningOnMidNoticeHoldsItAndOffReleasesIt() async {
+        let clock = ManualNoticeClock()
+        var expired: [String] = []
+        let timer = makeTimer(clock) { expired.append($0) }
+
+        timer.start("a", keepsUntilDismissed: true)
+        #expect(await clock.waitForSleepers(1))
+        clock.voiceOverRunning = true
+        #expect(await clock.waitForSleepers(0))
+        clock.advance(by: .seconds(3_600))
+        #expect(expired.isEmpty)
+
+        clock.voiceOverRunning = false
+        #expect(await clock.waitForSleepers(1))
+        clock.advance(by: NoticeDismiss.duration)
+        #expect(await waitForMainActorCondition { expired == ["a"] })
+    }
+
+    @Test func longerMessagesStayLongerUpToTheCap() async {
+        let short = String(repeating: "word ", count: 14)
+        let medium = String(repeating: "word ", count: 45)
+        let long = String(repeating: "word ", count: 500)
+        #expect(NoticeDismiss.duration(forMessage: nil) == .seconds(6))
+        #expect(NoticeDismiss.duration(forMessage: short) == .seconds(6))
+        #expect(NoticeDismiss.duration(forMessage: String(repeating: "word ", count: 15)) == .seconds(7))
+        #expect(NoticeDismiss.duration(forMessage: medium) == .seconds(9))
+        #expect(NoticeDismiss.duration(forMessage: long) == .seconds(12))
+
+        let clock = ManualNoticeClock()
+        let timer = makeTimer(clock) { _ in }
+        timer.start("a", message: medium)
+        #expect(await clock.waitForSleepers(1))
+        #expect(clock.requested == [.seconds(9)])
+        timer.cancel("a")
     }
 
     @Test func withoutVoiceOverANoticeWithAnActionTimesOut() async {
