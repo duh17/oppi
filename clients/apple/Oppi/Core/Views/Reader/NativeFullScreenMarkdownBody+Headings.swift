@@ -40,10 +40,14 @@ extension NativeFullScreenMarkdownBody {
     }
 
     /// Scrolls to the heading `anchor` names, opening any folded section above
-    /// it first. False when the document has no such heading.
+    /// it first. When the document has no such heading it says so, as a line
+    /// anchor past the end of a file does, and returns false.
     @discardableResult
     func scrollToHeading(_ anchor: ReaderHeadingAnchor) -> Bool {
-        guard readerOutline.resolve(anchor) != nil else { return false }
+        guard readerOutline.resolve(anchor) != nil else {
+            headingNotice?(String(localized: "No heading “\(anchor.displayName)” in this file."))
+            return false
+        }
         headingPlacement.pending = anchor
         scrollToPendingHeadingIfReady()
         return true

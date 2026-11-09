@@ -24,6 +24,15 @@ enum ReaderHeadingAnchor: Hashable, Sendable {
 
     var linkDestination: String { "\(Self.linkScheme):#\(fragment)" }
 
+    /// What a person would call the heading this names, for a message.
+    var displayName: String {
+        switch self {
+        case .title(let name), .id(let name), .customID(let name), .slug(let name): name
+        case .ordinal(let number): "#\(number)"
+        case .line(let number): "line \(number)"
+        }
+    }
+
     /// The anchor a link made by `linkDestination` names. A link's URL passes
     /// through an attributed string, and NSURL reports no `fragment` for a URL
     /// with nothing between `:` and `#` (Swift's `URL(string:)` does), so the

@@ -349,6 +349,7 @@ extension FullScreenCodeContent {
                 sourceFilePath: filePath,
                 taskEditing: context.taskEditing,
                 headingAnchor: context.headingAnchor,
+                headingNotice: context.headingNotice,
                 centersReadingColumn: true,
                 lineAnchor: context.lineAnchor,
                 focusLineAnchor: context.focusLineAnchor,
@@ -450,6 +451,7 @@ extension FullScreenCodeContent {
                 taskEditing: context.taskEditing,
                 orgFolds: context.orgFolds,
                 headingAnchor: context.headingAnchor,
+                headingNotice: context.headingNotice,
                 centersReadingColumn: true,
                 readerPreferences: readerPreferences,
                 perfSurface: .fullScreenMarkdown
@@ -614,6 +616,7 @@ struct ReaderBodyContext {
     let focusLineAnchor: Bool
     /// A heading an Org or Markdown body scrolls to once it has drawn.
     let headingAnchor: ReaderHeadingAnchor?
+    let headingNotice: (@MainActor @Sendable (String) -> Void)?
     /// Set when the reader's owner can save the document: Markdown and Org
     /// bodies then draw working task controls.
     let taskEditing: ReaderTaskEditing?

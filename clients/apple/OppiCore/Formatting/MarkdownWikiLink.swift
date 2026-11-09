@@ -193,7 +193,6 @@ struct ResourceReference: Hashable, Sendable {
     let fileCandidatePath: String?
     let kind: ResourceReferenceKind
     let lineAnchor: SourceLineAnchor?
-    /// The heading a file link names (`x.org::*Heading`, `x.md#slug`).
     let headingAnchor: ReaderHeadingAnchor?
     let visibleLabel: String?
 
@@ -672,10 +671,8 @@ enum ResourceReferenceURL {
 /// Rewrites wiki links and GitHub-style Markdown file links onto the shared
 /// `ResourceReference` pipeline, and classifies bang embeds after origin checks.
 ///
-/// Supported wiki syntax:
-/// - `[[target]]`
-/// - `[[target|label]]`
-/// - `![[target]]` / `![alt](path)` embed Oppi-backed image, audio, video, or USDZ
+/// Supported wiki syntax: `[[target]]`, `[[target|label]]`, and `![[target]]` /
+/// `![alt](path)` embeds of Oppi-backed image, audio, video, or USDZ.
 ///
 /// The raw target stays unresolved. A workspace-relative file candidate travels
 /// beside it so tap-time resolution can compare that candidate with exact Oppi
@@ -859,7 +856,6 @@ enum MarkdownWikiLinkRewriter {
         let workspaceID: String?
         let sessionID: String?
         let sourceDirectory: String?
-        /// A file reader scrolls to the heading a `#anchor` link names.
         var linksHeadings = false
     }
 
@@ -871,7 +867,13 @@ enum MarkdownWikiLinkRewriter {
         sourceDirectory: String?,
         linksHeadings: Bool = false
     ) -> [MarkdownBlock] {
-        let context = RewriteContext(serverID: serverID, workspaceID: workspaceID, sessionID: sessionID, sourceDirectory: sourceDirectory, linksHeadings: linksHeadings)
+        let context = RewriteContext(
+            serverID: serverID,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            sourceDirectory: sourceDirectory,
+            linksHeadings: linksHeadings
+        )
         return rewrite(blocks: blocks, context: context)
     }
 
@@ -1416,7 +1418,8 @@ enum MarkdownWikiLinkRewriter {
         "mailto",
         "oppi",
         "oppi-session-file",
-        ReaderHeadingAnchor.linkScheme, ResourceReferenceURL.scheme,
+        ReaderHeadingAnchor.linkScheme,
+        ResourceReferenceURL.scheme,
     ]
 
     /// GitHub-style file links share the wiki-link tap pipeline. Unknown and
@@ -1530,7 +1533,6 @@ enum MarkdownWikiLinkRewriter {
         if let lineAnchor = SourceLineAnchor.parse(fragment) {
             return ParsedWikiTarget(path: path, lineAnchor: lineAnchor)
         }
-        // Any other fragment names a heading.
         return ParsedWikiTarget(path: path, lineAnchor: nil, headingAnchor: ReaderHeadingAnchor(fragment: String(fragment.dropFirst())))
     }
 

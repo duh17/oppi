@@ -105,6 +105,12 @@ final class BookTableOfContentsViewController: UIViewController {
         ])
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // A popover closes by a tap outside or on a row; only a sheet needs Done.
+        doneButton.isHidden = presentationController is UIPopoverPresentationController
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         scrollToCurrentChapter()

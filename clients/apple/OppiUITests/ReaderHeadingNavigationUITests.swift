@@ -94,6 +94,7 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
         search("Paragraph 2 of section 4")
         XCTAssertTrue(waitForFold(2, "Expanded"), "the match opened the section above it")
         XCTAssertTrue(waitUntilScrolledTo(fold(5)), "and scrolled to the section holding it")
+        XCTAssertTrue(waitForMatchAboveFindBar("Paragraph 2 of section 4"), "the match itself is marked and clear of the find bar")
         saveScreenshot(name: "find-match-in-fold")
     }
 
@@ -101,6 +102,7 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
         launch(file: "handbook.org", colorScheme: "dark")
         search("Paragraph 3 of section 9")
         XCTAssertTrue(waitUntilScrolledTo(fold(10)), "the match near the end of the file is on screen")
+        XCTAssertTrue(waitForMatchAboveFindBar("Paragraph 3 of section 9"), "the match itself is marked and clear of the find bar")
         saveScreenshot(name: "find-long-file")
     }
 
@@ -117,15 +119,22 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
     func testFindAtTheLargestTextSize() throws {
         launch(file: "handbook.org", colorScheme: "dark", arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
         search("Paragraph 1 of section 6")
-        XCTAssertTrue(waitUntilScrolledTo(fold(7)), "the match is shown")
+        XCTAssertTrue(waitUntilScrolledTo(fold(7)), "the match's section is shown")
+        XCTAssertTrue(waitForMatchAboveFindBar("Paragraph 1 of section 6"), "the match itself is marked and clear of the find bar")
         saveScreenshot(name: "find-xxxl")
     }
 
     func testCommandFOpensFindOnIPad() throws {
         guard UIDevice.current.userInterfaceIdiom == .pad else { throw XCTSkip("Command-F is the iPad's keyboard path") }
         launch(file: "handbook.org")
-        app.typeKey("f", modifierFlags: .command)
-        XCTAssertTrue(findField.waitUntilExists(timeout: 10), "the standard find command opens the find bar")
+        // The reader takes first responder as it lays out, which can land after
+        // the first key press on a busy run: press again until the bar is up.
+        var opened = false
+        for _ in 0..<4 where !opened {
+            app.typeKey("f", modifierFlags: .command)
+            opened = findField.waitUntilExists(timeout: 5)
+        }
+        XCTAssertTrue(opened, "the standard find command opens the find bar")
         saveScreenshot(name: "find-command-f")
     }
 
@@ -155,6 +164,22 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
     private var findField: XCUIElement {
         let search = app.searchFields.firstMatch
         return search.exists ? search : app.textFields.matching(NSPredicate(format: "placeholderValue CONTAINS[c] 'find' OR label CONTAINS[c] 'find'")).firstMatch
+    }
+
+    /// The current find match is on screen, between the top bar and the find
+    /// bar riding on the keyboard, and only a marked (highlighted) match exists.
+    private func waitForMatchAboveFindBar(_ words: String, timeout: TimeInterval = 15) -> Bool {
+        // The element is the highlight itself, a view behind the match's words.
+        let match = app.descendants(matching: .any)["fileViewer.find.currentMatch"]
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if match.exists, match.label.contains(words), findField.exists {
+                let frame = match.frame
+                if frame.height > 0, frame.minY > 60, frame.maxY <= findField.frame.minY { return true }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return false
     }
 
     /// Opens the system find bar from the toolbar and types a query.

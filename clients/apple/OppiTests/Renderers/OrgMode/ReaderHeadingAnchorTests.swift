@@ -256,9 +256,15 @@ struct ReaderHeadingAnchorTests {
     // MARK: - The reader
 
     @MainActor
+    private final class NoticeLog {
+        var messages: [String] = []
+    }
+
+    @MainActor
     private final class Mounted {
         let body: NativeFullScreenMarkdownBody
         let window: UIWindow
+        let notices = NoticeLog()
         private let start: Set<Int>
         /// The folds the reader last reported to its owner.
         var folded: Set<Int> { box.folded ?? start }
@@ -272,6 +278,7 @@ struct ReaderHeadingAnchorTests {
             start = folded
             let box = FoldBox()
             let memory = OrgFoldMemory(folded: folded) { box.folded = $0 }
+            let log = notices
             self.box = box
             body = NativeFullScreenMarkdownBody(
                 content: source,
@@ -280,7 +287,8 @@ struct ReaderHeadingAnchorTests {
                 reviewCommentSelectionRouter: nil,
                 reviewCommentSourceContext: nil,
                 sourceFilePath: path,
-                orgFolds: memory
+                orgFolds: memory,
+                headingNotice: { log.messages.append($0) }
             )
             window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
             window.addSubview(body)
@@ -305,22 +313,10 @@ struct ReaderHeadingAnchorTests {
 
         /// The text the find highlight marks, when that text is on screen.
         func visibleHighlightedText() -> String? {
-            guard let (layout, range) = body.findState.highlighted else { return nil }
-            let views = body.collectionView.visibleCells.flatMap { Self.textViews(in: $0) }
-            guard let textView = views.first(where: { $0.textLayoutManager === layout }),
-                  let content = layout.textContentManager else { return nil }
-            let start = content.offset(from: content.documentRange.location, to: range.location)
-            let length = content.offset(from: range.location, to: range.endLocation)
-            guard let from = textView.position(from: textView.beginningOfDocument, offset: start),
-                  let to = textView.position(from: from, offset: length),
-                  let textRange = textView.textRange(from: from, to: to) else { return nil }
-            let rect = body.collectionView.convert(textView.firstRect(for: textRange), from: textView)
+            guard let fill = body.findState.fills.first, let textView = fill.superview as? UITextView else { return nil }
+            let rect = body.collectionView.convert(fill.frame, from: textView)
             let visible = body.collectionView.bounds.inset(by: body.collectionView.adjustedContentInset)
-            return visible.contains(rect) ? textView.text(in: textRange) : nil
-        }
-
-        private static func textViews(in view: UIView) -> [UITextView] {
-            (view as? UITextView).map { [$0] } ?? view.subviews.flatMap(textViews)
+            return visible.contains(rect) ? fill.accessibilityLabel : nil
         }
 
         /// How far below the top of the screen the item sits.
@@ -410,7 +406,7 @@ struct ReaderHeadingAnchorTests {
         #expect(matches.first?.section == 14, "Deep target is the 14th heading")
         reader.body.revealFindMatch(try #require(matches.first))
         try await reader.settle("the sections opening") { reader.folded == [5] }
-        try await reader.settle("the scroll") { reader.offset > 100 && reader.body.findState.highlighted != nil }
+        try await reader.settle("the scroll") { reader.offset > 100 && !reader.body.findState.fills.isEmpty }
         #expect(reader.folded == [5], "an unrelated fold is left alone")
     }
 
@@ -455,7 +451,18 @@ struct ReaderHeadingAnchorTests {
         let matches = try #require(index).matches(for: "lonely")
         #expect(matches.count == 1)
         reader.body.revealFindMatch(try #require(matches.first))
-        try await reader.settle("the scroll") { reader.offset > 100 && reader.body.findState.highlighted != nil }
+        try await reader.settle("the scroll") { reader.offset > 100 && !reader.body.findState.fills.isEmpty }
+    }
+
+    @MainActor
+    @Test func aLinkToAMissingHeadingSaysSoAndLeavesTheFileWhereItIs() async throws {
+        let reader = Mounted(source: Self.long)
+        try await reader.settle("first draw") { !reader.body.renderedSegments.isEmpty }
+        #expect(!reader.body.scrollToHeading(.title("Missing heading")))
+        #expect(reader.notices.messages == ["No heading “Missing heading” in this file."])
+        #expect(reader.folded.isEmpty)
+        let found = reader.body.scrollToHeading(.title("Section 3"))
+        #expect(found && reader.notices.messages.count == 1, "a heading that exists says nothing")
     }
 
     @MainActor

@@ -127,6 +127,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
     /// The document gained or lost its headings: the reader shows or hides Outline.
     var onOutlineChange: (() -> Void)?
+    /// Told when a link names a heading the file does not have.
+    let headingNotice: (@MainActor @Sendable (String) -> Void)?
     /// Find in file (`NativeFullScreenMarkdownBody+Find`).
     var findState = ReaderFindState()
     let lineAnchor: SourceLineAnchor?
@@ -208,6 +210,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         taskEditing: ReaderTaskEditing? = nil,
         orgFolds: OrgFoldMemory? = nil,
         headingAnchor: ReaderHeadingAnchor? = nil,
+        headingNotice: (@MainActor @Sendable (String) -> Void)? = nil,
         centersReadingColumn: Bool = false,
         lineAnchor: SourceLineAnchor? = nil,
         focusLineAnchor: Bool = true,
@@ -234,6 +237,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.taskEditing = taskEditing
         self.orgControls = sourceFormat == .orgMode ? OrgReaderControls(source: content, documentPath: sourceFilePath, editing: taskEditing, memory: orgFolds) : nil
         self.headingPlacement.pending = headingAnchor
+        self.headingNotice = headingNotice
         self.centersReadingColumn = centersReadingColumn
         self.lineAnchor = lineAnchor
         let initialText = content
@@ -364,6 +368,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        claimFindFocusIfWanted()
         if needsDocumentLayoutPreparation
             || preparedCanonicalWidth.map({ abs($0 - canonicalContentWidth) > 0.5 }) == true {
             prepareLazyDocumentLayout(layoutReason: pendingDocumentLayoutReason)

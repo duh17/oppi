@@ -1047,6 +1047,7 @@ final class FullScreenCodeViewController: UIViewController {
             lineAnchor: lineAnchor,
             focusLineAnchor: focusLineAnchor,
             headingAnchor: focusLineAnchor ? headingAnchor : nil,
+            headingNotice: lineAnchorNotice,
             taskEditing: taskEditing,
             orgFolds: orgFolds,
             adoptTrace: { [weak self] observation in
