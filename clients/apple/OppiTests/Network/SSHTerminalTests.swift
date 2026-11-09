@@ -2877,6 +2877,29 @@ struct SSHTerminalTests {
             for await geometry in fixture.resizes { resizes.sizes.append(geometry) }
         }
         defer { collector.cancel() }
+        // Every keyboard notification the process sees that this test did not post. The
+        // terminal's observer takes any of them from the same screen, so one that lands
+        // in a transition (a keyboard another test left behind) would show up as a size
+        // the test did not ask for; the failure messages below name it.
+        let foreign = ForeignKeyboardNotifications()
+        // The observer runs off the main actor, so it compares screens by identity.
+        let terminalScreen = ObjectIdentifier(scene.screen)
+        let foreignObserver = NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main
+        ) { notification in
+            guard notification.userInfo?[SSHTerminalTestKeyboard.postedByTestKey] == nil else { return }
+            let end = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+            let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber
+            // The terminal drops a notification from another screen, so only a same-screen
+            // one can have moved the grid.
+            let sameScreen = (notification.object as AnyObject?).map(ObjectIdentifier.init) == terminalScreen
+            MainActor.assumeIsolated {
+                foreign.notes.append(
+                    "end \(end.map { String(describing: $0) } ?? "none") duration \(duration?.doubleValue ?? -1) sameScreen=\(sameScreen)"
+                )
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(foreignObserver) }
 
         func find(_ id: String, in view: UIView) -> UIView? {
             if view.accessibilityIdentifier == id { return view }
@@ -2913,6 +2936,7 @@ struct SSHTerminalTests {
                 userInfo: [
                     UIResponder.keyboardFrameEndUserInfoKey: frame,
                     UIResponder.keyboardAnimationDurationUserInfoKey: 0.0,
+                    SSHTerminalTestKeyboard.postedByTestKey: true,
                     UIResponder.keyboardAnimationCurveUserInfoKey: 7,
                 ]
             )
@@ -2940,7 +2964,7 @@ struct SSHTerminalTests {
         }
         #expect(
             grid.bounds.height == gridBefore.height + SSHTerminalBottomBar.reserve,
-            "the bar's rows go to the grid while the keyboard is up, in the same resize"
+            "the bar's rows go to the grid while the keyboard is up, in the same resize; grid \(grid.bounds.size), \(foreign.summary)"
         )
         // The only two geometries the transition may report: the grid with the bar's
         // rows while the keyboard is up, and the grid it settles at. Anything else is a
@@ -2959,7 +2983,7 @@ struct SSHTerminalTests {
                 && !resizes.sizes.isEmpty
                 && channel.engine.geometry.rows == Int(grid.bounds.height / grid.cellSize.height)
         }
-        #expect(grid.bounds.size == gridBefore)
+        #expect(grid.bounds.size == gridBefore, "grid \(grid.bounds.size); \(foreign.summary)")
         /// The glass pill around a button: stack, effect content, effect view,
         /// glass, then the pill the bar holds.
         func pill(_ button: UIView) throws -> UIView {
@@ -3014,18 +3038,21 @@ struct SSHTerminalTests {
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
             nav.view.layoutIfNeeded()
             return resizes.sizes.count == settledResizes
-        }, "settled: the bar adds no resize of its own")
+        }, "settled: the bar adds no resize of its own; \(resizes.sizes.count) reported, \(settledResizes) at the settle; \(foreign.summary)")
         // The count alone cannot see a bar resize the hold absorbed early in the
         // transition, because it happens before the settle: read what the transition
         // reported instead. That compares geometry, never when the reads landed.
         let reportedInTransition = resizes.sizes.dropFirst(resizesBeforeHold)
         #expect(
             reportedInTransition.allSatisfy { $0 == upGeometry || $0 == settledGeometry },
-            "the transition reports the grid's two sizes, nothing between them: \(Array(reportedInTransition))"
+            """
+            the transition reports the grid's two sizes, nothing between them: \(Array(reportedInTransition)); \
+            keyboard up \(upGeometry), settled \(settledGeometry); \(foreign.summary)
+            """
         )
         #expect(
             channel.engine.geometry == settledGeometry,
-            "the transition ends with the terminal at the grid's size, rows and columns"
+            "the transition ends with the terminal at the grid's size, rows and columns; \(foreign.summary)"
         )
         #expect(nav.isNavigationBarHidden)
 
@@ -3544,6 +3571,21 @@ private final class MountedTerminalTestController {
 @MainActor
 private final class SSHTerminalResizeLog {
     var sizes: [SSHTerminalGeometry] = []
+}
+
+/// Keyboard notifications a test saw that it did not post itself.
+@MainActor
+private final class ForeignKeyboardNotifications {
+    var notes: [String] = []
+    var summary: String {
+        notes.isEmpty ? "no keyboard notification but the test's own" : "foreign keyboard notifications: \(notes)"
+    }
+}
+
+private enum SSHTerminalTestKeyboard {
+    /// Marks a keyboard notification a test posted by hand, so one the system or another
+    /// test raised can be told apart from it.
+    static let postedByTestKey = "dev.chenda.Oppi.test.keyboardPostedByTest"
 }
 
 private actor TerminalConnectionFixture: SSHTerminalConnection {
