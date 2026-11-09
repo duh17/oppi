@@ -11,7 +11,7 @@ Daily phone and tablet use after you have paired a server. Pairing is in [Onboar
 The Workspaces tab opens **All Sessions** for the active server.
 
 - **Your Turn**: sessions waiting on you (a question, an approval, a sign-in, or a result you have not seen). Blocked sessions come first.
-- **Working**: sessions that are busy.
+- **Working**: sessions that are busy. A session that one of its background jobs or child sessions will wake also shows **Working**, not **Done**.
 - Stopped sessions sit below, grouped by day, each with its workspace name.
 
 Every row and thread shows the same status. **Working** is blue. **Needs approval**, **Question**, and **Sign-in** are orange. **Error** is red. **Done** is green until you open the session on this phone, then it reads **Idle** (grey). **Stopped** is a stopped session you have seen or that ended without a result. Seen state is kept per device and resets when the app restarts.
@@ -47,13 +47,17 @@ When the session is idle, the composer says **Message…** and Send starts a new
 | **Steering** | Steer agent… | Guides the current turn. |
 | **Follow-up** | Queue follow-up… | Queues the next instruction after this turn. |
 
-If an Ask card is visible, the composer answers that prompt instead. With an empty composer during a busy turn, the primary action is **Stop**.
+If an Ask card is visible, the composer answers that prompt instead. Tap the card's title or chevron to fold it to a one-line bar above the composer, so you can read the chat behind it; your selections stay. With an empty composer during a busy turn, the primary action is **Stop**.
+
+Type `@` to mention a file or a model. Models from the server show above the files; choosing one writes its `provider/model-id` into the message.
 
 ## Siri, Quick Session, and the share sheet
 
 **Siri** starts a session with a prompt and opens that chat. Say "Start a session in Oppi", "Open a session in Oppi", or "New session in Oppi", optionally followed by "in <workspace>". Without a prompt, Siri asks "What should Pi do?". Siri and Shortcuts show the exact prompt, the workspace, and (with more than one server) the server for you to confirm before anything is sent. Invisible formatting characters are removed from the prompt first, so what you confirm is what is sent. Cancel sends nothing. The same confirmation applies when the prompt comes from another Shortcut action. Prompts over 280 characters or 12 lines are too long to confirm; open Oppi and send them from the app.
 
 **Quick Session** opens the composer without creating a session yet. Launch it from Oppi, Control Center, the Action Button, or the Shortcuts **New Session** action.
+
+On iPad, Quick Session shows the workspace and worktree on the left of a bar above the composer, and the **Classic** or **Durable** pill (while Durable Sessions is on) and **Incognito** on the right. The Agent, model, and thinking level are pop-up buttons at the composer's bottom right. On a hardware keyboard, Esc closes an open picker, then Quick Session.
 
 **The Shortcuts New Session action** reads "Open *Agent* in *Mode* mode". Every field is optional, and an empty one follows Quick Session's own choice:
 
@@ -94,7 +98,7 @@ A workspace's session list has the same **Git** button in its top bar, listing e
 
 ### The iPad side column
 
-On iPad (and in any Stage Manager window wide enough), **Files**, **Git**, **Outline**, **Context**, **Share Session**, readers you open from the chat, and a drawer's full-screen view all open in one column beside the chat. Drag the divider between them to resize it. The width you choose is kept as a share of the window, so it follows Stage Manager and rotation. The chat never gets narrower than a phone screen. Drag the divider on toward the window's leading edge to fill the window; a slim edge stays, and dragging it back returns the column to its earlier width. Drag the divider toward the trailing edge to close the column. VoiceOver can adjust the width and offers **Expand Pane** and **Show Chat**.
+On iPad (and in any Stage Manager window wide enough), **Files**, **Git**, **Outline**, **Context**, **Share Session**, readers you open from the chat, file and commit pills you tap in the timeline, and a drawer's full-screen view all open in one column beside the chat. A commit or file review you open from **Git** opens in the column too, with Back to **Git**. If the window becomes too narrow for the column, an open reader moves to full screen, and an open file or commit pill moves to a sheet, as on iPhone. Drag the divider between them to resize it. The width you choose is kept as a share of the window, so it follows Stage Manager and rotation. The chat never gets narrower than a phone screen. Drag the divider on toward the window's leading edge to fill the window; a slim edge stays, and dragging it back returns the column to its earlier width. Drag the divider toward the trailing edge to close the column. VoiceOver can adjust the width and offers **Expand Pane** and **Show Chat**.
 
 ## Voice
 
@@ -117,9 +121,33 @@ With the server's read aloud configured, a finished assistant reply has a speake
 
 **Settings → Chat → Top Bar** chooses which buttons a chat's top bar shows and their order: **Files**, **Git**, **Outline**, **Context** (the usage ring), and **Terminal**. The default shows only Context; the rest sit in the **…** menu, which always stays and has **Customize Top Bar…**. A button the chat cannot use is not shown: no Files, Git, or Terminal without a workspace folder, no Git outside a Git repository (or with Git status off), no Outline for an empty timeline, and no Terminal for a sandbox or relative-folder workspace. **Terminal** opens a login shell in the session's folder ([Open Terminal here](ssh-terminal.md#open-terminal-here)).
 
+The **Context** panel's reload button reloads the session as `/reload` does, so the panel shows the AGENTS files, Skills, tools, and extensions the session has now. It asks first, because when those files changed, the next message sends the whole conversation again without the prompt cache. The result shows at the top of the panel. It is available only while the session is idle. Pull down to refresh the numbers without a reload.
+
+## Keyboard and pointer
+
+With a hardware keyboard, these commands are in the iPad menu bar and in the list you see when you hold ⌘. A command is unavailable while the app is locked or Quick Session is open, and a chat command needs the chat in front.
+
+| Keys | Command |
+| --- | --- |
+| ⌘N | New Session (opens Quick Session) |
+| ⌘, | Settings |
+| ⌘W | Close: ends a search, then closes the top sheet or popover, then the chat's side column |
+| ⌃⌘S | Show or hide the sidebar |
+| ⌥⌘1 to ⌥⌘4 | Show or hide **Files**, **Git**, **Outline**, or **Context** |
+| ⌘. | Stop Response |
+| ⌘L | Focus Composer (in the code editor, ⌘L is Go to Line) |
+| ⇧⌘] and ⇧⌘[ | Next and previous session in All Sessions (Your Turn and Working) |
+| ⌘F | **Edit → Find**: starts the search on the screen in front |
+
+The [code editor](document-viewers.md#editing-workspace-files) and the [terminal](ssh-terminal.md#hardware-keyboard) have their own keys.
+
+With a trackpad or mouse, a secondary click on a row with swipe actions, such as a workspace, a schedule, or a paired device, shows the same actions in a menu. Session and sidebar rows highlight under the pointer, and the chat bar's icon buttons show their names.
+
 ## Appearance
 
 **Settings → Appearance** picks a built-in theme (Dark, OLED, Light, Night) or an imported custom theme, by hand or matching Light and Dark to iOS Display & Brightness. Custom themes are JSON files on the server; see [Custom themes](themes.md).
+
+**Pi Icon** shows the Pi logo in **Color** (the default) or **Monochrome**, in your theme's text color.
 
 ## Agents and schedules
 

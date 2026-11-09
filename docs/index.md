@@ -7,14 +7,14 @@ The docs have two tracks: **daily use** and **extension authoring**. Pi owns the
 ## Daily use
 
 - [Onboarding and pairing](onboarding.md): install the server, pair devices, approve new devices
-- [Using Oppi](usage.md): screens, prompt vs steer vs follow-up, Quick Session, files, voice, Agents and schedules, **Edit with Oppi**, server settings
+- [Using Oppi](usage.md): screens, prompt vs steer vs follow-up, Quick Session, files, voice, keyboard and pointer, Agents and schedules, **Edit with Oppi**, server settings
 - [Custom themes](themes.md): JSON themes on the server, tokens, contrast
 - [Server configuration](server-configuration.md): config CLI, voice, push, MCP, project trust, auth module
 - [Reverse proxy](reverse-proxy.md): put Oppi behind Caddy, nginx, or Cloudflare Tunnel
 - [Sandbox workspaces](sandbox.md): run agent tools in a VM
 - [Oppi Mirror](oppi-mirror.md): show a live terminal Pi session in Oppi
 - [Terminal](ssh-terminal.md): shell on a saved host
-- [Document viewers](document-viewers.md): viewers, wiki links, file editing
+- [Document viewers](document-viewers.md): viewers, wiki links, Org files, EPUB books, file editing
 - [Provider quotas](provider-quotas.md): remaining quota and pace
 - [Deep links](deeplinks.md): `oppi://` links
 - [Support](support.md) and [Privacy](privacy.md)

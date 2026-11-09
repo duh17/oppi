@@ -2,7 +2,7 @@
 
 Oppi opens text and document output in native full-screen viewers on iPhone and iPad, for reading, reviewing, copying, sharing, and selecting. Viewers do not change the file, tool output, session transcript, or agent context.
 
-Covered here: markdown, code, source text, diffs, terminal output, HTML, rendered formats (Org, LaTeX math, Mermaid, GeoJSON, TopoJSON), and Graphviz, which opens as highlighted source. Images, audio, video, and PDFs use their own controls; inline embeds are in [Attachment rendering](attachment-rendering.md).
+Covered here: markdown, code, source text, diffs, terminal output, HTML, rendered formats (Org, LaTeX math, Mermaid, GeoJSON, TopoJSON), EPUB books, and Graphviz, which opens as highlighted source. Images, audio, video, and PDFs use their own controls; inline embeds are in [Attachment rendering](attachment-rendering.md).
 
 ## File links in agent output
 
@@ -103,6 +103,16 @@ A Markdown table in chat or in the reader keeps short values, such as dates, tim
 - **Copy.** Touch and hold **N more columns** for the same two copy actions, which always take every row. Text selected across cells copies as tab-separated cells, ready to paste into a spreadsheet.
 - **Formatting.** Bold, italic, strikethrough, `code`, and links show in cells.
 
+## Org files
+
+The reader shows an Org file as a formatted document; **Source** shows it as written.
+
+- **Headings.** A heading's TODO state, priority, and progress cookie (`[2/5]`, `[40%]`) lead it as one badge bar, colored by state (open, waiting, done, dropped). Tags follow the title as capsules, and `#+FILETAGS` shows the same capsules. Property drawers stay hidden.
+- **Dates.** Scheduled, Deadline, and Closed lines show as dated badges under their heading. An open deadline with a warning period, such as `<2026-11-20 Fri -2d>`, turns to the warning color when that period starts, and VoiceOver reads it as due soon. A deadline without a warning period does not warn early. An open deadline that has passed turns red with a warning symbol.
+- **Folding.** A heading with content under it has a chevron. Tap the heading to hide everything under it, up to the next heading of the same or a higher level. Tap it again to show the content. A folded heading ends in **…**. A tap on a link in the heading opens the link, and a long press still opens the text menu. Folding never changes the file, so it works in files you cannot edit. Folds stay while the file is open, also after a task change saves. When you open the file again, all headings are unfolded. VoiceOver reads **Expanded** or **Collapsed** and offers **Collapse** or **Expand**.
+- **Comments.** A `COMMENT` heading and everything under it are hidden, as are `#` comment lines and `#+begin_comment` blocks. Source still shows them.
+- **Links.** `[[file:…]]` links and `./`, `../`, and `~/` paths open relative to the document. `[[*Heading]]` and an `[[id:…]]` that the file declares open the file itself. A link that nothing can open shows as its label. Image and PDF exports keep relative file links.
+
 ## Tasks in Markdown and Org
 
 When the file reader can save a Markdown or Org file (it shows the pencil), the file's tasks work in place:
@@ -112,6 +122,16 @@ When the file reader can save a Markdown or Org file (it shows the pencil), the 
 - **Dates (Org).** Tap a Scheduled or Deadline date to pick another day, add or remove a time, or **Clear** it. A repeater such as `+1w` and a warning period stay, and a time range keeps its length. Marking a repeating task done does not move it to its next date.
 
 Each tap saves at once, whatever Auto-Save says, and rewrites only the lines it changes. If the file changed on the server since it was read, nothing is overwritten: the editor opens with your change in it and offers the usual [conflict choices](#editing-workspace-files). A file the reader cannot save shows the same tasks, but tapping them does nothing. VoiceOver offers **Toggle**, **Change state**, and **Change date** as actions.
+
+## Books (EPUB)
+
+An `.epub` file opens as a book in the file viewer. The server sends books of up to 100 MB.
+
+- **Pages.** Each chapter is set as screen-sized pages. Swipe or tap the edge of the page to turn it. A turn past the first or last page opens the previous or next chapter. While you read, the controls hide; tap the middle of the page to show them. A line at the bottom shows the page and the time left in the chapter.
+- **Table of Contents**, in the header, lists the chapters and marks the one on screen.
+- **Aa** sets the text size, theme (**Original**, **Sepia**, **Gray**, **Dark**), typeface (**New York**, **System**, **Georgia**, **Palatino**), line spacing, margins, justification, and **Pages** or **Scrolling**. Changes apply at once and are kept on this device. **Scrolling** shows one chapter at a time, with **Previous** and **Next** at its end.
+- **Position.** Oppi keeps your place in each book on this device. A change of size, theme, or layout keeps the paragraph you were reading on screen.
+- **Limits.** Fixed-layout pages and vertical writing show "This chapter can't be shown yet". Images show as their alt text. A book with DRM says that it is protected.
 
 ## Diagrams and maps
 

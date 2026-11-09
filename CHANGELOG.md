@@ -54,6 +54,83 @@ Example:
 ## [Unreleased]
 <!-- Written by the release lane from the delta at release time. Don't add entries in feature or fix work. -->
 
+The file reader gets Org folding and badges, task controls, EPUB books, and better tables. On iPad, the side column holds more of the chat's screens, Quick Session gets its own bar, and a hardware keyboard and trackpad reach the main commands.
+
+### Added
+
+- **Client:** Org headings fold in the file reader. Tap a heading to hide everything under it, and tap it again to show it. A heading with content has a chevron, and a folded heading ends in "…". Folds stay while the file is open, also after a task change saves. See [Org files](docs/document-viewers.md#org-files).
+- **Client:** The Org reader shows a heading's state, priority, progress cookie, and tags as badges, and Scheduled, Deadline, and Closed lines as dated badges. An open deadline turns to the warning color when its warning period (`-2d`) starts, and red when it has passed. `[[file:…]]` and relative links open the linked file.
+- **Client:** Tasks in Markdown and Org files work in the reader: tap a checkbox to toggle it and recount its progress cookie, tap an Org state to change it, or tap a Scheduled or Deadline date to move it. Each tap saves at once and never overwrites a file that changed on the server. See [Tasks in Markdown and Org](docs/document-viewers.md#tasks-in-markdown-and-org).
+- **Client:** EPUB books open in the file viewer as pages, with a table of contents and an **Aa** sheet for size, reading theme, typeface, spacing, margins, and a scrolling layout. Oppi keeps your place in each book. See [Books (EPUB)](docs/document-viewers.md#books-epub).
+- **Client/Server:** A file you reach by a chat link, a link in another document, a tool row, or a session path gets the same pencil as the file in its workspace. Text files in the server account's home folder outside every workspace are editable too, except files that hold credentials or run code; `fileEditing.hostFiles: false` keeps all home files read-only. See [Editing a file you reached by a link](docs/document-viewers.md#editing-a-file-you-reached-by-a-link).
+- **Client:** Markdown tables fit the screen when every column stays readable, and otherwise scroll with an **N more columns** button. In chat, a table longer than 20 rows folds behind **Show all N rows**. A full-screen table viewer keeps the header row in view and copies as Markdown or TSV. See [Tables](docs/document-viewers.md#tables).
+- **Client:** Hardware-keyboard commands in the iPad menu bar and the ⌘-hold list: ⌘N New Session, ⌘, Settings, ⌘W Close, ⌃⌘S sidebar, ⌥⌘1 to ⌥⌘4 for Files, Git, Outline, and Context, ⌘. Stop Response, ⌘L Focus Composer, ⇧⌘] and ⇧⌘[ for the next and previous session, and ⌘F (**Edit → Find**) for the search on screen. See [Keyboard and pointer](docs/usage.md#keyboard-and-pointer).
+- **Client:** With a trackpad or mouse, rows with swipe actions (workspaces, schedules, and lists in Settings such as Paired Devices) show the same actions on a secondary click. Session and sidebar rows highlight under the pointer, and the chat bar's icon buttons show their names.
+- **Client:** On iPad, Quick Session puts the workspace, worktree, engine, and Incognito controls in a bar above the composer, and the Agent, model, and thinking level in pop-up buttons at its bottom right. Esc closes an open picker, then Quick Session. Worktrees have a new tree-in-a-box mark everywhere. See [Quick Session](docs/usage.md#siri-quick-session-and-the-share-sheet).
+- **Client:** The iPad side column resizes with a drag on its divider, and a longer drag fills the window or closes the column. Readers, **Share Session**, commits and file reviews opened from **Git**, and file and commit pills tapped in the timeline now open in the column instead of over the chat. If the window becomes too narrow, a reader moves to full screen and a pill's file or commit moves to a sheet. See [The iPad side column](docs/usage.md#the-ipad-side-column).
+- **Client:** Type `@` in the composer to mention a model: the server's models show above the files, and choosing one writes its `provider/model-id`.
+- **Client:** A pending Ask card folds to a one-line bar above the composer, so you can read the chat behind it.
+- **Client:** The **Context** panel's reload button reloads the session as `/reload` does, after it asks, and shows the result in the panel.
+- **Client:** **Settings → Appearance → Pi Icon** shows the Pi logo in color (the default) or in your theme's text color. With no Agent selected, the composer's agent pill shows only the Pi logo.
+- **Client/Server:** In durable sessions, the background jobs panel shows one row per job with **Stop** and the job's live output, and the pill shows the job count and the latest output line. Live output stays in server memory and never reaches the model.
+- **Server:** Session search finds text from before a compaction.
+- **Server:** `oppi server restart --drain` restarts the server when running turns finish, and holds new prompts until after the restart. See [Restart when turns finish](docs/server-configuration.md#restart-when-turns-finish).
+- **Client/Server:** Durable sessions show prompt-cache miss notices when Pi's `showCacheMissNotices` setting is on. In all sessions, notices now also show after a server restart and when a chat reloads its history.
+- **Server:** The command list of a durable session includes `/compact` and `/share`.
+- **Client/Server:** Extension authors can publish composable surfaces: panels and strip pills built from blocks (rows, text, badges, tables, charts, code, buttons, toggles, menus, and live elapsed timers) that the app draws natively and whose taps reach the plugin. Clients that cannot draw them get a v1 widget. See [Composable surfaces](docs/extension-native-ui.md#composable-surfaces-version-2).
+
+### Changed
+
+- **Client:** On a wide window, Markdown and Org files read in a centered column about 75 characters wide. Tables and code blocks can be wider.
+- **Client:** On iPad, the Model Picker and the reader's appearance and Viewing Options menus open as popovers at their control.
+- **Client:** The screen stays awake while any session runs a turn, not only the chat on screen. Updates from idle sessions no longer keep the screen awake.
+- **Client/Server:** A session that one of its background jobs or child sessions will wake shows **Working**, not **Done** or **Idle**, in its row and in the Subagents pill.
+- **Client:** A commit's age shows as on session rows, and as a short date for commits older than a week.
+- **Client/Server:** App connections no longer drop and reconnect every ten minutes when the access token renews.
+- **Server:** SQL explorer results show as a Markdown table in the tool row, with the first 100 rows and a count of the rows left out. The Data widget, its actions, and the chart option are gone.
+- **Server:** Classic sandbox sessions load only extensions that declare the sandbox runtime, plus extensions that the workspace lists in `sandboxConfig.hostExtensions` or that a saved Agent selects. Before, they loaded every global Pi extension, whose tools ran outside the VM. See [Host extensions](docs/sandbox.md#host-extensions).
+- **Server:** The push relay deletes a registration after 30 days without a push, down from 90.
+- **Server:** `server.log` says why a turn failed. Frequent session lifecycle lines moved to the debug level.
+- **Server:** A server with many durable sessions starts faster and uses much less memory, and an MCP server that only codemode uses connects at its first call. `oppi --version` and other commands that do not run the server start faster. The npm package is under 2 MB, and the Docker image no longer includes build-only dependencies.
+
+### Fixed
+
+- **Client:** With App Lock on and no device passcode, Oppi opened unlocked. It now stays locked and says to set a passcode.
+- **Client:** List pages opened during a server restart no longer stay on "Server is offline"; they load again when the connection returns.
+- **Client:** Photos and other media of a closed chat no longer stay in memory until the app restarts.
+- **Client:** The slash command list no longer shows only `/compact` after you return to a chat from a reader.
+- **Client:** A Quick Session sent without a model chosen is no longer refused on a server with no default model when all its models come from one provider.
+- **Client:** A GeoJSON map with an empty feature draws its other features instead of a black panel.
+- **Client:** `~~text~~` and checked task items draw their strikethrough line. A single `~` no longer strikes text.
+- **Client:** The Org reader no longer loses the rest of a file after an unclosed drawer, flattens nested lists, shows blocks inside list items as text, or shows math and bracketed text with extra backslashes. Table cells show inline markup, `#+` keyword lines are quiet, a `COMMENT` subtree is hidden, and image and PDF exports keep relative file links.
+- **Client:** Message, Dictate, Now Playing, and Files in the session list's bottom bar no longer react to a tap meant for a chat pushed over the list.
+- **Client:** Now Playing and an extension drawer no longer open at the same time, and an open extension drawer takes touches and scrolls at once.
+- **Client:** iPad: Settings forms center beside the sidebar, session list headers stay level with the rows when the sidebar toggles, a video in the file viewer fits its own proportions, Outline and Files search keep **Cancel** in a narrow window, the Git pane keeps the branch name readable, and **Files** closes with an X like the other panes. On iPhone Duo, the Outline header stays clear of the system's side rail.
+- **Server:** A long tool or MCP call is no longer stopped by the ten-minute idle timeout. A turn that sends no event for two hours stops.
+- **Server:** Stop on a session that is still starting stops it, and no longer leaves it running or hanging on a startup dialog. A session whose start failed is not started again after a crash.
+- **Server:** The server starts when a session queued to resume has a missing worktree or a durable store that cannot open, and waits for the store lock of a server that just crashed.
+- **Server:** An unhandled promise rejection, such as from a failing plugin timer, is logged instead of shutting the server down.
+- **Server:** After one failed MCP tool-list update, later prompts in the session no longer all fail.
+- **Server:** Stopping a sandbox workspace while its VM boots stops the VM.
+- **Server:** An Agent launch whose first prompt may have been delivered is not sent again.
+- **Server:** Logs, CLI output, and shared transcripts redact more API key formats (Anthropic, OpenAI project, service account, and admin keys, also when attached to a word), and a shared transcript removes a whole private key block.
+- **Server:** A model served from `http://[::1]` counts as local.
+
+### Removed
+
+- **Server:** `oppi control` and `POST /control-conversation`. Per-request Oppi Control sessions are unchanged.
+- **Server:** Classic Pi Control sessions. The first start copies each one to the data directory's `backups/` folder, then removes it. See [Oppi Control sessions](docs/extensions.md#oppi-control-sessions).
+- **Server:** Routes and commands that no client used: the worktree change and diff routes, `GET /local-sessions`, `GET /workspaces/{id}/git/commits`, and the WebSocket commands `cycle_model`, `cycle_thinking_level`, `set_auto_compaction`, `set_steering_mode`, `set_follow_up_mode`, `set_auto_retry`, `abort_retry`, `abort_bash`, and `voice_call_detach`.
+- **Server:** The `workspaceIdleTimeoutMs` and `extensions.voice.defaultVoiceId` config keys, which had no effect. A config file that still has them loads with a warning and loses them when the server next rewrites it.
+
+### Compatibility
+
+- **Compatibility:** The app still requires `oppi-server@0.54.0` or later. Editing linked and home files, and keeping connections open when the access token renews, need the new server.
+- **Compatibility:** Classic sandbox sessions lose global Pi extensions that do not declare the sandbox runtime. To keep one, list its ID in the workspace's `sandboxConfig.hostExtensions`. See [Host extensions](docs/sandbox.md#host-extensions).
+- **Compatibility:** The first start re-indexes session search once, to add text from before compactions.
+- **Compatibility:** The Mobile Output Guide setting moves into `config.json` on the first start. The old `settings/mobile-output-guide.json` is renamed with a `.migrated` suffix. If `config.json` has invalid values, the move waits and the server logs a warning.
+- **Compatibility:** Server paths no longer expand `~user`, and a bare `~` in TLS and identity paths now means the home folder.
+
 ## [0.54.0] - 2026-11-03
 
 Target: iOS `1.1.2` Build `57`, `oppi-server@0.54.0`, and `oppi-mirror@0.54.0` (pi-durable 1.5.0).
