@@ -107,6 +107,10 @@ final class ReleaseGateE2ETests: E2ETestCase {
 
     @MainActor
     func testExpandedComposerAttachmentSendAndStop() throws {
+        // This launch put a pending image in the launch environment, and every session the shared
+        // app opens afterwards would start with that attachment, which also swaps the busy
+        // composer's Stop action for Send. Do not leave the app to the next case.
+        defer { terminateSharedApp() }
         createAndEnterSession()
         waitForRequiredSplitStreamCapabilities()
         waitForWebSocketConnected()
@@ -158,17 +162,34 @@ final class ReleaseGateE2ETests: E2ETestCase {
             "Sent image thumbnail did not appear in the user timeline row"
         )
 
-        // The sent prompt starts a real run that settles a moment later. Its agent_settled
-        // must reach the app before the harness busy state below, or it ends that busy
-        // state and takes the stop button away between the wait and the tap.
+        // The sent prompt starts a real model run whose length is not ours to bound (a nightly
+        // run was still busy 20 s later). The real Stop button is proved on the harness turn
+        // below, so this run is only cleanup: abort it on the server rather than waiting for the
+        // model. Its agent_settled must reach the app before the harness busy state below, or it
+        // ends that busy state and takes the stop button away between the wait and the tap. An
+        // abort settles promptly whatever the model's latency; it is `try?` because the run may
+        // already have ended.
         let stopButton = app.buttons["chat.stop"]
-        let realRunSettled = Date().addingTimeInterval(20)
+        let workspaceId = try XCTUnwrap(
+            try e2eSession(sessionId: sessionId)["workspaceId"] as? String,
+            "Session snapshot missing workspaceId"
+        )
+        let realRunSettled = Date().addingTimeInterval(30)
+        var abortedRealRun = false
         while Date() < realRunSettled,
             (try? e2eSession(sessionId: sessionId)["status"] as? String) != "ready" || stopButton.exists
         {
+            if !abortedRealRun, (try? e2eSession(sessionId: sessionId)["status"] as? String) == "busy" {
+                _ = try? e2eLabAPIJSON(
+                    method: "POST",
+                    path: "/workspaces/\(workspaceId)/sessions/\(sessionId)/command",
+                    body: ["type": "abort", "requestId": UUID().uuidString]
+                )
+                abortedRealRun = true
+            }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        XCTAssertEqual(try e2eSession(sessionId: sessionId)["status"] as? String, "ready", "The attachment prompt's run did not settle")
+        XCTAssertEqual(try e2eSession(sessionId: sessionId)["status"] as? String, "ready", "The attachment prompt's run did not settle after aborting it")
         XCTAssertFalse(stopButton.exists, "The app still shows the attachment prompt's run as busy")
 
         try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_start"])

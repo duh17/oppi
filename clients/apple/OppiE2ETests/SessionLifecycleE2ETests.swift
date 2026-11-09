@@ -49,19 +49,30 @@ final class SessionLifecycleE2ETests: E2ETestCase {
     @MainActor
     func testSlashCommandSuggestionsRemainAvailableMidTurn() throws {
         createAndEnterSession()
+        waitForRequiredSplitStreamCapabilities()
+        waitForWebSocketConnected()
+        waitForSessionStreamEndpoint()
+        let sessionId = waitForFocusedSessionId(timeout: 20)
+        waitForAckedSubscription(sessionId: sessionId, level: "full")
 
-        let chatInput = focusChatInput()
-        chatInput.typeText("Write a detailed 500 word essay about the history of computing")
-        tap(app.buttons["chat.send"], named: "send button", timeout: 3)
-        allowAISharingIfAsked()
+        // The active turn comes from the harness, not the real model: a real reply can finish
+        // before the checks below run. The harness agent_start moves the server session to busy
+        // and only agent_settled clears it, so the turn stays active until this test ends it.
+        // The composer is not focused yet: the action row follows focus, so the Stop action is
+        // only looked for before the keyboard is up, as after a real send.
+        try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_start"])
+        defer {
+            _ = try? sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_end"])
+            _ = try? sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_settled"])
+        }
 
         let stopButton = app.buttons["chat.stop"]
         XCTAssertTrue(
-            stopButton.waitForExistence(timeout: 30),
-            "Streaming did not start before checking slash suggestions"
+            waitForElementToExist(stopButton, timeout: 10),
+            "Busy state did not reach the composer before checking slash suggestions"
         )
 
-        focusChatInput()
+        let chatInput = focusChatInput()
         chatInput.typeText("/")
 
         let reloadSuggestion = app.buttons
@@ -88,6 +99,12 @@ final class SessionLifecycleE2ETests: E2ETestCase {
             "Stop action did not return after clearing the selected slash command"
         )
         tap(stopButton, named: "stop button")
+        try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_end"])
+        try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_settled"])
+        XCTAssertTrue(
+            waitForNonExistence(stopButton, timeout: 10),
+            "Stop button did not disappear after the harness turn settled"
+        )
     }
 
     @MainActor
