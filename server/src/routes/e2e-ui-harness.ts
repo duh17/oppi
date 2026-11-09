@@ -46,15 +46,6 @@ export function createE2EUIHarnessRoutes(
       return true;
     }
 
-    if (path === "/e2e/ui/reset-chat-style") {
-      if (method !== "POST") {
-        helpers.error(res, 405, "Method not allowed");
-        return true;
-      }
-      await handleChatStyleReset(helpers, req, res);
-      return true;
-    }
-
     const fixtureMatch = path.match(/^\/e2e\/ui\/fixtures\/workspace-file$/);
     if (fixtureMatch) {
       if (method !== "POST") {
@@ -168,85 +159,6 @@ export function createE2EUIHarnessRoutes(
     await handleHarnessMessage(ctx, helpers, decodeURIComponent(messageMatch[1]), req, res);
     return true;
   };
-}
-
-/** The persisted Settings → Chat → Style key; deleting it restores the Full default. */
-const CHAT_STYLE_DEFAULTS_KEY = "dev.chenda.Oppi.chatDisplay.style";
-
-function isMissingDefaultsKey(error: unknown): boolean {
-  const output =
-    error instanceof Error && "stderr" in error
-      ? String(error.stderr)
-      : error instanceof Error
-        ? error.message
-        : String(error);
-  const normalized = output.toLowerCase();
-  return (
-    normalized.includes("does not exist") ||
-    normalized.includes("not found") ||
-    normalized.includes("found nothing")
-  );
-}
-
-async function handleChatStyleReset(
-  helpers: RouteHelpers,
-  req: IncomingMessage,
-  res: ServerResponse,
-): Promise<void> {
-  const body = await helpers.parseBody<Record<string, unknown>>(req, {
-    maxBytes: MAX_E2E_UI_MESSAGE_BYTES,
-  });
-  const simulatorUDID = stringField(body.simulatorUDID)?.trim();
-  if (!simulatorUDID || !/^[0-9A-Fa-f-]{36}$/.test(simulatorUDID)) {
-    helpers.error(res, 400, "Chat style reset requires a simulator UDID");
-    return;
-  }
-
-  let alreadyReset = false;
-  try {
-    execFileSync(
-      "xcrun",
-      [
-        "simctl",
-        "spawn",
-        simulatorUDID,
-        "defaults",
-        "delete",
-        "dev.chenda.Oppi",
-        CHAT_STYLE_DEFAULTS_KEY,
-      ],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000 },
-    );
-  } catch (error) {
-    if (!isMissingDefaultsKey(error)) {
-      helpers.error(res, 500, "Chat style simctl reset failed");
-      return;
-    }
-    alreadyReset = true;
-  }
-
-  // iOS XCTest cannot spawn simctl. The host harness deletes the exact
-  // persisted key; some Xcode runtimes also need the app-container plist.
-  try {
-    const containerPath = execFileSync(
-      "xcrun",
-      ["simctl", "get_app_container", simulatorUDID, "dev.chenda.Oppi", "data"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000 },
-    ).trim();
-    execFileSync(
-      "/usr/libexec/PlistBuddy",
-      [
-        "-c",
-        `Delete :${CHAT_STYLE_DEFAULTS_KEY}`,
-        join(containerPath, "Library", "Preferences", "dev.chenda.Oppi.plist"),
-      ],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000 },
-    );
-  } catch {
-    // Already absent from the container plist; the app assertion stays the final guard.
-  }
-
-  helpers.json(res, { ok: true, alreadyReset });
 }
 
 async function handleWorkspaceFileFixture(

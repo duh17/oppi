@@ -24,16 +24,16 @@ describe("E2E UI harness routes", () => {
     }
   });
 
-  it("keeps simulator preference reset unavailable outside the E2E harness", async () => {
+  it("keeps fixture routes unavailable outside the E2E harness", async () => {
     delete process.env.OPPI_E2E_UI_HARNESS;
     const dispatch = createE2EUIHarnessRoutes(makeContext("/tmp"), createRouteHelpers());
     const res = makeResponse();
 
     const handled = await dispatch({
       method: "POST",
-      path: "/e2e/ui/reset-chat-style",
-      url: new URL("http://localhost/e2e/ui/reset-chat-style"),
-      req: makeRequest({ simulatorUDID: "00000000-0000-0000-0000-000000000000" }),
+      path: "/e2e/ui/fixtures/workspace-file",
+      url: new URL("http://localhost/e2e/ui/fixtures/workspace-file"),
+      req: makeRequest({ directoryName: "d", filename: "f.txt", base64: "eA==" }),
       res: res as never,
     });
 

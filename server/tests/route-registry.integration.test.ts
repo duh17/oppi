@@ -65,7 +65,7 @@ describe("route registry against the running server", () => {
     process.env.OPPI_E2E_UI_HARNESS = "1";
     try {
       // The harness's own refusal (POST-only fixture), not the registry gate's 404.
-      const res = await sendFull("GET", "/e2e/ui/reset-chat-style", {
+      const res = await sendFull("GET", "/e2e/ui/fixtures/workspace-file", {
         Authorization: `Bearer ${token}`,
       });
       expect(res).toEqual({ status: 405 });
