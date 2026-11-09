@@ -1534,6 +1534,30 @@ class E2ETestCase: XCTestCase {
         return chatInput
     }
 
+    /// Backspaces a text view empty. The simulator has no hardware keyboard, so Cmd-A selects
+    /// nothing and the keyboard has no forward delete; a backspace only deletes before the caret.
+    /// Every round therefore taps `endTapOffset` first, a point in the empty space after the last
+    /// line (which puts the caret at the end of the text), then deletes what the view reports and
+    /// waits, bounded, for the value to settle: it updates a beat after the keys land. Pass a
+    /// point above the keyboard for a view that extends under it.
+    func emptyTextView(
+        _ element: XCUIElement,
+        named name: String,
+        endTapOffset: CGVector = CGVector(dx: 0.9, dy: 0.95)
+    ) {
+        for _ in 0..<3 {
+            let text = element.value as? String ?? ""
+            if text.isEmpty { break }
+            element.coordinate(withNormalizedOffset: endTapOffset).tap()
+            element.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: text.count))
+            let settled = Date().addingTimeInterval(2)
+            while !(element.value as? String ?? "").isEmpty, Date() < settled {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+        }
+        XCTAssertEqual(element.value as? String, "", "\(name) was not emptied")
+    }
+
     /// Types a message and taps send without waiting for the turn.
     func sendMessage(_ message: String) {
         dismissExtensionSheetIfNeeded(timeout: 1)

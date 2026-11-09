@@ -234,7 +234,14 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         let expandedEditor = app.textViews["expanded.composer.editor"]
         XCTAssertTrue(expandedEditor.waitForExistence(timeout: 5), "Expanded composer editor did not appear")
         tap(expandedEditor, named: "expanded composer editor")
-        expandedEditor.typeKey("a", modifierFlags: .command)
+        // Cmd-A does not select the text (the typed command then lands inside it as
+        // `//compactcompact`), so empty the editor with backspaces from the end of the text. The
+        // editor fills the screen and the keyboard covers its lower half: tap above the keyboard.
+        emptyTextView(
+            expandedEditor,
+            named: "The expanded composer",
+            endTapOffset: CGVector(dx: 0.5, dy: 0.4)
+        )
         expandedEditor.typeText("/compact")
 
         let expandedCompactSuggestion = app.buttons

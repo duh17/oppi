@@ -720,11 +720,19 @@ final class SessionThreadsE2ETests: E2ETestCase {
         return row
     }
 
-    /// Scrolls the editor form until `element` can be tapped.
+    /// Scrolls the editor form until `element` can be tapped. The preview stays pinned over the
+    /// form's top, and a `swipeDown()` starts under it, so the form never scrolls back up; and a
+    /// drag that lands on a row's switch flips it instead of scrolling. Drag in the lower half,
+    /// down the trailing margin outside the cards: no preview, row, switch, or segment there, and
+    /// no system edge gesture on that side.
     private func revealInForm(_ element: XCUIElement) {
         let form = app.collectionViews["sessionRows.form"]
-        for _ in 0..<5 where !element.isHittable { form.swipeUp() }
-        for _ in 0..<5 where !element.isHittable { form.swipeDown() }
+        func scroll(fingerFrom start: CGFloat, to end: CGFloat) {
+            form.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: start))
+                .press(forDuration: 0.05, thenDragTo: form.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: end)))
+        }
+        for _ in 0..<6 where !element.isHittable { scroll(fingerFrom: 0.9, to: 0.5) }
+        for _ in 0..<6 where !element.isHittable { scroll(fingerFrom: 0.5, to: 0.9) }
         XCTAssertTrue(element.isHittable, "\(element) is not reachable in the editor")
     }
 

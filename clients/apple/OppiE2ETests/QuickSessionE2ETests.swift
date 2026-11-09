@@ -300,10 +300,17 @@ final class QuickSessionE2ETests: E2ETestCase {
         XCTAssertTrue(sessionsList.waitForExistence(timeout: 10), "Sessions inbox not visible")
 
         tap(app.buttons["workspace.quickSession.start"], named: "quick session button")
-        defer { dismissQuickSessionSheetIfNeeded() }
+        defer {
+            clearQuickSessionDraft()
+            dismissQuickSessionSheetIfNeeded()
+        }
 
         let chatInput = app.textViews["chat.input"]
         XCTAssertTrue(chatInput.waitForExistence(timeout: 10), "Quick Session input not visible")
+        // Clear first, then assert: a draft an earlier case left behind must not fail this one,
+        // and the assertion still proves the clear worked.
+        clearQuickSessionDraft()
+        XCTAssertEqual(chatInput.value as? String, "", "Quick Session did not open with an empty composer")
         let overlay = app.buttons["quickSession.overlay"].firstMatch
         XCTAssertTrue(overlay.waitForExistence(timeout: 5), "Quick Session overlay not visible")
         XCTAssertFalse(
@@ -330,6 +337,9 @@ final class QuickSessionE2ETests: E2ETestCase {
         )
         XCTAssertFalse(app.buttons["Sheet Grabber"].exists, "Multiline growth restored the system sheet container")
 
+        // Quick Session saves its draft on every edit and restores it on the next open, so the
+        // next case would start with these lines already typed.
+        clearQuickSessionDraft()
         dismissQuickSessionSheetIfNeeded()
         XCTAssertTrue(
             sessionsList.waitForExistence(timeout: 5),
@@ -348,6 +358,7 @@ final class QuickSessionE2ETests: E2ETestCase {
     func testQuickSessionComposerScrollsInCompactHeight() throws {
         XCUIDevice.shared.orientation = .landscapeLeft
         defer {
+            clearQuickSessionDraft()
             dismissQuickSessionSheetIfNeeded()
             XCUIDevice.shared.orientation = .portrait
         }
@@ -358,6 +369,8 @@ final class QuickSessionE2ETests: E2ETestCase {
 
         let input = app.textViews["chat.input"]
         XCTAssertTrue(input.waitForExistence(timeout: 10), "Quick Session input not visible in compact height")
+        clearQuickSessionDraft()
+        XCTAssertEqual(input.value as? String, "", "Quick Session did not open with an empty composer")
         tap(input, named: "quick session input", timeout: 5)
         input.typeText("one\ntwo\nthree\nfour\nfive\nsix")
 
@@ -383,6 +396,14 @@ final class QuickSessionE2ETests: E2ETestCase {
             "Scrolled composer controls must remain above the keyboard"
         )
         XCTAssertFalse(app.buttons["Sheet Grabber"].exists, "Compact fallback must not restore a system sheet")
+    }
+
+    /// Empties the open Quick Session composer, if there is one with text in it.
+    @MainActor
+    private func clearQuickSessionDraft() {
+        let input = app.textViews["chat.input"]
+        guard input.exists, !(input.value as? String ?? "").isEmpty else { return }
+        emptyTextView(input, named: "The Quick Session draft")
     }
 
     /// Swipes an open Quick Session away, if one is up.
