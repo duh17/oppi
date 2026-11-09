@@ -2,10 +2,10 @@ import type { Context } from "@earendil-works/chord";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import type { ToolExecutionApi } from "@earendil-works/pi-durable";
 
-// Internal URLs (`agent://`, `history://`, `proc://`, `mcp://`) that the agent's `read` tool
+// Internal URLs (`agent://`, `history://`, `mcp://`, `ssh://`, `proc://`) that the agent's `read` tool
 // resolves, read only. This module is the pure part: parsing, id-prefix matching, the refusal
 // text for schemes Oppi does not serve, and paging. The scheme readers live with their owners:
-// sessions and MCP in `durable-internal-urls.ts`, background jobs in `plugins/background-jobs`.
+// sessions, MCP, and ssh in `durable-internal-urls.ts`, background jobs in `plugins/background-jobs`.
 
 /** One parsed `scheme://id/path` URL. */
 export interface InternalTarget {

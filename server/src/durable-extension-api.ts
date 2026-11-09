@@ -480,8 +480,8 @@ export interface OppiFileToolsHost {
 }
 
 /**
- * `agent://`, `history://`, and `mcp://` are the server's; a built-in registers the scheme of the
- * state it owns (`proc://`). Resolution is read only.
+ * `agent://`, `history://`, `mcp://`, and `ssh://` are the server's; a built-in registers the
+ * scheme of the state it owns (`proc://`). Resolution is read only.
  */
 export interface OppiInternalUrlsHost {
   /**

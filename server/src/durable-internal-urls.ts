@@ -18,8 +18,8 @@ import { isRecord } from "./json-shape.js";
 import type { TraceEvent } from "./trace.js";
 import type { Session } from "./types.js";
 
-// What the durable `read` tool resolves for `agent://`, `history://`, and `mcp://`, and the
-// registry other built-ins add a scheme to (`register`; `proc://` is background-jobs'). Read only.
+// What the durable `read` tool resolves for `agent://`, `history://`, `mcp://`, and `ssh://`, and
+// the registry other built-ins add a scheme to (`register`; `proc://` is background-jobs'). Read only.
 //
 // Who may read whom: a session reads the transcripts of the sessions in its own workspace
 // (`history://`) and the answers of the sessions it launched, directly or through its children
@@ -30,33 +30,15 @@ import type { Session } from "./types.js";
 
 /** Schemes plugins registered, by name. */
 const registered = new Map<string, SchemeReader>();
-const BUILT_IN_SCHEMES = new Set(["agent", "history", "mcp", "ssh"]);
-const readSsh = createSshReader();
 
 export const internalUrls: OppiInternalUrlsHost = {
   register(scheme, reader) {
-    if (BUILT_IN_SCHEMES.has(scheme)) throw new Error(`${scheme}:// is the server's own scheme`);
+    if (BUILT_IN_READERS.has(scheme)) throw new Error(`${scheme}:// is the server's own scheme`);
     registered.set(scheme, reader);
   },
   async read(args, api, context) {
-    const readers = new Map<string, SchemeReader>(registered);
-    const bound =
-      (read: typeof readHistory): SchemeReader =>
-      (target) => {
-        const reading = oppiHost().sessions(api.env)?.reading;
-        if (!reading)
-          throw new Error(`${target.scheme}:// needs an Oppi session, and this call has none.`);
-        return read(reading, target);
-      };
-    readers.set("history", bound(readHistory));
-    readers.set("agent", bound(readAgent));
-    readers.set("mcp", readMcp);
-    readers.set("ssh", (target, toolApi, toolContext) => {
-      // The server's ssh would reach hosts the sandbox is meant to keep a session away from.
-      if (toolApi.env instanceof GondolinExecutionEnv)
-        throw new Error("ssh:// is not available in sandbox sessions.");
-      return readSsh(target, toolApi, toolContext);
-    });
+    // Built-ins last: a plugin registration can never shadow one (`register` refuses them too).
+    const readers = new Map([...registered, ...BUILT_IN_READERS]);
     const text = await readInternalUrl(args.path, readers, api, context);
     if (text === undefined) return undefined;
     // `read` declares a structured output: its text, as for a file.
@@ -246,4 +228,34 @@ async function mcpCall(
       result.diagnostics.map((diagnostic) => diagnostic.message).join("; ") || `${tool} failed`,
     );
   return result.structuredOutput;
+}
+
+// --- the server's schemes --------------------------------------------------------------------
+
+const readSsh = createSshReader();
+
+/** The one table of the server's own schemes: `register` refuses these and `read` serves them. */
+const BUILT_IN_READERS: ReadonlyMap<string, SchemeReader> = new Map<string, SchemeReader>([
+  ["history", sessionReader(readHistory)],
+  ["agent", sessionReader(readAgent)],
+  ["mcp", readMcp],
+  [
+    "ssh",
+    (target, api, context) => {
+      // The server's ssh would reach hosts the sandbox is meant to keep a session away from.
+      if (api.env instanceof GondolinExecutionEnv)
+        throw new Error("ssh:// is not available in sandbox sessions.");
+      return readSsh(target, api, context);
+    },
+  ],
+]);
+
+/** A reader of the caller's sessions, through the runtime's view bound to the call's environment. */
+function sessionReader(read: typeof readHistory): SchemeReader {
+  return (target, api) => {
+    const reading = oppiHost().sessions(api.env)?.reading;
+    if (!reading)
+      throw new Error(`${target.scheme}:// needs an Oppi session, and this call has none.`);
+    return read(reading, target);
+  };
 }

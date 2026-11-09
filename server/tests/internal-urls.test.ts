@@ -2,6 +2,7 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { ToolExecutionApi } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
 import { internalUrls } from "../src/durable-internal-urls.js";
+import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import { bindOppiHost } from "../src/durable-extension-api.js";
 import { pageText, parseInternalUrl } from "../src/internal-urls.js";
 import type { Session } from "../src/types.js";
@@ -96,7 +97,25 @@ describe("internal URL resolution", () => {
   });
 
   it("does not let a plugin take a scheme the server serves", () => {
-    expect(() => internalUrls.register("history", async () => "")).toThrow("server's own");
+    for (const scheme of ["agent", "history", "mcp", "ssh"])
+      expect(() => internalUrls.register(scheme, async () => "")).toThrow("server's own");
+  });
+
+  it("serves every scheme the server owns, and a scheme a plugin registered", async () => {
+    bindSessions([row("caller")]);
+    // Each built-in answers as itself (these need no listing from the call's tools).
+    expect(await textOf("history://")).toContain("Sessions in this workspace");
+    expect(await textOf("agent://")).toContain("Sessions this session launched");
+    const noResourceTools = { executeTool: async () => Promise.reject(new Error("absent")) };
+    await expect(read("mcp://", noResourceTools)).rejects.toThrow(
+      /mcp:\/\/ needs the session's MCP/,
+    );
+    const sandbox = new GondolinExecutionEnv({} as never, "w", "/workspace");
+    await expect(read("ssh://", { env: sandbox })).rejects.toThrow(
+      "not available in sandbox sessions",
+    );
+    internalUrls.register("plugin-test", async (target) => `plugin saw ${target.id}`);
+    expect(await textOf("plugin-test://abc")).toBe("plugin saw abc");
   });
 
   it("reads an MCP resource through the session's resource tools", async () => {
