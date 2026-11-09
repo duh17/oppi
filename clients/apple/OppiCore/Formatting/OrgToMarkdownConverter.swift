@@ -35,6 +35,11 @@ enum OrgToMarkdownConverter {
         /// cmark-gfm makes no task list of `> - [ ]`: a marker there would
         /// show as raw text beside the literal box.
         var marksTaskItems: Bool
+        /// Whether a link to this document names its heading for the in-app
+        /// reader to scroll to (`ReaderHeadingAnchor.linkDestination`). Off for
+        /// every other render (share, PDF, chat output), whose link opens the
+        /// document: an app-private scheme means nothing to a receiving app.
+        var linksHeadings = false
         /// The ordinal (`OrgFolding`) of each heading a fold control leads, by
         /// source line, and the source lines of those folded. Empty for a
         /// reader that does not fold.
@@ -80,7 +85,8 @@ enum OrgToMarkdownConverter {
         clock: OrgBadges.Clock = .current,
         offersStateControl: Bool = false,
         foldingHeadings: FoldState? = nil,
-        headingTrace: HeadingTrace? = nil
+        headingTrace: HeadingTrace? = nil,
+        linksHeadings: Bool = false
     ) -> [MarkdownBlock] {
         var context = makeContext(
             located.map(\.block),
@@ -90,6 +96,7 @@ enum OrgToMarkdownConverter {
             marksTaskItems: true
         )
         context.headingTrace = headingTrace
+        context.linksHeadings = linksHeadings
         var shown = located
         if let foldingHeadings {
             let sections = OrgFolding.sections(of: located)
@@ -460,9 +467,11 @@ enum OrgToMarkdownConverter {
     /// Files go out as plain relative paths: the reader joins them to the
     /// document's directory and routes them to the file viewer like a Markdown
     /// `[label](path)`. A `::search` option other than a heading (a line, a
-    /// regex) is dropped: the file opens at the top. A heading a link names (`*Heading`, `#custom-id`, `id:`) travels as a
-    /// `ReaderHeadingAnchor` fragment, which the reader scrolls to: alone for
-    /// this document, after the path for another file.
+    /// regex) is dropped: the file opens at the top. A heading another file's
+    /// link names (`::*Heading`, `::#custom-id`) travels as a
+    /// `ReaderHeadingAnchor` fragment after its path. A link to this document
+    /// (`*Heading`, `#custom-id`, `id:`) goes to its heading in the in-app
+    /// reader, and to the document's name elsewhere.
     private static func linkDestination(_ url: String, context: Context) -> String? {
         let target = url.trimmingCharacters(in: .whitespaces)
         let lower = target.lowercased()
@@ -495,12 +504,13 @@ enum OrgToMarkdownConverter {
         return nil
     }
 
-    /// A link to this document: the reader scrolls to the heading in place
-    /// (`oppi-heading:#title=…`, `ReaderHeadingAnchor.linkDestination`). Nil
-    /// without the document's name, as before, so a render that cannot open
-    /// files shows the label alone.
+    /// A link to this document: in the in-app reader, its heading, which the
+    /// reader scrolls to (`oppi-heading:#title=…`); elsewhere the document's
+    /// name. Nil without the name, so a render that cannot open files shows
+    /// the label alone.
     private static func inDocument(_ anchor: ReaderHeadingAnchor, _ context: Context) -> String? {
-        context.documentName == nil ? nil : anchor.linkDestination
+        guard let name = context.documentName else { return nil }
+        return context.linksHeadings ? anchor.linkDestination : name
     }
 
     /// The file of a `file:` link, with the heading its `::*Heading` or

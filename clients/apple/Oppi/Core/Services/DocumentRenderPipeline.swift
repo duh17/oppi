@@ -739,13 +739,15 @@ enum DocumentRenderPipeline {
 
     /// The same conversion from blocks already parsed: a reader that folds
     /// parses once and converts again for each fold. `headingTrace` collects
-    /// which Org heading each Markdown heading is.
+    /// which Org heading each Markdown heading is. `linksHeadings` is for the
+    /// in-app reader only: links to the document name its headings.
     static func orgToMarkdown(
         located orgBlocks: [LocatedOrgBlock],
         documentPath: String? = nil,
         offersStateControl: Bool = false,
         foldingHeadings: OrgToMarkdownConverter.FoldState? = nil,
         headingTrace: OrgToMarkdownConverter.HeadingTrace? = nil,
+        linksHeadings: Bool = false,
         cancellationCheck: @escaping @Sendable () -> Bool
     ) -> String? {
         guard !cancellationCheck() else { return nil }
@@ -754,7 +756,8 @@ enum DocumentRenderPipeline {
             documentPath: documentPath,
             offersStateControl: offersStateControl,
             foldingHeadings: foldingHeadings,
-            headingTrace: headingTrace
+            headingTrace: headingTrace,
+            linksHeadings: linksHeadings
         )
         guard !cancellationCheck() else { return nil }
         let markdown = MarkdownBlockSerializer.serialize(mdBlocks)

@@ -121,10 +121,9 @@ struct ReaderHeadingAnchorTests {
     /// The heading a link in `body` jumps to, as the reader resolves it: the
     /// link's destination, read back as an anchor, against the document's outline.
     private func markdown(of source: String) throws -> String {
-        let converted = DocumentRenderPipeline.orgToMarkdown(
-            source, documentPath: "/notes/book.org", cancellationCheck: { false }
-        )
-        return try #require(converted)
+        let document = OrgReaderDocument(source: source, documentPath: "/notes/book.org", offersStateControl: false)
+        let converted = document.convert(folded: [], cancellationCheck: { false })
+        return try #require(converted).markdown
     }
 
     private func jump(_ link: String) throws -> ReaderHeading? {

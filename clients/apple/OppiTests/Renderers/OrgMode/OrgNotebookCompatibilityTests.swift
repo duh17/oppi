@@ -367,10 +367,21 @@ struct OrgNotebookCompatibilityTests {
         :END:
         See [[*Ship Org rendering]], [[id:abc-123]], [[#ship]], [[*Missing]], [[id:zzz]] and [[#nope]].
         """
-        #expect(linkDestinations(source) == [
-            "oppi-heading:#title=Ship%20Org%20rendering", "oppi-heading:#id=abc-123", "oppi-heading:#custom=ship",
-        ])
+        // Shared, printed or shown in chat, a link to the document opens it.
+        #expect(linkDestinations(source) == ["oppi.org", "oppi.org", "oppi.org"])
         #expect(linkDestinations(source, documentPath: nil).isEmpty)
+        // In the reader it scrolls to the heading.
+        let reader = OrgToMarkdownConverter.convert(
+            located: parser.parseLocated(source), documentPath: OrgNotebookFixture.projectPath, linksHeadings: true
+        )
+        guard case let .paragraph(inlines) = reader.last else {
+            Issue.record("no paragraph in \(reader)")
+            return
+        }
+        #expect(inlines.compactMap { inline -> String? in
+            if case let .link(_, destination) = inline { return destination }
+            return nil
+        } == ["oppi-heading:#title=Ship%20Org%20rendering", "oppi-heading:#id=abc-123", "oppi-heading:#custom=ship"])
     }
 
     @Test(arguments: ["[[id:other]]", "[[*Nowhere]]", "[[#nowhere]]", "[[Fuzzy search]]", "[[file:]]", "[[file://host/x]]", "[[elisp:(ignore)]]"])
@@ -398,7 +409,9 @@ struct OrgNotebookCompatibilityTests {
     // MARK: - Through the reader's pipeline
 
     private func readerLinks(_ source: String) throws -> [ResourceReference] {
-        let markdown = DocumentRenderPipeline.orgToMarkdown(source, documentPath: OrgNotebookFixture.projectPath)
+        let document = OrgReaderDocument(source: source, documentPath: OrgNotebookFixture.projectPath, offersStateControl: false)
+        let converted = document.convert(folded: [], cancellationCheck: { false })
+        let markdown = try #require(converted).markdown
         let segments = FlatSegment.build(
             from: parseCommonMark(markdown),
             themeID: .dark,

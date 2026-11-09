@@ -62,6 +62,7 @@ final class OrgReaderDocument: @unchecked Sendable {
             offersStateControl: offersStateControl,
             foldingHeadings: .init(folded: folded),
             headingTrace: trace,
+            linksHeadings: true,
             cancellationCheck: cancellationCheck
         ) else { return nil }
         let ordinals = OrgFolding.ordinals(of: blocks)
