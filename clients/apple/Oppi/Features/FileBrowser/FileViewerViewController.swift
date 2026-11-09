@@ -71,6 +71,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         var skillFile: SkillFileEditTarget? = nil
         /// Edit with Session, offered beside the pencil by the edit entry.
         var agentEdit: DocumentAgentEditAction? = nil
+        /// This viewer is the root of a trailing side pane: its reader names
+        /// the file in a title and closes the pane with an X, not a back chevron.
+        var isPaneRoot = false
     }
 
     /// The server-scoped services the viewer reads through.
@@ -373,6 +376,13 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         return false
     }
 
+    private func readerPresentationMode(
+        back: @escaping @MainActor @Sendable () -> Void
+    ) -> FullScreenCodeViewController.PresentationMode {
+        guard showsEmbeddedNavigationChrome else { return .contentOnly(onBackSwipe: back) }
+        return configuration.isPaneRoot ? .pane(title: viewerTitle, onDismiss: back) : .embedded(onDismiss: back)
+    }
+
     private var showsEmbeddedNavigationChrome: Bool {
         FileBrowserContentRenderingPolicy.showsNavigationChrome(
             for: configuration.chromeMode,
@@ -664,9 +674,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         let back: @MainActor @Sendable () -> Void = { [weak self] in self?.navigateBack() }
         let reader = FullScreenCodeViewController(
             content: fullScreenContent(text: text),
-            presentationMode: showsEmbeddedNavigationChrome
-                ? .embedded(onDismiss: back)
-                : .contentOnly(onBackSwipe: back),
+            presentationMode: readerPresentationMode(back: back),
             reviewCommentSelectionContext: readerSelectionContext,
             lineAnchor: activeSelection == nil ? configuration.lineAnchor : nil,
             lineAnchorNotice: onLineAnchorNotice,
@@ -728,9 +736,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         let back: @MainActor @Sendable () -> Void = { [weak self] in self?.navigateBack() }
         let reader = FullScreenCodeViewController(
             content: .book(document),
-            presentationMode: showsEmbeddedNavigationChrome
-                ? .embedded(onDismiss: back)
-                : .contentOnly(onBackSwipe: back),
+            presentationMode: readerPresentationMode(back: back),
             reviewCommentSelectionContext: readerSelectionContext,
             editItems: [],
             addToChatDestination: configuration.addToChatDestination

@@ -23,6 +23,9 @@ import UIKit
 /// as the phone receives it). `CHAT_ROUTES_REVIEW_COMMENT=none` stages no review comment, leaving
 /// the strip to the surfaces. `CHAT_ROUTES_WARNINGS=N` adds N warning rows
 /// above the composer.
+/// `SCREENSHOT_COLOR_SCHEME=light` shows the chat in the light theme.
+/// `CHAT_ROUTES_LONG_FILE=1` serves a long file with wide lines. The
+/// `chatRoutes.narrowWindow` control makes the window compact, as Split View does.
 /// `chatRoutes.createdSessions` counts the new sessions the stub received.
 /// Leading controls open the timeline's commit and file viewers through the
 /// production presenter (a test tap on a timeline pill did not reach the pill
@@ -47,6 +50,10 @@ final class ChatRoutesPreviewController: PreviewRootController {
     private var pushedReader: ChatReaderNavTarget?
 
     init(root: AppRootEnvironment, topBar: ChatTopBarLayout) {
+        if ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" {
+            root.themeStore.mode = .manual
+            root.themeStore.manualThemeID = .light
+        }
         ScreenshotVolatileDefaults.apply([
             AppPreferences.ChatTopBar.orderKey: topBar.storedOrder,
             AppPreferences.ChatTopBar.shownKey: topBar.storedShown,
@@ -100,6 +107,9 @@ final class ChatRoutesPreviewController: PreviewRootController {
         let controls = UIStackView(arrangedSubviews: [
             control("chatRoutes.openCommitViewer") {
                 ChatRoutesFixture.openFromTimeline(.commitDetail(sha: ChatRoutesFixture.commitSha))
+            },
+            control("chatRoutes.narrowWindow") { [weak self] in
+                self?.view.window?.traitOverrides.horizontalSizeClass = .compact
             },
             control("chatRoutes.openFileViewer") {
                 ChatRoutesFixture.openFromTimeline(
@@ -249,6 +259,15 @@ enum ChatRoutesFixture {
     static let sessionId = "chat-routes-session"
     static let commitSha = "abc1234"
     static let changedPath = "Sources/App.swift"
+
+    /// What `/files/current` serves. `CHAT_ROUTES_LONG_FILE=1`: 60 lines, some
+    /// far wider than a 369 pt pane, to see how a document wraps beside the chat.
+    static let fileText: String = {
+        guard environment["CHAT_ROUTES_LONG_FILE"] == "1" else { return "let route = \"chat\"\n" }
+        let wide = "let routeTable = [\"chat\": ChatRoute.chat, \"files\": ChatRoute.files, \"git\": ChatRoute.git, \"outline\": ChatRoute.outline]"
+        return (1...60).map { $0 % 5 == 0 ? "    \(wide) // \($0)" : "func route\($0)() -> Int { \($0) }" }
+            .joined(separator: "\n") + "\n"
+    }()
     /// A Git change from outside the session.
     static let otherChangePath = "README.md"
     /// A file the session wrote outside Git's changes: the Git panel's This
@@ -836,7 +855,7 @@ private final class ChatRoutesURLProtocol: URLProtocol {
             ])
         case ("GET", "/files/current"):
             contentType = "text/plain"
-            body = Data("let route = \"chat\"\n".utf8)
+            body = Data(ChatRoutesFixture.fileText.utf8)
         case ("GET", "/models"):
             body = Self.json([
                 "models": ChatRoutesFixture.models.map { model in

@@ -35,19 +35,22 @@ final class CommitDetailViewController: UIViewController {
         let sha: String
         var message = ""
         var reviewCommentSelectionScope: ReviewCommentSelectionScope?
-        /// The close control's identifier, for a commit that is a modal's root.
+        /// The close control's identifier, for a commit that is the root of a
+        /// modal or of a side pane.
         var closeAccessibilityIdentifier: String?
     }
 
     let configuration: Configuration
-    /// The modal's close control, for a commit at the root of a modal. Nil
-    /// while `hostedInPanel`: the panel's navigation draws the back button.
+    /// The close control, for a commit at the root of a modal (a chevron) or
+    /// of a side pane (an X). Nil for a commit pushed in the Git panel: that
+    /// navigation draws the back button.
     var onClose: (() -> Void)? {
         didSet { setNeedsUpdateProperties() }
     }
-    /// This screen is itself pushed in a trailing column's panel navigation
-    /// (the Git panel's commit row at regular width): a selected file pushes
-    /// its diff there too, instead of this screen's own column or sheet.
+    /// This screen is in a trailing column's panel navigation, pushed above
+    /// the Git panel's commit row or as the pane's root (a timeline commit
+    /// link at regular width): a selected file pushes its diff there too,
+    /// instead of this screen's own column or sheet.
     private let hostedInPanel: Bool
     /// Where a started session's chat goes; nil pushes it onto this screen's
     /// own stack.

@@ -1309,6 +1309,9 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         let commit = app.navigationBars["Commit"]
         XCTAssertTrue(commit.waitUntilExists(timeout: 5), "Commit viewer did not open in a router navigation bar")
         assertChatBesideTimelineViewer("commit")
+        if !usesSheets {
+            XCTAssertEqual(app.buttons["chat.commit-detail.dismiss"].label.lowercased(), "close", "A pane closes with the X the other panes use")
+        }
         openAndCloseDiff(pushed: !usesSheets)
         app.buttons["chat.commit-detail.dismiss"].tap()
         XCTAssertTrue(commit.waitUntilGone(timeout: 5), "Close must close the commit viewer")
@@ -1318,6 +1321,13 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         let back = app.buttons["fullScreen.code.close"]
         XCTAssertTrue(back.waitUntilExists(timeout: 10), "File viewer did not open with its back control")
         assertChatBesideTimelineViewer("file")
+        if !usesSheets {
+            XCTAssertEqual(back.label.lowercased(), "close", "A pane closes with the X the other panes use")
+            XCTAssertTrue(
+                app.staticTexts["Sources/App.swift"].exists,
+                "The pane names its file: it is ambiguous beside the chat"
+            )
+        }
         attachScreenshot("file-viewer")
         back.tap()
         XCTAssertTrue(back.waitUntilGone(timeout: 5), "Back at the viewer's root must close it")
@@ -1441,6 +1451,31 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         }
         hold()
         XCTAssertTrue(app.navigationBars["Commit"].exists, "Closing the diff must keep the commit")
+        assertRunning()
+    }
+
+    /// A second link replaces the open pane, and a window that narrows to
+    /// compact (Split View) presents the open pane as the sheet it is there,
+    /// not dropping it.
+    func testTimelinePaneIsReplacedAndMovesToASheetWhenTheWindowNarrows() throws {
+        launch()
+        try XCTSkipIf(usesSheets, "The column exists only at regular width")
+        let commit = app.navigationBars["Commit"]
+        app.buttons["chatRoutes.openCommitViewer"].tap()
+        XCTAssertTrue(commit.waitUntilExists(timeout: 5), "The commit link did not open a pane")
+
+        app.buttons["chatRoutes.openFileViewer"].tap()
+        XCTAssertTrue(commit.waitUntilGone(timeout: 5), "A second link must replace the open pane")
+        XCTAssertTrue(app.buttons["fullScreen.code.close"].waitUntilExists(timeout: 10), "The file link did not open a pane")
+
+        app.buttons["chatRoutes.openCommitViewer"].tap()
+        XCTAssertTrue(commit.waitUntilExists(timeout: 5), "The next link must replace the file pane")
+        app.buttons["chatRoutes.narrowWindow"].tap()
+        let dismiss = app.buttons["chat.commit-detail.dismiss"]
+        XCTAssertTrue(
+            waitFor(dismiss.exists && dismiss.label == "Done"),
+            "Narrowing must present the open commit as its sheet, not drop it"
+        )
         assertRunning()
     }
 

@@ -105,6 +105,7 @@ struct ChatTimelineDestinationPresenter {
         case .workspaceFile(let pill):
             var configuration = fileContent(for: pill, source: target)
             configuration.reviewCommentSelectionScope = target.reviewCommentSelectionScope
+            configuration.isPaneRoot = true
             let viewer = FileViewerViewController(configuration: configuration, services: .init(connection: connection))
             viewer.onBackNavigation = onClose
             return viewer

@@ -127,6 +127,55 @@ struct ChatReaderSidePanelRoutingTests {
         }
     }
 
+    private func commitRequest(_ host: Host, sha: String) -> ChatTimelineDestinationRequest {
+        ChatTimelineDestinationRequest(
+            destination: .commitDetail(sha: sha),
+            serverId: nil,
+            workspaceId: "ws-test",
+            sessionId: host.chat.sessionId,
+            reviewCommentSelectionScope: nil,
+            sourceView: host.chat.view,
+            presenter: host.chat
+        )
+    }
+
+    private func openedSha(_ host: Host) -> String? {
+        (host.chat.trailingColumn.mountedScreenForTesting as? CommitDetailViewController)?.configuration.sha
+    }
+
+    @Test("a timeline commit opens in the column at regular width, and a second open replaces it")
+    func timelineCommitOpensInTheColumnAndIsReplaced() async throws {
+        let host = try await makeHost(horizontalSizeClass: .regular)
+        defer { host.hide() }
+
+        host.chat.showSidePanel(.timeline(commitRequest(host, sha: "aaa1111").sidePanelTarget))
+        let first = await waitForMainActorCondition(timeout: .seconds(3)) { openedSha(host) == "aaa1111" }
+        #expect(first, "the commit never mounted in the trailing column")
+        #expect(host.chat.presentedViewController == nil, "no modal over the chat")
+
+        host.chat.showSidePanel(.timeline(commitRequest(host, sha: "bbb2222").sidePanelTarget))
+        let replaced = await waitForMainActorCondition(timeout: .seconds(3)) { openedSha(host) == "bbb2222" }
+        #expect(replaced, "a second link must replace the open pane, not stack on it or be ignored")
+    }
+
+    @Test("narrowing to compact moves an open timeline pane to the sheet it opens as there")
+    func narrowingMovesTheTimelinePaneToTheSheet() async throws {
+        let host = try await makeHost(horizontalSizeClass: .regular)
+        defer { host.hide() }
+
+        host.chat.showSidePanel(.timeline(commitRequest(host, sha: "aaa1111").sidePanelTarget))
+        _ = await waitForMainActorCondition(timeout: .seconds(3)) { openedSha(host) == "aaa1111" }
+
+        host.window.traitOverrides.horizontalSizeClass = .compact
+        let sheet = await waitForMainActorCondition(timeout: .seconds(3)) {
+            let presented = host.chat.presentedViewController as? RouterNavigationController
+            return presented?.viewControllers.first is CommitDetailViewController
+                && host.chat.trailingColumn.mountedScreenForTesting == nil
+        }
+        #expect(sheet, "the open commit pane was dropped instead of presented as the sheet")
+        #expect(host.chat.model.sidePanelTimelineTarget == nil)
+    }
+
     private func makeHost(horizontalSizeClass: UIUserInterfaceSizeClass) async throws -> Host {
         let sessionId = "reader-routing-\(UUID().uuidString)"
         let (connection, _) = await makeTestConnection(sessionId: sessionId)

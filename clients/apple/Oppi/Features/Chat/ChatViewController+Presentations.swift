@@ -143,8 +143,9 @@ extension ChatViewController {
     /// Side panels slide in as a trailing column in regular width (iPad, the
     /// Duo's inner display) and are sheets in compact width. A size-class
     /// change while a panel is open moves it between the column and the
-    /// sheet; its pushed pages close. The column sits beside the chat's bar,
-    /// timeline, and composer.
+    /// sheet; its pushed pages close. A reader moves to the pushed reader
+    /// route, and a timeline file or commit to the modal it opens as there.
+    /// The column sits beside the chat's bar, timeline, and composer.
     func updateSidePanels() {
         guard let root else { return }
         if !AdaptiveWidth.isWide(traitCollection), let target = model.sidePanelReaderTarget {
@@ -154,7 +155,11 @@ extension ChatViewController {
             model.sidePanelReaderTarget = nil
             appNavigation.openChatReader(target)
         }
-        if !AdaptiveWidth.isWide(traitCollection) { model.sidePanelTimelineTarget = nil }
+        if !AdaptiveWidth.isWide(traitCollection), let target = model.sidePanelTimelineTarget {
+            model.sidePanelTimelineTarget = nil
+            ChatTimelineDestinationPresenter(connection: connection)
+                .open(target.request(sourceView: view, presenter: self))
+        }
         let panel: ChatSidePanel? = {
             guard usesTrailingSidePanel else { return nil }
             // Share wins: it is a deliberate action from the title menu, not
@@ -215,15 +220,11 @@ extension ChatViewController {
                 preconditionFailure("The timeline panel presents only while its chat is alive")
             }
             let closePanel: () -> Void = { [weak self] in self?.showSidePanel(nil) }
-            let target = ChatTimelineSidePanelTarget(
-                destination: target.destination,
-                serverId: target.serverId,
-                workspaceId: target.workspaceId,
-                sessionId: target.sessionId,
-                reviewCommentSelectionScope: SessionFilePages.closingPanelScope(
-                    target.reviewCommentSelectionScope,
-                    closePanel: closePanel
-                )
+            // A comment started in the pane closes it first, as in Git's.
+            var target = target
+            target.reviewCommentSelectionScope = SessionFilePages.closingPanelScope(
+                target.reviewCommentSelectionScope,
+                closePanel: closePanel
             )
             return ChatTimelineDestinationPresenter(connection: connection).panelScreen(
                 for: target,

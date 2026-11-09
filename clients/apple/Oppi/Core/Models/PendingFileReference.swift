@@ -270,7 +270,7 @@ struct UserMessageAttachmentBadge: Equatable, Sendable {
     }
 }
 
-struct UserMessagePathPill: Hashable, Sendable {
+struct UserMessagePathPill: Equatable, Sendable {
     enum Kind: String, Sendable, CaseIterable {
         case uploadedFile
         case reviewFile

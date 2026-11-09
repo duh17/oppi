@@ -11,6 +11,8 @@ import UIKit
 ///   Used by timeline full-screen.
 /// - `.embedded(onDismiss:)`: embedded in a pushed screen. Shows a
 ///   back button (chevron.backward) that calls the provided closure.
+/// - `.pane(title:onDismiss:)`: the root of a trailing side pane. Shows the
+///   file name and a Close X like the other panes.
 /// - `.contentOnly`: embedded as pane content without internal navigation chrome.
 ///
 /// Swipe behavior follows the visible chrome: modal down-chevron chrome uses a
@@ -24,6 +26,9 @@ final class FullScreenCodeViewController: UIViewController {
         case sheet
         /// Embedded in a pushed screen — chevron.backward + closure.
         case embedded(onDismiss: @MainActor @Sendable () -> Void)
+        /// The root of a trailing side pane, beside the chat: the title names
+        /// the file, which is otherwise ambiguous there, and X closes the pane.
+        case pane(title: String, onDismiss: @MainActor @Sendable () -> Void)
         /// Embedded pane content without a navigation bar or dismiss affordance.
         /// A parent can still provide a back-swipe action so content-only panes
         /// keep the app-wide right-swipe-back invariant without rendering chrome.
@@ -352,7 +357,7 @@ final class FullScreenCodeViewController: UIViewController {
                 },
                 direction: FullScreenViewerNavigationChrome.DismissMode.modal.gestureDirection
             )
-        case .embedded:
+        case .embedded, .pane:
             handler = HorizontalBackSwipeGestureInstaller(
                 onBack: { [weak self] in
                     self?.doneTapped()
@@ -379,6 +384,9 @@ final class FullScreenCodeViewController: UIViewController {
             dismissMode = .modal
         case .embedded:
             dismissMode = .embedded
+        case .pane(let title, _):
+            dismissMode = .pane
+            vc.navigationItem.title = title
         case .contentOnly:
             dismissMode = nil
         }
@@ -1061,7 +1069,7 @@ final class FullScreenCodeViewController: UIViewController {
         switch presentationMode {
         case .sheet:
             dismiss(animated: true)
-        case .embedded(let onDismiss):
+        case .embedded(let onDismiss), .pane(_, let onDismiss):
             onDismiss()
         case .contentOnly(let onBackSwipe):
             onBackSwipe?()

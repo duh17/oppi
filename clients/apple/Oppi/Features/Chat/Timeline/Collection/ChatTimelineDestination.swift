@@ -2,7 +2,7 @@ import UIKit
 
 /// A destination the timeline asks chat composition to open. The timeline decides which
 /// destination a user action means; chat composition builds and presents it.
-enum ChatTimelineDestination: Hashable {
+enum ChatTimelineDestination: Equatable {
     case commitDetail(sha: String)
     /// Upload, review, repo, and host-path pills open the file viewer.
     case workspaceFile(UserMessagePathPill)
@@ -42,10 +42,24 @@ struct ChatTimelineSidePanelTarget: Hashable {
     let serverId: String?
     let workspaceId: String
     let sessionId: String
-    let reviewCommentSelectionScope: ReviewCommentSelectionScope?
+    var reviewCommentSelectionScope: ReviewCommentSelectionScope?
 
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
+    /// The same open as a modal's request, for a window too narrow for the
+    /// column.
+    func request(sourceView: UIView, presenter: UIViewController) -> ChatTimelineDestinationRequest {
+        ChatTimelineDestinationRequest(
+            destination: destination,
+            serverId: serverId,
+            workspaceId: workspaceId,
+            sessionId: sessionId,
+            reviewCommentSelectionScope: reviewCommentSelectionScope,
+            sourceView: sourceView,
+            presenter: presenter
+        )
+    }
 }
 
 typealias ChatTimelineOpenDestination = @MainActor (ChatTimelineDestinationRequest) -> Void

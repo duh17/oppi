@@ -636,6 +636,8 @@ enum FullScreenViewerNavigationChrome {
     enum DismissMode {
         case modal
         case embedded
+        /// The root of a trailing side pane: closes it like the other panes.
+        case pane
 
         var systemImageName: String {
             switch self {
@@ -643,6 +645,8 @@ enum FullScreenViewerNavigationChrome {
                 return "chevron.down"
             case .embedded:
                 return "chevron.backward"
+            case .pane:
+                return "xmark"
             }
         }
 
@@ -652,6 +656,8 @@ enum FullScreenViewerNavigationChrome {
                 return String(localized: "Done")
             case .embedded:
                 return String(localized: "Back")
+            case .pane:
+                return String(localized: "Close")
             }
         }
 
@@ -659,7 +665,7 @@ enum FullScreenViewerNavigationChrome {
             switch self {
             case .modal:
                 return .down
-            case .embedded:
+            case .embedded, .pane:
                 return .right
             }
         }
