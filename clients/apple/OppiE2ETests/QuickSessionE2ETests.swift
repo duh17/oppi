@@ -378,24 +378,48 @@ final class QuickSessionE2ETests: E2ETestCase {
         XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "Keyboard not visible in compact height")
         let viewport = app.scrollViews["quickSession.viewport"].firstMatch
         XCTAssertTrue(viewport.waitForExistence(timeout: 5), "Bounded Quick Session viewport not visible")
+        // Read once: the keyboard does not move, but its element drops out of the accessibility
+        // tree for a moment after a scroll gesture.
+        let keyboardTop = keyboard.frame.minY
         XCTAssertLessThanOrEqual(
             input.frame.maxY,
-            keyboard.frame.minY + 1,
+            keyboardTop + 1,
             "Compact-height composer input must stay above the keyboard"
         )
 
-        viewport.swipeUp()
+        // The destination row (workspace picker) sits above the composer. With the software
+        // keyboard up the viewport is shorter than its content, so the picker can be scrolled out
+        // of view; the swipe up only attempts to push it away (from the viewport's middle it may
+        // land on the composer's text view instead), and the drag down reverses whatever scrolled.
+        // With a hardware keyboard (the simulator hides the software one once it has seen one)
+        // the content fits, nothing scrolls, and the picker stays put. Both end with the picker
+        // hittable at a settled frame, above the keyboard.
         let workspacePicker = app.buttons["quickSession.workspacePicker"]
+        viewport.swipeUp()
+        XCTAssertTrue(workspacePicker.waitForExistence(timeout: 5), "Workspace picker missing after scrolling")
+        for _ in 0..<3 where !waitForSettledHittable(workspacePicker, timeout: 1.5) {
+            dragViewportDown(viewport)
+        }
         XCTAssertTrue(
-            workspacePicker.waitForExistence(timeout: 5) && workspacePicker.isHittable,
+            waitForSettledHittable(workspacePicker, timeout: 1.5),
             "Compact-height fallback must allow scrolling to the composer controls"
         )
         XCTAssertLessThanOrEqual(
             workspacePicker.frame.maxY,
-            keyboard.frame.minY + 1,
+            keyboardTop + 1,
             "Scrolled composer controls must remain above the keyboard"
         )
         XCTAssertFalse(app.buttons["Sheet Grabber"].exists, "Compact fallback must not restore a system sheet")
+    }
+
+    /// Scrolls the viewport back toward its top. The drag starts on the controls row at the
+    /// bottom of the viewport: a swipe from its middle lands on the composer's own text view,
+    /// which scrolls its text instead and leaves the viewport where it is.
+    @MainActor
+    private func dragViewportDown(_ viewport: XCUIElement) {
+        let start = viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.92))
+        let end = viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1.6))
+        start.press(forDuration: 0.05, thenDragTo: end)
     }
 
     /// Empties the open Quick Session composer, if there is one with text in it.
