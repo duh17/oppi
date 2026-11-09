@@ -776,8 +776,14 @@ struct FullScreenMarkdownStressCorpusTests {
         let settledDiagnostics = body.debugFirstPaintDiagnosticsForTesting
         #expect(settledDiagnostics.deferredFitUs > 0)
         print("READER_DEFERRED_METRIC fit_us=\(settledDiagnostics.deferredFitUs)")
-        #expect(settledAnchor.item == provisionalAnchor.item)
-        #expect(abs(settledAnchor.screenY - provisionalAnchor.screenY) < 1)
+        #expect(
+            settledAnchor.item == provisionalAnchor.item,
+            "first paint settle visible anchor item moved \(provisionalAnchor.item) -> \(settledAnchor.item); \(readerState(body))"
+        )
+        #expect(
+            abs(settledAnchor.screenY - provisionalAnchor.screenY) < 1,
+            "first paint settle visible anchor screen Y jumped \(provisionalAnchor.screenY) -> \(settledAnchor.screenY); \(readerState(body))"
+        )
 
         #expect(body.debugAppliedItemCountForTesting > 0)
         #expect(
@@ -1033,7 +1039,7 @@ struct FullScreenMarkdownStressCorpusTests {
             )
             #expect(
                 abs(reserved - fitting) < 1,
-                "\(stage) reserved height \(reserved) != fitting height \(fitting) for item \(item)"
+                "\(stage) reserved height \(reserved) != fitting height \(fitting) for item \(item); \(readerState(body))"
             )
         }
     }
@@ -1079,7 +1085,19 @@ struct FullScreenMarkdownStressCorpusTests {
             }
             return !body.debugHasDeferredReaderWorkForTesting
         }
-        #expect(settled, "\(stage) still had deferred reader work after \(timeoutMs) ms")
+        #expect(settled, "\(stage) still had deferred reader work after \(timeoutMs) ms; \(readerState(body))")
+    }
+
+    /// The reader's pending-work state at the moment an assertion fires. A gate
+    /// log keeps only the failing assertion's message, so each one carries this:
+    /// it separates "the reader still owed a pass" from "a settled pass moved
+    /// the anchor".
+    private func readerState(_ body: NativeFullScreenMarkdownBody) -> String {
+        "deferredReaderWork=\(body.debugHasDeferredReaderWorkForTesting) "
+            + "renderAheadActive=\(body.debugIsRenderAheadActiveForTesting) "
+            + "layoutReplaces=\(body.debugLayoutReplaceCountForTesting) "
+            + "replaceAfterInteraction=\(body.debugNeedsLayoutReplaceAfterInteractionForTesting) "
+            + "applied=\(body.debugAppliedItemCountForTesting)/\(body.debugRenderedSegmentCountForTesting)"
     }
 
     private func assertCurrentVisibleAnchor(
@@ -1093,11 +1111,11 @@ struct FullScreenMarkdownStressCorpusTests {
         )
         #expect(
             current.item == expected.item,
-            "\(stage) visible anchor item moved \(expected.item) -> \(current.item)"
+            "\(stage) visible anchor item moved \(expected.item) -> \(current.item); \(readerState(body))"
         )
         #expect(
             abs(current.screenY - expected.screenY) < 1,
-            "\(stage) visible anchor screen Y jumped \(expected.screenY) -> \(current.screenY)"
+            "\(stage) visible anchor screen Y jumped \(expected.screenY) -> \(current.screenY); \(readerState(body))"
         )
     }
 }
