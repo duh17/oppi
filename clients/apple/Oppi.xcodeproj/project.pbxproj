@@ -2002,6 +2002,7 @@
 		BFEE0F0B05252CB9BE9AEBE1 /* MacWorkspaceClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F17D16398175ED9E8F8B705 /* MacWorkspaceClient.swift */; };
 		C0114D59F25BC4804C3E5B98 /* FocusedSessionConnectionPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7365EA735B73F9C53A8773B5 /* FocusedSessionConnectionPolicy.swift */; };
 		C0220BE26FE35247429584CF /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E2E93EA6389E5A8B3E07F4C /* LogsView.swift */; };
+		C05C7CAFAC8D07345D054535 /* RelativeDateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17273B5DF3348FE813B4AA7B /* RelativeDateTests.swift */; };
 		C05DCB768DFCCF79F9DBD2DF /* MacSessionWindowChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = C07023BA43BC84133E2BBFFC /* MacSessionWindowChrome.swift */; };
 		C069A00C8D1AD2EF51A46B51 /* FullScreenImageViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E353CD6081B3126767E06A5 /* FullScreenImageViewController.swift */; };
 		C087E74A53A30EE92357E646 /* MarkdownTableGridLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC65C3C75E89CCFD7315A7A1 /* MarkdownTableGridLayout.swift */; };
@@ -2986,6 +2987,7 @@
 		16FB4A235BC03EE27C6FD76F /* WorkspaceFileEditorE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFileEditorE2ETests.swift; sourceTree = "<group>"; };
 		16FD3A7B910A879C4CE5D614 /* ServerMetricsEnableTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerMetricsEnableTests.swift; sourceTree = "<group>"; };
 		1716CC5986A09A38FFB7C07E /* NativeFullScreenSourceBody.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeFullScreenSourceBody.swift; sourceTree = "<group>"; };
+		17273B5DF3348FE813B4AA7B /* RelativeDateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelativeDateTests.swift; sourceTree = "<group>"; };
 		173E215DA60BFBD71CFDC51C /* TimelineBubbleStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineBubbleStyle.swift; sourceTree = "<group>"; };
 		174DBD7B8C4E6BE7F96EB0B3 /* MacDailyDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacDailyDetailView.swift; sourceTree = "<group>"; };
 		176E0E302B28081414F35D38 /* OppiTestExperimentsAtLoad.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = OppiTestExperimentsAtLoad.m; sourceTree = "<group>"; };
@@ -8242,6 +8244,7 @@
 				6E514947DE8D9B1296FC2706 /* ModelColorHelpersTests.swift */,
 				CDFC5F5CE188409648C283C1 /* NotebookCellPresentationTests.swift */,
 				78C0A69A83DB9430933BC8EF /* ProviderColorTests.swift */,
+				17273B5DF3348FE813B4AA7B /* RelativeDateTests.swift */,
 				DA83D5EAEAB81B0547804A94 /* TerminalInspectionTests.swift */,
 				99164436BAD4895F84298212 /* ToolCallDocumentTests.swift */,
 				833BF637F7F841FCC0760728 /* ToolContentDescriptorTests.swift */,
@@ -10344,6 +10347,7 @@
 				F7E630EE838CE7C4C5E60352 /* ReaderTaskControlTests.swift in Sources */,
 				03EAFE1FA63B1CF291D77BC2 /* ReadySessionScrollToBottomTests.swift in Sources */,
 				3B68390C5F9E2A8F7325E3E7 /* RecentModelsTests.swift in Sources */,
+				C05C7CAFAC8D07345D054535 /* RelativeDateTests.swift in Sources */,
 				B00D4BDD71026E54A19B3FA2 /* ReliabilityTests.swift in Sources */,
 				A01D4080264E7F07DF08788A /* RemotePushTests.swift in Sources */,
 				DD71B635AFB2D66E2D50584E /* RemoteThemeTests.swift in Sources */,

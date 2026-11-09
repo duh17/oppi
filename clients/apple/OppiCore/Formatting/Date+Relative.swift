@@ -18,4 +18,15 @@ extension Date {
             return "\(days)d ago"
         }
     }
+
+    /// `relativeString` up to a week, then a short calendar date ("Oct 15",
+    /// or "Oct 15, 2025" in another year) instead of a count of days.
+    func relativeOrShortDateString(relativeTo now: Date = Date(), calendar: Calendar = .current) -> String {
+        guard now.timeIntervalSince(self) >= 7 * 86400 else { return relativeString(relativeTo: now) }
+        let style = Date.FormatStyle(
+            locale: calendar.locale ?? .current, calendar: calendar, timeZone: calendar.timeZone
+        ).month(.abbreviated).day()
+        if calendar.isDate(self, equalTo: now, toGranularity: .year) { return formatted(style) }
+        return formatted(style.year())
+    }
 }

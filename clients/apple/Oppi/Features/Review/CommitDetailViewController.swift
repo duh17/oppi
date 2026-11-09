@@ -584,11 +584,11 @@ private final class CommitDetailContentView: UIScrollView {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let date = formatter.date(from: isoString) {
-            return date.relativeString()
+            return date.relativeOrShortDateString()
         }
         formatter.formatOptions = [.withInternetDateTime]
         guard let date = formatter.date(from: isoString) else { return isoString }
-        return date.relativeString()
+        return date.relativeOrShortDateString()
     }
 }
 
