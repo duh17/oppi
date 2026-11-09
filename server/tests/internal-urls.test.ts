@@ -1,29 +1,33 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { ToolExecutionApi } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
-import { bindInternalUrls, internalUrls } from "../src/durable-internal-urls.js";
+import { internalUrls } from "../src/durable-internal-urls.js";
+import { bindOppiHost } from "../src/durable-extension-api.js";
 import { pageText, parseInternalUrl } from "../src/internal-urls.js";
 import type { Session } from "../src/types.js";
 
 const row = (id: string, extra: Partial<Session> = {}): Session =>
   ({ id, status: "ready", lastActivity: 1, workspaceId: "w", ...extra }) as Session;
 
-function bindSessions(sessions: Session[]): void {
-  bindInternalUrls({
-    storage: {
-      getSession: (id) => sessions.find((session) => session.id === id),
-      listAllWorkspaceSessionSnapshots: (workspaceId) =>
-        sessions.filter((session) => session.workspaceId === workspaceId),
-    },
-    sessions: {
-      getServerDurableTrace: async (id) =>
+let rows: Session[] = [];
+const bindSessions = (sessions: Session[]): void => {
+  rows = sessions;
+};
+// The host as the server binds it, with the one part these tests read: the caller's sessions.
+const noTool = { description: "", parameters: {}, execute: async () => ({}) };
+bindOppiHost({
+  sessions: () => ({
+    reading: {
+      sessionId: "caller",
+      workspaceSessions: () => rows.filter((session) => session.workspaceId === "w"),
+      transcript: async (id: string) =>
         id === "classic-1"
           ? null
           : [{ id: "e1", type: "assistant", timestamp: "", text: `answer of ${id}` }],
     },
-    callerSessionId: () => "caller",
-  });
-}
+  }),
+  files: { ls: noTool, find: noTool, grep: noTool, internalUrls },
+} as unknown as Parameters<typeof bindOppiHost>[0]);
 
 const read = (path: string, api: Partial<ToolExecutionApi> = {}) =>
   internalUrls.read({ path }, api as ToolExecutionApi, context);

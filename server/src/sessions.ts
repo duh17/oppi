@@ -168,18 +168,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       import("./durable-harness.js"),
       import("./durable-threads.js"),
       import("./durable-control-cli.js"),
-      import("./durable-internal-urls.js"),
-    ]).then(([harnessModule, { DurableThreads }, { DurableControlCli }, urls]) => {
-      const { DurableHarness, conversationOfEnv } = harnessModule;
+    ]).then(([{ DurableHarness }, { DurableThreads }, { DurableControlCli }]) => {
       const runtime = new DurableHarness(storage.getDataDir());
-      urls.bindInternalUrls({
-        storage,
-        sessions: this,
-        callerSessionId: (env) => {
-          const caller = conversationOfEnv(env);
-          return caller && runtime.sessionIdOf(caller.host.storeId, caller.conversationId);
-        },
-      });
       runtime.onHostOpened = (host) => this.fenceStopped([host]);
       runtime.onHostRecovered = (host, failure) => this.recoverDurableSessions(host, failure);
       runtime.bindDisabledExtensions(
@@ -192,6 +182,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
           withIncomingWork: (sessionId, workspace, submit) =>
             this.withIncomingWork(sessionId, workspace, submit),
           onCreated: (session) => this.emit("session_created", session),
+          trace: (sessionId) => this.getServerDurableTrace(sessionId, "context"),
         }),
       );
       runtime.bindSessions({

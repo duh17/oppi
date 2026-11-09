@@ -1,8 +1,11 @@
 import type { Context, JsonValue } from "@earendil-works/chord";
 import type { ToolExecutionApi } from "@earendil-works/pi-durable";
-import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
-import type { OppiInternalUrlsHost } from "./durable-extension-api.js";
+import {
+  oppiHost,
+  type OppiInternalUrlsHost,
+  type SessionReading,
+} from "./durable-extension-api.js";
 import { createSshReader } from "./internal-url-ssh.js";
 import {
   pageText,
@@ -22,28 +25,8 @@ import type { Session } from "./types.js";
 // (`history://`) and the answers of the sessions it launched, directly or through its children
 // (`agent://`). It never sees another workspace's sessions, so an id from one is "not found".
 
-export interface InternalUrlDeps {
-  storage: {
-    getSession(id: string): Session | undefined;
-    listAllWorkspaceSessionSnapshots(workspaceId: string): Session[];
-  };
-  sessions: {
-    /** The server-durable transcript of a session; null for any other engine. */
-    getServerDurableTrace(
-      sessionId: string,
-      view: "context" | "full",
-    ): Promise<TraceEvent[] | null>;
-  };
-  /** The Oppi Session that runs the tool call whose env this is. */
-  callerSessionId(env: ExecutionEnv | undefined): string | undefined;
-}
-
-let deps: InternalUrlDeps | undefined;
-
-/** Server only: bind once per process, before a session runs a tool. A later server replaces it. */
-export function bindInternalUrls(next: InternalUrlDeps): void {
-  deps = next;
-}
+// The caller's view of sessions is `oppiHost().sessions(env).reading`, scoped by the runtime's
+// bound threads to the conversation that runs the call.
 
 /** Schemes plugins registered, by name. */
 const registered = new Map<string, SchemeReader>();
@@ -60,10 +43,10 @@ export const internalUrls: OppiInternalUrlsHost = {
     const bound =
       (read: typeof readHistory): SchemeReader =>
       (target) => {
-        const caller = deps?.callerSessionId(api.env);
-        if (!deps || caller === undefined)
+        const reading = oppiHost().sessions(api.env)?.reading;
+        if (!reading)
           throw new Error(`${target.scheme}:// needs an Oppi session, and this call has none.`);
-        return read(deps, caller, target);
+        return read(reading, target);
       };
     readers.set("history", bound(readHistory));
     readers.set("agent", bound(readAgent));
@@ -83,12 +66,6 @@ export const internalUrls: OppiInternalUrlsHost = {
 };
 
 // --- sessions --------------------------------------------------------------------------------
-
-function callerWorkspace(d: InternalUrlDeps, callerId: string): Session[] {
-  const caller = d.storage.getSession(callerId);
-  if (!caller?.workspaceId) return caller ? [caller] : [];
-  return d.storage.listAllWorkspaceSessionSnapshots(caller.workspaceId);
-}
 
 /** The sessions the caller launched, directly or through its children, newest first. */
 function descendants(sessions: readonly Session[], callerId: string): Session[] {
@@ -131,13 +108,9 @@ function noPath(target: InternalTarget): void {
     );
 }
 
-async function readHistory(
-  d: InternalUrlDeps,
-  callerId: string,
-  target: InternalTarget,
-): Promise<string> {
+async function readHistory(reading: SessionReading, target: InternalTarget): Promise<string> {
   noPath(target);
-  const visible = callerWorkspace(d, callerId);
+  const visible = reading.workspaceSessions();
   if (target.id === "")
     return listSessions(
       "Sessions in this workspace",
@@ -145,7 +118,7 @@ async function readHistory(
       "read history://<id> for a transcript",
     );
   const session = pickRow(target, "session", visible);
-  const trace = await d.sessions.getServerDurableTrace(session.id, "context");
+  const trace = await reading.transcript(session.id);
   if (trace === null)
     throw new Error(
       `history://${session.id} cannot be read: it is not a server-durable session. Use \`oppi session trace ${session.id}\`.`,
@@ -153,13 +126,9 @@ async function readHistory(
   return `${sessionLabel(session)}\n\n${renderTranscript(trace)}`;
 }
 
-async function readAgent(
-  d: InternalUrlDeps,
-  callerId: string,
-  target: InternalTarget,
-): Promise<string> {
+async function readAgent(reading: SessionReading, target: InternalTarget): Promise<string> {
   noPath(target);
-  const children = descendants(callerWorkspace(d, callerId), callerId);
+  const children = descendants(reading.workspaceSessions(), reading.sessionId);
   if (target.id === "")
     return listSessions(
       "Sessions this session launched",
@@ -168,7 +137,7 @@ async function readAgent(
     );
   const child = pickRow(target, "child session", children);
   const { id } = child;
-  const trace = await d.sessions.getServerDurableTrace(id, "context");
+  const trace = await reading.transcript(id);
   if (trace === null)
     throw new Error(
       `agent://${id} cannot be read: it is not a server-durable session. Use \`oppi session trace ${id}\`.`,

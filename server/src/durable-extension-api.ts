@@ -14,6 +14,8 @@ import type { Job } from "../plugins/background-jobs/contract.js";
 import type { SubagentWorktree } from "../plugins/subagents/contract.js";
 import type { NotifyInput, NotifyOutcome } from "../plugins/notify/contract.js";
 import type { SchemeReader } from "./internal-urls.js";
+import type { TraceEvent } from "./trace.js";
+import type { Session } from "./types.js";
 
 export type { InternalTarget, SchemeReader } from "./internal-urls.js";
 
@@ -294,6 +296,16 @@ export interface ResolvedSubagent {
  */
 export type Activated<T> = { submitted: T } | { failed: string; shuttingDown: boolean };
 
+/** Read-only access to Sessions for internal URLs, scoped to one calling conversation. */
+export interface SessionReading {
+  /** The caller's own Session. */
+  readonly sessionId: string;
+  /** The Sessions of the caller's workspace, the caller included. */
+  workspaceSessions(): Session[];
+  /** A Session's server-durable transcript; null for any other engine. */
+  transcript(sessionId: string): Promise<TraceEvent[] | null>;
+}
+
 /**
  * What the subagent tool needs from Oppi (see `DurableThreads.forCaller`), for one calling
  * conversation. Every Session it takes must be bound to a child conversation that the caller
@@ -302,6 +314,8 @@ export type Activated<T> = { submitted: T } | { failed: string; shuttingDown: bo
 export interface DurableSessionsHost {
   /** The store of the calling conversation. */
   readonly storeId: string;
+  /** What `agent://` and `history://` read; undefined while the caller has no Oppi Session. */
+  readonly reading: SessionReading | undefined;
   /**
    * The Oppi Session bound to a child conversation the caller owns, created on first use (not
    * attached: `activate` does that with the first message). Idempotent: one Session per

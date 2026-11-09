@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import type {
   Activated,
   DurableSessionsHost,
+  SessionReading,
   ResolvedSubagent,
   SessionSender,
   SubagentRequest,
@@ -35,6 +36,7 @@ import type { Storage } from "./storage.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
 import type { SubagentWorktree } from "../plugins/subagents/contract.js";
 import { resolveSessionWorkRoot } from "./session-work-root.js";
+import type { TraceEvent } from "./trace.js";
 import type { Session, Workspace } from "./types.js";
 import {
   availableWorktreeBranch,
@@ -73,6 +75,8 @@ export interface DurableThreadsDeps {
   ): Promise<{ attached: true; value: T } | { attached: false; error: unknown; closing: boolean }>;
   /** A Session row exists for a new child; clients learn about it. */
   onCreated(session: Session): void;
+  /** A Session's server-durable transcript (`history://`); null for any other engine. */
+  trace(sessionId: string): Promise<TraceEvent[] | null>;
 }
 
 /**
@@ -105,6 +109,21 @@ export class DurableThreads {
    * addresses them by name; any other Session, of this store or another, is refused.
    */
   forCaller(host: SessionHost, caller: ConversationId): DurableSessionsHost {
+    /** Read at each use: the caller's Session row may be bound after this object is made. */
+    const reading = (): SessionReading | undefined => {
+      const own = this.sessionOf(host.storeId, caller);
+      const row = own && this.deps.storage.getSession(own.sessionId);
+      return own && row
+        ? {
+            sessionId: own.sessionId,
+            workspaceSessions: () =>
+              row.workspaceId
+                ? this.deps.storage.listAllWorkspaceSessionSnapshots(row.workspaceId)
+                : [row],
+            transcript: (id) => this.deps.trace(id),
+          }
+        : undefined;
+    };
     /** Undefined when `sessionId` is bound to a child of the caller, otherwise why not. */
     const refuse = async (sessionId: string): Promise<string | undefined> => {
       const session = this.deps.storage.getSession(sessionId);
@@ -120,6 +139,9 @@ export class DurableThreads {
     };
     return {
       storeId: host.storeId,
+      get reading() {
+        return reading();
+      },
       sender: () => this.sessionOf(host.storeId, caller),
       materialize: async (child) => {
         if ((await ownerOf(host, child.conversationId)) !== caller)
