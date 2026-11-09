@@ -561,7 +561,10 @@ final class TimelineDocumentPositionE2ETests: E2ETestCase {
             "content": Self.deterministicWikiResponse,
             "persist": true,
         ])
+        // The harness agent_start made the server session busy; only agent_settled
+        // takes it back to ready, so close the run as a real one ends.
         try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_end"])
+        try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_settled"])
         waitForActiveResponseToFinish()
 
         // Re-enter once so the measured journey starts from the same persisted
