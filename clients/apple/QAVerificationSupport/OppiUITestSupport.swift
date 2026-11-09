@@ -180,6 +180,43 @@ extension XCUIApplication {
             .firstMatch
     }
 
+    /// Closes a regular-width popover the way a person does: a tap on the window
+    /// outside `content`. A popover has no grabber, so a swipe-down does not close
+    /// it (compact width presents the same content as a sheet, which does). `content`
+    /// is the element the caller can name, which may be only part of the popover (a
+    /// navigation bar, not its whole body), so the tap goes to the window corner
+    /// farthest from that element: the corner least likely to land on the rest of
+    /// the popover or on the control that opened it. The caller still asserts that
+    /// the content went away.
+    func tapOutsidePopover(_ content: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(
+            otherElements["PopoverDismissRegion"].exists,
+            "Only a popover closes with a tap outside it",
+            file: file,
+            line: line
+        )
+        let window = windows.firstMatch
+        let bounds = window.frame
+        let frame = content.frame
+        func distance(from corner: CGVector) -> CGFloat {
+            let point = CGPoint(x: bounds.minX + bounds.width * corner.dx, y: bounds.minY + bounds.height * corner.dy)
+            return hypot(max(frame.minX - point.x, 0, point.x - frame.maxX), max(frame.minY - point.y, 0, point.y - frame.maxY))
+        }
+        let corners = [
+            CGVector(dx: 0.05, dy: 0.95), CGVector(dx: 0.95, dy: 0.95),
+            CGVector(dx: 0.05, dy: 0.05), CGVector(dx: 0.95, dy: 0.05),
+        ]
+        let farthest = corners.max { distance(from: $0) < distance(from: $1) } ?? corners[0]
+        XCTAssertGreaterThan(
+            distance(from: farthest),
+            0,
+            "No window corner lies outside the popover content (\(frame))",
+            file: file,
+            line: line
+        )
+        window.coordinate(withNormalizedOffset: farthest).tap()
+    }
+
     /// Ends the search `field` has started, as a person does. The system draws its own
     /// control for that, with no identifier, and which one depends on the window's
     /// horizontal size class (not the field's: a regular-width column reports compact).
