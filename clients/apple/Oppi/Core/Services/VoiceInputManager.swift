@@ -495,6 +495,18 @@ final class VoiceInputManager {
     }
     @ObservationIgnored private var captureFailureTimer: NoticeDismissTimer<VoiceCaptureTakeIdentity>!
 
+    #if DEBUG
+    /// Publishes a failed take for the owner, as the capture pipeline would, so a
+    /// harness can show the real notice without microphone hardware.
+    func debugPublishCaptureFailure(owner: String, message: String) {
+        captureFailure = VoiceCaptureFailure(
+            take: VoiceCaptureTakeIdentity(requestID: nextStartRequestID + 1, composerGeneration: composerGeneration),
+            source: owner,
+            message: message
+        )
+    }
+    #endif
+
     /// The person dismissed the failure notice (or its timer ran out).
     func dismissCaptureFailure() {
         captureFailure = nil

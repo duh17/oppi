@@ -3,6 +3,18 @@ import UIKit
 /// UIKit pieces every transient notice shares with `NoticeDismissTimer`: the
 /// Dismiss control and the touch-hold that pauses the timer.
 enum NoticeChrome {
+    /// The most height a notice's message takes before it scrolls. Fixed, not
+    /// scaled: at the largest Dynamic Type sizes a long message would otherwise
+    /// grow past the screen and push Dismiss and Retry out of reach, so the
+    /// message scrolls and the buttons stay outside the scroll area.
+    static let messageMaxHeight: CGFloat = 160
+
+    /// `message` in a viewport capped at `messageMaxHeight`.
+    @MainActor
+    static func cappedMessage(_ message: UIView) -> CappedScrollView {
+        CappedScrollView(content: message, maxHeight: messageMaxHeight)
+    }
+
     /// A 44 pt close button labelled "Dismiss". The caller sets the scoped
     /// accessibility identifier and the tint.
     @MainActor

@@ -41,7 +41,10 @@ final class MessageQueueView: UIView {
     private lazy var errorDismissButton = NoticeChrome.dismissButton(identifier: "chat.messageQueue.error.dismiss") { [weak self] in
         self?.dismissError()
     }
-    private lazy var errorTimer = NoticeDismissTimer<Int> { [weak self] _ in self?.dismissError() }
+    private let noticeEnvironment: NoticeTimerEnvironment
+    private lazy var errorTimer = NoticeDismissTimer<Int>(environment: noticeEnvironment) { [weak self] _ in
+        self?.dismissError()
+    }
     private var errorTouchHold: NoticeTouchHold?
     private var timedError: String?
     private let sections = UIStackView()
@@ -58,8 +61,12 @@ final class MessageQueueView: UIView {
     private var isUpdating = false
     private var errorText: String?
 
-    init(presentation: MessageQueueContainerPresentation) {
+    init(
+        presentation: MessageQueueContainerPresentation,
+        noticeEnvironment: NoticeTimerEnvironment = NoticeTimerEnvironment()
+    ) {
         self.presentation = presentation
+        self.noticeEnvironment = noticeEnvironment
         super.init(frame: .zero)
         stack.axis = .vertical
         stack.alignment = .fill
@@ -112,7 +119,7 @@ final class MessageQueueView: UIView {
         errorRow.axis = .horizontal
         errorRow.alignment = .top
         errorRow.spacing = 8
-        errorRow.addArrangedSubview(errorLabel)
+        errorRow.addArrangedSubview(NoticeChrome.cappedMessage(errorLabel))
         errorRow.addArrangedSubview(errorDismissButton)
         stack.addArrangedSubview(errorRow)
         errorTouchHold = NoticeTouchHold(view: errorRow) { [weak self] held in

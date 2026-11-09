@@ -907,7 +907,8 @@ final class ComposerDictationFailureView: UIView {
         header.alignment = .top
         header.spacing = 8
 
-        let stack = UIStackView(arrangedSubviews: [header, messageLabel, retryButton])
+        let message = NoticeChrome.cappedMessage(messageLabel)
+        let stack = UIStackView(arrangedSubviews: [header, message, retryButton])
         stack.axis = .vertical
         stack.alignment = .leading
         stack.spacing = 6
@@ -919,6 +920,7 @@ final class ComposerDictationFailureView: UIView {
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 12),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
             header.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            message.widthAnchor.constraint(equalTo: stack.widthAnchor),
             retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
         layer.cornerRadius = 12

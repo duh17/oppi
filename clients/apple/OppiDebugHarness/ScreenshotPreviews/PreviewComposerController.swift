@@ -11,6 +11,7 @@ final class PreviewComposerController: UIViewController, ChatComposerSource {
         var isBusy = false
         var askRequest: AskRequest?
         var appliesOuterPadding = true
+        var voiceInputManager: VoiceInputManager?
         var colors: ComposerThemeColors
     }
 
@@ -68,7 +69,7 @@ final class PreviewComposerController: UIViewController, ChatComposerSource {
             allowsEmptySubmit: false,
             sendProgressText: nil,
             isStopping: false,
-            voiceInputManager: nil,
+            voiceInputManager: values.voiceInputManager,
             liveVoiceCall: nil,
             askRequest: values.askRequest,
             slashCommands: [],

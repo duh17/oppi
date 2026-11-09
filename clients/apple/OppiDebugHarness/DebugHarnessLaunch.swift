@@ -118,6 +118,9 @@ enum DebugHarnessLaunch {
         case "reader-task-edit": return ReaderTaskEditPreviewController()
         // The viewer on a portrait or landscape fixture clip, over loopback.
         case "file-viewer-video": return FileViewerVideoPreviewController()
+        // The transient notices that share NoticeDismissTimer, over their real views.
+        case "notice-dismiss-dictation": return NoticeDismissDictationPreviewController()
+        case "notice-dismiss-queue": return NoticeDismissQueuePreviewController()
         case "ssh-terminal": return SSHTerminalPreviewController()
         case "ssh-terminal-status-blocked": return SSHTerminalPreviewController(status: .blocked)
         case "ssh-terminal-rex-panes": return SSHTerminalPreviewController(status: .rexPanes)
