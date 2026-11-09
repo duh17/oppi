@@ -109,6 +109,8 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
     let kind: WorkspaceLinkedFileKind
     let navigationContext: FileBrowserNavigationContext?
     let lineAnchor: SourceLineAnchor?
+    /// The heading a link names; the file opens scrolled to it.
+    let headingAnchor: ReaderHeadingAnchor?
     let sourceSessionId: String?
     /// Declared control-session cwd for resolving relative owner-host paths.
     let controlSessionId: String?
@@ -120,6 +122,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
         kind: WorkspaceLinkedFileKind,
         navigationContext: FileBrowserNavigationContext? = nil,
         lineAnchor: SourceLineAnchor? = nil,
+        headingAnchor: ReaderHeadingAnchor? = nil,
         sourceSessionId: String? = nil,
         controlSessionId: String? = nil
     ) {
@@ -129,6 +132,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
         self.kind = kind
         self.navigationContext = navigationContext
         self.lineAnchor = lineAnchor
+        self.headingAnchor = headingAnchor
         self.sourceSessionId = sourceSessionId
         self.controlSessionId = controlSessionId
     }
@@ -141,6 +145,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
         fileName: String? = nil,
         navigationContext: FileBrowserNavigationContext? = nil,
         lineAnchor: SourceLineAnchor? = nil,
+        headingAnchor: ReaderHeadingAnchor? = nil,
         sourceSessionId: String? = nil
     ) -> Self {
         let resolvedFileName: String
@@ -157,6 +162,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
             kind: .workspaceFile(path: path, fileName: resolvedFileName),
             navigationContext: navigationContext,
             lineAnchor: lineAnchor,
+            headingAnchor: headingAnchor,
             sourceSessionId: sourceSessionId
         )
     }
@@ -168,6 +174,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
         path: String,
         fileName: String? = nil,
         lineAnchor: SourceLineAnchor? = nil,
+        headingAnchor: ReaderHeadingAnchor? = nil,
         sourceSessionId: String? = nil
     ) -> Self {
         let resolvedFileName: String
@@ -181,6 +188,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
             workspaceId: workspaceId,
             kind: .sessionFile(path: path, fileName: resolvedFileName, sessionId: sessionId),
             lineAnchor: lineAnchor,
+            headingAnchor: headingAnchor,
             sourceSessionId: sourceSessionId
         )
     }
@@ -191,6 +199,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
         path: String,
         fileName: String? = nil,
         lineAnchor: SourceLineAnchor? = nil,
+        headingAnchor: ReaderHeadingAnchor? = nil,
         sourceSessionId: String? = nil,
         controlSessionId: String? = nil
     ) -> Self {
@@ -206,6 +215,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
             workspaceId: workspaceId,
             kind: .hostFile(path: path, fileName: resolvedFileName),
             lineAnchor: lineAnchor,
+            headingAnchor: headingAnchor,
             sourceSessionId: sourceSessionId,
             controlSessionId: controlSessionId
         )

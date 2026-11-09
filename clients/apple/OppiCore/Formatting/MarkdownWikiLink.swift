@@ -193,6 +193,8 @@ struct ResourceReference: Hashable, Sendable {
     let fileCandidatePath: String?
     let kind: ResourceReferenceKind
     let lineAnchor: SourceLineAnchor?
+    /// The heading a file link names (`x.org::*Heading`, `x.md#slug`).
+    let headingAnchor: ReaderHeadingAnchor?
     let visibleLabel: String?
 
     init(
@@ -203,6 +205,7 @@ struct ResourceReference: Hashable, Sendable {
         fileCandidatePath: String?,
         kind: ResourceReferenceKind = .workspaceFile,
         lineAnchor: SourceLineAnchor? = nil,
+        headingAnchor: ReaderHeadingAnchor? = nil,
         visibleLabel: String? = nil
     ) {
         self.target = target
@@ -212,6 +215,7 @@ struct ResourceReference: Hashable, Sendable {
         self.fileCandidatePath = fileCandidatePath
         self.kind = kind
         self.lineAnchor = lineAnchor
+        self.headingAnchor = headingAnchor
         self.visibleLabel = visibleLabel
     }
 }
@@ -598,6 +602,7 @@ enum ResourceReferenceURL {
         if let lineAnchor = reference.lineAnchor {
             queryItems.append(URLQueryItem(name: "lineAnchor", value: lineAnchor.fragment))
         }
+        if let heading = reference.headingAnchor { queryItems.append(URLQueryItem(name: "heading", value: heading.fragment)) }
         if reference.kind == .hostFile {
             queryItems.append(URLQueryItem(name: "kind", value: ResourceReferenceKind.hostFile.rawValue))
         }
@@ -649,6 +654,7 @@ enum ResourceReferenceURL {
             fileCandidatePath: queryValue("fileCandidate", in: queryItems),
             kind: kind,
             lineAnchor: lineAnchor,
+            headingAnchor: queryValue("heading", in: queryItems).flatMap { ReaderHeadingAnchor(fragment: $0) },
             visibleLabel: queryValue("label", in: queryItems)
         )
     }
@@ -712,6 +718,7 @@ enum MarkdownWikiLinkRewriter {
     private struct ParsedWikiTarget {
         let path: String
         let lineAnchor: SourceLineAnchor?
+        var headingAnchor: ReaderHeadingAnchor?
     }
 
     /// Selects at most eight source-absent, three-byte alphanumeric tokens.
@@ -1466,6 +1473,7 @@ enum MarkdownWikiLinkRewriter {
             fileCandidatePath: fileCandidatePath,
             kind: classified.kind,
             lineAnchor: classified.parsed.lineAnchor,
+            headingAnchor: classified.parsed.headingAnchor,
             visibleLabel: display
         )) else {
             return children
@@ -1524,8 +1532,8 @@ enum MarkdownWikiLinkRewriter {
         if let lineAnchor = SourceLineAnchor.parse(fragment) {
             return ParsedWikiTarget(path: path, lineAnchor: lineAnchor)
         }
-        // Heading fragments are not anchors. Open the file and ignore the heading.
-        return ParsedWikiTarget(path: path, lineAnchor: nil)
+        // Any other fragment names a heading.
+        return ParsedWikiTarget(path: path, lineAnchor: nil, headingAnchor: ReaderHeadingAnchor(fragment: String(fragment.dropFirst())))
     }
 
     /// RFC 3986 network-path reference. Not a POSIX file and must not become

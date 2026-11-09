@@ -25,6 +25,8 @@ enum OrgToMarkdownConverter {
         let headingTitles: Set<String>
         /// `:ID:` values a `[[id:…]]` link can point at.
         let ids: Set<String>
+        /// `:CUSTOM_ID:` values a `[[#custom-id]]` link can point at.
+        let customIDs: Set<String>
         /// Whether a heading without a state carries an undrawn state control.
         let offersStateControl: Bool
         /// Whether a task item carries its markers: its Org source line, for a
@@ -120,13 +122,18 @@ enum OrgToMarkdownConverter {
     ) -> Context {
         var titles = Set<String>()
         var ids = Set<String>()
+        var customIDs = Set<String>()
         for block in blocks {
             switch block {
             case .heading(_, _, _, let title, _):
                 titles.insert(headingText(title))
             case .drawer(let name, let properties) where isPropertiesDrawer(name):
-                for property in properties where property.key.uppercased() == "ID" {
-                    ids.insert(property.value)
+                for property in properties {
+                    switch property.key.uppercased() {
+                    case "ID": ids.insert(property.value)
+                    case "CUSTOM_ID": customIDs.insert(property.value)
+                    default: break
+                    }
                 }
             default:
                 break
@@ -141,6 +148,7 @@ enum OrgToMarkdownConverter {
             documentName: name,
             headingTitles: titles,
             ids: ids,
+            customIDs: customIDs,
             offersStateControl: offersStateControl,
             marksTaskItems: marksTaskItems
         )
@@ -453,6 +461,9 @@ enum OrgToMarkdownConverter {
     /// document's directory and routes them to the file viewer like a Markdown
     /// `[label](path)`. A `::search` option (heading, line, regex) is dropped,
     /// as Markdown drops a `#heading` fragment: the file opens at the top.
+    /// A heading a link names (`*Heading`, `#custom-id`, `id:`) travels as a
+    /// `ReaderHeadingAnchor` fragment, which the reader scrolls to: alone for
+    /// this document, after the path for another file.
     private static func linkDestination(_ url: String, context: Context) -> String? {
         let target = url.trimmingCharacters(in: .whitespaces)
         let lower = target.lowercased()
@@ -466,11 +477,16 @@ enum OrgToMarkdownConverter {
         if lower.hasPrefix("id:") {
             // The reader has no index from `:ID:` to file, so only an ID this
             // document declares resolves.
-            return context.ids.contains(String(target.dropFirst(3))) ? context.documentName : nil
+            let id = String(target.dropFirst(3))
+            return context.ids.contains(id) ? inDocument(.id(id), context) : nil
         }
         if target.hasPrefix("*") {
             let heading = String(target.dropFirst()).trimmingCharacters(in: .whitespaces)
-            return context.headingTitles.contains(heading) ? context.documentName : nil
+            return context.headingTitles.contains(heading) ? inDocument(.title(heading), context) : nil
+        }
+        if target.hasPrefix("#") {
+            let id = String(target.dropFirst()).trimmingCharacters(in: .whitespaces)
+            return context.customIDs.contains(id) ? inDocument(.customID(id), context) : nil
         }
         // `[[./x.org]]` is a file link without the prefix; `[[x.org]]` is a
         // fuzzy in-document search in Org.
@@ -480,11 +496,33 @@ enum OrgToMarkdownConverter {
         return nil
     }
 
+    /// A link to this document: the reader scrolls to the heading in place. Nil
+    /// without the document's name, as before, so a render that cannot open
+    /// files shows the label alone.
+    private static func inDocument(_ anchor: ReaderHeadingAnchor, _ context: Context) -> String? {
+        context.documentName == nil ? nil : "#" + anchor.fragment
+    }
+
+    /// The file of a `file:` link, with the heading its `::*Heading` or
+    /// `::#custom-id` search option names. Other options (a line number, a
+    /// regex) are dropped: the file opens at the top.
     private static func filePath(fromFileLink spec: String) -> String? {
-        let path = spec.range(of: "::").map { String(spec[..<$0.lowerBound]) } ?? spec
+        let separator = spec.range(of: "::")
+        let path = separator.map { String(spec[..<$0.lowerBound]) } ?? spec
         let trimmed = path.trimmingCharacters(in: .whitespaces)
         // `//host/x` is a network path, not a file.
         guard !trimmed.isEmpty, !trimmed.hasPrefix("//") else { return nil }
-        return trimmed
+        guard let separator else { return trimmed }
+        let option = String(spec[separator.upperBound...]).trimmingCharacters(in: .whitespaces)
+        let anchor: ReaderHeadingAnchor?
+        if option.hasPrefix("*") {
+            let title = String(option.dropFirst()).trimmingCharacters(in: .whitespaces)
+            anchor = title.isEmpty ? nil : .title(title)
+        } else if option.hasPrefix("#"), option.count > 1 {
+            anchor = .customID(String(option.dropFirst()))
+        } else {
+            anchor = nil
+        }
+        return anchor.map { trimmed + "#" + $0.fragment } ?? trimmed
     }
 }

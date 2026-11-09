@@ -116,6 +116,87 @@ struct ReaderHeadingAnchorTests {
         #expect(ReaderHeadingAnchor(fragment: "ordinal=0") == .slug("ordinal=0"), "not a heading number, so a slug")
     }
 
+    // MARK: - Links
+
+    /// The heading a link in `body` jumps to, as the reader resolves it: the
+    /// link's destination, read back as an anchor, against the document's outline.
+    private func markdown(of source: String) throws -> String {
+        let converted = DocumentRenderPipeline.orgToMarkdown(
+            source, documentPath: "/notes/book.org", cancellationCheck: { false }
+        )
+        return try #require(converted)
+    }
+
+    private func jump(_ link: String) throws -> ReaderHeading? {
+        let source = Self.notebook + "\nSee \(link)."
+        let markdown = try markdown(of: source)
+        let destinations = parseCommonMark(markdown).flatMap { block -> [String] in
+            guard case .paragraph(let inlines) = block else { return [] }
+            return inlines.compactMap { inline in
+                if case .link(_, let destination) = inline { return destination }
+                return nil
+            }
+        }
+        let destination = try #require(destinations.first, "\(link) is a link")
+        let url = try #require(URL(string: destination))
+        #expect(url.path.isEmpty && url.scheme == nil, "\(link) stays in the reader")
+        let anchor = try #require(Self.anchor(in: url))
+        return orgOutline().resolve(anchor)
+    }
+
+    private static func anchor(in url: URL?) -> ReaderHeadingAnchor? {
+        guard let fragment = url?.fragment else { return nil }
+        return ReaderHeadingAnchor(fragment: fragment)
+    }
+
+    @Test func eachOrgLinkFormJumpsToItsHeading() throws {
+        #expect(try jump("[[*Alpha one]]")?.ordinal == alphaOne)
+        #expect(try jump("[[*Deep][down]]")?.ordinal == deep)
+        #expect(try jump("[[id:11111111-aaaa]]")?.ordinal == alpha)
+        #expect(try jump("[[#one-id]]")?.ordinal == alphaOne)
+    }
+
+    @Test func aTitleWithPunctuationSurvivesTheLinkAndMatches() throws {
+        let source = "* Ship (the) 100% reader / v2 & more\nSee [[*Ship (the) 100% reader / v2 & more]]."
+        let markdown = try markdown(of: source)
+        guard case .paragraph(let inlines) = parseCommonMark(markdown)[1],
+              case .link(_, let destination?) = inlines[1] else {
+            Issue.record("expected a link in \(markdown)")
+            return
+        }
+        let anchor = try #require(Self.anchor(in: URL(string: destination)))
+        let outline = ReaderOutline.org(OrgParser().parseLocated(source))
+        #expect(outline.resolve(anchor)?.ordinal == 1)
+    }
+
+    @Test func aLinkToAnotherFileCarriesItsHeadingToTheOpenRequest() throws {
+        let markdown = try markdown(
+            of: "See [[file:other.org::*Checklist][list]], [[file:other.org::#cid][id]] and [[file:other.org::7][line]]."
+        )
+        let segments = FlatSegment.build(
+            from: parseCommonMark(markdown), themeID: .dark, serverID: "s", workspaceID: "w", sourceDirectory: "/notes"
+        )
+        let references = segments.flatMap { segment -> [ResourceReference] in
+            guard case .text(let text) = segment else { return [] }
+            return text.runs.compactMap(\.link).compactMap(ResourceReferenceURL.parse)
+        }
+        #expect(references.map(\.headingAnchor) == [.title("Checklist"), .customID("cid"), nil])
+        #expect(Set(references.compactMap(\.fileCandidatePath)) == ["/notes/other.org"])
+    }
+
+    @Test func aMarkdownFileLinkCarriesItsFragmentAsASlug() throws {
+        let segments = FlatSegment.build(
+            from: parseCommonMark("See [setup](docs/guide.md#install-steps) and [line](docs/guide.md#L4)."),
+            themeID: .dark, serverID: "s", workspaceID: "w", sourceDirectory: nil
+        )
+        let references = segments.flatMap { segment -> [ResourceReference] in
+            guard case .text(let text) = segment else { return [] }
+            return text.runs.compactMap(\.link).compactMap(ResourceReferenceURL.parse)
+        }
+        #expect(references.map(\.headingAnchor) == [.slug("install-steps"), nil])
+        #expect(references.map { $0.lineAnchor?.fragment } == [nil, "#L4"])
+    }
+
     // MARK: - Segments
 
     @Test func eachHeadingOpensItsOwnSegmentWhenTheBuildSplits() {

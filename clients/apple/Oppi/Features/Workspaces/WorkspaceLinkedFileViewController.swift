@@ -259,6 +259,7 @@ final class WorkspaceLinkedFileViewController: UIViewController {
             workspaceRuntime: source == .hostFile ? nil : workspaceRuntime,
             navigationContext: source == .workspaceFile ? target.navigationContext : nil,
             lineAnchor: target.lineAnchor,
+            headingAnchor: target.headingAnchor,
             addToChatDestination: addToChatDestination,
             reviewCommentSelectionScope: reviewCommentSelectionScope(sourceSessionId: target.sourceSessionId)
         )

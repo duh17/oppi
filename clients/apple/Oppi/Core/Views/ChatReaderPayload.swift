@@ -350,6 +350,7 @@ enum ChatReaderLinkedFileRouting {
                 sessionId: sessionID,
                 path: path,
                 lineAnchor: reference.lineAnchor,
+                headingAnchor: reference.headingAnchor,
                 sourceSessionId: sessionID
             )
         }
@@ -359,6 +360,7 @@ enum ChatReaderLinkedFileRouting {
                 workspaceId: workspaceID ?? "",
                 path: path,
                 lineAnchor: reference.lineAnchor,
+                headingAnchor: reference.headingAnchor,
                 sourceSessionId: sessionID
             )
         }
@@ -370,6 +372,7 @@ enum ChatReaderLinkedFileRouting {
                 sessionId: sessionID,
                 path: path,
                 lineAnchor: reference.lineAnchor,
+                headingAnchor: reference.headingAnchor,
                 sourceSessionId: sessionID
             )
         }
@@ -379,6 +382,7 @@ enum ChatReaderLinkedFileRouting {
                 workspaceId: workspaceID,
                 path: path,
                 lineAnchor: reference.lineAnchor,
+                headingAnchor: reference.headingAnchor,
                 sourceSessionId: sessionID
             )
         }
@@ -387,6 +391,7 @@ enum ChatReaderLinkedFileRouting {
             workspaceId: workspaceID ?? "",
             path: path,
             lineAnchor: reference.lineAnchor,
+            headingAnchor: reference.headingAnchor,
             sourceSessionId: sessionID
         )
     }

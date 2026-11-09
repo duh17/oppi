@@ -71,6 +71,8 @@ final class FullScreenCodeViewController: UIViewController {
     private var pendingMarkdownViewportIntent: FullScreenMarkdownViewportIntent?
     private let onMarkdownViewportIntentChange: ((FullScreenMarkdownViewportIntent) -> Void)?
     private let lineAnchor: SourceLineAnchor?
+    /// The heading the reader opens at, until a restored reading position outranks it.
+    private let headingAnchor: ReaderHeadingAnchor?
     /// Set when the reader's owner can save the document.
     private let taskEditing: ReaderTaskEditing?
     private let orgFolds: OrgFoldMemory?
@@ -125,6 +127,7 @@ final class FullScreenCodeViewController: UIViewController {
         reviewCommentSourceLabel: String? = nil,
         lineAnchor: SourceLineAnchor? = nil,
         lineAnchorNotice: (@MainActor @Sendable (String) -> Void)? = nil,
+        headingAnchor: ReaderHeadingAnchor? = nil,
         editItems: [UIBarButtonItem] = [],
         markdownViewportIntent: FullScreenMarkdownViewportIntent? = nil,
         onMarkdownViewportIntentChange: ((FullScreenMarkdownViewportIntent) -> Void)? = nil,
@@ -143,6 +146,7 @@ final class FullScreenCodeViewController: UIViewController {
                 sourceLabel: reviewCommentSourceLabel
             )
         self.lineAnchor = lineAnchor
+        self.headingAnchor = headingAnchor
         self.lineAnchorNotice = lineAnchorNotice
         self.editItems = editItems
         self.lastEditItems = editItems
@@ -1028,6 +1032,7 @@ final class FullScreenCodeViewController: UIViewController {
             selection: reviewCommentSelectionContext,
             lineAnchor: lineAnchor,
             focusLineAnchor: focusLineAnchor,
+            headingAnchor: focusLineAnchor ? headingAnchor : nil,
             taskEditing: taskEditing,
             orgFolds: orgFolds,
             adoptTrace: { [weak self] observation in

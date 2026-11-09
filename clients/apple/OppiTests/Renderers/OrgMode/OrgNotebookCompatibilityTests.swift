@@ -342,8 +342,11 @@ struct OrgNotebookCompatibilityTests {
     @Test(arguments: [
         ("[[file:x.org]]", "x.org"),
         ("[[file:../notes/x.org]]", "../notes/x.org"),
-        ("[[file:notes/x.org::*Heading][label]]", "notes/x.org"),
+        ("[[file:notes/x.org::*Heading][label]]", "notes/x.org#title=Heading"),
+        ("[[file:notes/x.org::*Two%20words]]", "notes/x.org#title=Two%2520words"),
+        ("[[file:notes/x.org::#release-notes]]", "notes/x.org#custom=release-notes"),
         ("[[file:notes/x.org::42]]", "notes/x.org"),
+        ("[[file:notes/x.org::*]]", "notes/x.org"),
         ("[[file:~/notebook/x.org]]", "~/notebook/x.org"),
         ("[[file:/abs/x.org]]", "/abs/x.org"),
         ("[[./x.org]]", "./x.org"),
@@ -360,14 +363,15 @@ struct OrgNotebookCompatibilityTests {
         * Ship Org rendering
         :PROPERTIES:
         :ID: abc-123
+        :CUSTOM_ID: ship
         :END:
-        See [[*Ship Org rendering]], [[id:abc-123]], [[*Missing]] and [[id:zzz]].
+        See [[*Ship Org rendering]], [[id:abc-123]], [[#ship]], [[*Missing]], [[id:zzz]] and [[#nope]].
         """
-        #expect(linkDestinations(source) == ["oppi.org", "oppi.org"])
+        #expect(linkDestinations(source) == ["#title=Ship%20Org%20rendering", "#id=abc-123", "#custom=ship"])
         #expect(linkDestinations(source, documentPath: nil).isEmpty)
     }
 
-    @Test(arguments: ["[[id:other]]", "[[*Nowhere]]", "[[Fuzzy search]]", "[[file:]]", "[[file://host/x]]", "[[elisp:(ignore)]]"])
+    @Test(arguments: ["[[id:other]]", "[[*Nowhere]]", "[[#nowhere]]", "[[Fuzzy search]]", "[[file:]]", "[[file://host/x]]", "[[elisp:(ignore)]]"])
     func linksNothingCanOpenRenderTheirLabelAsText(source: String) {
         let blocks = convert("* Heading\n\(source)")
         #expect(blocks[1] == .paragraph([.text(source.dropFirst(2).dropLast(2).description)]))
@@ -409,14 +413,14 @@ struct OrgNotebookCompatibilityTests {
     @Test func fixtureFileLinksOpenRelativeToTheDocument() throws {
         let links = try readerLinks(OrgNotebookFixture.project)
         let paths = links.compactMap(\.fileCandidatePath)
-        // Checklist link, own-ID link, release notes, and the self link.
+        // The checklist link and the release notes: links to the document
+        // itself stay in the reader, as heading fragments.
         #expect(paths == [
-            "/Users/alex/notebook/projects/oppi.org",
             "/Users/alex/notebook/notes/release.org",
             "/Users/alex/notebook/notes/release.org",
-            "/Users/alex/notebook/projects/oppi.org",
         ])
         #expect(links.allSatisfy { $0.kind == .hostFile })
+        #expect(links.map(\.headingAnchor) == [.title("Checklist"), nil], "the checklist link names its heading")
     }
 
     private func readerText(_ source: String) -> NSAttributedString {

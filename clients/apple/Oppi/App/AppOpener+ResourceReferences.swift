@@ -119,6 +119,7 @@ extension AppOpener {
             sessionId: sessionID,
             path: path,
             lineAnchor: reference.lineAnchor,
+            headingAnchor: reference.headingAnchor,
             sourceSessionId: sessionID
         )
     }
@@ -498,6 +499,7 @@ extension AppOpener {
                         worktreeId: file.worktreeID,
                         path: file.path,
                         lineAnchor: reference.lineAnchor,
+                        headingAnchor: reference.headingAnchor,
                         sourceSessionId: reference.sourceSessionID
                     ),
                     workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace),
@@ -539,6 +541,7 @@ extension AppOpener {
                         workspaceId: reference.workspaceID ?? "",
                         path: file.path,
                         lineAnchor: reference.lineAnchor,
+                        headingAnchor: reference.headingAnchor,
                         sourceSessionId: reference.sourceSessionID
                     ),
                     sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in

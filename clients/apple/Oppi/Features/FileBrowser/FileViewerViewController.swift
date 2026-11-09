@@ -59,6 +59,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         var allowsHorizontalBackSwipe = true
         var navigationContext: FileBrowserNavigationContext? = nil
         var lineAnchor: SourceLineAnchor? = nil
+        var headingAnchor: ReaderHeadingAnchor? = nil
         var addToChatDestination: ComposerCanvasDestination? = nil
         /// Embedding review screens keep one staged-comment button of their
         /// own; the viewer must not draw a second one over previous-file.
@@ -681,6 +682,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             reviewCommentSelectionContext: readerSelectionContext,
             lineAnchor: activeSelection == nil ? configuration.lineAnchor : nil,
             lineAnchorNotice: onLineAnchorNotice,
+            headingAnchor: activeSelection == nil ? configuration.headingAnchor : nil,
             editItems: editOwner.barItems,
             markdownViewportIntent: markdownViewportRestore.state[path],
             onMarkdownViewportIntentChange: { [weak self] in self?.markdownViewportRestore.state[path] = $0 },
