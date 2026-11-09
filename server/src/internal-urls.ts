@@ -35,7 +35,6 @@ const UNSUPPORTED: Readonly<Record<string, string>> = {
   omp: "omp:// documentation URLs are not available in Oppi. Search the web or read the repository instead.",
   pr: "pr:// is not available in Oppi. Use bash: `gh pr view <N>`, or `gh pr diff <N>` for the diff.",
   issue: "issue:// is not available in Oppi. Use bash: `gh issue view <N>`.",
-  ssh: "ssh:// is not available in Oppi. Use bash: `ssh <host> cat <path>`.",
   artifact:
     "artifact:// is not available: Oppi keeps no artifact store. When bash truncates its output it names the file holding the full log; read that path.",
   local:

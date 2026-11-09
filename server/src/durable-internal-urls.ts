@@ -1,7 +1,9 @@
 import type { Context, JsonValue } from "@earendil-works/chord";
 import type { ToolExecutionApi } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import type { OppiInternalUrlsHost } from "./durable-extension-api.js";
+import { createSshReader } from "./internal-url-ssh.js";
 import {
   pageText,
   pickRow,
@@ -45,7 +47,8 @@ export function bindInternalUrls(next: InternalUrlDeps): void {
 
 /** Schemes plugins registered, by name. */
 const registered = new Map<string, SchemeReader>();
-const BUILT_IN_SCHEMES = new Set(["agent", "history", "mcp"]);
+const BUILT_IN_SCHEMES = new Set(["agent", "history", "mcp", "ssh"]);
+const readSsh = createSshReader();
 
 export const internalUrls: OppiInternalUrlsHost = {
   register(scheme, reader) {
@@ -65,6 +68,12 @@ export const internalUrls: OppiInternalUrlsHost = {
     readers.set("history", bound(readHistory));
     readers.set("agent", bound(readAgent));
     readers.set("mcp", readMcp);
+    readers.set("ssh", (target, toolApi, toolContext) => {
+      // The server's ssh would reach hosts the sandbox is meant to keep a session away from.
+      if (toolApi.env instanceof GondolinExecutionEnv)
+        throw new Error("ssh:// is not available in sandbox sessions.");
+      return readSsh(target, toolApi, toolContext);
+    });
     const text = await readInternalUrl(args.path, readers, api, context);
     if (text === undefined) return undefined;
     // `read` declares a structured output: its text, as for a file.

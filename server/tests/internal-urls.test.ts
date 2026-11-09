@@ -82,7 +82,6 @@ describe("internal URL resolution", () => {
   it("names the tool that does the job for schemes Oppi does not serve", async () => {
     bindSessions([]);
     await expect(read("issue://4")).rejects.toThrow("gh issue view");
-    await expect(read("ssh://box/etc/hosts")).rejects.toThrow("ssh <host> cat");
     await expect(read("omp://x")).rejects.toThrow("not available");
     await expect(read("local://notes.md")).rejects.toThrow("no shared scratch");
     await expect(read("skill://x")).rejects.toThrow(
