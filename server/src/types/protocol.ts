@@ -221,10 +221,8 @@ export type ClientMessage =
       }
     // ── Session ──
     | { type: "reload"; requestId?: string }
-    | { type: "new_session"; requestId?: string }
     | { type: "set_session_name"; name: string; requestId?: string }
     | { type: "compact"; customInstructions?: string; requestId?: string }
-    | { type: "fork"; entryId: string; requestId?: string }
     | { type: "get_fork_messages"; requestId?: string }
     | {
         type: "get_session_tree";

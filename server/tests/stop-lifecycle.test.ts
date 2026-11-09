@@ -180,69 +180,6 @@ function makeNeverResolvingReloadBackend(): {
   };
 }
 
-function makeNeverResolvingReplacementBackend(method: "newSession" | "fork"): {
-  backend: SdkBackend;
-  finishShutdown: () => void;
-  oldSessionDispose: ReturnType<typeof vi.fn>;
-  replacementSessionDispose: ReturnType<typeof vi.fn>;
-  replacementSettled: Promise<void>;
-} {
-  const backend = Object.create(SdkBackend.prototype) as SdkBackend;
-  const shutdown = deferred<void>();
-  const replacementFinished = deferred<void>();
-  const makeRuntimeSession = (dispose: ReturnType<typeof vi.fn>) => ({
-    sessionFile: "/tmp/current.jsonl",
-    isStreaming: false,
-    isCompacting: false,
-    dispose,
-    abortBash: vi.fn(),
-    abort: vi.fn(async () => undefined),
-    subscribe: vi.fn(() => vi.fn()),
-    bindExtensions: vi.fn(async () => undefined),
-    extensionRunner: { getAllRegisteredTools: () => [] },
-  });
-  const oldSessionDispose = vi.fn();
-  const replacementSessionDispose = vi.fn();
-  const oldSession = makeRuntimeSession(oldSessionDispose);
-  const replacementSession = makeRuntimeSession(replacementSessionDispose);
-  const runtime = {
-    session: oldSession,
-    dispose: vi.fn(async () => undefined),
-    newSession: vi.fn(async () => {
-      await shutdown.promise;
-      runtime.session = replacementSession;
-      replacementFinished.resolve();
-      return { cancelled: false };
-    }),
-    fork: vi.fn(async () => {
-      await shutdown.promise;
-      runtime.session = replacementSession;
-      replacementFinished.resolve();
-      return { cancelled: false, selectedText: "forked" };
-    }),
-  };
-  Object.assign(backend as unknown as Record<string, unknown>, {
-    disposed: false,
-    oppiSessionId: "s1",
-    runtime,
-    emitEvent: vi.fn(),
-    uiBridge: { createContext: vi.fn(() => ({})), dispose: vi.fn() },
-    unsub: vi.fn(),
-    shutdownCleanupPromise: null,
-  });
-
-  const selectedRuntimeCall = runtime[method];
-  if (!selectedRuntimeCall) throw new Error(`Missing runtime replacement method: ${method}`);
-
-  return {
-    backend,
-    finishShutdown: () => shutdown.resolve(),
-    oldSessionDispose,
-    replacementSessionDispose,
-    replacementSettled: replacementFinished.promise,
-  };
-}
-
 function makeNeverResolvingPreflightBackend(): {
   backend: SdkBackend;
   acceptPreflight: () => void;
@@ -1207,30 +1144,6 @@ describe("stop lifecycle", () => {
       vi.useRealTimers();
     }
   });
-
-  it.each(["new_session", "fork"] as const)(
-    "rejects in-wrapper %s without starting replacement teardown",
-    async (type) => {
-      const { manager, active, events } = makeManagerHarness("ready");
-      const { backend } = makeNeverResolvingReplacementBackend(
-        type === "new_session" ? "newSession" : "fork",
-      );
-      active.sdkBackend = backend;
-
-      await manager.forwardClientCommand(
-        "s1",
-        type === "new_session" ? { type: "new_session" } : { type: "fork", entryId: "entry-1" },
-        `request-${type}`,
-      );
-
-      expect(backend.isRuntimeLifecycleTransactionExclusive).toBe(false);
-      const result = events.find((event) => event.type === "command_result");
-      expect(result).toMatchObject({ success: false, command: type });
-      expect((result as Extract<ServerMessage, { type: "command_result" }>).error).toMatch(
-        /Oppi lifecycle|not allowed|distinct canonical/i,
-      );
-    },
-  );
 
   it.each(["input", "before_agent_start"] as const)(
     "bounds stopAll behind managed %s preflight and ignores its late acceptance",

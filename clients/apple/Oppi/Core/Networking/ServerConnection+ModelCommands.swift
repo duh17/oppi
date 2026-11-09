@@ -181,11 +181,6 @@ extension ServerConnection {
         }
     }
 
-    // periphery:ignore - used by ChatActionHandler; false positive from extension file split
-    func newSession() async throws {
-        try await send(.newSession())
-    }
-
     /// Renames `sessionId`, never whichever session holds focus at send time.
     /// A rename can finish seconds after it starts, often after the user opened another
     /// session; a focus-following send renamed that other session.

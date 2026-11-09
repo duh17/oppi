@@ -253,7 +253,6 @@ struct ServerConnectionModelCommandsTests {
             await sink.append(message)
         }
 
-        try await connection.newSession()
         try await connection.setSessionName("rename me", sessionId: "s1")
         try await connection.compact(instructions: "keep important stuff")
 
@@ -275,24 +274,20 @@ struct ServerConnectionModelCommandsTests {
         _ = try await shareTask
 
         let messages = await sink.messages
-        #expect(messages.count == 4)
+        #expect(messages.count == 3)
 
-        guard case .newSession = messages[0] else {
-            Issue.record("Expected newSession client message")
-            return
-        }
-        guard case .setSessionName(let name, _) = messages[1] else {
+        guard case .setSessionName(let name, _) = messages[0] else {
             Issue.record("Expected setSessionName client message")
             return
         }
         #expect(name == "rename me")
-        guard case .compact(let instructions, _) = messages[2] else {
+        guard case .compact(let instructions, _) = messages[1] else {
             Issue.record("Expected compact client message")
             return
         }
         #expect(instructions == "keep important stuff")
 
-        guard case .shareSession = messages[3] else {
+        guard case .shareSession = messages[2] else {
             Issue.record("Expected shareSession client message")
             return
         }

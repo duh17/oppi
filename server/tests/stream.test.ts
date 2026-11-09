@@ -762,22 +762,22 @@ describe("BoundSessionStreamMux", () => {
   it.each([
     {
       name: "malformed required field",
-      payload: { type: "fork", requestId: "req-fork" },
+      payload: { type: "navigate_tree", requestId: "req-tree" },
       expected: {
         type: "command_result",
-        command: "fork",
-        requestId: "req-fork",
+        command: "navigate_tree",
+        requestId: "req-tree",
         success: false,
-        error: "Invalid payload: expected entryId",
+        error: "Invalid payload: expected targetId",
         sessionId: "sess-bound",
       },
     },
     {
       name: "malformed required field without requestId",
-      payload: { type: "fork" },
+      payload: { type: "navigate_tree" },
       expected: {
         type: "error",
-        error: "Invalid payload: expected entryId",
+        error: "Invalid payload: expected targetId",
         sessionId: "sess-bound",
       },
     },

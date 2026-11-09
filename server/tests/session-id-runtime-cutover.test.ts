@@ -293,16 +293,12 @@ describe("Pi-native session identity cutover", () => {
   describe("in-wrapper identity replacement", () => {
     function makeCoordinator() {
       const navigateTree = vi.fn(async () => ({ cancelled: false }));
-      const newSession = vi.fn(async () => ({ cancelled: false }));
-      const fork = vi.fn(async () => ({ cancelled: false }));
       const coordinator = new SessionCommandCoordinator({
         getActiveSession: () =>
           ({
             session: makeSession({ status: "ready" }),
             sdkBackend: {
               navigateTree,
-              newSession,
-              fork,
               isStreaming: false,
               isCompacting: false,
             } as unknown as SdkBackend,
@@ -312,25 +308,8 @@ describe("Pi-native session identity cutover", () => {
         applyPiStateSnapshot: vi.fn(() => false),
         getContextWindowResolver: vi.fn(() => null),
       });
-      return { coordinator, navigateTree, newSession, fork };
+      return { coordinator, navigateTree };
     }
-
-    it.each(["new_session", "switch_session", "fork", "clone"] as const)(
-      "rejects %s inside an Oppi-focused session",
-      async (type) => {
-        const { coordinator, newSession, fork } = makeCoordinator();
-
-        expect(coordinator.isAllowedCommand(type)).toBe(false);
-        await expect(
-          coordinator.sendCommandAsync("sess-1", {
-            type,
-            ...(type === "fork" ? { entryId: "entry-1" } : {}),
-          }),
-        ).rejects.toThrow(/Oppi lifecycle|not allowed|distinct canonical/i);
-        expect(newSession).not.toHaveBeenCalled();
-        expect(fork).not.toHaveBeenCalled();
-      },
-    );
 
     it("still runs navigate_tree in the same focused session", async () => {
       const { coordinator, navigateTree } = makeCoordinator();
@@ -343,26 +322,6 @@ describe("Pi-native session identity cutover", () => {
       expect(navigateTree).toHaveBeenCalledWith("entry-1", expect.any(Object));
     });
 
-    it("rejects SdkBackend.newSession and fork before they replace the live runtime", async () => {
-      const runtimeNewSession = vi.fn();
-      const runtimeFork = vi.fn();
-      const backend = Object.create(SdkBackend.prototype) as SdkBackend;
-      Object.assign(backend as unknown as Record<string, unknown>, {
-        runtime: {
-          newSession: runtimeNewSession,
-          fork: runtimeFork,
-        },
-      });
-
-      await expect(backend.newSession()).rejects.toThrow(
-        /Oppi lifecycle|not allowed|distinct canonical/i,
-      );
-      await expect(backend.fork("entry-1")).rejects.toThrow(
-        /Oppi lifecycle|not allowed|distinct canonical/i,
-      );
-      expect(runtimeNewSession).not.toHaveBeenCalled();
-      expect(runtimeFork).not.toHaveBeenCalled();
-    });
   });
 
   describe("product fork writes the minted Session.id", () => {

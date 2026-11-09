@@ -29,10 +29,8 @@ export type RuntimeClientCommand = Extract<
       | "set_model"
       | "set_thinking_level"
       | "reload"
-      | "new_session"
       | "set_session_name"
-      | "compact"
-      | "fork";
+      | "compact";
   }
 >;
 

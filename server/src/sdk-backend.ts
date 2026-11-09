@@ -2012,18 +2012,6 @@ export class SdkBackend implements AgentBackend {
     });
   }
 
-  async newSession(): Promise<{ cancelled: boolean }> {
-    throw new Error(
-      "new_session is not allowed inside an Oppi-focused session; create a distinct canonical session through Oppi lifecycle routes",
-    );
-  }
-
-  async fork(_entryId: string): Promise<{ cancelled: boolean; selectedText?: string }> {
-    throw new Error(
-      "fork is not allowed inside an Oppi-focused session; create a distinct canonical session through Oppi lifecycle routes",
-    );
-  }
-
   // ─── Runtime transaction ───
 
   async withModelTurnAdmission<T>(

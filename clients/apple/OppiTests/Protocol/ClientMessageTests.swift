@@ -189,11 +189,6 @@ struct ClientMessageTests {
         #expect(json["requestId"] as? String == "req-reload")
     }
 
-    @Test func encodesNewSession() throws {
-        let json = try decode(ClientMessage.newSession())
-        #expect(json["type"] as? String == "new_session")
-    }
-
     @Test func encodesCompact() throws {
         let msg = ClientMessage.compact(customInstructions: "focus on code")
         let json = try decode(msg)

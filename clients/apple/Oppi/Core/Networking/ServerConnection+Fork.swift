@@ -3,32 +3,6 @@ import Foundation
 // MARK: - Fork Operations
 
 extension ServerConnection {
-    // periphery:ignore - used by ServerConnectionTests via @testable import
-    /// Fork from a canonical session entry ID (mirrors pi CLI behavior).
-    ///
-    /// Flow:
-    /// 1. `get_fork_messages` to resolve valid fork entry IDs
-    /// 2. Verify requested entry is in that server-authored list
-    /// 3. `fork(entryId)` with correlated requestId
-    func forkFromTimelineEntry(_ entryId: String) async throws {
-        guard UUID(uuidString: entryId) == nil else {
-            throw ForkRequestError.turnInProgress
-        }
-
-        let forkMessages = try await getForkMessages()
-        guard !forkMessages.isEmpty else {
-            throw ForkRequestError.noForkableMessages
-        }
-
-        guard let resolvedEntryId = Self.resolveForkEntryId(entryId, from: forkMessages) else {
-            throw ForkRequestError.entryNotForkable
-        }
-
-        _ = try await sendCommandAwaitingResult(command: "fork") { requestId in
-            .fork(entryId: resolvedEntryId, requestId: requestId)
-        }
-    }
-
     /// Create a new forked app session from a timeline entry.
     ///
     /// Unlike raw pi `fork`, this keeps the current app session untouched and

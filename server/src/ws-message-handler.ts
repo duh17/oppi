@@ -268,10 +268,8 @@ export class WsMessageHandler {
       case "set_model":
       case "set_thinking_level":
       case "reload":
-      case "new_session":
       case "set_session_name":
-      case "compact":
-      case "fork": {
+      case "compact": {
         if (msg.type === "set_model" && (await this.setInactiveSessionModel(session, msg, send))) {
           return;
         }

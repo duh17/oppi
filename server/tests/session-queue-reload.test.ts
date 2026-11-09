@@ -485,26 +485,6 @@ describe("SdkBackend lifecycle replacement transactions", () => {
     await reload;
   });
 
-  it.each(["newSession", "fork"] as const)(
-    "rejects in-wrapper %s instead of replacing the live runtime",
-    async (method) => {
-      const runtimeCall = vi.fn(async () => ({ cancelled: true }));
-      const backend = Object.create(SdkBackend.prototype) as SdkBackend;
-      Object.assign(backend as unknown as Record<string, unknown>, {
-        disposed: false,
-        runtime: {
-          newSession: runtimeCall,
-          fork: runtimeCall,
-        },
-      });
-
-      await expect(
-        method === "newSession" ? backend.newSession() : backend.fork("entry-1"),
-      ).rejects.toThrow(/Oppi lifecycle|not allowed|distinct canonical/i);
-      expect(runtimeCall).not.toHaveBeenCalled();
-    },
-  );
-
   it("serializes dispose behind reload teardown and rejects later queue work", async () => {
     const reloadGate = deferred<void>();
     const piSession = {

@@ -132,9 +132,4 @@ struct ForkHelperTests {
             #expect(!error.errorDescription!.isEmpty) // swiftlint:disable:this force_unwrapping
         }
     }
-
-    @Test func forkRequestErrorEquality() {
-        #expect(ForkRequestError.turnInProgress == ForkRequestError.turnInProgress)
-        #expect(ForkRequestError.turnInProgress != ForkRequestError.noForkableMessages)
-    }
 }

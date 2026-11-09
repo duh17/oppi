@@ -134,9 +134,6 @@ function validateKnownCommand(type: string, command: Record<string, unknown>): v
     case "set_session_name":
       readRequiredString(command.name, "name");
       return;
-    case "fork":
-      readRequiredString(command.entryId, "entryId");
-      return;
     case "navigate_tree":
       readRequiredString(command.targetId, "targetId");
       return;
@@ -178,7 +175,6 @@ function validateKnownCommand(type: string, command: Record<string, unknown>): v
     case "get_queue":
     case "take_queue":
     case "reload":
-    case "new_session":
     case "compact":
     case "get_fork_messages":
     case "get_session_tree":

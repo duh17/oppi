@@ -32,10 +32,8 @@ enum ClientMessage: Sendable {
 
     // ── Session ──
     case reload(requestId: String? = nil)
-    case newSession(requestId: String? = nil)
     case setSessionName(name: String, requestId: String? = nil)
     case compact(customInstructions: String? = nil, requestId: String? = nil)
-    case fork(entryId: String, requestId: String? = nil)
     case getForkMessages(requestId: String? = nil)
     case getSessionTree(filterMode: SessionTreeFilterMode? = nil, requestId: String? = nil)
     case navigateTree(
@@ -315,10 +313,6 @@ extension ClientMessage: Encodable {
             try c.encode("reload", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
-        case .newSession(let reqId):
-            try c.encode("new_session", forKey: .type)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-
         case .setSessionName(let name, let reqId):
             try c.encode("set_session_name", forKey: .type)
             try c.encode(name, forKey: .name)
@@ -327,11 +321,6 @@ extension ClientMessage: Encodable {
         case .compact(let instructions, let reqId):
             try c.encode("compact", forKey: .type)
             try c.encodeIfPresent(instructions, forKey: .customInstructions)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-
-        case .fork(let entryId, let reqId):
-            try c.encode("fork", forKey: .type)
-            try c.encode(entryId, forKey: .entryId)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         case .getForkMessages(let reqId):
@@ -442,7 +431,7 @@ extension ClientMessage: Encodable {
         case id, action, redactionPolicy, value, confirmed, cancelled
         case contextualStrings
         case provider, modelId, persist, level, name
-        case customInstructions, entryId, filterMode
+        case customInstructions, filterMode
         case targetId, summarize, replaceInstructions, label
         case itemId
         case clientCallId, callId, lastEventSeq, controllerLeaseEpoch
@@ -471,11 +460,9 @@ extension ClientMessage {
         case .takeQueue: return "take_queue"
         case .setModel: return "set_model"
         case .setThinkingLevel: return "set_thinking_level"
-        case .newSession: return "new_session"
         case .setSessionName: return "set_session_name"
         case .reload: return "reload"
         case .compact: return "compact"
-        case .fork: return "fork"
         case .getForkMessages: return "get_fork_messages"
         case .getSessionTree: return "get_session_tree"
         case .navigateTree: return "navigate_tree"

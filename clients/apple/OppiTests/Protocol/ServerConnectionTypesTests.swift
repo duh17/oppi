@@ -72,13 +72,6 @@ struct ServerConnectionTypesTests {
         #expect(error.errorDescription == "fork rejected")
     }
 
-    @Test("ForkRequestError descriptions")
-    func forkErrors() {
-        #expect(ForkRequestError.turnInProgress.errorDescription?.contains("finish") == true)
-        #expect(ForkRequestError.noForkableMessages.errorDescription?.contains("No user messages") == true)
-        #expect(ForkRequestError.entryNotForkable.errorDescription?.contains("cannot be forked") == true)
-    }
-
     // MARK: - ForkMessage
 
     @Test("ForkMessage equality")

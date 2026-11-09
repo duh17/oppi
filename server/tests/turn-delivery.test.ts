@@ -431,17 +431,6 @@ describe("turn delivery idempotency", () => {
     expect(treeResult?.error).toContain("navigate_tree requires an idle session");
   });
 
-  it("rejects in-wrapper fork instead of replacing focused-session identity", async () => {
-    const { manager, events, session } = makeManagerHarness("ready");
-
-    await manager.forwardClientCommand("s1", { type: "fork", entryId: "msg-123" }, "req-fork-1");
-
-    expect(session).not.toHaveProperty("piSessionId");
-    const rpcResult = asRpcResults(events).find((event) => event.command === "fork");
-    expect(rpcResult?.success).toBe(false);
-    expect(rpcResult?.error).toMatch(/not allowed|Oppi lifecycle|distinct canonical/i);
-  });
-
   it("mirrors thinking level after set_thinking_level without Oppi-owned per-model persistence", async () => {
     const { manager, session, events } = makeManagerHarness("ready");
 

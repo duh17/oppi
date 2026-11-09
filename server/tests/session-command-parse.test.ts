@@ -85,22 +85,6 @@ describe("parseClientCommand", () => {
       requestId: "req-think",
     },
     {
-      name: "fork missing entryId",
-      body: { type: "fork", requestId: "req-fork" },
-      code: "invalid_field",
-      error: "Invalid payload: expected entryId",
-      command: "fork",
-      requestId: "req-fork",
-    },
-    {
-      name: "fork non-string entryId",
-      body: { type: "fork", entryId: 12, requestId: "req-fork" },
-      code: "invalid_field",
-      error: "Invalid payload: expected entryId",
-      command: "fork",
-      requestId: "req-fork",
-    },
-    {
       name: "prompt missing message",
       body: { type: "prompt", requestId: "req-prompt" },
       code: "invalid_field",
@@ -193,6 +177,22 @@ describe("parseClientCommand", () => {
       requestId: "req-unknown",
     },
     {
+      name: "removed fork command",
+      body: { type: "fork", entryId: "entry-1", requestId: "req-fork" },
+      code: "unknown_type",
+      error: "Unsupported command type: fork",
+      command: "fork",
+      requestId: "req-fork",
+    },
+    {
+      name: "removed new_session command",
+      body: { type: "new_session", requestId: "req-new" },
+      code: "unknown_type",
+      error: "Unsupported command type: new_session",
+      command: "new_session",
+      requestId: "req-new",
+    },
+    {
       name: "missing type",
       body: { requestId: "req-type" },
       code: "missing_type",
@@ -260,10 +260,6 @@ describe("parseClientCommand", () => {
     {
       name: "set_thinking_level persist true",
       body: { type: "set_thinking_level", level: "high", persist: true },
-    },
-    {
-      name: "fork",
-      body: { type: "fork", entryId: "entry-9" },
     },
     {
       name: "prompt with empty message",

@@ -2067,17 +2067,17 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     runtime.subscribe(sessionId, (message) => received.push(message));
 
     await expect(
-      runtime.forwardClientCommand(sessionId, { type: "fork", entryId: "entry-1" }, "req-fork"),
+      runtime.forwardClientCommand(sessionId, { type: "share_session" }, "req-share"),
     ).resolves.toBeUndefined();
 
     expect(ws.sent.filter((message) => message.type === "command")).toHaveLength(0);
     expect(received).toContainEqual({
       type: "command_result",
-      command: "fork",
-      requestId: "req-fork",
+      command: "share_session",
+      requestId: "req-share",
       success: false,
       error:
-        "pi-tui runtime does not support command: fork (session-file replacement is terminal-owned; fork from the terminal)",
+        "pi-tui runtime does not support command: share_session (sharing needs a server-owned AgentSession export path)",
     });
   });
 
