@@ -868,6 +868,9 @@ final class ComposerDictationFailureView: UIView {
         self?.onDismiss?()
     }
     private var touchHold: NoticeTouchHold?
+    private var messageView: NoticeMessageView?
+    /// Centers the X on the title's first line; follows the title's font.
+    private var dismissCenterOffset: NSLayoutConstraint?
 
     /// Wires Retry, Dismiss, and the touch-hold to whichever manager the host
     /// has now.
@@ -902,12 +905,30 @@ final class ComposerDictationFailureView: UIView {
         retryButton.addAction(UIAction { [weak self] _ in self?.onRetry?() }, for: .touchUpInside)
 
 
-        let header = UIStackView(arrangedSubviews: [titleLabel, dismissButton])
-        header.axis = .horizontal
-        header.alignment = .top
-        header.spacing = 8
-
+        // The X is centered on the title's first line, not the header's middle:
+        // the title can wrap at large text sizes.
+        let header = UIView()
+        for view in [titleLabel, dismissButton] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            header.addSubview(view)
+        }
+        let dismissCenter = dismissButton.centerYAnchor.constraint(equalTo: titleLabel.topAnchor)
+        dismissCenterOffset = dismissCenter
+        // The header is as short as the title and the X allow.
+        let shortest = header.heightAnchor.constraint(equalToConstant: 0)
+        shortest.priority = .defaultLow
+        NSLayoutConstraint.activate([
+            titleLabel.topAnchor.constraint(equalTo: header.topAnchor),
+            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: dismissButton.leadingAnchor, constant: -8),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: header.bottomAnchor),
+            dismissButton.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            dismissButton.bottomAnchor.constraint(lessThanOrEqualTo: header.bottomAnchor),
+            dismissCenter,
+            shortest,
+        ])
         let message = NoticeChrome.cappedMessage(messageLabel)
+        messageView = message
         let stack = UIStackView(arrangedSubviews: [header, message, retryButton])
         stack.axis = .vertical
         stack.alignment = .leading
@@ -934,12 +955,15 @@ final class ComposerDictationFailureView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        let firstLineCenter = titleLabel.font.lineHeight / 2
+        if dismissCenterOffset?.constant != firstLineCenter { dismissCenterOffset?.constant = firstLineCenter }
         let width = max(bounds.width - 24, 280)
         titleLabel.preferredMaxLayoutWidth = width
         messageLabel.preferredMaxLayoutWidth = width
     }
 
     func apply(message: String, colors: ComposerThemeColors) {
+        if isHidden || messageLabel.text != message { messageView?.flashWhenOverflowing() }
         messageLabel.text = message
         titleLabel.textColor = colors.fg
         messageLabel.textColor = colors.fg

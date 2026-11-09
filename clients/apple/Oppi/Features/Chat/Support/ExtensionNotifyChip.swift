@@ -98,7 +98,9 @@ final class ExtensionNotifyDrawerView: ExtensionDrawerPanelView {
     private let titleLabel = ExtensionChromeFont.label(.subheadline, .semibold)
     private let countLabel = ExtensionChromeFont.label(.caption1)
     private let collapseButton = UIButton(type: .custom)
-    private let dismissButton = UIButton(type: .custom)
+    private lazy var dismissButton = NoticeChrome.dismissButton(identifier: "chat.extensionNotify.dismiss") { [weak self] in
+        self?.onDismiss?()
+    }
     private let entries = UIStackView()
     private var shown: (state: ExtensionNotifyChipStore.SessionState, themeID: ThemeID)?
 
@@ -107,15 +109,10 @@ final class ExtensionNotifyDrawerView: ExtensionDrawerPanelView {
         accessibilityIdentifier = "chat.extensionNotify.expanded"
         collapseButton.accessibilityLabel = "Collapse notification"
         collapseButton.addAction(UIAction { [weak self] _ in self?.onCollapse?() }, for: .touchUpInside)
-        dismissButton.accessibilityLabel = "Dismiss"
-        dismissButton.accessibilityIdentifier = "chat.extensionNotify.dismiss"
-        dismissButton.addAction(UIAction { [weak self] _ in self?.onDismiss?() }, for: .touchUpInside)
-        for button in [collapseButton, dismissButton] {
-            NSLayoutConstraint.activate([
-                button.widthAnchor.constraint(equalToConstant: 32),
-                button.heightAnchor.constraint(equalToConstant: 32),
-            ])
-        }
+        NSLayoutConstraint.activate([
+            collapseButton.widthAnchor.constraint(equalToConstant: 32),
+            collapseButton.heightAnchor.constraint(equalToConstant: 32),
+        ])
         let titles = UIStackView(arrangedSubviews: [titleLabel, countLabel])
         titles.axis = .vertical
         titles.alignment = .leading
@@ -155,10 +152,7 @@ final class ExtensionNotifyDrawerView: ExtensionDrawerPanelView {
         collapse.background.cornerRadius = 16
         collapse.contentInsets = .zero
         collapseButton.configuration = collapse
-        var dismiss = UIButton.Configuration.plain()
-        dismiss.image = UIImage.scaledSymbol("xmark", style: .caption1, weight: .bold, color: palette.ui.fgDim)
-        dismiss.contentInsets = .zero
-        dismissButton.configuration = dismiss
+        dismissButton.tintColor = palette.ui.fgDim
 
         for view in entries.arrangedSubviews { view.removeFromSuperview() }
         let showsNames = Set(state.entries.map(\.extensionDisplayName)).count > 1

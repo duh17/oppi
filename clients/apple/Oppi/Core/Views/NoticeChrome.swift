@@ -3,16 +3,22 @@ import UIKit
 /// UIKit pieces every transient notice shares with `NoticeDismissTimer`: the
 /// Dismiss control and the touch-hold that pauses the timer.
 enum NoticeChrome {
-    /// The most height a notice's message takes before it scrolls. Fixed, not
-    /// scaled: at the largest Dynamic Type sizes a long message would otherwise
-    /// grow past the screen and push Dismiss and Retry out of reach, so the
-    /// message scrolls and the buttons stay outside the scroll area.
-    static let messageMaxHeight: CGFloat = 160
+    /// The most height a notice's message takes before it scrolls: a share of
+    /// the window, never under `minimumMessageHeight`. At the largest Dynamic
+    /// Type sizes a long message would otherwise grow past the screen and push
+    /// Dismiss and Retry out of reach, so the message scrolls and the buttons
+    /// stay outside the scroll area.
+    static let messageWindowShare: CGFloat = 0.35
+    static let minimumMessageHeight: CGFloat = 160
 
-    /// `message` in a viewport capped at `messageMaxHeight`.
+    static func messageMaxHeight(windowHeight: CGFloat) -> CGFloat {
+        max(minimumMessageHeight, windowHeight * messageWindowShare)
+    }
+
+    /// `message` in a viewport capped by `messageMaxHeight(windowHeight:)`.
     @MainActor
-    static func cappedMessage(_ message: UIView) -> CappedScrollView {
-        CappedScrollView(content: message, maxHeight: messageMaxHeight)
+    static func cappedMessage(_ message: UIView) -> NoticeMessageView {
+        NoticeMessageView(message: message)
     }
 
     /// A 44 pt close button labelled "Dismiss". The caller sets the scoped
@@ -68,4 +74,52 @@ final class NoticeTouchHold: NSObject, UIGestureRecognizerDelegate {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
     ) -> Bool { true }
+}
+
+/// A notice's message in a viewport that follows the window height
+/// (`NoticeChrome.messageMaxHeight`) and flashes its scroll indicators when the
+/// notice appears with more text than fits.
+@MainActor
+final class NoticeMessageView: UIView {
+    private let viewport: CappedScrollView
+    private var needsFlash = true
+
+    init(message: UIView) {
+        viewport = CappedScrollView(content: message, maxHeight: NoticeChrome.minimumMessageHeight)
+        super.init(frame: .zero)
+        viewport.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(viewport)
+        NSLayoutConstraint.activate([
+            viewport.topAnchor.constraint(equalTo: topAnchor),
+            viewport.bottomAnchor.constraint(equalTo: bottomAnchor),
+            viewport.leadingAnchor.constraint(equalTo: leadingAnchor),
+            viewport.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    /// The notice appeared or its text changed: flash the indicators once it is
+    /// laid out, if the text overflows.
+    func flashWhenOverflowing() {
+        needsFlash = true
+        setNeedsLayout()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { flashWhenOverflowing() }
+    }
+
+    override func layoutSubviews() {
+        if let height = window?.bounds.height {
+            viewport.maxHeight = NoticeChrome.messageMaxHeight(windowHeight: height)
+        }
+        super.layoutSubviews()
+        guard needsFlash, window != nil else { return }
+        viewport.layoutIfNeeded()
+        needsFlash = false
+        if viewport.overflows { viewport.scrollView.flashScrollIndicators() }
+    }
 }

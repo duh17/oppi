@@ -47,6 +47,7 @@ final class MessageQueueView: UIView {
     }
     private var errorTouchHold: NoticeTouchHold?
     private var timedError: String?
+    private let errorMessage: NoticeMessageView
     private let sections = UIStackView()
     private lazy var sectionsViewport = CappedScrollView(
         content: sections,
@@ -67,6 +68,7 @@ final class MessageQueueView: UIView {
     ) {
         self.presentation = presentation
         self.noticeEnvironment = noticeEnvironment
+        errorMessage = NoticeChrome.cappedMessage(errorLabel)
         super.init(frame: .zero)
         stack.axis = .vertical
         stack.alignment = .fill
@@ -119,7 +121,7 @@ final class MessageQueueView: UIView {
         errorRow.axis = .horizontal
         errorRow.alignment = .top
         errorRow.spacing = 8
-        errorRow.addArrangedSubview(NoticeChrome.cappedMessage(errorLabel))
+        errorRow.addArrangedSubview(errorMessage)
         errorRow.addArrangedSubview(errorDismissButton)
         stack.addArrangedSubview(errorRow)
         errorTouchHold = NoticeTouchHold(view: errorRow) { [weak self] held in
@@ -197,10 +199,11 @@ final class MessageQueueView: UIView {
         errorRow.isHidden = error == nil
         if error != timedError {
             timedError = error
+            if error != nil { errorMessage.flashWhenOverflowing() }
             // Kept and announced under VoiceOver: the error used to stay until
             // the next queue action, and a timed-out error nobody heard is lost.
             if let error {
-                errorTimer.start(0, keepsUntilDismissed: true, announcement: error)
+                errorTimer.start(0, message: error, keepsUntilDismissed: true, announcement: error)
             } else {
                 errorTimer.cancel(0)
             }

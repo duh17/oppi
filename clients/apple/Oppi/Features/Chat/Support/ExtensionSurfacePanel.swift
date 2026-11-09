@@ -173,6 +173,15 @@ final class CappedScrollView: UIView {
     /// changes, from layout.
     var onOverflowChange: ((Bool) -> Void)?
     private(set) var overflows = false
+    private var maxHeightConstraint: NSLayoutConstraint?
+    /// The cap; a change lays the viewport out again.
+    var maxHeight: CGFloat {
+        get { maxHeightConstraint?.constant ?? 0 }
+        set {
+            guard newValue != maxHeightConstraint?.constant else { return }
+            maxHeightConstraint?.constant = newValue
+        }
+    }
 
     init(content: UIView, maxHeight: CGFloat) {
         super.init(frame: .zero)
@@ -198,9 +207,11 @@ final class CappedScrollView: UIView {
             content.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
             content.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-            scrollView.frameLayoutGuide.heightAnchor.constraint(lessThanOrEqualToConstant: maxHeight),
             hug,
         ])
+        let cap = scrollView.frameLayoutGuide.heightAnchor.constraint(lessThanOrEqualToConstant: maxHeight)
+        cap.isActive = true
+        maxHeightConstraint = cap
     }
 
     @available(*, unavailable)
