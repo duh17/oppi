@@ -314,6 +314,43 @@ struct APIClientTests {
         #expect(await recorder.waitForFailures(count: 1) == [.cannotConnectToHost])
     }
 
+    @Test func failedTelemetryUploadIsNotARouteAvailabilityFailure() async throws {
+        let recorder = AvailabilityFailureRecorder()
+        let configuration = URLSessionConfiguration.ephemeral
+        TestURLProtocol.install(in: configuration)
+        let client = APIClient(
+            environment: OppiClientEnvironment(
+                baseURL: URL(string: "http://localhost:7749")!,
+                bearerToken: "sk_test"
+            ),
+            configuration: configuration,
+            availabilityObserver: { failure in
+                await recorder.record(failure)
+            }
+        )
+        defer { cleanup() }
+        MockURLProtocol.handler = { _ in throw URLError(.timedOut) }
+
+        await #expect(throws: URLError.self) {
+            _ = try await client.uploadTelemetryEvents(
+                request: TelemetryEventUploadRequest(
+                    generatedAt: 0,
+                    client: TelemetryClientInfo(
+                        kind: .ios, appVersion: nil, buildNumber: nil, gitCommit: nil,
+                        osVersion: nil, deviceModel: nil, appInstanceId: nil, bootId: nil
+                    ),
+                    events: []
+                )
+            )
+        }
+        // A normal request on the same client still reports, so the observer is connected and
+        // the one report below is the request's, not the upload's.
+        await #expect(throws: URLError.self) { _ = try await client.me() }
+        #expect(await recorder.waitForFailures(count: 1) == [.timedOut])
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(await recorder.failures() == [.timedOut])
+    }
+
     @Test func healthReturnsTrue() async throws {
         let client = makeClient()
         defer { cleanup() }

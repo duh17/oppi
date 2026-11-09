@@ -2359,7 +2359,7 @@ actor APIClient: ClientLogUploading {
     /// Upload raw MetricKit payloads for backend trend dashboards.
     func uploadMetricKitPayload(request body: MetricKitUploadRequest) async throws {
         guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
-        _ = try await post("/telemetry/metrickit", body: body)
+        _ = try await postBackgroundUpload("/telemetry/metrickit", body: body)
     }
 
     /// Sorted-keys encoder for telemetry uploads: the same event always
@@ -2375,7 +2375,7 @@ actor APIClient: ClientLogUploading {
     /// events the server refused, by reason; it is `nil` when a 2xx body cannot be
     /// read, which must not read as a failed upload: the accepted events are stored.
     func uploadTelemetryEvents(request body: TelemetryEventUploadRequest) async throws -> TelemetryEventUploadResponse? {
-        let data = try await post(
+        let data = try await postBackgroundUpload(
             "/telemetry/events",
             body: body,
             encoder: Self.telemetryEncoder
@@ -2385,7 +2385,7 @@ actor APIClient: ClientLogUploading {
 
     func uploadClientLogs(request body: ClientLogUploadRequest) async throws {
         guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
-        _ = try await post(
+        _ = try await postBackgroundUpload(
             "/telemetry/client-logs",
             body: body,
             encoder: Self.telemetryEncoder
@@ -2394,13 +2394,28 @@ actor APIClient: ClientLogUploading {
 
     // MARK: - Private
 
-    private func performData(for request: URLRequest) async throws -> (Data, URLResponse) {
+    /// POST for telemetry and log uploads. A failed upload is no evidence about the route, so it
+    /// never feeds route availability; the uploader's own retry policy owns the failure.
+    private func postBackgroundUpload<T: Encodable>(
+        _ path: String,
+        body: T,
+        encoder: JSONEncoder? = nil
+    ) async throws -> Data {
+        let (data, response) = try await request("POST", path: path, body: body, encoder: encoder, reportsAvailability: false)
+        try checkStatus(response, data: data)
+        return data
+    }
+
+    private func performData(
+        for request: URLRequest,
+        reportsAvailability: Bool = true
+    ) async throws -> (Data, URLResponse) {
         let rejections = trustDelegate.rejectionCount
         do {
             return try await session.data(for: request)
         } catch {
             let error = namingCertificateRejection(error, since: rejections)
-            reportAvailabilityFailure(for: error)
+            if reportsAvailability { reportAvailabilityFailure(for: error) }
             throw error
         }
     }
@@ -2577,9 +2592,10 @@ actor APIClient: ClientLogUploading {
         path: String,
         body: T,
         encoder: JSONEncoder? = nil,
-        timeoutInterval: TimeInterval? = nil
+        timeoutInterval: TimeInterval? = nil,
+        reportsAvailability: Bool = true
     ) async throws -> (Data, URLResponse) {
-        try await performAuthorized {
+        try await performAuthorized(reportsAvailability: reportsAvailability) {
             var req = try URLRequest(url: self.makeURL(path: path))
             req.httpMethod = method
             if let timeoutInterval { req.timeoutInterval = timeoutInterval }
@@ -2745,17 +2761,18 @@ actor APIClient: ClientLogUploading {
     /// session refresh single-flight and retry exactly once. Refresh rejection
     /// (revoked/unknown device) propagates so the caller fails closed.
     private func performAuthorized(
+        reportsAvailability: Bool = true,
         buildingRequest: () throws -> URLRequest
     ) async throws -> (Data, URLResponse) {
         var request = try buildingRequest()
         var current = try await authorizedToken()
         ServerAuthorization.apply(token: current, to: &request)
-        var (data, response) = try await performData(for: request)
+        var (data, response) = try await performData(for: request, reportsAvailability: reportsAvailability)
         if authSessionBox.get() != nil, (response as? HTTPURLResponse)?.statusCode == 401 {
             current = try await authorizedToken(forceRefresh: true, replacing: current)
             var retry = try buildingRequest()
             ServerAuthorization.apply(token: current, to: &retry)
-            (data, response) = try await performData(for: retry)
+            (data, response) = try await performData(for: retry, reportsAvailability: reportsAvailability)
         }
         return (data, response)
     }

@@ -16,6 +16,10 @@ actor ClientLogUploadQueue {
     private var flushing = false
     private var flushWaiters: [CheckedContinuation<Void, Never>] = []
     private var flushTask: Task<Void, Never>?
+    /// Set when an upload failed and the flush timer is the retry. A full batch
+    /// must not upload ahead of it: offline, every new entry would otherwise
+    /// start another doomed upload, and each failure logs more entries.
+    private var retryPending = false
     private var nextSeq = 0
     private var droppedCount = 0
 
@@ -104,7 +108,7 @@ actor ClientLogUploadQueue {
             droppedCount += overflow
         }
 
-        if backlog.count >= maxBatchSize {
+        if backlog.count >= maxBatchSize, !retryTimerOwnsNextAttempt {
             flushIfNeeded()
         } else {
             scheduleFlushTimerIfNeeded()
@@ -118,10 +122,22 @@ actor ClientLogUploadQueue {
         }
         guard !flushing else { return }
         guard !backlog.isEmpty else { return }
+        guard !retryTimerOwnsNextAttempt else { return }
 
         Task { [weak self] in
-            await self?.flushLoop()
+            await self?.flushTriggered()
         }
+    }
+
+    /// After a failure the retry timer is the next attempt. `flushTaskFired` clears
+    /// `flushTask` before it calls `flushIfNeeded`, so the timer itself passes this check.
+    private var retryTimerOwnsNextAttempt: Bool { retryPending && flushTask != nil }
+
+    /// A trigger can be queued behind another that then fails; it re-checks on arrival so it
+    /// cannot add an attempt ahead of the timer that failure set.
+    private func flushTriggered() async {
+        guard !retryTimerOwnsNextAttempt else { return }
+        await flushLoop()
     }
 
     func flushNow() async {
@@ -191,9 +207,11 @@ actor ClientLogUploadQueue {
 
             do {
                 try await uploader.uploadClientLogs(request: request)
+                retryPending = false
             } catch {
                 backlog = batch + backlog
                 droppedCount += batchDroppedCount
+                retryPending = true
                 scheduleFlushTimerIfNeeded()
                 return
             }
@@ -220,6 +238,7 @@ actor ClientLogUploadQueue {
         uploader = nil
         backlog.removeAll(keepingCapacity: true)
         droppedCount = 0
+        retryPending = false
         flushTask?.cancel()
         flushTask = nil
     }
