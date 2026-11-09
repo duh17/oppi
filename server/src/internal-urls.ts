@@ -44,12 +44,13 @@ const UNSUPPORTED: Readonly<Record<string, string>> = {
 const SCHEME = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/is;
 const MAX_LISTED_IDS = 20;
 
-/** The URL a `read` path is, or undefined for a file path. */
+/** The URL a `read` path is, or undefined for a file path (and `file://`, which Pi resolves). */
 export function parseInternalUrl(path: string): InternalTarget | undefined {
   const match = SCHEME.exec(path.trim());
   if (!match) return undefined;
   const [, name = "", rest = ""] = match;
   const scheme = name.toLowerCase();
+  if (scheme === "file") return undefined;
   const slash = rest.indexOf("/");
   const id = slash < 0 ? rest : rest.slice(0, slash);
   return {

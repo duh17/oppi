@@ -37,6 +37,8 @@ afterEach(() => bindSessions([]));
 describe("internal URL resolution", () => {
   it("leaves file paths alone and splits an id from its path", () => {
     expect(parseInternalUrl("src/a.ts")).toBeUndefined();
+    // Pi's read resolves file: URLs itself.
+    expect(parseInternalUrl("file:///tmp/a.ts")).toBeUndefined();
     expect(parseInternalUrl("proc://bash-1/streams")).toMatchObject({
       scheme: "proc",
       id: "bash-1",
