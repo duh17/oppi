@@ -171,7 +171,8 @@ final class AssistantMarkdownSegmentSource {
 
     func buildSegmentsWithSourceLineRanges(
         _ config: AssistantMarkdownContentView.Configuration,
-        mergeAdjacentTextSegments: Bool = true
+        mergeAdjacentTextSegments: Bool = true,
+        splitsAtHeadings: Bool = false
     ) -> FlatSegment.BuildResult {
         // Reader identity needs located top-level starts on every tick. Keep
         // this path canonical during streaming: segment splitting/merging must
@@ -192,7 +193,8 @@ final class AssistantMarkdownSegmentSource {
             serverBaseURL: identity.serverBaseURL,
             sourceDirectory: config.sourceDirectory,
             worktreeId: identity.worktreeId,
-            mergeAdjacentTextSegments: mergeAdjacentTextSegments
+            mergeAdjacentTextSegments: mergeAdjacentTextSegments,
+            splitsAtHeadings: splitsAtHeadings
         )
         let buildEnd = MarkdownStreamingPerf.timestampNs()
 
@@ -211,7 +213,8 @@ final class AssistantMarkdownSegmentSource {
             identities: FlatSegment.readerSegmentIDs(
                 segments: segments,
                 sourceLineRanges: build.sourceLineRanges
-            )
+            ),
+            headingSegments: build.headingSegments
         )
     }
 

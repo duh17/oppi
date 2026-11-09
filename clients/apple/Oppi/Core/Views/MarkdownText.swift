@@ -383,25 +383,6 @@ enum FlatSegment: Sendable {
     /// Cached paragraph separator. Created once to avoid repeated allocation.
     private static let paragraphSeparator = AttributedString("\n\n")
 
-    struct BuildResult: Sendable {
-        let segments: [FlatSegment]
-        let sourceLineRanges: [ClosedRange<Int>?]
-        let identities: [MarkdownReaderSegmentID]
-
-        init(
-            segments: [FlatSegment],
-            sourceLineRanges: [ClosedRange<Int>?],
-            identities: [MarkdownReaderSegmentID]? = nil
-        ) {
-            self.segments = segments
-            self.sourceLineRanges = sourceLineRanges
-            self.identities = identities ?? FlatSegment.readerSegmentIDs(
-                segments: segments,
-                sourceLineRanges: sourceLineRanges
-            )
-        }
-    }
-
     static func build(
         from blocks: [MarkdownBlock],
         themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
@@ -444,7 +425,8 @@ enum FlatSegment: Sendable {
         serverBaseURL: URL? = nil,
         sourceDirectory: String? = nil,
         worktreeId: String? = nil,
-        mergeAdjacentTextSegments: Bool = true
+        mergeAdjacentTextSegments: Bool = true,
+        splitsAtHeadings: Bool = false
     ) -> BuildResult {
         buildResult(
             from: blocks.map(\.block),
@@ -456,7 +438,8 @@ enum FlatSegment: Sendable {
             sourceDirectory: sourceDirectory,
             worktreeId: worktreeId,
             sourceLineRanges: blocks.map(\.lineRange),
-            mergeAdjacentTextSegments: mergeAdjacentTextSegments
+            mergeAdjacentTextSegments: mergeAdjacentTextSegments,
+            splitsAtHeadings: splitsAtHeadings
         )
     }
 
@@ -470,7 +453,8 @@ enum FlatSegment: Sendable {
         sourceDirectory: String?,
         worktreeId: String? = nil,
         sourceLineRanges: [ClosedRange<Int>?]? = nil,
-        mergeAdjacentTextSegments: Bool
+        mergeAdjacentTextSegments: Bool,
+        splitsAtHeadings: Bool = false
     ) -> BuildResult {
         let palette = themeID.palette
         let rewritten = MarkdownWikiLinkRewriter.rewrite(
@@ -489,6 +473,7 @@ enum FlatSegment: Sendable {
         var pendingText = AttributedString()
         var pendingTextLineRange: ClosedRange<Int>?
         var hasPendingText = false
+        var headingSegments: [Int?] = []
 
         func mergedLineRange(_ lhs: ClosedRange<Int>?, _ rhs: ClosedRange<Int>?) -> ClosedRange<Int>? {
             switch (lhs, rhs) {
@@ -892,6 +877,14 @@ enum FlatSegment: Sendable {
                     )
                 }
 
+            case .heading:
+                // A heading that opens its own segment can be scrolled to.
+                let attributed = Self.attributedString(for: block, palette: palette)
+                let opensSegment = splitsAtHeadings || !mergeAdjacentTextSegments
+                if opensSegment { flushPendingText() }
+                headingSegments.append(opensSegment && !attributed.characters.isEmpty ? result.count : nil)
+                appendTextBlock(attributed, lineRange: lineRange)
+
             default:
                 let attributed = Self.attributedString(for: block, palette: palette)
                 appendTextBlock(attributed, lineRange: lineRange)
@@ -901,7 +894,8 @@ enum FlatSegment: Sendable {
         flushPendingText()
         return BuildResult(
             segments: result,
-            sourceLineRanges: resultLineRanges
+            sourceLineRanges: resultLineRanges,
+            headingSegments: headingSegments
         )
     }
 

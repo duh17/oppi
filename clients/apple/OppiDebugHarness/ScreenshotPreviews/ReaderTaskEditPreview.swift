@@ -68,6 +68,33 @@ enum ReaderTaskEditFixture {
     - [ ] Review the screenshots
     """
 
+    /// A long notebook-style file for heading navigation: a title, drawers with
+    /// IDs, four levels, TODO states, and links to its own headings.
+    static var handbookSeed: String {
+        func section(_ n: Int) -> String {
+            (1...3).map { "Paragraph \($0) of section \(n): notes, decisions and the occasional link, long enough to fill a phone screen with prose." }
+                .joined(separator: "\n\n")
+        }
+        var text = """
+        #+TITLE: Handbook
+        #+TODO: TODO NEXT WAIT | DONE CANCELLED
+
+        * Index
+        Jump to [[*Deep dive][the deep dive]], [[id:5b0c7d2e-4f1a-4a5e-9c3d-1e2f3a4b5c6d][the shipping plan]],
+        [[#release-notes][the release notes]] or [[*Missing heading][a heading that is gone]].
+
+        """
+        text += "* NEXT Planning\n\(section(1))\n\n** DONE Goals\n\(section(2))\n\n"
+        text += "** WAIT Shipping plan\n:PROPERTIES:\n:ID: 5b0c7d2e-4f1a-4a5e-9c3d-1e2f3a4b5c6d\n:END:\n\(section(3))\n\n"
+        text += "*** TODO Deep dive\n\(section(4))\n\n**** Details\n\(section(5))\n\n"
+        text += "* Research\n\(section(6))\n\n** Prior art\n\(section(7))\n\n"
+        text += "* TODO Release notes :oppi:\n:PROPERTIES:\n:CUSTOM_ID: release-notes\n:END:\n\(section(8))\n\n"
+        text += "* Appendix\n\(section(9))\n"
+        return text
+    }
+
+    static let flatSeed = "Just prose, with no headings at all.\n\nA second paragraph.\n"
+
     static let markdownSeed = """
     # Release plan [1/3]
 
@@ -100,6 +127,8 @@ enum ReaderTaskEditFixture {
         try? Data(org.utf8).write(to: url(for: "tasks.org"), options: .atomic)
         try? Data(notebookSeed.utf8).write(to: url(for: "notebook.org"), options: .atomic)
         try? Data(markdownSeed.utf8).write(to: url(for: "notes.md"), options: .atomic)
+        try? Data(handbookSeed.utf8).write(to: url(for: "handbook.org"), options: .atomic)
+        try? Data(flatSeed.utf8).write(to: url(for: "flat.org"), options: .atomic)
     }
 
     static func makeClient() -> APIClient {

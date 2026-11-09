@@ -38,6 +38,15 @@ enum OrgToMarkdownConverter {
         /// reader that does not fold.
         var foldableHeadings: [Int: Int] = [:]
         var foldedHeadings: Set<Int> = []
+        /// Collects each heading block written, in order, when a reader needs to
+        /// know which Org heading each one of its Markdown headings is.
+        var headingTrace: HeadingTrace?
+    }
+
+    /// The source line of each heading block a conversion wrote, in order: nil
+    /// for a `#+TITLE`, which is a heading of no Org heading's.
+    final class HeadingTrace {
+        fileprivate(set) var lines: [Int?] = []
     }
 
     /// Convert org blocks to markdown blocks.
@@ -68,7 +77,8 @@ enum OrgToMarkdownConverter {
         documentPath: String? = nil,
         clock: OrgBadges.Clock = .current,
         offersStateControl: Bool = false,
-        foldingHeadings: FoldState? = nil
+        foldingHeadings: FoldState? = nil,
+        headingTrace: HeadingTrace? = nil
     ) -> [MarkdownBlock] {
         var context = makeContext(
             located.map(\.block),
@@ -77,6 +87,7 @@ enum OrgToMarkdownConverter {
             offersStateControl: offersStateControl,
             marksTaskItems: true
         )
+        context.headingTrace = headingTrace
         var shown = located
         if let foldingHeadings {
             let sections = OrgFolding.sections(of: located)
@@ -136,7 +147,7 @@ enum OrgToMarkdownConverter {
     }
 
     /// Heading text as a `[[*Heading]]` link names it: no statistics cookie.
-    private static func headingText(_ inlines: [OrgInline]) -> String {
+    static func headingText(_ inlines: [OrgInline]) -> String {
         inlines.map { inline -> String in
             switch inline {
             case .text(let string), .verbatim(let string), .code(let string): return string
@@ -281,6 +292,7 @@ enum OrgToMarkdownConverter {
                 }
 
                 result.append(.heading(level: min(level, 6), inlines: inlines))
+                context.headingTrace?.lines.append(line)
 
             case .paragraph(let orgInlines):
                 result.append(.paragraph(convertInlines(orgInlines, context: context)))
@@ -330,6 +342,7 @@ enum OrgToMarkdownConverter {
             case .quote(let children):
                 var quoted = context
                 quoted.marksTaskItems = false
+                quoted.headingTrace = nil
                 result.append(.blockQuote(convert(children, lines: nil, context: quoted)))
 
             case .keyword(let key, let value):
@@ -337,6 +350,7 @@ enum OrgToMarkdownConverter {
                 if upper == "TITLE" {
                     // Render title as a level-1 heading.
                     result.append(.heading(level: 1, inlines: [.text(value)]))
+                    context.headingTrace?.lines.append(nil)
                 } else if upper == "STARTUP" || upper == "OPTIONS" || OrgTodoKeywords.isDeclarationKey(upper) {
                     // Skip directives that control rendering behavior.
                     break

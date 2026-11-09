@@ -153,13 +153,13 @@ struct OrgHeadingFoldTests {
 
     @Test func parsingOnceServesEveryFold() throws {
         let document = OrgReaderDocument(source: Self.outline, documentPath: nil, offersStateControl: false)
-        let openResult = document.markdown(folded: [], cancellationCheck: { false })
-        let foldedResult = document.markdown(folded: [alpha], cancellationCheck: { false })
+        let openResult = document.convert(folded: [], cancellationCheck: { false })
+        let foldedResult = document.convert(folded: [alpha], cancellationCheck: { false })
         let open = try #require(openResult)
         let folded = try #require(foldedResult)
-        #expect(try open == shown(folding: []))
-        #expect(try folded == shown(folding: [alpha]))
-        #expect(document.markdown(folded: [], cancellationCheck: { true }) == nil)
+        #expect(try open.markdown == shown(folding: []))
+        #expect(try folded.markdown == shown(folding: [alpha]))
+        #expect(document.convert(folded: [], cancellationCheck: { true }) == nil)
     }
 
     // MARK: - Text view

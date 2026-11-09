@@ -17,6 +17,7 @@ final class OrgReaderDocument: @unchecked Sendable {
     private let offersStateControl: Bool
     private let lock = NSLock()
     private var parsed: [LocatedOrgBlock]?
+    private var parsedOutline: ReaderOutline?
 
     init(source: String, documentPath: String?, offersStateControl: Bool) {
         self.source = source
@@ -24,20 +25,47 @@ final class OrgReaderDocument: @unchecked Sendable {
         self.offersStateControl = offersStateControl
     }
 
-    /// The Markdown with the headings on `folded` hidden; nil when cancelled.
-    func markdown(folded: Set<Int>, cancellationCheck: @escaping @Sendable () -> Bool) -> String? {
-        guard !cancellationCheck() else { return nil }
+    /// What a conversion wrote: the Markdown, and which Org heading (by
+    /// ordinal, `OrgFolding`) each of its headings is. A `#+TITLE` is a
+    /// heading of no Org heading's, and has none.
+    struct Converted: Sendable {
+        let markdown: String
+        let headingOrdinals: [Int?]
+    }
+
+    private func blocks() -> [LocatedOrgBlock] {
         lock.lock()
+        defer { lock.unlock() }
         let blocks = parsed ?? OrgParser().parseLocated(source)
         parsed = blocks
-        lock.unlock()
-        return DocumentRenderPipeline.orgToMarkdown(
+        return blocks
+    }
+
+    /// The document's headings, for finding one and listing them.
+    var outline: ReaderOutline {
+        let blocks = blocks()
+        lock.lock()
+        defer { lock.unlock() }
+        let outline = parsedOutline ?? ReaderOutline.org(blocks)
+        parsedOutline = outline
+        return outline
+    }
+
+    /// The Markdown with the headings on `folded` hidden; nil when cancelled.
+    func convert(folded: Set<Int>, cancellationCheck: @escaping @Sendable () -> Bool) -> Converted? {
+        guard !cancellationCheck() else { return nil }
+        let blocks = blocks()
+        let trace = OrgToMarkdownConverter.HeadingTrace()
+        guard let markdown = DocumentRenderPipeline.orgToMarkdown(
             located: blocks,
             documentPath: documentPath,
             offersStateControl: offersStateControl,
             foldingHeadings: .init(folded: folded),
+            headingTrace: trace,
             cancellationCheck: cancellationCheck
-        )
+        ) else { return nil }
+        let ordinals = OrgFolding.ordinals(of: blocks)
+        return Converted(markdown: markdown, headingOrdinals: trace.lines.map { $0.flatMap { ordinals[$0] } })
     }
 }
 
@@ -71,6 +99,19 @@ final class OrgReaderControls: ReaderTaskControlHandling {
         focusOrdinal = ordinal
         memory.onChange(folded)
         onFoldChange?()
+    }
+
+    /// Opens whichever of the sections `ordinals` names are folded, so a
+    /// heading under them shows. True when it opened any, and the reader
+    /// converts again.
+    @discardableResult
+    func unfold(_ ordinals: [Int]) -> Bool {
+        let closed = ordinals.filter { folded.contains($0) }
+        guard !closed.isEmpty else { return false }
+        folded.subtract(closed)
+        memory.onChange(folded)
+        onFoldChange?()
+        return true
     }
 
     func interaction(for control: ReaderTaskControl, in view: UIView) -> ReaderTaskInteraction {
