@@ -107,7 +107,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     /// False when each top-level block keeps its own segment: a book chapter
     /// merges into one text view otherwise, which is expensive to lay out and
     /// leaves no block to restore a reading position to.
-    private let mergesAdjacentTextSegments: Bool
+    let mergesAdjacentTextSegments: Bool
     let themeID: ThemeID
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
@@ -127,7 +127,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
     /// The document gained or lost its headings: the reader shows or hides Outline.
     var onOutlineChange: (() -> Void)?
-    private let lineAnchor: SourceLineAnchor?
+    /// Find in file (`NativeFullScreenMarkdownBody+Find`).
+    var findState = ReaderFindState()
+    let lineAnchor: SourceLineAnchor?
     private let lineAnchorResolution: SourceLineAnchorResolution?
     private let maximumViewportHeight: CGFloat?
     /// A reader that cannot scroll (the inline tool viewport) shows only the top
@@ -167,7 +169,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private(set) var renderedSegments: [FlatSegment] = []
     private var renderedSegmentLineRanges: [ClosedRange<Int>?] = []
     private var renderedSegmentIDs: [MarkdownReaderSegmentID] = []
-    private var currentConfig: AssistantMarkdownContentView.Configuration?
+    private(set) var currentConfig: AssistantMarkdownContentView.Configuration?
     private var viewportDoubleTapActivation: (() -> Void)?
     private var lineAnchorFocusTask: Task<Void, Never>?
     private var lineAnchorFocusPending = false
@@ -323,6 +325,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         ])
 
         orgControls?.onFoldChange = { [weak self] in self?.scheduleOrgModeSourcePreparation() }
+        installFindInteraction()
         if sourceFormat == .orgMode {
             installDeferredRenderPlaceholder(palette: palette)
             scheduleOrgModeSourcePreparation()

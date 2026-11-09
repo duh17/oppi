@@ -194,6 +194,21 @@ struct ReaderHeadingAnchorTests {
         #expect(Set(references.compactMap(\.fileCandidatePath)) == ["/notes/other.org"])
     }
 
+    @Test func aMarkdownInPageAnchorLinksToItsHeadingOnlyInAFileReader() {
+        let blocks = parseCommonMarkLocated("# Intro\n\nSee [setup](#setup-steps).\n\n## Setup steps")
+        func anchors(splitsAtHeadings: Bool) -> [ReaderHeadingAnchor] {
+            FlatSegment.buildWithSourceLineRanges(from: blocks, themeID: .dark, splitsAtHeadings: splitsAtHeadings)
+                .segments.flatMap { segment -> [ReaderHeadingAnchor] in
+                    guard case .text(let text) = segment else { return [] }
+                    return text.runs.compactMap(\.link).compactMap { ReaderHeadingAnchor(linkURL: $0) }
+                }
+        }
+        #expect(anchors(splitsAtHeadings: true) == [.slug("setup-steps")])
+        #expect(anchors(splitsAtHeadings: false).isEmpty, "chat and other text keep a bare #anchor as plain text")
+        let outline = ReaderOutline.markdown(blocks)
+        #expect(outline.resolve(.slug("setup-steps"))?.ordinal == 2)
+    }
+
     @Test func aMarkdownFileLinkCarriesItsFragmentAsASlug() throws {
         let segments = FlatSegment.build(
             from: parseCommonMark("See [setup](docs/guide.md#install-steps) and [line](docs/guide.md#L4)."),
@@ -325,6 +340,26 @@ struct ReaderHeadingAnchorTests {
         #expect(top >= 0 && top < 844, "Deep target is on screen, at \(top)")
     }
 
+    /// What UIKit hands the reader: the link's URL after it has lived in an
+    /// attributed string, as an NSURL. For `oppi-heading:#title=…` NSURL reports
+    /// no `fragment`, which Swift's `URL(string:)` does, so a test of the
+    /// Swift URL alone passed while a real tap did nothing.
+    @MainActor
+    @Test func aLinkToAHeadingSurvivesTheAttributedStringRoundTrip() async throws {
+        let destination = ReaderHeadingAnchor.title("Deep dive").linkDestination
+        var text = AttributedString("Go to the deep dive")
+        text.link = try #require(URL(string: destination))
+        let readBack = NSAttributedString(text).attribute(.link, at: 0, effectiveRange: nil)
+        let url = try #require(readBack as? URL ?? (readBack as? NSURL) as URL?)
+        #expect(ReaderHeadingAnchor(linkURL: url) == .title("Deep dive"))
+        let cf = try #require(CFURLCreateWithString(nil, destination as CFString, nil) as URL?)
+        #expect(ReaderHeadingAnchor(linkURL: cf) == .title("Deep dive"))
+
+        let reader = Mounted(source: Self.long)
+        try await reader.settle("first draw") { !reader.body.renderedSegments.isEmpty }
+        #expect(reader.body.headingAction(for: url) != nil, "the reader takes the link UIKit gives it")
+    }
+
     @MainActor
     @Test func tappingALinkToAHeadingRunsTheReadersOwnAction() async throws {
         let reader = Mounted(source: Self.long)
@@ -336,6 +371,47 @@ struct ReaderHeadingAnchorTests {
         try await reader.settle("the scroll") { reader.offset > 100 }
         let item = try #require(reader.body.headingPlacement.segment(forOrdinal: 7))
         #expect(abs(try #require(reader.topOfItem(item))) < 24)
+    }
+
+    @MainActor
+    @Test func aFindMatchInAFoldedSectionOpensItScrollsThereAndMarksIt() async throws {
+        let reader = Mounted(source: Self.long, folded: [12, 13, 5])
+        try await reader.settle("first draw") { !reader.body.renderedSegments.isEmpty }
+        var index: ReaderFindIndex?
+        reader.body.findIndex { index = $0 }
+        try await reader.settle("the index") { index != nil }
+        let matches = try #require(index).matches(for: "Target body")
+        #expect(matches.count == 1)
+        #expect(matches.first?.section == 14, "Deep target is the 14th heading")
+        reader.body.revealFindMatch(try #require(matches.first))
+        try await reader.settle("the sections opening") { reader.folded == [5] }
+        try await reader.settle("the scroll") { reader.offset > 100 && reader.body.findState.highlighted != nil }
+        #expect(reader.folded == [5], "an unrelated fold is left alone")
+    }
+
+    @MainActor
+    @Test func aFindWithNoMatchLeavesTheDocumentAlone() async throws {
+        let reader = Mounted(source: Self.long, folded: [3])
+        try await reader.settle("first draw") { !reader.body.renderedSegments.isEmpty }
+        var index: ReaderFindIndex?
+        reader.body.findIndex { index = $0 }
+        try await reader.settle("the index") { index != nil }
+        #expect(try #require(index).matches(for: "no such words anywhere").isEmpty)
+        #expect(reader.folded == [3] && reader.offset == 0 - reader.body.collectionView.adjustedContentInset.top)
+    }
+
+    @MainActor
+    @Test func aMarkdownReaderFindsTextWithoutAnyFold() async throws {
+        let source = (1...10).map { n in "## Part \(n)\n\n" + (1...6).map { _ in "Filler prose for part \(n), long enough to make the part tall on a phone." }.joined(separator: "\n\n") }.joined(separator: "\n\n") + "\n\n## Last\n\nthe lonely word"
+        let reader = Mounted(source: source, format: .markdown, path: "notes.md")
+        try await reader.settle("first draw") { !reader.body.renderedSegments.isEmpty }
+        var index: ReaderFindIndex?
+        reader.body.findIndex { index = $0 }
+        try await reader.settle("the index") { index != nil }
+        let matches = try #require(index).matches(for: "lonely")
+        #expect(matches.count == 1)
+        reader.body.revealFindMatch(try #require(matches.first))
+        try await reader.settle("the scroll") { reader.offset > 100 && reader.body.findState.highlighted != nil }
     }
 
     @MainActor

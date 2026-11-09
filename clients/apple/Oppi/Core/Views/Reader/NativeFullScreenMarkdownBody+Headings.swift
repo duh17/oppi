@@ -59,6 +59,7 @@ extension NativeFullScreenMarkdownBody {
     /// Runs from every point a render can finish. A heading under a folded
     /// section waits for the section to open and the document to draw again.
     func scrollToPendingHeadingIfReady() {
+        revealPendingFindMatchIfReady()
         guard let anchor = headingPlacement.pending,
               sourcePreparationTask == nil, deferredInitialRenderTask == nil, asyncRenderTask == nil,
               !needsDocumentLayoutPreparation, !renderedSegments.isEmpty, collectionView.bounds.height > 0 else { return }

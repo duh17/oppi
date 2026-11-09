@@ -57,6 +57,11 @@ protocol ReaderBody: UIView {
 
     /// Lists the headings, presented from `sourceItem`; choosing one scrolls to it.
     func presentOutline(from host: UIViewController, sourceItem: UIBarButtonItem)
+
+    /// Whether the body finds text in its whole document (the system find bar).
+    var supportsFind: Bool { get }
+
+    func presentFind()
 }
 
 /// A page's own paper and the ink that holds on it.
@@ -96,6 +101,10 @@ extension ReaderBody {
     }
 
     func presentOutline(from host: UIViewController, sourceItem: UIBarButtonItem) {}
+
+    var supportsFind: Bool { false }
+
+    func presentFind() {}
 
     var viewportIntent: FullScreenMarkdownViewportIntent? { nil }
 

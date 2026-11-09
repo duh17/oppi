@@ -859,6 +859,8 @@ enum MarkdownWikiLinkRewriter {
         let workspaceID: String?
         let sessionID: String?
         let sourceDirectory: String?
+        /// A file reader scrolls to the heading a `#anchor` link names.
+        var linksHeadings = false
     }
 
     static func rewrite(
@@ -866,14 +868,10 @@ enum MarkdownWikiLinkRewriter {
         serverID: String? = nil,
         workspaceID: String?,
         sessionID: String? = nil,
-        sourceDirectory: String?
+        sourceDirectory: String?,
+        linksHeadings: Bool = false
     ) -> [MarkdownBlock] {
-        let context = RewriteContext(
-            serverID: serverID,
-            workspaceID: workspaceID,
-            sessionID: sessionID,
-            sourceDirectory: sourceDirectory
-        )
+        let context = RewriteContext(serverID: serverID, workspaceID: workspaceID, sessionID: sessionID, sourceDirectory: sourceDirectory, linksHeadings: linksHeadings)
         return rewrite(blocks: blocks, context: context)
     }
 
@@ -1443,7 +1441,7 @@ enum MarkdownWikiLinkRewriter {
                 return children
             }
         } else if rawDestination.hasPrefix("#") {
-            return passthrough
+            return context.linksHeadings ? ReaderHeadingAnchor.markdownLink(children, rawDestination) ?? passthrough : passthrough
         }
 
         guard let classified = classifyMarkdownLinkTarget(

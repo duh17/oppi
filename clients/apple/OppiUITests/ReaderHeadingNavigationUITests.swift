@@ -1,6 +1,6 @@
 import XCTest
 
-/// Finding a heading in the file reader: the Outline, on the handbook fixture (`ReaderTaskEditFixture.handbookSeed`). The
+/// Finding a heading in the file reader: the Outline and Find, on the handbook fixture (`ReaderTaskEditFixture.handbookSeed`). The
 /// headings are ordinals: 1 Index, 2 Planning, 3 Goals, 4 Shipping plan,
 /// 5 Deep dive, 6 Details, 7 Research, 8 Prior art, 9 Release notes, 10 Appendix.
 @MainActor
@@ -12,6 +12,38 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
         throw XCTSkip("Heading navigation runs on the simulator's disk fixture")
 #endif
         continueAfterFailure = false
+    }
+
+    // MARK: Links
+
+    func testALinkScrollsToItsHeading() throws {
+        launch(file: "handbook.org")
+        tapLink("Go to the deep dive")
+        let arrived = waitUntilNearTop(fold(5))
+        saveScreenshot(name: "heading-link-jump")
+        XCTAssertTrue(arrived, "the link brought Deep dive to the top")
+    }
+
+    func testALinkIntoAFoldedSectionOpensItFirst() throws {
+        launch(file: "handbook.org")
+        // Planning holds Goals, Shipping plan and Deep dive.
+        tapChevron(2)
+        XCTAssertTrue(waitForFold(2, "Collapsed"), "Planning folds")
+        XCTAssertTrue(fold(5).waitUntilGone(timeout: 10), "and takes Deep dive with it")
+        saveScreenshot(name: "heading-link-folded-before")
+        tapLink("Go to the deep dive")
+        // Deep dive sat inside the folded Planning: seeing it means the section opened.
+        XCTAssertTrue(waitUntilNearTop(fold(5)), "the link opened the section above Deep dive and scrolled to it")
+        saveScreenshot(name: "heading-link-folded-after")
+    }
+
+    func testIdAndCustomIdLinksScroll() throws {
+        launch(file: "handbook.org")
+        tapLink("Go to the shipping plan")
+        XCTAssertTrue(waitUntilNearTop(fold(4)), "[[id:…]] reached Shipping plan")
+        scrollToTop()
+        tapLink("Go to the release notes")
+        XCTAssertTrue(waitUntilScrolledTo(fold(9)), "[[#custom-id]] reached Release notes")
     }
 
     // MARK: Outline
@@ -52,7 +84,102 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
         saveScreenshot(name: "outline-empty")
     }
 
+    // MARK: Find
+
+    func testFindOpensTheFoldedSectionHoldingAMatch() throws {
+        launch(file: "handbook.org", colorScheme: "light")
+        tapChevron(2)
+        XCTAssertTrue(waitForFold(2, "Collapsed"), "Planning folds")
+        XCTAssertTrue(fold(5).waitUntilGone(timeout: 10), "and takes Deep dive with it")
+        search("Paragraph 2 of section 4")
+        XCTAssertTrue(waitForFold(2, "Expanded"), "the match opened the section above it")
+        XCTAssertTrue(waitUntilScrolledTo(fold(5)), "and scrolled to the section holding it")
+        saveScreenshot(name: "find-match-in-fold")
+    }
+
+    func testFindReachesAMatchFarDownALongFile() throws {
+        launch(file: "handbook.org", colorScheme: "dark")
+        search("Paragraph 3 of section 9")
+        XCTAssertTrue(waitUntilScrolledTo(fold(10)), "the match near the end of the file is on screen")
+        saveScreenshot(name: "find-long-file")
+    }
+
+    func testFindWithNoMatchesSaysSoAndLeavesTheFileAlone() throws {
+        launch(file: "handbook.org", colorScheme: "dark")
+        search("zzzqq no such words")
+        // The system bar shows its query with a result count of 0, not words.
+        XCTAssertEqual(findField.value as? String, "zzzqq no such words", "the find bar holds the query")
+        saveScreenshot(name: "find-no-matches")
+        XCTAssertTrue(onScreen(fold(1)), "the file did not move")
+        XCTAssertTrue(fold(2).exists && fold(2).value as? String == "Expanded", "and no section opened")
+    }
+
+    func testFindAtTheLargestTextSize() throws {
+        launch(file: "handbook.org", colorScheme: "dark", arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
+        search("Paragraph 1 of section 6")
+        XCTAssertTrue(waitUntilScrolledTo(fold(7)), "the match is shown")
+        saveScreenshot(name: "find-xxxl")
+    }
+
+    func testCommandFOpensFindOnIPad() throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { throw XCTSkip("Command-F is the iPad's keyboard path") }
+        launch(file: "handbook.org")
+        app.typeKey("f", modifierFlags: .command)
+        XCTAssertTrue(findField.waitUntilExists(timeout: 10), "the standard find command opens the find bar")
+        saveScreenshot(name: "find-command-f")
+    }
+
     // MARK: Helpers
+
+    /// Taps a link of the reader's text by its words.
+    private func tapLink(_ label: String) {
+        let link = app.links.matching(NSPredicate(format: "label CONTAINS %@", label)).firstMatch
+        XCTAssertTrue(link.waitUntilExists(timeout: 15), "the reader shows a link \(label)")
+        link.tap()
+    }
+
+    private func waitUntilNearTop(_ element: XCUIElement, timeout: TimeInterval = 15) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        let window = app.windows.firstMatch.frame
+        while Date() < deadline {
+            if element.exists, element.frame.minY > 0, element.frame.minY < window.height * 0.4 { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return false
+    }
+
+    private func scrollToTop() {
+        for _ in 0..<12 where !onScreen(fold(1)) { app.swipeDown() }
+    }
+
+    private var findField: XCUIElement {
+        let search = app.searchFields.firstMatch
+        return search.exists ? search : app.textFields.matching(NSPredicate(format: "placeholderValue CONTAINS[c] 'find' OR label CONTAINS[c] 'find'")).firstMatch
+    }
+
+    /// Opens the system find bar from the toolbar and types a query.
+    private func search(_ query: String) {
+        let button = app.buttons["fileViewer.find.button"]
+        XCTAssertTrue(button.waitUntilExists(timeout: 15), "a file reader offers Find")
+        button.tap()
+        XCTAssertTrue(findField.waitUntilExists(timeout: 10), "the find bar opens")
+        app.typeText(query)
+    }
+
+    private func waitForFold(_ ordinal: Int, _ value: String, timeout: TimeInterval = 10) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if fold(ordinal).exists, fold(ordinal).value as? String == value { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return fold(ordinal).value as? String == value
+    }
+
+    private func tapChevron(_ ordinal: Int) {
+        let element = fold(ordinal)
+        XCTAssertTrue(element.waitUntilExists(timeout: 15), "fold \(ordinal) exists")
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 10, dy: 0)).tap()
+    }
 
 
     private func fold(_ ordinal: Int) -> XCUIElement {

@@ -201,6 +201,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     private var shareItem: UIBarButtonItem?
     /// The Outline entry a bar this viewer feeds shows (`FileViewerViewController+Outline`).
     var outlineItem: UIBarButtonItem?
+    var findItem: UIBarButtonItem?
     private var shareItemKey: Int?
 
     init(configuration: Configuration, services: Services) {
@@ -1027,7 +1028,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             // trailing-first, so they go in reversed.
             if !sharesReaderBar, !loading {
                 items.append(contentsOf: editOwner.barItems.reversed())
-                items.append(contentsOf: outlineBarItems())
+                items.append(contentsOf: readerNavigationItems())
             }
             if configuration.chromeMode == .pushed, !isUsingFileViewer, let share = shareBarItem() {
                 items.append(share)

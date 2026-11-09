@@ -24,10 +24,21 @@ enum ReaderHeadingAnchor: Hashable, Sendable {
 
     var linkDestination: String { "\(Self.linkScheme):#\(fragment)" }
 
-    /// The anchor a link made by `linkDestination` names.
+    /// The anchor a link made by `linkDestination` names. A link's URL passes
+    /// through an attributed string, and NSURL reports no `fragment` for a URL
+    /// with nothing between `:` and `#` (Swift's `URL(string:)` does), so the
+    /// text after the first `#` is read from the string.
     init?(linkURL url: URL) {
-        guard url.scheme == Self.linkScheme, let fragment = url.fragment else { return nil }
-        self.init(fragment: fragment)
+        guard url.scheme == Self.linkScheme,
+              let hash = url.absoluteString.firstIndex(of: "#") else { return nil }
+        self.init(fragment: String(url.absoluteString[url.absoluteString.index(after: hash)...]))
+    }
+
+    /// A Markdown `[label](#anchor)` made a link to the heading it names, in a
+    /// reader that scrolls to headings. Nil for an empty anchor.
+    static func markdownLink(_ children: [MarkdownInline], _ destination: String) -> [MarkdownInline]? {
+        guard let anchor = Self(fragment: String(destination.dropFirst())) else { return nil }
+        return [.link(children: children, destination: anchor.linkDestination)]
     }
 
     /// The text after `#` in a link destination. A slug is written bare, as

@@ -462,7 +462,8 @@ enum FlatSegment: Sendable {
             serverID: serverID,
             workspaceID: workspaceID,
             sessionID: sessionID,
-            sourceDirectory: sourceDirectory
+            sourceDirectory: sourceDirectory,
+            linksHeadings: splitsAtHeadings
         )
         let (blocks, sourceLineRanges) = MarkdownTaskListSplit.split(rewritten, lineRanges: sourceLineRanges)
         var result: [Self] = []

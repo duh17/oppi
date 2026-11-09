@@ -87,16 +87,17 @@ final class FullScreenCodeViewController: UIViewController {
     private var completeRawText: String?
     private var rawSidecarTask: Task<Void, Never>?
     private var copyButton: UIBarButtonItem?
-    /// Lists the open file's headings; present only while the body has some.
-    private var outlineBarItem: UIBarButtonItem?
+    // The reader's Outline and Find bar items (`FullScreenCodeViewController+ReaderNavigation`).
+    var outlineBarItem: UIBarButtonItem?
+    var findBarItem: UIBarButtonItem?
     private var floatingViewingOptionsButton: UIButton?
     private weak var viewingOptionsController: FullScreenViewingOptionsController?
-    private weak var contentHostController: UIViewController?
+    private(set) weak var contentHostController: UIViewController?
     private var viewingOptionsBarItem: UIBarButtonItem?
     private var annotateBarItem: UIBarButtonItem?
     private var stashBarItem: UIBarButtonItem?
     private var backSwipeDismissHandler: HorizontalBackSwipeGestureInstaller?
-    private var installedBodyView: (any ReaderBody)?
+    private(set) var installedBodyView: (any ReaderBody)?
     /// The installed body's one observation of its live trace.
     private var traceObservation: ReaderTraceToken?
     /// Where the rendered body was read before Source; a streaming source
@@ -669,18 +670,7 @@ final class FullScreenCodeViewController: UIViewController {
         copyButton = copy
         rightItems.append(copy)
 
-        outlineBarItem = nil
-        if installedBodyView?.hasOutline == true {
-            let outline = railItem(
-                symbol: "list.bullet.indent",
-                title: String(localized: "Outline"),
-                action: #selector(showOutline)
-            )
-            outline.accessibilityIdentifier = "fileViewer.outline.button"
-            outline.tintColor = palette.ui.fgDim
-            outlineBarItem = outline
-            rightItems.append(outline)
-        }
+        rightItems.append(contentsOf: makeReaderNavigationItems(palette: palette))
 
         if let shareable = shareableContent() {
             rightItems.append(
@@ -745,7 +735,7 @@ final class FullScreenCodeViewController: UIViewController {
         applyContentSurface()
     }
 
-    private func railItem(symbol: String, title: String, action: Selector) -> UIBarButtonItem {
+    func railItem(symbol: String, title: String, action: Selector) -> UIBarButtonItem {
         let item = UIBarButtonItem(
             image: UIImage(systemName: symbol),
             style: .plain,
@@ -1108,18 +1098,6 @@ final class FullScreenCodeViewController: UIViewController {
         case .contentOnly(let onBackSwipe):
             onBackSwipe?()
         }
-    }
-
-    @objc private func showOutline() {
-        guard let item = outlineBarItem else { return }
-        presentOutline(sourceItem: item)
-    }
-
-    /// Whether the open file has headings to list.
-    var hasOutline: Bool { installedBodyView?.hasOutline == true }
-
-    func presentOutline(sourceItem: UIBarButtonItem) {
-        installedBodyView?.presentOutline(from: contentHostController ?? self, sourceItem: sourceItem)
     }
 
     @objc private func copyTapped() {
