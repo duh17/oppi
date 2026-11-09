@@ -256,7 +256,7 @@ belowEditor strip
 
 ### Notifications, editor handoffs, and the working row
 
-- **`notify()`** is fire-and-forget: a muted temporary chip above the composer; tap to read it. It needs no response and is not replayed after reconnect.
+- **`notify()`** is fire-and-forget: a muted temporary chip above the composer; tap to read it. It closes on its own after 6 seconds plus 1 second per 15 words, at most 12 seconds, and waits while expanded; its **Dismiss** button closes it sooner. It needs no response and is not replayed after reconnect.
 - **`setEditorText()` and `pasteToEditor()`** are one-shot handoffs to the target session's composer. The text then belongs to the user; later settlement neither removes nor submits it.
 - **`setWorkingIndicator`, `setWorkingMessage`, and `setStatus`** are data, not terminal frames, so Oppi projects them cheaply:
   - iOS animates custom frames locally from `frames` and `intervalMs`. `frames: []` hides the working glyph; `undefined` restores the native spinner.

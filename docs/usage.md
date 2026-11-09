@@ -137,7 +137,7 @@ With a hardware keyboard, these commands are in the iPad menu bar and in the lis
 | ⌘. | Stop Response |
 | ⌘L | Focus Composer (in the code editor, ⌘L is Go to Line) |
 | ⇧⌘] and ⇧⌘[ | Next and previous session in All Sessions (Your Turn and Working) |
-| ⌘F | **Edit → Find**: starts the search on the screen in front |
+| ⌘F | **Edit → Find**: in a Markdown or Org file reader, opens [Find](document-viewers.md#outline-and-find) for the file; elsewhere, starts the search on the screen in front |
 
 The [code editor](document-viewers.md#editing-workspace-files) and the [terminal](ssh-terminal.md#hardware-keyboard) have their own keys.
 

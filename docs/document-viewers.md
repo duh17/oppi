@@ -21,7 +21,7 @@ Assistant messages link to files with wiki links or standard Markdown links. A t
 
 **Host links.** Absolute POSIX paths, `~` and `~/...`, and local `file://` URLs open a real file the Oppi server process can read. `~otheruser` and non-local `file://` URLs stay literal. A host file opens in the existing viewer on the current stack; it does not switch workspace or start a session in another checkout. The viewer title shows the file's real path. Relative links inside a host Markdown file resolve against that file's directory.
 
-**Markdown links.** `[label](path)` works like a wiki link, except Oppi does not add `.md` and root files such as `README.md` resolve from the workspace root. A heading fragment on a file path opens the file and ignores the heading; a same-file `#heading` link is not tappable. `http`, `https`, `mailto`, and `oppi` links are unchanged. `javascript:`, `data:`, query strings, and unsupported host forms fail closed.
+**Markdown links.** `[label](path)` works like a wiki link, except Oppi does not add `.md` and root files such as `README.md` resolve from the workspace root. A heading fragment on a file path, such as `notes.md#setup`, opens the Markdown or Org file at that heading. In a file reader, a same-file `[label](#setup)` link scrolls to the heading; elsewhere, such as in chat, it is not tappable. The fragment is the heading's GitHub-style slug: lowercase, punctuation dropped, spaces as hyphens, and `-1`, `-2` on repeated headings. When the heading does not exist, a link to another file opens it at the top, and a same-file link shows a short notice. `http`, `https`, `mailto`, and `oppi` links are unchanged. `javascript:`, `data:`, query strings, and unsupported host forms fail closed.
 
 **Line anchors.** `#L12` and `#L12-L18` (uppercase `L`, positive one-based numbers, end not before start) focus and highlight those source lines in code, plain-text, and Markdown Source viewers. The rendered Markdown reader highlights every block whose source range overlaps the anchor. A range past the end is clipped, and the file opens at the end with one short notice. Malformed anchors (`#L0`, `#L12-L11`, `#l12`) stay literal text and are not links.
 
@@ -103,6 +103,13 @@ A Markdown table in chat or in the reader keeps short values, such as dates, tim
 - **Copy.** Touch and hold **N more columns** for the same two copy actions, which always take every row. Text selected across cells copies as tab-separated cells, ready to paste into a spreadsheet.
 - **Formatting.** Bold, italic, strikethrough, `code`, and links show in cells.
 
+## Outline and Find
+
+The reader of a Markdown or Org file has **Find** in its toolbar, and **Outline** when the file has headings.
+
+- **Outline** lists the file's headings, indented by level, with each Org heading's TODO state. Choose one to scroll to it. Any folded heading above it opens. Outline opens as a popover on iPad and as a sheet on iPhone or in a narrow window.
+- **Find** opens the system find bar. On iPad, ⌘F opens it too. It searches the whole file, folded sections included, in text and code blocks. Tables, images, diagrams, maps, and math blocks are not searched. Matching ignores case and accents unless you change that in the find bar's options. The bar shows which match is current and how many there are, and next and previous wrap at the ends. The current match is highlighted and scrolled into view, and the folded sections that hold it open. A query with no match leaves the page where it was.
+
 ## Org files
 
 The reader shows an Org file as a formatted document; **Source** shows it as written.
@@ -111,7 +118,7 @@ The reader shows an Org file as a formatted document; **Source** shows it as wri
 - **Dates.** Scheduled, Deadline, and Closed lines show as dated badges under their heading. An open deadline with a warning period, such as `<2026-11-20 Fri -2d>`, turns to the warning color when that period starts, and VoiceOver reads it as due soon. A deadline without a warning period does not warn early. An open deadline that has passed turns red with a warning symbol.
 - **Folding.** A heading with content under it has a chevron. Tap the heading to hide everything under it, up to the next heading of the same or a higher level. Tap it again to show the content. A folded heading ends in **…**. A tap on a link in the heading opens the link, and a long press still opens the text menu. Folding never changes the file, so it works in files you cannot edit. Folds stay while the file is open, also after a task change saves. When you open the file again, all headings are unfolded. VoiceOver reads **Expanded** or **Collapsed** and offers **Collapse** or **Expand**.
 - **Comments.** A `COMMENT` heading and everything under it are hidden, as are `#` comment lines and `#+begin_comment` blocks. Source still shows them.
-- **Links.** `[[file:…]]` links and `./`, `../`, and `~/` paths open relative to the document. `[[*Heading]]` and an `[[id:…]]` that the file declares open the file itself. A link that nothing can open shows as its label. Image and PDF exports keep relative file links.
+- **Links.** `[[file:…]]` links and `./`, `../`, and `~/` paths open relative to the document. `[[*Heading]]`, `[[#custom-id]]`, and `[[id:…]]` scroll to that heading of the same file, opening any folded heading above it. The heading, custom ID, or ID must be in this file. `[[file:notes.org::*Heading]]` and `[[file:notes.org::#custom-id]]` open the other file at that heading. Another search option, such as a line number, opens the file at the top. A link that nothing can open shows as its label. In a share image, a PDF, or an Org file shown in chat, a link to a heading of the same file links to the file itself. Image and PDF exports keep relative file links.
 
 ## Tasks in Markdown and Org
 

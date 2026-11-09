@@ -22,6 +22,8 @@ Fill past the tick means more quota remains than time: you can spend faster. Fil
 
 The app places the tick from the device clock when it draws the bar, so each reload moves it even if usage did not change. Model Providers reloads usage when it appears, when you pull to refresh, and when you return to the app; its footer says when the usage was read.
 
+The providers show as soon as the server lists them, and their usage fills in when it arrives. The server keeps each provider's usage for 60 seconds, so a reload within that time shows the same numbers. After that, it answers with the last reading at once and refreshes it in the background. A failed refresh keeps the last good reading. For a provider it has no reading for, the server waits at most 4 seconds; after that, the row says the usage is still loading, and a pull to refresh a moment later shows it. A credential change, or an extension adding or removing a provider, clears the saved readings. `oppi quota` and `oppi models` read the same cache.
+
 | Pace label | Supply ratio |
 | --- | --- |
 | Plenty | greater than 1.20 |
