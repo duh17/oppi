@@ -17,9 +17,6 @@ import type { Storage } from "./storage.js";
 import {
   collectSessionTraceJsonlPaths,
   findToolOutput,
-  readSessionTrace,
-  readSessionTraceByUuid,
-  readSessionTraceFromFile,
   readSessionTraceFromFiles,
   type LiveEntryRendererSet,
   type TraceEvent,
@@ -138,39 +135,18 @@ export class SessionTraceService {
     const liveLeafId = typeof live?.leafId === "string" ? live.leafId : undefined;
     const refreshedSession = this.deps.storage.getSession(params.session.id) || params.session;
     const hydratedSession = this.deps.ensureSessionContextWindow(refreshedSession);
-    const baseDir = this.traceBaseDir();
-    const entryRenderers = this.liveEntryRenderers(params.session.id);
-
-    let trace =
+    const trace =
       (await this.deps.sessionRuntimes.getServerDurableTrace?.(params.session.id, traceView)) ??
-      this.loadSessionTrace(hydratedSession, traceView, liveLeafId, entryRenderers);
-
-    if (!trace || trace.length === 0) {
-      const traceOptions = this.traceReadOptions({
-        sessionId: params.session.id,
-        view: traceView,
-        leafId: liveLeafId,
-        entryRenderers,
-      });
-
-      if (live?.sessionFile) {
-        trace = readSessionTraceFromFile(live.sessionFile, traceOptions);
-      }
-      if ((!trace || trace.length === 0) && live?.sessionId) {
-        trace = readSessionTraceByUuid(
-          baseDir,
-          live.sessionId,
-          hydratedSession.workspaceId,
-          traceOptions,
-        );
-      }
-
-      const refreshed = this.deps.storage.getSession(params.session.id);
-      if (refreshed && (!trace || trace.length === 0)) {
-        this.deps.ensureSessionContextWindow(refreshed);
-        trace = this.loadSessionTrace(refreshed, traceView, liveLeafId, entryRenderers);
-      }
-    }
+      (await this.readFullTrace(
+        hydratedSession,
+        typeof live?.sessionFile === "string" ? live.sessionFile : undefined,
+        this.traceReadOptions({
+          sessionId: params.session.id,
+          view: traceView,
+          leafId: liveLeafId,
+          entryRenderers: this.liveEntryRenderers(params.session.id),
+        }),
+      ));
 
     const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
     return {
@@ -299,32 +275,13 @@ export class SessionTraceService {
     };
   }
 
-  loadSessionTrace(
+  private async readFullTrace(
     session: Session,
-    traceView: SessionTraceViewMode = "context",
-    leafId?: string | null,
-    entryRenderers?: LiveEntryRendererSet,
-  ): TraceEvent[] | null {
-    const baseDir = this.traceBaseDir();
-    const traceOptions = this.traceReadOptions({
-      sessionId: session.id,
-      view: traceView,
-      leafId,
-      entryRenderers: entryRenderers ?? this.liveEntryRenderers(session.id),
-    });
-    let trace = readSessionTrace(baseDir, session.id, session.workspaceId, traceOptions);
-
-    if ((!trace || trace.length === 0) && session.piSessionFiles?.length) {
-      trace = readSessionTraceFromFiles(session.piSessionFiles, traceOptions);
-    }
-    if ((!trace || trace.length === 0) && session.piSessionFile) {
-      trace = readSessionTraceFromFile(session.piSessionFile, traceOptions);
-    }
-    if ((!trace || trace.length === 0) && session.id) {
-      trace = readSessionTraceByUuid(baseDir, session.id, session.workspaceId, traceOptions);
-    }
-
-    return trace;
+    liveSessionFile: string | undefined,
+    options: TraceReadOptions,
+  ): Promise<TraceEvent[] | null> {
+    const jsonlPaths = await this.collectTracePageJsonlPaths(session, liveSessionFile);
+    return readSessionTraceFromFiles(jsonlPaths, options);
   }
 
   async getToolOutput(
@@ -393,7 +350,11 @@ export class SessionTraceService {
     session: Session;
     path: string;
   }): Promise<SessionOverallDiffResult> {
-    const trace = this.loadSessionTrace(params.session);
+    const trace = await this.readFullTrace(
+      params.session,
+      undefined,
+      this.traceReadOptions({ sessionId: params.session.id }),
+    );
     if (!trace || trace.length === 0) {
       return { kind: "trace-not-found" };
     }

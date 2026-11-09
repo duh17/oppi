@@ -10,7 +10,8 @@ import {
 } from "../src/session-attachments.js";
 import {
   parseJsonl,
-  readSessionTrace,
+  collectSessionTraceJsonlPaths,
+  readSessionTraceFromFiles,
   buildSessionContext,
   replaceUnpairedSurrogates,
 } from "../src/trace.js";
@@ -574,9 +575,9 @@ describe("parseJsonl", () => {
   });
 });
 
-// ─── readSessionTrace integration ───
+// ─── readSessionTraceFromFiles integration ───
 
-describe("readSessionTrace", () => {
+describe("readSessionTraceFromFiles", () => {
   let tmp: string;
 
   beforeEach(() => {
@@ -585,24 +586,6 @@ describe("readSessionTrace", () => {
 
   afterEach(() => {
     rmSync(tmp, { recursive: true });
-  });
-
-  it("returns null when workspaceId is missing", () => {
-    const result = readSessionTrace(tmp, "sess1");
-    expect(result).toBeNull();
-  });
-
-  it("returns null when sessions dir does not exist", () => {
-    const result = readSessionTrace(tmp, "sess1", "ws1");
-    expect(result).toBeNull();
-  });
-
-  it("returns null when no JSONL files exist", () => {
-    const dir = join(tmp, "ws1", "sessions", "sess1", "agent", "sessions", "--work--");
-    mkdirSync(dir, { recursive: true });
-
-    const result = readSessionTrace(tmp, "sess1", "ws1");
-    expect(result).toBeNull();
   });
 
   it("merges all JSONL files in chronological order", () => {
@@ -632,7 +615,7 @@ describe("readSessionTrace", () => {
       }),
     );
 
-    const events = readSessionTrace(tmp, "sess1", "ws1");
+    const events = readSessionTraceFromFiles(collectSessionTraceJsonlPaths(tmp, "sess1", "ws1"));
     expect(events).not.toBeNull();
     expect(events).toHaveLength(2);
     expect(events![0].text).toBe("old message");
@@ -676,7 +659,7 @@ describe("readSessionTrace", () => {
 
     writeFileSync(join(dir, "2026-01-01_session.jsonl"), lines);
 
-    const events = readSessionTrace(tmp, "sess1", "ws1");
+    const events = readSessionTraceFromFiles(collectSessionTraceJsonlPaths(tmp, "sess1", "ws1"));
     expect(events).toHaveLength(3);
     expect(events![0].type).toBe("user");
     expect(events![1].type).toBe("toolCall");

@@ -251,6 +251,35 @@ describe("SessionTraceService", () => {
     ]);
   });
 
+  it("merges a multi-file imported session in chronological order", async () => {
+    const dataDir = tempDir("oppi-session-trace-multi-");
+    const first = join(dataDir, "2026-05-03T000000Z_a.jsonl");
+    const second = join(dataDir, "2026-05-04T000000Z_b.jsonl");
+    writeJsonl(first, [
+      {
+        type: "message",
+        id: "u1",
+        timestamp: "2026-05-03T00:00:01.000Z",
+        message: { role: "user", content: [{ type: "text", text: "first file" }] },
+      },
+    ]);
+    writeJsonl(second, [
+      {
+        type: "message",
+        id: "u2",
+        parentId: "u1",
+        timestamp: "2026-05-04T00:00:01.000Z",
+        message: { role: "user", content: [{ type: "text", text: "second file" }] },
+      },
+    ]);
+    const session = makeSession({ piSessionFiles: [second, first], piSessionFile: second });
+    const { service } = makeService({ dataDir, storedSession: session });
+
+    const result = await service.getSessionWithTrace({ session });
+
+    expect(result.trace.map((event) => event.text)).toEqual(["first file", "second file"]);
+  });
+
   it("falls back to the live runtime trace file when stored traces are absent", async () => {
     const dataDir = tempDir("oppi-session-trace-live-");
     const liveTrace = join(dataDir, "live.jsonl");
@@ -423,8 +452,7 @@ describe("SessionTraceService", () => {
     });
     const toolResult = result?.trace.find((event) => event.type === "toolResult");
     const details = toolResult?.details as
-      | { media?: Array<{ id?: string; kind?: string; mimeType?: string }> }
-      | undefined;
+      { media?: Array<{ id?: string; kind?: string; mimeType?: string }> } | undefined;
 
     expect(toolResult?.output).toBe("Read image file [image/png]");
     expect(toolResult?.output).not.toContain("data:image/");

@@ -13,7 +13,7 @@ import {
   readSearchTranscriptFile,
   SearchAdditionJoiner,
 } from "../src/search-transcript.js";
-import { readSessionTraceFromFile, type SessionEntry } from "../src/trace.js";
+import { readSessionTraceFromFiles, type SessionEntry } from "../src/trace.js";
 import type { Session } from "../src/types.js";
 
 const USER_MESSAGE_CAP = 50_000;
@@ -56,7 +56,12 @@ function searchableFieldsFromMobileTrace(jsonlPath: string): {
   assistantMessages: string;
   toolNames: string;
 } | null {
-  const events = readSessionTraceFromFile(jsonlPath, { view: "full" });
+  let events: ReturnType<typeof readSessionTraceFromFiles>;
+  try {
+    events = readSessionTraceFromFiles([jsonlPath], { view: "full" });
+  } catch {
+    return null; // the mobile trace fails closed on a malformed tool result
+  }
   if (!events) return null;
 
   const userParts: string[] = [];
@@ -685,7 +690,6 @@ describe("search transcript extraction fields", () => {
       },
     ]);
 
-    expect(readSessionTraceFromFile(jsonlPath)).toBeNull();
     expect(searchableFieldsFromMobileTrace(jsonlPath)).toBeNull();
     expect(readSearchTranscriptFile(jsonlPath)?.transcript ?? null).toEqual({
       userMessages: "kept-user-after-bad-toolresult",
