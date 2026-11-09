@@ -339,9 +339,6 @@ struct ChatSessionManagerTests {
         #expect(reloaded)
         #expect(capturedCachedEventCount == nil)
         #expect(capturedCachedLastEventId == nil)
-        #expect(manager.isSyncing == false)
-        #expect(manager.lastSyncFailed == false)
-        #expect(manager.lastSuccessfulSyncAt != nil)
     }
 
     @Test func forceHistoryReloadReturnsFalseWhenTestingHookReturnsNil() async {
@@ -354,8 +351,6 @@ struct ChatSessionManagerTests {
         )
 
         #expect(reloaded == false)
-        #expect(manager.isSyncing == false)
-        #expect(manager.lastSyncFailed == true)
     }
 
     @Test func forceHistoryReloadFailsWithoutAPIClientWhenNoTestingHook() async {
@@ -367,8 +362,6 @@ struct ChatSessionManagerTests {
         )
 
         #expect(reloaded == false)
-        #expect(manager.isSyncing == false)
-        #expect(manager.lastSyncFailed == true)
     }
 
     @Test func connectSchedulesHistoryReloadWhenSessionStreamUnavailable() async {
@@ -388,7 +381,7 @@ struct ChatSessionManagerTests {
         await manager.connect(connection: connection, sessionStore: sessionStore)
 
         let loaded = await waitForTestCondition(timeoutMs: 500) {
-            await MainActor.run { loadCalls == 1 && manager.lastSuccessfulSyncAt != nil }
+            await MainActor.run { loadCalls == 1 }
         }
         #expect(loaded, "History reload should still run when the session stream cannot open")
         if case .disconnected(let reason) = manager.entryState {
@@ -648,7 +641,6 @@ struct ChatSessionManagerTests {
         #expect(reloaded)
         #expect(manager.tracePage == nil)
         #expect(manager.reducer.items.map(\.id) == ["u1", "a1"])
-        #expect(manager.lastSyncFailed == false)
     }
 
     @Test func unexpectedConnectedStreamExitSchedulesReconnect() async {
@@ -2920,12 +2912,11 @@ struct ChatSessionManagerTests {
             manager.coalescer.needsPresentationTraceReload,
             "Failed overflow reload must keep the pending reload armed"
         )
-        #expect(manager.lastSyncFailed)
 
         // The production overflow path retries without another scene callback.
         #expect(await tracker.waitForCalls(3))
         let completed = await waitForMainActorCondition {
-            !manager.coalescer.needsPresentationTraceReload && manager.lastSyncFailed == false
+            !manager.coalescer.needsPresentationTraceReload
         }
         #expect(completed, "Successful overflow reload must clear the pending reload arm")
         #expect(!manager.coalescer.resume())

@@ -122,11 +122,6 @@ final class ChatSessionManager {
     private var workspaceIdHint: String?
     private let routeScopeHint: SessionRouteScope?
 
-    /// Freshness metadata for chat timeline sync.
-    private(set) var lastSuccessfulSyncAt: Date?
-    private(set) var isSyncing = false
-    private(set) var lastSyncFailed = false
-
     private(set) var tracePage: TracePageMetadata?
     private(set) var isLoadingOlderTracePage = false
 
@@ -586,21 +581,6 @@ final class ChatSessionManager {
         }
     }
 
-    private func markSyncStarted() {
-        isSyncing = true
-    }
-
-    private func markSyncSucceeded(at date: Date = Date()) {
-        isSyncing = false
-        lastSyncFailed = false
-        lastSuccessfulSyncAt = date
-    }
-
-    private func markSyncFailed() {
-        isSyncing = false
-        lastSyncFailed = true
-    }
-
     // MARK: - Lifecycle
 
     func markAppeared() {
@@ -872,7 +852,6 @@ final class ChatSessionManager {
         telemetry.cancelTTFT()
         telemetry.startSessionSwitch()
         telemetry.startSessionLoad()
-        markSyncStarted()
 
         let persistedLastSeenSeq = focusedStreamPort.loadPersistedSeq(sessionId: sessionId)
         focusedStreamPort.seedLastSeenSeq(
@@ -1130,7 +1109,6 @@ final class ChatSessionManager {
             return
         }
 
-        markSyncSucceeded()
         telemetry.updateTransportPath(focusedStreamPort.transportPath)
 
         if case .conversationStream(let frame) = message {
@@ -1784,7 +1762,6 @@ final class ChatSessionManager {
 
             guard generation == connectionGeneration else { return .noGap }
             guard let response else {
-                markSyncFailed()
                 log.warning("Catch-up fetch failed for \(self.sessionId) — scheduling history reload")
                 scheduleHistoryReload(
                     generation: generation,
@@ -1795,7 +1772,6 @@ final class ChatSessionManager {
             }
 
             if !response.live {
-                markSyncFailed()
                 log.warning("Session \(self.sessionId) is not live — scheduling history reload")
                 scheduleHistoryReload(
                     generation: generation,
@@ -1805,7 +1781,6 @@ final class ChatSessionManager {
                 return .fullReloadScheduled
             }
 
-            markSyncSucceeded()
 
             if let responseEpoch = response.runtimeEpoch,
                let focusedEpoch = runtimeEpoch,
@@ -2259,7 +2234,6 @@ final class ChatSessionManager {
         allowFirstMessageFallback: Bool = true
     ) async -> TraceSignature? {
         guard let routeScope = resolveRouteScope() else {
-            markSyncFailed()
             log.warning("Trace fetch skipped for \(self.sessionId): missing workspaceId")
             return nil
         }
@@ -2307,7 +2281,6 @@ final class ChatSessionManager {
             // re-entry cannot leave the visible timeline blank. The coalescer
             // still prevents high-frequency live publication in that state.
             tracePage = page
-            markSyncSucceeded()
 
             // `firstMessage` is a list-summary preview and may be truncated.
             // While execution is live, the focused stream owns the complete
@@ -2459,7 +2432,6 @@ final class ChatSessionManager {
             if let replayID {
                 reducer.discardHistoryReplayBuffer(id: replayID)
             }
-            markSyncFailed()
             log.warning("Trace fetch failed for \(self.sessionId): \(error.localizedDescription)")
             return nil
         }
@@ -2543,7 +2515,6 @@ final class ChatSessionManager {
             return applyPrependedTracePage(response)
         } catch {
             olderHistoryLoadFailed = true
-            markSyncFailed()
             log.warning("Older trace page failed for \(self.sessionId): \(error.localizedDescription)")
             return false
         }
@@ -2572,7 +2543,6 @@ final class ChatSessionManager {
             reducer.finalizeTerminalArtifactsAsInterrupted()
         }
         tracePage = page
-        markSyncSucceeded()
 
         let cacheEvents = reducer.traceEventsForCache()
         Task { @MainActor [historyPort, sessionId] in
@@ -2594,7 +2564,6 @@ final class ChatSessionManager {
             cancelPresentationReloadRetry()
         }
         cancelHistoryReload()
-        markSyncStarted()
 
         let cachedEventCount = cachedSignature?.eventCount
         let cachedLastEventId = cachedSignature?.lastEventId
@@ -2624,10 +2593,7 @@ final class ChatSessionManager {
                     // Overflow/paused-mutation recovery stays armed until a
                     // successful load. Failed hooks must not clear the flag.
                     self.coalescer.acknowledgePresentationTraceReload(ifMarker: presentationReloadMarker)
-                    self.markSyncSucceeded()
                     didSucceed = true
-                } else {
-                    self.markSyncFailed()
                 }
             } else if self.historyPort.canFetchRemoteHistory {
                 if let freshSignature = await self.loadHistory(
@@ -2648,7 +2614,6 @@ final class ChatSessionManager {
                 if self.activeHistoryReplayID == replayID {
                     self.activeHistoryReplayID = nil
                 }
-                self.markSyncFailed()
             }
 
             guard !Task.isCancelled,
@@ -2679,9 +2644,7 @@ final class ChatSessionManager {
 
         if let loadHook = _loadHistoryForTesting {
             let presentationReloadMarker = coalescer.presentationTraceReloadMarker
-            markSyncStarted()
             guard let signature = await loadHook(nil, nil) else {
-                markSyncFailed()
                 return false
             }
 
@@ -2690,16 +2653,13 @@ final class ChatSessionManager {
                 lastEventId: signature.lastEventId
             )
             coalescer.acknowledgePresentationTraceReload(ifMarker: presentationReloadMarker)
-            markSyncSucceeded()
             return true
         }
 
         guard historyPort.canFetchRemoteHistory else {
-            markSyncFailed()
             return false
         }
 
-        markSyncStarted()
         let replayID = UUID()
         activeHistoryReplayID = replayID
         reducer.beginHistoryReplayBuffer(id: replayID)
