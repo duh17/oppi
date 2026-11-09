@@ -450,3 +450,30 @@ class UIHarnessTestCase: XCTestCase {
         return lastOffset
     }
 }
+
+extension XCUIApplication {
+    /// Closes a regular-width popover the way a person does: a tap on the window
+    /// outside `content`. A popover has no grabber, so a swipe-down does not close
+    /// it (compact width presents the same content as a sheet, which does). The tap
+    /// lands in the window's own corner farthest from `content`, which the popover's
+    /// dismiss region receives; the caller still asserts that the content went away.
+    func tapOutsidePopover(_ content: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(
+            otherElements["PopoverDismissRegion"].exists,
+            "Only a popover closes with a tap outside it",
+            file: file,
+            line: line
+        )
+        let window = windows.firstMatch.frame
+        let frame = content.frame
+        let candidates = [
+            CGVector(dx: 0.05, dy: 0.95), CGVector(dx: 0.95, dy: 0.95),
+            CGVector(dx: 0.05, dy: 0.05), CGVector(dx: 0.95, dy: 0.05),
+        ]
+        let outside = candidates.first {
+            !frame.contains(CGPoint(x: window.minX + window.width * $0.dx, y: window.minY + window.height * $0.dy))
+        }
+        XCTAssertNotNil(outside, "No window corner lies outside the popover (\(frame))", file: file, line: line)
+        coordinate(withNormalizedOffset: outside ?? candidates[0]).tap()
+    }
+}

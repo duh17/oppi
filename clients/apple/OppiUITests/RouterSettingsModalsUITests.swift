@@ -275,7 +275,8 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// The guided composer's model pill opens the shared UIKit model picker
-    /// over the Agents list; Cancel and swipe-down both close it.
+    /// over the Agents list; Cancel closes it, and so does swipe-down on a sheet or
+    /// a tap outside on a popover.
     func testGuidedComposerModelPicker() {
         launch(page: "agents")
         let input = app.textViews["chat.input"]
@@ -294,8 +295,14 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
 
         pill.tap()
         XCTAssertTrue(models.waitUntilExists(timeout: 5), "Model picker did not reopen")
-        dragToBottom(models)
-        XCTAssertTrue(models.waitUntilGone(timeout: 10), "Swipe-down must close the model picker")
+        // Compact width presents a sheet, which swipes down; regular width a popover,
+        // which closes with a tap outside it.
+        let usesSheet = app.windows.firstMatch.horizontalSizeClass == .compact
+        if usesSheet { dragToBottom(models) } else { app.tapOutsidePopover(models) }
+        XCTAssertTrue(
+            models.waitUntilGone(timeout: 10),
+            usesSheet ? "Swipe-down must close the model picker" : "A tap outside must close the model picker popover"
+        )
         assertRunning()
     }
 

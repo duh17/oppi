@@ -351,7 +351,17 @@ final class BookReaderHarnessUITests: XCTestCase {
 
         let sheet = app.otherElements["fullscreen.viewingOptions"]
         XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Viewing Options did not open")
-        sheet.swipeDown()
+        closeViewingOptions(sheet)
+    }
+
+    /// A sheet at compact width, a popover at regular width: the sheet swipes down,
+    /// the popover closes with a tap outside it.
+    private func closeViewingOptions(_ sheet: XCUIElement) {
+        if app.windows.firstMatch.horizontalSizeClass == .compact {
+            sheet.swipeDown()
+        } else {
+            app.tapOutsidePopover(sheet)
+        }
         XCTAssertTrue(sheet.waitUntilGone(timeout: 5), "Viewing Options did not close")
     }
 
@@ -367,8 +377,7 @@ final class BookReaderHarnessUITests: XCTestCase {
 
         let sheet = app.otherElements["fullscreen.viewingOptions"]
         XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Viewing Options did not open")
-        sheet.swipeDown()
-        XCTAssertTrue(sheet.waitUntilGone(timeout: 5), "Viewing Options did not close")
+        closeViewingOptions(sheet)
     }
 
     // MARK: - Reading state
