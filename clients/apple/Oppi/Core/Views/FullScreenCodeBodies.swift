@@ -168,7 +168,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var pendingReconfigurationLayoutReason: MarkdownReaderLayoutReplacementReason?
     private(set) var renderedSegments: [FlatSegment] = []
     private var renderedSegmentLineRanges: [ClosedRange<Int>?] = []
-    private var renderedSegmentIDs: [MarkdownReaderSegmentID] = []
+    private(set) var renderedSegmentIDs: [MarkdownReaderSegmentID] = []
     private(set) var currentConfig: AssistantMarkdownContentView.Configuration?
     private var viewportDoubleTapActivation: (() -> Void)?
     private var lineAnchorFocusTask: Task<Void, Never>?
@@ -978,6 +978,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             #endif
         }
         updateGeometryPresentation(on: cell, item: indexPath.item)
+        remarkFindMatch(in: cell)
         return cell
     }
 

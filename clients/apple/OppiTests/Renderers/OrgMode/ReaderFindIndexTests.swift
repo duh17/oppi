@@ -121,12 +121,6 @@ struct ReaderFindIndexTests {
         #expect(cursor.index == 1)
         var none = ReaderFindCursor(count: 0)
         none.step(forward: true)
-        #expect(none.isEmpty && none.index == 0)
-    }
-
-    @Test func aNewQueryStartsAtTheFirstMatchOnOrAfterTheReadingPlace() {
-        let matches = [0, 2, 5].map { ReaderFindMatch(segment: $0, range: NSRange(location: 0, length: 1), section: nil) }
-        #expect(ReaderFindCursor.firstIndex(in: matches, atOrAfterSegment: 1) == 1)
-        #expect(ReaderFindCursor.firstIndex(in: matches, atOrAfterSegment: 9) == 0, "past the last: wrap to the first")
+        #expect(none.count == 0 && none.index == 0)
     }
 }

@@ -263,7 +263,12 @@ struct ReaderHeadingAnchorTests {
         /// The folds the reader last reported to its owner.
         var folded: Set<Int> { box.folded ?? start }
 
-        init(source: String, folded: Set<Int> = [], format: MarkdownReaderSourceFormat = .orgMode, path: String = "notes.org") {
+        init(
+            source: String,
+            folded: Set<Int> = [],
+            format: MarkdownReaderSourceFormat = .orgMode,
+            path: String = "notes.org"
+        ) {
             start = folded
             let box = FoldBox()
             let memory = OrgFoldMemory(folded: folded) { box.folded = $0 }
@@ -297,6 +302,26 @@ struct ReaderHeadingAnchorTests {
         }
 
         var offset: CGFloat { body.collectionView.contentOffset.y }
+
+        /// The text the find highlight marks, when that text is on screen.
+        func visibleHighlightedText() -> String? {
+            guard let (layout, range) = body.findState.highlighted else { return nil }
+            let views = body.collectionView.visibleCells.flatMap { Self.textViews(in: $0) }
+            guard let textView = views.first(where: { $0.textLayoutManager === layout }),
+                  let content = layout.textContentManager else { return nil }
+            let start = content.offset(from: content.documentRange.location, to: range.location)
+            let length = content.offset(from: range.location, to: range.endLocation)
+            guard let from = textView.position(from: textView.beginningOfDocument, offset: start),
+                  let to = textView.position(from: from, offset: length),
+                  let textRange = textView.textRange(from: from, to: to) else { return nil }
+            let rect = body.collectionView.convert(textView.firstRect(for: textRange), from: textView)
+            let visible = body.collectionView.bounds.inset(by: body.collectionView.adjustedContentInset)
+            return visible.contains(rect) ? textView.text(in: textRange) : nil
+        }
+
+        private static func textViews(in view: UIView) -> [UITextView] {
+            (view as? UITextView).map { [$0] } ?? view.subviews.flatMap(textViews)
+        }
 
         /// How far below the top of the screen the item sits.
         func topOfItem(_ item: Int) -> CGFloat? {
@@ -387,6 +412,25 @@ struct ReaderHeadingAnchorTests {
         try await reader.settle("the sections opening") { reader.folded == [5] }
         try await reader.settle("the scroll") { reader.offset > 100 && reader.body.findState.highlighted != nil }
         #expect(reader.folded == [5], "an unrelated fold is left alone")
+    }
+
+    /// A section several screens tall, as any section is at the largest text
+    /// size: the match sits far below the top of the segment that holds it.
+    @MainActor
+    @Test func aFindMatchFarIntoATallSectionIsHighlightedOnScreen() async throws {
+        func section(_ n: Int) -> String {
+            "* Section \(n)\n" + (1...30).map { "Paragraph \($0) of section \(n), long enough to wrap onto a second line on a phone." }
+                .joined(separator: "\n\n") + "\n"
+        }
+        let reader = Mounted(source: (1...6).map(section).joined(separator: "\n"), folded: [4])
+        try await reader.settle("first draw") { !reader.body.renderedSegments.isEmpty }
+        var index: ReaderFindIndex?
+        reader.body.findIndex { index = $0 }
+        try await reader.settle("the index") { index != nil }
+        let query = "Paragraph 27 of section 4"
+        let match = try #require(index?.matches(for: query).first)
+        reader.body.revealFindMatch(match)
+        try await reader.settle("the match on screen, marked") { reader.visibleHighlightedText() == query }
     }
 
     @MainActor

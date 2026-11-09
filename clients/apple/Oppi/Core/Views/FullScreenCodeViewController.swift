@@ -87,9 +87,8 @@ final class FullScreenCodeViewController: UIViewController {
     private var completeRawText: String?
     private var rawSidecarTask: Task<Void, Never>?
     private var copyButton: UIBarButtonItem?
-    // The reader's Outline and Find bar items (`FullScreenCodeViewController+ReaderNavigation`).
+    /// The reader's Outline bar item, the popover's anchor (`FullScreenCodeViewController+ReaderNavigation`).
     var outlineBarItem: UIBarButtonItem?
-    var findBarItem: UIBarButtonItem?
     private var floatingViewingOptionsButton: UIButton?
     private weak var viewingOptionsController: FullScreenViewingOptionsController?
     private(set) weak var contentHostController: UIViewController?

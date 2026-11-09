@@ -7,12 +7,10 @@ extension FullScreenCodeViewController {
     /// while the open file has headings.
     func makeReaderNavigationItems(palette: ThemePalette) -> [UIBarButtonItem] {
         var items: [UIBarButtonItem] = []
-        findBarItem = nil
         if supportsFind {
             let find = railItem(symbol: "magnifyingglass", title: String(localized: "Find"), action: #selector(showFind))
             find.accessibilityIdentifier = "fileViewer.find.button"
             find.tintColor = palette.ui.fgDim
-            findBarItem = find
             items.append(find)
         }
         outlineBarItem = nil

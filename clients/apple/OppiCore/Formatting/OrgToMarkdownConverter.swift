@@ -459,9 +459,8 @@ enum OrgToMarkdownConverter {
     ///
     /// Files go out as plain relative paths: the reader joins them to the
     /// document's directory and routes them to the file viewer like a Markdown
-    /// `[label](path)`. A `::search` option (heading, line, regex) is dropped,
-    /// as Markdown drops a `#heading` fragment: the file opens at the top.
-    /// A heading a link names (`*Heading`, `#custom-id`, `id:`) travels as a
+    /// `[label](path)`. A `::search` option other than a heading (a line, a
+    /// regex) is dropped: the file opens at the top. A heading a link names (`*Heading`, `#custom-id`, `id:`) travels as a
     /// `ReaderHeadingAnchor` fragment, which the reader scrolls to: alone for
     /// this document, after the path for another file.
     private static func linkDestination(_ url: String, context: Context) -> String? {

@@ -10,6 +10,9 @@ struct ReaderFindState {
     var waiting: [@MainActor (ReaderFindIndex) -> Void] = []
     /// A match waiting for its section to open and draw.
     var pending: ReaderFindMatch?
+    /// The segment and range the current match is marked at, kept so a cell
+    /// configured again (a reload, a new document layout) marks it again.
+    var marked: (segment: MarkdownReaderSegmentID, range: NSRange)?
     var highlighted: (layout: NSTextLayoutManager, range: NSTextRange)?
 }
 
@@ -159,6 +162,8 @@ extension NativeFullScreenMarkdownBody: UIFindInteractionDelegate {
         }
         findState.pending = nil
         guard renderedSegments.indices.contains(item) else { return }
+        removeFindHighlightRendering()
+        findState.marked = renderedSegmentIDs.indices.contains(item) ? (renderedSegmentIDs[item], match.range) : nil
         let path = IndexPath(item: item, section: 0)
         collectionView.layoutIfNeeded()
         guard let frame = collectionView.collectionViewLayout.layoutAttributesForItem(at: path)?.frame else { return }
@@ -177,13 +182,26 @@ extension NativeFullScreenMarkdownBody: UIFindInteractionDelegate {
     // MARK: Highlight
 
     func clearFindHighlight() {
+        findState.marked = nil
+        removeFindHighlightRendering()
+    }
+
+    /// A configured cell gets new text views when the document lays out again,
+    /// and the old ones take the mark with them: mark the match again.
+    func remarkFindMatch(in cell: FullScreenMarkdownSegmentCell) {
+        guard let marked = findState.marked, cell.appliedSegmentID == marked.segment,
+              let textView = Self.textView(in: cell) else { return }
+        highlight(marked.range, in: textView)
+    }
+
+    private func removeFindHighlightRendering() {
         guard let (layout, range) = findState.highlighted else { return }
         layout.removeRenderingAttribute(.backgroundColor, for: range)
         findState.highlighted = nil
     }
 
     private func highlight(_ range: NSRange, in textView: UITextView) {
-        clearFindHighlight()
+        removeFindHighlightRendering()
         guard let layout = textView.textLayoutManager, let content = layout.textContentManager,
               let start = content.location(content.documentRange.location, offsetBy: range.location),
               let end = content.location(start, offsetBy: range.length),

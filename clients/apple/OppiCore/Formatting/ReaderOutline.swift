@@ -111,7 +111,6 @@ struct ReaderOutline: Equatable, Sendable {
     let headings: [ReaderHeading]
     /// The ordinal of each heading's parent, if it has one.
     private let parents: [Int: Int]
-    private let ordinalByLine: [Int: Int]
 
     init(headings: [ReaderHeading]) {
         self.headings = headings
@@ -123,17 +122,10 @@ struct ReaderOutline: Equatable, Sendable {
             open.append(heading)
         }
         self.parents = parents
-        ordinalByLine = Dictionary(headings.map { ($0.line, $0.ordinal) }, uniquingKeysWith: { first, _ in first })
     }
-
-    var isEmpty: Bool { headings.isEmpty }
 
     func heading(ordinal: Int) -> ReaderHeading? {
         headings.indices.contains(ordinal - 1) ? headings[ordinal - 1] : nil
-    }
-
-    func heading(line: Int) -> ReaderHeading? {
-        ordinalByLine[line].flatMap { heading(ordinal: $0) }
     }
 
     /// The headings above `ordinal`, outermost first: the sections that must be

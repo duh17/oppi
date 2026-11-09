@@ -116,17 +116,9 @@ struct ReaderFindCursor: Equatable, Sendable {
         self.index = count == 0 ? 0 : min(max(0, index), count - 1)
     }
 
-    var isEmpty: Bool { count == 0 }
-
     mutating func step(forward: Bool) {
         guard count > 0 else { return }
         index = (index + (forward ? 1 : count - 1)) % count
-    }
-
-    /// The match nearest at or after `segment`, so a new query starts from
-    /// where the person is reading: the first match at or after `from`, else the first.
-    static func firstIndex(in matches: [ReaderFindMatch], atOrAfterSegment from: Int) -> Int {
-        matches.firstIndex { $0.segment >= from } ?? 0
     }
 }
 
