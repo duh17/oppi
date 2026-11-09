@@ -949,6 +949,52 @@ struct AppWorkspaceLoad: TelemetryEvent {
     }
 }
 
+/// How long from a Model Providers load starting until the connection was ready, the providers showed, and the usage filled in? A failed usage read is `error` and still reports usage_ms.
+struct AppModelProvidersLoad: TelemetryEvent {
+    static let name = "app.model_providers_load"
+
+    enum Status: String, Sendable, CaseIterable {
+        case ok
+        case error
+    }
+
+    let readyMs: Double
+    let providersMs: Double
+    let usageMs: Double
+    let status: Status
+
+    init(
+        readyMs: Double,
+        providersMs: Double,
+        usageMs: Double,
+        status: Status
+    ) {
+        self.readyMs = readyMs
+        self.providersMs = providersMs
+        self.usageMs = usageMs
+        self.status = status
+    }
+
+    var fieldValues: [String: Double] {
+        var values: [String: Double] = [:]
+        values["ready_ms"] = readyMs
+        values["providers_ms"] = providersMs
+        values["usage_ms"] = usageMs
+        return values
+    }
+
+    var passesEmitPolicy: Bool {
+        if providersMs >= 60000 { return false }
+        return true
+    }
+
+    var tagValues: [String: String] {
+        var values: [String: String] = [:]
+        values["status"] = status.rawValue
+        return values
+    }
+}
+
 /// How long did the client wait for the focused session stream to connect?
 struct AppWsWait: TelemetryEvent {
     static let name = "app.ws_wait"

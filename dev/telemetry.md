@@ -107,6 +107,7 @@ User-visible wait time. Do not put full agent work duration in this group.
 | `app.session_switch` | How long from tapping a session row until chat content was visible? | `duration_ms` ms<br>`cached` bool | none | emit `duration_ms` < 60000<br>SLO `duration_ms` TM99 ≤ 600 |
 | `app.trace_fetch` | How long did fetching and decoding a trace page take? | `duration_ms` ms<br>`trace_events` count (optional) | `status`*: `ok`, `error`<br>`error_kind` | SLO `duration_ms` TM99 ≤ 1500 when status=ok |
 | `app.workspace_load` | How long until the workspace screen was usable? | `duration_ms` ms | `load_path`*: `open`, `return_from_chat` | emit `duration_ms` < 60000<br>SLO `duration_ms` TM99 ≤ 1000 |
+| `app.model_providers_load` | How long from a Model Providers load starting until the connection was ready, the providers showed, and the usage filled in? A failed usage read is `error` and still reports usage_ms. | `ready_ms` ms<br>`providers_ms` ms<br>`usage_ms` ms | `status`*: `ok`, `error` | emit `providers_ms` < 60000<br>SLO `providers_ms` TM99 ≤ 1000 |
 
 #### Connection Reliability
 

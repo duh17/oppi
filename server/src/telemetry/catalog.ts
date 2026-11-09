@@ -886,6 +886,15 @@ const EVENTS = {
     emit: [{ field: "duration_ms", max: LOAD_CEILING_MS }],
     slo: [{ field: "duration_ms", tm99: 1_000, label: "Workspace load" }],
   },
+  "app.model_providers_load": {
+    description:
+      "How long from a Model Providers load starting until the connection was ready, the providers showed, and the usage filled in? A failed usage read is `error` and still reports usage_ms.",
+    group: "ux",
+    fields: { ready_ms: "ms", providers_ms: "ms", usage_ms: "ms" },
+    tags: { status: { required: true, values: ["ok", "error"] } },
+    emit: [{ field: "providers_ms", max: LOAD_CEILING_MS }],
+    slo: [{ field: "providers_ms", tm99: 1_000, label: "Model Providers load" }],
+  },
 
   // ─── App: connection, commands, and queue ───
   "app.ws_wait": {

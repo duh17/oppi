@@ -146,6 +146,39 @@ struct ModelProvidersPageTests {
         }, "a failed usage read keeps the usage the page showed")
     }
 
+    @Test("the providers show and the load ends while the usage read is still out")
+    func providersDoNotWaitForUsage() async throws {
+        let usageReadAt = 1_700_000_000_000
+        let answers = ProviderHostAnswers(
+            providers: [provider("claude", name: "Claude", authenticated: true)],
+            quotas: ProviderQuotasInfo(
+                providers: [ProviderQuota(
+                    providerId: "claude", displayName: "Claude", authenticated: true, planType: "max",
+                    windows: [], credits: nil, prepaidBalanceCents: nil, fetchedAt: usageReadAt, error: nil
+                )],
+                fetchedAt: usageReadAt
+            )
+        )
+        answers.holdQuotas()
+        defer { answers.releaseQuotas() }
+        let routes = Self.useAnswers(["ready-server.test": answers])
+        defer { routes.end() }
+        let root = try await makeRoot()
+        let page = ModelProvidersViewController(target: ModelProvidersNavTarget(serverId: serverId), root: root)
+        let window = try show(page)
+        defer { hide(window) }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.shownItems.contains(.provider("claude")) && !page.isLoading
+        }, "the providers are shown and the load is over before the usage answers")
+        #expect(page.sections().first { $0.id == .connected }?.footer == nil, "no usage is shown yet")
+
+        answers.releaseQuotas()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.sections().first { $0.id == .connected }?.footer?.hasPrefix("Usage as of") == true
+        }, "the usage fills in when it lands")
+    }
+
     @Test("the API key sheet saves the trimmed key and refuses to be swiped away with one typed")
     func apiKeySheetSavesTheTrimmedKey() async throws {
         let routes = Self.useAnswers(["ready-server.test": ProviderHostAnswers(providers: [])])
@@ -279,6 +312,13 @@ private final class ProviderHostAnswers: @unchecked Sendable {
     /// Fails the next usage reads instead of answering them.
     var failQuotas = false
 
+    private let quotaGate = DispatchSemaphore(value: 0)
+    private var holdsQuotas = false
+
+    /// Keeps usage reads unanswered until `releaseQuotas()`.
+    func holdQuotas() { lock.withLock { holdsQuotas = true } }
+    func releaseQuotas() { quotaGate.signal() }
+
     func answer(for request: URLRequest) throws -> (Data, HTTPURLResponse)? {
         switch request.url?.path {
         case let path? where path.hasSuffix("/provider-auth/status"):
@@ -290,6 +330,7 @@ private final class ProviderHostAnswers: @unchecked Sendable {
             if cancels { throw URLError(.cancelled) }
             return try mockJSONResponse(encoding: Envelope(providers: providers), for: request)
         case let path? where path.hasSuffix("/server/provider-quotas"):
+            if lock.withLock({ holdsQuotas }) { quotaGate.wait() }
             if failQuotas { throw URLError(.badServerResponse) }
             return try mockJSONResponse(encoding: quotas, for: request)
         default:
