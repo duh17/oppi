@@ -1106,9 +1106,17 @@ final class RexMonitor: SSHTerminalOverviewSource {
     /// A pane row opens that pane on this device (`openPane`). Session rows
     /// offer nothing.
     func open(_ focus: SSHTerminalOverviewFocus) -> Bool {
+        guard let sessionID = focus.scope, !focus.isGroup else {
+            focusFailure = "This pane is no longer in Rex."
+            return false
+        }
+        return open(session: sessionID, block: focus.id)
+    }
+
+    /// Opens the pane Rex knows by these ids, or says it is gone.
+    func open(session sessionID: String, block blockID: String) -> Bool {
         focusFailure = nil
-        guard let sessionID = focus.scope, !focus.isGroup,
-              let pane = snapshot?.pane(session: sessionID, block: focus.id), let openPane else {
+        guard let pane = snapshot?.pane(session: sessionID, block: blockID), let openPane else {
             focusFailure = "This pane is no longer in Rex."
             return false
         }

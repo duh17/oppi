@@ -54,12 +54,17 @@ final class SSHTerminalSetupViewController: ListScreenController<
     /// `host` prefills a new host (the server's address); a saved host always
     /// shows its own. `folderTerminal` makes this form the first step of
     /// "Open Terminal here".
-    init(profileID: UUID? = nil, host: String? = nil, folderTerminal: SSHTerminalFolderTarget? = nil) {
+    /// `presetsRex` starts a new host on Multiplexer: Rex (a Rex link opened Add Host).
+    init(
+        profileID: UUID? = nil, host: String? = nil, folderTerminal: SSHTerminalFolderTarget? = nil,
+        presetsRex: Bool = false
+    ) {
         self.profileID = profileID
         self.folderTerminal = folderTerminal
         var stored = profileID.flatMap { SSHTerminalProfileStore().profile(id: $0) }
             ?? SSHTerminalProfile(id: profileID ?? UUID())
         if profileID == nil, let host, !host.isEmpty { stored.host = host }
+        if profileID == nil, presetsRex { stored.choose(.rex) }
         profile = stored
         portText = String(stored.port)
         colorChoice = SSHTerminalColorStore().choice(for: stored.id)

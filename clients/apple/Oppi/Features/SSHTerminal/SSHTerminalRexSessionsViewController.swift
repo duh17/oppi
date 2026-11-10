@@ -22,8 +22,12 @@ final class SSHTerminalRexSessionsViewController: UIViewController {
     /// Edit Host from a pane or the shell: that host's form opens once the
     /// terminal has closed over this screen.
     private var editAfterTerminal: UUID?
+    /// A pane an `oppi://terminal` link asked for, opened once Rex has been read.
+    /// Dropped when Rex answers (the pane opens, or is said to be gone) or cannot be reached.
+    private var linkedPane: TerminalDeepLink?
 
-    init(profile: SSHTerminalProfile, suppliedPassword: String? = nil) {
+    init(profile: SSHTerminalProfile, suppliedPassword: String? = nil, opening linkedPane: TerminalDeepLink? = nil) {
+        self.linkedPane = linkedPane
         follower = SSHTerminalRexFollower(profile: profile, suppliedPassword: suppliedPassword, promptsAutomatically: true)
         super.init(nibName: nil, bundle: nil)
         title = follower.profile.endpointLabel
@@ -114,8 +118,33 @@ final class SSHTerminalRexSessionsViewController: UIViewController {
         // The chrome first: the edge of a terminal closing over this screen
         // cancels the attempt in flight, which must not be the list's own.
         chrome?.sync()
+        openLinkedPaneIfRead()
         let covered = session.showsTerminal || editAfterTerminal != nil || presentedViewController != nil
         follower.sync(active: isOnScreen && !isBackground && !covered)
+    }
+
+    /// Rex has been read (or cannot be): open the linked pane, or say plainly why not.
+    /// The list stays under the message, showing what Rex does have.
+    private func openLinkedPaneIfRead() {
+        guard let link = linkedPane else { return }
+        let message: String
+        if monitor.snapshot != nil {
+            linkedPane = nil
+            guard !monitor.open(session: link.sessionID, block: link.blockID) else { return }
+            message = String(localized: "That pane is no longer in Rex. The panes that are running are listed here.")
+        } else if let absence = monitor.absence {
+            linkedPane = nil
+            message = absence.advice
+        } else if session.failure != nil || monitor.failure != nil, !session.connecting {
+            // The sign-in or the read failed; its own row says why.
+            linkedPane = nil
+            message = monitor.failure ?? String(localized: "Oppi could not reach Rex on this host.")
+        } else {
+            return
+        }
+        Task { @MainActor [weak self] in
+            self?.errorAlerts.show(title: String(localized: "Cannot Open Pane"), message: message)
+        }
     }
 
     /// The host's own terminal: the login shell, the one open if it still is.

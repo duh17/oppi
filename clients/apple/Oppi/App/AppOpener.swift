@@ -21,6 +21,8 @@ enum AppOpenRequest: Equatable, Sendable {
     case quickSession(QuickSessionStart)
     /// `oppi://workspace?path=&name=&server=`: workspace creation, prefilled.
     case createWorkspace(WorkspaceDeepLink.Payload)
+    /// `oppi://terminal/rex?session=&block=`: opens one Rex pane. Open-only.
+    case terminal(TerminalOpen)
     /// `oppi://connect` or `oppi://pair`.
     case invite(URL)
     /// http(s): the browser preference decides in-app or system.
@@ -56,6 +58,8 @@ enum AppOpenRequest: Equatable, Sendable {
             self = .thread(thread)
         } else if scheme == "oppi", let payload = WorkspaceDeepLink.payload(from: url) {
             self = .createWorkspace(payload)
+        } else if let terminal = TerminalOpen(url: url, sourceServerID: sourceServerID) {
+            self = .terminal(terminal)
         } else if scheme == "oppi" {
             self = .invite(url)
         } else if let reference = ResourceReferenceURL.parse(url) {
@@ -595,6 +599,8 @@ final class AppOpener {
             outcome = await performThread(open, generation: generation)
         case .createWorkspace(let payload):
             outcome = await performCreateWorkspace(payload, generation: generation)
+        case .terminal(let open):
+            outcome = await performTerminal(open, generation: generation)
         case .quickSession(let start):
             navigation.presentQuickSession(start, from: .intent)
             outcome = .finished

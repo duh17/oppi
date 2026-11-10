@@ -7,6 +7,7 @@ oppi://connect?v=3&invite=<base64url-signed-invite>
 oppi://workspace?path=/Users/example/workspace/oppi&name=Oppi&server=sha256:<server-fingerprint>
 oppi://session/<session-id>
 oppi://thread/<session-id>
+oppi://terminal/rex?session=<rex-session-id>&block=<rex-block-id>
 ```
 
 Test in the Simulator:
@@ -23,6 +24,7 @@ xcrun simctl openurl booted 'oppi://workspace?path=/Users/example/workspace/oppi
 | `oppi://workspace?path=<path>&name=<name>&server=<fingerprint>` | `path`; `name` and `server` optional | Opens Create Workspace with the path and name prefilled; you confirm |
 | `oppi://session/<session-id>` | Session ID | Opens the session if known locally or found by server lookup; otherwise opens Workspaces |
 | `oppi://thread/<session-id>` | ID of any session in the thread | Opens All Sessions (the matching list on iPad) with the session's thread open in place and scrolled to its root; if the session is a descendant, its root's thread opens. A session the server says it does not have opens the list with a "Session not found for this thread link" notice; a server that cannot be reached keeps the link for the next foreground, as a session link does |
+| `oppi://terminal/rex?session=<id>&block=<id>` | Rex `session_id` and `block_id` (`session:…`, `block:…`, as `rex split --json` prints them; the colons may be percent-encoded) | Opens that Rex pane in the SSH terminal, on the saved SSH host for the server the link came from (the chat it was tapped in, else the active server) |
 
 Invite and workspace links accept `oppi://workspace?...` and `oppi:///workspace?...`. Session links use `oppi://session/<id>` and thread links `oppi://thread/<id>`, with the same ID validation and server lookup (a `?workspaceId=` query is ignored). Use lowercase parameter names; route names are case-insensitive.
 
@@ -52,12 +54,16 @@ Workspace links navigate and prefill; they never run remote commands. The app se
 - **Server:** `server` must match a paired server fingerprint (`sha256:<hash>` or `<hash>`). If omitted and exactly one server is paired, Oppi uses it. With several paired and no `server`, the app shows a toast and does not open the form.
 - **Encoding:** percent-encode query values with `URLComponents`, `URLSearchParams`, or similar. These decode query values once, so a literal `%2F` is written `%252F`. `path` is trimmed and must not be empty; empty `name` and `server` count as missing.
 
+## Terminal links
+
+A terminal link only opens a pane; it never types or runs anything, and any parameter beyond `session` and `block` makes it invalid. It needs the Rex experiment on and a saved host whose Multiplexer is Rex. With no saved host for the server, Oppi opens Add Host with the server's host filled in and Multiplexer set to Rex; after you save it, tap the link again. If Rex is not running or the pane is gone, Oppi says so and leaves you on the host's pane list. Sign-in is the terminal's own, including Face ID for the key.
+
 ## Links in assistant output
 
 The chat timeline handles links before UIKit does:
 
 - `oppi://session/<id>` pushes the target session on the current stack; Back and swipe-back return to the chat. Session URLs from outside the app, including cold launches, replace the visible route instead.
-- Other `oppi://` links use the app-level handler, so pairing and workspace links keep their global behavior.
+- Other `oppi://` links use the app-level handler, so pairing, workspace, and terminal links keep their global behavior. This holds in an ask card's Markdown too.
 - `http://` and `https://` follow the Browser link-opening setting (Oppi's in-app browser or the external browser). Other schemes use the system default.
 
 An agent can print a link such as `[Create workspace](oppi://workspace?path=/Users/example/workspace/oppi&name=Oppi)`. The tap is user-initiated. Oppi strips common trailing Markdown delimiters from tapped URLs, including encoded backticks from malformed autolinks.
