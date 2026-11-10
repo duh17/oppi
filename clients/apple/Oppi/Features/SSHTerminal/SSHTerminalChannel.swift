@@ -600,6 +600,9 @@ final class SSHTerminalChannel {
             await process(queue.drain(), releasingTo: queue)
             if !connected { break }
         }
+        // A stream that ended mid-gesture: what was held goes in first, so the
+        // panes get their last output and the terminal ends in the stream's words.
+        while connected, let item = scrollHold.popFirst() { apply(item) }
         queue.finish()
         if connected { close(reason: "The SSH connection closed.") }
     }
@@ -620,6 +623,10 @@ final class SSHTerminalChannel {
     /// after this one finished, and a non-data event is applied only after
     /// every byte queued before it. Interpreted bytes are released before each
     /// yield, so the remote can resume while the main actor is away.
+    ///
+    /// While a scroll gesture runs, `scrollHold` takes what is not the pane being
+    /// scrolled (`SSHTerminalScrollHold`). Held bytes count as consumed, so the
+    /// remote keeps flowing; the hold's cap, not the queue, bounds them.
     private func process(_ items: [SSHTerminalEventQueue.Item], releasingTo queue: SSHTerminalEventQueue) async {
         let clock = ContinuousClock()
         var sliceStart = clock.now
@@ -632,7 +639,32 @@ final class SSHTerminalChannel {
             interpret(run, block: runBlock)
             run.removeAll(keepingCapacity: true)
         }
+        /// After a spent slice: release what was interpreted and yield, so frames
+        /// and input run. False when a close while yielded (user, background,
+        /// registry) ended the burst.
+        func yieldIfSliceSpent() async -> Bool {
+            guard clock.now - sliceStart >= Self.ingestSliceBudget else { return true }
+            queue.release(bytes: unreleased)
+            unreleased = 0
+            await Task.yield()
+            sliceStart = clock.now
+            return connected
+        }
         for item in items {
+            if scrollHold.shouldHold(item, presented: presented, scrolling: isScrollGestureActive) {
+                switch item {
+                case .event(.data(let bytes)), .data(let bytes, _): unreleased += bytes.count
+                default: break
+                }
+                scrollHold.hold(item)
+                // Past the cap the oldest go in now, a slice at a time.
+                while scrollHold.isOverCap, let oldest = scrollHold.popFirst() {
+                    flush()
+                    apply(oldest)
+                    guard await yieldIfSliceSpent() else { return }
+                }
+                continue
+            }
             switch item {
             case .event(.data(let bytes)):
                 unreleased += bytes.count
@@ -643,14 +675,7 @@ final class SSHTerminalChannel {
                 run.append(bytes)
                 guard run.count >= Self.ingestWriteBytes else { continue }
                 flush()
-                guard clock.now - sliceStart >= Self.ingestSliceBudget else { continue }
-                queue.release(bytes: unreleased)
-                unreleased = 0
-                await Task.yield()
-                sliceStart = clock.now
-                // A close while yielded (user, background, registry) ends the burst.
-                guard connected else { return }
-                continue
+                guard await yieldIfSliceSpent() else { return }
             case .data(let bytes, let block):
                 unreleased += bytes.count
                 if runBlock != block {
@@ -660,33 +685,62 @@ final class SSHTerminalChannel {
                 run.append(bytes)
                 guard run.count >= Self.ingestWriteBytes else { continue }
                 flush()
-                guard clock.now - sliceStart >= Self.ingestSliceBudget else { continue }
-                queue.release(bytes: unreleased)
-                unreleased = 0
-                await Task.yield()
-                sliceStart = clock.now
-                guard connected else { return }
-                continue
-            case .event(let event):
+                guard await yieldIfSliceSpent() else { return }
+            default:
                 flush()
-                self.event(event)
-            case .snapshot(let snapshot, let block):
-                flush()
-                restore(snapshot, block: block)
-            case .snapshotRecords(let records, let block):
-                flush()
-                restoreHistory(records, block: block)
-            case .ended(let reason):
-                flush()
-                close(reason: reason)
-            case .overflow:
-                flush()
-                close(reason: "The terminal stopped consuming remote output. The connection was closed.")
+                apply(item)
             }
             if !connected { break }
         }
         flush()
         queue.release(bytes: unreleased)
+        startFlushingHeld()
+    }
+
+    /// One queued item, applied at once.
+    private func apply(_ item: SSHTerminalEventQueue.Item) {
+        switch item {
+        case .event(let event): self.event(event)
+        case .data(let bytes, let block): interpret(bytes, block: block)
+        case .snapshot(let snapshot, let block): restore(snapshot, block: block)
+        case .snapshotRecords(let records, let block): restoreHistory(records, block: block)
+        case .ended(let reason): close(reason: reason)
+        case .overflow: close(reason: "The terminal stopped consuming remote output. The connection was closed.")
+        }
+    }
+
+    // MARK: - Held while scrolling
+
+    /// A scroll gesture (finger down through coasting) is running on the grid.
+    /// The grid sets it each frame; it ending applies everything held.
+    @ObservationIgnored var isScrollGestureActive = false {
+        didSet { if oldValue, !isScrollGestureActive { startFlushingHeld() } }
+    }
+    @ObservationIgnored private(set) var scrollHold = SSHTerminalScrollHold()
+    @ObservationIgnored private var heldFlush: Task<Void, Never>?
+
+    /// Replaces the hold with one of another cap. Only before anything is held.
+    func setScrollHoldCap(_ capBytes: Int) {
+        scrollHold = SSHTerminalScrollHold(capBytes: capBytes)
+    }
+
+    /// Applies the held items, oldest first, in slices of `ingestSliceBudget`,
+    /// until none are left or another gesture starts. Each item applies without
+    /// a suspension point, so a later item of the same pane cannot overtake it.
+    private func startFlushingHeld() {
+        guard heldFlush == nil, !isScrollGestureActive, !scrollHold.isEmpty else { return }
+        heldFlush = Task { [weak self] in
+            guard let self else { return }
+            let clock = ContinuousClock()
+            var sliceStart = clock.now
+            while !isScrollGestureActive, connected, let item = scrollHold.popFirst() {
+                apply(item)
+                guard clock.now - sliceStart >= Self.ingestSliceBudget else { continue }
+                await Task.yield()
+                sliceStart = clock.now
+            }
+            heldFlush = nil
+        }
     }
 
     private var exitSubject: String { command.map { "`\($0)`" } ?? "Shell" }

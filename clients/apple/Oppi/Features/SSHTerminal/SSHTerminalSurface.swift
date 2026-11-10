@@ -339,6 +339,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         stopDisplayLink()
         if window == nil {
             keyRepeater.stop()
+            channel.isScrollGestureActive = false
             // The page is not in view: the swipe renderer kept between drags goes.
             panePreview.releaseRenderer()
             NotificationCenter.default.removeObserver(self, name: UIApplication.didBecomeActiveNotification, object: nil)
@@ -1898,11 +1899,14 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         didDrawFrame()
     }
 
-    /// One tick of the scroll gesture's measurement (`SSHTerminalScrollMeter`).
+    /// One tick of the scroll gesture's measurement (`SSHTerminalScrollMeter`), and
+    /// the channel's cue to hold back what is not the pane being scrolled.
     fileprivate func measureScroll(_ link: CADisplayLink) {
+        let scrolling = isHistoryScrolling
+        channel.isScrollGestureActive = scrolling
         guard let gesture = scrollMeter.tick(
-            timestamp: link.timestamp, targetTimestamp: link.targetTimestamp, scrolling: isHistoryScrolling,
-            heldBytes: 0,
+            timestamp: link.timestamp, targetTimestamp: link.targetTimestamp, scrolling: scrolling,
+            heldBytes: channel.scrollHold.totalHeldBytes,
             mode: SSHTerminalScrollMeter.mode(isRex: channel.rex != nil, command: channel.command),
             path: SSHTerminalScrollMeter.path(channel.engine.scrollAction)
         ) else { return }

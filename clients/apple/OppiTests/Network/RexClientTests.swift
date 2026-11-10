@@ -43,7 +43,7 @@ private func upgradeAnswer(key: String, subprotocol: String) -> Data {
 }
 
 /// A Ghostty snapshot of a `columns` by `rows` terminal that was written `text`.
-private func ghosttySnapshot(of text: String, columns: UInt16 = 80, rows: UInt16 = 24) throws -> Data {
+func ghosttySnapshot(of text: String, columns: UInt16 = 80, rows: UInt16 = 24) throws -> Data {
     var terminal: GhosttyTerminal?
     try #require(ghostty_terminal_new(nil, &terminal, columns, rows) == GHOSTTY_SUCCESS)
     defer { ghostty_terminal_free(terminal) }
@@ -60,13 +60,13 @@ private func ghosttySnapshot(of text: String, columns: UInt16 = 80, rows: UInt16
 }
 
 /// `count` numbered lines (`<name> line 0`, ...), enough to fill several history pages.
-private func numberedLines(_ count: Int, name: String = "") -> String {
+func numberedLines(_ count: Int, name: String = "") -> String {
     (0..<count).map { "\(name) line \($0)" }.joined(separator: "\r\n") + "\r\n$ "
 }
 
 /// A snapshot cut where Rex's stream cuts it: the screen (every record
 /// through READY) and each whole record after it.
-private func snapshotParts(_ snapshot: Data) throws -> (screen: Data, records: [Data]) {
+func snapshotParts(_ snapshot: Data) throws -> (screen: Data, records: [Data]) {
     var stream = RexTerminalStream(nonce: 1)
     var screen: Data?
     var records: [Data] = []
