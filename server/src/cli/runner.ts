@@ -5,7 +5,6 @@ import { cmdAgent } from "./commands/agent.js";
 import { cmdConfig } from "./commands/config.js";
 import { cmdDictionary } from "./commands/dictionary.js";
 import { cmdExtensions } from "./commands/extensions.js";
-import { cmdMachines } from "./commands/machines.js";
 import { cmdSchedule } from "./commands/schedule.js";
 import { cmdSession } from "./commands/session.js";
 import { cmdWait } from "./commands/wait.js";
@@ -148,9 +147,12 @@ async function executeCliCommand(args: readonly string[], options: CliRunOptions
     case "dictionary":
       await cmdDictionary(connection, positional[0], flags);
       return;
-    case "machines":
+    case "machines": {
+      // pi-env pulls in pi-durable, which the other commands never load.
+      const { cmdMachines } = await import("./commands/machines.js");
       await cmdMachines(connection.getDataDir(), positional[0], positional.slice(1), flags);
       return;
+    }
     case "workspace":
       await cmdWorkspace(connection, positional[0], positional.slice(1), flags);
       return;
