@@ -211,6 +211,21 @@ enum SettingsCatalog {
         )
     )
 
+    // MARK: - Privacy (this device)
+
+    /// Whether Markdown images from public HTTPS sites load without a tap. The fetch
+    /// limits (HTTPS, public hosts, size, content type) apply either way.
+    static let remoteImages = SettingDeclaration<Bool>(
+        id: "settings.privacy.loadRemoteImages",
+        key: AppPreferenceStore.RemoteImages.autoloadKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.RemoteImages.autoloadDefault,
+        copy: SettingCopy(
+            title: String(localized: "Load Remote Images"),
+            footer: String(localized: "Images from websites load without a tap. A website can see when you open the message, and a session that has been tricked could put private data in an image link.")
+        )
+    )
+
     // MARK: - Terminal
 
     /// What the Terminal page lists: Rex's panes for every saved host, or the saved
@@ -334,5 +349,6 @@ enum SettingsCatalog {
         durableSessionsEnabled.descriptor,
         startSessionsAsDurable.descriptor,
         autoSave.descriptor,
+        remoteImages.descriptor,
     ]
 }

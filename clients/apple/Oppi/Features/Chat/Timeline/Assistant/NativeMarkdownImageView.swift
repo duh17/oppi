@@ -102,6 +102,11 @@ final class NativeMarkdownImageView: UIView {
         try await RemoteMarkdownImageFetcher.fetch(url)
     }
 
+    /// Whether `.loadableRemote` images load without the tap prompt
+    /// (Settings > Privacy & Security > Load Remote Images).
+    var loadsRemoteImagesAutomatically: () -> Bool = { AppPreferences.RemoteImages.isEnabled }
+    private var remoteImagesObserver: NSObjectProtocol?
+
     /// Reader hosts use this to reserve the final item height and keep the
     /// viewport still. When set, async size changes do not invalidate the
     /// enclosing collection layout themselves.
@@ -127,6 +132,14 @@ final class NativeMarkdownImageView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupViews()
+        // Views already on screen pick up the switch: a pending prompt loads.
+        remoteImagesObserver = NotificationCenter.default.addObserver(
+            forName: AppPreferences.RemoteImages.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.loadPendingRemoteImageIfAllowed() }
+        }
     }
 
     @available(*, unavailable)
@@ -134,6 +147,9 @@ final class NativeMarkdownImageView: UIView {
 
     deinit {
         MainActor.assumeIsolated {
+            if let remoteImagesObserver {
+                NotificationCenter.default.removeObserver(remoteImagesObserver)
+            }
             cancelPreparationDemand()
         }
     }
@@ -412,7 +428,11 @@ final class NativeMarkdownImageView: UIView {
                     fetchSessionFile: fetchSessionFile,
                     fetchHostFile: fetchHostFile
                 )
-                showRemoteLoadPrompt(alt: alt)
+                if loadsRemoteImagesAutomatically() {
+                    handleRemoteLoadTap()
+                } else {
+                    showRemoteLoadPrompt(alt: alt)
+                }
             case .blockedRemote:
                 pendingRemoteLoad = nil
                 showBlockedRemoteState(alt: alt)
@@ -518,6 +538,13 @@ final class NativeMarkdownImageView: UIView {
                 fetchHostFile: fetchHostFile
             )
         }
+    }
+
+    private func loadPendingRemoteImageIfAllowed() {
+        // A reused view can still hold a stale pending load; only the current URL counts.
+        guard let pending = pendingRemoteLoad, pending.url == currentURL,
+              loadsRemoteImagesAutomatically() else { return }
+        handleRemoteLoadTap()
     }
 
     @objc private func handleRemoteLoadTap() {

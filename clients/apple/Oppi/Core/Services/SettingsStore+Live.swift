@@ -61,6 +61,9 @@ extension SettingsStore {
                 // write changes without telling anyone: the editors that are
                 // open need to hear it to start or stop the save they owe.
                 NotificationCenter.default.post(name: .codeEditorAutoSaveDidChange, object: nil)
+            case SettingsCatalog.remoteImages.id:
+                // Images already on screen that wait for a tap load now.
+                NotificationCenter.default.post(name: AppPreferences.RemoteImages.didChangeNotification, object: nil)
             case SettingsCatalog.experimentRex.id, SettingsCatalog.experimentHerdr.id:
                 // Out of an experiment at once, without a relaunch: a Rex terminal is a
                 // pane of a session Oppi may no longer read, so it ends rather than

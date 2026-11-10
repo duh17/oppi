@@ -599,6 +599,17 @@ enum AppPreferences {
         }
     }
 
+    // MARK: - Remote images
+
+    /// Settings > Privacy & Security > Load Remote Images (`SettingsCatalog.remoteImages`).
+    enum RemoteImages {
+        /// Posted after the setting is written so image views already on screen
+        /// can load the ones that wait for a tap.
+        static let didChangeNotification = Notification.Name("\(AppIdentifiers.subsystem).remoteImages.didChange")
+
+        static var isEnabled: Bool { AppPreferenceStore.RemoteImages.isAutoloadEnabled }
+    }
+
     // MARK: - Telemetry
 
     /// User preference for uploading diagnostics to the paired server.

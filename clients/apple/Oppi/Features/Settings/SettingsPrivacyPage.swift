@@ -1,7 +1,7 @@
 import UIKit
 
 /// Settings > Privacy & Security: App Lock, Confirm New Servers, the AI services
-/// this device allowed (each can be withdrawn), Send Diagnostics, and the Privacy
+/// this device allowed (each can be withdrawn), Load Remote Images, Send Diagnostics, and the Privacy
 /// Policy link. All of it is saved on this device.
 ///
 /// App Lock and Confirm New Servers guard themselves: changing or turning off an
@@ -10,9 +10,9 @@ import UIKit
 /// cannot quietly weaken them. A cancelled prompt leaves the control where it was.
 @MainActor
 final class SettingsPrivacyViewController: ListScreenController<SettingsPrivacyViewController.Section, SettingsPrivacyViewController.Item> {
-    enum Section: Hashable, Sendable { case appLock, confirmNewServers, aiServices, diagnostics, privacyPolicy }
+    enum Section: Hashable, Sendable { case appLock, confirmNewServers, aiServices, remoteImages, diagnostics, privacyPolicy }
     enum Item: Hashable, Sendable {
-        case appLock, confirmNewServers, diagnostics, privacyPolicy
+        case appLock, confirmNewServers, remoteImages, diagnostics, privacyPolicy
         /// One allowed AI service on one server (`AISharingConsent`).
         case aiService(serverId: String, kind: AISharingConsent.Recipient.Kind, id: String)
         /// No AI service allowed yet.
@@ -22,13 +22,14 @@ final class SettingsPrivacyViewController: ListScreenController<SettingsPrivacyV
     private let root: AppRootEnvironment
     private let appLock: AppLockService
 
-    init(root: AppRootEnvironment, appLock: AppLockService = .shared) {
+    init(root: AppRootEnvironment, appLock: AppLockService = .shared, settings: SettingsStore? = nil) {
         self.root = root
         self.appLock = appLock
         super.init(
             title: String(localized: "Privacy & Security"),
             listIdentifier: "settings.privacy.list",
             scope: .device,
+            settings: settings ?? root.settings,
             headers: true,
             footers: true
         )
@@ -72,6 +73,11 @@ final class SettingsPrivacyViewController: ListScreenController<SettingsPrivacyV
                     : aiGrants.map { .aiService(serverId: $0.serverId, kind: $0.recipient.kind, id: $0.recipient.id) }
             ),
             ListSection(
+                .remoteImages,
+                footer: SettingsCatalog.remoteImages.copy.footer,
+                items: [.remoteImages]
+            ),
+            ListSection(
                 .diagnostics,
                 footer: AppPreferences.Telemetry.isEnabled
                     ? String(localized: "Diagnostics are sent only to your server.")
@@ -94,6 +100,8 @@ final class SettingsPrivacyViewController: ListScreenController<SettingsPrivacyV
             AnyHashable([AnyHashable(BiometricService.shared.isEnabled), AnyHashable(appLock.isAuthenticating)])
         case .diagnostics:
             AnyHashable(AppPreferences.Telemetry.isEnabled)
+        case .remoteImages:
+            settingInputs(SettingsCatalog.remoteImages)
         case .privacyPolicy, .aiServicesNone:
             AnyHashable(0)
         case .aiService(let serverId, _, _):
@@ -161,7 +169,7 @@ final class SettingsPrivacyViewController: ListScreenController<SettingsPrivacyV
         case .privacyPolicy: collectionView.dequeueConfiguredReusableCell(using: linkRow, for: indexPath, item: item)
         case .aiService: collectionView.dequeueConfiguredReusableCell(using: aiServiceRow, for: indexPath, item: item)
         case .aiServicesNone: collectionView.dequeueConfiguredReusableCell(using: aiServicesNoneRow, for: indexPath, item: item)
-        case .confirmNewServers, .diagnostics: super.dequeue(item, at: indexPath)
+        case .confirmNewServers, .remoteImages, .diagnostics: super.dequeue(item, at: indexPath)
         }
     }
 
@@ -187,6 +195,8 @@ final class SettingsPrivacyViewController: ListScreenController<SettingsPrivacyV
                 identifier: "settings.confirmNewServers",
                 isEnabled: !appLock.isAuthenticating
             ) { [weak self] in self?.changeConfirmNewServers(to: $0) }
+        case .remoteImages:
+            settingToggleRow(cell, SettingsCatalog.remoteImages)
         case .diagnostics:
             toggleRow(
                 cell,

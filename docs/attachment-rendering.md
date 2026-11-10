@@ -139,7 +139,7 @@ Targets that are not files Oppi serves never become an embed and start no fetch:
 
 ### Markdown image resolution
 
-Embedded images use the same origin-first decision as video and audio. Public HTTPS images stay tap-to-load. Owner-host files use an authenticated full-byte request. Sandbox sessions map guest POSIX paths and never read host paths for guest paths.
+Embedded images use the same origin-first decision as video and audio. Public HTTPS images stay tap-to-load unless **Load Remote Images** is on in Settings > Privacy & Security (off by default); the same fetch limits apply either way. Owner-host files use an authenticated full-byte request. Sandbox sessions map guest POSIX paths and never read host paths for guest paths.
 
 | Markdown source | Behavior |
 | --- | --- |

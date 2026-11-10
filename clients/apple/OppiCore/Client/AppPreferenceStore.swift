@@ -197,6 +197,19 @@ enum AppPreferenceStore {
         }
     }
 
+    // MARK: - Remote images
+
+    /// Whether Markdown images from public HTTPS sites load without a tap.
+    enum RemoteImages {
+        static let autoloadKey = "\(AppIdentifiers.subsystem).remoteImages.autoload"
+        /// Off: a website sees nothing until a person taps. `SettingsCatalog.remoteImages` uses this constant.
+        static let autoloadDefault = false
+
+        static var isAutoloadEnabled: Bool {
+            UserDefaults.standard.object(forKey: autoloadKey) as? Bool ?? autoloadDefault
+        }
+    }
+
     // MARK: - Editor
 
     /// The code editor's Auto-Save, for every document the editor writes. Key

@@ -3826,6 +3826,7 @@ struct NativeMarkdownImageViewTests {
         let view = NativeMarkdownImageView()
         view.frame = CGRect(x: 0, y: 0, width: 300, height: 160)
         view.layoutIfNeeded()
+        view.loadsRemoteImagesAutomatically = { false }
 
         let imageData = try #require(Self.makeRedGreenImage().pngData())
         var fetchCount = 0
@@ -3848,6 +3849,77 @@ struct NativeMarkdownImageViewTests {
         }
         #expect(loaded, "NativeMarkdownImageView should load and display the remote image after explicit tap")
         #expect(fetchCount == 1)
+    }
+
+    @Test func remoteHTTPSImageLoadsWithoutTapWhenSwitchIsOn() async throws {
+        let view = NativeMarkdownImageView()
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 160)
+        view.layoutIfNeeded()
+        view.loadsRemoteImagesAutomatically = { true }
+
+        let imageData = try #require(Self.makeRedGreenImage().pngData())
+        var fetchCount = 0
+        view.fetchRemoteImage = { _ in
+            fetchCount += 1
+            return imageData
+        }
+
+        let url = testUnwrap(URL(string: "https://example.com/autoload-on.png"))
+        view.apply(url: url, alt: "Test", fetchWorkspaceFile: nil, fetchSessionFile: nil)
+
+        let loaded = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            timelineAllImageViews(in: view).contains { !$0.isHidden && $0.image != nil }
+        }
+        #expect(loaded)
+        #expect(fetchCount == 1)
+    }
+
+    @Test func turningSwitchOnLoadsPromptsAlreadyOnScreen() async throws {
+        let view = NativeMarkdownImageView()
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 160)
+        view.layoutIfNeeded()
+        var enabled = false
+        view.loadsRemoteImagesAutomatically = { enabled }
+
+        let imageData = try #require(Self.makeRedGreenImage().pngData())
+        var fetchCount = 0
+        view.fetchRemoteImage = { _ in
+            fetchCount += 1
+            return imageData
+        }
+
+        let url = testUnwrap(URL(string: "https://example.com/autoload-late.png"))
+        view.apply(url: url, alt: "Test", fetchWorkspaceFile: nil, fetchSessionFile: nil)
+        #expect(fetchCount == 0)
+
+        enabled = true
+        NotificationCenter.default.post(name: AppPreferences.RemoteImages.didChangeNotification, object: nil)
+
+        let loaded = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            timelineAllImageViews(in: view).contains { !$0.isHidden && $0.image != nil }
+        }
+        #expect(loaded)
+        #expect(fetchCount == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func blockedRemoteURLNeverFetchesWhateverTheSwitch(switchOn: Bool) {
+        let view = NativeMarkdownImageView()
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 160)
+        view.layoutIfNeeded()
+        view.loadsRemoteImagesAutomatically = { switchOn }
+        view.fetchRemoteImage = { _ in
+            Issue.record("Blocked remote URLs must not fetch")
+            return Data()
+        }
+
+        for raw in ["http://192.168.1.1/router.png", "https://localhost/a.png", "https://10.0.0.5/a.png"] {
+            view.apply(url: testUnwrap(URL(string: raw)), alt: "Blocked", fetchWorkspaceFile: nil, fetchSessionFile: nil)
+            let labels = timelineAllViews(in: view).compactMap { $0 as? UILabel }
+            #expect(labels.contains { $0.text?.contains("remote image blocked") == true && !$0.isHidden }, "\(raw)")
+        }
+        // A change notification must not wake a blocked image either.
+        NotificationCenter.default.post(name: AppPreferences.RemoteImages.didChangeNotification, object: nil)
     }
 
     @Test func blockedRemoteURLShowsBlockedPlaceholderWithoutFetching() throws {
