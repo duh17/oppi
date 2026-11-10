@@ -1455,13 +1455,19 @@ const ISSUE_MESSAGE_MAX_CHARS = 400;
 function logTestFailureLines(logText: string): string[] {
   const lines = logText.split("\n").map((line) => line.replace(/\r$/, ""));
   const kept = new Set<string>();
-  const clip = (text: string) => (text.length > ISSUE_MESSAGE_MAX_CHARS ? `${text.slice(0, ISSUE_MESSAGE_MAX_CHARS)}…` : text);
+  const clip = (text: string) => {
+    if (text.length <= ISSUE_MESSAGE_MAX_CHARS) return text;
+    // Never cut between the halves of a surrogate pair (an emoji in a message).
+    const end = /[\ud800-\udbff]/.test(text[ISSUE_MESSAGE_MAX_CHARS - 1]) ? ISSUE_MESSAGE_MAX_CHARS - 1 : ISSUE_MESSAGE_MAX_CHARS;
+    return `${text.slice(0, end)}…`;
+  };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (/^\u200b*\u2718 .*recorded an issue/.test(line)) {
       const entry = [clip(line)];
       for (let j = i + 1; j < lines.length && lines[j].startsWith("\u21b3") && entry.length <= ISSUE_MESSAGE_MAX_LINES; j++) entry.push(clip(lines[j]));
       kept.add(entry.join("\n"));
+      i += entry.length - 1; // the message lines belong to this entry, not to the scan
     } else if (/failed\b.*-\[|Test Case .* failed|error:.*assert|#expect.* failed|Issue recorded|Expectation failed/.test(line)) {
       kept.add(line);
     }

@@ -113,8 +113,9 @@ Test Suite 'All tests' started.
 ✘ Test «unknown» recorded an issue at TestDoubles.swift:166:21: Issue recorded
 ↳ unexpected request: GET https://example.test/v1/sessions (owner SessionStoreTests)
 ↳ install handlers with TestURLProtocol.routeScope
+↳ nested: Expectation failed in helper
 ✘ Test thing() recorded an issue at A.swift:1:2: Expectation failed: a == b
-↳ ${"x".repeat(5000)}
+↳ ${"x".repeat(397)}💥${"y".repeat(100)}
 ${Array.from({ length: 40 }, (_, i) => `↳ detail ${i}`).join("\n")}
 ✘ Test caught() recorded an issue at B.swift:9:9: Caught error: URLError(.timedOut)
 ↳ GET https://example.test/slow
@@ -128,11 +129,14 @@ ${Array.from({ length: 40 }, (_, i) => `↳ detail ${i}`).join("\n")}
       "✘ Test «unknown» recorded an issue at TestDoubles.swift:166:21: Issue recorded",
       "↳ unexpected request: GET https://example.test/v1/sessions (owner SessionStoreTests)",
       "↳ install handlers with TestURLProtocol.routeScope",
+      "↳ nested: Expectation failed in helper",
     ]);
+    expect(lines.filter((line) => line.includes("nested: Expectation failed"))).toHaveLength(1);
     const runaway = lines.find((line) => line.includes("A.swift:1:2"))!;
     const runawayLines = runaway.split("\n");
     expect(runawayLines).toHaveLength(1 + 8);
     expect(runawayLines.every((line) => line.length <= 401)).toBe(true);
+    expect(runawayLines[1]).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
     expect(runaway).toContain("detail 0");
     expect(runaway).not.toContain("detail 39");
     expect(lines).toContain(
