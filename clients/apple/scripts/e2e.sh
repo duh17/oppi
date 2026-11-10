@@ -45,7 +45,7 @@ Options:
   --only-testing TARGET Run one XCTest bundle, suite, or test target. May be repeated.
   --skip-testing TARGET Skip one XCTest bundle, suite, or test target. May be repeated.
   --record-video[=POLICY]
-                        Simulator video policy: on-failure (default), always, or off.
+                        Simulator video policy: off (default), on-failure, or always.
                         Bare --record-video means always for compatibility.
   --no-record-video     Disable simulator video recording.
   -h, --help            Show this help.
@@ -53,7 +53,7 @@ Options:
 Environment:
   OPPI_E2E_GROUP        Default --group value.
   OPPI_E2E_ONLY_TESTING Default --only-testing target. Overrides group target defaults.
-  OPPI_E2E_RECORD_VIDEO Default simulator video policy (default: on-failure).
+  OPPI_E2E_RECORD_VIDEO Default simulator video policy (default: off).
   OPPI_E2E_DURABLE      1 = --durable.
   OPPI_E2E_FAUX_MODEL   1 = --faux-model.
   E2E_ARTIFACT_DIR      Absolute or repo-relative directory for E2E run artifacts.
@@ -104,7 +104,7 @@ if [[ -n "${OPPI_E2E_ONLY_TESTING:-}" ]]; then
     ONLY_TESTING+=("$OPPI_E2E_ONLY_TESTING")
     ONLY_TESTING_EXPLICIT=true
 fi
-E2E_RECORD_VIDEO="${OPPI_E2E_RECORD_VIDEO:-${OPPI_SIM_POOL_VIDEO_POLICY:-${OPPI_SIM_POOL_RECORD_VIDEO:-on-failure}}}"
+E2E_RECORD_VIDEO="${OPPI_E2E_RECORD_VIDEO:-${OPPI_SIM_POOL_VIDEO_POLICY:-${OPPI_SIM_POOL_RECORD_VIDEO:-off}}}"
 SKIP_TESTING=()
 while [[ $# -gt 0 ]]; do
     case "$1" in

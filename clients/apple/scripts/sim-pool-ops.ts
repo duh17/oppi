@@ -39,6 +39,7 @@ import {
   type HeldLock,
   type RunPlan,
 } from "./sim-pool-build";
+import { ensureBuildLink, isManagedBuildLink } from "./build-root";
 import {
   lockPath,
   beginPublishing,
@@ -445,6 +446,7 @@ export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: strin
     }
   }
   const appleDir = join(oppiRoot, "clients", "apple");
+  ensureBuildLink(appleDir, env);
   const buildBase = join(appleDir, ".build");
   const profileName = env.OPPI_SIM_DEVICE_PROFILE ?? "";
   const profile = lookupDeviceProfile(profileName);
@@ -2701,7 +2703,9 @@ export function commandPruneCache(config: PoolConfig, args: string[]): number {
   }
   const appleDir = join(gitRoot, "clients", "apple");
   const buildBase = join(appleDir, ".build");
-  for (const path of [gitRoot, appleDir, buildBase]) {
+  // The link to the OPPI_BUILD_ROOT folder is ours to follow; any other symlinked root is refused.
+  const managedBuild = isManagedBuildLink(appleDir, process.env);
+  for (const path of [gitRoot, appleDir, ...(managedBuild ? [] : [buildBase])]) {
     try {
       if (statSync(path).isSymbolicLink?.() || (existsSync(path) && statSync(path).isSymbolicLink())) {
         die("prune-cache: refusing symlinked cleanup root");
@@ -2710,7 +2714,7 @@ export function commandPruneCache(config: PoolConfig, args: string[]): number {
       // missing handled below
     }
   }
-  if (existsSync(gitRoot) && (lstatIsSymlink(gitRoot) || lstatIsSymlink(appleDir) || (existsSync(buildBase) && lstatIsSymlink(buildBase)))) {
+  if (existsSync(gitRoot) && (lstatIsSymlink(gitRoot) || lstatIsSymlink(appleDir) || (!managedBuild && existsSync(buildBase) && lstatIsSymlink(buildBase)))) {
     die("prune-cache: refusing symlinked cleanup root");
   }
   if (!existsSync(buildBase)) {

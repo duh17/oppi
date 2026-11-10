@@ -851,6 +851,8 @@ run_ios_release_gate() {
   local developer_dir log_dir build_log status=0 cache_arg
   local -a cache_args=()
   developer_dir="$(pinned_developer_dir)"
+  # .build may live under OPPI_BUILD_ROOT (clients/apple/scripts/build-root.ts); a no-op when it is unset.
+  bun "$REPO_ROOT/clients/apple/scripts/build-root.ts" "$REPO_ROOT/clients/apple"
   # sim-pool's shared SwiftPM clone and compilation cache, keyed by this Xcode: a fresh worktree
   # compiles from the cache instead of from source, and clones no packages over the network.
   while IFS= read -r -d '' cache_arg; do cache_args+=("$cache_arg"); done < <(
@@ -881,6 +883,7 @@ run_ios_release_gate() {
 }
 
 run_mac_gate() {
+  bun "$REPO_ROOT/clients/apple/scripts/build-root.ts" "$REPO_ROOT/clients/apple"
   (cd "$REPO_ROOT/server" && bun scripts/check-architecture-boundaries.ts --scope mac)
   (cd "$REPO_ROOT/clients/apple" && DEVELOPER_DIR="$(pinned_developer_dir)" "$HEAVY" xcode-build -- xcodebuild \
     -project Oppi.xcodeproj -scheme OppiMac build-for-testing \

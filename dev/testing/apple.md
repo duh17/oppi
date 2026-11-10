@@ -82,6 +82,7 @@ Each of these has cost a false red or a false green.
 - **Builds:** `run` builds outside simulator slots into one DerivedData per checkout (`.build/dd`) under a checkout lock and an `xcode-build` heavy slot, then clones the products (APFS) and leases a slot only for `test-without-building`. A UI/E2E-only run strips hosted unit-test bundles from its clone.
 - **Build skip:** `.build/dd/oppi-build-stamp.json` keys the checkout (HEAD, `git diff HEAD`, untracked files, reachable `.xcconfig`s including `Local.xcconfig`, `Vendor/*/BUILD_ID`), the Xcode and build environment, and the full invocation; the log says `Build skipped`. One stamp per DerivedData, so another scheme, commit, edit, or raw `xcodebuild` into `.build/dd` rebuilds. Other env vars and tool versions (`bun`, `node`) are not keyed; a checkout with an untracked nested repo never skips.
 - **Compilation cache:** shared per Xcode in `~/Library/Caches/oppi-xcode/<Xcode>/` with prefix mapping, which compiles `#filePath` to `/^src/...` (`ios-test-no-source-paths`; tests read their bundle or `TEST_RUNNER_OPPI_SOURCE_ROOT`). `OPPI_XCODE_CACHE_DIR` replaces the `~/Library/Caches/oppi-xcode` parent; the `<Xcode>/` folder is kept. `OPPI_SIM_POOL_COMPILATION_CACHE=0` disables it.
+- **Build root:** `OPPI_BUILD_ROOT=<dir>` (a RAM disk) makes `scripts/build-root.ts` link each checkout's `.build` to `<dir>/<checkout>-<hash>` and moves the cache to `<dir>/xcode-cache`; sim-pool, the shards, and the pre-push Apple lanes call it. Unset or unmounted, `.build` is the ordinary folder. Debug builds use `dwarf`, not a dSYM.
 - **Slot reset:** each run uninstalls `dev.chenda.Oppi`, resets the keychain, and revokes microphone before `xcodebuild` (~1–2 s), so no run leaks a pairing or preference into the next.
 - **E2E contamination:** `simctl boot` keeps `SIMCTL_CHILD_*` as device environment until shutdown, so a slot an E2E lane booted starts every later app in E2E mode. The pool probes reused slots and recycles contaminated ones; a raw `xcodebuild` on a pool device bypasses this (check `xcrun simctl getenv <udid> PI_E2E_INVITE_URL`).
 - **Interrupted runs:** a canceled, hung, or dead-holder run marks its slot `interrupted`, and the next run boots it clean.
@@ -108,7 +109,7 @@ Exit codes: `2` only for coverage below an enforced threshold; `7` package resol
 `clients/apple/scripts/e2e.sh` starts a paired E2E server (Docker by default, `--native` for a local process), launches XCUITests, and cleans up. Artifacts: `.internal/reports/e2e-runs/<timestamp>/` (`E2E_ARTIFACT_DIR`).
 
 ```bash
-clients/apple/scripts/e2e.sh --native
+clients/apple/scripts/e2e.sh --native           # no video; --record-video=on-failure|always opts in
 clients/apple/scripts/e2e.sh --native --only-testing OppiE2ETests/<Suite>/<test>
 clients/apple/scripts/e2e.sh --group gate         # preferred release gate (ReleaseGateE2ETests)
 clients/apple/scripts/e2e.sh --group extended     # gate + recovery, history, quick-session, extension-attention

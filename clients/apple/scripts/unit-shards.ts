@@ -27,6 +27,7 @@ import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSy
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { budgetVerdict, headOf, hiddenFlakesLine, loadBudgets, recordRedLane, recordRerun, redLaneLine, zeroTestLine } from "../../../scripts/gate-report";
+import { ensureBuildLink } from "./build-root";
 import { findXctestrun, runDirectory } from "./sim-pool-build";
 
 /** Schemes whose build-for-testing builds OppiTests (project.yml). */
@@ -389,6 +390,7 @@ async function main(argv: string[]): Promise<number> {
   const skipQuarantined = quarantine.active.map((entry) => `-skip-testing:${entry.id}`);
 
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  ensureBuildLink(appleDir);
   const runDir = runDirectory(join(appleDir, ".build"), `shards-${stamp}`);
   // sim-pool clones the products into runDir under the same checkout lock as the build, so
   // another run in this checkout cannot swap them in between.

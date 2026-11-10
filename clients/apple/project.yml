@@ -93,6 +93,9 @@ settings:
     APP_GROUP_IDENTIFIER: group.oppi
     DEBUG_INFORMATION_FORMAT: "dwarf-with-dsym"
   configs:
+    # Debug skips the dSYM: each relink rewrote ~540 MB and every unit-test install copied it.
+    Debug:
+      DEBUG_INFORMATION_FORMAT: dwarf
     Release:
       OPPI_TELEMETRY_MODE: "public"
 targets:

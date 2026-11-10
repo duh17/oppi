@@ -21,6 +21,7 @@ import { existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, re
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { buildRoot } from "./build-root";
 import { cloneDirectory } from "./sim-pool-clone";
 import { flockFd, LOCK_EX, LOCK_NB, LOCK_SH, LOCK_UN } from "./sim-pool-lock";
 
@@ -157,6 +158,7 @@ export function slotlessBuildSettings(argv: string[]): string[] {
  * ios-test-no-source-paths keeps tests from opening files through it.
  * OPPI_SIM_POOL_COMPILATION_CACHE=0 turns it off. OPPI_XCODE_CACHE_DIR replaces the parent
  * (default ~/Library/Caches/oppi-xcode), so a cache moved to another volume keeps one folder per Xcode.
+ * A mounted OPPI_BUILD_ROOT (build-root.ts) takes precedence: the parent is `<root>/xcode-cache`.
  */
 export type CompilationCache = { root: string; args: string[]; settings: string[]; packages?: string };
 
@@ -171,7 +173,8 @@ export function compilationCache(
   // an OPPI_XCODE_CACHE_DIR parent.
   const xcode = basename(dirname(dirname(env.DEVELOPER_DIR ?? "/Applications/Xcode.app/Contents/Developer"))).replace(/[^\w.-]/g, "_");
   // An empty value falls back too: join("", xcode) would put the cache in the working directory.
-  const parent = env.OPPI_XCODE_CACHE_DIR || join(env.HOME ?? homedir(), "Library", "Caches", "oppi-xcode");
+  const ramRoot = buildRoot(env);
+  const parent = ramRoot ? join(ramRoot, "xcode-cache") : env.OPPI_XCODE_CACHE_DIR || join(env.HOME ?? homedir(), "Library", "Caches", "oppi-xcode");
   const root = join(parent, xcode);
   const settings = [
     "COMPILATION_CACHE_ENABLE_CACHING=YES",

@@ -35,6 +35,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ensureBuildLink } from "./build-root";
 import { findXctestrun, runDirectory } from "./sim-pool-build";
 import {
   budgetVerdict, failedXCTestCases, hiddenFlakesLine, loadBudgets, logOfSummary, median, passedXCTestCases, recordRerun, xctestCaseSeconds, xctestRerun, zeroTestLine,
@@ -434,6 +435,7 @@ async function main(argv: string[]): Promise<number> {
   if (flags.includes("--plan")) return 0;
 
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  ensureBuildLink(appleDir);
   const runDir = runDirectory(join(appleDir, ".build"), `ui-shards-${stamp}`);
   // sim-pool clones the products into runDir under the same checkout lock as the build, so
   // another run in this checkout cannot swap them in between. The build is slotless and the same

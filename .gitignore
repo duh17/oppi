@@ -5,7 +5,7 @@ server/dist/
 server/npm-shrinkwrap.json
 server/coverage/
 clients/apple/build/
-clients/apple/.build/
+clients/apple/.build
 # Built by clients/apple/scripts/build-tailscalekit.sh (exceeds the repo file-size limit).
 clients/apple/Vendor/TailscaleKit/
 # Locally built, pinned static terminal engine.
@@ -76,6 +76,8 @@ clients/apple/scripts/*
 !clients/apple/scripts/sim-pool-simctl.test.ts
 !clients/apple/scripts/sim-pool-ops.ts
 !clients/apple/scripts/sim-pool-ops.test.ts
+!clients/apple/scripts/build-root.ts
+!clients/apple/scripts/build-root.test.ts
 !clients/apple/scripts/sim-pool-build.ts
 !clients/apple/scripts/sim-pool-build.test.ts
 !clients/apple/scripts/sim-pool-clone.ts

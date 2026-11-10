@@ -123,6 +123,9 @@ export const BUILD_CACHE_PATHS = [
   // Installed from a host cache by `cp -R`: new copies would carry new mtimes and re-link the app.
   // ensure-prebuilt-frameworks.sh replaces them when their BUILD_ID pin changes.
   "clients/apple/Vendor",
+  // A reused worktree skips `npm ci` while package-lock.json is unchanged; ensure-installed-deps.mjs
+  // compares the lock with the install and reinstalls when it moved.
+  "server/node_modules",
 ];
 /** Exit code of a --with-pre-push gate whose hook failed. */
 export const PRE_PUSH_FAILED = 3;
