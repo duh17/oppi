@@ -264,7 +264,7 @@ function framesFromDiagnostic(value: unknown): StackFrame[] {
 
 function isAppFrame(frame: StackFrame): boolean {
   const binary = frame.binaryName ?? "";
-  return binary === "Oppi" || binary === "OppiMac" || binary.startsWith("Oppi");
+  return binary.startsWith("Oppi");
 }
 
 function dedupeFrames(frames: StackFrame[], limit: number): StackFrame[] {
@@ -320,22 +320,15 @@ function resolveSymbolicationBinaryPath(inputPath: string): string {
 
   const archiveCandidates = [
     join(path, "dSYMs", "Oppi.app.dSYM", "Contents", "Resources", "DWARF", "Oppi"),
-    join(path, "dSYMs", "OppiMac.app.dSYM", "Contents", "Resources", "DWARF", "OppiMac"),
     join(path, "Products", "Applications", "Oppi.app", "Oppi"),
-    join(path, "Products", "Applications", "OppiMac.app", "Contents", "MacOS", "OppiMac"),
   ];
   const archiveMatch = firstExistingPath(archiveCandidates);
   if (archiveMatch) return archiveMatch;
 
-  const dsymCandidates = [
-    join(path, "Contents", "Resources", "DWARF", "Oppi"),
-    join(path, "Contents", "Resources", "DWARF", "OppiMac"),
-  ];
-  const dsymMatch = firstExistingPath(dsymCandidates);
+  const dsymMatch = firstExistingPath([join(path, "Contents", "Resources", "DWARF", "Oppi")]);
   if (dsymMatch) return dsymMatch;
 
-  const appCandidates = [join(path, "Oppi"), join(path, "Contents", "MacOS", "OppiMac")];
-  return firstExistingPath(appCandidates) ?? path;
+  return firstExistingPath([join(path, "Oppi")]) ?? path;
 }
 
 function readBinaryUUIDs(binaryPath: string): string[] {

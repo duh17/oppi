@@ -47,7 +47,6 @@ describe("isExemptPath", () => {
       "server/e2e/paired-session.ts",
       "server/plugins/background-jobs/jobs.test.ts",
       "clients/apple/OppiTests/Models/PendingFileReferenceTests.swift",
-      "clients/apple/OppiMacTests/MacLocalHTTPTests.swift",
       "clients/apple/scripts/sim-pool-ops.test.ts",
       "server/bench/server-hotpath.bench.ts",
       "docs/document-viewers.md",

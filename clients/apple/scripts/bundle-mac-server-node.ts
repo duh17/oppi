@@ -1,7 +1,11 @@
 #!/usr/bin/env bun
 /**
  * Stage and describe the version-pinned Node Mach-O that becomes the Mac
- * server worker (`dev.chenda.OppiMac.server`).
+ * app's server worker (`dev.chenda.Oppi.server`).
+ *
+ * No release lane calls this today: the AppKit Mac app that bundled it is gone,
+ * and the Mac Catalyst build of `Oppi` will bundle the server the same way. The
+ * server's bundled-Node detection (`server/src/launchd.ts`) expects this layout.
  *
  * The binary is copied into Oppi.app/Contents/Resources/Helpers after archive.
  * It is never Homebrew Node, and signing must not copy Oppi's designated
@@ -18,7 +22,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-export const SERVER_WORKER_IDENTIFIER = "dev.chenda.OppiMac.server";
+export const SERVER_WORKER_IDENTIFIER = "dev.chenda.Oppi.server";
 export const PINNED_NODE_VERSION = "24.11.1";
 /**
  * SHA-256 of the official tarballs, copied from

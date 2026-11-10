@@ -135,7 +135,6 @@ const scans: ScanConfig[] = [
     paths: [
       "clients/apple/Oppi",
       "clients/apple/Shared",
-      "clients/apple/OppiMac",
       "clients/apple/OppiActivityExtension",
       "clients/apple/OppiControlWidget",
     ],
@@ -165,7 +164,6 @@ if (includeTests) {
       paths: [
         "clients/apple/OppiTests",
         "clients/apple/OppiPerfTests",
-        "clients/apple/OppiMacTests",
         "clients/apple/OppiE2ETests",
         "clients/apple/OppiUITests",
       ],

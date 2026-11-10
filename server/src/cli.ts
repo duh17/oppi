@@ -1138,7 +1138,6 @@ async function cmdServer(action: string | undefined, flags: Record<string, strin
     } else {
       console.log(c.dim("  The server will start automatically on login."));
       console.log(c.dim("  It will restart if it crashes."));
-      console.log(c.dim("  The Mac app will detect and attach to it."));
     }
     console.log("");
     return;

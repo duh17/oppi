@@ -5,12 +5,11 @@ import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const DEFAULT_SCHEMES = ["OppiUnitTests", "OppiMac"];
+const DEFAULT_SCHEMES = ["OppiUnitTests"];
 const DEFAULT_REPORT_INCLUDES = [
   "Oppi/**/*.swift",
   "OppiDebugHarness/**/*.swift",
   "Shared/**/*.swift",
-  "OppiMac/**/*.swift",
 ];
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 

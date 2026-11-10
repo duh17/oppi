@@ -1300,7 +1300,7 @@ function finishedTests(argv: string[], logText: string): TestCompletion | undefi
   if (extractFlagValue("-scheme", argv) === "OppiUnitTests" && onlyTestingTargetsAre("OppiTests", argv)) {
     return finishedSwiftTesting(logText);
   }
-  // Both schemes keep every test bundle parallelizable = NO; OppiMac does not.
+  // Only these two schemes keep every test bundle parallelizable = NO.
   const scheme = extractFlagValue("-scheme", argv);
   const bundles = new Set(argv.filter((arg) => arg.startsWith("-only-testing:")).map((arg) => arg.slice(14).split("/")[0]));
   if ((scheme !== "Oppi" && scheme !== "OppiUnitTests") || bundles.size !== 1 || /^◇ Test run started\./m.test(logText)) {
@@ -2656,9 +2656,6 @@ export function pruneBuildKind(base: string): "pool" | "derived" | "mac-stale" |
   switch (base) {
     case "logs":
     case "videos":
-    case "mac-tests":
-    case "mac-debug":
-    case "pre-push-mac":
     case "ci":
     case "privacy":
       return null;

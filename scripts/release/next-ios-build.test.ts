@@ -26,7 +26,7 @@ describe("next iOS release build", () => {
           settings:
             MARKETING_VERSION: "1.1.2"
             CURRENT_PROJECT_VERSION: 47
-        OppiMac:
+        OppiShareExtension:
           settings:
             CURRENT_PROJECT_VERSION: 40
       `),

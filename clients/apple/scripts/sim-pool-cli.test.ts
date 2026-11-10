@@ -1474,7 +1474,7 @@ sleep 30
     { name: "infrastructure failure", text: swiftTestPrelude + swiftPassed + "Testing failed:\nrunner disconnected\n" },
     { name: "XCTest run of two bundles", text: xctestE2E(0), args: [...e2eArgs, "-only-testing:OppiUITests"] },
     { name: "XCTest activity after the top-level result", text: xctestE2E(0) + "Test Suite 'Selected tests' started at 2026-10-08 20:09:15.000.\n", args: e2eArgs },
-    { name: "XCTest run of a parallel scheme", text: xctestE2E(0), args: ["-scheme", "OppiMac", "test", "-only-testing:OppiMacTests"] },
+    { name: "XCTest run of a parallel scheme", text: xctestE2E(0), args: ["-scheme", "ParallelScheme", "test", "-only-testing:ParallelTests"] },
     { name: "XCTest passed with failures", text: xctestE2E(1).replaceAll("failed at", "passed at"), args: e2eArgs },
   ];
   for (const guard of completionGuards) {

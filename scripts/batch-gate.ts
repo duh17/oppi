@@ -18,7 +18,7 @@
 //
 // --with-pre-push <push row>: run `.githooks/pre-push origin` (the row on its stdin, as git would
 // give it) alongside the lanes instead of before them, so the UI lanes do not wait minutes for the
-// unit shards and the Mac and Release compiles. The UI lanes start once the hook's Apple build
+// unit shards and the Release compile. The UI lanes start once the hook's Apple build
 // passed, or with the hook when its plan has no Apple lane; every other lane starts after the hook
 // passed. With UI or E2E lanes the hook gets OPPI_PRE_PUSH_UI_LANES=1 and builds the Oppi scheme,
 // which they test and which builds OppiTests too, so sim-pool skips every later build in .build/dd.
@@ -29,7 +29,7 @@
 // [pre-push], and the summary leads with its row.
 //
 // `--build-cache` prints, one BUILD_CACHE_LINE each, the ignored paths a reused queue worktree keeps
-// between batches (the DerivedData of the Oppi, Mac, and Release builds, and the prebuilt Vendor
+// between batches (the DerivedData of the Oppi build, and the prebuilt Vendor
 // frameworks), then one BUILD_CACHE_KEY_LINE naming the pinned Xcode: a queue that sees the key
 // change throws the worktree away instead of building incrementally over another toolchain's state.
 //
@@ -118,7 +118,6 @@ export const BUILD_CACHE_KEY_LINE = "batch-gate: build-cache-key";
 /** What a reused queue worktree keeps: everything the Apple builds can build incrementally from. */
 export const BUILD_CACHE_PATHS = [
   "clients/apple/.build/dd",
-  "clients/apple/.build/pre-push-mac",
   // Not pre-push-release: its whole-module Release compile rebuilds the Oppi module whatever is kept.
   // Installed from a host cache by `cp -R`: new copies would carry new mtimes and re-link the app.
   // ensure-prebuilt-frameworks.sh replaces them when their BUILD_ID pin changes.

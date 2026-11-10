@@ -19,16 +19,14 @@ import { fileURLToPath } from "node:url";
  *  4. Fixed black/white SwiftUI backgrounds — common escape hatches that fail
  *     under light themes.
  *
- * The theme is UIKit-side on iOS: `Color.theme*`, the `.theme*` `ShapeStyle`
- * shorthand, and the themed-surface modifiers ship in `OppiMac` only, so no iOS
- * file can spell them and no check reads them here. The Mac's SwiftUI face is
- * out of scope.
+ * The theme is UIKit-side: there is no `Color.theme*`, `.theme*` `ShapeStyle`
+ * shorthand, or themed-surface modifier to spell, so no check reads them here.
  *
  * Preview/screenshot harnesses are allowlisted: they intentionally freeze
  * styling for marketing shots and stress fixtures.
  *
- * OppiMac and the Live Activity/widget extensions are out of scope: they have
- * no theme runtime and deliberately use system styling.
+ * The Live Activity/widget extensions are out of scope: they have no theme
+ * runtime and deliberately use system styling.
  */
 
 type GuardCheck = {

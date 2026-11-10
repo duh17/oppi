@@ -331,7 +331,7 @@ writeFileSync("${state}/ui-" + profile + ".done", "");
 `);
     mkdirSync(join(fx.checkout, ".githooks"));
     // Build-phase stamps an earlier batch left in the kept DerivedData.
-    const stamps = ["dd/Build/Intermediates.noindex/Oppi.build/Debug-iphonesimulator/Oppi.build/DerivedSources", "pre-push-mac/Build/Intermediates.noindex/Oppi.build/Debug/OppiMac.build/DerivedSources"]
+    const stamps = ["dd/Build/Intermediates.noindex/Oppi.build/Debug-iphonesimulator/Oppi.build/DerivedSources"]
       .flatMap((dir) => ["swiftlint.stamp", "architecture-boundaries.stamp"].map((name) => join(apple, ".build", dir, name)));
     for (const stamp of stamps) {
       mkdirSync(join(stamp, ".."), { recursive: true });

@@ -105,7 +105,6 @@ clients/apple/scripts/*
 !clients/apple/scripts/sim-slim.sh
 !clients/apple/scripts/sim-slim.test.ts
 !clients/apple/scripts/sim-pool-slim-labels.txt
-!clients/apple/scripts/release-mac.sh
 !clients/apple/scripts/bundle-mac-server-node.ts
 !clients/apple/scripts/bundle-mac-server-node.test.ts
 !clients/apple/scripts/periphery-scan.ts

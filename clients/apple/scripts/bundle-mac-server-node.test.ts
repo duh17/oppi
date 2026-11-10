@@ -17,26 +17,25 @@ import {
 } from "./bundle-mac-server-node";
 
 describe("bundle-mac-server-node", () => {
-  test("signs the worker as dev.chenda.OppiMac.server without copying Oppi's DR", () => {
-    expect(SERVER_WORKER_IDENTIFIER).toBe("dev.chenda.OppiMac.server");
+  test("signs the worker as dev.chenda.Oppi.server without copying Oppi's DR", () => {
+    expect(SERVER_WORKER_IDENTIFIER).toBe("dev.chenda.Oppi.server");
     const args = serverNodeCodesignArgs({
       identity: "Developer ID Application: Example (TEAMID)",
       nodePath: "/tmp/Oppi.app/Contents/Resources/Helpers/node",
-      entitlementsPath: "/tmp/OppiMac.server.entitlements",
+      entitlementsPath: "/tmp/Oppi.server.entitlements",
     });
-    // release-mac.sh runs exactly these args (step 1b).
     expect(args[0]).toBe("codesign");
     expect(args.slice(args.indexOf("--options"), args.indexOf("--options") + 2)).toEqual([
       "--options",
       "runtime",
     ]);
     expect(args).toContain("--timestamp");
-    expect(args[args.indexOf("--entitlements") + 1]).toBe("/tmp/OppiMac.server.entitlements");
-    expect(args[args.indexOf("--identifier") + 1]).toBe("dev.chenda.OppiMac.server");
+    expect(args[args.indexOf("--entitlements") + 1]).toBe("/tmp/Oppi.server.entitlements");
+    expect(args[args.indexOf("--identifier") + 1]).toBe("dev.chenda.Oppi.server");
     expect(args.at(-1)).toBe("/tmp/Oppi.app/Contents/Resources/Helpers/node");
     expect(args).not.toContain("--requirements");
-    expect(args).not.toContain("dev.chenda.OppiMac");
-    expect(args.join(" ")).not.toContain("OppiMac.entitlements");
+    expect(args).not.toContain("dev.chenda.Oppi");
+    expect(args.join(" ")).not.toContain("Oppi.entitlements");
   });
 
   test("worker entitlements are Node-specific and not Oppi's GUI entitlements", () => {

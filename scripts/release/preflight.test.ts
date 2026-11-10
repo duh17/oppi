@@ -128,7 +128,7 @@ describe("project setting parser", () => {
     settings:
       base:
         CURRENT_PROJECT_VERSION: 44
-  OppiMac:
+  OppiShareExtension:
     settings:
       base:
         CURRENT_PROJECT_VERSION: 40
@@ -136,7 +136,7 @@ describe("project setting parser", () => {
     expect(readTargetSetting(yaml, "Oppi", "CURRENT_PROJECT_VERSION")).toBe(
       "44",
     );
-    expect(readTargetSetting(yaml, "OppiMac", "CURRENT_PROJECT_VERSION")).toBe(
+    expect(readTargetSetting(yaml, "OppiShareExtension", "CURRENT_PROJECT_VERSION")).toBe(
       "40",
     );
   });

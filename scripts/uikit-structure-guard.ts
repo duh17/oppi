@@ -24,9 +24,8 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    `USDZRealityCanvas`), the TipKit file (`FeatureEducationTips`), the shared
  *    `ModelColorHelpers` chart, and the Live Activity surface
  *    (`LiveActivityPresentation`). The iOS app target is UIKit everywhere else,
- *    and the debug harness is UIKit too. The theme itself is UIKit-side on iOS
- *    (`ThemeColor` is `UIColor` there; the Mac's SwiftUI face of the same
- *    tokens ships in `OppiMac/Theme/`), so no theme file imports SwiftUI, model
+ *    and the debug harness is UIKit too. The theme itself is UIKit-side
+ *    (`ThemeColor` is `UIColor`), so no theme file imports SwiftUI, model
  *    colors included: `modelColor` and `providerIconTint` return `ThemeColor`.
  *    Any other file fails, and a new entry needs the owner's approval.
  *    `@_exported import` of any of them fails even in an allow-listed file.
@@ -248,8 +247,7 @@ const swiftUIImporters: { file: string; reason: string }[] = [
     file: "clients/apple/Oppi/Features/Chat/Timeline/Assistant/USDZRealityCanvas.swift",
     reason: "RealityKit's RealityView is SwiftUI-only: the USDZ canvas and the one UIHostingController that hosts it.",
   },
-  // The theme is UIKit-side on iOS: a token is `ThemeColor` (`UIColor`), and the
-  // Mac's SwiftUI face of the same tokens ships in `OppiMac/Theme/`. No theme
+  // The theme is UIKit-side: a token is `ThemeColor` (`UIColor`). No theme
   // file imports SwiftUI, so none is named here.
   // TipKit: the framework re-exports SwiftUI (`Text` and `Image` inside a tip),
   // so the tips' definitions and their display live in this one file.
@@ -270,22 +268,6 @@ const swiftUIImporters: { file: string; reason: string }[] = [
 const swiftUIImporterFiles = swiftUIImporters.map((entry) => entry.file);
 const sharedImporterCount = swiftUIImporterFiles.filter((file) => file.includes("/Shared/")).length;
 
-/**
- * SwiftUI in `Shared/` that the iOS target excludes (the same path is in
- * `project.yml`'s `Oppi` sources): the Mac's own view. It ships in `OppiMac`
- * only, so it is not an app importer, but the guard scans the folder and must
- * know it. Keep this list and `project.yml` in step.
- */
-const sharedMacOnlySwiftUI: { file: string; reason: string }[] = [
-  {
-    file: "clients/apple/Shared/Renderers/Orbs/ThinkingOrbAcknowledgmentsView.swift",
-    reason: "The Mac's orb acknowledgments page; iOS has none. Excluded from the Oppi target.",
-  },
-  {
-    file: "clients/apple/Shared/Renderers/Orbs/OrbView.swift",
-    reason: "The Mac's SwiftUI wrapper around `OrbMetalView`; iOS draws the same view in UIKit. Excluded from the Oppi target.",
-  },
-];
 /** Files that may read the idiom or the raw size class, each with the question it answers. */
 const adaptiveWidthExceptions: { file: string; reason: string }[] = [
   {
@@ -310,7 +292,7 @@ const adaptiveWidthExceptions: { file: string; reason: string }[] = [
   },
 ];
 const adaptiveWidthExempt = adaptiveWidthExceptions.map((entry) => entry.file);
-const swiftUIExemptFiles = [...swiftUIImporterFiles, ...sharedMacOnlySwiftUI.map((entry) => entry.file)];
+const swiftUIExemptFiles = swiftUIImporterFiles;
 
 const constructs: Construct[] = [
   { name: "NavigationStack", pattern: /\bNavigationStack\b/g, disallowed: true },

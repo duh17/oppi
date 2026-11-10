@@ -225,7 +225,7 @@ ${Array.from({ length: 40 }, (_, i) => `↳ detail ${i}`).join("\n")}
     expect(pruneBuildKind("pool-foo")).toBeNull();
     expect(pruneBuildKind("derived-data-foo")).toBe("derived");
     expect(pruneBuildKind("mac-vocab-optin")).toBe("mac-stale");
-    expect(pruneBuildKind("mac-tests")).toBeNull();
+    expect(pruneBuildKind("mac-tests")).toBe("mac-stale");
     expect(parsePruneKeepSlots("0-5")).toEqual({ start: 0, end: 5 });
     expect(() => parsePruneKeepSlots("5-0")).toThrow(PoolError);
   });

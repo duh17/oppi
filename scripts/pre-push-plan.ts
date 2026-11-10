@@ -8,7 +8,6 @@ export type AppleGateMode = "none" | "unit" | "all";
 export type PrePushPlan = {
   server: ServerGateMode;
   apple: AppleGateMode;
-  mac: boolean;
   harness: boolean;
   /** A `dev/` doc, its budgets, or their guard changed: the hook runs scripts/dev-docs-guard.ts. */
   docs: boolean;
@@ -80,19 +79,8 @@ function serverMode(path: string): ServerGateMode {
   return "changed";
 }
 
-function affectsMacBuild(path: string): boolean {
-  return path === "clients/apple/project.yml"
-    || path.endsWith(".xcconfig")
-    || path.endsWith("Package.resolved")
-    || path.endsWith("project.pbxproj")
-    || path.endsWith("OppiMac.xcscheme")
-    || path.startsWith("clients/apple/OppiCore/")
-    || path.startsWith("clients/apple/Shared/");
-}
-
 function appleMode(path: string): AppleGateMode {
   if (!path.startsWith("clients/apple/")) return "none";
-  if (path.startsWith("clients/apple/OppiMac")) return "none";
   if (
     path.startsWith("clients/apple/OppiUITests/")
     || path.startsWith("clients/apple/OppiE2ETests/")
@@ -112,7 +100,6 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
   const changedPaths = [...new Set([...inputPaths].filter(Boolean))].sort();
   let server: ServerGateMode = "none";
   let apple: AppleGateMode = "none";
-  let mac = false;
   let harness = false;
   let docs = false;
 
@@ -136,7 +123,6 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
     if (protocolBoundary) {
       server = "full";
       apple = strongerApple(apple, "unit");
-      mac = true;
       continue;
     }
 
@@ -146,7 +132,6 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
     if (crossPlatformGuard) {
       server = strongerServer(server, "full");
       apple = strongerApple(apple, "unit");
-      mac = true;
       continue;
     }
 
@@ -168,15 +153,9 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
       continue;
     }
 
-    if (path.startsWith("clients/apple/OppiMac")) {
-      mac = true;
-      continue;
-    }
-
     const pathAppleMode = appleMode(path);
     if (pathAppleMode !== "none") {
       apple = strongerApple(apple, pathAppleMode);
-      if (affectsMacBuild(path)) mac = true;
       continue;
     }
 
@@ -185,10 +164,9 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
     // Unknown executable/configuration surfaces fail closed.
     server = "full";
     apple = strongerApple(apple, "unit");
-    mac = true;
   }
 
-  return { server, apple, mac, harness, docs, changedPaths };
+  return { server, apple, harness, docs, changedPaths };
 }
 
 function usage(): never {
@@ -216,7 +194,6 @@ if (import.meta.main) {
   } else {
     console.log(`SERVER_MODE=${plan.server}`);
     console.log(`APPLE_MODE=${plan.apple}`);
-    console.log(`MAC_CHANGED=${plan.mac ? 1 : 0}`);
     console.log(`HARNESS_CHANGED=${plan.harness ? 1 : 0}`);
     console.log(`DOCS_CHANGED=${plan.docs ? 1 : 0}`);
     console.log(`CHANGED_COUNT=${plan.changedPaths.length}`);

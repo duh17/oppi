@@ -8,7 +8,6 @@ import { describe, expect, it } from "vitest";
 import {
   findFileLineBudgetViolations,
   findIosLayerViolations,
-  findMacLayerViolations,
   findServerLayerViolations,
 } from "../scripts/architecture-layer-rules.mjs";
 
@@ -46,7 +45,6 @@ describe("architecture layer rule helpers", () => {
       const allowed = [
         "clients/apple/Oppi/App/AppOpener.swift",
         "clients/apple/OppiTests/BrowserTests.swift",
-        "clients/apple/OppiMac/Browser.swift",
       ];
       for (const file of [...forbidden, ...allowed]) {
         write(
@@ -868,197 +866,8 @@ describe("architecture layer rule helpers", () => {
   });
 });
 
-const ALLOWED_MAC_OPPI_THEME = "Oppi/Core/Theme/AppTheme.swift";
-
-function writeOppiMacProjectYml(repoRoot: string, extraOppiPaths: string[] = []): void {
-  const extraLines = extraOppiPaths.map((path) => `      - path: ${path}`).join("\n");
-  write(
-    join(repoRoot, "clients/apple/project.yml"),
-    [
-      "targets:",
-      "  Oppi:",
-      "    sources:",
-      "      - path: Oppi",
-      "  OppiMac:",
-      "    sources:",
-      "      - path: OppiMac",
-      "      - path: OppiCore",
-      `      - path: ${ALLOWED_MAC_OPPI_THEME}`,
-      extraLines,
-      "    settings:",
-      "      base:",
-      "        PRODUCT_NAME: Oppi",
-      "",
-    ]
-      .filter((line) => line !== "")
-      .join("\n") + "\n",
-  );
-}
-
-describe("Mac architecture layer rules", () => {
-  it("flags UIKit imports in OppiMac app files", () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-mac-uikit-"));
-
-    try {
-      write(
-        join(repoRoot, "clients/apple/OppiMac/Views/BadMacView.swift"),
-        ["import Foundation", "import UIKit", "struct BadMacView {}"].join("\n"),
-      );
-      write(
-        join(repoRoot, "clients/apple/OppiMac/Views/GoodMacView.swift"),
-        ["import AppKit", "import SwiftUI", "struct GoodMacView {}"].join("\n"),
-      );
-
-      const violations = findMacLayerViolations(repoRoot);
-
-      expect(violations).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            rule: "mac-app-no-uikit",
-            file: "clients/apple/OppiMac/Views/BadMacView.swift",
-          }),
-        ]),
-      );
-      expect(violations).not.toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            file: "clients/apple/OppiMac/Views/GoodMacView.swift",
-          }),
-        ]),
-      );
-    } finally {
-      rmSync(repoRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("flags concrete identity branches in the Mac extension-surface painter", () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-mac-extension-"));
-
-    try {
-      write(
-        join(repoRoot, "clients/apple/OppiMac/Views/MacExtensionSurfacePanel.swift"),
-        [
-          "import SwiftUI",
-          "func route(statusKey: String) -> String {",
-          '  if statusKey == "local-only" { return "bad" }',
-          '  return "ok"',
-          "}",
-        ].join("\n"),
-      );
-
-      const violations = findMacLayerViolations(repoRoot);
-
-      expect(violations).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            rule: "extension-surface-no-identity-branch",
-            file: "clients/apple/OppiMac/Views/MacExtensionSurfacePanel.swift",
-          }),
-        ]),
-      );
-    } finally {
-      rmSync(repoRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("flags iOS production files added to the Mac target outside the established allowlist", () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-mac-membership-"));
-
-    try {
-      writeOppiMacProjectYml(repoRoot, ["Oppi/Features/Chat/ChatView.swift"]);
-      write(join(repoRoot, "clients/apple/OppiMac/App/OppiMacApp.swift"), "import SwiftUI\n");
-
-      const violations = findMacLayerViolations(repoRoot);
-
-      expect(violations).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            rule: "mac-oppi-tree-membership",
-            file: "clients/apple/project.yml",
-            target: "Oppi/Features/Chat/ChatView.swift",
-          }),
-        ]),
-      );
-      expect(violations).not.toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            rule: "mac-oppi-tree-membership",
-            target: ALLOWED_MAC_OPPI_THEME,
-          }),
-        ]),
-      );
-    } finally {
-      rmSync(repoRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("flags disallowed top-level roots and accepts allowed roots plus descendants", () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-mac-membership-roots-"));
-
-    try {
-      writeOppiMacProjectYml(repoRoot, [
-        "OppiMac/App/OppiMacApp.swift",
-        "OppiCore/Models/Foo.swift",
-        "Shared",
-        "Shared/Theme/Color.swift",
-        "Oppi/Resources/Fonts/Fira.ttf",
-        "OppiActivityExtension",
-        "OppiActivityExtension/Info.plist",
-        "/tmp/OppiMac",
-        "OppiMacExtra",
-      ]);
-      write(join(repoRoot, "clients/apple/OppiMac/App/OppiMacApp.swift"), "import SwiftUI\n");
-
-      const membershipTargets = findMacLayerViolations(repoRoot)
-        .filter((violation) => violation.rule === "mac-oppi-tree-membership")
-        .map((violation) => violation.target);
-
-      expect(membershipTargets).toEqual(
-        expect.arrayContaining([
-          "OppiActivityExtension",
-          "OppiActivityExtension/Info.plist",
-          "/tmp/OppiMac",
-          "OppiMacExtra",
-        ]),
-      );
-      expect(membershipTargets).not.toEqual(
-        expect.arrayContaining([
-          "OppiMac",
-          "OppiMac/App/OppiMacApp.swift",
-          "OppiCore",
-          "OppiCore/Models/Foo.swift",
-          "Shared",
-          "Shared/Theme/Color.swift",
-          ALLOWED_MAC_OPPI_THEME,
-          "Oppi/Resources/Fonts/Fira.ttf",
-        ]),
-      );
-    } finally {
-      rmSync(repoRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("does not invent a two-consumers rule for OppiCore types", () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-mac-no-two-consumers-"));
-
-    try {
-      write(
-        join(repoRoot, "clients/apple/OppiCore/Models/MacOnlyDTO.swift"),
-        ["import Foundation", "struct MacOnlyDTO { let id: String }"].join("\n"),
-      );
-      write(join(repoRoot, "clients/apple/OppiMac/App/OppiMacApp.swift"), "import SwiftUI\n");
-      writeOppiMacProjectYml(repoRoot);
-
-      const violations = findMacLayerViolations(repoRoot);
-
-      expect(violations.filter((violation) => violation.rule.includes("consumer"))).toEqual([]);
-      expect(violations).toEqual([]);
-    } finally {
-      rmSync(repoRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("accepts --scope mac and rejects unknown scopes", () => {
+describe("Architecture boundary CLI and iOS ownership rules", () => {
+  it("rejects unknown scopes", () => {
     const script = "scripts/check-architecture-boundaries.ts";
     const invalid = spawnSync("bun", [script, "--scope", "windows"], {
       cwd: process.cwd(),
@@ -1066,13 +875,6 @@ describe("Mac architecture layer rules", () => {
     });
     expect(invalid.status).not.toBe(0);
     expect(`${invalid.stdout}${invalid.stderr}`).toContain("Invalid --scope value: windows");
-
-    const mac = spawnSync("bun", [script, "--scope", "mac"], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-    });
-    expect(mac.status).toBe(0);
-    expect(mac.stdout).toContain("scope: mac");
   });
   it("defers opens to App Lock only in the open owner", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-open-unlock-"));
@@ -1328,7 +1130,7 @@ describe("Mac architecture layer rules", () => {
         "func check(file: StaticString = #filePath, line: UInt = #line) {}\nfunc near(_ a: Int, file: String = #file) {}\n// URL(fileURLWithPath: #filePath)\n",
       );
       write(
-        join(repoRoot, "clients/apple/OppiMacTests/E.swift"),
+        join(repoRoot, "clients/apple/OppiShareExtension/E.swift"),
         "let u = URL(fileURLWithPath: #filePath)\n",
       );
       const violations = findIosLayerViolations(repoRoot).filter(

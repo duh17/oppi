@@ -12,9 +12,9 @@
  * - All paths in ProgramArguments are resolved to absolute paths at install time
  * - PATH env includes /opt/homebrew/bin so git, pi, tailscale are available
  * - KeepAlive restarts on crash; RunAtLoad starts on boot/login
- * - Runtime selection depends on who started the install. The Mac app runs the
- *   CLI on its bundled Mach-O at Contents/Resources/Helpers/node (signed as
- *   dev.chenda.OppiMac.server); that install is bundled-only and never falls back
+ * - Runtime selection depends on who started the install. A Mac app that bundles
+ *   the server runs the CLI on its bundled Mach-O at Contents/Resources/Helpers/node
+ *   (signed as dev.chenda.Oppi.server); that install is bundled-only and never falls back
  *   to Homebrew/system Node. A terminal install keeps using Homebrew/system Node,
  *   except that `OPPI_NODE` (set by the `~/.oppi/bin/oppi` launcher that
  *   install.sh writes) names the Node the installer chose.

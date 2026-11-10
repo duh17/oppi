@@ -3,44 +3,41 @@ import { planForPaths } from "./pre-push-plan";
 
 describe("pre-push gate planning", () => {
   test.each([
-    ["docs only", ["README.md", "docs/usage.md"], ["none", "none", false, false]],
-    ["server source", ["server/src/server.ts"], ["changed", "none", false, false]],
-    ["server tests", ["server/tests/server.test.ts"], ["changed", "none", false, false]],
-    ["server config", ["server/vitest.config.ts"], ["full", "none", false, false]],
+    ["docs only", ["README.md", "docs/usage.md"], ["none", "none", false]],
+    ["server source", ["server/src/server.ts"], ["changed", "none", false]],
+    ["server tests", ["server/tests/server.test.ts"], ["changed", "none", false]],
+    ["server config", ["server/vitest.config.ts"], ["full", "none", false]],
     // The plugin host evaluates plugins at runtime, out of Vitest's import graph.
-    ["server plugin", ["server/plugins/x/server.ts"], ["full", "none", false, false]],
-    ["iOS app", ["clients/apple/Oppi/App/OppiApp.swift"], ["none", "unit", false, false]],
-    ["iOS unit tests", ["clients/apple/OppiTests/Network/APIClientTests.swift"], ["none", "unit", false, false]],
-    ["iOS E2E", ["clients/apple/OppiE2ETests/ReleaseGateE2ETests.swift"], ["none", "all", false, false]],
-    ["Mac", ["clients/apple/OppiMac/OppiMacApp.swift"], ["none", "none", true, false]],
-    ["accessibility id guard", ["scripts/ax-id-guard.ts", "scripts/ax-id-baseline.json"], ["none", "unit", false, false]],
-    ["document edit guard", ["scripts/document-edit-guard.ts"], ["none", "unit", false, false]],
-    ["protocol", ["protocol/server-messages.json"], ["full", "unit", true, false]],
-    ["server protocol model", ["server/src/types/protocol.ts"], ["full", "unit", true, false]],
-    ["server session protocol model", ["server/src/types/session.ts"], ["full", "unit", true, false]],
-    ["server icon protocol model", ["server/src/types/icon.ts"], ["full", "unit", true, false]],
-    ["server git protocol type", ["server/src/types/git.ts"], ["full", "unit", true, false]],
-    ["server shared protocol type", ["server/src/types/shared.ts"], ["full", "unit", true, false]],
-    ["server thinking levels protocol type", ["server/src/thinking-levels.ts"], ["full", "unit", true, false]],
-    ["Apple protocol model", ["clients/apple/OppiCore/Models/ServerMessage.swift"], ["full", "unit", true, false]],
-    ["shared Apple source", ["clients/apple/Shared/SharedConstants.swift"], ["none", "unit", true, false]],
-    ["Mac tests", ["clients/apple/OppiMacTests/MacAPIClientTests.swift"], ["none", "none", true, false]],
-    ["Apple project", ["clients/apple/project.yml"], ["none", "all", true, false]],
-    ["Apple xcconfig", ["clients/apple/Base.xcconfig"], ["none", "unit", true, false]],
-    ["Mac scheme", ["clients/apple/Oppi.xcodeproj/xcshareddata/xcschemes/OppiMac.xcscheme"], ["none", "all", true, false]],
-    ["architecture guard", ["server/scripts/check-architecture-boundaries.ts"], ["full", "unit", true, false]],
-    ["gate policy", [".githooks/pre-push"], ["none", "none", false, true]],
-    ["heavy-job semaphore", ["scripts/heavy.sh"], ["none", "none", false, true]],
-    ["heavy-job semaphore test", ["scripts/heavy.test.ts"], ["none", "none", false, true]],
-    ["gate allowlist", [".gitignore"], ["none", "none", false, true]],
-    ["unknown fails closed", ["tools/release.ts"], ["full", "unit", true, false]],
+    ["server plugin", ["server/plugins/x/server.ts"], ["full", "none", false]],
+    ["iOS app", ["clients/apple/Oppi/App/OppiApp.swift"], ["none", "unit", false]],
+    ["iOS unit tests", ["clients/apple/OppiTests/Network/APIClientTests.swift"], ["none", "unit", false]],
+    ["iOS E2E", ["clients/apple/OppiE2ETests/ReleaseGateE2ETests.swift"], ["none", "all", false]],
+    ["accessibility id guard", ["scripts/ax-id-guard.ts", "scripts/ax-id-baseline.json"], ["none", "unit", false]],
+    ["document edit guard", ["scripts/document-edit-guard.ts"], ["none", "unit", false]],
+    ["protocol", ["protocol/server-messages.json"], ["full", "unit", false]],
+    ["server protocol model", ["server/src/types/protocol.ts"], ["full", "unit", false]],
+    ["server session protocol model", ["server/src/types/session.ts"], ["full", "unit", false]],
+    ["server icon protocol model", ["server/src/types/icon.ts"], ["full", "unit", false]],
+    ["server git protocol type", ["server/src/types/git.ts"], ["full", "unit", false]],
+    ["server shared protocol type", ["server/src/types/shared.ts"], ["full", "unit", false]],
+    ["server thinking levels protocol type", ["server/src/thinking-levels.ts"], ["full", "unit", false]],
+    ["Apple protocol model", ["clients/apple/OppiCore/Models/ServerMessage.swift"], ["full", "unit", false]],
+    ["shared Apple source", ["clients/apple/Shared/SharedConstants.swift"], ["none", "unit", false]],
+    ["Apple project", ["clients/apple/project.yml"], ["none", "all", false]],
+    ["Apple xcconfig", ["clients/apple/Base.xcconfig"], ["none", "unit", false]],
+    ["architecture guard", ["server/scripts/check-architecture-boundaries.ts"], ["full", "unit", false]],
+    ["gate policy", [".githooks/pre-push"], ["none", "none", true]],
+    ["heavy-job semaphore", ["scripts/heavy.sh"], ["none", "none", true]],
+    ["heavy-job semaphore test", ["scripts/heavy.test.ts"], ["none", "none", true]],
+    ["gate allowlist", [".gitignore"], ["none", "none", true]],
+    ["unknown fails closed", ["tools/release.ts"], ["full", "unit", false]],
     // batch-gate is executable gate code: it keeps the fail-closed lanes of an unknown path and
     // also runs its own self-test (the hook's run_self_test), which only harness=true triggers.
-    ["batch gate", ["scripts/batch-gate.ts"], ["full", "unit", true, true]],
-    ["batch gate test", ["scripts/batch-gate.test.ts"], ["full", "unit", true, true]],
+    ["batch gate", ["scripts/batch-gate.ts"], ["full", "unit", true]],
+    ["batch gate test", ["scripts/batch-gate.test.ts"], ["full", "unit", true]],
   ] as const)("classifies %s", (_name, paths, expected) => {
     const plan = planForPaths(paths);
-    expect([plan.server, plan.apple, plan.mac, plan.harness]).toEqual(expected);
+    expect([plan.server, plan.apple, plan.harness]).toEqual(expected);
   });
 
   test("takes the strongest union for mixed changes", () => {
@@ -53,7 +50,6 @@ describe("pre-push gate planning", () => {
 
     expect(plan.server).toBe("full");
     expect(plan.apple).toBe("all");
-    expect(plan.mac).toBe(false);
   });
 
   test.each([
@@ -70,7 +66,7 @@ describe("pre-push gate planning", () => {
 
   test("a docs guard change runs its tests in the harness lane and no product lane", () => {
     const plan = planForPaths(["scripts/dev-docs-guard.ts", "scripts/dev-docs-guard.test.ts"]);
-    expect([plan.server, plan.apple, plan.mac, plan.harness, plan.docs]).toEqual(["none", "none", false, true, true]);
+    expect([plan.server, plan.apple, plan.harness, plan.docs]).toEqual(["none", "none", true, true]);
   });
 
   test("deduplicates and sorts paths for deterministic cache input", () => {
