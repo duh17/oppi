@@ -96,7 +96,6 @@ clients/apple/scripts/*
 !clients/apple/scripts/sim-pool-cli.test.ts
 !clients/apple/scripts/sim-pool-prune.test.ts
 !clients/apple/scripts/sim-pool-shutdown.test.ts
-!clients/apple/scripts/sim-pool-types.d.ts
 !clients/apple/scripts/xcode-toolchain.sh
 !clients/apple/scripts/xcode-toolchain.ts
 !clients/apple/scripts/xcode-toolchain.test.ts

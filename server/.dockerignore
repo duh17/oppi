@@ -1,9 +1,0 @@
-node_modules/
-dist/
-coverage/
-scripts/
-.pi/
-.internal/
-*.log
-*.tsbuildinfo
-.env*
