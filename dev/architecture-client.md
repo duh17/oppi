@@ -232,7 +232,7 @@ New rows use `settings|server|workspace.<page>.<row>` on the row button or contr
 
 ## Syntax grammars
 
-- `tree-sitter-css`, `-javascript`, `-python` and `-yaml` are forks under `duh17`: upstream's `Package.swift` adds `src/scanner.c` only if `FileManager` finds it at manifest cwd, which Xcode SPM misses (link failure). Each fork's `oppi-spm` branch is the upstream release tag plus that one-line fix, tagged `<upstream-tag>-oppi.N`, and `clients/apple/project.yml` pins it exactly. On a new upstream tag, rebase `oppi-spm` onto it and tag `<new-tag>-oppi.1`; drop the fork once upstream fixes the manifest. The weekly dependency check should flag a fork whose base tag trails upstream.
+- `tree-sitter-css`, `-javascript`, `-python` and `-yaml` are forks under the project's GitHub account: upstream's `Package.swift` adds `src/scanner.c` only if `FileManager` finds it at manifest cwd, which Xcode SPM misses (link failure). Each fork's `oppi-spm` branch is the upstream release tag plus that one-line fix, tagged `<upstream-tag>-oppi.N`, and `clients/apple/project.yml` pins it exactly. On a new upstream tag, rebase `oppi-spm` onto it and tag `<new-tag>-oppi.1`; drop the fork once upstream fixes the manifest. The weekly dependency check (`scripts/deps-check.ts`) flags a fork whose base tag trails upstream.
 
 ## Client boundary rules current code
 

@@ -76,6 +76,17 @@ export function bump(current: string, latest: string): Bump {
   return "current";
 }
 
+/** Base upstream tag of a fork pin tagged `<upstream-tag>-oppi.N`; undefined for any other tag. */
+export function forkBaseTag(tag: string): string | undefined {
+  return /^(.+)-oppi\.\d+$/.exec(tag)?.[1];
+}
+
+/** Fork status against upstream's latest tag: "rebase due" when the base trails, "unknown" when a tag is not numeric. */
+export function forkStatus(baseTag: string, upstreamLatest: string): "rebase due" | "up to date" | "unknown" {
+  const b = bump(baseTag, upstreamLatest);
+  return b === "unknown" ? "unknown" : b === "current" || b === "ahead" ? "up to date" : "rebase due";
+}
+
 const cmpVer = (a: number[], b: number[]) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 
 async function pool<T, R>(items: T[], size: number, fn: (x: T) => Promise<R>): Promise<R[]> {
@@ -428,6 +439,16 @@ async function swiftScan(): Promise<void> {
     const decl = declByUrl.get(repo);
     const direct = Boolean(decl);
     const health = (await guarded(`gh repo ${repo}`, () => repoHealth(repo))) ?? "";
+    const forkBase = p.state.version ? forkBaseTag(p.state.version) : undefined;
+    if (forkBase) {
+      // Fork pinned as `<upstream-tag>-oppi.N`: compare its base tag with the fork's GitHub parent.
+      const parent = await guarded(`gh parent ${repo}`, async () => (await gh(`repos/${repo}`)).parent?.full_name as string | undefined);
+      if (!parent) return gaps.push(`swift fork ${p.identity}: no GitHub parent repo; cannot find upstream`);
+      const lt = await guarded(`gh tags ${parent}`, () => latestTag(parent));
+      if (!lt) return gaps.push(`swift fork ${p.identity}: no release tag found on upstream ${parent}`);
+      forks.push({ name: p.identity, pinned: p.state.version!, upstream: parent, upstreamLatest: lt.tag, status: forkStatus(forkBase, lt.tag) });
+      return;
+    }
     const pinned = decl && decl.rule !== "from";
     const note = [
       direct ? `direct (${decl!.rule} ${decl!.value.slice(0, 12)})` : "transitive",
@@ -596,6 +617,8 @@ async function toolchainScan(): Promise<void> {
   toolchainNotes.push(...notes);
 }
 const toolchainNotes: string[] = [];
+type ForkRow = { name: string; pinned: string; upstream: string; upstreamLatest: string; status: "rebase due" | "up to date" | "unknown" };
+const forks: ForkRow[] = [];
 
 async function actionsScan(): Promise<void> {
   const dir = join(root, ".github/workflows");
@@ -649,6 +672,10 @@ function buildActions(): Action[] {
     else if ((o.bump === "patch" || o.bump === "minor" || o.bump === "unknown") && /pin reason|overrides/.test(o.note))
       out.push({ rank: 3, text: `Pinned on purpose, revisit: ${o.name} ${o.current}→${o.latest} (${o.source}) — ${o.note.slice(0, 160)}` });
     if (o.stale) out.push({ rank: 3, text: `Upstream health: ${o.name} — ${o.stale}` });
+  }
+  for (const f of forks) {
+    const what = `${f.name} ${f.pinned} (upstream ${f.upstream} latest ${f.upstreamLatest})`;
+    out.push({ rank: 3, text: f.status === "rebase due" ? `Fork rebase due: ${what}` : f.status === "up to date" ? `Fork up to date: ${what}` : `Fork not comparable (non-numeric tag): ${what}` });
   }
   for (const n of toolchainNotes) out.push({ rank: 3, text: n });
   return out;

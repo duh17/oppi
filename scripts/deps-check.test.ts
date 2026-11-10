@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { applyGoModuleFixes, bump, parseGoModuleFixes, parseProjectYmlPackages } from "./deps-check";
+import { applyGoModuleFixes, bump, forkBaseTag, forkStatus, parseGoModuleFixes, parseProjectYmlPackages } from "./deps-check";
 
 describe("Go module overrides", () => {
   const script = [
@@ -33,6 +33,24 @@ describe("Go module overrides", () => {
     expect(out.find((r) => r.name === "golang.org/x/net")).toEqual({ name: "golang.org/x/net", version: "0.62.0", override: true });
     expect(out.find((r) => r.name === "golang.org/x/sys")?.override).toBeUndefined();
     expect(out.map((r) => r.name)).toContain("github.com/new/mod");
+  });
+});
+
+describe("fork tags", () => {
+  test("strips only the -oppi.N suffix", () => {
+    expect(forkBaseTag("0.25.0-oppi.1")).toBe("0.25.0");
+    expect(forkBaseTag("v0.25.0-oppi.12")).toBe("v0.25.0");
+    expect(forkBaseTag("0.25.0")).toBeUndefined();
+    expect(forkBaseTag("0.25.0-oppi.x")).toBeUndefined();
+    expect(forkBaseTag("0.25.0-rc.1")).toBeUndefined();
+  });
+
+  test("rebase is due only when the base trails upstream's latest", () => {
+    expect(forkStatus("0.25.0", "v0.26.0")).toBe("rebase due");
+    expect(forkStatus("0.25.0", "0.25.1")).toBe("rebase due");
+    expect(forkStatus("0.25.0", "v0.25.0")).toBe("up to date");
+    expect(forkStatus("0.25.1", "0.25.0")).toBe("up to date");
+    expect(forkStatus("nightly", "0.25.0")).toBe("unknown");
   });
 });
 
