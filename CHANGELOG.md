@@ -107,6 +107,7 @@ The file reader gets Org folding and badges, heading links, Outline and Find, ta
 - **Client:** The slash command list no longer shows only `/compact` after you return to a chat from a reader.
 - **Client:** A Quick Session sent without a model chosen is no longer refused on a server with no default model when all its models come from one provider.
 - **Client:** A GeoJSON map with an empty feature draws its other features instead of a black panel.
+- **Client:** Settings > Tailscale no longer shows **Error** until Retry after Oppi reconnects Tailscale in the background while the device is locked; it reconnects once you unlock. A start that does fail now says why instead of "TailscaleError error 3".
 - **Client:** `~~text~~` and checked task items draw their strikethrough line. A single `~` no longer strikes text.
 - **Client:** The Org reader no longer loses the rest of a file after an unclosed drawer, flattens nested lists, shows blocks inside list items as text, or shows math and bracketed text with extra backslashes. Table cells show inline markup, `#+` keyword lines are quiet, a `COMMENT` subtree is hidden, and image and PDF exports keep relative file links.
 - **Client:** Message, Dictate, Now Playing, and Files in the session list's bottom bar no longer react to a tap meant for a chat pushed over the list.

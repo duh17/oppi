@@ -521,6 +521,102 @@ struct TailnetPeerStatusTests {
     }
 }
 
+// MARK: - Node start
+
+@MainActor
+@Suite("Tailnet node start", .timeLimit(.minutes(1)))
+struct TailnetNodeStartTests {
+    private let gate = ProtectedDataGate()
+    private let starts = NodeStartRecorder()
+
+    private func makeController() -> TailnetNodeController {
+        TailnetNodeController(
+            waitForProtectedData: gate.wait,
+            startNode: { [starts] in try await starts.start() }
+        )
+    }
+
+    /// A node recreated while the device is locked cannot read its saved
+    /// state; it must start once protected data is available, not fail.
+    @Test func startWaitsForProtectedDataBeforeStartingTheNode() async {
+        let controller = makeController()
+        var waits = gate.arrivals.makeAsyncIterator()
+        var attempts = starts.attempts.makeAsyncIterator()
+
+        await controller.restart()
+        await waits.next()
+        #expect(starts.count == 0)
+        #expect(controller.state == .starting)
+
+        gate.open()
+        await attempts.next()
+        #expect(starts.count == 1)
+        #expect(controller.state == .failed("Tailscale could not start: \(NodeStartRecorder.failure.localizedDescription)"))
+    }
+
+    /// A restart while an earlier start still waits for unlock (bus loss,
+    /// then Retry) starts one node, for the latest generation.
+    @Test func supersededStartNeverStartsANode() async {
+        let controller = makeController()
+        var waits = gate.arrivals.makeAsyncIterator()
+        var attempts = starts.attempts.makeAsyncIterator()
+
+        await controller.restart()
+        await waits.next()
+        await controller.restart()
+        await waits.next()
+
+        gate.open()
+        await attempts.next()
+        #expect(starts.count == 1)
+        #expect(controller.state == .failed("Tailscale could not start: \(NodeStartRecorder.failure.localizedDescription)"))
+    }
+}
+
+@MainActor
+private final class ProtectedDataGate {
+    let arrivals: AsyncStream<Void>
+    private let arrival: AsyncStream<Void>.Continuation
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init() {
+        (arrivals, arrival) = AsyncStream<Void>.makeStream()
+    }
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+            arrival.yield()
+        }
+    }
+
+    func open() {
+        let ready = waiters
+        waiters = []
+        ready.forEach { $0.resume() }
+    }
+}
+
+@MainActor
+private final class NodeStartRecorder {
+    static let failure = CocoaError(.fileReadNoPermission)
+
+    let attempts: AsyncStream<Void>
+    private let attempt: AsyncStream<Void>.Continuation
+    private(set) var count = 0
+
+    init() {
+        (attempts, attempt) = AsyncStream<Void>.makeStream()
+    }
+
+    /// Fails like tsnet on a locked device, so no real node starts.
+    func start() async throws -> Never {
+        count += 1
+        attempt.yield()
+        throw Self.failure
+    }
+}
+
 // MARK: - Transport through the node's SOCKS5 proxy
 
 @Suite("Tailnet transport route", .serialized)

@@ -48,6 +48,22 @@ final class TailnetNodeController {
     @ObservationIgnored private var busDeliveredSinceWatch = false
     @ObservationIgnored private var lastNodeRestart: ContinuousClock.Instant?
     @ObservationIgnored private var peerRefresh: Task<Void, Never>?
+    /// `TailnetTransportRoute` is process-wide; only the controller that
+    /// published a route withdraws it.
+    @ObservationIgnored private var ownsRoute = false
+
+    private let waitForProtectedData: @MainActor () async -> Void
+    private let startNode: @MainActor () async throws -> TailscaleNode
+
+    init(
+        waitForProtectedData: @escaping @MainActor () async -> Void = { await ProtectedDataAvailability.wait() },
+        startNode: @escaping @MainActor () async throws -> TailscaleNode = {
+            try await TailnetNodeController.makeNode(logSink: TailnetLogSink())
+        }
+    ) {
+        self.waitForProtectedData = waitForProtectedData
+        self.startNode = startNode
+    }
 
     private static let nodeRestartInterval: Duration = .seconds(30)
     /// Peer deltas arrive per peer (Online/LastSeen flips included); one status
@@ -141,14 +157,22 @@ final class TailnetNodeController {
         ClientLog.info("Tailnet", "Starting embedded node")
 
         Task { [weak self] in
+            // tsnet opens its saved state (tailscaled.state, tailscaled.log.conf),
+            // which the app's default protection class locks with the device.
+            // iOS resumes Oppi in the background, often while locked, and a
+            // node started then fails with "operation not permitted" and stays
+            // failed. Start once the files are readable; until then the node
+            // reads as starting.
+            await self?.waitForProtectedData()
+            guard let self, self.generation == generation else { return }
             let node: TailscaleNode
             do {
-                node = try await Self.makeNode(logSink: TailnetLogSink())
+                node = try await self.startNode()
             } catch {
-                self?.fail(generation, "Tailscale could not start: \(error.localizedDescription)")
+                self.fail(generation, "Tailscale could not start: \(error.localizedDescription)")
                 return
             }
-            guard let self, self.generation == generation else {
+            guard self.generation == generation else {
                 try? await node.close()
                 return
             }
@@ -371,6 +395,7 @@ final class TailnetNodeController {
             let proxy = TailnetSOCKSProxy(host: host, port: port, credential: loopback.proxyCredential)
             guard TailnetTransportRoute.proxy != proxy else { return }
             TailnetTransportRoute.publish(proxy, generation: generation)
+            ownsRoute = true
             ClientLog.info("Tailnet", "Published tailnet transport route")
             onRouteChange?()
         } catch {
@@ -379,10 +404,45 @@ final class TailnetNodeController {
     }
 
     private func unpublishRoute() {
-        guard TailnetTransportRoute.proxy != nil else { return }
+        guard ownsRoute else { return }
+        ownsRoute = false
         TailnetTransportRoute.publish(nil)
         ClientLog.info("Tailnet", "Withdrew tailnet transport route")
         onRouteChange?()
+    }
+}
+
+/// TailscaleKit's errors carry no descriptions, so they read as
+/// "TailscaleError error 3". Most carry the Go-side message (`tailscale_errmsg`)
+/// as details; show that.
+extension TailscaleError: @retroactive LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .badInterfaceHandle: "The Tailscale node is not running."
+        case .listenerClosed: "The Tailscale listener closed."
+        case .invalidTimeout: "The Tailscale timeout is invalid."
+        case .connectionClosed: "The Tailscale connection closed."
+        case .readFailed: "Reading from Tailscale failed."
+        case .shortWrite: "Tailscale could not send all of the data."
+        case .invalidProxyAddress: "Tailscale returned an invalid proxy address."
+        case .invalidControlURL: "The Tailscale control server address is invalid."
+        case let .cannotFetchIps(details):
+            Self.text(details) ?? "Tailscale could not read this device's tailnet addresses."
+        case let .posixError(error, details):
+            Self.text(details) ?? String(cString: strerror(error.code.rawValue))
+        case let .unknownPosixError(code, details):
+            Self.text(details) ?? "Tailscale failed with system error \(code)."
+        case let .internalError(details):
+            Self.text(details) ?? "Tailscale reported an internal error."
+        @unknown default:
+            "Tailscale reported an error."
+        }
+    }
+
+    private static func text(_ details: String?) -> String? {
+        guard let details = details?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !details.isEmpty else { return nil }
+        return details
     }
 }
 
