@@ -1,10 +1,10 @@
 import Network
-import PDFKit
 import UIKit
 
 /// One file, read from where it lives and shown by type: text in the UIKit
-/// reader (`FullScreenCodeViewController`) or the code editor, images, video,
-/// audio, PDF, and 3D scenes. Large text files ask before loading.
+/// reader (`FullScreenCodeViewController`) or the code editor, everything else
+/// in the `FileRenderer` its preview category names (`FileRendererRegistry`).
+/// Large text files ask before loading.
 ///
 /// `.pushed` is a screen of its own: a text file shows the reader's glass bar
 /// and hides the stack's (`readerHostNavigationBar` behavior), host files keep
@@ -80,14 +80,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         case sizeWarning(Int)
         case error(String)
         case text(String)
-        case image(Data)
-        case video(AuthenticatedMediaSource)
-        case audio(AuthenticatedMediaSource)
-        case pdf(Data)
-        case usdz(USDZLocalFileStore.Handle)
-        /// A downloaded book the native reader opens itself.
-        case book(EPUBBook)
-        case binary(Data)
+        /// The file at `path`, loaded by its renderer. Every load passes
+        /// through `.loading`, so only the same renderer compares equal.
+        case rendered(any FileRenderer, path: String)
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             switch (lhs, rhs) {
@@ -95,14 +90,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             case (.sizeWarning(let a), .sizeWarning(let b)): a == b
             case (.error(let a), .error(let b)): a == b
             case (.text(let a), .text(let b)): a == b
-            case (.image(let a), .image(let b)): a == b
-            case (.video(let a), .video(let b)): a.identity == b.identity
-            case (.audio(let a), .audio(let b)): a.identity == b.identity
-            case (.pdf(let a), .pdf(let b)): a == b
-            case (.usdz(let a), .usdz(let b)): a == b
-            // A book's archive has no value identity; a re-read mounts anew.
-            case (.book, .book): false
-            case (.binary(let a), .binary(let b)): a == b
+            case (.rendered(let a, _), .rendered(let b, _)): a === b
             default: false
             }
         }
@@ -136,27 +124,23 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     private var activeSelection: FileBrowserSelection?
     private var content: Phase = .loading {
         didSet {
-            if content != oldValue { contentGeneration &+= 1 }
+            if content != oldValue {
+                contentGeneration &+= 1
+                if case .rendered(let renderer, _) = oldValue { renderer.release() }
+            }
             setNeedsUpdateProperties()
         }
     }
     private var contentGeneration = 0
-    private var loadedMediaPath: String?
     /// Path whose text `content` holds, so a re-shown viewer revalidates instead of rebuilding.
     private var loadedTextPath: String?
-    /// Path whose book `content` holds. Re-showing the viewer keeps the open
-    /// chapter and its position instead of downloading the archive again.
-    private var loadedBookPath: String?
+    /// The host path the shown text resolved to; reader resources resolve against it.
     private var loadedHostFilePath: String?
     private var isExpensiveNetwork = false {
         didSet { if isExpensiveNetwork != oldValue { setNeedsUpdateProperties() } }
     }
-    /// The API client of the last load, for reader resources and captions.
+    /// The API client of the last load, for reader resources and the editor.
     private var loadedApiClient: APIClient?
-    private var timedText = TimedText.LoadResult.empty {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var timedTextLoadFinished = false
     /// The tagged read of the displayed bytes, the open editor, and the edit
     /// entry's bar items. One owner decides all three.
     private lazy var editOwner = makeEditOwner()
@@ -167,7 +151,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 
     private var loadTask: Task<Void, Never>?
     private var networkTask: Task<Void, Never>?
-    private var isOnScreen = false
+    private(set) var isOnScreen = false
 
     // MARK: Views
 
@@ -185,13 +169,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     private var sizeWarning: FileViewerSizeWarningView?
     /// The unavailable or failed state on screen, kept to repaint on a theme change.
     private var stateView: (view: UIContentUnavailableView, state: LoadState)?
-    private var videoPage: AspectFitMediaView?
     /// Under the reader: the reader's own page color, so the band below its
     /// safe area (the home indicator) does not show the viewer's lighter page.
     private var readerPage: UIView?
-    private var audioPlayerController: AudioLyricsPlayerViewController?
-    private var videoModel: AuthenticatedMediaPlayerModel?
-    private var videoHost: AuthenticatedMediaPlayerHostController?
 #if DEBUG
     private var motionMarker: FileMotionDebugMarker?
 #endif
@@ -232,7 +212,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         // its bytes are read, so no control outlives the previous file.
         guard !alreadyShown else { return }
         editOwner.begin(subject: editSubject(for: selection.path))
-        beginUSDZSafeLoading()
+        content = .loading
         if isOnScreen { startLoad() }
     }
 
@@ -276,8 +256,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         startLoad()
         networkTask?.cancel()
         networkTask = Task { [weak self] in await self?.checkNetworkCost() }
-        if let videoModel, case .video(let source) = content {
-            prepareVideo(videoModel, source: source)
+        if case .rendered(let renderer, _) = content {
+            renderer.viewerDidAppear()
         }
     }
 
@@ -288,8 +268,10 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         loadTask = nil
         networkTask?.cancel()
         networkTask = nil
-        videoModel?.handleDisappear()
-        releaseLoadedUSDZHandle()
+        if case .rendered(let renderer, _) = content {
+            renderer.viewerDidDisappear()
+            if renderer.releasesOffScreen { content = .loading }
+        }
         if isLeaving {
             // Popped or dismissed: the editor hands its buffer to the session.
             editOwner.finishEditing()
@@ -351,10 +333,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             path: currentFilePath,
             fileName: currentFileName
         )
-    }
-
-    private var fileExtension: String {
-        (currentFilePath as NSString).pathExtension.lowercased()
     }
 
     /// Text is loaded and the reader (not the editor) shows it.
@@ -436,13 +414,12 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         showsEmbeddedNavigationChrome && isUsingFileViewer
     }
 
-    /// Text, PDF, and 3D scenes own the back swipe; the viewer handles it for the rest.
+    /// Text and renderers that say so own the back swipe; the viewer handles it for the rest.
     private var parentOwnsBackSwipe: Bool {
         switch content {
-        case .text, .pdf, .usdz, .book:
-            false
-        case .loading, .sizeWarning, .error, .image, .video, .audio, .binary:
-            true
+        case .text: false
+        case .rendered(let renderer, _): !renderer.ownsBackSwipe
+        case .loading, .sizeWarning, .error: true
         }
     }
 
@@ -519,24 +496,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             } else {
                 mounted = mountReader(text: text)
             }
-        case .image(let data):
-            mounted = mountImage(data)
-        case .video(let source):
-            mounted = mountVideo(source)
-        case .audio(let source):
-            mounted = mountAudio(source)
-        case .pdf(let data):
-            mounted = mountPDF(data)
-        case .usdz(let handle):
-            mounted = mountUSDZ(handle)
-        case .book(let book):
-            mounted = mountBookReader(book)
-        case .binary(let data):
-            mounted = unavailable(.empty(
-                title: currentFileName,
-                systemImage: "doc.fill",
-                message: FileViewerBinarySummary.text(fileName: currentFileName, byteCount: data.count)
-            ))
+        case .rendered(let renderer, _):
+            mounted = renderer.mount(in: self)
         }
         mountedView = mounted
         if FileBrowserContentRenderingPolicy.shouldInstallHorizontalBackSwipe(
@@ -575,10 +536,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 
     private func unmountContent() {
         editOwner.finishEditing()
-        if let videoModel {
-            videoModel.handleDisappear()
-            videoHost?.dispose()
-        }
         for child in mountedChildren {
             child.willMove(toParent: nil)
             child.view.removeFromSuperview()
@@ -591,36 +548,23 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         reader = nil
         sizeWarning = nil
         stateView = nil
-        videoPage = nil
         readerPage = nil
-        audioPlayerController = nil
-        videoModel = nil
-        videoHost = nil
 #if DEBUG
         motionMarker?.removeFromSuperview()
         motionMarker = nil
 #endif
     }
 
-    /// Adds `controller` as a child whose view fills `container`.
-    private func embed(_ controller: UIViewController, in container: UIView, guide: UILayoutGuide? = nil) {
+    func mountChild<Attached>(_ controller: UIViewController, attach: () -> Attached) -> Attached {
         addChild(controller)
-        controller.view.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(controller.view)
-        let anchors = guide.map { ($0.topAnchor, $0.bottomAnchor, $0.leadingAnchor, $0.trailingAnchor) }
-            ?? (container.topAnchor, container.bottomAnchor, container.leadingAnchor, container.trailingAnchor)
-        NSLayoutConstraint.activate([
-            controller.view.topAnchor.constraint(equalTo: anchors.0),
-            controller.view.bottomAnchor.constraint(equalTo: anchors.1),
-            controller.view.leadingAnchor.constraint(equalTo: anchors.2),
-            controller.view.trailingAnchor.constraint(equalTo: anchors.3),
-        ])
+        let attached = attach()
         controller.didMove(toParent: self)
         mountedChildren.append(controller)
+        return attached
     }
 
     /// A full-page container on `pageView`, inside the safe area unless asked.
-    private func addPage(_ page: UIView) {
+    func addPage(_ page: UIView) {
         page.translatesAutoresizingMaskIntoConstraints = false
         pageView.insertSubview(page, at: 0)
         NSLayoutConstraint.activate([
@@ -643,18 +587,23 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         return page
     }
 
-    private func unavailable(_ state: LoadState) -> UIView {
+    func unavailable(_ state: LoadState) -> UIView {
         let unavailable = makeStateView(state)
         addPage(unavailable)
         return unavailable
     }
 
-    private func makeStateView(_ state: LoadState) -> UIContentUnavailableView {
+    func makeStateView(_ state: LoadState) -> UIContentUnavailableView {
         let view = UIContentUnavailableView(
             configuration: .loadState(state, palette: ThemeRuntimeState.currentPalette())
         )
         stateView = (view, state)
         return view
+    }
+
+    func removeStateView() {
+        stateView?.view.removeFromSuperview()
+        stateView = nil
     }
 
     private func mountReader(text: String) -> UIView {
@@ -675,81 +624,39 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             orgFolds: OrgFoldMemory(folded: orgFolds[path] ?? []) { [weak self] in self?.orgFolds[path] = $0 },
             addToChatDestination: configuration.addToChatDestination
         )
-        reader.setLeadingFloatingAccessoryCount(leadingAccessoryCount)
-        reader.setTrailingFloatingAccessoryCount(trailingAccessoryCount)
-        let page = UIView()
-        addPage(page)
-        addChild(reader)
-        reader.view.translatesAutoresizingMaskIntoConstraints = false
-        page.addSubview(reader.view)
-        let safe = page.safeAreaLayoutGuide
-        // The reader's own glass bar sits at the top of a pushed screen.
-        NSLayoutConstraint.activate([
-            reader.view.topAnchor.constraint(
-                equalTo: showsEmbeddedNavigationChrome ? page.topAnchor : safe.topAnchor
-            ),
-            reader.view.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
-            reader.view.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
-            reader.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
-        ])
-        reader.didMove(toParent: self)
-        mountedChildren.append(reader)
-        self.reader = reader
-        readerPage = page
-        return page
+        return mountReaderPage(reader)
     }
 
-    /// Where this file came from, as the viewer knows it. A book's saved
-    /// position is keyed by it, so two books at one path in two workspaces, two
-    /// sessions, or on the host do not share one slot.
-    private var bookOrigin: String {
-        return switch configuration.source {
-        case .workspaceFile: "workspace:\(configuration.workspaceId)"
-        case .sessionFile(let sessionId): "session:\(sessionId)"
-        case .hostFile: "host"
-        case .sessionTouched(let origin): "session:\(origin.sessionId)"
-        }
-    }
-
-    /// The reader for a downloaded book: one chapter at a time with its own TOC
-    /// and Previous/Next, at the position this book was left.
-    private func mountBookReader(_ book: EPUBBook) -> UIView {
-        let document = EPUBReaderDocument(
-            book: book,
-            positionKey: EPUBReadingPositionStore.key(
-                serverId: configuration.serverId,
-                origin: bookOrigin,
-                path: loadedHostFilePath ?? currentFilePath
-            ),
-            filePath: loadedHostFilePath ?? currentFilePath,
-            title: book.title.isEmpty ? currentFileName : book.title
-        )
+    func mountReader(_ content: FullScreenCodeContent) -> UIView {
         let back: @MainActor @Sendable () -> Void = { [weak self] in self?.navigateBack() }
-        let reader = FullScreenCodeViewController(
-            content: .book(document),
+        return mountReaderPage(FullScreenCodeViewController(
+            content: content,
             presentationMode: readerPresentationMode(back: back),
             reviewCommentSelectionContext: readerSelectionContext,
             editItems: [],
             addToChatDestination: configuration.addToChatDestination
-        )
+        ))
+    }
+
+    private func mountReaderPage(_ reader: FullScreenCodeViewController) -> UIView {
         reader.setLeadingFloatingAccessoryCount(leadingAccessoryCount)
         reader.setTrailingFloatingAccessoryCount(trailingAccessoryCount)
         let page = UIView()
         addPage(page)
-        addChild(reader)
-        reader.view.translatesAutoresizingMaskIntoConstraints = false
-        page.addSubview(reader.view)
-        let safe = page.safeAreaLayoutGuide
-        NSLayoutConstraint.activate([
-            reader.view.topAnchor.constraint(
-                equalTo: showsEmbeddedNavigationChrome ? page.topAnchor : safe.topAnchor
-            ),
-            reader.view.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
-            reader.view.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
-            reader.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
-        ])
-        reader.didMove(toParent: self)
-        mountedChildren.append(reader)
+        mountChild(reader) {
+            reader.view.translatesAutoresizingMaskIntoConstraints = false
+            page.addSubview(reader.view)
+            let safe = page.safeAreaLayoutGuide
+            // The reader's own glass bar sits at the top of a pushed screen.
+            NSLayoutConstraint.activate([
+                reader.view.topAnchor.constraint(
+                    equalTo: showsEmbeddedNavigationChrome ? page.topAnchor : safe.topAnchor
+                ),
+                reader.view.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
+                reader.view.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
+                reader.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
+            ])
+        }
         self.reader = reader
         readerPage = page
         return page
@@ -760,237 +667,35 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     private func mountEditor(_ editorPage: DocumentEditEditorPage) -> UIView {
         let page = UIView()
         addPage(page)
-        embed(editorPage, in: page)
-        return page
-    }
-
-    private func mountImage(_ data: Data) -> UIView {
-        let page = UIView()
-        addPage(page)
-        let scroll = UIScrollView()
-        scroll.alwaysBounceVertical = true
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        page.addSubview(scroll)
-        let safe = page.safeAreaLayoutGuide
-        NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: safe.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
-            scroll.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
-        ])
-        let image = DataImagePreviewView(
-            data: data,
-            mimeType: MediaMimeType.imageMimeType(forPathExtension: fileExtension),
-            maxPixelSize: 2_400
-        )
-        image.translatesAutoresizingMaskIntoConstraints = false
-        scroll.addSubview(image)
-        let inset: CGFloat = 16
-        NSLayoutConstraint.activate([
-            image.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: inset),
-            image.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -inset),
-            image.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor, constant: inset),
-            image.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor, constant: -inset),
-        ])
-        return page
-    }
-
-    private func mountVideo(_ source: AuthenticatedMediaSource) -> UIView {
-        let model = AuthenticatedMediaPlayerModel()
-        let host = AuthenticatedMediaPlayerHostController(model: model)
-        // `loadedMediaPath` changes with `content`, so the loader always names
-        // the file behind `source`. The host runs it once per source and
-        // attaches captions to the player overlay, even during fullscreen.
-        host.update(
-            model: model,
-            sourceIdentity: source.identity,
-            chrome: AuthenticatedMediaPlayerHostController.Chrome(
-                unavailableTitle: "Video preview unavailable",
-                unavailableSystemImage: "film.slash"
-            ),
-            timedTextLoader: loadedMediaPath.flatMap { makeTimedTextLoader(path: $0, kind: .video) }
-        )
-        addChild(host)
-        // The player takes the video's own proportions inside the page; until
-        // its size arrives (`prepareVideo`) the box is 16:9.
-        host.view.layer.cornerRadius = 10
-        host.view.clipsToBounds = true
-        let page = AspectFitMediaView(content: host.view)
-        addPage(page)
-        videoPage = page
-        host.didMove(toParent: self)
-        mountedChildren.append(host)
-        videoModel = model
-        videoHost = host
-        if isOnScreen {
-            prepareVideo(model, source: source)
+        mountChild(editorPage) {
+            editorPage.view.translatesAutoresizingMaskIntoConstraints = false
+            page.addSubview(editorPage.view)
+            NSLayoutConstraint.activate([
+                editorPage.view.topAnchor.constraint(equalTo: page.topAnchor),
+                editorPage.view.bottomAnchor.constraint(equalTo: page.bottomAnchor),
+                editorPage.view.leadingAnchor.constraint(equalTo: page.leadingAnchor),
+                editorPage.view.trailingAnchor.constraint(equalTo: page.trailingAnchor),
+            ])
         }
         return page
     }
 
-    private func prepareVideo(_ model: AuthenticatedMediaPlayerModel, source: AuthenticatedMediaSource) {
-        model.setVisible(true)
-        model.prepare(
-            source: source,
-            autoplay: false,
-            telemetrySource: "authenticated_media",
-            telemetryMode: "inline",
-            telemetrySessionId: nil,
-            onPresentationSize: { [weak self] size in self?.videoPage?.contentSize = size }
-        )
-    }
-
-    private func mountAudio(_ source: AuthenticatedMediaSource) -> UIView {
-        let player = AudioLyricsPlayerViewController(configuration: audioConfiguration(source))
-        let page = UIView()
-        addPage(page)
-        embed(player, in: page, guide: page.safeAreaLayoutGuide)
-        audioPlayerController = player
-        return page
-    }
-
-    private var audioItemID: String {
-        AudioPlaybackItemID.fileBrowser(
-            path: currentFilePath,
-            workspaceID: configuration.workspaceId,
-            sessionID: configuration.sessionId,
-            worktreeID: configuration.worktreeId
-        )
-    }
-
-    /// Reads the player's `@Observable` state: call from `updateProperties()`
-    /// so the lyrics follow what plays.
-    private func audioConfiguration(_ source: AuthenticatedMediaSource) -> AudioLyricsPlayerViewController.Configuration {
-        let itemID = audioItemID
-        let audioPlayer = services.audioPlayer
-        let nowPlayingTimedText = audioPlayer?.nowPlayingTimedText
-        let playbackTimedText =
-            (audioPlayer?.playingItemID == itemID || audioPlayer?.loadingItemID == itemID)
-            && !(nowPlayingTimedText?.tracks.isEmpty ?? true)
-            ? (nowPlayingTimedText ?? timedText)
-            : timedText
-        let playbackTimedTextLoader = timedTextLoadFinished
-            ? nil
-            : makeTimedTextLoader(path: currentFilePath, kind: .audio)
-        return AudioLyricsPlayerViewController.Configuration(
-            title: currentFileName,
-            lyrics: nil,
-            itemID: itemID,
-            audioPlayer: audioPlayer,
-            play: { selectedTimedText in
-                audioPlayer?.toggleMediaPlayback(
-                    source: source,
-                    itemID: itemID,
-                    timedText: selectedTimedText ?? playbackTimedText,
-                    timedTextLoader: playbackTimedTextLoader
-                )
-            },
-            openFile: nil,
-            shareFileData: nil,
-            autoplayOnAppear: false,
-            showsCloseButton: false,
-            usesNavigationBackButton: false,
-            titlePresentation: FileBrowserContentRenderingPolicy.audioPlayerTitlePresentation,
-            timedText: playbackTimedText,
-            sidecarLoader: nil,
-            dismiss: { [weak self] in self?.navigateBack() }
-        )
-    }
-
-    private func mountPDF(_ data: Data) -> UIView {
-        guard let document = PDFDocument(data: data) else {
-            let invalid = unavailable(.empty(
-                title: String(localized: "Invalid PDF"),
-                systemImage: "doc.badge.exclamationmark",
-                message: String(localized: "Could not decode PDF data.")
-            ))
-            installOwnBackSwipe(on: invalid)
-            return invalid
-        }
-        let pdf = PDFView()
-        pdf.autoScales = true
-        pdf.displayMode = .singlePageContinuous
-        pdf.displayDirection = .vertical
-        pdf.backgroundColor = .clear
-        pdf.document = document
-        let page = UIView()
-        addPage(page)
-        pdf.translatesAutoresizingMaskIntoConstraints = false
-        page.addSubview(pdf)
-        let safe = page.safeAreaLayoutGuide
-        NSLayoutConstraint.activate([
-            pdf.topAnchor.constraint(equalTo: safe.topAnchor),
-            pdf.bottomAnchor.constraint(equalTo: page.bottomAnchor),
-            pdf.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
-            pdf.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
-        ])
-        installOwnBackSwipe(on: pdf)
-        return page
-    }
-
-    /// PDF content handles back itself when the host allows the swipe.
-    private func installOwnBackSwipe(on view: UIView) {
+    /// A page that owns the back swipe handles back itself when the host allows the swipe.
+    func installOwnBackSwipe(on view: UIView) {
         guard configuration.allowsHorizontalBackSwipe else { return }
         let installer = HorizontalBackSwipeGestureInstaller { [weak self] in self?.navigateBack() }
         installer.install(on: view)
         mountedBackSwipe = installer
     }
 
-    private func mountUSDZ(_ handle: USDZLocalFileStore.Handle) -> UIView {
-        let page = UIView()
-        addPage(page)
-        let scene = USDZSceneView()
-        scene.isInteractive = true
-        scene.accessibilityIdentifier = "file-browser-usdz"
-        scene.accessibilityLabel = currentFileName
-        scene.translatesAutoresizingMaskIntoConstraints = false
-        page.addSubview(scene)
-        let safe = page.safeAreaLayoutGuide
-        NSLayoutConstraint.activate([
-            scene.topAnchor.constraint(equalTo: safe.topAnchor),
-            scene.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
-            scene.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
-            scene.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
-        ])
-        let fileName = currentFileName
-        let fileURL = handle.url
-        scene.onLoadFailed = { [weak self, weak page, weak scene] in
-            guard let self, let page, let scene else { return }
-            scene.clear()
-            scene.isHidden = true
-            let unavailable = makeStateView(.failed(
-                title: String(localized: "Unable to load 3D scene"),
-                message: fileName,
-                retry: RetryAction { [weak self, weak scene] in
-                    guard let scene else { return }
-                    self?.stateView?.view.removeFromSuperview()
-                    self?.stateView = nil
-                    scene.isHidden = false
-                    scene.show(fileURL: fileURL)
-                }
-            ))
-            unavailable.translatesAutoresizingMaskIntoConstraints = false
-            page.addSubview(unavailable)
-            NSLayoutConstraint.activate([
-                unavailable.topAnchor.constraint(equalTo: page.safeAreaLayoutGuide.topAnchor),
-                unavailable.bottomAnchor.constraint(equalTo: page.safeAreaLayoutGuide.bottomAnchor),
-                unavailable.leadingAnchor.constraint(equalTo: page.safeAreaLayoutGuide.leadingAnchor),
-                unavailable.trailingAnchor.constraint(equalTo: page.safeAreaLayoutGuide.trailingAnchor),
-            ])
-        }
-        scene.show(fileURL: handle.url)
-        return page
-    }
-
     /// Updates what stays mounted: the reader's Edit action and floating
-    /// counts, the editor's preview and replacement, its header, the audio
-    /// player's lyrics, and the theme colors of the pages this viewer draws.
+    /// counts, the editor's preview and replacement, its header, the
+    /// renderer's own state, and the theme colors of the pages this viewer draws.
     private func updateMountedContent(palette: ThemePalette) {
         sizeWarning?.apply(palette)
         if let stateView {
             stateView.view.configuration = UIContentUnavailableConfiguration.loadState(stateView.state, palette: palette)
         }
-        videoPage?.backgroundColor = palette.ui.bgDark
         readerPage?.backgroundColor = palette.ui.bgDark
         if let reader {
             reader.setEditBarItems(editOwner.barItems)
@@ -998,8 +703,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             reader.setTrailingFloatingAccessoryCount(trailingAccessoryCount)
         }
         editOwner.updateEditorPage(palette: palette, checkoutSubtitle: checkoutSubtitle)
-        if let audioPlayerController, case .audio(let source) = content {
-            audioPlayerController.apply(audioConfiguration(source))
+        if case .rendered(let renderer, _) = content {
+            renderer.update(palette: palette)
         }
     }
 
@@ -1049,66 +754,12 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     private func shareBarItem() -> UIBarButtonItem? {
         if shareItemKey == contentGeneration, let shareItem { return shareItem }
         shareItemKey = contentGeneration
-        if let shareable = shareableContent() {
-            let item = FileSharePresenter.makeShareBarButtonItem(for: shareable)
-            item.title = String(localized: "Share")
-            shareItem = item
-        } else if case .audio(let source) = content {
-            shareItem = makeAudioShareItem(source)
-        } else {
-            shareItem = nil
+        shareItem = switch content {
+        case .text(let text): FileShareService.ShareableContent.fromText(text, filePath: currentFilePath).shareBarItem
+        case .rendered(let renderer, _): renderer.makeShareItem(host: self)
+        case .loading, .sizeWarning, .error: nil
         }
         return shareItem
-    }
-
-    /// Media stays range-streamed until the user asks to share the file.
-    private func makeAudioShareItem(_ source: AuthenticatedMediaSource) -> UIBarButtonItem {
-        let filename = currentFileName
-        let box = Weak<UIBarButtonItem>()
-        let item = UIBarButtonItem(
-            title: String(localized: "Share"),
-            image: UIImage(systemName: "square.and.arrow.up"),
-            primaryAction: UIAction { [weak self] _ in
-                guard let button = box.value else { return }
-                let token = BarButtonLoadingToken(button: button, tintColor: nil)
-                Task { @MainActor in
-                    token.start()
-                    defer { token.stop() }
-                    do {
-                        let data = try await source.loadFileData()
-                        let item = FileShareService.fileShareItem(data: data, filename: filename)
-                        FileSharePresenter.presentActivityController(item: item)
-                    } catch is CancellationError {
-                        return
-                    } catch {
-                        self?.presentShareFailure()
-                    }
-                }
-            }
-        )
-        item.accessibilityIdentifier = "fileBrowser.audio.share"
-        box.value = item
-        return item
-    }
-
-    private func presentShareFailure() {
-        errorAlerts.showShareFailure()
-    }
-
-    /// Shareable content of the loaded phase.
-    private func shareableContent() -> FileShareService.ShareableContent? {
-        switch content {
-        case .text(let text):
-            return .fromText(text, filePath: currentFilePath)
-        case .image(let data):
-            return .imageData(data, filename: currentFileName)
-        case .pdf(let data):
-            return .pdfData(data, filename: currentFileName)
-        case .binary(let data):
-            return .fileData(data, filename: currentFileName)
-        default:
-            return nil
-        }
     }
 
     /// The stack's bar hides while the reader shows its own (pushed text). The
@@ -1172,21 +823,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 
         let requestedSelection = currentSelection
         let requestedPath = requestedSelection.path
-        let requestedExtension = (requestedPath as NSString).pathExtension.lowercased()
         let requestedCategory = FileKind.detect(from: requestedPath).previewCategory
-        let existingMedia: FileBrowserMediaLoadPolicy.Existing = {
-            guard let loadedMediaPath else { return .none }
-            switch content {
-            case .video: return .video(path: loadedMediaPath)
-            case .audio: return .audio(path: loadedMediaPath)
-            default: return .none
-            }
-        }()
-        if !FileBrowserMediaLoadPolicy.shouldReload(
-            existing: existingMedia,
-            requestedPath: requestedPath,
-            force: force
-        ) {
+        if !force, case .rendered(let renderer, let path) = content,
+           renderer.keepsOnReshow, path == requestedPath {
             return
         }
 
@@ -1202,12 +841,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         // inline players; missing or denied files must not show stale text.
         if !force, loadedTextPath == requestedPath, case .text(let shownText) = content {
             do {
-                guard let read = try await readReaderBytes(
-                    api: api, path: requestedPath, category: requestedCategory
-                ) else { return }
+                guard let read = try await readText(api: api, path: requestedPath) else { return }
                 if case .bytes(let data, let editedText, _) = read,
-                   readerPhase(data: data, editedText: editedText, path: requestedPath, category: requestedCategory)
-                    == .text(shownText) {
+                   readerText(data: data, editedText: editedText, path: requestedPath) == shownText {
                     return
                 }
             } catch {
@@ -1227,111 +863,56 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             return
         }
 
-        loadedMediaPath = nil
         loadedTextPath = nil
-        loadedBookPath = nil
         loadedHostFilePath = nil
-        timedText = .empty
-        timedTextLoadFinished = false
-        beginUSDZSafeLoading()
+        content = .loading
 
-        let access = fileAccess
         do {
-            switch requestedCategory {
-            case .video:
-                let source = try await access.mediaSource(
-                    api: api,
-                    path: requestedPath,
-                    contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: requestedExtension),
-                    sourceFileExtension: requestedExtension
-                )
-                guard isCurrentFile(requestedPath) else { return }
-                loadedMediaPath = requestedPath
-                content = .video(source)
-            case .audio:
-                let source = try await access.mediaSource(
-                    api: api,
-                    path: requestedPath,
-                    contentTypeHint: MediaMimeType.audioMimeType(forPathExtension: requestedExtension),
-                    sourceFileExtension: requestedExtension
-                )
-                guard isCurrentFile(requestedPath) else { return }
-                loadedMediaPath = requestedPath
-                content = .audio(source)
-                await loadTimedText(api: api, path: requestedPath, kind: .audio)
-            case .usdz:
-                let data: Data
-                if configuration.source == .hostFile {
-                    let file = try await api.browseHostFileContent(
-                        path: requestedPath, controlSessionId: configuration.controlSessionId
-                    )
-                    guard isCurrentFile(requestedPath) else { return }
-                    data = file.data
-                    loadedHostFilePath = file.resolvedPath
-                } else {
-                    data = try await access.browseFile(api: api, path: requestedPath)
-                }
-                guard isCurrentFile(requestedPath) else { return }
-                let key = USDZLocalFileStore.cacheKey(
-                    kind: configuration.source == .hostFile ? .hostFile : .workspaceFile,
-                    workspaceID: configuration.workspaceId,
-                    sessionID: configuration.sessionId,
-                    worktreeID: configuration.worktreeId,
-                    path: configuration.revision.map { "\($0):\(requestedPath)" } ?? requestedPath
-                )
-                let handle = try await USDZLocalFileStore.shared.store(key: key, data: data)
-                guard isCurrentFile(requestedPath) else {
-                    await USDZLocalFileStore.shared.release(handle)
-                    return
-                }
-                loadedMediaPath = requestedPath
-                content = .usdz(handle)
-            case .book:
-                if !force, loadedBookPath == requestedPath, case .book = content { return }
-                guard let read = try await readReaderBytes(
-                    api: api, path: requestedPath, category: requestedCategory
-                ) else { return }
-                switch read {
-                case .deletedDraft(let text):
-                    content = .text(text)
-                case .bytes(let data, _, let resolvedHostPath):
-                    if let resolvedHostPath { loadedHostFilePath = resolvedHostPath }
-                    do {
-                        let book = try EPUBBook.open(data: data)
-                        guard isCurrentFile(requestedPath) else { return }
-                        loadedBookPath = requestedPath
-                        content = .book(book)
-                    } catch {
-                        guard isCurrentFile(requestedPath) else { return }
-                        content = .error(error.localizedDescription)
-                    }
-                }
-            case .image, .pdf, .text, .binary:
-                guard let read = try await readReaderBytes(
-                    api: api, path: requestedPath, category: requestedCategory
-                ) else { return }
-                switch read {
-                case .deletedDraft(let text):
-                    // Gone on the server: a kept draft reopens in the
-                    // non-writing deleted state instead of an error page.
-                    content = .text(text)
-                    return
-                case .bytes(let data, let editedText, let resolvedHostPath):
-                    if let resolvedHostPath {
-                        loadedHostFilePath = resolvedHostPath
-                    }
-                    content = readerPhase(
-                        data: data, editedText: editedText, path: requestedPath, category: requestedCategory
-                    )
-                }
+            if let renderer = FileRendererRegistry.renderer(for: requestedCategory) {
+                guard let rendered = try await renderer.load(renderInput(api: api, path: requestedPath)) else { return }
+                content = .rendered(rendered, path: requestedPath)
+                await rendered.finishLoading()
+                return
             }
-            if case .text = content {
-                loadedTextPath = requestedPath
+            guard let read = try await readText(api: api, path: requestedPath) else { return }
+            switch read {
+            case .deletedDraft(let text):
+                // Gone on the server: a kept draft reopens in the
+                // non-writing deleted state instead of an error page.
+                content = .text(text)
+            case .bytes(let data, let editedText, let resolvedHostPath):
+                if let resolvedHostPath {
+                    loadedHostFilePath = resolvedHostPath
+                }
+                if let text = readerText(data: data, editedText: editedText, path: requestedPath) {
+                    content = .text(text)
+                    loadedTextPath = requestedPath
+                    return
+                }
+                // Bytes the reader cannot show open as the category their path
+                // names: a host web page as an image, anything else as binary.
+                let category: FilePreviewCategory = showsAsWebString(requestedPath) ? .image : .binary
+                guard let renderer = FileRendererRegistry.renderer(for: category),
+                      let rendered = try await renderer.load(renderInput(api: api, path: requestedPath, preread: data))
+                else { return }
+                content = .rendered(rendered, path: requestedPath)
             }
         } catch {
             guard isCurrentFile(requestedPath) else { return }
             content = .error(error.localizedDescription)
         }
+    }
+
+    private func renderInput(api: APIClient, path: String, preread: Data? = nil) -> FileRenderInput {
+        FileRenderInput(
+            api: api,
+            access: fileAccess,
+            path: path,
+            fileName: currentFileName,
+            audioPlayer: services.audioPlayer,
+            preread: preread,
+            isCurrent: { [weak self] in self?.isCurrentFile(path) ?? false }
+        )
     }
 
     private enum ReaderRead {
@@ -1340,61 +921,35 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         case deletedDraft(String)
     }
 
-    /// One read of a document file. Editable text goes through the edit entry's
+    /// One read of a text file. Editable text goes through the edit entry's
     /// tagged read, so a live or recovered draft wins over disk. Nil when the
     /// person moved to another file meanwhile.
-    private func readReaderBytes(
-        api: APIClient,
-        path: String,
-        category: FilePreviewCategory
-    ) async throws -> ReaderRead? {
-        if category == .text {
-            switch await editOwner.read() {
-            case .ownRead:
-                break
-            case .deletedDraft(let text):
-                guard isCurrentFile(path) else { return nil }
-                return .deletedDraft(text)
-            case .bytes(let snapshot, let draftText):
-                guard isCurrentFile(path) else { return nil }
-                return .bytes(snapshot.bytes, editedText: draftText, resolvedHostPath: editOwner.resolvedHostPath)
-            }
-        }
-        if configuration.source == .hostFile {
-            let file = try await api.browseHostFileContent(
-                path: path, controlSessionId: configuration.controlSessionId
-            )
+    private func readText(api: APIClient, path: String) async throws -> ReaderRead? {
+        switch await editOwner.read() {
+        case .ownRead:
+            break
+        case .deletedDraft(let text):
             guard isCurrentFile(path) else { return nil }
-            return .bytes(file.data, editedText: nil, resolvedHostPath: file.resolvedPath)
+            return .deletedDraft(text)
+        case .bytes(let snapshot, let draftText):
+            guard isCurrentFile(path) else { return nil }
+            return .bytes(snapshot.bytes, editedText: draftText, resolvedHostPath: editOwner.resolvedHostPath)
         }
-        let data = try await fileAccess.browseFile(api: api, path: path)
-        guard isCurrentFile(path) else { return nil }
-        return .bytes(data, editedText: nil, resolvedHostPath: nil)
+        guard let read = try await renderInput(api: api, path: path).bytes() else { return nil }
+        return .bytes(read.data, editedText: nil, resolvedHostPath: read.resolvedHostPath)
     }
 
-    private func readerPhase(
-        data: Data,
-        editedText: String?,
-        path: String,
-        category: FilePreviewCategory
-    ) -> Phase {
-        if configuration.source == .hostFile, HostFilePreviewPolicy.usesStringFetchViewer(for: path) {
-            if FileKind.detect(from: path) == .html,
-               let text = String(data: data, encoding: .utf8) {
-                return .text(text)
-            }
-            return .image(data)
+    /// A host HTML or SVG file, which the reader shows from its fetched string.
+    private func showsAsWebString(_ path: String) -> Bool {
+        configuration.source == .hostFile && HostFilePreviewPolicy.usesStringFetchViewer(for: path)
+    }
+
+    /// The text the reader shows, or nil when the bytes are not text it shows.
+    private func readerText(data: Data, editedText: String?, path: String) -> String? {
+        if showsAsWebString(path) {
+            return FileKind.detect(from: path) == .html ? String(data: data, encoding: .utf8) : nil
         }
-        switch category {
-        case .image: return .image(data)
-        case .pdf: return .pdf(data)
-        case .text:
-            if let editedText { return .text(editedText) }
-            if let text = String(data: data, encoding: .utf8) { return .text(text) }
-            return .binary(data)
-        default:
-            return .binary(data)
-        }
+        return editedText ?? String(data: data, encoding: .utf8)
     }
 
     /// Reader content with the file's origin, for relative images, media,
@@ -1408,22 +963,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         )
     }
 
-    private func loadTimedText(api: APIClient, path: String, kind: TimedText.MediaKind) async {
-        let result = await fileAccess.loadTimedText(api: api, path: path, kind: kind)
-        guard isCurrentFile(path) else { return }
-        timedTextLoadFinished = true
-        timedText = result
-    }
-
-    private func makeTimedTextLoader(
-        path: String,
-        kind: TimedText.MediaKind
-    ) -> (() async -> TimedText.LoadResult)? {
-        guard let api = loadedApiClient ?? services.apiClient() else { return nil }
-        let access = fileAccess
-        return { await access.loadTimedText(api: api, path: path, kind: kind) }
-    }
-
     private func isCurrentFile(_ requestedPath: String) -> Bool {
         !Task.isCancelled && currentFilePath == requestedPath
     }
@@ -1435,17 +974,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         default:
             return false
         }
-    }
-
-    private func beginUSDZSafeLoading() {
-        releaseLoadedUSDZHandle()
-        content = .loading
-    }
-
-    private func releaseLoadedUSDZHandle() {
-        guard case .usdz(let handle) = content else { return }
-        content = .loading
-        Task { await USDZLocalFileStore.shared.release(handle) }
     }
 
     /// One-shot check for an expensive network (cellular, hotspot).
@@ -1472,7 +1000,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         )
         let outgoing = spec == nil ? nil : pageView.snapshotView(afterScreenUpdates: false)
         activeSelection = next
-        beginUSDZSafeLoading()
+        content = .loading
         onNavigationSelectionChange?(next)
         startLoad()
         updatePropertiesIfNeeded()
@@ -1501,7 +1029,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     }
 
     /// Back: the host's action, else close the screen the viewer is.
-    private func navigateBack() {
+    func navigateBack() {
         if let onBackNavigation {
             onBackNavigation()
             return
@@ -1509,6 +1037,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         Router.finish(stackScreen)
     }
 }
+
+extension FileViewerViewController: FileRendererHost {}
 
 /// The file viewer the Files screen (`FileBrowserViewController`) shows:
 /// beside the tree (`make`), or pushed above the list (`pushReader`).

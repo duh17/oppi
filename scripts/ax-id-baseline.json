@@ -35,7 +35,7 @@
     "clients/apple/Oppi/Features/FileBrowser/Editing/CodeEditorTextView.swift": 1,
     "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditChrome.swift": 10,
     "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditorViewController.swift": 3,
-    "clients/apple/Oppi/Features/FileBrowser/FileViewerViewController.swift": 1,
+    "clients/apple/Oppi/Features/FileBrowser/Renderers/USDZFileRenderer.swift": 1,
     "clients/apple/Oppi/Features/Review/CommitDetailViewController.swift": 2,
     "clients/apple/Oppi/Features/Review/WorkspaceReviewFileDetailViewController.swift": 4,
     "clients/apple/OppiDebugHarness/FullScreenReviewCommentHarnessView.swift": 5,

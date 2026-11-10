@@ -14,8 +14,8 @@
       "reason": "Client block owners, store and focused-session invariants (catch-up, busy sends, focus claims), extension UI, tool inspection, and the Mac adapter path; holds the focused-session rules of the deleted flows doc. 1115 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client/change-map.md": {
-      "words": 420,
-      "reason": "Steps and boundaries for adding a document renderer, plus client cleanup targets. 311 words; headroom max(15%, 100 words)."
+      "words": 520,
+      "reason": "Steps and boundaries for adding a document renderer and a file viewer format (FileKindTable row, FileRenderer and its registry line), plus client cleanup targets. 420 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client/code-map.md": {
       "words": 420,

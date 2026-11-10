@@ -88,28 +88,6 @@ enum FileBrowserContentRenderingPolicy {
     }
 }
 
-enum FileBrowserMediaLoadPolicy {
-    enum Existing: Equatable {
-        case none
-        case video(path: String)
-        case audio(path: String)
-    }
-
-    static func shouldReload(
-        existing: Existing,
-        requestedPath: String,
-        force: Bool
-    ) -> Bool {
-        if force { return true }
-        switch existing {
-        case .video(let path), .audio(let path):
-            return path != requestedPath
-        case .none:
-            return true
-        }
-    }
-}
-
 /// Previous file stays in the leading bottom corner; next file stays trailing.
 /// When Viewing Options / Reader is also present, it stacks above next.
 /// A missing direction omits that button instead of recentering the other one.

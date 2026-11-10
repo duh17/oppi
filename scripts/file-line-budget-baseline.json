@@ -105,11 +105,6 @@
       "owner": "file browser / list kit",
       "reason": "List, search, and navigation state in one collection view; list-kit migration may take it."
     },
-    "clients/apple/Oppi/Features/FileBrowser/FileViewerViewController.swift": {
-      "budget": 1600,
-      "owner": "document reader plan",
-      "reason": "Viewer presentation; the document-reader plan owns the split."
-    },
     "clients/apple/Oppi/Features/SSHTerminal/RexClient.swift": {
       "budget": 1800,
       "owner": "SSH4 Rex lane set",
