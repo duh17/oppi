@@ -1,5 +1,40 @@
 import { describe, expect, test } from "bun:test";
-import { bump, parseProjectYmlPackages } from "./deps-check";
+import { applyGoModuleFixes, bump, parseGoModuleFixes, parseProjectYmlPackages } from "./deps-check";
+
+describe("Go module overrides", () => {
+  const script = [
+    'BUILD_ID="x"',
+    "GO_MODULE_FIXES=(",
+    "  # why",
+    "  golang.org/x/net@v0.62.0",
+    "  golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2  # pseudo",
+    "  github.com/new/mod@v1.0.0",
+    ")",
+    'go get "${GO_MODULE_FIXES[@]}"',
+  ].join("\n");
+
+  test("parses module@version entries, skipping comments", () => {
+    expect(parseGoModuleFixes(script)).toEqual([
+      { name: "golang.org/x/net", version: "0.62.0" },
+      { name: "golang.org/x/crypto", version: "0.58.1-0.20261009181718-2f1f834330b2" },
+      { name: "github.com/new/mod", version: "1.0.0" },
+    ]);
+    expect(parseGoModuleFixes("no array here")).toEqual([]);
+  });
+
+  test("overrides replace declared versions and add missing modules", () => {
+    const out = applyGoModuleFixes(
+      [
+        { name: "golang.org/x/net", version: "0.50.0" },
+        { name: "golang.org/x/sys", version: "0.1.0" },
+      ],
+      parseGoModuleFixes(script),
+    );
+    expect(out.find((r) => r.name === "golang.org/x/net")).toEqual({ name: "golang.org/x/net", version: "0.62.0", override: true });
+    expect(out.find((r) => r.name === "golang.org/x/sys")?.override).toBeUndefined();
+    expect(out.map((r) => r.name)).toContain("github.com/new/mod");
+  });
+});
 
 describe("bump", () => {
   test("classifies by the first differing component", () => {

@@ -461,6 +461,31 @@ function shVar(text: string, name: string): string | undefined {
   return new RegExp(`^${name}="([^"]+)"`, "m").exec(text)?.[1];
 }
 
+type GoReq = { name: string; version: string; override?: boolean };
+
+/** `module@version` entries of the GO_MODULE_FIXES array in build-tailscalekit.sh (the build's `go get` overrides). */
+export function parseGoModuleFixes(script: string): { name: string; version: string }[] {
+  const body = /^GO_MODULE_FIXES=\(([^)]*)\)/m.exec(script)?.[1] ?? "";
+  return body
+    .split("\n")
+    .map((l) => l.replace(/#.*/, "").trim())
+    .filter(Boolean)
+    .map((l) => /^([\w./~-]+)@v([\w.+-]+)$/.exec(l))
+    .filter((m): m is RegExpExecArray => !!m)
+    .map((m) => ({ name: m[1], version: m[2] }));
+}
+
+/** Versions the build resolves: declared requirements with each override replacing (or adding) its module. */
+export function applyGoModuleFixes(reqs: GoReq[], fixes: { name: string; version: string }[]): GoReq[] {
+  const out: GoReq[] = reqs.map((r) => ({ ...r }));
+  for (const f of fixes) {
+    const hit = out.find((r) => r.name === f.name);
+    if (hit) Object.assign(hit, { version: f.version, override: true });
+    else out.push({ ...f, override: true });
+  }
+  return out;
+}
+
 async function vendorScan(): Promise<void> {
   const scripts = join(root, "clients/apple/scripts");
   const ghostty = readFileSync(join(scripts, "build-ghostty-vt.sh"), "utf8");
@@ -490,8 +515,12 @@ async function vendorScan(): Promise<void> {
   await guarded("libtailscale go.mod", async () => {
     const f = await gh(`repos/tailscale/libtailscale/contents/go.mod?ref=${tsCommit}`);
     const mod = Buffer.from(f.content, "base64").toString("utf8");
-    const reqs = [...mod.matchAll(/^\s*([\w./~-]+)\s+v([\w.+-]+)(?:\s|$)/gm)].map((m) => ({ name: m[1], version: m[2] })).filter((r) => r.name.includes("."));
-    coverage.push(`TailscaleKit: OSV (Go) on ${reqs.length} go.mod requirements of libtailscale@${tsCommit.slice(0, 7)} (as declared; MVS may select higher)`);
+    const declared = [...mod.matchAll(/^\s*([\w./~-]+)\s+v([\w.+-]+)(?:\s|$)/gm)].map((m) => ({ name: m[1], version: m[2] })).filter((r) => r.name.includes("."));
+    const fixes = parseGoModuleFixes(ts);
+    const reqs = applyGoModuleFixes(declared, fixes);
+    const changed = reqs.filter((r) => r.override).map((r) => `${r.name} ${declared.find((d) => d.name === r.name)?.version ?? "(not declared)"} → ${r.version}`);
+    coverage.push(`TailscaleKit: OSV (Go) on ${reqs.length} go.mod requirements of libtailscale@${tsCommit.slice(0, 7)} (as declared; MVS may select higher), with ${fixes.length} \`go get\` overrides from build-tailscalekit.sh GO_MODULE_FIXES applied: ${changed.join("; ") || "none"}`);
+    for (const r of reqs.filter((r) => r.override)) inventory.push(["`build-tailscalekit.sh` GO_MODULE_FIXES", `Go module override (${r.name})`, `v${r.version}`, "version from override, not libtailscale go.mod"]);
     await osvScan(reqs.map((r) => ({ eco: "Go", name: r.name, version: r.version, meta: { source: "vendor:TailscaleKit", scope: "runtime" as const } })));
   });
   await guarded("OSV ghostty commit", () =>
