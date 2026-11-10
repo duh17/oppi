@@ -13,6 +13,7 @@ import {
   extractBuildTimingSummary,
   extractCompilerLinkerErrors,
   extractPoolFlags,
+  extractTestFailures,
   GATE_POOL_WAIT_SECONDS,
   loadConfig,
   normalizeCommandArgs,
@@ -104,6 +105,41 @@ Test Suite 'All tests' started.
     const timing = extractBuildTimingSummary(log).join("\n");
     expect(timing).toContain("SwiftCompile (33 tasks) | 1084.000 seconds");
     expect(timing).not.toContain("Test Suite");
+  });
+
+  test("a Swift Testing issue keeps its message lines, bounded, and nothing else that follows", () => {
+    const log = `◇ Test run started.
+↳ Testing Library Version: 2084
+✘ Test «unknown» recorded an issue at TestDoubles.swift:166:21: Issue recorded
+↳ unexpected request: GET https://example.test/v1/sessions (owner SessionStoreTests)
+↳ install handlers with TestURLProtocol.routeScope
+✘ Test thing() recorded an issue at A.swift:1:2: Expectation failed: a == b
+↳ ${"x".repeat(5000)}
+${Array.from({ length: 40 }, (_, i) => `↳ detail ${i}`).join("\n")}
+✘ Test caught() recorded an issue at B.swift:9:9: Caught error: URLError(.timedOut)
+↳ GET https://example.test/slow
+✘ Test run with 1 test in 1 suite failed after 2.7 seconds with 2 issues.
+↳ not an issue message
+`;
+    const { lines, uncertain } = extractTestFailures(log);
+    expect(uncertain).toBe(false);
+    const unknown = lines.find((line) => line.includes("TestDoubles.swift:166"))!;
+    expect(unknown.split("\n")).toEqual([
+      "✘ Test «unknown» recorded an issue at TestDoubles.swift:166:21: Issue recorded",
+      "↳ unexpected request: GET https://example.test/v1/sessions (owner SessionStoreTests)",
+      "↳ install handlers with TestURLProtocol.routeScope",
+    ]);
+    const runaway = lines.find((line) => line.includes("A.swift:1:2"))!;
+    const runawayLines = runaway.split("\n");
+    expect(runawayLines).toHaveLength(1 + 8);
+    expect(runawayLines.every((line) => line.length <= 401)).toBe(true);
+    expect(runaway).toContain("detail 0");
+    expect(runaway).not.toContain("detail 39");
+    expect(lines).toContain(
+      "✘ Test caught() recorded an issue at B.swift:9:9: Caught error: URLError(.timedOut)\n↳ GET https://example.test/slow",
+    );
+    expect(lines.join("\n")).not.toContain("Testing Library Version");
+    expect(lines.join("\n")).not.toContain("not an issue message");
   });
 
   test("a plain run queues for a ui-suite token as long as a gate run; an explicit OPPI_SIM_POOL_WAIT wins", () => {

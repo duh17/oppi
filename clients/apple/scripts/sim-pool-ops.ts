@@ -1442,19 +1442,34 @@ function listedTestIds(argv: string[], derivedData: string, startedMs: number): 
   return tests.ids.length > 0 ? tests : { reason: `${basename(path)} lists no test` };
 }
 
+/** Message lines kept per recorded issue, and characters kept per message line. */
+const ISSUE_MESSAGE_MAX_LINES = 8;
+const ISSUE_MESSAGE_MAX_CHARS = 400;
+
+/**
+ * The failure lines of a raw xcodebuild log. Swift Testing prints an issue's message, the comment
+ * a test passed to `Issue.record` or `#expect`, on `↳` lines after the `recorded an issue` line, and
+ * helpers like TestURLProtocol put the URL and owner only there. Each issue is one entry: its first
+ * line plus its leading `↳` lines, each capped, so a runaway message cannot flood the summary.
+ */
 function logTestFailureLines(logText: string): string[] {
-  return [
-    ...new Set(
-      logText.split("\n").filter((line) =>
-        /failed\b.*-\[|Test Case .* failed|error:.*assert|#expect.* failed|Issue recorded|Expectation failed/.test(
-          line,
-        ),
-      ),
-    ),
-  ];
+  const lines = logText.split("\n").map((line) => line.replace(/\r$/, ""));
+  const kept = new Set<string>();
+  const clip = (text: string) => (text.length > ISSUE_MESSAGE_MAX_CHARS ? `${text.slice(0, ISSUE_MESSAGE_MAX_CHARS)}…` : text);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\u200b*\u2718 .*recorded an issue/.test(line)) {
+      const entry = [clip(line)];
+      for (let j = i + 1; j < lines.length && lines[j].startsWith("\u21b3") && entry.length <= ISSUE_MESSAGE_MAX_LINES; j++) entry.push(clip(lines[j]));
+      kept.add(entry.join("\n"));
+    } else if (/failed\b.*-\[|Test Case .* failed|error:.*assert|#expect.* failed|Issue recorded|Expectation failed/.test(line)) {
+      kept.add(line);
+    }
+  }
+  return [...kept];
 }
 
-function extractTestFailures(logText: string, derivedData?: string): { lines: string[]; uncertain: boolean } {
+export function extractTestFailures(logText: string, derivedData?: string): { lines: string[]; uncertain: boolean } {
   const fallback = logTestFailureLines(logText);
   if (derivedData) {
     const testLogs = join(derivedData, "Logs", "Test");
