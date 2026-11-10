@@ -8,7 +8,7 @@ The server is the authority for sessions, workspace access, runtime configuratio
 
 ```mermaid
 graph TD
-  App[iOS and Mac apps] --> HTTP[Network REST API]
+  App[iOS app] --> HTTP[Network REST API]
   App --> Streams[Focused session, app event, audio streams]
   CLI[Local oppi CLI] --> LocalHTTP[HTTP over owner Unix socket]
   LocalHTTP --> Router[SessionRuntimes]
@@ -46,7 +46,7 @@ Prompt to pixel: `ClientMessage` → `ws-message-handler.ts` → `SessionRuntime
 ## Cross-system invariants
 
 - The local CLI uses bearer-authenticated HTTP over the owner Unix socket and never discovers or falls back to a network listener.
-- The Mac app uses the same socket for HTTP and live WebSocket upgrades and never sends `sk_` over HTTPS/WSS; unauthenticated `GET /health` may use localhost HTTPS.
+- The socket also takes live WebSocket upgrades for a same-machine client, which never sends `sk_` over HTTPS/WSS; unauthenticated `GET /health` may use localhost HTTPS.
 - Remote access is HTTPS/WSS, independent of the CLI socket; remote failures fail closed without disabling local routes. Device credentials bind a per-device P-256 key and a short-lived token.
 - Workspace navigation is HTTP-first. The app-event stream is store-level only: never timeline deltas, full state, queue state, command results, audio, or raw `GitStatus`; compact Git state comes from the catalog snapshot. App-event reconnect repairs from HTTP snapshots, not replay.
 - The Workspaces root is a server-scoped active-session inbox. The hot recent list is time-bounded; older history is in archive buckets. Session-list endpoints return summaries, not full `Session` payloads.

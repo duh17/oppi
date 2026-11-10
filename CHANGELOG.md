@@ -124,6 +124,7 @@ The file reader gets Org folding and badges, heading links, Outline and Find, ta
 
 ### Removed
 
+- **Client:** The experimental macOS app. It gets no further updates; on a Mac, run the server with the CLI (`oppi server install`) and pair your iPhone or iPad with it. The iPhone and iPad app is coming to the Mac as a Mac Catalyst build that runs the server itself.
 - **Server:** `oppi control` and `POST /control-conversation`. Per-request Oppi Control sessions are unchanged.
 - **Server:** Classic Pi Control sessions. The first start copies each one to the data directory's `backups/` folder, then removes it. See [Oppi Control sessions](docs/extensions.md#oppi-control-sessions).
 - **Server:** Routes and commands that no client used: the worktree change and diff routes, `GET /local-sessions`, `GET /workspaces/{id}/git/commits`, and the WebSocket commands `cycle_model`, `cycle_thinking_level`, `set_auto_compaction`, `set_steering_mode`, `set_follow_up_mode`, `set_auto_retry`, `abort_retry`, `abort_bash`, and `voice_call_detach`.

@@ -157,13 +157,9 @@ Schedules support `at`, `every`, and `cron` triggers. Each schedule can target a
 
 Oppi Control sessions pass Agent and schedule changes through size-limited `--definition-json` arguments instead of temporary files. Run `oppi --help` or see [server/README.md](server/README.md) for all commands.
 
-## Mac app shell (experimental)
+## On a Mac
 
-The macOS app, human users, and managed host sessions share the globally installed `oppi` command. The app does not bundle another server; it bundles only a signed Node runtime (`Contents/Resources/Helpers/node`, code-signing identifier `dev.chenda.OppiMac.server`) that runs that CLI, so the server does not use Homebrew Node when the app manages it. Install or update the CLI first:
-
-```bash
-npm install -g oppi-server@latest
-```
+There is no Mac app at the moment. The experimental AppKit Mac app is retired; the iPhone and iPad app is coming to the Mac as a Mac Catalyst build that runs the server for you. Until then, run the server with the CLI ([Quick start](#quick-start), [Background service](#background-service)) and pair your iPhone or iPad with it.
 
 `oppi init`, local status, and pairing work before you pair a phone. Workspace, session, Agent, and schedule commands require the local owner credentials created during setup.
 

@@ -10,7 +10,6 @@
 | iOS build only | `sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build` | [Simulator build](apple.md#simulator-build) |
 | iOS user journey | The E2E lane | [iOS E2E tests](apple.md#ios-e2e-tests) |
 | Coverage, privacy manifest, project file | Coverage gate, archive report, `xcodegen generate` | [Apple](apple.md) |
-| Mac app (only when the work names Mac) | Mac checks | [Mac](mac.md) |
 | `dev/**/*.md` | `bun scripts/dev-docs-guard.ts` | [dev/README.md](../README.md#what-belongs-in-dev) |
 | A red pre-push or land gate | Read the summary lines | [Gate reports](#gate-reports) |
 
@@ -26,7 +25,7 @@
 
 ## The pre-push gate
 
-- The hook classifies changed paths (`scripts/pre-push-plan.ts`) and runs lanes concurrently: `server` (static checks, the `bun test` suites of `server/plugins/{background-jobs,subagents}`, plus affected Vitest; configuration, protocol, and `server/plugins/` changes run the full suite, because the plugin host loads plugins outside Vitest's import graph), `apple` (build-for-testing, the whole OppiUnitTests suite in 3 slots via `unit-shards.ts`, the Mac compile, `ios-release`), `mac`, `harness` (the hook's self-test), and a docs check for `dev/**/*.md`. Each lane requires its relevant worktree paths to match the pushed commit; passes are cached by commit, range, lane mode, path set, and toolchain.
+- The hook classifies changed paths (`scripts/pre-push-plan.ts`) and runs lanes concurrently: `server` (static checks, the `bun test` suites of `server/plugins/{background-jobs,subagents}`, plus affected Vitest; configuration, protocol, and `server/plugins/` changes run the full suite, because the plugin host loads plugins outside Vitest's import graph), `apple` (build-for-testing, the whole OppiUnitTests suite in 3 slots via `unit-shards.ts`, `ios-release`), `harness` (the hook's self-test), and a docs check for `dev/**/*.md`. Each lane requires its relevant worktree paths to match the pushed commit; passes are cached by commit, range, lane mode, path set, and toolchain.
 - A planned server or harness lane first runs `server/scripts/ensure-installed-deps.mjs` (`npm ci` when `server/node_modules` is missing or differs from the lockfile). Never symlink or copy main's `node_modules` (a symlink counts as not installed).
 - That install refuses while `dist/current`, or a build a live PID is pinned to, has no `node_modules` of its own: its server imports from `server/node_modules`. Restart the server onto a new build, which gets its own copy, then rerun.
 - `ios-release` compiles Release for the device SDK, because Debug never sees `#if DEBUG` code and a Release-only break would otherwise fail the first archive: `xcodebuild -project Oppi.xcodeproj -scheme Oppi -configuration Release -sdk iphoneos -destination generic/platform=iOS -derivedDataPath .build/pre-push-release CODE_SIGNING_ALLOWED=NO build` under the pinned Xcode. It takes its slot only after the Debug build holds one. A red run prints compiler errors and `.git/oppi/pre-push-logs/ios-release-*.log`.
@@ -59,7 +58,7 @@ Exit codes: `0` pass or nothing named; `1` a lane failed (every lane runs) or a 
 
 - **Rerun once.** Unit shards (≤20 failed tests), UI shards and E2E (≤5, only when the run reached its XCTest summary) rerun failures once in the same lane. A pass on rerun is `FLAKY` and the lane passes. Failed UI/E2E runs hold their slot 15–35 s longer collecting diagnostics.
 - **Rerun ledger:** `$(git rev-parse --git-common-dir)/oppi/test-flakes.jsonl`, one line per rerun; a test that flaked in 2 distinct heads gets quarantined. Every passing lane prints `N flakes hidden by rerun: ...` or `no flakes hidden by rerun`.
-- **Red-lane ledger:** in a land-queue batch (`LAND_QUEUE_BATCH`), each failed lane appends to `$(git rev-parse --git-common-dir)/oppi/land-queue/red-lanes.jsonl` with a `cause_guess`, its evidence, and `cause_confirmed: null` for a person to correct. The pre-push Apple build, Mac, Release, and harness lanes do not write it yet.
+- **Red-lane ledger:** in a land-queue batch (`LAND_QUEUE_BATCH`), each failed lane appends to `$(git rev-parse --git-common-dir)/oppi/land-queue/red-lanes.jsonl` with a `cause_guess`, its evidence, and `cause_confirmed: null` for a person to correct. The pre-push Apple build, Release, and harness lanes do not write it yet.
 - **Quarantine:** `dev/testing/quarantine.json`, entries `{id, owner, reason, addedAt, expires, backlog}` with ids under `OppiTests/`, `OppiUITests/`, or `OppiE2ETests/`, expiring at most 30 days out. The blocking run skips entries and a non-blocking run reports them; an expired or incomplete entry fails the gate before anything runs. Two-server suites cannot skip, so their entries still block.
 - **Lane budgets:** `dev/testing/lane-budgets.json`; over budget prints `WARNING <lane> over budget` and never fails. Set one with `bun scripts/gate-report.ts budget <lane> <seconds>`.
 

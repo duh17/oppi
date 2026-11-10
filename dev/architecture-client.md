@@ -1,12 +1,12 @@
 # Oppi client architecture
 
-The Apple clients render and control server-owned and terminal-owned Pi sessions: they send commands and render the server's projection, never execute Pi sessions or mutate server read models. Workspace navigation is HTTP-first; WebSockets carry only live streams. iOS paints with UIKit over HTTPS/WSS; Mac paints with AppKit and existing SwiftUI over the owner Unix socket, on the same `ChatSessionManager` and reducers ([Mac adapter path](architecture-client/blocks.md#mac-adapter-path)). Server: [Server architecture](architecture-server.md); routes: [Networking](networking.md).
+The Apple clients render and control server-owned and terminal-owned Pi sessions: they send commands and render the server's projection, never execute Pi sessions or mutate server read models. Workspace navigation is HTTP-first; WebSockets carry only live streams. The app paints with UIKit over HTTPS/WSS; the Mac gets the same app as a Mac Catalyst build (in progress), not a separate client. Server: [Server architecture](architecture-server.md); routes: [Networking](networking.md).
 
 ## Detail map
 
 | Page | Covers |
 | --- | --- |
-| [Client blocks and shared core](architecture-client/blocks.md) | Block owners, stores, focused session, extension UI, tool inspection, Mac adapter path |
+| [Client blocks and shared core](architecture-client/blocks.md) | Block owners, stores, focused session, extension UI, tool inspection |
 | [Media, files, and sharing](architecture-client/media-files.md) | Content access, current-file routes, file editing, Quick Session intake |
 | [Renderer change map](architecture-client/change-map.md) | Adding a document renderer; cleanup targets |
 | [Where to look in code](architecture-client/code-map.md) | File pointers by area |
@@ -73,7 +73,6 @@ UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.
 ### The SwiftUI allow-list
 
 - `swiftUIImporters` names exactly five files the app target compiles, the whole of SwiftUI in the iOS app. The framework leaves are `UsageCharts.swift` and `USDZRealityCanvas.swift`: values only, no `@Environment` or app service, and `UsageChartLeafHost` and `USDZRealityCanvasHost` are the only `UIHostingController`s in the app. `FeatureEducationTips.swift` holds the TipKit tips, whose `Text`/`Image` need SwiftUI while their display is UIKit. `Shared/Theme/ModelColorHelpers.swift` holds the shared `StatsDailyChart`, the model colors, and the contrast rules its labels use: a model color is a `ThemeColor` too, and a SwiftUI leaf draws one with `viewColor(_:)`. `Shared/Activity/LiveActivityPresentation.swift` is the Live Activity surface, shared with the widget extension. `Shared/Theme/ModelStatsValues.swift` (model identity, aggregations, provider labels) imports neither SwiftUI nor Charts.
-- `sharedMacOnlySwiftUI` names the Mac-only `ThinkingOrbAcknowledgmentsView.swift` and `Shared/Renderers/Orbs/OrbView.swift` (the orb's SwiftUI wrapper; excluded from `Oppi` in `project.yml`; the two lists move together). `OrbMetalView.swift` is a UIKit/AppKit view on both platforms.
 
 ### App services
 
@@ -99,7 +98,7 @@ One owner per layout question. `userInterfaceIdiom` is never a layout signal: th
 
 `scripts/uikit-structure-guard.ts` scans `Oppi`, `OppiDebugHarness`, `OppiCore`, and `Shared` with comments and strings stripped. SwiftUI navigation and presentation constructs and `UIHostingController` are disallowed outside its commented `allowed` list (the two leaf hosts); another exception needs the owner's approval. The Debug-only harness is UIKit too: a harness or preview is a controller that `DebugHarnessLaunch` routes. The other ratchets (settings theming and writes, alerts, load states, entity artwork, page loads, idiom and raw size-class reads outside `adaptiveWidthExceptions`) count per file against `scripts/uikit-structure-baseline.json`: new files start at 0, decreases pass, a settings page that moves onto the kit commits the lowered baseline from `--update`, a rename keeps its count, and ordinary runs never write it.
 
-**Mac (`clients/apple/OppiMac`):** new views are AppKit; existing SwiftUI stays until a separate decision.
+**Mac:** the Mac Catalyst build of `Oppi` (in progress); there is no separate Mac app or AppKit code.
 
 ## The shell
 
@@ -236,10 +235,9 @@ New rows use `settings|server|workspace.<page>.<row>` on the row button or contr
 
 ## Client boundary rules current code
 
-`server/scripts/check-architecture-boundaries.ts` enforces these in server checks (`--scope all`), the iOS build phase (`--scope ios`), and the Mac pre-push gate (`--scope mac`):
+`server/scripts/check-architecture-boundaries.ts` enforces these in server checks (`--scope all`) and the iOS build phase (`--scope ios`):
 
 - `OppiCore/**` must not import UIKit, AppKit, SwiftUI, ActivityKit, UserNotifications, Speech, AVFoundation, WebKit, or MetricKit; `TimelineReducer.swift` and `DeltaCoalescer.swift` stay platform-neutral.
-- `OppiMac/**` must not import UIKit. `project.yml` is the Mac target membership authority: OppiMac compiles `OppiMac/**`, `OppiCore/**`, `Shared/**`, and only the listed `Oppi/**` adapter files.
 - `Oppi/Core/Views/**` and `Oppi/Features/Chat/Timeline/**` must not reference `APIClient`, `WebSocketClient`, `ServerConnection`, `ConnectionCoordinator`, `apiClient`, `wsClient`, `SessionStore`, or `WorkspaceStore` (`view-layer-connection-boundary`); they take explicit values (`SessionContentAccess`, icon cache, `openDestination`, `loadOlderPage`) and typed actions, and no forwarding object re-exposes a connection, transport, or store.
 - Only `ComposerShared.swift` calls `.stopRecording(`/`.cancelRecording(` (`ios-voice-lifecycle-owner`); it owns keyboard restore, draft rollback, and capture ownership.
 - `TimelineReducer.swift` may carry one `cyclomatic_complexity` disable; `ToolPresentationBuilder.swift` and `ToolTimelineRowContent.swift` none (`ios-cyclomatic-disable-budget`).
@@ -249,8 +247,8 @@ New rows use `settings|server|workspace.<page>.<row>` on the row button or contr
 - Only `SessionStore` assigns a session's `.status` (`ios-session-status-writer`): rows follow the server's `state` and `session_summary`, never an event. `session_ended → stopped` (`applySessionEnded`) is the one event-derived write, kept for 0.54.0 servers that send no summary after it.
 - `SessionStore`, `WorkspaceStore`, `ServerResourceStore`, and `OppiCore/Stores/**` must not depend on each other; cross-store work belongs in `ServerConnection` or a small service.
 - iOS opens go through `AppOpener` (no NotificationCenter open bus). Only the opener waits for App Lock, launch, and server, applies the browser preference, and system-opens URLs; only it and Tailnet authentication present `InAppBrowserPresenter`. Timeline `UITextViewDelegate` conformances implement `primaryActionFor` in the same file.
-- Generic extension UI must not branch on tool, extension, status, widget, or display names (including `ExtensionSurfacePanel.swift`, `MacExtensionSurfacePanel.swift`); add protocol metadata at the producer.
-- SwiftUI styling uses the environment-resolved `.theme*` `ShapeStyle`; `Color.theme*` is a snapshot for APIs that need a concrete `Color`. Both ship in `OppiMac` only, where no guard scans them: on iOS a theme token is `ThemeColor` (`UIColor`), so no theme file imports SwiftUI. Persistent list and panel modifiers read `theme`/`themeID` from the environment, or mounted content does not repaint after a theme switch.
+- Generic extension UI must not branch on tool, extension, status, widget, or display names (including `ExtensionSurfacePanel.swift`); add protocol metadata at the producer.
+- A theme token is `ThemeColor` (`UIColor`), so no theme file imports SwiftUI.
 - UIKit reads colours from its palette (`palette.ui.*`, `ThemeUIKitPalette` in `Core/Theme/ThemeCatalog.swift`) where it applies its theme, never into a constant; palettes are immutable, so views that re-read in `updateProperties()` repaint on a theme switch. A palette token is already a `UIColor` (`ThemeColor`), so a UIKit call site converts nothing. A translucent colour of its own is `withAlphaComponent`; `multiplyingAlpha` is for a token derived from another token and keeps that token's own alpha.
 - Production sources under `Oppi`, `OppiCore`, and `Shared` stay at or under 1,500 lines; bigger files are frozen at their size in `scripts/file-line-budget-baseline.json`, and budgets only go down (`file-line-budget`; tests and the debug harness are reported, not enforced).
 - The [structure guard](#structure-guard) and `scripts/screenshot-screen-guard.ts` (every launched `SCREENSHOT_SCREEN` has a preview case) run with this check.

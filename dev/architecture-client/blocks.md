@@ -41,7 +41,7 @@ Part of [Oppi client architecture](../architecture-client.md).
 
 ## Extension UI
 
-Render protocol metadata only ([boundary rules](../architecture-client.md#client-boundary-rules-current-code)). `AskRequestStore` holds asks, `ExtensionDialogQueue` dialogs, and `ExtensionSurfaceState` (`OppiCore/Runtime/`) the per-session surface snapshot, reducer, and placement (`extensionSurfaceBySession` on iOS, `MacSessionTraceStore.extensionSurface` on Mac).
+Render protocol metadata only ([boundary rules](../architecture-client.md#client-boundary-rules-current-code)). `AskRequestStore` holds asks, `ExtensionDialogQueue` dialogs, and `ExtensionSurfaceState` (`OppiCore/Runtime/`) the per-session surface snapshot, reducer, and placement (`extensionSurfaceBySession`).
 
 - `ServerConnection+Ask.swift` answers over the focused stream, or over HTTP when the focused WebSocket is not bound to the target session.
 - `ExtensionNativeBlockViews.swift` keeps block views by id so a replacement snapshot preserves view state; `ExtensionNativeBlockPresentation.swift` holds the framework-free rules.
@@ -49,7 +49,7 @@ Render protocol metadata only ([boundary rules](../architecture-client.md#client
 
 ## Shared Apple client core
 
-`clients/apple/OppiCore/**` compiles into iOS and macOS: protocol DTOs, `ChatSessionManager` and its ports, reducers, stream and policy state, stores, formatting, and the CommonMark parser (`OppiCore/Formatting`). UI and device work belongs in `Oppi/**` or `OppiMac/**`.
+`clients/apple/OppiCore/**` holds the UI-free core: protocol DTOs, `ChatSessionManager` and its ports, reducers, stream and policy state, stores, formatting, and the CommonMark parser (`OppiCore/Formatting`). UI and device work belongs in `Oppi/**`.
 
 ## Tool inspection
 
@@ -62,17 +62,3 @@ Server side (producer facts, registry, full output): [Tool inspection](../archit
 - `outputPresentation.kind: "interactive"` marks settlement and automatic expansion skips it. Voice settings change only on the declared `settingEffect: "voiceReplyMode"` with a valid successful result.
 - `ToolDisplay` is a producer fact in `ToolArgsStore`; its humanizer acts on `display.title` only. Apple clients do not parse MCP names (the fallback resolver is `server/src/mobile-renderer-display.ts`).
 - `OppiCore/Formatting/BuiltInToolFacts.swift` is the sole client tool-identity exception: it supplies registry facts only when both presentations are absent and the exact name is `bash`, `read`, `write`, `edit`, or `ask` (no case or prefix normalization), never availability or setting authority; any producer fact suppresses it and synthetic facts are never stored.
-- Only Mac still interprets tool names (`OppiMac/Views/MacSessionTimelineViews.swift`, `OppiMac/Formatting/MacLegacyToolCallFormatting.swift`), pending its inspection work.
-
-## Mac adapter path
-
-Share semantics; paint and adapt per platform. Do not merge the Unix-socket and HTTPS transports, or the Mac and iOS renderers, to reduce file count.
-
-| Layer | Owner |
-| --- | --- |
-| Protocol DTOs, `ChatSessionManager` ports, reducers, focused-session policy, extension-surface state | `OppiCore` |
-| Paired HTTPS/WSS, device auth, UIKit timeline, iOS navigation | `clients/apple/Oppi/**` |
-| Owner Unix-socket HTTP/WebSocket, attach/LaunchAgent/spawn, TCC, AppKit/SwiftUI paint | `clients/apple/OppiMac/**` |
-
-- `MacServerLifecycle.startupPlan` attaches when `/health` succeeds, else waits for an installed LaunchAgent, else spawns `oppi serve`.
-- `MacChatSessionRuntimeAdapter` implements the same three `ChatSessionManager` ports over `MacSessionTraceStore` and the owner socket.

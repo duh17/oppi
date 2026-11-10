@@ -86,7 +86,6 @@ When the server advertises `capabilities.conversationStream` and the session is 
 
 ## Not yet covered
 
-- The Mac app does not attach.
 - `toolResult.display` cannot restore an MCP server's configured spelling for `mcp__` names (the trace route can).
 - Codemode call arguments over 200 characters arrive as `argumentsBytes` of pi-durable's cut text.
 - A second compaction whose kept range starts before the first compaction's marker hides that marker from `older`.

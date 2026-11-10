@@ -208,9 +208,9 @@ Schedules store a trigger and an action. `oppi schedule create` accepts `--at`, 
 
 ### Install and update modes
 
-- **npm global install:** npm owns both server code and the `oppi` executable used by humans, the Mac app, and managed host sessions. Use `oppi update`, the iPhone **Server** screen, or `npm install -g oppi-server@latest` to upgrade, and `npm uninstall -g oppi-server` to remove it. The app and CLI share the same global-npm check and install only an already-discovered latest version.
-- **Mac app:** requires the npm global install and does not bundle or seed another server. It bundles a signed Node worker (`Contents/Resources/Helpers/node`, identifier `dev.chenda.OppiMac.server`) and runs the npm CLI on it, including `oppi server install` when the app starts it. `oppi server install` from a terminal still uses Homebrew or system Node (22.19+); the app migrates such a LaunchAgent to its bundled Node on launch, and `oppi doctor` warns when an installed Oppi.app will do so.
-- **Git/bootstrap install:** git owns server code. Use `git pull && npm install && npm run build` to upgrade a checkout. For a machine-wide development CLI, run `bash setup.sh --install`; it source-links `oppi` to the checkout and installs the LaunchAgent from that exact link. `OPPI_SERVER_PATH` selects which CLI the Mac app runs, but the Node is always the bundled worker. Only release builds carry it, so a Debug build cannot start a server: run `oppi serve` yourself and the app attaches. The same missing runtime also disables app-driven LaunchAgent restart and stop, pairing invites, and the onboarding Node check in Debug builds; use the `oppi` CLI for those.
+- **npm global install:** npm owns both server code and the `oppi` executable used by humans and managed host sessions. Use `oppi update`, the iPhone **Server** screen, or `npm install -g oppi-server@latest` to upgrade, and `npm uninstall -g oppi-server` to remove it. The app and CLI share the same global-npm check and install only an already-discovered latest version.
+- **App-bundled Node:** a Mac app that runs the server bundles a signed Node at `Contents/Resources/Helpers/node` (identifier `dev.chenda.Oppi.server`) and runs the npm CLI on it; an `oppi server install` it starts uses only that Node. `oppi server install` from a terminal uses Homebrew or system Node (22.19+), and `oppi doctor` warns when an installed `Oppi.app` with a bundled Node would take the LaunchAgent over. No Mac app ships today; the Mac Catalyst build will run the server this way.
+- **Git/bootstrap install:** git owns server code. Use `git pull && npm install && npm run build` to upgrade a checkout. For a machine-wide development CLI, run `bash setup.sh --install`; it source-links `oppi` to the checkout and installs the LaunchAgent from that exact link.
 
 ## Extensions
 
@@ -220,7 +220,7 @@ See [Oppi extension behavior](../docs/extensions.md) for extension loading, per-
 
 ## Server stats API
 
-`GET /server/stats?range=7|30|90&tz=<offset>` returns aggregate session counts, cost, token usage, model breakdown, workspace breakdown, and daily trends. `GET /server/stats/daily/YYYY-MM-DD?tz=<offset>` returns an hourly breakdown and session list for a single day. Both the iOS and Mac apps consume these endpoints for the stats dashboard.
+`GET /server/stats?range=7|30|90&tz=<offset>` returns aggregate session counts, cost, token usage, model breakdown, workspace breakdown, and daily trends. `GET /server/stats/daily/YYYY-MM-DD?tz=<offset>` returns an hourly breakdown and session list for a single day. The app's Usage screen consumes these endpoints.
 
 ## Workspace files API
 

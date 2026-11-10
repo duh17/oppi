@@ -11,7 +11,7 @@
     },
     "dev/architecture-client/blocks.md": {
       "words": 1290,
-      "reason": "Client block owners, store and focused-session invariants (catch-up, busy sends, focus claims), extension UI, tool inspection, and the Mac adapter path; holds the focused-session rules of the deleted flows doc. 1115 words; headroom max(15%, 100 words)."
+      "reason": "Client block owners, store and focused-session invariants (catch-up, busy sends, focus claims), extension UI, tool inspection; holds the focused-session rules of the deleted flows doc. 1115 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client/change-map.md": {
       "words": 520,
@@ -80,10 +80,6 @@
     "dev/testing/ios-accessibility-testability.md": {
       "words": 820,
       "reason": "Accessibility contract for agent-facing controls: the visual-accessibility non-target and its size-style rule, timeline headers, identifier naming and its guard, Live Voice ids, semantic journey proof. 765 words; headroom max(15%, 100 words)."
-    },
-    "dev/testing/mac.md": {
-      "words": 290,
-      "reason": "Mac build and test commands, derived-data paths, and what the visual gates prove. 188 words; headroom max(15%, 100 words)."
     },
     "dev/testing/qa-verification.md": {
       "words": 490,
