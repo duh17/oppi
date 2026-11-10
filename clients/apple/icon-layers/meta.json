@@ -1,6 +1,7 @@
 {
   "generator": "clients/apple/icon-layers/generate.ts",
   "seed": 42,
+  "richness": 2,
   "canvas": 1024,
   "grid": {
     "columns": 8,

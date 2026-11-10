@@ -6,6 +6,31 @@
     {
       "layers": [
         {
+          "glass": false,
+          "hidden": false,
+          "image-name": "6-detail.svg",
+          "name": "detail",
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      }
+    },
+    {
+      "layers": [
+        {
           "fill": {
             "linear-gradient": [
               "display-p3:0.17000,0.19000,0.24000,0.75000",
