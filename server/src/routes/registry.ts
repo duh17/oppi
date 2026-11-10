@@ -1102,6 +1102,24 @@ const rawApiRouteSpecs = [
     operationId: "getWorkspaceCommitDiff",
     surface: "core",
     auth: "owner",
+    description:
+      "Hunks of one file in a commit. A binary file has no hunks and a nonText flag per side: the client shows the file from getWorkspaceGitBlob.",
+  },
+  {
+    method: "GET",
+    path: "/workspaces/{workspaceId}/git/blob",
+    operationId: "getWorkspaceGitBlob",
+    surface: "core",
+    auth: "owner",
+    description:
+      "File bytes at a revision (rev: HEAD, a commit hash, or either with ^ for its parent) in the workspace checkout or worktreeId. Same size limits as current-file reads; one byte range.",
+  },
+  {
+    method: "HEAD",
+    path: "/workspaces/{workspaceId}/git/blob",
+    operationId: "headWorkspaceGitBlob",
+    surface: "core",
+    auth: "owner",
   },
 
   {

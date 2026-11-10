@@ -5,15 +5,7 @@ import { basename, dirname, extname, isAbsolute, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
-import {
-  getContentType,
-  isBookContentType,
-  isBrowseMediaContentType,
-  isStreamingMediaContentType,
-  MAX_BROWSE_BOOK_FILE_SIZE,
-  MAX_BROWSE_IMAGE_FILE_SIZE,
-  MAX_BROWSE_TEXT_FILE_SIZE,
-} from "./file-serving-policy.js";
+import { browseSizeLimit, getContentType } from "./file-serving-policy.js";
 import { expandHome, isPathWithinRoot } from "./path-utils.js";
 import { encodeHostResolvedPathHeader, expandExactHostPath } from "./host-file-path.js";
 import { logRejectedByteRange, parseByteRangeHeader } from "./http-range.js";
@@ -67,16 +59,9 @@ export async function statServableFile(
   }
 
   const contentType = getContentType(extname(typePath).toLowerCase(), basename(typePath));
-  // Streaming media is range-served without buffering, so it has no size cap.
-  if (!isStreamingMediaContentType(contentType)) {
-    const maxSize = isBookContentType(contentType)
-      ? MAX_BROWSE_BOOK_FILE_SIZE
-      : isBrowseMediaContentType(contentType)
-        ? MAX_BROWSE_IMAGE_FILE_SIZE
-        : MAX_BROWSE_TEXT_FILE_SIZE;
-    if (fileStat.size > maxSize) {
-      return { kind: "too-large", maxSizeMegabytes: Math.round(maxSize / (1024 * 1024)) };
-    }
+  const maxSize = browseSizeLimit(contentType);
+  if (maxSize !== null && fileStat.size > maxSize) {
+    return { kind: "too-large", maxSizeMegabytes: Math.round(maxSize / (1024 * 1024)) };
   }
   return { kind: "ok", file: { filePath, size: fileStat.size, contentType } };
 }

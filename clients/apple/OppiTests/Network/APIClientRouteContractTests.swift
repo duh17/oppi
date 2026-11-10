@@ -13,7 +13,7 @@ import Testing
 ///
 /// Not driven here, and why:
 /// - `makeHostFileMediaSource`, `makeWorkspaceMediaSource`, `makeSessionFileMediaSource`,
-///   `makeSessionAttachmentMediaSource` (two overloads): they return an `AuthenticatedMediaSource`
+///   `makeGitBlobMediaSource`, `makeSessionAttachmentMediaSource` (two overloads): they return an `AuthenticatedMediaSource`
 ///   and send nothing, so no request reaches the protocol double.
 /// - `fileEditingCapability(for:)`: a synchronous read of the capabilities `/server/info` recorded.
 /// - `uploadMetricKitPayload`, `uploadClientLogs`: both return before building a request unless
@@ -383,6 +383,9 @@ extension APIClientEndpoint {
             _ = try? await $0.getCommitFileDiff(
                 workspaceId: Placeholder.workspace, sha: "abc1234", path: Placeholder.path
             )
+        },
+        APIClientEndpoint("getGitBlob") {
+            _ = try? await $0.getGitBlob(workspaceId: Placeholder.workspace, revision: "HEAD", path: Placeholder.path)
         },
         APIClientEndpoint("getWorkspaceGitSummary") {
             _ = try? await $0.getWorkspaceGitSummary(workspaceId: Placeholder.workspace)

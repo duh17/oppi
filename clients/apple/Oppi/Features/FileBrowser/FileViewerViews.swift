@@ -1,4 +1,5 @@
 import UIKit
+import UniformTypeIdentifiers
 
 /// Previous/next file buttons in the bottom corners. Horizontal swipes stay
 /// reserved for back. Hidden while the editor is open.
@@ -190,5 +191,14 @@ final class FileViewerSizeWarningView: UIView {
             image.tintColor = color
             label.textColor = color
         }
+    }
+}
+
+/// The generic file view's description of a file no viewer renders: its type and size.
+enum FileViewerBinarySummary {
+    static func text(fileName: String, byteCount: Int) -> String {
+        let type = UTType(filenameExtension: (fileName as NSString).pathExtension)?.localizedDescription
+            ?? String(localized: "Binary file")
+        return "\(type) · \(ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file))"
     }
 }

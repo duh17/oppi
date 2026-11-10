@@ -1801,6 +1801,40 @@ struct APIClientTests {
     }
 
     @MainActor
+    @Test func revisionReadsServeTheBlobAtThatRevisionNotTheWorkingTree() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        let access = FileViewerFileAccess(
+            source: .workspaceFile,
+            serverId: nil,
+            workspaceId: "ws-1",
+            worktreeId: "wt-1",
+            sessionId: nil,
+            controlSessionId: nil,
+            workspaceRuntime: nil,
+            revision: "abc1234^"
+        )
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/workspaces/ws-1/git/blob")
+            #expect(self.currentFileQuery(request.url) == [
+                "rev": "abc1234^", "path": "docs/images/app icon.png", "worktreeId": "wt-1",
+            ])
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk_test")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (Data("old png".utf8), response)
+        }
+        let data = try await access.browseFile(api: client, path: "docs/images/app icon.png")
+        #expect(String(data: data, encoding: .utf8) == "old png")
+
+        let video = try await access.mediaSource(
+            api: client, path: "clip.mp4", contentTypeHint: "video/mp4", sourceFileExtension: "mp4"
+        )
+        #expect(video.url.path == "/workspaces/ws-1/git/blob")
+        #expect(currentFileQuery(video.url)["rev"] == "abc1234^")
+        #expect(video.mediaInfoURL == nil)
+    }
+
+    @MainActor
     @Test func currentSessionReaderProvidersNeverUseHostWhenRuntimeMetadataIsMissing() async throws {
         let client = makeClient()
         defer { cleanup() }

@@ -1,7 +1,8 @@
-import { readFile, realpath, stat } from "node:fs/promises";
+import { open, readFile, realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
-import { execGit, type GitTrust } from "./git-safe.js";
+import { bytesLookBinary, readGitBlob } from "./git-blobs.js";
+import type { GitTrust } from "./git-safe.js";
 import { HttpStatusError } from "./http-status-error.js";
 import { isPathWithinRoot, expandHome } from "./path-utils.js";
 import {
@@ -17,7 +18,6 @@ import type {
   WorkspaceReviewDiffSpan,
 } from "./types.js";
 
-const GIT_TIMEOUT_MS = 5000;
 const MAX_REVIEW_TEXT_BYTES = 256 * 1024;
 const HUNK_CONTEXT_LINES = 3;
 /**
@@ -40,6 +40,10 @@ export class WorkspaceReviewDiffError extends HttpStatusError {}
 type ReadTextResult = {
   text: string;
   exists: boolean;
+  /** Not text: no text diff, the client shows the file. */
+  binary?: boolean;
+  /** Past the review size limit, so not diffed; `binary` still says what it is. */
+  tooLarge?: boolean;
 };
 
 type MutableReviewLine = WorkspaceReviewDiffLine;
@@ -52,40 +56,18 @@ type Token = {
   space: boolean;
 };
 
-function bufferLooksBinary(buffer: Buffer): boolean {
-  return buffer.includes(0);
-}
-
-async function gitBuffer(trust: GitTrust, cwd: string, args: string[]): Promise<Buffer | null> {
-  const { error, stdout } = await execGit(trust, cwd, args, { timeout: GIT_TIMEOUT_MS });
-  if (error) return null;
-  return Buffer.isBuffer(stdout) ? stdout : Buffer.from(String(stdout), "utf8");
-}
-
 async function readHeadText(
   repoDir: string,
   trust: GitTrust,
   reqPath: string,
 ): Promise<ReadTextResult> {
-  const resolved = expandHome(repoDir);
-  const stdout = await gitBuffer(trust, resolved, ["show", `HEAD:${reqPath}`]);
-
-  if (stdout === null) {
-    return { text: "", exists: false };
+  const blob = await readGitBlob(trust, repoDir, "HEAD", reqPath, MAX_REVIEW_TEXT_BYTES);
+  if (blob.kind === "missing") return { text: "", exists: false };
+  if (blob.kind === "too-large") {
+    return { text: "", exists: true, tooLarge: true, binary: bytesLookBinary(blob.prefix) };
   }
-
-  if (stdout.byteLength > MAX_REVIEW_TEXT_BYTES) {
-    throw new WorkspaceReviewDiffError(413, "File too large for review.");
-  }
-
-  if (bufferLooksBinary(stdout)) {
-    throw new WorkspaceReviewDiffError(422, "Binary files are not supported in review yet.");
-  }
-
-  return {
-    text: stdout.toString("utf8"),
-    exists: true,
-  };
+  if (bytesLookBinary(blob.bytes)) return { text: "", exists: true, binary: true };
+  return { text: blob.bytes.toString("utf8"), exists: true };
 }
 
 async function readCurrentText(repoDir: string, reqPath: string): Promise<ReadTextResult> {
@@ -105,12 +87,25 @@ async function readCurrentText(repoDir: string, reqPath: string): Promise<ReadTe
     }
 
     if (fileStat.size > MAX_REVIEW_TEXT_BYTES) {
-      throw new WorkspaceReviewDiffError(413, "File too large for review.");
+      // Too big to diff, but a large binary file still shows as the file.
+      const handle = await open(resolvedTarget, "r");
+      try {
+        const prefix = Buffer.alloc(MAX_REVIEW_TEXT_BYTES);
+        const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0);
+        return {
+          text: "",
+          exists: true,
+          tooLarge: true,
+          binary: bytesLookBinary(prefix.subarray(0, bytesRead)),
+        };
+      } finally {
+        await handle.close();
+      }
     }
 
     const buffer = await readFile(resolvedTarget);
-    if (bufferLooksBinary(buffer)) {
-      throw new WorkspaceReviewDiffError(422, "Binary files are not supported in review yet.");
+    if (bytesLookBinary(buffer)) {
+      return { text: "", exists: true, binary: true };
     }
 
     return {
@@ -551,6 +546,27 @@ export function buildDiffHunks(flatLines: FlatDiffLine[]): WorkspaceReviewDiffHu
   return buildHunks(lines);
 }
 
+/**
+ * The diff of a file with no text diff (binary): no hunks, and `nonText` names
+ * the sides that exist so the client shows the file itself, not an error.
+ */
+export function nonTextReviewDiff(
+  workspaceId: string,
+  path: string,
+  sides: { before: boolean; after: boolean },
+): WorkspaceReviewDiffResponse {
+  return {
+    workspaceId,
+    path,
+    baselineText: "",
+    currentText: "",
+    addedLines: 0,
+    removedLines: 0,
+    hunks: [],
+    nonText: sides,
+  };
+}
+
 export async function buildWorkspaceReviewDiff(args: {
   workspaceId: string;
   workspaceRoot: string;
@@ -571,6 +587,15 @@ export async function buildWorkspaceReviewDiff(args: {
 
   if (!baseline.exists && !current.exists) {
     throw new WorkspaceReviewDiffError(404, "File not found for review");
+  }
+  if (baseline.binary || current.binary) {
+    return nonTextReviewDiff(workspaceId, reqPath, {
+      before: baseline.exists,
+      after: current.exists,
+    });
+  }
+  if (baseline.tooLarge || current.tooLarge) {
+    throw new WorkspaceReviewDiffError(413, "File too large for review.");
   }
 
   const flatLines = computeDiffLines(baseline.text, current.text);

@@ -12,8 +12,16 @@ struct FileViewerFileAccess {
     let sessionId: String?
     let controlSessionId: String?
     let workspaceRuntime: WorkspaceRuntime?
+    /// Reads the file as Git stores it at this revision (a commit, its parent,
+    /// or HEAD) in the workspace checkout, not the working tree.
+    var revision: String? = nil
 
     func browseFile(api: APIClient, path: String) async throws -> Data {
+        if let revision {
+            return try await api.getGitBlob(
+                workspaceId: workspaceId, revision: revision, path: path, worktreeId: worktreeId
+            )
+        }
         switch source {
         case .hostFile:
             return try await api.browseHostFile(
@@ -42,6 +50,16 @@ struct FileViewerFileAccess {
         contentTypeHint: String?,
         sourceFileExtension: String?
     ) async throws -> AuthenticatedMediaSource {
+        if let revision {
+            return try await api.makeGitBlobMediaSource(
+                workspaceId: workspaceId,
+                revision: revision,
+                path: path,
+                worktreeId: worktreeId,
+                contentTypeHint: contentTypeHint,
+                sourceFileExtension: sourceFileExtension
+            )
+        }
         switch source {
         case .hostFile:
             return try await api.makeHostFileMediaSource(
@@ -75,6 +93,8 @@ struct FileViewerFileAccess {
         path: String,
         kind: TimedText.MediaKind
     ) async -> TimedText.LoadResult {
+        // Captions sit beside a working-tree file, not in a revision.
+        if revision != nil { return .empty }
         if case .sessionTouched(let origin) = source {
             return await origin.loadTimedText(api: api, workspaceId: workspaceId, mediaPath: path, kind: kind)
         }

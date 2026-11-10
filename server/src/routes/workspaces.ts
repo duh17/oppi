@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import { serveGitBlob } from "../git-blobs.js";
 import { getCommitDetail, getCommitFileDiff, getCommitGraph } from "../git-commits.js";
 import { gitTrustForWorkspace } from "../git-safe.js";
 import { getGitStatus, getWorkspaceGitSummary } from "../git-status.js";
@@ -689,6 +690,34 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
   }
 
+  /** File bytes at a revision (`rev`: a commit, its parent, or HEAD) in the selected checkout. */
+  async function handleGetWorkspaceGitBlob(
+    wsId: string,
+    url: URL,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+    const checkout = await workspaceCheckoutFromQuery(workspace, wsId, url, res);
+    if (!checkout) return;
+
+    try {
+      await serveGitBlob(req, res, {
+        trust: gitTrustForWorkspace(workspace),
+        cwd: checkout.path,
+        revision: url.searchParams.get("rev") ?? "",
+        path: url.searchParams.get("path") ?? "",
+      });
+    } catch (error) {
+      if (answerStatusError(helpers, res, error)) return;
+      throw error;
+    }
+  }
+
   function sessionWithinWorkspace(
     session: Session | undefined,
     workspaceId: string,
@@ -1051,6 +1080,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         req,
         res,
       );
+      return true;
+    }
+
+    const wsGitBlobMatch = path.match(/^\/workspaces\/([^/]+)\/git\/blob$/);
+    if (wsGitBlobMatch && (method === "GET" || method === "HEAD")) {
+      await handleGetWorkspaceGitBlob(wsGitBlobMatch[1], url, req, res);
       return true;
     }
 

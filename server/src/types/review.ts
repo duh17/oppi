@@ -62,6 +62,13 @@ export interface WorkspaceReviewDiffResponse {
   addedLines: number;
   removedLines: number;
   hunks: WorkspaceReviewDiffHunk[];
+  /**
+   * Present when the file has no text diff (binary): `hunks` is empty and the
+   * client shows the file itself. Each flag says whether that side exists:
+   * before is the base revision (the commit's parent, or HEAD), after the
+   * commit or the working tree.
+   */
+  nonText?: { before: boolean; after: boolean };
   /** Number of trace mutations (session diff only). */
   revisionCount?: number;
   /** Cache key for client-side caching (session diff only). */

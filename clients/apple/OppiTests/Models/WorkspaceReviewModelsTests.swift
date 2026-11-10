@@ -17,6 +17,42 @@ struct WorkspaceReviewModelsTests {
         #expect(hunk.headerText == "@@ -4,2 +4,3 @@")
     }
 
+    @Test func nonTextDiffDecodesTheSidesThatExistAndTextDiffsHaveNone() throws {
+        let binary = Data(
+            """
+            {"workspaceId":"w1","path":"icon.png","baselineText":"","currentText":"",
+             "addedLines":0,"removedLines":0,"hunks":[],"nonText":{"before":true,"after":false}}
+            """.utf8
+        )
+        let decoded = try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: binary)
+        #expect(decoded.nonText == .init(before: true, after: false))
+
+        let text = Data(
+            """
+            {"workspaceId":"w1","path":"a.swift","baselineText":"","currentText":"",
+             "addedLines":0,"removedLines":0,"hunks":[]}
+            """.utf8
+        )
+        #expect(try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: text).nonText == nil)
+    }
+
+    @Test func nonTextSidesAreTheVersionsThatExistOldestFirst() {
+        func sides(before: Bool, after: Bool, afterRevision: String?) -> [NonTextDiffSides.Side] {
+            NonTextDiffSides.resolve(
+                .init(before: before, after: after), beforeRevision: "abc^", afterRevision: afterRevision
+            )
+        }
+        // Modified: both, After at the commit.
+        #expect(sides(before: true, after: true, afterRevision: "abc").map(\.revision) == ["abc^", "abc"])
+        // Added shows only the new version; deleted only the old one.
+        #expect(sides(before: false, after: true, afterRevision: "abc").map(\.revision) == ["abc"])
+        #expect(sides(before: true, after: false, afterRevision: "abc").map(\.revision) == ["abc^"])
+        // The working tree is a nil revision, and stays distinct from "no side".
+        let review = sides(before: true, after: true, afterRevision: nil)
+        #expect(review.count == 2)
+        #expect(review[1].revision == nil)
+    }
+
     @Test func diffLineKindPrefixesMatchDiffMarkers() {
         #expect(WorkspaceReviewDiffLine.Kind.context.prefix == " ")
         #expect(WorkspaceReviewDiffLine.Kind.added.prefix == "+")

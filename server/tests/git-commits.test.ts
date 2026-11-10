@@ -251,23 +251,4 @@ describe("getCommitFileDiff", () => {
       message: "File not found in commit",
     } satisfies Partial<CommitDiffError>);
   });
-
-  it("rejects binary files in diff view", async () => {
-    const dir = await createRepo();
-    const filePath = "image.bin";
-
-    await writeFile(join(dir, filePath), Buffer.from([0xde, 0xad, 0x00, 0xbe, 0xef]));
-    git(dir, ["add", filePath]);
-    git(dir, ["commit", "-m", "add binary"]);
-
-    const sha = git(dir, ["rev-parse", "--short", "HEAD"]).trim();
-
-    await expect(
-      getCommitFileDiff(dir, HOST_GIT_TRUST, sha, filePath, "workspace-1"),
-    ).rejects.toMatchObject({
-      name: "CommitDiffError",
-      status: 422,
-      message: "Binary files are not supported in diff view.",
-    } satisfies Partial<CommitDiffError>);
-  });
 });

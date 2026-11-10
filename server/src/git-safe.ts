@@ -79,7 +79,8 @@ export function gitTrustForWorkspace(
 export interface GitExecOptions {
   timeout?: number;
   maxBuffer?: number;
-  encoding?: BufferEncoding;
+  /** `"buffer"` returns stdout as a `Buffer`, for bytes that are not text. */
+  encoding?: BufferEncoding | "buffer";
   windowsHide?: boolean;
 }
 

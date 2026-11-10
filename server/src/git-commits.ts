@@ -10,7 +10,12 @@ import { execGit, SandboxGitRefusedError, type GitTrust } from "./git-safe.js";
 import { expandHome } from "./path-utils.js";
 import { computeDiffLines, computeLineDiffStatsFromLines } from "./diff-core.js";
 import { HttpStatusError } from "./http-status-error.js";
-import { applyWordSpansToNumberedHunks, buildDiffHunks } from "./workspace-review-diff.js";
+import { bytesLookBinary, readGitBlob } from "./git-blobs.js";
+import {
+  applyWordSpansToNumberedHunks,
+  buildDiffHunks,
+  nonTextReviewDiff,
+} from "./workspace-review-diff.js";
 import type {
   GitCommitDetail,
   GitCommitFileInfo,
@@ -45,10 +50,6 @@ async function gitBuffer(
   });
   if (error) return null;
   return Buffer.isBuffer(stdout) ? stdout : Buffer.from(String(stdout), "utf8");
-}
-
-function bufferLooksBinary(buffer: Buffer): boolean {
-  return buffer.includes(0);
 }
 
 function parseHunkHeader(line: string): {
@@ -337,33 +338,33 @@ export async function getCommitFileDiff(
   const trimmedPath = filePath.trim();
 
   // Get the file content at the commit and its parent
-  const [beforeBuf, afterBuf] = await Promise.all([
-    gitBuffer(trust, resolved, ["show", `${sha}^:${trimmedPath}`]),
-    gitBuffer(trust, resolved, ["show", `${sha}:${trimmedPath}`]),
+  const [before, after] = await Promise.all([
+    readGitBlob(trust, resolved, `${sha}^`, trimmedPath, MAX_DIFF_TEXT_BYTES),
+    readGitBlob(trust, resolved, sha, trimmedPath, MAX_DIFF_TEXT_BYTES),
   ]);
 
-  const beforeExists = beforeBuf !== null;
-  const afterExists = afterBuf !== null;
-
-  if (!beforeExists && !afterExists) {
+  if (before.kind === "missing" && after.kind === "missing") {
     throw new CommitDiffError(404, "File not found in commit");
   }
 
-  // Check for binary content
-  if (beforeBuf && bufferLooksBinary(beforeBuf)) {
-    throw new CommitDiffError(422, "Binary files are not supported in diff view.");
-  }
-  if (afterBuf && bufferLooksBinary(afterBuf)) {
-    throw new CommitDiffError(422, "Binary files are not supported in diff view.");
+  // No text diff for a binary file: the client shows the file itself, from the
+  // blob at each side's revision. Too-large sides are judged by the bytes read.
+  const sides = [before, after];
+  const nonText = (): WorkspaceReviewDiffResponse =>
+    nonTextReviewDiff(workspaceId, trimmedPath, {
+      before: before.kind !== "missing",
+      after: after.kind !== "missing",
+    });
+  if (
+    sides.some((side) => side.kind === "ok" && bytesLookBinary(side.bytes)) ||
+    sides.some((side) => side.kind === "too-large" && bytesLookBinary(side.prefix))
+  ) {
+    return nonText();
   }
 
-  const canDiffFullText =
-    (!beforeBuf || beforeBuf.byteLength <= MAX_DIFF_TEXT_BYTES) &&
-    (!afterBuf || afterBuf.byteLength <= MAX_DIFF_TEXT_BYTES);
-
-  if (canDiffFullText) {
-    const beforeText = beforeBuf ? beforeBuf.toString("utf8") : "";
-    const afterText = afterBuf ? afterBuf.toString("utf8") : "";
+  if (before.kind !== "too-large" && after.kind !== "too-large") {
+    const beforeText = before.kind === "ok" ? before.bytes.toString("utf8") : "";
+    const afterText = after.kind === "ok" ? after.bytes.toString("utf8") : "";
 
     const flatLines = computeDiffLines(beforeText, afterText);
     const hunks = buildDiffHunks(flatLines);
@@ -407,9 +408,7 @@ export async function getCommitFileDiff(
   }
 
   const patchText = patchBuf.toString("utf8");
-  if (patchText.includes("Binary files ")) {
-    throw new CommitDiffError(422, "Binary files are not supported in diff view.");
-  }
+  if (patchText.includes("Binary files ")) return nonText();
 
   const hunks = applyWordSpansToNumberedHunks(parseUnifiedDiffHunks(patchText));
   let addedLines = 0;

@@ -29,6 +29,16 @@ struct WorkspaceReviewDiffResponse: Codable, Sendable, Equatable {
     let revisionCount: Int?
     /// Cache key for client-side caching (session diff only).
     let cacheKey: String?
+    /// Set when the file has no text diff (binary): `hunks` is empty and the
+    /// client shows the file itself.
+    var nonText: NonText? = nil
+
+    /// Which sides of a non-text file exist: before is the base revision (a
+    /// commit's parent, or HEAD), after the commit or the working tree.
+    struct NonText: Codable, Sendable, Equatable {
+        let before: Bool
+        let after: Bool
+    }
 }
 
 struct WorkspaceQuickActionOption: Codable, Sendable, Equatable, Identifiable {

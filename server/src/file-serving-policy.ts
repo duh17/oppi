@@ -291,6 +291,17 @@ export function isBookContentType(contentType: string): boolean {
   return normalizeContentType(contentType) === "application/epub+zip";
 }
 
+/**
+ * Largest file the browse reads serve for a content type, in bytes; null for
+ * streaming media, which is range-served without buffering and has no cap.
+ */
+export function browseSizeLimit(contentType: string): number | null {
+  if (isStreamingMediaContentType(contentType)) return null;
+  if (isBookContentType(contentType)) return MAX_BROWSE_BOOK_FILE_SIZE;
+  if (isBrowseMediaContentType(contentType)) return MAX_BROWSE_IMAGE_FILE_SIZE;
+  return MAX_BROWSE_TEXT_FILE_SIZE;
+}
+
 export function getContentType(ext: string, filename: string): string {
   const normalizedExt = normalizeExtension(ext, filename);
 

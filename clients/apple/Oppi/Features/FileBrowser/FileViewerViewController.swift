@@ -51,6 +51,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         /// This viewer is the root of a trailing side pane: its reader names
         /// the file in a title and closes the pane with an X, not a back chevron.
         var isPaneRoot = false
+        /// Read the file as Git stores it at this revision, not the working
+        /// tree (a diff's Before or After of a file with no text diff). Never edited.
+        var revision: String? = nil
     }
 
     /// The server-scoped services the viewer reads through.
@@ -84,7 +87,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         case usdz(USDZLocalFileStore.Handle)
         /// A downloaded book the native reader opens itself.
         case book(EPUBBook)
-        case binary
+        case binary(Data)
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             switch (lhs, rhs) {
@@ -99,7 +102,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             case (.usdz(let a), .usdz(let b)): a == b
             // A book's archive has no value identity; a re-read mounts anew.
             case (.book, .book): false
-            case (.binary, .binary): true
+            case (.binary(let a), .binary(let b)): a == b
             default: false
             }
         }
@@ -243,7 +246,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             worktreeId: configuration.worktreeId,
             sessionId: configuration.sessionId,
             controlSessionId: configuration.controlSessionId,
-            workspaceRuntime: configuration.workspaceRuntime
+            workspaceRuntime: configuration.workspaceRuntime,
+            revision: configuration.revision
         )
     }
 
@@ -415,7 +419,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     /// What the edit entry sees of the file at `path`, read in the context of the session this
     /// viewer came from. Only the file it was opened for reads as its Skill's own file.
     private func editSubject(for path: String) -> DocumentEditSubject {
-        .file(
+        if configuration.revision != nil { return .snapshot }
+        return .file(
             serverId: configuration.serverId,
             source: configuration.source,
             workspaceId: configuration.workspaceId,
@@ -526,11 +531,11 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             mounted = mountUSDZ(handle)
         case .book(let book):
             mounted = mountBookReader(book)
-        case .binary:
+        case .binary(let data):
             mounted = unavailable(.empty(
-                title: String(localized: "Binary File"),
+                title: currentFileName,
                 systemImage: "doc.fill",
-                message: String(localized: "This file type cannot be displayed as text.")
+                message: FileViewerBinarySummary.text(fileName: currentFileName, byteCount: data.count)
             ))
         }
         mountedView = mounted
@@ -1050,6 +1055,15 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             shareItem = item
         } else if case .audio(let source) = content {
             shareItem = makeAudioShareItem(source)
+        } else if case .binary(let data) = content {
+            let name = currentFileName
+            shareItem = UIBarButtonItem(
+                title: String(localized: "Share"),
+                image: UIImage(systemName: "square.and.arrow.up"),
+                primaryAction: UIAction { _ in
+                    FileSharePresenter.presentActivityController(item: FileShareService.fileShareItem(data: data, filename: name))
+                }
+            )
         } else {
             shareItem = nil
         }
@@ -1270,7 +1284,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
                     workspaceID: configuration.workspaceId,
                     sessionID: configuration.sessionId,
                     worktreeID: configuration.worktreeId,
-                    path: requestedPath
+                    path: configuration.revision.map { "\($0):\(requestedPath)" } ?? requestedPath
                 )
                 let handle = try await USDZLocalFileStore.shared.store(key: key, data: data)
                 guard isCurrentFile(requestedPath) else {
@@ -1384,9 +1398,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         case .text:
             if let editedText { return .text(editedText) }
             if let text = String(data: data, encoding: .utf8) { return .text(text) }
-            return .binary
+            return .binary(data)
         default:
-            return .binary
+            return .binary(data)
         }
     }
 

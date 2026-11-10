@@ -108,6 +108,8 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
             case currentFile
             case deletedDiff
             case tabs(DetailTab)
+            /// No text diff (binary): the file itself, at HEAD and in the working tree.
+            case nonText([NonTextDiffSides.Side])
         }
 
         let path: String
@@ -455,8 +457,10 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
                 body = .loading
             case .unavailable(let message):
                 body = .unavailable(message)
-            case .loaded:
-                if isNewFile {
+            case .loaded(let loaded):
+                if let nonText = loaded.nonText {
+                    body = .nonText(NonTextDiffSides.resolve(nonText, beforeRevision: "HEAD", afterRevision: nil))
+                } else if isNewFile {
                     body = .currentFile
                 } else if isDeletedFile {
                     body = .deletedDiff
@@ -480,7 +484,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
             ReviewPagePlaceholder.showLoading(String(localized: "Loading file review…"), on: page)
         case .unavailable(let message):
             add(ReviewPagePlaceholder.unavailable(title: String(localized: "Review Unavailable"), message: message), to: page)
-        case .currentFile, .deletedDiff, .tabs:
+        case .currentFile, .deletedDiff, .tabs, .nonText:
             mountReview(key.body, on: page)
         }
         if configuration.allowsHorizontalBackSwipe {
@@ -553,6 +557,8 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         switch body {
         case .currentFile, .tabs(.current):
             content = mountCurrentFile()
+        case .nonText(let sides):
+            content = mountNonTextPreview(sides)
         default:
             content = mountDiffReader()
         }
@@ -601,6 +607,32 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         viewer.didMove(toParent: self)
         mountedChildren.append(viewer)
         currentFileViewer = viewer
+        return container
+    }
+
+    /// The file itself for a diff with no text: each version that exists.
+    private func mountNonTextPreview(_ sides: [NonTextDiffSides.Side]) -> UIView {
+        let preview = NonTextDiffPreviewViewController(
+            configuration: .init(
+                workspaceId: configuration.workspaceId,
+                path: currentFile.path,
+                sides: sides,
+                worktreeId: configuration.worktreeId,
+                serverId: configuration.serverId,
+                sessionId: configuration.selectedSessionId,
+                reviewCommentSelectionScope: configuration.reviewCommentSelectionScope
+            ),
+            services: .init(
+                apiClient: apiClient,
+                audioPlayer: connection.audioPlayer,
+                sessionStore: connection.sessionStore
+            )
+        )
+        let container = UIView()
+        addChild(preview)
+        add(preview.view, to: container)
+        preview.didMove(toParent: self)
+        mountedChildren.append(preview)
         return container
     }
 

@@ -316,9 +316,15 @@ final class CommitDetailViewController: UIViewController {
             reviewCommentSelectionScope: self.configuration.reviewCommentSelectionScope
         )
         let apiClient = apiClient
+        let audioPlayer = connection.audioPlayer
         let hostedInPanel = hostedInPanel
         return { [weak self] in
-            let diff = CommitFileDiffViewController(configuration: configuration, apiClient: apiClient, hostedInPanel: hostedInPanel)
+            let diff = CommitFileDiffViewController(
+                configuration: configuration,
+                apiClient: apiClient,
+                audioPlayer: audioPlayer,
+                hostedInPanel: hostedInPanel
+            )
             // Pushed in a panel, the navigation controller's own back button
             // leads back to the commit; a column or sheet root needs this
             // screen's own close control instead.
@@ -615,6 +621,7 @@ final class CommitFileDiffViewController: UIViewController {
     private let hostedInPanel: Bool
 
     private let apiClient: APIClient?
+    private let audioPlayer: AudioPlayerService?
     private var diff: WorkspaceReviewDiffResponse? {
         didSet { setNeedsUpdateProperties() }
     }
@@ -627,11 +634,19 @@ final class CommitFileDiffViewController: UIViewController {
     private let bodyView = UIView()
     private var mountedPhase: WorkspaceReviewFileDetailPhase?
     private var diffReader: DiffReaderView?
+    /// The file's own viewer, mounted instead of the diff reader for a file with no text diff.
+    private var previewChild: NonTextDiffPreviewViewController?
     private let stashButton = ReviewCommentStashFloatingButton()
 
-    init(configuration: Configuration, apiClient: APIClient?, hostedInPanel: Bool = false) {
+    init(
+        configuration: Configuration,
+        apiClient: APIClient?,
+        audioPlayer: AudioPlayerService? = nil,
+        hostedInPanel: Bool = false
+    ) {
         self.configuration = configuration
         self.apiClient = apiClient
+        self.audioPlayer = audioPlayer
         self.hostedInPanel = hostedInPanel
         super.init(nibName: nil, bundle: nil)
         title = configuration.file.path.lastPathComponentForDisplay
@@ -712,6 +727,11 @@ final class CommitFileDiffViewController: UIViewController {
         mountedPhase = phase
         bodyView.subviews.forEach { $0.removeFromSuperview() }
         diffReader = nil
+        if let previewChild {
+            previewChild.willMove(toParent: nil)
+            previewChild.removeFromParent()
+            self.previewChild = nil
+        }
         let content: UIView
         switch phase {
         case .loading:
@@ -719,6 +739,11 @@ final class CommitFileDiffViewController: UIViewController {
             return
         case .unavailable(let message):
             content = ReviewPagePlaceholder.unavailable(title: String(localized: "Diff Unavailable"), message: message)
+        case .loaded(let diff) where diff.nonText != nil:
+            let preview = makeNonTextPreview(diff)
+            addChild(preview)
+            previewChild = preview
+            content = preview.view
         case .loaded(let diff):
             let reader = DiffReaderView()
             let selection = configuration.reviewCommentSelectionScope?.makeContext()
@@ -741,6 +766,23 @@ final class CommitFileDiffViewController: UIViewController {
             content.leadingAnchor.constraint(equalTo: bodyView.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: bodyView.trailingAnchor),
         ])
+        previewChild?.didMove(toParent: self)
+    }
+
+    /// The file at the commit and at its parent, from the blob each holds.
+    private func makeNonTextPreview(_ diff: WorkspaceReviewDiffResponse) -> NonTextDiffPreviewViewController {
+        let sha = configuration.sha
+        return NonTextDiffPreviewViewController(
+            configuration: .init(
+                workspaceId: configuration.workspaceId,
+                path: configuration.file.path,
+                sides: diff.nonText.map {
+                    NonTextDiffSides.resolve($0, beforeRevision: "\(sha)^", afterRevision: sha)
+                } ?? [],
+                reviewCommentSelectionScope: configuration.reviewCommentSelectionScope
+            ),
+            services: .init(apiClient: apiClient, audioPlayer: audioPlayer)
+        )
     }
 
     private func loadDiff() async {

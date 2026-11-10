@@ -147,7 +147,7 @@ actor APIClient: ClientLogUploading {
     /// Device-key auth session. When set, the bearer comes from this session and
     /// a 401 triggers a single-flight refresh with exactly one retry.
     nonisolated private let authSessionBox = DeviceAuthSessionBox()
-    private let tlsCertFingerprint: String?
+    let tlsCertFingerprint: String?
     private let session: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
     private let availabilityObserver: APIClientAvailabilityObserver?
@@ -2739,7 +2739,7 @@ actor APIClient: ClientLogUploading {
     /// (revoked/unknown device) fails closed. An unavailable device key falls back
     /// to a leftover/static token when one exists, then fails closed if that
     /// leftover is also empty instead of issuing an unauthenticated request.
-    private func mediaAuthorizationProvider() -> @Sendable () async throws -> String {
+    func mediaAuthorizationProvider() -> @Sendable () async throws -> String {
         let staticToken = token
         return { [weak self] in
             guard let self else {
@@ -2858,7 +2858,7 @@ actor APIClient: ClientLogUploading {
         return encoded
     }
 
-    private func workspaceWorktreeQueryItems(_ worktreeId: String?) -> [URLQueryItem] {
+    func workspaceWorktreeQueryItems(_ worktreeId: String?) -> [URLQueryItem] {
         let trimmed = worktreeId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !trimmed.isEmpty else { return [] }
         return [URLQueryItem(name: "worktreeId", value: trimmed)]
