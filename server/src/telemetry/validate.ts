@@ -6,9 +6,6 @@
 
 import {
   EVENT_DEFS,
-  NAME_LOCATION_RULES,
-  NAME_TAG_FALLBACK,
-  NAME_TAG_PATTERN,
   TAG_DEFS,
   eventOrigin,
   fieldSpec,
@@ -16,6 +13,7 @@ import {
   type EventDef,
   type TelemetryOrigin,
 } from "./catalog.js";
+import { NAME_LOCATION_RULES, NAME_TAG_FALLBACK, NAME_TAG_PATTERN } from "./name-tag-rules.js";
 import type { TelemetryDropReason } from "../types.js";
 
 export interface ValidatedEvent {

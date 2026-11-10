@@ -17,6 +17,7 @@ final class RexFakeDataHost: Sendable {
         var ticket: Data?
         var block: String?
         var closed = false
+        var snapshotted = false
     }
 
     private let nonce: UInt64
@@ -58,7 +59,11 @@ final class RexFakeDataHost: Sendable {
 
     /// The pane's screen as Ghostty's snapshot, then Rex's `resize` message,
     /// which ends it.
+    /// The pane's snapshot went out: its program's output can follow.
+    var isStreaming: Bool { state.withLock { $0.snapshotted } }
+
     func emitSnapshot(_ snapshot: Data, columns: Int = 80, rows: Int = 24) {
+        state.withLock { $0.snapshotted = true }
         deliver(Self.frame(0x02, snapshot + message(#"{"type":"resize","cols":\#(columns),"rows":\#(rows)}"#)))
     }
 

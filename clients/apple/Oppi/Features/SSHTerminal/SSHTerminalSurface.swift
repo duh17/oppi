@@ -156,6 +156,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private var displayLink: CADisplayLink?
     private var displayLinkGeneration: UInt64 = 0
     private(set) var displayLinkTickCount: UInt64 = 0
+    private let scrollMeter = SSHTerminalScrollMeter()
     var isDisplayLinkRunning: Bool { displayLink.map { !$0.isPaused } ?? false }
     private let metalHost = SSHTerminalMetalHostView()
     private let historyScroll = SSHTerminalHistoryScrollView()
@@ -396,7 +397,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             displayLink.isPaused = false
             return
         }
-        let link = CADisplayLink(target: DisplayTarget(self), selector: #selector(DisplayTarget.tick))
+        let link = CADisplayLink(target: DisplayTarget(self), selector: #selector(DisplayTarget.tick(_:)))
         link.preferredFrameRateRange = SSHTerminalDisplayLinkPolicy.normalRate
         link.add(to: .main, forMode: .common)
         displayLink = link
@@ -533,7 +534,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         guard let renderer = rendererIfReady() else { return false }
         if renderer.inFlightCount >= SSHTerminalMetalRenderer.ringSize { return false }
         guard let metalLayer else { return false }
-        let frame = channel.engine.frame()
+        let frame = SSHTerminalScrollPerf.interval("engineFrame") { channel.engine.frame() }
         // Never shift toward a side with no captured rows (the live bottom).
         let shift = frame.rowsBelowViewport > 0 ? historyShiftPixels : 0
         let shouldDraw = needsFullPaint || !frame.rebuiltRows.isEmpty || shift != paintedShiftPixels
@@ -552,10 +553,12 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         (cursorColor ?? foreground).withAlphaComponent(0.65).getRed(&r, green: &g, blue: &b, alpha: &a)
         let cursor = SIMD4<Float>(Float(r), Float(g), Float(b), Float(a))
-        let cost = renderer.encode(
-            frame: frame, cursorColor: cursor, drawable: drawable, fullRebuild: needsFullPaint,
-            shiftPixels: shift
-        )
+        let cost = SSHTerminalScrollPerf.interval("encode") {
+            renderer.encode(
+                frame: frame, cursorColor: cursor, drawable: drawable, fullRebuild: needsFullPaint,
+                shiftPixels: shift
+            )
+        }
         if cost.submitted {
             needsFullPaint = false
             paintedShiftPixels = shift
@@ -1862,6 +1865,9 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// One display-link frame: pending scroll input goes out, the engine is
     /// snapshotted and drawn if it changed, then `didDrawFrame` runs.
     func drawFrame() {
+        let signposter = SSHTerminalScrollPerf.signposter
+        let signpost = signposter.beginInterval("drawFrame")
+        defer { signposter.endInterval("drawFrame", signpost) }
         flushPendingAppScroll()
         flushTrackpadArrows()
         // A hold has a one-second deadline even if no more bytes arrive.
@@ -1890,6 +1896,17 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         }
         updateSecureEntry()
         didDrawFrame()
+    }
+
+    /// One tick of the scroll gesture's measurement (`SSHTerminalScrollMeter`).
+    fileprivate func measureScroll(_ link: CADisplayLink) {
+        guard let gesture = scrollMeter.tick(
+            timestamp: link.timestamp, targetTimestamp: link.targetTimestamp, scrolling: isHistoryScrolling,
+            heldBytes: 0,
+            mode: SSHTerminalScrollMeter.mode(isRex: channel.rex != nil, command: channel.command),
+            path: SSHTerminalScrollMeter.path(channel.engine.scrollAction)
+        ) else { return }
+        Telemetry.record(gesture)
     }
 
     /// Another pane's picture is not this one's: the check that last saw a
@@ -2025,10 +2042,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     @MainActor private final class DisplayTarget {
         weak var view: SSHTerminalGridView?
         init(_ view: SSHTerminalGridView) { self.view = view }
-        @objc func tick() {
+        @objc func tick(_ link: CADisplayLink) {
             guard let view else { return }
             view.displayLinkTickCount &+= 1
             let generation = view.displayLinkGeneration
+            view.measureScroll(link)
             view.drawFrame()
             let still = SSHTerminalDisplayLinkPolicy.resolve(
                 hasWindow: view.window != nil,
@@ -2048,118 +2066,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
 }
 
-/// History scroller. Touches begin here, so a sticky long-press tap ignore
-/// can clear before the next independent tap is recognized. Until its pan
-/// starts (and cancels these touches), moves report vertical finger travel.
-private final class SSHTerminalHistoryScrollView: UIScrollView {
-    var touchBegan: (() -> Void)?
-    var touchMoved: ((CGFloat) -> Void)?
-    var touchEnded: (() -> Void)?
-    /// Where the first finger of this touch went down, in the grid's
-    /// coordinates, which do not scroll.
-    var firstTouchY: CGFloat?
-    /// That finger. A second finger neither moves the lead nor resets
-    /// `firstTouchY`.
-    private var firstTouch: UITouch?
-
-    private func track(_ touches: Set<UITouch>, with event: UIEvent?) {
-        // Every finger on this view is new: a fresh touch, even if a lost
-        // end left an old one tracked.
-        let fresh = event?.touches(for: self).map { $0.isSubset(of: touches) } ?? true
-        guard firstTouch == nil || fresh, let touch = touches.first else { return }
-        firstTouch = touch
-        firstTouchY = touch.location(in: superview).y
-    }
-
-    /// True when the tracked finger is among `touches`, which then ends it.
-    private func untrack(_ touches: Set<UITouch>) -> Bool {
-        guard let firstTouch, touches.contains(firstTouch) else { return false }
-        self.firstTouch = nil
-        return true
-    }
-
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        track(touches, with: event)
-        touchBegan?()
-        super.touchesBegan(touches, with: event)
-    }
-
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if let firstTouch, touches.contains(firstTouch), let firstTouchY {
-            touchMoved?(firstTouch.location(in: superview).y - firstTouchY)
-        }
-        super.touchesMoved(touches, with: event)
-    }
-
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if untrack(touches) { touchEnded?() }
-        super.touchesEnded(touches, with: event)
-    }
-
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if untrack(touches) { touchEnded?() }
-        super.touchesCancelled(touches, with: event)
-    }
-
-    override func touchesShouldBegin(_ touches: Set<UITouch>, with event: UIEvent?, in view: UIView) -> Bool {
-        track(touches, with: event)
-        touchBegan?()
-        return super.touchesShouldBegin(touches, with: event, in: view)
-    }
-}
-
-/// Metal drawable host. Kept as a child so history rubber-band can translate
-/// the grid without moving the native scroll view on top of it.
-final class SSHTerminalMetalHostView: UIView {
-    let metalLayer = CAMetalLayer()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isOpaque = true
-        metalLayer.pixelFormat = .bgra8Unorm
-        metalLayer.framebufferOnly = true
-        metalLayer.isOpaque = true
-        layer.addSublayer(metalLayer)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        metalLayer.frame = bounds
-    }
-}
-
-private final class SSHTerminalSelectionOverlay: UIView {
-    var spans: [CGRect] = [] {
-        didSet { setNeedsDisplay() }
-    }
-    /// The theme's selection color; nil keeps the system blue.
-    var fill: UIColor? {
-        didSet { setNeedsDisplay() }
-    }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isOpaque = false
-        backgroundColor = .clear
-        isHidden = true
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    override func draw(_ rect: CGRect) {
-        // The overlay sits over the text, so a theme's own (opaque) color is
-        // laid down translucent enough to read through.
-        (fill?.withAlphaComponent(0.55) ?? UIColor.systemBlue.withAlphaComponent(0.28)).setFill()
-        for span in spans {
-            UIBezierPath(rect: span).fill()
-        }
-    }
-}
-
 private extension UIColor {
     convenience init(_ rgb: GhosttyColorRgb) {
         self.init(red: CGFloat(rgb.r) / 255, green: CGFloat(rgb.g) / 255, blue: CGFloat(rgb.b) / 255, alpha: 1)
@@ -2168,32 +2074,5 @@ private extension UIColor {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         getRed(&r, green: &g, blue: &b, alpha: &a)
         return .init(r: UInt8(max(0, min(255, r * 255))), g: UInt8(max(0, min(255, g * 255))), b: UInt8(max(0, min(255, b * 255))))
-    }
-}
-
-/// A pasted image as the bytes the clipboard held and a file extension the
-/// host file can carry, so the agent sees a PNG, JPEG, or HEIC as such.
-struct SSHTerminalPastedImage: Equatable {
-    let data: Data
-    let fileExtension: String
-
-    init(data: Data, type: UTType) {
-        self.data = data
-        fileExtension = type.preferredFilenameExtension ?? "png"
-    }
-
-    init?(pasteboard: UIPasteboard) {
-        for identifier in pasteboard.types {
-            guard let type = UTType(identifier), type.conforms(to: .image),
-                  let data = pasteboard.data(forPasteboardType: identifier) else { continue }
-            self.init(data: data, type: type)
-            return
-        }
-        guard let data = pasteboard.image?.pngData() else { return nil }
-        self.init(data: data, type: .png)
-    }
-
-    static func imageType(in provider: NSItemProvider) -> UTType? {
-        provider.registeredTypeIdentifiers.lazy.compactMap { UTType($0) }.first { $0.conforms(to: .image) }
     }
 }

@@ -8,6 +8,14 @@ enum SSHTerminalScreenshotStatus: String {
     /// A Rex session terminal: three panes in one window, over a fake host,
     /// so the pane switcher, the minimap, and the swipe draw.
     case rexPanes
+    /// The scroll-smoothness runs: a plain shell, and the Rex session, each with
+    /// thousands of history rows to fling through. `rexBusy` has its two
+    /// neighbour panes stream output the whole time.
+    case scrollback, rexScrollback, rexBusy
+
+    var isRex: Bool { self == .rexPanes || self == .rexScrollback || self == .rexBusy }
+    /// Prints the latest scroll gesture's measurement (`SSHTerminalPreviewReadout.scrolled`).
+    var measuresScroll: Bool { self == .scrollback || self == .rexScrollback || self == .rexBusy }
 }
 
 /// `SCREENSHOT_SCREEN=ssh-terminal`, `-status-blocked`, `-rex-panes`: the real
@@ -76,6 +84,7 @@ final class SSHTerminalPreviewController: PreviewRootController {
     deinit {
         playback?.cancel()
         consumption?.cancel()
+        if status.measuresScroll { Telemetry._processObserverForTesting = nil }
     }
 
     override func viewDidLoad() {
@@ -83,10 +92,17 @@ final class SSHTerminalPreviewController: PreviewRootController {
         readout.install(in: view)
         guard let channel else { return }
         let status = self.status
+        if status.measuresScroll {
+            let readout = readout
+            Telemetry._processObserverForTesting = { payload in
+                guard payload.name == AppTerminalScrollGesture.name else { return }
+                Task { @MainActor in readout.scrolled(payload) }
+            }
+        }
         // The fixture's bytes, once the terminal above is its view controller.
         playback = Task { @MainActor [weak self] in
-            if status == .rexPanes {
-                self?.consumption = await Self.playRexSession(on: channel)
+            if status.isRex {
+                self?.consumption = await Self.playRexSession(on: channel, workload: status.measuresScroll ? Self.scrollWorkload(status) : nil)
             } else {
                 self?.play(on: channel)
             }
@@ -118,7 +134,8 @@ final class SSHTerminalPreviewController: PreviewRootController {
         let esc = "\u{1b}["
         let screen = switch status {
         case .none: herdrScreen(esc)
-        case .blocked, .rexPanes: statusScreen(esc)
+        case .scrollback: scrollbackScreen(esc, lines: Self.historyLines)
+        case .blocked, .rexPanes, .rexScrollback, .rexBusy: statusScreen(esc)
         }
         var bytes = Data(screen.utf8)
         bytes.append(statusReports(status))
@@ -130,14 +147,14 @@ final class SSHTerminalPreviewController: PreviewRootController {
     /// real control and data protocols run against the fake host, so a tap on
     /// the switcher menu or a minimap cell switches panes for real.
     /// Returns the task consuming the connection's events, which the caller owns.
-    static func playRexSession(on channel: SSHTerminalChannel) async -> Task<Void, Never>? {
+    static func playRexSession(on channel: SSHTerminalChannel, workload: RexScrollWorkload? = nil) async -> Task<Void, Never>? {
         guard !channel.connected else { return nil }
         let esc = "\u{1b}["
         // Three icons for the bar's switcher: programs that report status put
         // their own mark first in the title (π, ✳), a plain shell has the
         // terminal glyph.
         let panes = [
-            RexFakeSession.Pane(block: "block:preview-pi", label: "shell", title: "\u{03C0} - oppi", screen: (1...80).map { "\(esc)2mbuild log line \($0)\(esc)0m\r\n" }.joined() + "\(esc)1m\u{03C0}\(esc)0m in ~/oppi\r\n\(esc)32m>\(esc)0m refactor the connection\r\n\r\nThe terminal stands for the session.\r\nSwipe sideways to move between its panes.\r\n", records: #"[{"state":"working","app":"pi"}]"#),
+            RexFakeSession.Pane(block: "block:preview-pi", label: "shell", title: "\u{03C0} - oppi", screen: (1...(workload?.historyLines ?? 80)).map { "\(esc)2mbuild log line \($0)\(esc)0m\r\n" }.joined() + "\(esc)1m\u{03C0}\(esc)0m in ~/oppi\r\n\(esc)32m>\(esc)0m refactor the connection\r\n\r\nThe terminal stands for the session.\r\nSwipe sideways to move between its panes.\r\n", records: #"[{"state":"working","app":"pi"}]"#),
             RexFakeSession.Pane(block: "block:preview-logs", label: "shell", title: "tail -f server.log", screen: "\(esc)2m12:01:09\(esc)0m listening on :7749\r\n\(esc)2m12:01:11\(esc)0m GET /health 200\r\n", records: #"[{"state":"blocked","kind":"permission"}]"#),
             RexFakeSession.Pane(block: "block:preview-claude", label: "shell", title: "\u{2733} Fixing the build", screen: "\(esc)1mclaude\(esc)0m in ~/dotfiles\r\n\(esc)32m>\(esc)0m fix the build\r\n\r\nReading the failing target.\r\n", records: #"[{"state":"idle","app":"claude"}]"#),
         ]
@@ -150,7 +167,40 @@ final class SSHTerminalPreviewController: PreviewRootController {
         ) else { return nil }
         channel.rex = RexSessionModel(connection: connection)
         channel.opened(PreviewRexHostConnection(session: connection))
-        return Task { await channel.consume(queue) }
+        let consume = Task { await channel.consume(queue) }
+        let drive = workload?.busyNeighbours == true ? driveNeighbours(of: panes[0].block, in: fake) : nil
+        return Task {
+            await withTaskCancellationHandler { await consume.value } onCancel: {
+                consume.cancel()
+                drive?.cancel()
+            }
+        }
+    }
+
+    /// What a scroll-smoothness run plays: how much history the shown pane has
+    /// and whether the other panes stream output meanwhile.
+    struct RexScrollWorkload {
+        let historyLines: Int
+        let busyNeighbours: Bool
+    }
+
+    static let historyLines = 6_000
+
+    private static func scrollWorkload(_ status: SSHTerminalScreenshotStatus) -> RexScrollWorkload {
+        RexScrollWorkload(historyLines: historyLines, busyNeighbours: status == .rexBusy)
+    }
+
+    /// Output from every pane but the shown one, as busy agents print it: about
+    /// 100 KB of coloured lines each, as fast as the stream takes them, until cancelled.
+    private static func driveNeighbours(of shown: String, in fake: RexFakeSession) -> Task<Void, Never> {
+        let esc = "\u{1b}["
+        let chunk = (0..<1000).map { "\(esc)3\($0 % 6 + 1)magent\(esc)0m step \($0): reading Sources/Feature/File\($0).swift and rewriting the failing case\r\n" }.joined()
+        return Task.detached {
+            while !Task.isCancelled {
+                for host in fake.dataHosts where host.isStreaming && host.block != shown { host.emit(chunk) }
+                try? await Task.sleep(for: .milliseconds(1))
+            }
+        }
     }
 
     private func herdrScreen(_ esc: String) -> String {
@@ -168,13 +218,18 @@ final class SSHTerminalPreviewController: PreviewRootController {
         ].joined()
     }
 
+    /// A shell that has printed `lines` rows: the history a fling scrolls through.
+    private func scrollbackScreen(_ esc: String, lines: Int) -> String {
+        (1...lines).map { "\(esc)2mbuild log line \($0)\(esc)0m\r\n" }.joined() + "\(esc)32m$\(esc)0m "
+    }
+
     private func statusScreen(_ esc: String) -> String {
         "\(esc)2J\(esc)H Allow running rg?  Yes  No  Always\r\n"
     }
 
     private func statusReports(_ status: SSHTerminalScreenshotStatus) -> Data {
         switch status {
-        case .none, .rexPanes:
+        case .none, .rexPanes, .scrollback, .rexScrollback, .rexBusy:
             return Data()
         case .blocked:
             return osc("state=blocked:kind=permission:app=pi:msg=\(b64("Allow running rg in the repo?"))")
@@ -194,10 +249,16 @@ final class SSHTerminalPreviewController: PreviewRootController {
 final class SSHTerminalPreviewReadout {
     private let sentLabel = UILabel()
     private let openedLabel = UILabel()
+    private let scrollLabel = UILabel()
     private var sentGroups: [String] = []
+    private var gestures = 0
 
     func install(in view: UIView) {
-        for (label, id) in [(sentLabel, "sshTerminal.preview.sent"), (openedLabel, "sshTerminal.preview.opened")] {
+        let labels = [
+            (sentLabel, "sshTerminal.preview.sent"), (openedLabel, "sshTerminal.preview.opened"),
+            (scrollLabel, "sshTerminal.preview.scroll"),
+        ]
+        for (label, id) in labels {
             label.translatesAutoresizingMaskIntoConstraints = false
             label.font = .systemFont(ofSize: 1)
             label.alpha = 0.02
@@ -216,7 +277,20 @@ final class SSHTerminalPreviewReadout {
             sentLabel.topAnchor.constraint(equalTo: view.topAnchor),
             openedLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             openedLabel.topAnchor.constraint(equalTo: sentLabel.bottomAnchor),
+            scrollLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollLabel.topAnchor.constraint(equalTo: openedLabel.bottomAnchor),
         ])
+    }
+
+    /// The latest terminal scroll gesture the grid measured, as `key=value` words
+    /// after a running count (`none` before the first): the same event telemetry
+    /// records, so a UI run reads what the device would report.
+    func scrolled(_ gesture: TelemetryEventPayload) {
+        gestures += 1
+        let fields = gesture.fields.sorted { $0.key < $1.key }.map { "\($0.key)=\(String(format: "%.4g", $0.value))" }
+        let tags = (gesture.tags ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+        scrollLabel.text = (["gesture=\(gestures)"] + fields + tags).joined(separator: " ")
+        scrollLabel.accessibilityLabel = scrollLabel.text
     }
 
     func sent(_ bytes: Data) {

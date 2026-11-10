@@ -17,13 +17,12 @@ import { fileURLToPath } from "node:url";
 
 import {
   EVENT_DEFS,
-  GROUPS,
   TAG_DEFS,
   fieldSpec,
   type EventDef,
-  type GroupKey,
   type TagDef,
 } from "../src/telemetry/catalog.ts";
+import { GROUPS, type GroupKey } from "../src/telemetry/groups.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const DOCS_PATH = join(repoRoot, "dev/telemetry.md");

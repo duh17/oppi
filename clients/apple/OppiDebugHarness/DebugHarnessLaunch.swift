@@ -124,6 +124,11 @@ enum DebugHarnessLaunch {
         case "ssh-terminal": return SSHTerminalPreviewController()
         case "ssh-terminal-status-blocked": return SSHTerminalPreviewController(status: .blocked)
         case "ssh-terminal-rex-panes": return SSHTerminalPreviewController(status: .rexPanes)
+        // The scroll-smoothness runs: 6,000 history rows in a plain shell, and in a
+        // Rex session with and without busy neighbour panes.
+        case "ssh-terminal-scrollback": return SSHTerminalPreviewController(status: .scrollback)
+        case "ssh-terminal-rex-scrollback": return SSHTerminalPreviewController(status: .rexScrollback)
+        case "ssh-terminal-rex-busy": return SSHTerminalPreviewController(status: .rexBusy)
         case "ssh-terminal-rex-list": return SSHTerminalRexListPreviewController()
         case "audio-script-reader": return AudioScriptReaderPreviewController(themeStore: root.themeStore)
         default: return nil

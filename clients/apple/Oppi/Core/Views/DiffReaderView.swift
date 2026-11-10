@@ -828,24 +828,18 @@ private final class DiffReaderRowTintView: UIView {
 
 // MARK: - Scroll smoothness
 
-/// Counts frames and hitches while the user scrolls the reader. A frame that
-/// lands more than half a frame late is a hitch; `hitchMs` sums the lateness.
+/// Counts frames and hitches while the user scrolls the reader (`FrameHitchCounter`).
 @MainActor
 private final class DiffReaderScrollSampler: NSObject {
     private var link: CADisplayLink?
-    private var lastTimestamp: CFTimeInterval = 0
-    private var frames = 0
-    private var hitches = 0
-    private var hitchMilliseconds = 0.0
-    private var scrollMilliseconds = 0.0
-    private var worstFrameMilliseconds = 0.0
+    private var counter = FrameHitchCounter()
 
     func start() {
         guard link == nil else { return }
         let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
         link.add(to: .main, forMode: .common)
         self.link = link
-        lastTimestamp = 0
+        counter.forgetLastFrame()
     }
 
     func stop() {
@@ -854,34 +848,15 @@ private final class DiffReaderScrollSampler: NSObject {
     }
 
     func reset() {
-        frames = 0
-        hitches = 0
-        hitchMilliseconds = 0
-        scrollMilliseconds = 0
-        worstFrameMilliseconds = 0
+        counter.resetCounts()
     }
 
     /// Frames and hitches since the last reset. `hitchRatio` is hitch time over scroll time.
     func stats() -> (frames: Int, hitches: Int, hitchRatio: Double, worstFrameMs: Double) {
-        (
-            frames,
-            hitches,
-            scrollMilliseconds > 0 ? hitchMilliseconds / scrollMilliseconds : 0,
-            worstFrameMilliseconds
-        )
+        (counter.frames, counter.hitches, counter.hitchRatio, counter.worstFrameMilliseconds)
     }
 
     @objc private func tick(_ link: CADisplayLink) {
-        defer { lastTimestamp = link.timestamp }
-        guard lastTimestamp > 0 else { return }
-        let interval = (link.timestamp - lastTimestamp) * 1_000
-        let expected = max(1, (link.targetTimestamp - link.timestamp) * 1_000)
-        frames += 1
-        scrollMilliseconds += interval
-        worstFrameMilliseconds = max(worstFrameMilliseconds, interval)
-        if interval > expected * 1.5 {
-            hitches += 1
-            hitchMilliseconds += interval - expected
-        }
+        counter.tick(timestamp: link.timestamp, targetTimestamp: link.targetTimestamp)
     }
 }

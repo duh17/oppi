@@ -740,7 +740,7 @@ final class SSHTerminalChannel {
         let engine: SSHTerminalEngine? = if let block { engines[block] } else { own }
         guard let engine else { return }
         do {
-            try engine.continueRestore(records)
+            try SSHTerminalScrollPerf.interval("restoreHistory") { try engine.continueRestore(records) }
         } catch {
             // The screen drew; a damaged history record still ends the pane,
             // and says the history was the part that failed.
@@ -774,7 +774,7 @@ final class SSHTerminalChannel {
     private func interpret(_ bytes: Data, block: String? = nil) {
         guard connected, !bytes.isEmpty else { return }
         let engine = block.map { engine(for: $0) } ?? own
-        engine.receive(bytes)
+        SSHTerminalScrollPerf.interval("ingest") { engine.receive(bytes) }
         guard isPresented(block) else { return }
         if engine.title != title { title = engine.title }
         refreshWorkingDirectory()

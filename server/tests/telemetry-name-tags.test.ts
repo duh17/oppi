@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { NAME_LOCATION_RULES } from "../src/telemetry/catalog.js";
+import { NAME_LOCATION_RULES } from "../src/telemetry/name-tag-rules.js";
 import { looksLikeLocation, sanitizeNameTag } from "../src/telemetry/validate.js";
 
 /** The one accept/reject list; the Swift test reads the same file. */

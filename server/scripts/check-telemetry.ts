@@ -37,15 +37,14 @@ import { fileURLToPath } from "node:url";
 
 import {
   EVENT_DEFS,
-  NAME_LOCATION_RULES,
   TAG_DEFS,
   eventOrigin,
   fieldSpec,
   type EventDef,
   type FieldUnit,
-  type NameLocationRule,
   type TagDef,
 } from "../src/telemetry/catalog.ts";
+import { NAME_LOCATION_RULES, type NameLocationRule } from "../src/telemetry/name-tag-rules.ts";
 import { telemetryEventFileName } from "../src/telemetry/event-writer.ts";
 import { DOCS_PATH, withGeneratedTables } from "./generate-telemetry-docs.ts";
 import { GENERATED_SWIFT_PATH, generateSwift } from "./generate-telemetry-catalog.ts";

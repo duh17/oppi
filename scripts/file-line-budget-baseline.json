@@ -126,7 +126,7 @@
       "reason": "Cohesive render stack: pipeline, glyph atlas, kitty cache, renderer."
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalSurface.swift": {
-      "budget": 2200,
+      "budget": 2100,
       "owner": "SSH3 terminal grid input owners",
       "reason": "UITextInput has to stay on the first responder view, so owners hang off it; the terminal campaigns land first."
     },
@@ -216,9 +216,9 @@
       "reason": "Hand-written normalizeConfig with 77 error pushes; needs its own scout."
     },
     "server/src/telemetry/catalog.ts": {
-      "budget": 1800,
+      "budget": 1700,
       "owner": "server telemetry",
-      "reason": "Declared-once event catalog that generates the Swift twin; keep one file."
+      "reason": "Declared-once event catalog that generates the Swift twin; keep one file. The name-tag rules and review groups moved to their own files."
     }
   }
 }

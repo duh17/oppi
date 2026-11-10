@@ -15,6 +15,13 @@ enum Telemetry {
     /// task while other suites run in parallel. Nil in production.
     @TaskLocal static var _observerForTesting: (@Sendable (TelemetryEventPayload) -> Void)?
 
+    #if DEBUG
+    /// The same view for the whole process, for a driven UI run: the app's own
+    /// display-link callbacks run in no test task, so the debug harness installs
+    /// this to publish what it measured. Absent from release builds.
+    nonisolated(unsafe) static var _processObserverForTesting: (@Sendable (TelemetryEventPayload) -> Void)?
+    #endif
+
     static func record(
         _ event: some TelemetryEvent,
         sessionId: String? = nil,
@@ -37,6 +44,9 @@ enum Telemetry {
             workspaceId: Self.cleanID(workspaceId)
         )
         _observerForTesting?(payload)
+        #if DEBUG
+        _processObserverForTesting?(payload)
+        #endif
 
         guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
         Task.detached(priority: .utility) {

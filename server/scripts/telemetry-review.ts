@@ -20,7 +20,8 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { isRecord } from "../src/json-shape.ts";
-import { EVENT_DEFS, GROUPS, fieldSpec, type EventDef } from "../src/telemetry/catalog.ts";
+import { EVENT_DEFS, fieldSpec, type EventDef } from "../src/telemetry/catalog.ts";
+import { GROUPS } from "../src/telemetry/groups.ts";
 import { tagsMatch } from "../src/telemetry/validate.ts";
 import { buildLabel } from "./build-label.ts";
 

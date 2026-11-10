@@ -1,6 +1,7 @@
 /**
  * Telemetry catalog: the single declaration of every telemetry event Oppi
- * records. Pure data plus types; no runtime imports.
+ * records. Pure data plus types; no runtime imports (the review groups live in
+ * `groups.ts`, the `name` tag rules in `name-tag-rules.ts`).
  *
  * Every consumer derives from this file or is checked against it:
  * - server ingest (`POST /telemetry/events`) validates app events against it,
@@ -20,6 +21,8 @@
  * - An event may narrow an enum tag to a subset of its vocabulary.
  * - Removed events are deleted, not retired.
  */
+
+import type { GroupKey } from "./groups.js";
 
 export type TelemetryOrigin = "app" | "server";
 
@@ -46,7 +49,7 @@ export interface BucketEdge {
 /**
  * - `enum`: closed value set; events may narrow it.
  * - `bucket`: a number mapped to a named bucket; both sides share the edges.
- * - `name`: open but bounded identifier matching `NAME_TAG_PATTERN` that does
+ * - `name`: open but bounded identifier matching `NAME_TAG_PATTERN` (`name-tag-rules.ts`) that does
  *   not look like a host, URL, or path (`looksLikeLocation`); anything else is
  *   stored as `unknown`. `route` lets a value start with `/` (a normalized
  *   route template such as `/workspaces/:workspaceId`); no other key may.
@@ -60,103 +63,6 @@ export type TagDef =
       readonly description: string;
     }
   | { readonly kind: "name"; readonly description: string; readonly route?: true };
-
-/**
- * Characters a `name` tag value may use besides ASCII letters and digits.
- * `:` and `@` keep HTTP route patterns (`/workspaces/:workspaceId`) and
- * versioned model ids (`claude-opus-4@20250514`, `qwen3:32b`). `-` stays last
- * so the string drops into a regex character class as is.
- */
-export const NAME_TAG_PUNCTUATION = "._/:@-";
-export const NAME_TAG_MAX_LENGTH = 128;
-export const NAME_TAG_PATTERN = new RegExp(
-  `^[A-Za-z0-9${NAME_TAG_PUNCTUATION}]{1,${NAME_TAG_MAX_LENGTH}}$`,
-);
-export const NAME_TAG_FALLBACK = "unknown";
-
-/**
- * One reason a `name` value is stored as `unknown` although its characters are
- * allowed: it looks like a location (URL, host, address, path) rather than an
- * identifier. The rules are data so the server (`validate.ts`) and the
- * generated Swift (`TelemetryName`) apply exactly the same ones: `source` is a
- * regular expression in the syntax JavaScript and ICU share (no lookbehind, no
- * inline flags). The check is defence in depth: a bare or public hostname
- * (`stt-box`, `example.com`) or a relative path is indistinguishable from an
- * identifier, so a source of `name` tags must still be bounded to constants or
- * enum-like values.
- */
-export interface NameLocationRule {
-  readonly id: string;
-  readonly source: string;
-  readonly ignoreCase?: true;
-  /** A route template (`route` tags) may match this rule, as `/workspaces/:workspaceId` does. */
-  readonly exemptForRoute?: true;
-  /**
-   * A cheap prefilter: the rule can only match a value that contains at least
-   * one of these substrings (compared ignoring ASCII case; a single character
-   * must not be a letter). Both sides skip the regex when none is present, which
-   * is what keeps sanitizing a plain `bash` or `chat` free of regex work. The
-   * server tests check every rule against the shared fixture and a fuzz sweep.
-   */
-  readonly needs: readonly string[];
-  readonly description: string;
-}
-
-export const NAME_LOCATION_RULES: readonly NameLocationRule[] = [
-  { id: "url_scheme", needs: [":"], source: "://", description: "A URL (`https://host`)." },
-  {
-    id: "home_path",
-    needs: ["~"],
-    source: "^~",
-    description: "A home-relative path (`~/models`).",
-  },
-  {
-    id: "absolute_path",
-    needs: ["/"],
-    source: "^/",
-    exemptForRoute: true,
-    description: "An absolute path (`/Users/me/models`); a route template may start with `/`.",
-  },
-  {
-    id: "localhost",
-    needs: ["localhost"],
-    source: "(^|[^A-Za-z0-9])localhost($|[^A-Za-z0-9])",
-    ignoreCase: true,
-    description: "`localhost` as a whole word.",
-  },
-  {
-    id: "private_host_suffix",
-    needs: ["."],
-    source: "\\.(local|lan|internal|localdomain|ts\\.net|home\\.arpa)$",
-    ignoreCase: true,
-    description: "A private or tailnet host name (`mac-studio.tail1234.ts.net`).",
-  },
-  {
-    id: "ipv4",
-    needs: ["."],
-    source: "^\\d{1,3}(\\.\\d{1,3}){3}(:\\d+)?$",
-    description: "An IPv4 address, with an optional port.",
-  },
-  {
-    id: "ipv6",
-    needs: [":"],
-    source: "^(?=([^:]*:){2})[0-9A-Fa-f:.]+$",
-    description:
-      "An IPv6 address (`fd7a:115c:a1e0::53`, `::1`): two or more colons, hex digits only.",
-  },
-  {
-    id: "host_port",
-    needs: [":"],
-    source: "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}:\\d{2,5}$",
-    description: "A host with an alphabetic top-level domain and a port (`stt.example.com:7936`).",
-  },
-  {
-    id: "user_at_host",
-    needs: ["@"],
-    source: "^[^@]+@[^@]*\\.[A-Za-z]{2,}$",
-    description: "`user@host.tld`; a leading `@` scope (`@cf/meta/llama`) has no user.",
-  },
-];
 
 export interface TagUse {
   readonly required?: true;
@@ -209,57 +115,6 @@ export interface EventDef {
   readonly storage?: StorageSpec;
   readonly slo?: readonly SloSpec[];
 }
-
-// ── Review and dashboard groups ──
-
-export const GROUPS = {
-  ux: {
-    label: "UX Responsiveness",
-    note: "User-visible wait time. Do not put full agent work duration in this group.",
-  },
-  connection: {
-    label: "Connection Reliability",
-    note: "Command/session readiness and stream health. These are user-blocking when they fail or tail out.",
-  },
-  rendering: {
-    label: "Rendering Smoothness",
-    note: "Frame-budget work on the 120 Hz budget (8.3 ms).",
-  },
-  media: {
-    label: "Attention and Media UX",
-    note: "Human-in-the-loop, sharing, and media playback. Ask response is user dwell time, not app latency.",
-  },
-  dictation_ux: {
-    label: "Dictation UX",
-    note: "Client dictation and voice input as the user experiences it.",
-  },
-  dictation_backend: {
-    label: "Dictation Backend",
-    note: "Server speech-to-text and finalize work.",
-  },
-  session_list: {
-    label: "Session List",
-    note: "Session list compute and SwiftUI body churn.",
-  },
-  device: {
-    label: "Device",
-    note: "Client CPU, memory, thermal pressure, and main-thread stalls.",
-  },
-  server: {
-    label: "Server",
-    note: "Resource pressure. event_loop_p99_ms is the ungated trend; the release gate uses event_loop_max_ms.",
-  },
-  workload: {
-    label: "Agent Workload",
-    note: "Long values usually mean the agent was working. Call them bad only when correlated with no progress, high TTFT, tool hangs, errors, or missing UI updates. Operational success is not accepted-task correctness.",
-  },
-  server_ops: {
-    label: "Server Operations",
-    note: "HTTP routes, WebSocket plumbing, push, MCP, schedules, and session lifecycle drill-down.",
-  },
-} as const satisfies Readonly<Record<string, { label: string; note: string }>>;
-
-export type GroupKey = keyof typeof GROUPS;
 
 // ── Tag vocabulary ──
 
@@ -596,6 +451,16 @@ const TAGS = {
     description: "Tool row measurement pass (`width.<name>`, `viewport.<name>`).",
   },
   language: { kind: "name", description: "Syntax-highlight language." },
+  terminal_mode: {
+    kind: "enum",
+    values: ["shell", "herdr", "tmux", "rex"],
+    description: "What the SSH terminal runs: a plain shell, Herdr, tmux, or a Rex session.",
+  },
+  scroll_path: {
+    kind: "enum",
+    values: ["history", "wheel", "keys"],
+    description: "Where a terminal scroll went: local history, mouse-wheel reports, or arrow keys.",
+  },
   surface: {
     kind: "name",
     description:
@@ -1097,6 +962,20 @@ const EVENTS = {
       hitch_ratio: "ratio",
       worst_frame_ms: "ms",
     },
+  },
+  "app.terminal_scroll_gesture": {
+    description: "How smoothly did one SSH terminal scroll gesture, finger down through coasting, run?",
+    group: "rendering",
+    fields: {
+      duration_ms: "ms",
+      frames: "count",
+      hitches: "count",
+      hitch_ratio: "ratio",
+      worst_frame_ms: "ms",
+      deferred_bytes: "bytes",
+    },
+    tags: { terminal_mode: { required: true }, scroll_path: { required: true } },
+    emit: [{ field: "frames", min: 2 }],
   },
 
   // ─── App: session list ───

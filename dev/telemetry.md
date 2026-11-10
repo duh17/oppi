@@ -146,6 +146,7 @@ Frame-budget work on the 120 Hz budget (8.3 ms).
 | `app.timeline_jank` | What share of timeline apply cycles in a session missed the frame budget? | `jank_pct` pct<br>`cycles` count<br>`hitches` count | none | emit `cycles` ≥ 1<br>SLO `jank_pct` TM99 ≤ 25 |
 | `app.coalescer_window` | How much stream traffic did the delta coalescer flush per window of 200 flushes (or a non-trivial partial drain)? | `flushes` count<br>`events` count<br>`payload_bytes` bytes | none | none |
 | `app.diff_reader_session` | How fast did a review diff open and how smoothly did it scroll? | `open_ms` ms<br>`lines` count<br>`chunks` count<br>`content_width_points` count<br>`scroll_frames` count<br>`hitches` count<br>`hitch_ratio` ratio<br>`worst_frame_ms` ms | none | none |
+| `app.terminal_scroll_gesture` | How smoothly did one SSH terminal scroll gesture, finger down through coasting, run? | `duration_ms` ms<br>`frames` count<br>`hitches` count<br>`hitch_ratio` ratio<br>`worst_frame_ms` ms<br>`deferred_bytes` bytes | `terminal_mode`*<br>`scroll_path`* | emit `frames` ≥ 2 |
 
 #### Attention and Media UX
 

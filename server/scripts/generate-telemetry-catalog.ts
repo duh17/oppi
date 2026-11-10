@@ -18,16 +18,18 @@ import { fileURLToPath } from "node:url";
 
 import {
   EVENT_DEFS,
-  NAME_LOCATION_RULES,
-  NAME_TAG_FALLBACK,
-  NAME_TAG_MAX_LENGTH,
-  NAME_TAG_PUNCTUATION,
   TAG_DEFS,
   fieldSpec,
   type EventDef,
   type FieldUnit,
   type TagDef,
 } from "../src/telemetry/catalog.ts";
+import {
+  NAME_LOCATION_RULES,
+  NAME_TAG_FALLBACK,
+  NAME_TAG_MAX_LENGTH,
+  NAME_TAG_PUNCTUATION,
+} from "../src/telemetry/name-tag-rules.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const GENERATED_SWIFT_PATH = join(

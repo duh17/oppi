@@ -495,6 +495,21 @@ enum TelemetryTag {
         }
     }
 
+    /// What the SSH terminal runs: a plain shell, Herdr, tmux, or a Rex session.
+    enum TerminalMode: String, Sendable, CaseIterable {
+        case shell
+        case herdr
+        case tmux
+        case rex
+    }
+
+    /// Where a terminal scroll went: local history, mouse-wheel reports, or arrow keys.
+    enum ScrollPath: String, Sendable, CaseIterable {
+        case history
+        case wheel
+        case keys
+    }
+
     /// Whether any agent session was running on the device.
     enum Agents: String, Sendable, CaseIterable {
         case running
@@ -1977,6 +1992,63 @@ struct AppDiffReaderSession: TelemetryEvent {
 
     var tagValues: [String: String] {
         [:]
+    }
+}
+
+/// How smoothly did one SSH terminal scroll gesture, finger down through coasting, run?
+struct AppTerminalScrollGesture: TelemetryEvent {
+    static let name = "app.terminal_scroll_gesture"
+
+    let durationMs: Double
+    let frames: Int
+    let hitches: Int
+    let hitchRatio: Double
+    let worstFrameMs: Double
+    let deferredBytes: Int
+    let terminalMode: TelemetryTag.TerminalMode
+    let scrollPath: TelemetryTag.ScrollPath
+
+    init(
+        durationMs: Double,
+        frames: Int,
+        hitches: Int,
+        hitchRatio: Double,
+        worstFrameMs: Double,
+        deferredBytes: Int,
+        terminalMode: TelemetryTag.TerminalMode,
+        scrollPath: TelemetryTag.ScrollPath
+    ) {
+        self.durationMs = durationMs
+        self.frames = frames
+        self.hitches = hitches
+        self.hitchRatio = hitchRatio
+        self.worstFrameMs = worstFrameMs
+        self.deferredBytes = deferredBytes
+        self.terminalMode = terminalMode
+        self.scrollPath = scrollPath
+    }
+
+    var fieldValues: [String: Double] {
+        var values: [String: Double] = [:]
+        values["duration_ms"] = durationMs
+        values["frames"] = Double(frames)
+        values["hitches"] = Double(hitches)
+        values["hitch_ratio"] = hitchRatio
+        values["worst_frame_ms"] = worstFrameMs
+        values["deferred_bytes"] = Double(deferredBytes)
+        return values
+    }
+
+    var passesEmitPolicy: Bool {
+        if Double(frames) < 2 { return false }
+        return true
+    }
+
+    var tagValues: [String: String] {
+        var values: [String: String] = [:]
+        values["terminal_mode"] = terminalMode.rawValue
+        values["scroll_path"] = scrollPath.rawValue
+        return values
     }
 }
 
