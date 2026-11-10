@@ -570,14 +570,6 @@ final class NativeExpandedAudioAttachmentView: UIView {
             return
         }
 
-        let compactBase64 = base64.filter { !$0.isWhitespace }
-        guard estimatedDecodedByteCount(compactBase64) <= Self.maxDecodedBytes else {
-            subtitleLabel.text = "Audio is over 10 MB and was not decoded"
-            playButton.isEnabled = false
-            updateButton(palette: palette)
-            return
-        }
-
         subtitleLabel.text = "Preparing WAV…"
         playButton.isEnabled = false
         updateButton(palette: palette)
@@ -585,15 +577,23 @@ final class NativeExpandedAudioAttachmentView: UIView {
         let hasAudioPlayer = audioPlayer != nil
         let maxDecodedBytes = Self.maxDecodedBytes
         decodeTask = Task.detached(priority: .userInitiated) { [weak self] in
-            let result = Result { try ToolAudioAttachmentCache.cachedWAVFileURL(base64: compactBase64, maxDecodedBytes: maxDecodedBytes) }
+            // The payload can be megabytes: strip, size-check, and decode off the main thread.
+            let result = Result {
+                try ToolAudioAttachmentCache.cachedWAV(
+                    base64: base64.filter { !$0.isWhitespace },
+                    maxDecodedBytes: maxDecodedBytes
+                )
+            }
             await MainActor.run { [weak self] in
                 guard let self, self.id == id else { return }
                 switch result {
-                case .success(let url):
-                    self.fileURL = url
-                    let byteCount = (try? Data(contentsOf: url))?.count ?? 0
-                    self.subtitleLabel.text = compact ? nil : "WAV • \(ToolCallFormatting.formatBytes(byteCount))"
+                case .success(let wav):
+                    self.fileURL = wav.url
+                    self.subtitleLabel.text = compact ? nil : "WAV • \(ToolCallFormatting.formatBytes(wav.byteCount))"
                     self.playButton.isEnabled = hasAudioPlayer
+                case .failure(let error) where error as? ToolAudioAttachmentCache.Failure == .overLimit:
+                    self.subtitleLabel.text = "Audio is over 10 MB and was not decoded"
+                    self.playButton.isEnabled = false
                 case .failure:
                     self.subtitleLabel.text = "Unable to decode WAV payload"
                     self.playButton.isEnabled = false
@@ -641,10 +641,6 @@ final class NativeExpandedAudioAttachmentView: UIView {
         guard let id, let fileURL, let audioPlayer else { return }
         audioPlayer.toggleFilePlayback(fileURL: fileURL, itemID: id)
         updateButton(palette: ThemeRuntimeState.currentPalette())
-    }
-
-    private func estimatedDecodedByteCount(_ base64: String) -> Int {
-        max(0, (base64.count * 3) / 4 - base64.suffix(2).filter { $0 == "=" }.count)
     }
 }
 
@@ -825,18 +821,23 @@ final class NativeExpandedVideoAttachmentView: UIView {
 }
 
 private enum ToolAudioAttachmentCache {
-    static func cachedWAVFileURL(base64: String, maxDecodedBytes: Int) throws -> URL {
+    enum Failure: Error { case overLimit }
+
+    static func cachedWAV(base64: String, maxDecodedBytes: Int) throws -> (url: URL, byteCount: Int) {
+        let estimatedBytes = max(0, (base64.count * 3) / 4 - base64.suffix(2).filter { $0 == "=" }.count)
+        guard estimatedBytes <= maxDecodedBytes else { throw Failure.overLimit }
         let digest = SHA256.hash(data: Data(base64.utf8)).map { String(format: "%02x", $0) }.joined()
         let directory = try cacheDirectory()
         let fileURL = directory.appendingPathComponent("tool-audio-\(digest).wav")
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            return fileURL
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+           let size = attributes[.size] as? Int {
+            return (fileURL, size)
         }
         guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters), data.count <= maxDecodedBytes else {
             throw CocoaError(.fileReadCorruptFile)
         }
         try data.write(to: fileURL, options: .atomic)
-        return fileURL
+        return (fileURL, data.count)
     }
 
     private static func cacheDirectory() throws -> URL {

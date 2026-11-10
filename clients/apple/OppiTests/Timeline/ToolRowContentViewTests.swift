@@ -2171,3 +2171,46 @@ struct ToolTimelineRowContentViewTests {
     }
 
 }
+
+@Suite("Expanded inline audio attachment")
+@MainActor
+struct NativeExpandedAudioAttachmentViewTests {
+    /// Applies a payload and returns the subtitle once it leaves "Preparing WAV…".
+    private func settledSubtitle(base64: String, mimeType: String = "audio/wav") async -> String? {
+        let view = NativeExpandedAudioAttachmentView()
+        view.apply(
+            id: "audio-\(UUID().uuidString)",
+            title: "clip.wav",
+            base64: base64,
+            mimeType: mimeType,
+            audioPlayer: nil,
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        func subtitle() -> String? {
+            timelineAllLabels(in: view).compactMap(\.text).first {
+                $0.hasPrefix("WAV") || $0.hasPrefix("Audio") || $0.hasPrefix("Unable") || $0.hasPrefix("Unsupported")
+            }
+        }
+        for _ in 0..<500 where subtitle() == nil || subtitle() == "Preparing WAV…" {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return subtitle()
+    }
+
+    @Test func subtitleShowsDecodedSizeOfLineWrappedPayloadFreshAndFromCache() async {
+        // 3000 decoded bytes; the 64-column wrapping puts newlines in the payload.
+        let wav = Data(repeating: 0, count: 3_000)
+        let base64 = wav.base64EncodedString(options: .lineLength64Characters)
+        let expected = "WAV • \(ToolCallFormatting.formatBytes(3_000))"
+
+        #expect(await settledSubtitle(base64: base64) == expected)
+        // Second apply of the same payload is served from the cached file.
+        #expect(await settledSubtitle(base64: base64) == expected)
+    }
+
+    @Test func oversizedPayloadIsRefusedWithoutDecoding() async {
+        // Decodes to 10.5 MB, over the 10 MiB limit.
+        let base64 = String(repeating: "A", count: 14_000_000)
+        #expect(await settledSubtitle(base64: base64) == "Audio is over 10 MB and was not decoded")
+    }
+}
