@@ -32,6 +32,9 @@ final class SafeSizingCell: UICollectionViewCell {
     /// lays out all characters regardless of visibility.
     var isStreamingAssistant = false
     var cachedStreamingHeight: CGFloat?
+    /// Width `cachedStreamingHeight` was measured at. A height cached at another
+    /// width is wrong (too tall wider, clipped narrower), so it is discarded.
+    private var cachedStreamingWidth: CGFloat?
     /// Last time preferredLayoutAttributesFitting did a full computation.
     /// Used to throttle self-sizing during streaming — recompute periodically
     /// instead of every streaming tick. Between recomputations, text appends add
@@ -198,6 +201,7 @@ final class SafeSizingCell: UICollectionViewCell {
 
     func invalidateStreamingHeightCache() {
         cachedStreamingHeight = nil
+        cachedStreamingWidth = nil
         lastFullSizeComputeNs = 0
     }
 
@@ -206,6 +210,10 @@ final class SafeSizingCell: UICollectionViewCell {
     ) -> UICollectionViewLayoutAttributes {
         guard let attributes = layoutAttributes.copy() as? UICollectionViewLayoutAttributes else {
             return layoutAttributes
+        }
+
+        if let cachedWidth = cachedStreamingWidth, cachedWidth != attributes.size.width {
+            invalidateStreamingHeightCache()
         }
 
         // Streaming throttle: avoid full self-sizing on every tick. Text-only
@@ -249,6 +257,7 @@ final class SafeSizingCell: UICollectionViewCell {
             // clears this cache and allows one settled measurement.
             resolvedHeight = max(cachedStreamingHeight ?? 0, height)
             cachedStreamingHeight = resolvedHeight
+            cachedStreamingWidth = width
             lastFullSizeComputeNs = DispatchTime.now().uptimeNanoseconds
         } else {
             resolvedHeight = height

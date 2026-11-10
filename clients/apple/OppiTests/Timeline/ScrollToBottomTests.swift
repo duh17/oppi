@@ -672,6 +672,64 @@ struct ScrollToBottomTests {
         #expect(cell.cachedStreamingHeight == fitted.size.height)
     }
 
+    /// A streaming cell whose content wraps, so its height depends on width.
+    @MainActor
+    private func makeWrappingStreamingCell() -> SafeSizingCell {
+        let cell = SafeSizingCell(frame: CGRect(x: 0, y: 0, width: 200, height: 100))
+        let label = UILabel()
+        label.numberOfLines = 0
+        label.text = String(repeating: "streaming words wrap ", count: 30)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        cell.contentView.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: cell.contentView.topAnchor),
+            label.bottomAnchor.constraint(equalTo: cell.contentView.bottomAnchor),
+            label.leadingAnchor.constraint(equalTo: cell.contentView.leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: cell.contentView.trailingAnchor),
+        ])
+        cell.isStreamingAssistant = true
+        return cell
+    }
+
+    @MainActor
+    private func fittedHeight(_ cell: SafeSizingCell, width: CGFloat) -> CGFloat {
+        let attributes = UICollectionViewLayoutAttributes(
+            forCellWith: IndexPath(item: 0, section: 0)
+        )
+        attributes.size = CGSize(width: width, height: 100)
+        return cell.preferredLayoutAttributesFitting(attributes).size.height
+    }
+
+    @MainActor
+    @Test func streamingAssistantSizingRemeasuresWhenWidthGrowsInsideThrottleWindow() {
+        let cell = makeWrappingStreamingCell()
+        let narrow = fittedHeight(cell, width: 200)
+        let expectedWide = fittedHeight(makeWrappingStreamingCell(), width: 600)
+        #expect(expectedWide < narrow)
+
+        // Immediately after the narrow measurement the throttle window is open.
+        #expect(fittedHeight(cell, width: 600) == expectedWide)
+    }
+
+    @MainActor
+    @Test func streamingAssistantSizingRemeasuresWhenWidthShrinksInsideThrottleWindow() {
+        let cell = makeWrappingStreamingCell()
+        _ = fittedHeight(cell, width: 600)
+        let expectedNarrow = fittedHeight(makeWrappingStreamingCell(), width: 200)
+
+        #expect(fittedHeight(cell, width: 200) == expectedNarrow)
+    }
+
+    @MainActor
+    @Test func streamingAssistantSizingKeepsTallestHeightAtUnchangedWidth() {
+        let cell = makeWrappingStreamingCell()
+        let measured = fittedHeight(cell, width: 200)
+        cell.cachedStreamingHeight = measured + 300
+        cell.lastFullSizeComputeNs = 0 // throttle expired: forces a full measurement
+
+        #expect(fittedHeight(cell, width: 200) == measured + 300)
+    }
+
     // MARK: - Scroll command processing
 
     @MainActor
