@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the pinned, static VT engine; no Ghostty app, renderer or GUI resources.
 # A cache/vendor hit needs neither Zig nor network access. A cache miss needs
-# network access and Xcode with iPhoneOS + iPhoneSimulator SDKs; it uses a
+# network access and Xcode with iPhoneOS, iPhoneSimulator and macOS SDKs
+# (macOS for the Mac Catalyst slice); it uses a
 # PATH Zig only at exactly ZIG_VERSION, else the checksummed official release.
 set -euo pipefail
 
@@ -35,7 +36,7 @@ COMMIT="de70b9f476c39ce3f5b293ecba813b674f037a80"
 # file, temporary-file, and shared-memory loads stay off unless a terminal
 # sets those options. Direct and zlib payloads do not need a PNG decoder.
 ZIG_VERSION="0.17.1"
-BUILD_ID="$COMMIT-zig$ZIG_VERSION-fast-simd-kitty-v1"
+BUILD_ID="$COMMIT-zig$ZIG_VERSION-fast-simd-kitty-catalyst-v1"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENDOR="$ROOT/Vendor/GhosttyVt"
 CACHE_ROOT="${OPPI_GHOSTTY_VT_CACHE:-$HOME/Library/Caches/oppi-ghostty-vt}"
@@ -44,7 +45,8 @@ WORK="$ROOT/.build/ghostty-vt"
 
 current() {
     [[ -f "$1/BUILD_ID" && -d "$1/ghostty-vt.xcframework/ios-arm64" &&
-       -d "$1/ghostty-vt.xcframework/ios-arm64-simulator" ]] &&
+       -d "$1/ghostty-vt.xcframework/ios-arm64-simulator" &&
+       -d "$1/ghostty-vt.xcframework/ios-arm64-maccatalyst" ]] &&
         [[ "$(<"$1/BUILD_ID")" == "$BUILD_ID" ]]
 }
 install_product() {
@@ -121,13 +123,29 @@ git -C "$WORK/source" checkout -q --detach "$COMMIT"
 (cd "$WORK/source" && "$ZIG" build -Demit-lib-vt=true -Demit-xcframework=true \
     -Doptimize=ReleaseFast -Dsimd=true \
     --prefix "$WORK/output")
+# Ghostty's xcframework has no Mac Catalyst slice, but Zig targets
+# maccatalyst directly, so build that archive with the same options. Apple
+# silicon only: the Catalyst app does not support Intel Macs. The minimum
+# matches the iOS deployment target in project.yml. (Retagging the macOS
+# archive with vtool fails: Zig objects leave no load command padding.)
+rm -rf "$WORK/output-maccatalyst"
+(cd "$WORK/source" && "$ZIG" build -Demit-lib-vt=true \
+    -Dtarget=aarch64-maccatalyst.26.0 \
+    -Doptimize=ReleaseFast -Dsimd=true \
+    --prefix "$WORK/output-maccatalyst")
 # A fresh product dir: copying into a previous one would keep a stale archive
 # beside the new one when the library file name changes.
 rm -rf "$WORK/product"
 mkdir -p "$WORK/product"
-cp -R "$WORK/output/lib/ghostty-vt.xcframework" "$WORK/product/"
+GHOSTTY_XCF="$WORK/output/lib/ghostty-vt.xcframework"
+xcodebuild -create-xcframework \
+    -library "$GHOSTTY_XCF/ios-arm64/libghostty-vt-fat.a" -headers "$GHOSTTY_XCF/ios-arm64/Headers" \
+    -library "$GHOSTTY_XCF/ios-arm64-simulator/libghostty-vt-fat.a" -headers "$GHOSTTY_XCF/ios-arm64-simulator/Headers" \
+    -library "$GHOSTTY_XCF/macos-arm64_x86_64/libghostty-vt.a" -headers "$GHOSTTY_XCF/macos-arm64_x86_64/Headers" \
+    -library "$WORK/output-maccatalyst/lib/libghostty-vt.a" -headers "$GHOSTTY_XCF/macos-arm64_x86_64/Headers" \
+    -output "$WORK/product/ghostty-vt.xcframework"
 printf '%s\n' "$BUILD_ID" > "$WORK/product/BUILD_ID"
-current "$WORK/product" || { echo 'error: missing iOS device/simulator slices' >&2; exit 1; }
+current "$WORK/product" || { echo 'error: missing iOS device/simulator or Mac Catalyst slices' >&2; exit 1; }
 install_product "$WORK/product" "$VENDOR"
 install_product "$WORK/product" "$CACHE"
 echo "Built $VENDOR/ghostty-vt.xcframework ($BUILD_ID)."
