@@ -2,9 +2,10 @@ import UIKit
 
 /// A full-screen reader body: the view `FullScreenCodeContent.makeFullScreenBody`
 /// builds and `FullScreenCodeViewController` installs under its chrome. Each
-/// requirement answers a question the controller asks of two or more bodies; the
-/// extension below gives every other body the empty answer, so the controller
-/// never casts to a concrete body to ask it.
+/// requirement is a question the controller asks the installed body, even when
+/// only one body answers it (Outline and Find are the Markdown body's); the
+/// extension below gives every other body the empty answer, so asking needs no
+/// cast to a concrete body.
 @MainActor
 protocol ReaderBody: UIView {
     /// Viewing Options (text size, wrapping, spacing), applied in place.
