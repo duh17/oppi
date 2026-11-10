@@ -59,7 +59,7 @@ In tool terms: `subagent spawn` with `host: "build-mac"` and `worktree: "new"` (
 1. Keeps a bare mirror of your repository on the machine (`~/.oppi/pool/<workspace>.git`) and pushes your current commit to it from the server.
 2. Adds a worktree of it for the child, under `~/.oppi/pool/worktrees`.
 3. Runs the child there. In its prompt, paths, programs, and `localhost` mean the machine.
-4. When the child finishes (or fails, or you stop it), fetches its branch into your repository. The branch is an ordinary local branch there, with no worktree on the server: merge it, or check it out to review it. The parent's answer and `list` fetch again if the machine was offline at that moment. The first worker on a machine copies the repository to it, which can take minutes, and the spawn shows that while it runs.
+4. When the child finishes (or fails, or you stop it), fetches its branch into your repository. The branch is an ordinary local branch there, with no worktree on the server: merge it, or check it out to review it. The parent's answer and `list` fetch again if the machine was offline at that moment. The first worker on a machine copies the repository to it, which can take a few minutes; the spawn waits for it.
 
 The child's `list` row and answers say `worktree: <branch> · on build-mac · 2 commits ahead · fetched`. Work that is not committed on the machine is not in the branch.
 

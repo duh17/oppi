@@ -114,7 +114,9 @@ export async function remoteWorktreeLine(
   const parts = [worktree.branch ?? "detached", `on ${worktree.machine}`];
   if (placement?.fetched) {
     const ahead = await countAhead(placement.repo, placement.base, placement.branch);
-    parts.push(ahead === 1 ? "1 commit ahead" : `${ahead} commits ahead`, "fetched");
+    // No commits also means no local branch (nothing was fetched), so there is no "fetched" to say.
+    if (ahead === 0) parts.push("no commits");
+    else parts.push(ahead === 1 ? "1 commit ahead" : `${ahead} commits ahead`, "fetched");
   } else parts.push("not fetched");
   return parts.join(" \u00b7 ");
 }

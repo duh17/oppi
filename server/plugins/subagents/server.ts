@@ -1058,12 +1058,6 @@ export function createDurableSessions(
     const earlier = rerun ? before?.children[name] : undefined;
     let worktree: SubagentWorktree | undefined = earlier?.worktree;
     if (earlier === undefined && request !== undefined) {
-      // The first worktree on a machine copies the repository there: say so while it runs.
-      if (host)
-        await api.details(
-          { name, status: `Preparing a worktree on ${host}; the first one copies the repository.` },
-          context,
-        );
       const plan = await sessions.planWorktree(request, name, call, host);
       worktree = await sessions.provisionWorktree(plan, { call, adopt: request !== "new" });
     }
