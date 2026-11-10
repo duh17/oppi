@@ -1289,6 +1289,7 @@
 		7D12B3DD18E5A2914A50FF46 /* MermaidKanbanRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E223D33B9B7A41141B8D5B0 /* MermaidKanbanRenderer.swift */; };
 		7D250D2D228AD8520FC7AFDF /* SSHTerminalBarPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98AC4092E8DB61B0FF41083B /* SSHTerminalBarPill.swift */; };
 		7D294D644EE65AACEC0D62FC /* TimedText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F044BF09A23B7B08BFA8CE5 /* TimedText.swift */; };
+		7D4B95562EE914C557B09871 /* ServerConnectionListRefreshHandoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79F8CC7292812EE75E5D9355 /* ServerConnectionListRefreshHandoffTests.swift */; };
 		7D4E0E49A271363AEF5CFBD0 /* MacMarkdownAudioTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D69868DDDA8B17A1DD33FCD /* MacMarkdownAudioTests.swift */; };
 		7D5C249C24CD2BFCEDBBD297 /* ToolCallDocumentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99164436BAD4895F84298212 /* ToolCallDocumentTests.swift */; };
 		7D6190E89790EA78B9D7A10F /* OppiActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FD032A5FFCD767317A0DCB8 /* OppiActivityBundle.swift */; };
@@ -3880,6 +3881,7 @@
 		79D2089FD76E60EB66A51CAD /* GuidedControlComposerModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuidedControlComposerModelTests.swift; sourceTree = "<group>"; };
 		79D57947FA2479C908D6C827 /* MacCatalogViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCatalogViews.swift; sourceTree = "<group>"; };
 		79EDD89095D4D4738892D0E8 /* LiveStreamingPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveStreamingPresentationTests.swift; sourceTree = "<group>"; };
+		79F8CC7292812EE75E5D9355 /* ServerConnectionListRefreshHandoffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionListRefreshHandoffTests.swift; sourceTree = "<group>"; };
 		79FAA3EE71EE0F94A76FCA13 /* HostVideoCaptionsE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostVideoCaptionsE2ETests.swift; sourceTree = "<group>"; };
 		7A0A577B2D90028AB1A708C8 /* OppiAppCacheLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiAppCacheLaunchTests.swift; sourceTree = "<group>"; };
 		7A15E4E3F8E96B2DF444ACB0 /* SSHTerminalScrollHoldTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalScrollHoldTests.swift; sourceTree = "<group>"; };
@@ -5287,6 +5289,7 @@
 				AF62E83D666C51FC2AB5B0BF /* ServerConnectionInvariantTests.swift */,
 				8D4ED5F6D7342021B60F0C49 /* ServerConnectionLANTransportTests.swift */,
 				D20186190FFCD32FD150AD92 /* ServerConnectionLifecycleTests.swift */,
+				79F8CC7292812EE75E5D9355 /* ServerConnectionListRefreshHandoffTests.swift */,
 				3E32650EFD98AE8E1B704FD6 /* ServerConnectionModelCommandsTests.swift */,
 				42471A85F050E9E0351ABE9D /* ServerConnectionReconnectTests.swift */,
 				DC0D17421C1CE500676A776C /* ServerConnectionRoutingTests.swift */,
@@ -10540,6 +10543,7 @@
 				057BB38CEF8C82D34F0C2DB2 /* ServerConnectionInvariantTests.swift in Sources */,
 				46E5CE5AB9E563E5F81B80A6 /* ServerConnectionLANTransportTests.swift in Sources */,
 				73DA57183A86460FFE36C49E /* ServerConnectionLifecycleTests.swift in Sources */,
+				7D4B95562EE914C557B09871 /* ServerConnectionListRefreshHandoffTests.swift in Sources */,
 				85E45C9A07BE83DD32F564C5 /* ServerConnectionModelCommandsTests.swift in Sources */,
 				F7C890022A3739DC7F5E2374 /* ServerConnectionReconnectTests.swift in Sources */,
 				13369A25AB3638182D16050D /* ServerConnectionRoutingTests.swift in Sources */,

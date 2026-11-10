@@ -177,7 +177,8 @@ extension ServerConnection {
                 if let syncToken {
                     self.sessionStore.finishSyncIfOwned(syncToken)
                 }
-                self.sessionListRefreshTask = nil
+                // A cancelled refresh unwinds after its replacement took the slot.
+                if self.ownsListRefresh(ownership) { self.sessionListRefreshTask = nil }
             }
 
             // Ownership is the commit fence. Cancellation is cooperative after
@@ -315,7 +316,9 @@ extension ServerConnection {
         let task = Task { @MainActor [weak self, apiClient] in
             guard let self else { return }
             let requestStartedAt = Date()
-            defer { self.workspaceCatalogRefreshTask = nil }
+            defer {
+                if self.ownsListRefresh(ownership) { self.workspaceCatalogRefreshTask = nil }
+            }
 
             guard !Task.isCancelled, self.ownsListRefresh(ownership) else { return }
             let outcome = await self.workspaceStore.load(api: apiClient) {
