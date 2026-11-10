@@ -29,7 +29,6 @@ Platform painters
   +-- iOS NativeFullScreenCodeBody  Owns full-file highlight scheduling
   +-- iOS NotebookCellView / ToolRowCodeRenderStrategy / BashToolRowView
   |     Own tool-row highlight scheduling (notebook source, code row, bash command)
-  +-- Mac MacSyntaxHighlighter  Tokens -> NSAttributedString (NSColor, Mac fonts)
   +-- iOS DiffAttributedStringBuilder  Per-hunk projections; cached painter colors
   +-- iOS ToolRowTextRenderer   Guttered tool-row paint from the same tokens/colors
 
@@ -44,10 +43,9 @@ they do not re-scan or invent a second token→color table.
 
 | Method | Owner | Used by |
 |---|---|---|
-| `TreeSitterHighlighter.resolvedTokenRanges` | OppiCore | iOS/Mac painters, tool-row gutters |
+| `TreeSitterHighlighter.resolvedTokenRanges` | OppiCore | iOS painters, tool-row gutters |
 | `TreeSitterHighlighter.resolvedTokenRangesUTF8` | OppiCore | Diff builder (tree-sitter or UTF-8 fallback) |
 | `SyntaxHighlighter.highlight` | iOS painter | Called by `NativeCodeBlockView` (fences), `NativeFullScreenCodeBody` (files), notebook/code/bash tool rows, share/export |
-| `MacSyntaxHighlighter.attributedCode` | Mac painter | Mac timeline / document column |
 
 `resolvedTokenRanges` uses tree-sitter for registered languages (plain text if the query is missing) and `SyntaxTokenScanner` otherwise. Public `SyntaxTokenRange` offsets are always UTF-16 code units, matching `NSRange`, `NSString`, and tree-sitter captures. Displayed source is the full input; only token work is bounded.
 
@@ -114,7 +112,6 @@ Nine token types map to theme colors. Every character gets one of these:
 | Format | SyntaxLanguage | Renderer | Notes |
 |---|---|---|---|
 | LaTeX | `.latex` | `MathCoreGraphicsRenderer` | CGContext-based math rendering |
-| Org Mode | `.orgMode` | `OrgAttributedStringRenderer` | Parsed AST -> attributed string |
 | Mermaid | `.mermaid` | `MermaidFlowchartRenderer` et al. | Multiple diagram types |
 | Graphviz | `.dot` | Graphviz renderer | Graph layout via SugiyamaLayout |
 
@@ -240,7 +237,6 @@ All current tree-sitter grammars meet these targets. Painters keep complete sour
 | `Oppi/Features/Chat/Timeline/Tool/NotebookCellView.swift` | Notebook source highlight scheduling |
 | `Oppi/Features/Chat/Timeline/Tool/ToolRowCodeRenderStrategy.swift` | Expanded code-row highlight scheduling |
 | `Oppi/Features/Chat/Timeline/Tool/BashToolRowView.swift` | Bash command highlight scheduling |
-| `OppiMac/Formatting/MacSyntaxHighlighter.swift` | Mac painter: NSColor, Mac fonts, no baked gutters |
 | `OppiCore/Formatting/SyntaxKeywords.swift` | Keyword sets for hand-written scanners |
 | `OppiCore/Formatting/BashEmbeddedLanguageDetector.swift` | Heredoc/inline script detection |
 | `Oppi/Core/Formatting/FullScreenCodeHighlighter.swift` | `SendableNSAttributedString` transport |

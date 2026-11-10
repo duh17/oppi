@@ -1,4 +1,4 @@
-# ─── Oppi iOS + macOS ───
+# ─── Oppi ───
 # Fork setup: change bundleIdPrefix and DEVELOPMENT_TEAM to your own values.
 # See CONTRIBUTING.md for full setup instructions.
 name: Oppi
@@ -6,9 +6,6 @@ packages:
   swift-cmark:
     url: https://github.com/swiftlang/swift-cmark.git
     from: "0.7.1"
-  Sparkle:
-    url: https://github.com/sparkle-project/Sparkle
-    from: "2.9.0"
   swift-tree-sitter:
     url: https://github.com/tree-sitter/swift-tree-sitter
     from: "0.25.0"
@@ -79,7 +76,6 @@ options:
   bundleIdPrefix: dev.chenda
   deploymentTarget:
     iOS: "26.0"
-    macOS: "15.0"
   xcodeVersion: "27.1"
   generateEmptyDirectories: true
   defaultLocalization: en
@@ -133,12 +129,6 @@ targets:
         type: group
         excludes:
           - "Renderers/Orbs/LICENSE"
-          # Mac-only SwiftUI in Shared: iOS has no orb acknowledgments page of
-          # its own (the Mac's Settings shows it), and the thinking orb's SwiftUI
-          # wrapper (`OrbView`) is the Mac's chat chrome; iOS draws the same
-          # `OrbMetalView` in UIKit.
-          - "Renderers/Orbs/ThinkingOrbAcknowledgmentsView.swift"
-          - "Renderers/Orbs/OrbView.swift"
       # Debug harnesses and screenshot previews (and their fixtures). UI and E2E
       # tests launch the Debug app with harness launch arguments, so the folder
       # compiles into this target; Release excludes it below.
@@ -307,8 +297,6 @@ targets:
             "$SRCROOT/OppiPerfTests"
             "$SRCROOT/OppiUITests"
             "$SRCROOT/OppiE2ETests"
-            "$SRCROOT/OppiMac"
-            "$SRCROOT/OppiMacTests"
           )
 
           needs_lint=0
@@ -496,8 +484,6 @@ targets:
         type: group
       - path: Shared/Models
         type: group
-      - path: Shared/NearbyPairing
-        type: group
       - path: Shared/Renderers
         type: group
         excludes:
@@ -618,8 +604,6 @@ targets:
       - path: Shared/Logging
         type: group
       - path: Shared/Models
-        type: group
-      - path: Shared/NearbyPairing
         type: group
       - path: Shared/Renderers
         type: group
@@ -776,130 +760,6 @@ targets:
         # QAVerificationSupport/OppiTestLaunch.swift picks the E2E reset token by it.
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) OPPI_E2E_TESTS"
 
-  OppiMacTests:
-    type: bundle.unit-test
-    platform: macOS
-    deploymentTarget: "26.0"
-    sources:
-      - path: OppiMacTests
-        type: group
-    dependencies:
-      - target: OppiMac
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiMacTests
-        CODE_SIGN_IDENTITY: ""
-        CODE_SIGNING_ALLOWED: "NO"
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Oppi.app/Contents/MacOS/Oppi"
-        BUNDLE_LOADER: "$(TEST_HOST)"
-
-  OppiMac:
-    type: application
-    platform: macOS
-    deploymentTarget: "26.0"
-    sources:
-      - path: OppiMac
-        type: group
-      - path: Oppi/Resources/Fonts
-        type: folder
-        buildPhase: resources
-      - path: OppiCore
-        type: group
-      - path: Shared/Auth/Keychain
-        type: group
-      - path: Shared/Constants
-        type: group
-      - path: Shared/Logging
-        type: group
-      - path: Shared/Models
-        type: group
-      - path: Shared/NearbyPairing
-        type: group
-      - path: Shared/Renderers
-        type: group
-        excludes:
-          - "Orbs/LICENSE"
-      - path: Shared/Theme
-        type: group
-      - path: Oppi/Core/AppIdentifiers.swift
-      - path: Oppi/Core/Extensions/Color+Theme.swift
-      - path: Oppi/Core/Theme/AppTheme.swift
-      - path: Oppi/Core/Theme/RemoteTheme.swift
-      - path: Oppi/Core/Theme/ThemeCatalog.swift
-      - path: Oppi/Core/Theme/ThemeContrast.swift
-      - path: Oppi/Core/Theme/ThemeStore.swift
-    dependencies:
-      - package: Sparkle
-      - package: swift-cmark
-        product: cmark-gfm
-      - package: swift-cmark
-        product: cmark-gfm-extensions
-      - package: swift-tree-sitter
-        product: SwiftTreeSitter
-      - package: tree-sitter-bash
-        product: TreeSitterBash
-      - package: tree-sitter-javascript
-        product: TreeSitterJavaScript
-      - package: tree-sitter-python
-        product: TreeSitterPython
-      - package: tree-sitter-typescript
-        product: TreeSitterTypeScript
-      - package: tree-sitter-go
-        product: TreeSitterGo
-      - package: tree-sitter-rust
-        product: TreeSitterRust
-      - package: tree-sitter-c
-        product: TreeSitterC
-      - package: tree-sitter-cpp
-        product: TreeSitterCPP
-      - package: tree-sitter-html
-        product: TreeSitterHTML
-      - package: tree-sitter-css
-        product: TreeSitterCSS
-      - package: tree-sitter-ruby
-        product: TreeSitterRuby
-      - package: tree-sitter-java
-        product: TreeSitterJava
-      - package: tree-sitter-yaml
-        product: TreeSitterYAML
-      - package: tree-sitter-toml
-        product: TreeSitterTOML
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiMac
-        PRODUCT_NAME: Oppi
-        MARKETING_VERSION: "0.2.0"
-        CURRENT_PROJECT_VERSION: 40
-        CODE_SIGN_IDENTITY: "Developer ID Application"
-        CODE_SIGN_STYLE: Manual
-        DEVELOPMENT_TEAM: AZAQMY4SPZ
-        ENABLE_HARDENED_RUNTIME: true
-        CODE_SIGN_ENTITLEMENTS: OppiMac/OppiMac.entitlements
-      configs:
-        Debug:
-          CODE_SIGN_IDENTITY: ""
-          CODE_SIGNING_ALLOWED: "NO"
-          ENABLE_HARDENED_RUNTIME: false
-    info:
-      path: OppiMac/Resources/Info.plist
-      properties:
-        CFBundleDisplayName: Oppi
-        CFBundleURLTypes:
-          - CFBundleTypeRole: Editor
-            CFBundleURLName: dev.chenda.oppi.invite
-            CFBundleURLSchemes:
-              - oppi
-        SUFeedURL: "https://github.com/duh17/oppi/releases/download/appcast/appcast.xml"
-        SUPublicEDKey: "wnLCIfY048anOcj7/J/Iv6Lp9Fmba4zQ0EjCL7k/M+E="
-        SUEnableAutomaticChecks: true
-        SUScheduledCheckInterval: 86400
-        NSMicrophoneUsageDescription: "Oppi uses the microphone to transcribe your voice into text prompts."
-        NSLocalNetworkUsageDescription: "Oppi uses the local network to pair nearby iPhones with this Mac."
-        NSBonjourServices:
-          - "_oppi-pair._tcp"
-        NSAppTransportSecurity:
-          NSAllowsLocalNetworking: true
-
 schemes:
   OppiUnitTests:
     build:
@@ -937,15 +797,3 @@ schemes:
     build:
       targets:
         OppiNotificationService: all
-
-  OppiMac:
-    build:
-      targets:
-        OppiMac: all
-        OppiMacTests: [test]
-    test:
-      targets:
-        - name: OppiMacTests
-          parallelizable: true
-          randomExecutionOrder: true
-

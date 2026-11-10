@@ -4,16 +4,9 @@ import Foundation
 
 // MARK: - Render Output
 
-/// Output produced by a document renderer.
-///
-/// Two rendering strategies depending on format:
-/// - Text-based formats (org mode) produce attributed strings rendered in text views.
-/// - Graphical formats (LaTeX math, Mermaid, Graphviz) produce draw commands for Core Graphics.
+/// Output produced by a document renderer. Graphical formats (LaTeX math,
+/// Mermaid, Graphviz) produce draw commands for Core Graphics.
 enum RenderOutput: @unchecked Sendable {
-    /// Attributed string for text view rendering (UITextView / NSTextView).
-    /// Used by text-based formats (org mode, future markup formats).
-    case attributedString(NSAttributedString)
-
     /// Positioned elements for Core Graphics `draw(rect:)`.
     /// Used by graphical formats (LaTeX math, diagrams).
     case graphical(GraphicalRenderResult)
@@ -274,9 +267,7 @@ struct RenderTheme: Sendable {
 /// Protocol for document renderers.
 ///
 /// Renderers convert a parsed document AST into visual output.
-/// Two specializations:
-/// - `AttributedStringDocumentRenderer` for text-based formats
-/// - `GraphicalDocumentRenderer` for diagram/math formats
+/// `GraphicalDocumentRenderer` specializes it for diagram/math formats.
 ///
 /// Every renderer ships with:
 /// - Render correctness tests (verify attributes or layout positions)
@@ -286,27 +277,6 @@ protocol DocumentRenderer: Sendable {
 
     /// Render a parsed document into visual output.
     nonisolated func render(_ document: Document, configuration: RenderConfiguration) -> RenderOutput
-}
-
-/// Convenience protocol for text-based renderers producing attributed strings.
-///
-/// Used by org mode and future markup renderers. Output goes directly into
-/// UITextView (iOS) or NSTextView (Mac).
-protocol AttributedStringDocumentRenderer: DocumentRenderer {
-    /// Render directly to NSAttributedString.
-    nonisolated func renderAttributedString(
-        _ document: Document,
-        configuration: RenderConfiguration
-    ) -> NSAttributedString
-}
-
-extension AttributedStringDocumentRenderer {
-    nonisolated func render(
-        _ document: Document,
-        configuration: RenderConfiguration
-    ) -> RenderOutput {
-        .attributedString(renderAttributedString(document, configuration: configuration))
-    }
 }
 
 /// Protocol for graphical renderers (diagrams, math).
