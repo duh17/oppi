@@ -339,7 +339,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         stopDisplayLink()
         if window == nil {
             keyRepeater.stop()
-            channel.isScrollGestureActive = false
+            endScrollVisit()
             // The page is not in view: the swipe renderer kept between drags goes.
             panePreview.releaseRenderer()
             NotificationCenter.default.removeObserver(self, name: UIApplication.didBecomeActiveNotification, object: nil)
@@ -383,6 +383,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
 
     @objc private func sceneResignedActive() {
         sceneActive = false
+        endScrollVisit()
         stopDisplayLink()
     }
 
@@ -398,6 +399,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             displayLink.isPaused = false
             return
         }
+        scrollMeter.linkRestarted()
         let link = CADisplayLink(target: DisplayTarget(self), selector: #selector(DisplayTarget.tick(_:)))
         link.preferredFrameRateRange = SSHTerminalDisplayLinkPolicy.normalRate
         link.add(to: .main, forMode: .common)
@@ -1904,13 +1906,19 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     fileprivate func measureScroll(_ link: CADisplayLink) {
         let scrolling = isHistoryScrolling
         channel.isScrollGestureActive = scrolling
-        guard let gesture = scrollMeter.tick(
+        scrollMeter.tick(
             timestamp: link.timestamp, targetTimestamp: link.targetTimestamp, scrolling: scrolling,
             heldBytes: channel.scrollHold.totalHeldBytes,
             mode: SSHTerminalScrollMeter.mode(isRex: channel.rex != nil, command: channel.command),
             path: SSHTerminalScrollMeter.path(channel.engine.scrollAction)
-        ) else { return }
-        Telemetry.record(gesture)
+        )
+    }
+
+    /// The terminal is out of view or the app inactive: no gesture is running, and
+    /// the visit's scroll totals go out.
+    private func endScrollVisit() {
+        channel.isScrollGestureActive = false
+        scrollMeter.takeVisits().forEach { Telemetry.record($0) }
     }
 
     /// Another pane's picture is not this one's: the check that last saw a

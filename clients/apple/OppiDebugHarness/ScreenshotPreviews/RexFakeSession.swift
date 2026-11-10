@@ -57,11 +57,11 @@ final class RexFakeDataHost: Sendable {
     /// The data connection is open and welcomed: output can flow.
     var isWelcomed: Bool { state.withLock { $0.ticket != nil } }
 
-    /// The pane's screen as Ghostty's snapshot, then Rex's `resize` message,
-    /// which ends it.
     /// The pane's snapshot went out: its program's output can follow.
     var isStreaming: Bool { state.withLock { $0.snapshotted } }
 
+    /// The pane's screen as Ghostty's snapshot, then Rex's `resize` message,
+    /// which ends it.
     func emitSnapshot(_ snapshot: Data, columns: Int = 80, rows: Int = 24) {
         state.withLock { $0.snapshotted = true }
         deliver(Self.frame(0x02, snapshot + message(#"{"type":"resize","cols":\#(columns),"rows":\#(rows)}"#)))

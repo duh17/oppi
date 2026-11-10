@@ -84,7 +84,7 @@ final class SSHTerminalPreviewController: PreviewRootController {
     deinit {
         playback?.cancel()
         consumption?.cancel()
-        if status.measuresScroll { Telemetry._processObserverForTesting = nil }
+        if status.measuresScroll { SSHTerminalScrollMeter._gestureObserverForTesting = nil }
     }
 
     override func viewDidLoad() {
@@ -94,10 +94,7 @@ final class SSHTerminalPreviewController: PreviewRootController {
         let status = self.status
         if status.measuresScroll {
             let readout = readout
-            Telemetry._processObserverForTesting = { payload in
-                guard payload.name == AppTerminalScrollGesture.name else { return }
-                Task { @MainActor in readout.scrolled(payload) }
-            }
+            SSHTerminalScrollMeter._gestureObserverForTesting = { readout.scrolled($0) }
         }
         // The fixture's bytes, once the terminal above is its view controller.
         playback = Task { @MainActor [weak self] in
@@ -283,13 +280,19 @@ final class SSHTerminalPreviewReadout {
     }
 
     /// The latest terminal scroll gesture the grid measured, as `key=value` words
-    /// after a running count (`none` before the first): the same event telemetry
-    /// records, so a UI run reads what the device would report.
-    func scrolled(_ gesture: TelemetryEventPayload) {
+    /// after a running count (`none` before the first): what the device's
+    /// per-visit event sums, so a UI run reads the same numbers.
+    func scrolled(_ gesture: SSHTerminalScrollMeter.Gesture) {
         gestures += 1
-        let fields = gesture.fields.sorted { $0.key < $1.key }.map { "\($0.key)=\(String(format: "%.4g", $0.value))" }
-        let tags = (gesture.tags ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
-        scrollLabel.text = (["gesture=\(gestures)"] + fields + tags).joined(separator: " ")
+        let words = [
+            "gesture=\(gestures)", "duration_ms=\(String(format: "%.4g", gesture.durationMs))",
+            "frames=\(gesture.frames)", "hitches=\(gesture.hitches)",
+            "hitch_ratio=\(String(format: "%.4g", gesture.hitchRatio))",
+            "worst_frame_ms=\(String(format: "%.4g", gesture.worstFrameMs))",
+            "deferred_bytes=\(gesture.deferredBytes)", "terminal_mode=\(gesture.mode.rawValue)",
+            "scroll_path=\(gesture.path.rawValue)",
+        ]
+        scrollLabel.text = words.joined(separator: " ")
         scrollLabel.accessibilityLabel = scrollLabel.text
     }
 

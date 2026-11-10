@@ -963,10 +963,12 @@ const EVENTS = {
       worst_frame_ms: "ms",
     },
   },
-  "app.terminal_scroll_gesture": {
-    description: "How smoothly did one SSH terminal scroll gesture, finger down through coasting, run?",
+  "app.terminal_scroll_visit": {
+    description:
+      "How smoothly did scrolling run in one SSH terminal visit (every gesture, finger down through coasting, summed)?",
     group: "rendering",
     fields: {
+      gestures: "count",
       duration_ms: "ms",
       frames: "count",
       hitches: "count",

@@ -41,7 +41,7 @@ enum TelemetryName {
     }
 
     /// A value an endpoint, address, or filesystem path would produce. The rules are
-    /// the catalog's `NAME_LOCATION_RULES`, the same data the server applies. The app
+    /// `NAME_LOCATION_RULES` (`name-tag-rules.ts`), the same data the server applies. The app
     /// has no route templates, so a leading `/` is a path here.
     static func looksLikeLocation(_ value: String) -> Bool {
         guard mayLookLikeLocation(value) else { return false }
@@ -1995,10 +1995,11 @@ struct AppDiffReaderSession: TelemetryEvent {
     }
 }
 
-/// How smoothly did one SSH terminal scroll gesture, finger down through coasting, run?
-struct AppTerminalScrollGesture: TelemetryEvent {
-    static let name = "app.terminal_scroll_gesture"
+/// How smoothly did scrolling run in one SSH terminal visit (every gesture, finger down through coasting, summed)?
+struct AppTerminalScrollVisit: TelemetryEvent {
+    static let name = "app.terminal_scroll_visit"
 
+    let gestures: Int
     let durationMs: Double
     let frames: Int
     let hitches: Int
@@ -2009,6 +2010,7 @@ struct AppTerminalScrollGesture: TelemetryEvent {
     let scrollPath: TelemetryTag.ScrollPath
 
     init(
+        gestures: Int,
         durationMs: Double,
         frames: Int,
         hitches: Int,
@@ -2018,6 +2020,7 @@ struct AppTerminalScrollGesture: TelemetryEvent {
         terminalMode: TelemetryTag.TerminalMode,
         scrollPath: TelemetryTag.ScrollPath
     ) {
+        self.gestures = gestures
         self.durationMs = durationMs
         self.frames = frames
         self.hitches = hitches
@@ -2030,6 +2033,7 @@ struct AppTerminalScrollGesture: TelemetryEvent {
 
     var fieldValues: [String: Double] {
         var values: [String: Double] = [:]
+        values["gestures"] = Double(gestures)
         values["duration_ms"] = durationMs
         values["frames"] = Double(frames)
         values["hitches"] = Double(hitches)

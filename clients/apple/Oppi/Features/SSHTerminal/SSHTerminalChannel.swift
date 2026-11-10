@@ -602,7 +602,7 @@ final class SSHTerminalChannel {
         }
         // A stream that ended mid-gesture: what was held goes in first, so the
         // panes get their last output and the terminal ends in the stream's words.
-        while connected, let item = scrollHold.popFirst() { apply(item) }
+        await applyHeld(untilScrolling: false)
         queue.finish()
         if connected { close(reason: "The SSH connection closed.") }
     }
@@ -658,7 +658,7 @@ final class SSHTerminalChannel {
                 }
                 scrollHold.hold(item)
                 // Past the cap the oldest go in now, a slice at a time.
-                while scrollHold.isOverCap, let oldest = scrollHold.popFirst() {
+                while scrollHold.isOverCap, let oldest = scrollHold.popFirstRun(maxBytes: Self.ingestWriteBytes) {
                     flush()
                     apply(oldest)
                     guard await yieldIfSliceSpent() else { return }
@@ -719,27 +719,35 @@ final class SSHTerminalChannel {
     @ObservationIgnored private(set) var scrollHold = SSHTerminalScrollHold()
     @ObservationIgnored private var heldFlush: Task<Void, Never>?
 
-    /// Replaces the hold with one of another cap. Only before anything is held.
+    #if DEBUG
+    /// Replaces the hold with one of another cap, for tests. Only before anything is held.
     func setScrollHoldCap(_ capBytes: Int) {
         scrollHold = SSHTerminalScrollHold(capBytes: capBytes)
     }
+    #endif
 
-    /// Applies the held items, oldest first, in slices of `ingestSliceBudget`,
-    /// until none are left or another gesture starts. Each item applies without
-    /// a suspension point, so a later item of the same pane cannot overtake it.
+    /// Applies the held items, oldest first, until none are left, or (with
+    /// `untilScrolling`) another gesture starts. A pane's run of output goes in as
+    /// writes of about `ingestWriteBytes`, and the main actor yields after each
+    /// `ingestSliceBudget`. Each write applies without a suspension point, so a
+    /// later item of the same pane cannot overtake it.
+    private func applyHeld(untilScrolling: Bool) async {
+        let clock = ContinuousClock()
+        var sliceStart = clock.now
+        while connected, !(untilScrolling && isScrollGestureActive),
+              let item = scrollHold.popFirstRun(maxBytes: Self.ingestWriteBytes) {
+            apply(item)
+            guard clock.now - sliceStart >= Self.ingestSliceBudget else { continue }
+            await Task.yield()
+            sliceStart = clock.now
+        }
+    }
+
     private func startFlushingHeld() {
         guard heldFlush == nil, !isScrollGestureActive, !scrollHold.isEmpty else { return }
         heldFlush = Task { [weak self] in
-            guard let self else { return }
-            let clock = ContinuousClock()
-            var sliceStart = clock.now
-            while !isScrollGestureActive, connected, let item = scrollHold.popFirst() {
-                apply(item)
-                guard clock.now - sliceStart >= Self.ingestSliceBudget else { continue }
-                await Task.yield()
-                sliceStart = clock.now
-            }
-            heldFlush = nil
+            await self?.applyHeld(untilScrolling: true)
+            self?.heldFlush = nil
         }
     }
 

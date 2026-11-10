@@ -13,9 +13,9 @@ struct SSHTerminalScrollMeterTests {
     private func drive(
         _ meter: SSHTerminalScrollMeter, from start: Double, count: Int, lateIndex: Int? = nil, late: Double = 0,
         scrolling: Bool = true, heldBytes: Int = 0, mode: TelemetryTag.TerminalMode = .shell
-    ) -> (end: Double, gesture: AppTerminalScrollGesture?) {
+    ) -> (end: Double, gesture: SSHTerminalScrollMeter.Gesture?) {
         var time = start
-        var gesture: AppTerminalScrollGesture?
+        var gesture: SSHTerminalScrollMeter.Gesture?
         for index in 0..<count {
             time += frame + (index == lateIndex ? late : 0)
             gesture = meter.tick(
@@ -73,6 +73,42 @@ struct SSHTerminalScrollMeterTests {
         let during = drive(meter, from: 10.1, count: 5, heldBytes: 5_000)
         let end = try #require(drive(meter, from: during.end, count: 1, scrolling: false, heldBytes: 9_000).gesture)
         #expect(end.deferredBytes == 8_000)
+    }
+
+    @Test func aVisitSumsItsGesturesIntoOneEventPerModeAndPath() throws {
+        let meter = SSHTerminalScrollMeter()
+        var time = 10.0
+        for index in 0..<3 {
+            let during = drive(meter, from: time, count: 31, lateIndex: index == 1 ? 15 : nil, late: 0.025, heldBytes: 100 * index)
+            time = drive(meter, from: during.end, count: 1, scrolling: false, heldBytes: 100 * (index + 1)).end + 5
+        }
+        let visits = meter.takeVisits()
+        let visit = try #require(visits.first)
+        #expect(visits.count == 1)
+        #expect(visit.gestures == 3 && visit.frames == 90 && visit.hitches == 1)
+        #expect(abs(visit.worstFrameMs - (frame + 0.025) * 1_000) < 0.01)
+        #expect(visit.deferredBytes == 300)
+        // The ratio is hitch time over all scroll time, not an average of ratios.
+        #expect(abs(visit.hitchRatio - 25 / visit.durationMs) < 0.001)
+        #expect(meter.takeVisits().isEmpty, "a visit is reported once")
+    }
+
+    @Test func aDifferentModeOrPathIsItsOwnEvent() {
+        let meter = SSHTerminalScrollMeter()
+        let first = drive(meter, from: 10, count: 10, mode: .shell)
+        let second = drive(meter, from: drive(meter, from: first.end, count: 1, scrolling: false).end + 5, count: 10, mode: .rex)
+        _ = drive(meter, from: second.end, count: 1, scrolling: false)
+        #expect(Set(meter.takeVisits().map(\.terminalMode)) == [.shell, .rex])
+    }
+
+    @Test func aPausedLinkIsNotOneLongFrame() throws {
+        let meter = SSHTerminalScrollMeter()
+        let during = drive(meter, from: 10, count: 10)
+        meter.linkRestarted()
+        let resumed = drive(meter, from: during.end + 30, count: 10)
+        let end = try #require(drive(meter, from: resumed.end, count: 1, scrolling: false).gesture)
+        #expect(end.hitches == 0)
+        #expect(end.worstFrameMs < 10)
     }
 
     @Test func theModeNamesWhatTheTerminalRuns() {

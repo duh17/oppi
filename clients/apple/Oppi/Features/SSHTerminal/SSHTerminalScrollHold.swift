@@ -9,8 +9,8 @@ import Foundation
 /// Order is the contract. Items of one pane apply in the order they arrived,
 /// so once a pane has an item held, everything after it for that pane is held
 /// too, whether or not a gesture is running; an item that is not a pane's
-/// (the connection ending, a status event) is a barrier and holds everything
-/// behind it. Nothing is dropped: past `capBytes` the oldest items are handed
+/// (the stream ending) is a barrier and holds everything behind it; a status event
+/// such as writability belongs to no pane and applies at once. Nothing is dropped: past `capBytes` the oldest items are handed
 /// back (`popFirst`) to be applied in small slices even though the gesture is
 /// still running, so a long scroll never grows this without bound.
 struct SSHTerminalScrollHold {
@@ -19,7 +19,11 @@ struct SSHTerminalScrollHold {
     /// Where an item applies: one pane's terminal, or the whole channel.
     private enum Lane: Hashable {
         case pane(String?)
+        /// The stream ending: after everything before it, before everything after.
         case channel
+        /// Applies at once, whatever is held: a status event (writability) that
+        /// belongs to no pane's output.
+        case free
     }
 
     /// Most bytes held at once. The queue's own limit (4 MiB) is the stuck-consumer
@@ -44,8 +48,9 @@ struct SSHTerminalScrollHold {
     /// Whether `item` waits. `presented` is the pane on screen; `scrolling` is
     /// whether a gesture is running now.
     func shouldHold(_ item: Item, presented: String?, scrolling: Bool) -> Bool {
-        if lanes[.channel] != nil { return true }
         let lane = Self.lane(of: item)
+        if lane == .free { return false }
+        if lanes[.channel] != nil { return true }
         if lane == .channel { return !isEmpty }
         if lanes[lane] != nil { return true }
         guard scrolling else { return false }
@@ -69,9 +74,7 @@ struct SSHTerminalScrollHold {
         guard head < items.count else { return nil }
         let item = items[head]
         head += 1
-        let lane = Self.lane(of: item)
-        if let count = lanes[lane], count > 1 { lanes[lane] = count - 1 } else { lanes[lane] = nil }
-        bytes -= Self.size(of: item)
+        forget(item)
         // Compact once the consumed prefix outweighs the rest, so popping stays O(1).
         if head == items.count {
             items.removeAll(keepingCapacity: true)
@@ -83,12 +86,49 @@ struct SSHTerminalScrollHold {
         return item
     }
 
+    /// The oldest held item, with the output right behind it for the same pane
+    /// joined into it up to `maxBytes`, so one write parses a run instead of one
+    /// chunk each. Only output moves up: other panes' items stay put, and a pane's
+    /// snapshot, history, or the stream's end stops the join, so no pane's order
+    /// changes.
+    mutating func popFirstRun(maxBytes: Int) -> Item? {
+        guard let first = popFirst() else { return nil }
+        guard case .data(var joined, let block) = first else { return first }
+        var joinedIndices: [Int] = []
+        var index = head
+        scan: while index < items.count, joined.count < maxBytes, index - head < 256 {
+            switch items[index] {
+            case .data(let more, let other) where other == block:
+                if joined.count + more.count > maxBytes { break scan }
+                joined.append(more)
+                joinedIndices.append(index)
+            case let item where Self.lane(of: item) == .pane(block) || Self.lane(of: item) == .channel:
+                break scan
+            default:
+                break
+            }
+            index += 1
+        }
+        for index in joinedIndices.reversed() {
+            forget(items.remove(at: index))
+        }
+        return .data(joined, block: block)
+    }
+
+    /// An item left the hold: its lane and bytes no longer count it.
+    private mutating func forget(_ item: Item) {
+        let lane = Self.lane(of: item)
+        if let count = lanes[lane], count > 1 { lanes[lane] = count - 1 } else { lanes[lane] = nil }
+        bytes -= Self.size(of: item)
+    }
+
     private static func lane(of item: Item) -> Lane {
         switch item {
         case .data(_, let block): .pane(block)
         case .snapshot(_, let block), .snapshotRecords(_, let block): .pane(block)
         case .event(.data): .pane(nil)
-        case .event, .overflow, .ended: .channel
+        case .event: .free
+        case .overflow, .ended: .channel
         }
     }
 

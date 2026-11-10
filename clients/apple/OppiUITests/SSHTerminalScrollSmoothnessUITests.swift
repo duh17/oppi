@@ -1,10 +1,10 @@
 import XCTest
 
 /// How smoothly the SSH terminal scrolls a fling through thousands of history
-/// rows, measured by the app itself: its grid reports each gesture
-/// (`app.terminal_scroll_gesture`: frames, hitches, hitch time ratio, worst
-/// frame) and the debug harness prints the latest one in the readout
-/// `sshTerminal.preview.scroll`, the same event a device uploads.
+/// rows, measured by the app itself: its grid measures each gesture (frames,
+/// hitches, hitch time ratio, worst frame) and the debug harness prints the
+/// latest one in the readout `sshTerminal.preview.scroll`. A device uploads the
+/// same numbers summed per visit (`app.terminal_scroll_visit`).
 ///
 /// - `ssh-terminal-scrollback`: a plain shell, the comparison.
 /// - `ssh-terminal-rex-scrollback`: the fake Rex session (`RexFakeSession`), quiet neighbours.

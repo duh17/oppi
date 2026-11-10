@@ -35,7 +35,7 @@ const LOCATION_RULES = NAME_LOCATION_RULES.map((rule) => ({
  * True when a name looks like a URL, host, address, or filesystem path rather
  * than an identifier. A tag source is not trusted to be a vocabulary: a
  * configured endpoint or an unregistered client string must not reach storage as
- * a "name". The rules are `NAME_LOCATION_RULES` in the catalog, and the
+ * a "name". The rules are `NAME_LOCATION_RULES` in `name-tag-rules.ts`, and the
  * generated Swift (`TelemetryName`) applies the same data.
  */
 export function looksLikeLocation(value: string, allowRoute = false): boolean {

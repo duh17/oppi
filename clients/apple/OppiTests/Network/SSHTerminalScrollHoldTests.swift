@@ -44,6 +44,36 @@ struct SSHTerminalScrollHoldTests {
         #expect(hold.shouldHold(data("late", "a"), presented: "a", scrolling: false), "and what follows it stays behind it")
     }
 
+    @Test func aStatusEventBelongsToNoPaneAndNeverWaits() {
+        var hold = SSHTerminalScrollHold()
+        hold.hold(data("one", "b"))
+        hold.hold(.ended("over"))
+        #expect(!hold.shouldHold(.event(.writabilityChanged(true)), presented: "a", scrolling: true), "not even behind the stream's end")
+    }
+
+    @Test func aRunOfOnePanesOutputComesBackAsOneWriteInOrder() {
+        var hold = SSHTerminalScrollHold()
+        hold.hold(data("b1", "b"))
+        hold.hold(data("c1", "c"))
+        hold.hold(data("b2", "b"))
+        hold.hold(.snapshotRecords(Data([9]), block: "b"))
+        hold.hold(data("b3", "b"))
+        #expect(hold.popFirstRun(maxBytes: 100) == data("b1b2", "b"), "b's output joins across c's, which stays put")
+        #expect(hold.popFirstRun(maxBytes: 100) == data("c1", "c"))
+        #expect(hold.popFirstRun(maxBytes: 100) == .snapshotRecords(Data([9]), block: "b"), "history stops the join")
+        #expect(hold.popFirstRun(maxBytes: 100) == data("b3", "b"))
+        #expect(hold.isEmpty && hold.bytes == 0)
+    }
+
+    @Test func aRunStopsAtTheWriteSize() {
+        var hold = SSHTerminalScrollHold()
+        hold.hold(data("aaaa", "b"))
+        hold.hold(data("bbbb", "b"))
+        hold.hold(data("cc", "b"))
+        #expect(hold.popFirstRun(maxBytes: 6) == data("aaaa", "b"))
+        #expect(hold.popFirstRun(maxBytes: 6) == data("bbbbcc", "b"))
+    }
+
     @Test func itemsComeBackOldestFirstAndTheCountsFollow() {
         var hold = SSHTerminalScrollHold(capBytes: 10)
         hold.hold(data("aaaa", "b"))
@@ -107,6 +137,50 @@ struct SSHTerminalScrollHoldTests {
             Self.lines(channel.engine(for: "b")) == ["b one", "b two", "b three"]
         }, "all of it, once the gesture ended, in the order it arrived: \(Self.lines(channel.engine(for: "b")))")
         #expect(channel.scrollHold.isEmpty)
+        queue.end("done")
+        await consumer.value
+    }
+
+    @MainActor
+    @Test func aWritabilityEventDuringAGestureIsNotBlockedByHeldOutput() async throws {
+        let (channel, queue, consumer) = try rig()
+        defer { channel.close(reason: "done") }
+        channel.isScrollGestureActive = true
+        queue.pushData(Data("b one\r\n".utf8), block: "b")
+        queue.push(.writabilityChanged(true))
+        queue.pushData(Data("a shown\r\n".utf8), block: "a")
+        // Behind a held barrier the shown pane's line would be held too.
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { Self.lines(channel.engine(for: "a")) == ["a shown"] })
+        #expect(channel.scrollHold.bytes == 7, "only the neighbour's output is held")
+        channel.isScrollGestureActive = false
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { channel.scrollHold.isEmpty })
+        queue.end("done")
+        await consumer.value
+    }
+
+    /// A switch mid-gesture changes which pane is shown; what was held stays held
+    /// in its order, and the pane just left is now the one that waits.
+    @MainActor
+    @Test func aPaneSwitchWhileOutputIsHeldKeepsEachPanesOrder() async throws {
+        let (channel, queue, consumer) = try rig()
+        defer { channel.close(reason: "done") }
+        channel.isScrollGestureActive = true
+        queue.pushData(Data("a1\r\n".utf8), block: "a")
+        queue.pushData(Data("b1\r\n".utf8), block: "b")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { Self.lines(channel.engine(for: "a")) == ["a1"] })
+        #expect(channel.scrollHold.bytes == 4)
+
+        channel.present("b")
+        queue.pushData(Data("b2\r\n".utf8), block: "b")
+        queue.pushData(Data("a2\r\n".utf8), block: "a")
+        // b is shown now, but its b1 is held, so b2 queues behind it; a waits.
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { channel.scrollHold.bytes == 12 })
+        #expect(Self.lines(channel.engine(for: "b")).isEmpty)
+
+        channel.isScrollGestureActive = false
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            Self.lines(channel.engine(for: "b")) == ["b1", "b2"] && Self.lines(channel.engine(for: "a")) == ["a1", "a2"]
+        }, "a: \(Self.lines(channel.engine(for: "a"))), b: \(Self.lines(channel.engine(for: "b")))")
         queue.end("done")
         await consumer.value
     }

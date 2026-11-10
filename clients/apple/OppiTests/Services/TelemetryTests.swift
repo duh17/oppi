@@ -88,7 +88,7 @@ struct TelemetryTests {
     }
 
     /// One accept/reject list (`protocol/telemetry-name-tags.json`) for the server
-    /// sanitizer and this one; both apply the catalog's `NAME_LOCATION_RULES`.
+    /// sanitizer and this one; both apply `NAME_LOCATION_RULES` (`name-tag-rules.ts`).
     private struct NameTagFixture: Decodable {
         let accept: [String]
         let reject: [String]

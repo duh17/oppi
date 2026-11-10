@@ -411,7 +411,7 @@ enum TelemetryName {
     }
 
     /// A value an endpoint, address, or filesystem path would produce. The rules are
-    /// the catalog's \`NAME_LOCATION_RULES\`, the same data the server applies. The app
+    /// \`NAME_LOCATION_RULES\` (\`name-tag-rules.ts\`), the same data the server applies. The app
     /// has no route templates, so a leading \`/\` is a path here.
     static func looksLikeLocation(_ value: String) -> Bool {
         guard mayLookLikeLocation(value) else { return false }
