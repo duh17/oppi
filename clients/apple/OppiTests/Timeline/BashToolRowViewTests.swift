@@ -345,6 +345,97 @@ struct BashToolRowViewTests {
         #expect(firstAttr === secondAttr || firstAttr.string == secondAttr.string)
     }
 
+    @Test("streamed command deltas append in place and colour the tail via one coalesced highlight")
+    func streamingCommandAppendsAndColoursTail() async throws {
+        let view = BashToolRowView()
+        let lines = ["cat > /tmp/a.sh <<'EOF'", "echo 'one' && ls -la", "echo 'two' | wc -l", "EOF"]
+
+        func apply(_ command: String, streaming: Bool) {
+            _ = view.apply(
+                input: BashRenderInput(
+                    command: command, output: nil, unwrapped: false,
+                    isError: false, isStreaming: streaming
+                ),
+                outputColor: .white,
+                wasOutputVisible: false
+            )
+        }
+
+        apply(lines[0], streaming: true)
+        let storage = view.commandLabel.textStorage
+        let firstLength = storage.length
+        let prefixBefore = storage.attributedSubstring(from: NSRange(location: 0, length: firstLength))
+        let workAfterFirst = view.debugCommandHighlightWorkCountForTesting
+
+        var command = lines[0]
+        var deltas = 0
+        for line in lines.dropFirst() {
+            command += "\n" + line
+            deltas += 1
+            apply(command, streaming: true)
+            // Synchronously: text appended in place, no highlighter work on main.
+            #expect(view.commandLabel.textStorage === storage)
+            #expect(storage.string == command)
+            #expect(view.debugCommandHighlightWorkCountForTesting == workAfterFirst)
+        }
+
+        // The coalesced job colours the tail while the call is still streaming.
+        await view.drainStreamingCommandHighlightForTesting()
+        #expect(view.commandLabel.textStorage === storage)
+        #expect(storage.string == command)
+        let jobs = view.debugCommandHighlightWorkCountForTesting - workAfterFirst
+        #expect(jobs >= 1 && jobs <= deltas)
+        let tailRange = NSRange(location: firstLength, length: storage.length - firstLength)
+        let tail = storage.attributedSubstring(from: tailRange)
+        #expect(uniqueForegroundColorCount(tail) >= 2)
+        let prefixAfter = storage.attributedSubstring(from: NSRange(location: 0, length: firstLength))
+        #expect(prefixAfter.isEqual(to: prefixBefore))
+
+        // Completion keeps the painted text and colours; no second pass is needed.
+        let jobsBeforeFinish = view.debugCommandHighlightWorkCountForTesting
+        apply(command, streaming: false)
+        #expect(view.commandLabel.textStorage === storage)
+        #expect(view.debugCommandHighlightWorkCountForTesting == jobsBeforeFinish)
+        #expect(storage.string == command)
+        #expect(uniqueForegroundColorCount(storage) >= 2)
+    }
+
+    @Test("repeat applies of the same command while a stream highlight runs do no extra work")
+    func repeatApplyDuringStreamHighlightIsIdle() async throws {
+        BashToolRowView.deferredCommandHighlightDelayForTesting = .milliseconds(200)
+        defer { BashToolRowView.deferredCommandHighlightDelayForTesting = nil }
+        let view = BashToolRowView()
+
+        func apply(_ command: String, streaming: Bool) {
+            _ = view.apply(
+                input: BashRenderInput(
+                    command: command, output: nil, unwrapped: false,
+                    isError: false, isStreaming: streaming
+                ),
+                outputColor: .white,
+                wasOutputVisible: false
+            )
+        }
+
+        apply("echo 'a'", streaming: true)
+        let command = "echo 'a' && echo 'b' | wc -l"
+        apply(command, streaming: true) // appends, starts the (delayed) job
+        let storage = view.commandLabel.textStorage
+        let work = view.debugCommandHighlightWorkCountForTesting
+
+        // Output streaming and completion re-apply the same command mid-job.
+        apply(command, streaming: true)
+        apply(command, streaming: false)
+        #expect(view.commandLabel.textStorage === storage)
+        #expect(storage.string == command)
+        #expect(view.debugCommandHighlightWorkCountForTesting == work)
+
+        await view.drainStreamingCommandHighlightForTesting()
+        #expect(view.debugCommandHighlightWorkCountForTesting == work + 1)
+        #expect(storage.string == command)
+        #expect(uniqueForegroundColorCount(storage) >= 2)
+    }
+
     @Test("highlighted command keeps mixed syntax colors after applyTheme")
     func applyThemePreservesCommandSyntaxColors() throws {
         let view = BashToolRowView()

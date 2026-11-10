@@ -118,6 +118,8 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     private var deferredANSISignature: Int?
     private var deferredCommandTask: Task<Void, Never>?
     private var deferredCommandSignature: Int?
+    private var streamHighlightTask: Task<Void, Never>?
+    private var streamHighlightGeneration = 0
 
     #if DEBUG
     nonisolated(unsafe) static var deferredANSIDelayForTesting: Duration?
@@ -199,6 +201,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
             applyCommandHighlight(
                 displayCmd: displayCmd,
                 signature: signature,
+                isStreaming: input.isStreaming,
                 pressure: input.resourcePressure,
                 sessionId: input.sessionId
             )
@@ -396,6 +399,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     private func applyCommandHighlight(
         displayCmd: String,
         signature: Int,
+        isStreaming: Bool,
         pressure: StreamingRenderPolicy.ResourcePressure,
         sessionId: String?
     ) {
@@ -409,7 +413,9 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
             return
         }
 
-        if signature == commandRenderSignature, commandShowsHighlight {
+        // A running stream highlight job already covers the painted text, so a
+        // repeat apply (output, other args, completion) must not redo the work.
+        if signature == commandRenderSignature, commandShowsHighlight || streamHighlightTask != nil {
             return
         }
 
@@ -423,6 +429,20 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
             pressure: pressure,
             consumer: .explicit
         )
+
+        // The model is still writing the command: keep the painted prefix and
+        // its attributes, append only the new tail. Re-highlighting the whole
+        // text per delta repainted every colour run on each chunk. Colours for
+        // the grown text come from one coalesced off-main highlight that is
+        // diffed into the existing storage (see `requestStreamingHighlight`).
+        if isStreaming, appendStreamedCommandTail(displayCmd) {
+            cancelDeferredCommandHighlightOnly()
+            commandShowsHighlight = false
+            commandRenderSignature = signature
+            // Resource pressure still gates the highlight work itself.
+            if tier != .cheap { requestStreamingHighlight() }
+            return
+        }
 
         let startNs = ChatTimelinePerf.timestampNs()
         switch tier {
@@ -460,6 +480,20 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         commandRenderSignature = signature
     }
 
+    /// Appends `text`'s new tail to the painted command when `text` extends it.
+    private func appendStreamedCommandTail(_ text: String) -> Bool {
+        let storage = commandLabel.textStorage
+        let painted = storage.string
+        let nsText = text as NSString
+        guard !painted.isEmpty, nsText.length > storage.length, text.utf16.starts(with: painted.utf16) else { return false }
+        let tail = nsText.substring(from: storage.length)
+        storage.append(NSAttributedString(string: tail, attributes: [
+            .font: AppFont.monoMedium,
+            .foregroundColor: UIColor.themeFg,
+        ]))
+        return true
+    }
+
     private func applyPlainCommand(_ text: String) {
         commandLabel.attributedText = nil
         commandLabel.text = text
@@ -467,10 +501,93 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     }
 
     private func cancelDeferredCommandHighlight() {
+        cancelDeferredCommandHighlightOnly()
+        streamHighlightGeneration += 1
+        streamHighlightTask?.cancel()
+        streamHighlightTask = nil
+    }
+
+    private func cancelDeferredCommandHighlightOnly() {
         deferredCommandTask?.cancel()
         deferredCommandTask = nil
         deferredCommandSignature = nil
     }
+
+    // MARK: - Streaming command highlight
+
+    /// At most one job runs. A delta that lands while it runs only grows the
+    /// storage; the finished job sees the growth and starts the next job.
+    private func requestStreamingHighlight() {
+        guard streamHighlightTask == nil else { return }
+        startStreamingHighlight()
+    }
+
+    private func startStreamingHighlight() {
+        #if DEBUG
+        let artificialDelay = Self.deferredCommandHighlightDelayForTesting
+        #endif
+        let text = commandLabel.textStorage.string
+        let themeID = ThemeRuntimeState.currentThemeID()
+        let generation = streamHighlightGeneration
+        streamHighlightTask = Task.detached(priority: .utility) { [weak self] in
+            #if DEBUG
+            if let artificialDelay { try? await Task.sleep(for: artificialDelay) }
+            #endif
+            let highlighted = ToolRowTextRenderer.bashCommandHighlighted(text, themeID: themeID)
+            guard !Task.isCancelled else { return }
+            let result = DeferredCommandResult(attributed: highlighted)
+            await MainActor.run { [weak self] in
+                self?.finishStreamingHighlight(result, of: text, generation: generation)
+            }
+        }
+    }
+
+    private func finishStreamingHighlight(_ result: DeferredCommandResult, of text: String, generation: Int) {
+        guard generation == streamHighlightGeneration else { return }
+        streamHighlightTask = nil
+        let storage = commandLabel.textStorage
+        // A reset or rewritten command makes the result stale; drop it.
+        guard storage.string.utf16.starts(with: text.utf16) else { return }
+        #if DEBUG
+        debugCommandHighlightWorkCountForTesting += 1
+        #endif
+        applyHighlightInPlace(result.attributed)
+        if storage.length > result.attributed.length {
+            startStreamingHighlight()
+        } else {
+            commandShowsHighlight = true
+        }
+    }
+
+    /// Writes `highlighted` onto the existing storage, touching only runs
+    /// whose attributes differ, so unchanged colours never repaint.
+    private func applyHighlightInPlace(_ highlighted: NSAttributedString) {
+        let storage = commandLabel.textStorage
+        let limit = min(highlighted.length, storage.length)
+        var changes: [(attributes: [NSAttributedString.Key: Any], range: NSRange)] = []
+        highlighted.enumerateAttributes(in: NSRange(location: 0, length: limit)) { wanted, range, _ in
+            storage.enumerateAttributes(in: range) { current, sub, _ in
+                if !(current as NSDictionary).isEqual(to: wanted) {
+                    changes.append((wanted, sub))
+                }
+            }
+        }
+        guard !changes.isEmpty else { return }
+        storage.beginEditing()
+        for change in changes {
+            storage.setAttributes(change.attributes, range: change.range)
+        }
+        storage.endEditing()
+    }
+
+    #if DEBUG
+    /// Awaits the coalesced streaming highlight chain until it goes idle.
+    func drainStreamingCommandHighlightForTesting() async {
+        while let task = streamHighlightTask {
+            await task.value
+        }
+    }
+    #endif
 
     private func scheduleDeferredCommandHighlight(
         text: String,
