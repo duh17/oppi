@@ -125,6 +125,7 @@ export interface ExtensionUIActivityRow {
   detail?: string;
   state?: "queued" | "running" | "success" | "warning" | "error" | "inactive";
   progress?: number;
+  since?: number;
   link?: string;
   children?: ExtensionUIActivityRow[];
   blocks?: ExtensionUINativeBlock[];
@@ -132,6 +133,8 @@ export interface ExtensionUIActivityRow {
 ```
 
 Use activity lists for persistent task state: running jobs, queued work, substeps, and recent results.
+
+iOS draws each row as a list row: the state symbol, the `title` on one line, the `subtitle` under it, the `detail` on a quieter line, and a thin bar for `progress`. The title is cut in the middle when it is too long. The subtitle is one line, or two on a `warning` or `error` row. To group rows, put each `activityList` in a `section`: the section's `title` is the group's header, and the section draws no box of its own.
 
 | State | Meaning | Treatment |
 | --- | --- | --- |
@@ -142,7 +145,9 @@ Use activity lists for persistent task state: running jobs, queued work, substep
 | `error` | Failed | Red |
 | `inactive` | Stopped, dismissed, or no longer active | Muted |
 
-- `link` is a row navigation target such as `oppi://session/<id>` and routes through app-level link handling.
+- `since` is the time, in epoch milliseconds, when the row's current state began. The client shows the time since then and updates it itself, so a running row needs no new snapshot to stay current. Send it only while that time is useful, for example while the row runs or waits. The server drops a surface whose `since` is negative or not a finite number.
+- `progress` is the fraction of the row's task that is complete, from 0 to 1. Do not use it for other quantities.
+- `link` is a row navigation target such as `oppi://session/<id>` and routes through app-level link handling. A row that links to a session also gets that session's menu (Open, Copy Branch, Copy Session ID, Stop) on touch and hold, secondary click, and as accessibility actions. While a `running` row's session is busy, the client can show that session's newest tool or text line in place of the `subtitle`.
 - `blocks` makes the row a disclosure row: tapping shows or hides those blocks under it. They are ordinary blocks (Markdown with links, terminal output, code, progress, nested activity lists) and count against the surface limits one nesting level below the list. If the row also has a `link`, the link gets its own trailing button. Clients build disclosure content only while shown, and keep a row open across snapshots while its `id` is stable.
 - Keep the model generic; do not encode extension-specific concepts.
 
@@ -250,7 +255,7 @@ belowEditor strip
 ```
 
 - A collapsed strip is one row of pills that scrolls horizontally; empty strips are hidden. One pill is one widget or one standalone status entry. The pill label comes from, in order: native `presentation.title` and `subtitle`, an attached `setStatus` value, the `widgetKey`, then the first fallback line. Accessibility sizes can change row height or promote content to a sheet, but the collapsed state stays bounded.
-- Each placement has one drawer. Tapping a pill opens that widget there, tapping another pill replaces the content, and tapping the active pill or the collapse control closes it. The drawer has a maximum height and scrolls; long content can open full screen. `renderNative()` content renders as native blocks; a widget without it shows the sanitized terminal fallback.
+- Each placement has one drawer. Tapping a pill opens that widget there, tapping another pill replaces the content, and tapping the active pill or the collapse control closes it. The drawer has a maximum height and scrolls. Its header button opens the whole widget: full screen on a narrow screen, or in the trailing column beside the chat on a wide one, where the drawer closes so the content shows only once. The pill above the drawer shows the widget's title and status, so the drawer's header does not repeat them. `renderNative()` content renders as native blocks; a widget without it shows the sanitized terminal fallback.
 - `setStatus(key, text)` attaches to a widget when `key === widgetKey`. If exactly one status and one widget share an extension scope, a client can attach them by scope. Other statuses render as standalone pills in the same group.
 - Native blocks are viewport-independent. Clients decide iPhone, iPad, Dynamic Type, color scheme, and scroll ownership locally.
 
