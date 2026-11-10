@@ -7,7 +7,7 @@ Part of [Testing Guide](README.md). Commands run from `clients/apple/` unless no
 - The Oppi target links two untracked XCFrameworks under `Vendor/` (TailscaleKit, libghostty-vt), checked while Xcode plans the build, so a fresh worktree fails with `There is no XCFramework found at …/Vendor/…`. `sim-pool.sh run` and Xcode Cloud run `scripts/ensure-prebuilt-frameworks.sh` first; run it yourself before a bare `xcodebuild` or GUI build (it copies from `~/Library/Caches/oppi-*/<build-id>/`, building only on a miss).
 - Xcode caches a failed build plan: after filling `Vendor/`, delete `<DerivedData>/Build/Intermediates.noindex/XCBuildData/*.xcbuilddata` or use a fresh `-derivedDataPath`.
 - The architecture-check build phase and the E2E server need `server/node_modules`; `sim-pool.sh run` and `e2e.sh` run `node server/scripts/ensure-installed-deps.mjs` first, a bare `xcodebuild` does not.
-- Builders: `./scripts/build-tailscalekit.sh` (a cache miss needs Go with cgo); `./scripts/build-ghostty-vt.sh` (exactly Zig 0.17.0, fetched if absent; iOS only). Rex encodes pane snapshots with that ghostty revision, and one older than `781c58e96` fails a whole snapshot on an unknown record kind: after a bump, check a Rex pane showing an image.
+- Builders: `./scripts/build-tailscalekit.sh` (a cache miss needs Go with cgo); `./scripts/build-ghostty-vt.sh` (exactly Zig 0.17.1, fetched if absent; iOS only). Rex encodes pane snapshots with that ghostty revision, and one older than `781c58e96` fails a whole snapshot on an unknown record kind: after a bump, check a Rex pane showing an image.
 
 ## Privacy manifests
 

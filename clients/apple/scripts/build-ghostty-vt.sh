@@ -26,7 +26,7 @@ COMMIT="f54340ad77814fe319d136e5e915d6a48de8dd23"
 # Kitty graphics is compiled in. PNG decode is an embedder callback, and
 # file, temporary-file, and shared-memory loads stay off unless a terminal
 # sets those options. Direct and zlib payloads do not need a PNG decoder.
-ZIG_VERSION="0.17.0"
+ZIG_VERSION="0.17.1"
 BUILD_ID="$COMMIT-zig$ZIG_VERSION-fast-simd-kitty-v1"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENDOR="$ROOT/Vendor/GhosttyVt"
@@ -71,8 +71,8 @@ pinned_zig() {
     fi
     local arch sha dir tmp
     case "$(uname -m)" in
-        arm64) arch=aarch64 sha=b607e9b9234790a008116ae5bdb71c6243b84b9fb42a53a9e70fde41c06c536a ;;
-        x86_64) arch=x86_64 sha=4f9a1c5269aa17ebda5e6d3c2b89d6cbf36f7d2b22a0306e9ab98f25f95529c6 ;;
+        arm64) arch=aarch64 sha=75f1bc7a1e9852f17ec9a0c1895f767c4ec56d46bc8a834920eece1d0359dd8d ;;
+        x86_64) arch=x86_64 sha=9af07b20319fbd0c92ee46ad23e81d6a782b1aaea2cfb8dcbff35f1d2c7ddbb7 ;;
         *) echo "error: no Zig $ZIG_VERSION download for $(uname -m)" >&2; return 1 ;;
     esac
     dir="$CACHE_ROOT/zig-$arch-macos-$ZIG_VERSION"
