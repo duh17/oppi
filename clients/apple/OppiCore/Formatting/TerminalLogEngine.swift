@@ -42,7 +42,7 @@ final class TerminalLogEngine {
             // Large render jobs are one-shot owners; avoid synchronous full
             // compression scans immediately before the formatter decompresses.
             // NULL restores the 10,000-byte default; SIZE_MAX removes the byte limit.
-            var unlimitedBytes = Int(bitPattern: UInt.max)
+            var unlimitedBytes = UInt.max
             try check(ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, &unlimitedBytes), "history bytes")
             if live {
                 var lines = 1976 // active 24 + scrollback = 2000 physical rows

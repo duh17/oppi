@@ -38,6 +38,20 @@ struct SSHTerminalEngineRenderTests {
         #expect(resized.rebuiltRows == IndexSet(integersIn: 0..<3))
     }
 
+    /// Growing rows while shrinking columns pulls history into the new rows
+    /// (libghostty 321a32a42) and keeps the cursor on the last line, instead of
+    /// leaving blank rows above or below it.
+    @Test func growingRowsAndShrinkingColumnsPullsHistoryDown() throws {
+        let engine = try SSHTerminalEngine(geometry: .init(columns: 10, rows: 3)) { _ in }
+        engine.receive(Data((1...10).map { String(format: "r%02d", $0) }.joined(separator: "\r\n").utf8))
+        _ = engine.frame()
+
+        engine.resize(.init(columns: 8, rows: 6, cellWidth: 8, cellHeight: 17))
+        let rows = engine.frame().rows.map { $0.prefix(3).map(\.text).joined() }
+        #expect(rows == ["r05", "r06", "r07", "r08", "r09", "r10"])
+        #expect(engine.cursorCell.row == 5)
+    }
+
     @Test func combiningGraphemesAllocateAClusterPlainScalarsDoNot() throws {
         let engine = try SSHTerminalEngine(geometry: .init(columns: 10, rows: 1)) { _ in }
         engine.receive(Data("a中e\u{301}".utf8))

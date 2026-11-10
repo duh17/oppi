@@ -6,12 +6,13 @@
 set -euo pipefail
 
 # Ghostty main as of 2026-11-10 (libghostty-vt 1.1.0-dev, after the 1.0 C ABI
-# freeze). Rex 1642 encodes its pane snapshots with ghostty f54340ad7 (main of
-# 2026-10-21, go.mitchellh.com/libghostty df1957cbff56); the snapshot wire
-# format is unchanged since then (every golden fixture and record tag is
-# identical; only decoder-side fixes landed: prompt-seen for an input cursor,
-# a hyperlink-capacity hint, a Style repack), so this decoder reads what that
-# Rex writes. It writes Kitty graphics records (tags 8-10) for a pane that
+# freeze). Rex 1642 through 1853 (Rex Beta) encode their pane snapshots with
+# ghostty f54340ad7 (main of 2026-10-21, go.mitchellh.com/libghostty
+# df1957cbff56, read with `go version -m`); the snapshot wire format is
+# unchanged since then (every golden fixture and record tag is identical;
+# the changes are prompt-seen for an input cursor, a hyperlink-capacity hint
+# that encoder and decoder both compute in the same field and stays
+# compatible, and a Style repack), so this decoder reads what that Rex writes. It writes Kitty graphics records (tags 8-10) for a pane that
 # showed an image, and decoders from 781c58e96 on skip record tags they do not
 # know, so a newer Rex's optional records no longer fail the whole restore.
 # Also carries OSC 7501 program status at spec revision 0.4 (b7207b2ef).

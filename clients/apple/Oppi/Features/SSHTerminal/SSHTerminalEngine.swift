@@ -21,7 +21,7 @@ struct SSHTerminalCellStyle: Equatable {
 
     init(_ style: GhosttyStyle) {
         // GHOSTTY_STYLE_FLAG_* are cast macros Swift does not import; bits per
-        // ghostty/vt/style.h: 0-2 bold/italic/faint, 4-6 inverse/invisible/strike, 3-bit underline kind at 8.
+        // ghostty/vt/style.h: 0-2 bold/italic/faint, 4-6 inverse/invisible/strike, 3-bit underline kind at the shift.
         let flags = style.flags
         if flags & (1 << 0) != 0 { bits |= 1 << 0 }
         if flags & (1 << 1) != 0 { bits |= 1 << 1 }
@@ -29,7 +29,7 @@ struct SSHTerminalCellStyle: Equatable {
         if flags & (1 << 4) != 0 { bits |= 1 << 3 }
         if flags & (1 << 5) != 0 { bits |= 1 << 4 }
         if flags & (1 << 6) != 0 { bits |= 1 << 5 }
-        if flags & (0x7 << 8) != 0 { bits |= 1 << 6 }
+        if flags & UInt16(0x7 << GHOSTTY_STYLE_UNDERLINE_SHIFT) != 0 { bits |= 1 << 6 }
     }
 
     var bold: Bool { bits & (1 << 0) != 0 }
@@ -108,7 +108,7 @@ private final class SSHTerminalCellReads {
     static let styleKeyCount = 3
 
     /// One raw cell's decode, read back as a single value. The C enums are
-    /// `uint32_t`-typed, so the tag and width land in `UInt32` fields and compare as
+    /// int-sized (32-bit), imported as `UInt32`, so the tag and width land in `UInt32` fields and compare as
     /// plain integers: a comparison of the imported enum structs is a generic
     /// `RawRepresentable` call per cell in unoptimized builds.
     struct Decoded {
@@ -1062,8 +1062,8 @@ final class SSHTerminalEngine {
         ghostty_key_event_set_key(event, key)
         ghostty_key_event_set_mods(event, modifiers)
         ghostty_key_event_set_unshifted_codepoint(event, text.lowercased().unicodeScalars.first?.value ?? 0)
-        return text.utf8CString.withUnsafeBufferPointer { input in
-            ghostty_key_event_set_utf8(event, GhosttyString(ptr: input.baseAddress.map { UnsafeRawPointer($0).assumingMemoryBound(to: UInt8.self) }, len: input.count - 1))
+        var text = text; return text.withUTF8 { input in
+            ghostty_key_event_set_utf8(event, GhosttyString(ptr: input.baseAddress, len: input.count))
             var length = 0
             ghostty_key_encoder_encode(encoder, event, nil, 0, &length)
             var output = [CChar](repeating: 0, count: length)
