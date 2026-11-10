@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildRoot, ensureBuildLink, isManagedBuildLink } from "./build-root";
+import { buildRoot, buildRootFor, ensureBuildLink, isManagedBuildLink } from "./build-root";
 
 const made: string[] = [];
 function temp(): string {
@@ -45,7 +45,7 @@ describe("build root", () => {
     expect(folderA).not.toBe(folderB);
     expect(readlinkSync(join(a, ".build"))).toBe(folderA);
     expect(existsSync(join(folderA, "dd"))).toBe(false);
-    expect(isManagedBuildLink(a, env)).toBe(true);
+    expect(isManagedBuildLink(a)).toBe(true);
     expect(ensureBuildLink(a, env)).toBe(folderA);
   });
 
@@ -64,5 +64,45 @@ describe("build root", () => {
     expect(ensureBuildLink(a, env)).toBe(folderA);
     expect(existsSync(join(folderA, "kept"))).toBe(true);
     expect(existsSync(folderB)).toBe(false);
+  });
+
+  test("a link to another checkout's folder is relinked; a link outside the root is left alone", () => {
+    const base = temp();
+    const root = join(base, "ram");
+    mkdirSync(join(root, "elsewhere"), { recursive: true });
+    const env = { OPPI_BUILD_ROOT: root };
+    const a = checkout(base, "wt-a");
+    symlinkSync(join(root, "elsewhere"), join(a, ".build"));
+    const folder = ensureBuildLink(a, env)!;
+    expect(readlinkSync(join(a, ".build"))).toBe(folder);
+    const b = checkout(base, "wt-b");
+    const own = join(base, "own");
+    mkdirSync(own);
+    symlinkSync(own, join(b, ".build"));
+    expect(ensureBuildLink(b, env)).toBeUndefined();
+    expect(readlinkSync(join(b, ".build"))).toBe(own);
+  });
+
+  test("managed means the folder names this checkout, with or without the env; folders on an unmounted volume are kept", () => {
+    const base = temp();
+    const root = join(base, "ram");
+    mkdirSync(root);
+    const env = { OPPI_BUILD_ROOT: root };
+    const a = checkout(base, "wt-a");
+    const b = checkout(base, "wt-b");
+    const folderA = ensureBuildLink(a, env)!;
+    ensureBuildLink(b, env);
+    expect(isManagedBuildLink(a)).toBe(true);
+    expect(buildRootFor(a, {})).toBe(root);
+    // b's link points at a's folder: not b's own.
+    rmSync(join(b, ".build"));
+    symlinkSync(folderA, join(b, ".build"));
+    expect(isManagedBuildLink(b)).toBe(false);
+    // A checkout whose volume is unmounted (its worktree's parent is absent) is not reaped.
+    const gone = join(base, "unmounted", "wt-x", "clients", "apple");
+    mkdirSync(join(root, "wt-x-1234abcd"));
+    writeFileSync(join(root, "wt-x-1234abcd", ".checkout"), `${gone}\n`);
+    ensureBuildLink(checkout(base, "wt-c"), env);
+    expect(existsSync(join(root, "wt-x-1234abcd"))).toBe(true);
   });
 });

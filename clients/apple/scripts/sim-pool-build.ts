@@ -21,7 +21,7 @@ import { existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, re
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { buildRoot } from "./build-root";
+import { buildRootFor } from "./build-root";
 import { cloneDirectory } from "./sim-pool-clone";
 import { flockFd, LOCK_EX, LOCK_NB, LOCK_SH, LOCK_UN } from "./sim-pool-lock";
 
@@ -158,7 +158,9 @@ export function slotlessBuildSettings(argv: string[]): string[] {
  * ios-test-no-source-paths keeps tests from opening files through it.
  * OPPI_SIM_POOL_COMPILATION_CACHE=0 turns it off. OPPI_XCODE_CACHE_DIR replaces the parent
  * (default ~/Library/Caches/oppi-xcode), so a cache moved to another volume keeps one folder per Xcode.
- * A mounted OPPI_BUILD_ROOT (build-root.ts) takes precedence: the parent is `<root>/xcode-cache`.
+ * A build root (build-root.ts: OPPI_BUILD_ROOT mounted, or the one `.build` already links into) holds the CAS and
+ * module cache at `<root>/xcode-cache`; the SwiftPM clone stays under the on-disk parent, so a build after the
+ * root's contents are lost needs no network.
  */
 export type CompilationCache = { root: string; args: string[]; settings: string[]; packages?: string };
 
@@ -173,9 +175,10 @@ export function compilationCache(
   // an OPPI_XCODE_CACHE_DIR parent.
   const xcode = basename(dirname(dirname(env.DEVELOPER_DIR ?? "/Applications/Xcode.app/Contents/Developer"))).replace(/[^\w.-]/g, "_");
   // An empty value falls back too: join("", xcode) would put the cache in the working directory.
-  const ramRoot = buildRoot(env);
-  const parent = ramRoot ? join(ramRoot, "xcode-cache") : env.OPPI_XCODE_CACHE_DIR || join(env.HOME ?? homedir(), "Library", "Caches", "oppi-xcode");
-  const root = join(parent, xcode);
+  const diskParent = env.OPPI_XCODE_CACHE_DIR || join(env.HOME ?? homedir(), "Library", "Caches", "oppi-xcode");
+  const ramRoot = buildRootFor(appleDir, env);
+  const diskRoot = join(diskParent, xcode);
+  const root = ramRoot ? join(ramRoot, "xcode-cache", xcode) : diskRoot;
   const settings = [
     "COMPILATION_CACHE_ENABLE_CACHING=YES",
     `COMPILATION_CACHE_CAS_PATH=${join(root, "cas")}`,
@@ -197,7 +200,7 @@ export function compilationCache(
   const resolved = join(appleDir, "Oppi.xcodeproj", "project.xcworkspace", "xcshareddata", "swiftpm", "Package.resolved");
   if (existsSync(resolved) && !argv.includes("-clonedSourcePackagesDirPath")) {
     const hash = createHash("sha256").update(readFileSync(resolved)).digest("hex").slice(0, 16);
-    packages = join(root, "spm", hash);
+    packages = join(diskRoot, "spm", hash);
     args.push("-clonedSourcePackagesDirPath", packages, "-disableAutomaticPackageResolution", "-skipPackageUpdates");
     mappings.push(...mapped(packages, "/^spm"));
   }

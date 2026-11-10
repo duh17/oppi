@@ -2704,7 +2704,7 @@ export function commandPruneCache(config: PoolConfig, args: string[]): number {
   const appleDir = join(gitRoot, "clients", "apple");
   const buildBase = join(appleDir, ".build");
   // The link to the OPPI_BUILD_ROOT folder is ours to follow; any other symlinked root is refused.
-  const managedBuild = isManagedBuildLink(appleDir, process.env);
+  const managedBuild = isManagedBuildLink(appleDir);
   for (const path of [gitRoot, appleDir, ...(managedBuild ? [] : [buildBase])]) {
     try {
       if (statSync(path).isSymbolicLink?.() || (existsSync(path) && statSync(path).isSymbolicLink())) {

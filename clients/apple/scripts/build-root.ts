@@ -9,7 +9,7 @@
 //
 //   bun build-root.ts [<apple dir>]   link the checkout's .build; prints nothing, never fails
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,25 +42,45 @@ function lstatOrNull(path: string) {
   }
 }
 
-/** True when `.build` is the link this module made, so cleanup tools may follow it. */
-export function isManagedBuildLink(appleDir: string, env: NodeJS.ProcessEnv): boolean {
-  const root = buildRoot(env);
-  if (!root) return false;
+/** The folder `.build` links to when that folder's `.checkout` names this checkout; else undefined. */
+function managedFolder(appleDir: string): string | undefined {
   try {
     const link = join(appleDir, ".build");
-    return lstatSync(link).isSymbolicLink() && realpathSync(link).startsWith(`${root}/`);
+    if (!lstatSync(link).isSymbolicLink()) return undefined;
+    const folder = realpathSync(link);
+    return readFileSync(join(folder, OWNER_FILE), "utf8").trim() === realpathSync(appleDir) ? folder : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
-/** Drop folders of checkouts that no longer exist; a checkout's `.build` link may be gone while the checkout lives (git clean). */
+/** True when `.build` is the link this module made for this checkout, so cleanup tools may follow it. */
+export function isManagedBuildLink(appleDir: string): boolean {
+  return managedFolder(appleDir) !== undefined;
+}
+
+/** The root this checkout builds under: OPPI_BUILD_ROOT while mounted, else the root its managed link lives in. */
+export function buildRootFor(appleDir: string, env: NodeJS.ProcessEnv): string | undefined {
+  const folder = managedFolder(appleDir);
+  return buildRoot(env) ?? (folder ? dirname(folder) : undefined);
+}
+
+/**
+ * Drop folders of checkouts that no longer exist. A checkout's `.build` link may be gone while the checkout lives
+ * (git clean), and a checkout on an unmounted volume is absent too: only a folder whose worktree directory's parent
+ * is present (the volume is mounted) is judged.
+ */
 function reapOrphans(root: string): void {
   for (const name of readdirSync(root)) {
-    const owner = join(root, name, OWNER_FILE);
-    if (!existsSync(owner)) continue;
-    const apple = readFileSync(owner, "utf8").trim();
-    if (apple && !existsSync(apple)) rmSync(join(root, name), { recursive: true, force: true });
+    try {
+      const owner = join(root, name, OWNER_FILE);
+      if (!existsSync(owner)) continue;
+      const apple = readFileSync(owner, "utf8").trim();
+      const worktree = dirname(dirname(apple));
+      if (apple && !existsSync(apple) && existsSync(dirname(worktree))) rmSync(join(root, name), { recursive: true, force: true });
+    } catch {
+      // A folder that cannot be judged stays.
+    }
   }
 }
 
@@ -68,6 +88,29 @@ function reapOrphans(root: string): void {
 function inUse(dir: string): boolean {
   const lsof = spawnSync("lsof", ["-t", "+D", dir], { encoding: "utf8", timeout: 60_000 });
   return lsof.status !== 1 || (lsof.stdout ?? "").trim() !== "";
+}
+
+const sleepMs = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/** Exclusive for the move of a real `.build` to the root; a second caller waits for the first to finish. */
+function withMigrationLock<T>(link: string, body: () => T): T | undefined {
+  const lock = `${link}.migrating`;
+  for (let waited = 0; ; waited += 100) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") return undefined;
+    }
+    // The holder died mid-move (several minutes is far beyond a rename and a link): take over.
+    if (waited >= 300_000) rmSync(lock, { recursive: true, force: true });
+    sleepMs(100);
+  }
+  try {
+    return body();
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -78,23 +121,41 @@ export function ensureBuildLink(appleDir: string, env: NodeJS.ProcessEnv = proce
   try {
     const link = join(appleDir, ".build");
     const root = buildRoot(env);
-    const stat = lstatOrNull(link);
     // A link into a volume that is gone (or was recreated empty) would fail every build: drop it.
-    if (stat?.isSymbolicLink() && !existsSync(link)) unlinkSync(link);
+    if (lstatOrNull(link)?.isSymbolicLink() && !existsSync(link)) unlinkSync(link);
     if (!root) return undefined;
     const target = folderFor(root, appleDir);
-    const current = lstatOrNull(link);
-    if (current?.isSymbolicLink()) return readlinkSync(link) === target ? target : undefined;
-    reapOrphans(root);
-    if (current) {
-      // An existing real folder moves over once nothing uses it; its contents are a rebuildable cache.
-      if (!current.isDirectory() || inUse(link)) return undefined;
-      rmSync(link, { recursive: true, force: true });
+    const claim = () => {
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(target, OWNER_FILE), `${realpathSync(appleDir)}\n`);
+      symlinkSync(target, link);
+    };
+    let current = lstatOrNull(link);
+    if (current?.isSymbolicLink()) {
+      if (readlinkSync(link) === target) return target;
+      // Another checkout's folder (a moved worktree): relink. A link outside the root is someone's own.
+      if (!readlinkSync(link).startsWith(`${root}/`)) return undefined;
+      unlinkSync(link);
+      current = null;
     }
-    mkdirSync(target, { recursive: true });
-    writeFileSync(join(target, OWNER_FILE), `${realpathSync(appleDir)}\n`);
-    symlinkSync(target, link);
-    return target;
+    reapOrphans(root);
+    if (!current) {
+      claim();
+      return target;
+    }
+    if (!current.isDirectory()) return undefined;
+    // An existing real folder moves over once nothing uses it; its contents are a rebuildable cache. The rename
+    // and the link follow each other at once, so concurrent callers find a link, never a missing `.build`.
+    return withMigrationLock(link, () => {
+      const now = lstatOrNull(link);
+      if (now?.isSymbolicLink()) return readlinkSync(link) === target ? target : undefined;
+      if (!now?.isDirectory() || inUse(link)) return undefined;
+      const old = `${link}.old-${process.pid}`;
+      renameSync(link, old);
+      claim();
+      rmSync(old, { recursive: true, force: true });
+      return target;
+    });
   } catch {
     return undefined;
   }
