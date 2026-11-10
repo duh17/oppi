@@ -76,6 +76,7 @@ The file reader gets Org folding and badges, heading links, Outline and Find, ta
 - **Client:** The **Context** panel's reload button reloads the session as `/reload` does, after it asks, and shows the result in the panel.
 - **Client:** **Settings → Appearance → Pi Icon** shows the Pi logo in color (the default) or in your theme's text color. With no Agent selected, the composer's agent pill shows only the Pi logo.
 - **Client/Server:** In durable sessions, the background jobs panel shows one row per job with **Stop** and the job's live output, and the pill shows the job count and the latest output line. Live output stays in server memory and never reaches the model.
+- **Server:** Subagents in durable sessions can run their tools on another Mac or Linux machine over SSH. `oppi machines add|test|list|remove` sets up a machine, `subagent spawn` takes `host` with a worktree, and the worker's branch comes back to your repository when it ends. Oppi needs only SSH login and `git` on the machine. See [Run tools on another machine](docs/run-on-another-machine.md).
 - **Server:** Session search finds text from before a compaction.
 - **Server:** `oppi server restart --drain` restarts the server when running turns finish, and holds new prompts until after the restart. See [Restart when turns finish](docs/server-configuration.md#restart-when-turns-finish).
 - **Client/Server:** Durable sessions show prompt-cache miss notices when Pi's `showCacheMissNotices` setting is on. In all sessions, notices now also show after a server restart and when a chat reloads its history.
@@ -136,6 +137,7 @@ The file reader gets Org folding and badges, heading links, Outline and Find, ta
 - **Compatibility:** The first start re-indexes session search once, to add text from before compactions.
 - **Compatibility:** The Mobile Output Guide setting moves into `config.json` on the first start. The old `settings/mobile-output-guide.json` is renamed with a `.migrated` suffix. If `config.json` has invalid values, the move waits and the server logs a warning.
 - **Compatibility:** Server paths no longer expand `~user`, and a bare `~` in TLS and identity paths now means the home folder.
+- **Compatibility:** Plugins get Chord 1.5.1. `@earendil-works/chord/next` is gone: import its API from `@earendil-works/chord`, `Context` from `@earendil-works/chord/context`, and `JsonValue` from the new shared module `@earendil-works/chord/json`.
 
 ## [0.54.0] - 2026-11-03
 
