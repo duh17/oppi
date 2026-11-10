@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
 import { getCommitFileDiff } from "../src/git-commits.js";
-import { HOST_GIT_TRUST } from "../src/git-safe.js";
+import { execGit, HOST_GIT_TRUST } from "../src/git-safe.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { createWorkspaceRoutes } from "../src/routes/workspaces.js";
@@ -13,6 +14,12 @@ import type { Workspace } from "../src/types.js";
 import { buildWorkspaceReviewDiff } from "../src/workspace-review-diff.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 import { makeRequest, MockWritableResponse } from "./harness/route-test-helpers.js";
+
+// Counts the `git show` runs, to prove one blob is read once however many ranges are asked for.
+vi.mock("../src/git-safe.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/git-safe.js")>();
+  return { ...actual, execGit: vi.fn(actual.execGit) };
+});
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -198,5 +205,53 @@ describe("GET /workspaces/{id}/git/blob", () => {
       expect((await getBlob(dir, { rev, path: "logo.png" })).status).toBe(400);
     }
     expect((await getBlob(dir, { rev: added, path: "" })).status).toBe(400);
+  });
+});
+
+describe("GET /workspaces/{id}/git/blob for playback", () => {
+  const showRuns = () =>
+    vi.mocked(execGit).mock.calls.filter(([, , args]) => args[0] === "show").length;
+
+  it("serves every byte range of a video blob from one Git read", async () => {
+    const dir = makeTempDir("oppi-git-blobs-video-");
+    git(dir, ["init", "--initial-branch=main"]);
+    git(dir, ["config", "user.email", "test@example.com"]);
+    git(dir, ["config", "user.name", "Test User"]);
+    const clip = randomBytes(300 * 1024);
+    await writeFile(join(dir, "clip.mp4"), clip);
+    const sha = await commitAll(dir, "add clip");
+    vi.mocked(execGit).mockClear();
+
+    for (const [header, expected] of [
+      ["bytes=0-1023", clip.subarray(0, 1024)],
+      ["bytes=1024-2047", clip.subarray(1024, 2048)],
+      ["bytes=-100", clip.subarray(clip.length - 100)],
+    ] as const) {
+      const ranged = await getBlob(dir, { rev: sha, path: "clip.mp4" }, header);
+      expect(ranged.status).toBe(206);
+      expect(ranged.headers["Content-Type"]).toBe("video/mp4");
+      expect(ranged.body.equals(expected)).toBe(true);
+    }
+    expect(showRuns()).toBe(1);
+
+    // A moving HEAD is pinned to its commit first, so it shares that commit's entry: no new read.
+    vi.mocked(execGit).mockClear();
+    for (let i = 0; i < 2; i += 1) {
+      expect((await getBlob(dir, { rev: "HEAD", path: "clip.mp4" }, "bytes=0-9")).status).toBe(206);
+    }
+    expect(showRuns()).toBe(0);
+
+    // After a new commit, HEAD names another blob: no stale bytes.
+    const next = randomBytes(1024);
+    await writeFile(join(dir, "clip.mp4"), next);
+    await commitAll(dir, "replace clip");
+    expect((await getBlob(dir, { rev: "HEAD", path: "clip.mp4" })).body.equals(next)).toBe(true);
+  });
+
+  it("answers a Git failure that is not a missing file with a server error", async () => {
+    const missingDir = join(makeTempDir("oppi-git-blobs-gone-"), "never-created");
+    for (const rev of ["HEAD", "abcd1234"]) {
+      expect((await getBlob(missingDir, { rev, path: "a.png" })).status).toBe(500);
+    }
   });
 });

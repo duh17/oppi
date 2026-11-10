@@ -6,7 +6,7 @@ import {
   getContentType,
   MAX_BROWSE_IMAGE_FILE_SIZE,
 } from "./file-serving-policy.js";
-import { execGit, type GitTrust } from "./git-safe.js";
+import { execGit, SandboxGitRefusedError, type GitTrust } from "./git-safe.js";
 import { logRejectedByteRange, parseByteRangeHeader } from "./http-range.js";
 import { HttpStatusError } from "./http-status-error.js";
 import { expandHome } from "./path-utils.js";
@@ -19,6 +19,16 @@ import { expandHome } from "./path-utils.js";
 
 const GIT_TIMEOUT_MS = 5000;
 const MAX_BUFFER_EXCEEDED = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+
+/**
+ * Blobs of an immutable revision, kept briefly so the byte ranges of one
+ * playback (AVPlayer asks for many) read Git once. Bounded by entries, total
+ * bytes, and age.
+ */
+const CACHE_MAX_ENTRIES = 4;
+const CACHE_MAX_BYTES = 128 * 1024 * 1024;
+const CACHE_TTL_MS = 120_000;
+const blobCache = new Map<string, { bytes: Buffer; at: number }>();
 
 /** `HEAD`, a commit hash, or the first parent of either. */
 const BLOB_REVISION = /^(?:HEAD|[0-9a-f]{4,64})\^?$/i;
@@ -37,6 +47,18 @@ export function bytesLookBinary(bytes: Buffer): boolean {
 }
 
 /**
+ * A Git failure that means "no such revision or path" is a miss. Anything else
+ * (a timeout, git not starting, the sandbox refusing the command) is a server
+ * error, not a missing file.
+ */
+function throwUnlessMissing(error: Error & { code?: unknown; killed?: unknown }): void {
+  const exited = typeof error.code === "number" && error.killed !== true;
+  if (error instanceof SandboxGitRefusedError || !exited) {
+    throw new GitBlobError(500, "Failed to read the file from Git.");
+  }
+}
+
+/**
  * Read `<revision>:<path>`. `show` is the one subcommand that reads a blob for
  * both host and sandbox trust.
  */
@@ -52,10 +74,59 @@ export async function readGitBlob(
     maxBuffer: maxBytes,
     encoding: "buffer",
   });
-  const bytes = Buffer.isBuffer(stdout) ? stdout : Buffer.from(String(stdout), "latin1");
+  // `encoding: "buffer"` makes stdout a Buffer; a refused command has none and fails below.
+  const bytes = stdout as Buffer;
   if (!error) return { kind: "ok", bytes };
   if (error.code === MAX_BUFFER_EXCEEDED) return { kind: "too-large", prefix: bytes };
+  throwUnlessMissing(error);
   return { kind: "missing" };
+}
+
+/** The commit a revision names now, so a moving `HEAD` can key the cache; null when it names none. */
+async function pinRevision(trust: GitTrust, cwd: string, revision: string): Promise<string | null> {
+  if (!/^HEAD/i.test(revision)) return revision;
+  const { error, stdout } = await execGit(
+    trust,
+    expandHome(cwd),
+    ["rev-parse", "--verify", "--quiet", `${revision}^{commit}`],
+    { timeout: GIT_TIMEOUT_MS },
+  );
+  if (error) {
+    throwUnlessMissing(error);
+    return null;
+  }
+  return String(stdout).trim();
+}
+
+async function readCachedGitBlob(
+  trust: GitTrust,
+  cwd: string,
+  revision: string,
+  path: string,
+  maxBytes: number,
+): Promise<GitBlobRead> {
+  const pinned = await pinRevision(trust, cwd, revision);
+  if (pinned === null) return { kind: "missing" };
+  const key = `${cwd}\0${pinned}\0${path}`;
+  const hit = blobCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
+    blobCache.delete(key);
+    blobCache.set(key, hit); // most recently used last
+    return { kind: "ok", bytes: hit.bytes };
+  }
+  blobCache.delete(key);
+  const blob = await readGitBlob(trust, cwd, pinned, path, maxBytes);
+  if (blob.kind === "ok" && blob.bytes.length <= CACHE_MAX_BYTES) {
+    blobCache.set(key, { bytes: blob.bytes, at: Date.now() });
+    let total = 0;
+    for (const entry of blobCache.values()) total += entry.bytes.length;
+    for (const [oldKey, entry] of blobCache) {
+      if (blobCache.size <= CACHE_MAX_ENTRIES && total <= CACHE_MAX_BYTES) break;
+      blobCache.delete(oldKey);
+      total -= entry.bytes.length;
+    }
+  }
+  return blob;
 }
 
 /** Serve one blob (GET/HEAD, one byte range) with the browse size limit for its type. */
@@ -72,7 +143,7 @@ export async function serveGitBlob(
   const contentType = getContentType(extname(path).toLowerCase(), basename(path));
   // A blob is buffered to answer, so streaming media gets the largest cap, not none.
   const maxBytes = browseSizeLimit(contentType) ?? MAX_BROWSE_IMAGE_FILE_SIZE;
-  const blob = await readGitBlob(trust, cwd, revision, path, maxBytes);
+  const blob = await readCachedGitBlob(trust, cwd, revision, path, maxBytes);
   if (blob.kind === "missing") throw new GitBlobError(404, "File not found at revision");
   if (blob.kind === "too-large") {
     const megabytes = Math.round(maxBytes / (1024 * 1024));

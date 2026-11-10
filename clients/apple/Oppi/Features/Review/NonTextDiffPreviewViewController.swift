@@ -79,16 +79,7 @@ final class NonTextDiffPreviewViewController: UIViewController {
                 guard let self, let control else { return }
                 show(control.selectedSegmentIndex)
             }, for: .valueChanged)
-            control.translatesAutoresizingMaskIntoConstraints = false
-            let slot = UIView()
-            slot.addSubview(control)
-            NSLayoutConstraint.activate([
-                control.topAnchor.constraint(equalTo: slot.topAnchor, constant: 10),
-                control.bottomAnchor.constraint(equalTo: slot.bottomAnchor, constant: -10),
-                control.leadingAnchor.constraint(equalTo: slot.leadingAnchor, constant: 16),
-                control.trailingAnchor.constraint(equalTo: slot.trailingAnchor, constant: -16),
-            ])
-            stack.addArrangedSubview(slot)
+            stack.addArrangedSubview(ReviewSegmentedControlSlot.wrap(control))
         }
         stack.addArrangedSubview(contentView)
         show(max(lastIndex, 0))

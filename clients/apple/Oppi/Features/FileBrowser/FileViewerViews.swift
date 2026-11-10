@@ -199,6 +199,7 @@ enum FileViewerBinarySummary {
     static func text(fileName: String, byteCount: Int) -> String {
         let type = UTType(filenameExtension: (fileName as NSString).pathExtension)?.localizedDescription
             ?? String(localized: "Binary file")
-        return "\(type) · \(ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file))"
+        let size = ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)
+        return String(localized: "\(type) · \(size)")
     }
 }

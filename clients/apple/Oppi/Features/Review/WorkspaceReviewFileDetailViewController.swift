@@ -535,16 +535,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
                 self.selectedTab = tab
             }, for: .valueChanged)
             tabs.accessibilityLabel = String(localized: "View")
-            let tabsSlot = UIView()
-            tabs.translatesAutoresizingMaskIntoConstraints = false
-            tabsSlot.addSubview(tabs)
-            NSLayoutConstraint.activate([
-                tabs.topAnchor.constraint(equalTo: tabsSlot.topAnchor, constant: 10),
-                tabs.bottomAnchor.constraint(equalTo: tabsSlot.bottomAnchor, constant: -10),
-                tabs.leadingAnchor.constraint(equalTo: tabsSlot.leadingAnchor, constant: 16),
-                tabs.trailingAnchor.constraint(equalTo: tabsSlot.trailingAnchor, constant: -16),
-            ])
-            stack.addArrangedSubview(tabsSlot)
+            stack.addArrangedSubview(ReviewSegmentedControlSlot.wrap(tabs))
             self.tabs = tabs
         }
 

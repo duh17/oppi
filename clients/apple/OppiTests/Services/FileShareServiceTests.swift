@@ -79,6 +79,20 @@ struct FileShareServiceTests {
         #expect(formats == [.image])
     }
 
+    @Test func rawFileDataSharesTheOriginalBytesUnderItsOwnName() async throws {
+        let bytes = Data([0x00, 0xDE, 0xAD, 0x00, 0xBE, 0xEF])
+        let content = FileShareService.ShareableContent.fileData(bytes, filename: "assets/model.weights")
+        #expect(FileShareService.availableFormats(for: content) == [.source])
+
+        let item = await FileShareService.render(content, as: .source)
+        guard case .file(let url) = item else {
+            Issue.record("Expected a file share item")
+            return
+        }
+        #expect(url.lastPathComponent == "model.weights")
+        #expect(try Data(contentsOf: url) == bytes)
+    }
+
     @Test func pdfIsFirstAvailableFormatForRenderedTypes() {
         // PDF should be listed first for non-HTML rendered types
         let mdFormats = FileShareService.availableFormats(for: .markdown("# test"))

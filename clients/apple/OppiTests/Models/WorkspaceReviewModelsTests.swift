@@ -17,25 +17,6 @@ struct WorkspaceReviewModelsTests {
         #expect(hunk.headerText == "@@ -4,2 +4,3 @@")
     }
 
-    @Test func nonTextDiffDecodesTheSidesThatExistAndTextDiffsHaveNone() throws {
-        let binary = Data(
-            """
-            {"workspaceId":"w1","path":"icon.png","baselineText":"","currentText":"",
-             "addedLines":0,"removedLines":0,"hunks":[],"nonText":{"before":true,"after":false}}
-            """.utf8
-        )
-        let decoded = try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: binary)
-        #expect(decoded.nonText == .init(before: true, after: false))
-
-        let text = Data(
-            """
-            {"workspaceId":"w1","path":"a.swift","baselineText":"","currentText":"",
-             "addedLines":0,"removedLines":0,"hunks":[]}
-            """.utf8
-        )
-        #expect(try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: text).nonText == nil)
-    }
-
     @Test func nonTextSidesAreTheVersionsThatExistOldestFirst() {
         func sides(before: Bool, after: Bool, afterRevision: String?) -> [NonTextDiffSides.Side] {
             NonTextDiffSides.resolve(

@@ -1055,15 +1055,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             shareItem = item
         } else if case .audio(let source) = content {
             shareItem = makeAudioShareItem(source)
-        } else if case .binary(let data) = content {
-            let name = currentFileName
-            shareItem = UIBarButtonItem(
-                title: String(localized: "Share"),
-                image: UIImage(systemName: "square.and.arrow.up"),
-                primaryAction: UIAction { _ in
-                    FileSharePresenter.presentActivityController(item: FileShareService.fileShareItem(data: data, filename: name))
-                }
-            )
         } else {
             shareItem = nil
         }
@@ -1113,6 +1104,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             return .imageData(data, filename: currentFileName)
         case .pdf(let data):
             return .pdfData(data, filename: currentFileName)
+        case .binary(let data):
+            return .fileData(data, filename: currentFileName)
         default:
             return nil
         }

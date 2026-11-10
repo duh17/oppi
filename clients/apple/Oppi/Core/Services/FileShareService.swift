@@ -72,6 +72,8 @@ enum FileShareService {
         case diff([WorkspaceReviewDiffHunk], filePath: String)
         case imageData(Data, filename: String)
         case pdfData(Data, filename: String)
+        /// Any file's raw bytes, shared as they are (a file no viewer renders).
+        case fileData(Data, filename: String)
 
         /// Original last-path-component, if this content came from a named file.
         var originalFileName: String? {
@@ -88,7 +90,7 @@ enum FileShareService {
                 return FileShareService.fileName(fromPath: fileName)
             case .diff(_, let filePath):
                 return FileShareService.fileName(fromPath: filePath)
-            case .imageData(_, let filename), .pdfData(_, let filename):
+            case .imageData(_, let filename), .pdfData(_, let filename), .fileData(_, let filename):
                 return FileShareService.fileName(fromPath: filename)
             }
         }
@@ -287,6 +289,16 @@ enum FileShareService {
                 sourceExtension: "pdf",
                 pdfFilename: fileName(fromPath: filename) ?? filename
             )
+        case .fileData(_, let filename):
+            let ext = (filename as NSString).pathExtension
+            return ContentExportSpec(
+                defaultFormat: .source,
+                formats: [.source],
+                sourceLabel: "File",
+                sourceBaseName: fileNameStem(filename),
+                sourceExtension: ext.isEmpty ? nil : ext,
+                pdfFilename: fileName(fromPath: filename) ?? filename
+            )
         }
     }
 
@@ -375,7 +387,7 @@ enum FileShareService {
             image = renderDiffToImage(hunks: hunks, filePath: filePath)
         case .imageData:
             image = placeholderImage()
-        case .pdfData:
+        case .pdfData, .fileData:
             image = placeholderImage()
         }
         return namedImageShareItem(image, for: content)
@@ -840,6 +852,8 @@ enum FileShareService {
             } else {
                 pdfData = Data()
             }
+        case .fileData:
+            pdfData = Data()
         }
 
         return .pdf(pdfData, filename: spec.pdfFilename)
@@ -1116,9 +1130,7 @@ enum FileShareService {
             return .file(writeTempFile(content: text, filename: filename))
         case .diff(let hunks, _):
             return .file(writeTempFile(content: buildUnifiedDiffText(hunks), filename: filename))
-        case .imageData(let data, let name):
-            return .file(writeTempData(data: data, filename: fileName(fromPath: name) ?? name))
-        case .pdfData(let data, let name):
+        case .imageData(let data, let name), .pdfData(let data, let name), .fileData(let data, let name):
             return .file(writeTempData(data: data, filename: fileName(fromPath: name) ?? name))
         }
     }
@@ -1300,6 +1312,7 @@ enum FileShareService {
         case .diff: return "diff"
         case .imageData: return "image"
         case .pdfData: return "pdf"
+        case .fileData: return "file"
         }
     }
 
