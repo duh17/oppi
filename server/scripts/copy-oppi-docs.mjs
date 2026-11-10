@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -25,6 +25,32 @@ const EXCLUDED_TOP_LEVEL_DIRS = new Set(["demo"]);
 
 rmSync(targetDocs, { recursive: true, force: true });
 copyPublicDocs(sourceDocs, targetDocs);
+copyReferencedExcludedImages(targetDocs);
+
+// Docs link their screenshots with relative paths (`demo/x.png`) so GitHub and the
+// in-app reader both render them. Excluded media that a copied page references
+// travels with it; the rest of docs/demo stays out.
+function copyReferencedExcludedImages(dir) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      copyReferencedExcludedImages(path);
+      continue;
+    }
+    if (!entry.name.endsWith(".md")) continue;
+    for (const match of readFileSync(path, "utf8").matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)) {
+      const reference = match[1];
+      if (/^[a-z][a-z0-9+.-]*:/i.test(reference) || reference.startsWith("/")) continue;
+      const target = resolve(dirname(path), reference);
+      const fromDocs = relative(targetDocs, target);
+      if (fromDocs.startsWith("..") || existsSync(target)) continue;
+      const source = join(sourceDocs, fromDocs);
+      if (!existsSync(source)) continue;
+      mkdirSync(dirname(target), { recursive: true });
+      cpSync(source, target);
+    }
+  }
+}
 
 function copyPublicDocs(sourceDir, targetDir) {
   for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {

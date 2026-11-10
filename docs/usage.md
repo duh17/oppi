@@ -2,9 +2,9 @@
 
 Daily phone and tablet use after you have paired a server. Pairing is in [Onboarding](onboarding.md). Pi slash commands, skills, compaction, and the TUI stay in [Pi's usage guide](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/usage.md).
 
-![Session and search](https://raw.githubusercontent.com/duh17/oppi/main/docs/demo/session-combined.png)
+![Session and search](demo/session-combined.png)
 
-![Timeline and files](https://raw.githubusercontent.com/duh17/oppi/main/docs/demo/timeline-combined.png)
+![Timeline and files](demo/timeline-combined.png)
 
 ## Screen map
 
