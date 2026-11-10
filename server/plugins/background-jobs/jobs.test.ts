@@ -294,6 +294,20 @@ describe("background pill", () => {
     expect(rawOutputTail(`${"\u00e9".repeat(100)}`, 9, 30)).toBe("\u00e9".repeat(4));
   });
 
+  test("only a running job's row carries its start, so a finished job's age stops ticking", () => {
+    const pill = backgroundPill([
+      {
+        id: "bash-1",
+        command: "npm test",
+        status: "running",
+        backgrounded: true,
+        startedAt: 1_000,
+      },
+      { id: "bash-2", command: "go test", status: "completed", backgrounded: true, startedAt: 500 },
+    ]);
+    expect(pill?.rows.map((row) => row.since)).toEqual([1_000, undefined]);
+  });
+
   test("keeps a finished result visible without pretending it is still running", () => {
     const pill = backgroundPill([
       { id: "bash-1", command: "npm test", status: "running", backgrounded: true },

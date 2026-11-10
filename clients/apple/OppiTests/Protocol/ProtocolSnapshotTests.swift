@@ -396,6 +396,18 @@ struct ProtocolSnapshotTests {
         #expect(notification.widgetKey == "review")
         #expect(notification.extensionScopeId == "npm:review-helper")
         #expect(notification.extensionDisplayName == "Review Helper")
+
+        // A section's activity row carries its progress and the time its state began.
+        guard case .section(_, let title, _, let blocks)? = notification.nativeSurface?.blocks.first,
+              case .activityList(_, let rows)? = blocks.first,
+              let row = rows.first else {
+            Issue.record("Expected a section holding an activity list")
+            return
+        }
+        #expect(title == "Running")
+        #expect(row.since == 1_762_800_000_000)
+        #expect(row.progress == 0.4)
+        #expect(row.state == "running")
     }
 
     @Test func extensionUISettled() throws {

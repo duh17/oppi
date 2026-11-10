@@ -842,6 +842,22 @@ describe("extension UI contract", () => {
     );
   });
 
+  it("accepts a row's since only as a finite, non-negative time", () => {
+    const surface = (since: unknown) => ({
+      version: 1,
+      id: "widget:jobs",
+      source: "widget",
+      presentation: { style: "surfacePanel" },
+      blocks: [{ type: "activityList", rows: [{ id: "bash-1", title: "bash-1", since }] }],
+    });
+
+    expect(normalizeExtensionUINativeSurface(surface(1_762_800_000_000))).toMatchObject({
+      blocks: [{ rows: [{ since: 1_762_800_000_000 }] }],
+    });
+    for (const since of [-1, Number.NaN, Number.POSITIVE_INFINITY, "1762800000000"])
+      expect(normalizeExtensionUINativeSurface(surface(since))).toBeUndefined();
+  });
+
   it("accepts row disclosure blocks and raw terminal text inside the same budgets", () => {
     const surface = (text: string, extra: Record<string, unknown> = {}) => ({
       version: 1,

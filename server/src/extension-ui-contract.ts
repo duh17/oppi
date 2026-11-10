@@ -458,6 +458,13 @@ function validateNativeActivityRows(
     ) {
       return false;
     }
+    // Epoch milliseconds the row's state began; clients tick the time since it themselves.
+    if (
+      row.since !== undefined &&
+      (typeof row.since !== "number" || !Number.isFinite(row.since) || row.since < 0)
+    ) {
+      return false;
+    }
     if (
       row.children !== undefined &&
       !validateNativeActivityRows(row.children, depth + 1, state, limits)

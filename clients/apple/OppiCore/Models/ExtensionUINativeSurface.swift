@@ -80,6 +80,9 @@ struct ExtensionUIActivityRow: Sendable, Equatable, Decodable, Identifiable {
     let children: [ExtensionUIActivityRow]?
     /// Disclosure content: tapping the row shows or hides it. Clients build it only while shown.
     var blocks: [ExtensionUINativeBlock]? = nil
+    /// Epoch milliseconds the row's current state began. The client shows the time since then,
+    /// ticking it itself, so a running row needs no republish to stay current.
+    var since: Double? = nil
 }
 
 struct ExtensionUIBlockBase: Sendable, Equatable {

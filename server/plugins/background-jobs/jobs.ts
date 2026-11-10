@@ -103,6 +103,8 @@ export interface BackgroundPill {
     title: string;
     subtitle: string;
     state: "running" | "success" | "warning" | "error";
+    /** A running job's start, epoch ms: the client shows its age, ticking it itself. */
+    since?: number;
     blocks: JobOutputBlock[];
   }>;
 }
@@ -175,6 +177,9 @@ export function backgroundPill(
         title: job.id,
         subtitle: compactCommand(job.command),
         state: pillState(job.status),
+        ...(job.status === "running" && job.startedAt !== undefined
+          ? { since: job.startedAt }
+          : {}),
         blocks: [
           text
             ? { type: "terminal", id: `output:${job.id}`, text }

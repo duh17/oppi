@@ -597,6 +597,38 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     workingVisible: true,
     hiddenThinkingLabel: "Private reasoning",
     toolsExpanded: true,
+    nativeSurface: {
+      version: 1,
+      id: "widget:review",
+      source: "widget",
+      presentation: { style: "surfacePanel", title: "Review", subtitle: "1 running" },
+      blocks: [
+        {
+          type: "section",
+          id: "review:running",
+          title: "Running",
+          blocks: [
+            {
+              type: "activityList",
+              id: "review:rows",
+              rows: [
+                {
+                  id: "finding-1",
+                  title: "Check retry state",
+                  subtitle: "Reading session-lifecycle.ts",
+                  detail: "2 findings",
+                  state: "running",
+                  progress: 0.4,
+                  since: 1_762_800_000_000,
+                  link: "oppi://session/test-session-2",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      fallback: { lines: ["Check retry state: running"] },
+    },
   },
   extension_ui_settled: {
     type: "extension_ui_settled",

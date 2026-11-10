@@ -344,6 +344,8 @@ export interface ExtensionUIActivityRow {
   detail?: string;
   state?: "queued" | "running" | "success" | "warning" | "error" | "inactive";
   progress?: number;
+  /** Epoch milliseconds the row's current state began; clients show the time since, ticking it themselves. */
+  since?: number;
   link?: string;
   children?: ExtensionUIActivityRow[];
   /** Disclosure content. Tapping the row shows or hides it; clients render it only while shown. */
