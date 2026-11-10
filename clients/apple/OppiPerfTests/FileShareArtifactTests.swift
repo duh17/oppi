@@ -404,7 +404,7 @@ struct FileShareArtifactTests {
                     return prefix + line.text
                 }).joined(separator: "\n")
             }.joined(separator: "\n")
-        case .imageData, .pdfData:
+        case .imageData, .pdfData, .fileData:
             return ""
         }
     }
