@@ -25,7 +25,7 @@ import {
   type EntryRecord,
   type Extension,
 } from "@earendil-works/pi-durable";
-import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { CodingTools } from "./coding-tools.js";
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import { computeCacheWaste } from "./cache-miss.js";
 import {

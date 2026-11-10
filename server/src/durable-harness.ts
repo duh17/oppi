@@ -24,7 +24,7 @@ import {
   type Tx,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { CodingTools } from "./coding-tools.js";
 import {
   CODEMODE_TOOL_NAME,
   createCodemodeExtension,

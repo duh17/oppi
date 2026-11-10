@@ -101,6 +101,7 @@ The file reader gets Org folding and badges, heading links, Outline and Find, ta
 
 ### Fixed
 
+- **Server:** In durable sessions, `read` scales images down to 1568 px on the long edge and re-encodes them, so a session that reads many photos sends far smaller requests. Images over 2000 px are no longer refused.
 - **Client:** With App Lock on and no device passcode, Oppi opened unlocked. It now stays locked and says to set a passcode.
 - **Client:** List pages opened during a server restart no longer stay on "Server is offline"; they load again when the connection returns.
 - **Client:** Photos and other media of a closed chat no longer stay in memory until the app restarts.
