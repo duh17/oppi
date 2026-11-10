@@ -17,6 +17,15 @@ import { existsSync, readFileSync } from "node:fs";
  *   it never did, not with a bare test timeout.
  */
 export const SUBPROCESS_TEST_TIMEOUT_MS = 60_000;
+
+/**
+ * Host build settings must not reach a test. With OPPI_BUILD_ROOT set (a RAM disk, say) the scripts relink a
+ * temp checkout's `.build` into the developer's real build root, and OPPI_XCODE_CACHE_DIR moves the shared
+ * cache. Every sim-pool test file imports this module and every spawned script inherits `process.env`, so
+ * dropping them here, once, isolates the lot. A test about the build root passes its own env explicitly
+ * (build-root.test.ts, sim-pool-build.test.ts).
+ */
+for (const name of ["OPPI_BUILD_ROOT", "OPPI_XCODE_CACHE_DIR"]) delete process.env[name];
 export const SPAWN_WAIT_MS = 30_000;
 
 /**
