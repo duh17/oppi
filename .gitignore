@@ -46,6 +46,8 @@ scripts/*
 !scripts/gate-report.test.ts
 !scripts/dev-docs-guard.ts
 !scripts/dev-docs-guard.test.ts
+!scripts/deps-check.ts
+!scripts/deps-check.test.ts
 !scripts/sim-pool.sh
 clients/apple/scripts/*
 !clients/apple/scripts/build-tailscalekit.sh

@@ -21,6 +21,7 @@
 
 - Local gate: `.githooks/pre-push` (install with `install -m 755 .githooks/pre-push "$(git rev-parse --git-path hooks)/pre-push"`; `--self-test`, lane fixtures only `--self-test --lanes-only`).
 - Full non-coverage server gate: `cd server && npm run check && npm test`. Coverage thresholds (no CI runs them): `cd server && npm run test:gate:ci-coverage` (`check` plus `test:coverage`; thresholds in `server/vitest.config.ts`) and `clients/apple/scripts/check-coverage.sh`. Release cuts: [`scripts/release/README.md`](../../scripts/release/README.md).
+- Weekly dependency check: `bun scripts/deps-check.ts [--out report.md]` prints one Markdown report (npm audit and OSV for every lockfile and Swift pin, outdated npm/Swift/Actions/toolchain pins, a ranked "Do this week" list, and a Gaps section). Read-only, needs network and a signed-in `gh`, exits 0 even with findings. It reads pin reasons from the comments next to `project.yml` packages; keep them there.
 - `.github/workflows/hygiene.yml` runs secret, file-size, and tracked-private-path checks on every push; `.gitignore` does not protect a path after `git add -f`.
 
 ## The pre-push gate
