@@ -129,6 +129,13 @@ final class SSHTerminalRexSessionsViewController: UIViewController {
         }
     }
 
+    /// A link for this host arrived while this list is on top: open the pane here,
+    /// over the connection the list already has.
+    func openLinkedPane(_ link: TerminalDeepLink) {
+        linkedPane = link
+        setNeedsUpdateProperties()
+    }
+
     /// Rex has been read (or cannot be): open the linked pane, or say plainly why not.
     /// The list stays under the message, showing what Rex does have.
     private func openLinkedPaneIfRead() {
@@ -137,7 +144,7 @@ final class SSHTerminalRexSessionsViewController: UIViewController {
         if monitor.snapshot != nil {
             linkedPane = nil
             guard !monitor.open(session: link.sessionID, block: link.blockID) else { return }
-            message = String(localized: "That pane is no longer in Rex. The panes that are running are listed here.")
+            message = String(localized: "That pane isn\u{2019}t open in Rex on \(profile.endpointLabel). The panes that are running are listed here.")
         } else if let absence = monitor.absence {
             linkedPane = nil
             message = absence.advice

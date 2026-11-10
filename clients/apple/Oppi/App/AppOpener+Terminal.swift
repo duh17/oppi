@@ -50,7 +50,12 @@ enum TerminalLinkPresenter {
         case .hostNotRex(let profile):
             toast(String(localized: "Set Multiplexer to Rex for \(profile.endpointLabel) in its host settings to open this pane."))
         case .openPane(let profile, let pane):
-            Router.push(SSHTerminalRexSessionsViewController(profile: profile, opening: pane), from: screen)
+            // This host's pane list is already on top: open the pane there, with no second list.
+            if let list = screen as? SSHTerminalRexSessionsViewController, list.profileID == profile.id {
+                list.openLinkedPane(pane)
+            } else {
+                Router.push(SSHTerminalRexSessionsViewController(profile: profile, opening: pane), from: screen)
+            }
         }
     }
 
@@ -67,8 +72,11 @@ enum TerminalLinkPresenter {
     }
 
     private static func front(of controller: UIViewController) -> UIViewController? {
-        if let presented = controller.presentedViewController, !presented.isBeingDismissed {
-            return front(of: presented)
+        // A presented controller with no navigation stack of its own (an alert, a plain
+        // sheet) leaves the stack underneath to push on.
+        if let presented = controller.presentedViewController, !presented.isBeingDismissed,
+           let found = front(of: presented) {
+            return found
         }
         if let navigation = controller as? UINavigationController {
             return navigation.topViewController.flatMap(front(of:)) ?? navigation.topViewController

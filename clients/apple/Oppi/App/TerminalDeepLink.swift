@@ -17,6 +17,9 @@ enum TerminalDeepLinkError: Error, Equatable, Sendable {
     case unsupportedMultiplexer
     case missing(String)
     case unknownParameter(String)
+    case duplicateParameter(String)
+    /// A fragment, user-info, or port: nothing a terminal link has.
+    case unexpectedComponent(String)
 }
 
 /// One terminal link opened from a tap, a scene URL, or a push. `sourceServerID`
@@ -38,7 +41,15 @@ struct TerminalOpen: Equatable, Sendable {
         }
         guard parts.first?.lowercased() == "terminal" else { return nil }
         self.sourceServerID = sourceServerID
-        link = Self.parse(multiplexer: parts.dropFirst().first, extra: parts.dropFirst(2).first, query: components?.queryItems ?? [])
+        let unexpected = [
+            ("fragment", components?.fragment), ("user", components?.user),
+            ("password", components?.password), ("port", components?.port.map(String.init)),
+        ].first { $0.1 != nil }?.0
+        if let unexpected {
+            link = .failure(.unexpectedComponent(unexpected))
+        } else {
+            link = Self.parse(multiplexer: parts.dropFirst().first, extra: parts.dropFirst(2).first, query: components?.queryItems ?? [])
+        }
     }
 
     private static func parse(
@@ -46,10 +57,14 @@ struct TerminalOpen: Equatable, Sendable {
     ) -> Result<TerminalDeepLink, TerminalDeepLinkError> {
         guard multiplexer?.lowercased() == "rex", extra == nil else { return .failure(.unsupportedMultiplexer) }
         var values: [String: String] = [:]
+        var seen: Set<String> = []
         for item in query {
             let name = item.name.lowercased()
             guard name == "session" || name == "block" else { return .failure(.unknownParameter(item.name)) }
             let value = item.value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            // A repeated name could mean two things; refuse rather than pick one.
+            guard values[name] == nil, !seen.contains(name) else { return .failure(.duplicateParameter(name)) }
+            seen.insert(name)
             if !value.isEmpty { values[name] = value }
         }
         guard let session = values["session"] else { return .failure(.missing("session")) }

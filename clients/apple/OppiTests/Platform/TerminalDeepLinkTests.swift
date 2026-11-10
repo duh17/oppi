@@ -40,6 +40,15 @@ struct TerminalDeepLinkTests {
         #expect(link("https://terminal/rex?session=a&block=b") == nil)
     }
 
+    @Test func rejectsRepeatedParametersAndExtraUrlParts() {
+        #expect(link("oppi://terminal/rex?session=a&session=b&block=c") == .failure(.duplicateParameter("session")))
+        // Names compare without case, so a differently cased repeat is a repeat.
+        #expect(link("oppi://terminal/rex?session=a&block=b&BLOCK=c") == .failure(.duplicateParameter("block")))
+        #expect(link("oppi://terminal/rex?session=a&block=b#frag") == .failure(.unexpectedComponent("fragment")))
+        #expect(link("oppi://user@terminal/rex?session=a&block=b") == .failure(.unexpectedComponent("user")))
+        #expect(link("oppi://terminal:80/rex?session=a&block=b") == .failure(.unexpectedComponent("port")))
+    }
+
     // MARK: Routing
 
     private let good = Result<TerminalDeepLink, TerminalDeepLinkError>.success(
