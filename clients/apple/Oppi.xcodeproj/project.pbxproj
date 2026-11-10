@@ -433,7 +433,6 @@
 		297EA6F003652F6BAF18CE61 /* VoiceInputManager+LocaleSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 018F72CE9E2860A2A97D7DDC /* VoiceInputManager+LocaleSupport.swift */; };
 		297F8F21EAADB851E652965D /* CascadiaCode-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D277EA46947AD8CF33855744 /* CascadiaCode-Bold.ttf */; };
 		298B19B95738F8E0490883AC /* WorkspaceFileEditSessionRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E376376C862B0BD97609E7F /* WorkspaceFileEditSessionRegistry.swift */; };
-		2992AEC062F95672B38D6C3F /* SYNTAX-HIGHLIGHTING.md in Resources */ = {isa = PBXBuildFile; fileRef = 3D88E6941A0BE9E3A1030545 /* SYNTAX-HIGHLIGHTING.md */; };
 		29B330AC0595C607167B1835 /* AudioLyrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBF480164E5D7F4E1E3504A7 /* AudioLyrics.swift */; };
 		29C6A11AFBCCF95E38AA5768 /* WorkspaceReview.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF35BE07CADBFD0BA554CB6 /* WorkspaceReview.swift */; };
 		2A4298D03BD0EFE2F35438F6 /* MemoryKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED6198CD3DC4243B5F39A3AB /* MemoryKeychain.swift */; };
@@ -3340,7 +3339,6 @@
 		3CEC611424DEB6963E065374 /* MermaidFlowchartConformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidFlowchartConformanceTests.swift; sourceTree = "<group>"; };
 		3D5A668B2751BD147404D107 /* MacSessionFilePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionFilePreview.swift; sourceTree = "<group>"; };
 		3D7DDAB227BD59D0CF73834A /* FileBrowserNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileBrowserNavigation.swift; sourceTree = "<group>"; };
-		3D88E6941A0BE9E3A1030545 /* SYNTAX-HIGHLIGHTING.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "SYNTAX-HIGHLIGHTING.md"; sourceTree = "<group>"; };
 		3DA42C67C4BE769CC15E62A9 /* BashEmbeddedLanguageDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BashEmbeddedLanguageDetectorTests.swift; sourceTree = "<group>"; };
 		3DA62DE78DD7E384238541A0 /* MacWebSocketFrameCodecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWebSocketFrameCodecTests.swift; sourceTree = "<group>"; };
 		3DDA46585AC22AC019611EEC /* SessionScopedGitStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionScopedGitStatus.swift; sourceTree = "<group>"; };
@@ -5897,7 +5895,6 @@
 				4FB286B4533D13ED155B1967 /* ANSIAttributedStringRenderer.swift */,
 				00B3533483080107B480CD97 /* FullScreenCodeHighlighter.swift */,
 				8E9E3106B53C20450F229CB7 /* ProviderColor.swift */,
-				3D88E6941A0BE9E3A1030545 /* SYNTAX-HIGHLIGHTING.md */,
 				070DA145C740439D6AF3A207 /* SyntaxHighlighter.swift */,
 				9506D2E58A787905A514F86B /* WorkspaceMarkdownImageFileLookup.swift */,
 			);
@@ -9102,7 +9099,6 @@
 				24ED7A2FB5D86A8D45045359 /* MonaspaceNeon-SemiBold.otf in Resources */,
 				A7F96ACEA8DF9CBB1455289C /* MultiplexerLogos-NOTICE.txt in Resources */,
 				A28D45E34E868F779C75097E /* PrivacyInfo.xcprivacy in Resources */,
-				2992AEC062F95672B38D6C3F /* SYNTAX-HIGHLIGHTING.md in Resources */,
 				2F7CB7622DB28551C01E9571 /* SourceCodePro-Bold.otf in Resources */,
 				FCBDC99702D80793E616746E /* SourceCodePro-Regular.otf in Resources */,
 				264625CF60222C26FAF5BB1E /* SourceCodePro-Semibold.otf in Resources */,

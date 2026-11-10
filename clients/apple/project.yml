@@ -108,6 +108,8 @@ targets:
         excludes:
           - "Resources/AppIcon.icon"
           - "Resources/PrivacyInfo.xcprivacy"
+          # Contributor note beside the highlighter; nothing in the app reads it.
+          - "Core/Formatting/SYNTAX-HIGHLIGHTING.md"
       - path: Oppi/Resources/AppIcon.icon
         type: file
         buildPhase: resources
