@@ -5,19 +5,26 @@
 # PATH Zig only at exactly ZIG_VERSION, else the checksummed official release.
 set -euo pipefail
 
-# The ghostty revision Rex 1642 encodes its pane snapshots with (main as of
-# 2026-10-21, pinned by go.mitchellh.com/libghostty df1957cbff56). It writes
-# Kitty graphics records (tags 8-10) for a pane that showed an image, and
-# decoders from 781c58e96 on skip record tags they do not know, so a newer
-# Rex's optional records no longer fail the whole restore. Also carries OSC
-# 7501 program status at spec revision 0.4 (b7207b2ef).
+# Ghostty main as of 2026-11-10 (libghostty-vt 1.1.0-dev, after the 1.0 C ABI
+# freeze). Rex 1642 encodes its pane snapshots with ghostty f54340ad7 (main of
+# 2026-10-21, go.mitchellh.com/libghostty df1957cbff56); the snapshot wire
+# format is unchanged since then (every golden fixture and record tag is
+# identical; only decoder-side fixes landed: prompt-seen for an input cursor,
+# a hyperlink-capacity hint, a Style repack), so this decoder reads what that
+# Rex writes. It writes Kitty graphics records (tags 8-10) for a pane that
+# showed an image, and decoders from 781c58e96 on skip record tags they do not
+# know, so a newer Rex's optional records no longer fail the whole restore.
+# Also carries OSC 7501 program status at spec revision 0.4 (b7207b2ef).
+# Needs Zig >= 0.17.0 (build.zig.zon minimum_zig_version).
+# The 1.0 freeze renamed and reshaped much of the C API; the Swift call sites
+# follow the headers in the built xcframework.
 # When bumping, re-check SSHTerminalSnapshotFeed (SSHTerminalEngine.swift)
 # against src/terminal/snapshot/snapshot.zig: its record tags (`knownTags`)
 # and what one `ghostty_snapshot_decoder_next` reads (HISTORY manifests, a
 # page, and the header of the next known record, with that page's Kitty
 # placements when they follow), since a call that reads past what has
 # arrived fails the restore.
-COMMIT="f54340ad77814fe319d136e5e915d6a48de8dd23"
+COMMIT="de70b9f476c39ce3f5b293ecba813b674f037a80"
 # ReleaseFast with SIMD, as Ghostty ships it: both Release modes drop Zig's
 # runtime safety checks, so Fast only trades library size for speed, and the
 # vendored simdutf/highway build without libc++ into the static archive. On

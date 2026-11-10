@@ -22,14 +22,15 @@ enum SSHTerminalKittyLayer: Int, CaseIterable {
     case aboveText
 
     /// libghostty's own classification, used as the placement iterator's layer
-    /// filter: z < INT32_MIN/2 is below the background, negative is below text,
-    /// zero or more above it. Keeping the thresholds library-side means the
-    /// embedder never re-derives them and a draw order cannot disagree.
-    var ghosttyLayer: GhosttyKittyPlacementLayer {
+    /// filter (a bitmask): z < INT32_MIN/2 is below the background, negative is
+    /// below text, zero or more above it. Keeping the thresholds library-side
+    /// means the embedder never re-derives them and a draw order cannot disagree.
+    var ghosttyLayerMask: UInt32 {
         switch self {
-        case .belowBackground: GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG
-        case .belowText: GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT
-        case .aboveText: GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT
+        // GHOSTTY_IMAGE_LAYER_MASK_*: a function-like macro Swift does not import.
+        case .belowBackground: 1 << GHOSTTY_IMAGE_LAYER_BELOW_BACKGROUND.rawValue
+        case .belowText: 1 << GHOSTTY_IMAGE_LAYER_BELOW_TEXT.rawValue
+        case .aboveText: 1 << GHOSTTY_IMAGE_LAYER_ABOVE_TEXT.rawValue
         }
     }
 }
@@ -101,16 +102,15 @@ struct SSHTerminalKittyImage {
     /// terminal is mutated, which is why the renderer copies it immediately.
     func resolvePixels(_ graphics: GhosttyKittyGraphics) -> SSHTerminalKittyPixels? {
         guard let image = ghostty_kitty_graphics_image(graphics, id) else { return nil }
-        var pixels: UnsafePointer<UInt8>?
-        if ghostty_kitty_graphics_image_get(
-            image, GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR, &pixels
-        ) != GHOSTTY_SUCCESS { pixels = nil }
-        var length = 0
-        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN, &length)
-        // A payload libghostty has not finished assembling reports no pointer;
+        var pixels = GhosttyString()
+        // A payload libghostty has not finished assembling is GHOSTTY_NO_VALUE;
         // the next frame retries once the store's generation moves.
-        guard let pixels, length == width * height * format.bytesPerPixel else { return nil }
-        return SSHTerminalKittyPixels(pointer: pixels, byteCount: length)
+        guard ghostty_kitty_graphics_image_get(
+            image, GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_PIXELS, &pixels
+        ) == GHOSTTY_SUCCESS,
+            let pointer = pixels.ptr,
+            pixels.len == width * height * format.bytesPerPixel else { return nil }
+        return SSHTerminalKittyPixels(pointer: pointer, byteCount: pixels.len)
     }
 }
 
@@ -172,11 +172,11 @@ final class SSHTerminalKittySnapshot {
         var height: UInt32 = 0
         var format = GHOSTTY_KITTY_IMAGE_FORMAT_RGBA
         var generation: UInt64 = 0
-        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_ID, &id)
-        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_WIDTH, &width)
-        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_HEIGHT, &height)
-        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_FORMAT, &format)
-        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_GENERATION, &generation)
+        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_ID, &id)
+        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_WIDTH, &width)
+        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_HEIGHT, &height)
+        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_FORMAT, &format)
+        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_GENERATION, &generation)
         return SSHTerminalKittyImage(
             id: id, generation: generation,
             width: Int(width), height: Int(height),

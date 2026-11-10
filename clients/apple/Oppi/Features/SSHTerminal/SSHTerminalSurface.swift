@@ -1840,7 +1840,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         case " ": return GHOSTTY_KEY_SPACE
         default:
             if let scalar = text.lowercased().unicodeScalars.first, (97...122).contains(scalar.value) {
-                return GhosttyKey(rawValue: GHOSTTY_KEY_A.rawValue + Int32(scalar.value) - 97)
+                return GhosttyKey(rawValue: GHOSTTY_KEY_A.rawValue + scalar.value - 97)
             }
             return GHOSTTY_KEY_UNIDENTIFIED
         }

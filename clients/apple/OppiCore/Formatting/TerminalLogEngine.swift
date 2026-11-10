@@ -41,7 +41,9 @@ final class TerminalLogEngine {
             // silently prune complete reader history at Ghostty's default cap.
             // Large render jobs are one-shot owners; avoid synchronous full
             // compression scans immediately before the formatter decompresses.
-            try check(ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, nil), "history bytes")
+            // NULL restores the 10,000-byte default; SIZE_MAX removes the byte limit.
+            var unlimitedBytes = Int(bitPattern: UInt.max)
+            try check(ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, &unlimitedBytes), "history bytes")
             if live {
                 var lines = 1976 // active 24 + scrollback = 2000 physical rows
                 try check(ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES, &lines), "history lines")
@@ -49,15 +51,10 @@ final class TerminalLogEngine {
                 try check(ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES, nil), "history lines")
             }
             // Tool output never draws images; untrusted bytes must not reach zlib or ImageIO.
-            try check(ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, nil), "kitty graphics")
-            var options = GhosttyFormatterTerminalOptions()
-            options.size = MemoryLayout<GhosttyFormatterTerminalOptions>.size
-            options.emit = GHOSTTY_FORMATTER_FORMAT_VT
-            options.unwrap = true
-            options.trim = true
-            // No screen/terminal extras: only resolved text and cell styles are
-            // passed to the existing native SGR painter/chunk layout machinery.
-            try check(ghostty_formatter_terminal_new(nil, &formatter, terminal, options), "formatter")
+            // Zero disables Kitty graphics; NULL would restore the 10 MB default.
+            var noImages: UInt64 = 0
+            try check(ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &noImages), "kitty graphics")
+            formatter = try Self.makeFormatter(for: terminal, selection: nil)
         } catch {
             ghostty_terminal_free(terminal)
             terminal = nil
@@ -216,28 +213,41 @@ final class TerminalLogEngine {
     private func formatRows(_ rows: Range<Int>) throws -> String {
         guard !rows.isEmpty else { return "" }
         var selection = GhosttySelection()
-        selection.size = MemoryLayout<GhosttySelection>.size
         selection.start = try gridRef(x: 0, y: rows.lowerBound)
         selection.end = try gridRef(x: Self.columns - 1, y: rows.upperBound - 1)
-        // The selection convenience API emits palette/terminal extras for VT.
-        // Use the configurable formatter so only text and SGR reach UIKit.
-        var options = GhosttyFormatterTerminalOptions()
-        options.size = MemoryLayout<GhosttyFormatterTerminalOptions>.size
-        options.emit = GHOSTTY_FORMATTER_FORMAT_VT
-        options.unwrap = true
-        options.trim = true
-        return try withUnsafePointer(to: &selection) { pointer in
-            options.selection = pointer
-            var length = 0
-            var output: UnsafeMutablePointer<UInt8>?
-            var regionFormatter: GhosttyFormatter?
-            try check(ghostty_formatter_terminal_new(nil, &regionFormatter, terminal, options), "region formatter")
-            defer { ghostty_formatter_free(regionFormatter) }
-            try check(ghostty_formatter_format_alloc(regionFormatter, nil, &output, &length), "selection formatting")
-            defer { ghostty_free(nil, output, length) }
-            return (output.map { String(decoding: UnsafeBufferPointer(start: $0, count: length), as: UTF8.self) } ?? "")
-                .replacingOccurrences(of: "\r\n", with: "\n")
+        let regionFormatter = try Self.makeFormatter(for: terminal, selection: selection)
+        defer { ghostty_formatter_free(regionFormatter) }
+        var length = 0
+        var output: UnsafeMutablePointer<UInt8>?
+        try check(ghostty_formatter_format_alloc(regionFormatter, nil, &output, &length), "selection formatting")
+        defer { ghostty_free(nil, output, length) }
+        return (output.map { String(decoding: UnsafeBufferPointer(start: $0, count: length), as: UTF8.self) } ?? "")
+            .replacingOccurrences(of: "\r\n", with: "\n")
+    }
+
+    /// A VT formatter with no screen/terminal extras: only resolved text and
+    /// cell styles reach the native SGR painter/chunk layout machinery. A new
+    /// formatter defaults to palette, cursor style and hyperlink extras, so
+    /// they are cleared explicitly.
+    private static func makeFormatter(for terminal: GhosttyTerminal?, selection: GhosttySelection?) throws -> GhosttyFormatter? {
+        var formatter: GhosttyFormatter?
+        try check(ghostty_formatter_terminal_new(nil, &formatter, terminal), "formatter")
+        do {
+            var emit = GHOSTTY_FORMATTER_FORMAT_VT
+            try check(ghostty_formatter_set(formatter, GHOSTTY_FORMATTER_OPT_EMIT, &emit), "formatter emit")
+            var enabled = true
+            try check(ghostty_formatter_set(formatter, GHOSTTY_FORMATTER_OPT_UNWRAP, &enabled), "formatter unwrap")
+            try check(ghostty_formatter_set(formatter, GHOSTTY_FORMATTER_OPT_TRIM, &enabled), "formatter trim")
+            var extras: GhosttyFormatterExtras = 0
+            try check(ghostty_formatter_set(formatter, GHOSTTY_FORMATTER_OPT_EXTRAS, &extras), "formatter extras")
+            if var selection {
+                try check(ghostty_formatter_set(formatter, GHOSTTY_FORMATTER_OPT_SELECTION, &selection), "formatter selection")
+            }
+        } catch {
+            ghostty_formatter_free(formatter)
+            throw error
         }
+        return formatter
     }
 
     /// Used by detached reader/large-row jobs. Each job owns its engine, so
@@ -251,6 +261,10 @@ final class TerminalLogEngine {
     }
 
     private func check(_ result: GhosttyResult, _ operation: String) throws {
+        try Self.check(result, operation)
+    }
+
+    private static func check(_ result: GhosttyResult, _ operation: String) throws {
         guard result == GHOSTTY_SUCCESS else { throw Failure(operation: operation, result: result) }
     }
 }

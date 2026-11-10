@@ -338,13 +338,13 @@ enum SSHTerminalKeymap {
     private static func namedKey(_ name: String) -> (GhosttyKey, String, String)? {
         if name.count == 1, let scalar = name.unicodeScalars.first {
             if (97...122).contains(scalar.value) {
-                return (GhosttyKey(rawValue: GHOSTTY_KEY_A.rawValue + Int32(scalar.value) - 97), name, name.uppercased())
+                return (GhosttyKey(rawValue: GHOSTTY_KEY_A.rawValue + scalar.value - 97), name, name.uppercased())
             }
             if (48...57).contains(scalar.value) {
-                return (GhosttyKey(rawValue: GHOSTTY_KEY_DIGIT_0.rawValue + Int32(scalar.value) - 48), name, name)
+                return (GhosttyKey(rawValue: GHOSTTY_KEY_DIGIT_0.rawValue + scalar.value - 48), name, name)
             }
         }
-        if name.hasPrefix("f"), let number = Int32(name.dropFirst()), (1...12).contains(number) {
+        if name.hasPrefix("f"), let number = UInt32(name.dropFirst()), (1...12).contains(number) {
             return (GhosttyKey(rawValue: GHOSTTY_KEY_F1.rawValue + number - 1), "", "F\(number)")
         }
         switch name {

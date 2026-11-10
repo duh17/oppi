@@ -12,7 +12,7 @@ struct SSHTerminalGeometry: Equatable, Sendable {
 }
 
 /// The style bits the renderer draws, one byte per cell. libghostty's
-/// `GhosttyStyle` is 72 bytes and its colors arrive already resolved in the
+/// `GhosttyStyle` is 16 bytes and its colors arrive already resolved in the
 /// cell, so only these flags are kept.
 struct SSHTerminalCellStyle: Equatable {
     private var bits: UInt8 = 0
@@ -20,13 +20,16 @@ struct SSHTerminalCellStyle: Equatable {
     init() {}
 
     init(_ style: GhosttyStyle) {
-        if style.bold { bits |= 1 << 0 }
-        if style.italic { bits |= 1 << 1 }
-        if style.faint { bits |= 1 << 2 }
-        if style.inverse { bits |= 1 << 3 }
-        if style.invisible { bits |= 1 << 4 }
-        if style.strikethrough { bits |= 1 << 5 }
-        if style.underline != 0 { bits |= 1 << 6 } // GHOSTTY_SGR_UNDERLINE_NONE
+        // GHOSTTY_STYLE_FLAG_* are cast macros Swift does not import; bits per
+        // ghostty/vt/style.h: 0-2 bold/italic/faint, 4-6 inverse/invisible/strike, 3-bit underline kind at 8.
+        let flags = style.flags
+        if flags & (1 << 0) != 0 { bits |= 1 << 0 }
+        if flags & (1 << 1) != 0 { bits |= 1 << 1 }
+        if flags & (1 << 2) != 0 { bits |= 1 << 2 }
+        if flags & (1 << 4) != 0 { bits |= 1 << 3 }
+        if flags & (1 << 5) != 0 { bits |= 1 << 4 }
+        if flags & (1 << 6) != 0 { bits |= 1 << 5 }
+        if flags & (0x7 << 8) != 0 { bits |= 1 << 6 }
     }
 
     var bold: Bool { bits & (1 << 0) != 0 }
@@ -105,13 +108,13 @@ private final class SSHTerminalCellReads {
     static let styleKeyCount = 3
 
     /// One raw cell's decode, read back as a single value. The C enums are
-    /// `int`-typed, so the tag and width land in `Int32` fields and compare as
+    /// `uint32_t`-typed, so the tag and width land in `UInt32` fields and compare as
     /// plain integers: a comparison of the imported enum structs is a generic
     /// `RawRepresentable` call per cell in unoptimized builds.
     struct Decoded {
         var codepoint: UInt32 = 0
-        var tag: Int32 = 0
-        var wide: Int32 = 0
+        var tag: UInt32 = 0
+        var wide: UInt32 = 0
         var styled = false
     }
 
@@ -132,9 +135,7 @@ private final class SSHTerminalCellReads {
     init() {
         decoded.initialize(to: Decoded())
         let base = UnsafeMutableRawPointer(decoded)
-        var blank = GhosttyStyle()
-        blank.size = MemoryLayout<GhosttyStyle>.size
-        style.initialize(to: blank)
+        style.initialize(to: GhosttyStyle())
         foreground.initialize(to: GhosttyColorRgb())
         background.initialize(to: GhosttyColorRgb())
         cellKeys.initialize(from: [
@@ -332,7 +333,7 @@ final class SSHTerminalEngine {
         // plus the part-row strip under the last whole row. libghostty only
         // captures rows that exist, so the live screen reads none.
         var overscan = GhosttyRenderStateOverscan(above: 0, below: 2)
-        ghostty_render_state_set(render, GHOSTTY_RENDER_STATE_OPTION_OVERSCAN, &overscan)
+        ghostty_render_state_set(render, GHOSTTY_RENDER_STATE_OPT_OVERSCAN, &overscan)
     }
 
     /// Everything this engine sets on its libghostty terminal: callbacks, size,
@@ -646,7 +647,7 @@ final class SSHTerminalEngine {
         forceFullRebuild = true
         var value = GhosttyTerminalScrollViewportValue()
         value.delta = rows
-        ghostty_terminal_scroll_viewport(terminal, .init(tag: GHOSTTY_SCROLL_VIEWPORT_DELTA, value: value))
+        ghostty_terminal_scroll_viewport(terminal, .init(tag: GHOSTTY_TERMINAL_SCROLL_VIEWPORT_DELTA, value: value))
     }
 
     /// Absolute row in the same space as `scrollbar.offset`.
@@ -655,7 +656,7 @@ final class SSHTerminalEngine {
         forceFullRebuild = true
         var value = GhosttyTerminalScrollViewportValue()
         value.row = max(0, row)
-        ghostty_terminal_scroll_viewport(terminal, .init(tag: GHOSTTY_SCROLL_VIEWPORT_ROW, value: value))
+        ghostty_terminal_scroll_viewport(terminal, .init(tag: GHOSTTY_TERMINAL_SCROLL_VIEWPORT_ROW, value: value))
         var active = false
         ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_VIEWPORT_ACTIVE, &active)
         following = active
@@ -665,7 +666,7 @@ final class SSHTerminalEngine {
         following = true
         notePictureChange()
         forceFullRebuild = true
-        ghostty_terminal_scroll_viewport(terminal, .init(tag: GHOSTTY_SCROLL_VIEWPORT_BOTTOM, value: .init()))
+        ghostty_terminal_scroll_viewport(terminal, .init(tag: GHOSTTY_TERMINAL_SCROLL_VIEWPORT_BOTTOM, value: .init()))
     }
 
     var scrollbar: GhosttyTerminalScrollbar {
@@ -859,9 +860,9 @@ final class SSHTerminalEngine {
         var iterator: GhosttyKittyGraphicsPlacementIterator?
         if ghostty_kitty_graphics_placement_iterator_new(nil, &iterator) == GHOSTTY_SUCCESS {
             for layer in SSHTerminalKittyLayer.allCases {
-                var filter = layer.ghosttyLayer
+                var filter = layer.ghosttyLayerMask
                 guard ghostty_kitty_graphics_placement_iterator_set(
-                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER, &filter
+                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPT_LAYER, &filter
                 ) == GHOSTTY_SUCCESS,
                     ghostty_kitty_graphics_get(
                         graphics, GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR, &iterator
@@ -974,7 +975,7 @@ final class SSHTerminalEngine {
     private func readCell(
         _ cell: SSHTerminalCellReads.Decoded, x: Int,
         foreground: GhosttyColorRgb, background: GhosttyColorRgb,
-        codepointTag: Int32, graphemeTag: Int32, columns: UInt8
+        codepointTag: UInt32, graphemeTag: UInt32, columns: UInt8
     ) -> SSHTerminalCell {
         guard cell.styled || cell.tag != codepointTag else {
             return SSHTerminalCell(
@@ -1029,11 +1030,12 @@ final class SSHTerminalEngine {
         ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &length)
         guard length > 1 else { return nil }
         return withUnsafeTemporaryAllocation(of: UInt32.self, capacity: Int(length)) { codepoints in
+            var buffer = GhosttyCodepointBuffer(ptr: codepoints.baseAddress, cap: codepoints.count, len: 0)
             guard ghostty_render_state_row_cells_get(
-                cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, codepoints.baseAddress
+                cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, &buffer
             ) == GHOSTTY_SUCCESS else { return nil }
             var scalars = String.UnicodeScalarView()
-            for value in codepoints {
+            for value in codepoints.prefix(buffer.len) {
                 if let scalar = Unicode.Scalar(value) { scalars.append(scalar) }
             }
             return String(scalars)
@@ -1051,17 +1053,17 @@ final class SSHTerminalEngine {
         var event: GhosttyKeyEvent?
         guard ghostty_key_event_new(nil, &event) == GHOSTTY_SUCCESS else { return Data() }
         defer { ghostty_key_event_free(event) }
-        ghostty_key_encoder_setopt_from_terminal(encoder, terminal)
+        ghostty_key_encoder_set_from_terminal(encoder, terminal)
         // Option is Alt (Meta), like Ghostty's `macos-option-as-alt = true`.
         // The terminal-state call above resets this, so it is set per key.
         var optionAsAlt = GHOSTTY_OPTION_AS_ALT_TRUE
-        ghostty_key_encoder_setopt(encoder, GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT, &optionAsAlt)
+        ghostty_key_encoder_set(encoder, GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT, &optionAsAlt)
         ghostty_key_event_set_action(event, GHOSTTY_KEY_ACTION_PRESS)
         ghostty_key_event_set_key(event, key)
         ghostty_key_event_set_mods(event, modifiers)
         ghostty_key_event_set_unshifted_codepoint(event, text.lowercased().unicodeScalars.first?.value ?? 0)
         return text.utf8CString.withUnsafeBufferPointer { input in
-            ghostty_key_event_set_utf8(event, input.baseAddress, input.count - 1)
+            ghostty_key_event_set_utf8(event, GhosttyString(ptr: input.baseAddress.map { UnsafeRawPointer($0).assumingMemoryBound(to: UInt8.self) }, len: input.count - 1))
             var length = 0
             ghostty_key_encoder_encode(encoder, event, nil, 0, &length)
             var output = [CChar](repeating: 0, count: length)
@@ -1111,7 +1113,6 @@ final class SSHTerminalEngine {
               let end = gridRef(.init(x: UInt16(cursor.column - 1), y: UInt32(cursor.row)), tag: GHOSTTY_POINT_TAG_ACTIVE)
         else { return nil }
         var selection = GhosttySelection()
-        selection.size = MemoryLayout<GhosttySelection>.size
         selection.start = start
         selection.end = end
         selection.rectangle = false
@@ -1193,14 +1194,14 @@ final class SSHTerminalEngine {
     /// and tracking mode the application selected. Empty when it did not ask.
     func mouse(_ input: MouseInput, column: Int, row: Int) -> Data {
         guard mouseTracking else { return Data() }
-        ghostty_mouse_encoder_setopt_from_terminal(mouseEncoder, terminal)
+        ghostty_mouse_encoder_set_from_terminal(mouseEncoder, terminal)
         var size = GhosttyMouseEncoderSize()
         size.size = MemoryLayout<GhosttyMouseEncoderSize>.size
         size.screen_width = UInt32(geometry.pixelWidth)
         size.screen_height = UInt32(geometry.pixelHeight)
         size.cell_width = UInt32(max(1, geometry.cellWidth))
         size.cell_height = UInt32(max(1, geometry.cellHeight))
-        ghostty_mouse_encoder_setopt(mouseEncoder, GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size)
+        ghostty_mouse_encoder_set(mouseEncoder, GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size)
         let column = min(max(0, column), geometry.columns - 1)
         let row = min(max(0, row), geometry.rows - 1)
         let position = GhosttyMousePosition(x: Float((Double(column) + 0.5) * Double(geometry.cellWidth)),
@@ -1225,7 +1226,7 @@ final class SSHTerminalEngine {
             ghostty_mouse_event_set_button(event, button)
             ghostty_mouse_event_set_position(event, position)
             var anyPressed = pressed
-            ghostty_mouse_encoder_setopt(mouseEncoder, GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &anyPressed)
+            ghostty_mouse_encoder_set(mouseEncoder, GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &anyPressed)
             var buffer = [CChar](repeating: 0, count: 64)
             var length = 0
             let result = buffer.withUnsafeMutableBufferPointer {
@@ -1255,7 +1256,6 @@ final class SSHTerminalEngine {
             options.boundary_codepoints = buffer.baseAddress
             options.boundary_codepoints_len = buffer.count
             var selection = GhosttySelection()
-            selection.size = MemoryLayout<GhosttySelection>.size
             guard ghostty_terminal_select_word(terminal, &options, &selection) == GHOSTTY_SUCCESS else {
                 return nil
             }
@@ -1322,7 +1322,6 @@ final class SSHTerminalEngine {
             selectionDrag, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_GEOMETRY, &gestureGeometry
         )
         var selection = GhosttySelection()
-        selection.size = MemoryLayout<GhosttySelection>.size
         guard ghostty_selection_gesture_event(
             selectionGesture, terminal, selectionDrag, &selection
         ) == GHOSTTY_SUCCESS else { return nil }
@@ -1366,7 +1365,6 @@ final class SSHTerminalEngine {
         value.coordinate = coordinate
         let point = GhosttyPoint(tag: tag, value: value)
         var ref = GhosttyGridRef()
-        ref.size = MemoryLayout<GhosttyGridRef>.size
         guard ghostty_terminal_grid_ref(terminal, point, &ref) == GHOSTTY_SUCCESS else { return nil }
         return ref
     }
@@ -1378,28 +1376,30 @@ final class SSHTerminalEngine {
 
     private func formatSelection(_ selection: GhosttySelection) -> String? {
         var selection = selection
-        var options = GhosttyTerminalSelectionFormatOptions()
-        options.size = MemoryLayout<GhosttyTerminalSelectionFormatOptions>.size
-        options.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN
-        options.unwrap = true
-        options.trim = true
-        return withUnsafePointer(to: &selection) { pointer in
-            options.selection = pointer
-            var output: UnsafeMutablePointer<UInt8>?
-            var length = 0
-            let result = ghostty_terminal_selection_format_alloc(
-                terminal, nil, options, &output, &length
-            )
-            defer { ghostty_free(nil, output, length) }
-            guard result == GHOSTTY_SUCCESS, let output, length > 0 else { return nil }
-            return String(decoding: UnsafeBufferPointer(start: output, count: length), as: UTF8.self)
-        }
+        // Plain text, unwrapped and trimmed: what Ghostty copies. The formatter
+        // keeps its own copy of the selection, so one is made per call. Its
+        // default extras only apply to VT output.
+        var formatter: GhosttyFormatter?
+        guard ghostty_formatter_terminal_new(nil, &formatter, terminal) == GHOSTTY_SUCCESS else { return nil }
+        defer { ghostty_formatter_free(formatter) }
+        var emit = GHOSTTY_FORMATTER_FORMAT_PLAIN
+        var enabled = true
+        guard ghostty_formatter_set(formatter, GHOSTTY_FORMATTER_OPT_EMIT, &emit) == GHOSTTY_SUCCESS,
+              ghostty_formatter_set(formatter, GHOSTTY_FORMATTER_OPT_UNWRAP, &enabled) == GHOSTTY_SUCCESS,
+              ghostty_formatter_set(formatter, GHOSTTY_FORMATTER_OPT_TRIM, &enabled) == GHOSTTY_SUCCESS,
+              ghostty_formatter_set(formatter, GHOSTTY_FORMATTER_OPT_SELECTION, &selection) == GHOSTTY_SUCCESS
+        else { return nil }
+        var output: UnsafeMutablePointer<UInt8>?
+        var length = 0
+        let result = ghostty_formatter_format_alloc(formatter, nil, &output, &length)
+        defer { ghostty_free(nil, output, length) }
+        guard result == GHOSTTY_SUCCESS, let output, length > 0 else { return nil }
+        return String(decoding: UnsafeBufferPointer(start: output, count: length), as: UTF8.self)
     }
 
     private func viewportSpans(_ selection: GhosttySelection) -> [SSHTerminalSelectionSpan] {
         var selection = selection
         var ordered = GhosttySelection()
-        ordered.size = MemoryLayout<GhosttySelection>.size
         guard ghostty_terminal_selection_ordered(
             terminal, &selection, GHOSTTY_SELECTION_ORDER_FORWARD, &ordered
         ) == GHOSTTY_SUCCESS else { return [] }

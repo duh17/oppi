@@ -1596,9 +1596,9 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         let y = Float(frame.cursor.viewport_y) * cellH
         let hair = max(1, Float(scale))
         switch frame.cursor.visual_style {
-        case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR:
+        case GHOSTTY_CURSOR_STYLE_BAR:
             return [CellInstance(origin: SIMD2(x, y), size: SIMD2(2 * hair, cellH), color: color, uv: .zero, flags: 0)]
-        case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE:
+        case GHOSTTY_CURSOR_STYLE_UNDERLINE:
             return [CellInstance(
                 origin: SIMD2(x, y + cellH - 2 * hair),
                 size: SIMD2(cellW, 2 * hair),
