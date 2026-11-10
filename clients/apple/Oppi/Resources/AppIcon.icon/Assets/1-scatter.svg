@@ -3,10 +3,10 @@
   <title>Oppi icon scatter</title>
   <desc>quiet outer cells</desc>
   <g opacity="0.18">
-    <rect x="226" y="129" width="86" height="86" rx="23" fill="#DDE4F2"/>
-    <rect x="323" y="129" width="86" height="86" rx="23" fill="#DDE4F2"/>
-    <rect x="129" y="518" width="86" height="86" rx="23" fill="#DDE4F2"/>
-    <rect x="226" y="810" width="86" height="86" rx="23" fill="#DDE4F2"/>
-    <rect x="810" y="810" width="86" height="86" rx="23" fill="#DDE4F2"/>
+    <rect x="227" y="130" width="85" height="85" rx="23" fill="#DDE4F2"/>
+    <rect x="324" y="130" width="85" height="85" rx="23" fill="#DDE4F2"/>
+    <rect x="130" y="518" width="85" height="85" rx="23" fill="#DDE4F2"/>
+    <rect x="227" y="809" width="85" height="85" rx="23" fill="#DDE4F2"/>
+    <rect x="809" y="809" width="85" height="85" rx="23" fill="#DDE4F2"/>
   </g>
 </svg>

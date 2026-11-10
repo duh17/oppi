@@ -1,35 +1,25 @@
 {
+  "generator": "clients/apple/icon-layers/generate.ts",
+  "seed": 42,
   "canvas": 1024,
   "grid": {
-    "cell": 86,
+    "columns": 8,
+    "rows": 8,
+    "cell": 85,
+    "gap": 12,
     "radius": 23,
-    "x": [
-      129,
-      226,
-      323,
-      421,
-      518,
-      615,
-      712,
-      810
-    ],
-    "y": [
-      129,
-      226,
-      323,
-      421,
-      518,
-      615,
-      712,
-      810
-    ]
+    "origin": 130
   },
-  "intent": "Same production composition, cleaner SVG layers for Icon Composer.",
-  "appleGuidance": [
-    "Keep layers unmasked; let the system apply the app icon mask.",
-    "Keep source artwork flat with clearly defined edges.",
-    "Use Icon Composer for background, glass, translucency, shadows, and appearance tuning.",
-    "Keep the mark recognizable at small sizes and in mono/tinted appearances."
+  "layout": [
+    ". s s . . . . .",
+    ". 1 2 w p p W .",
+    "g . p . . p . .",
+    "g . p . . . . .",
+    "s . w . . P . .",
+    ". . p . . w . .",
+    ". . p . . p p .",
+    ". s . . . . . G",
+    ". . . . . g . ."
   ],
   "layers": [
     {
@@ -51,12 +41,12 @@
       "description": "mid-depth cells that extend the pi rhythm",
       "opacity": 0.42,
       "cells": [
-        "6,0",
-        "0,1",
+        "6,1",
         "0,2",
-        "5,3",
-        "7,6",
-        "5,7"
+        "0,3",
+        "5,4",
+        "7,7",
+        "5,8"
       ]
     },
     {
@@ -80,7 +70,7 @@
     {
       "file": "4-warm-detail.svg",
       "name": "warm-detail",
-      "description": "warm secondary cells inside the mark",
+      "description": "tinted secondary cells inside the mark",
       "opacity": 0.9,
       "cells": [
         "3,1",
@@ -92,47 +82,12 @@
     {
       "file": "5-sparks.svg",
       "name": "sparks",
-      "description": "primary warm accent cells",
+      "description": "rare vivid cells",
       "opacity": 0.96,
       "cells": [
         "1,1",
         "2,1"
       ]
     }
-  ],
-  "iconComposerNotes": [
-    "Background is stored in icon.json, not in the layer SVGs.",
-    "Scatter and growth are intentionally faint support layers; main cells and accents stay crisp.",
-    "Tune Default, Dark, Mono, tinted, and clear variants in Icon Composer before release."
-  ],
-  "leftJewels": {
-    "file": "left-jewels.svg",
-    "intent": "Four left-side support cells use subtly different cool colors.",
-    "cells": [
-      {
-        "x": 129,
-        "y": 323,
-        "fill": "#A9BAB9",
-        "opacity": 0.82
-      },
-      {
-        "x": 129,
-        "y": 421,
-        "fill": "#7F8794",
-        "opacity": 0.76
-      },
-      {
-        "x": 129,
-        "y": 518,
-        "fill": "#42545A",
-        "opacity": 0.7
-      },
-      {
-        "x": 226,
-        "y": 810,
-        "fill": "#202B32",
-        "opacity": 0.66
-      }
-    ]
-  }
+  ]
 }

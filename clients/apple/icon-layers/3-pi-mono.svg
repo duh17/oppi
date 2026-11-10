@@ -3,15 +3,15 @@
   <title>Oppi icon pi-mono</title>
   <desc>main neutral pi cells</desc>
   <g opacity="0.92">
-    <rect x="518" y="226" width="86" height="86" rx="23" fill="#EEF3FF"/>
-    <rect x="615" y="226" width="86" height="86" rx="23" fill="#EEF3FF"/>
-    <rect x="323" y="323" width="86" height="86" rx="23" fill="#EEF3FF"/>
-    <rect x="615" y="323" width="86" height="86" rx="23" fill="#EEF3FF"/>
-    <rect x="323" y="421" width="86" height="86" rx="23" fill="#EEF3FF"/>
-    <rect x="615" y="518" width="86" height="86" rx="23" fill="#EEF3FF"/>
-    <rect x="323" y="615" width="86" height="86" rx="23" fill="#EEF3FF"/>
-    <rect x="323" y="712" width="86" height="86" rx="23" fill="#EEF3FF"/>
-    <rect x="615" y="712" width="86" height="86" rx="23" fill="#EEF3FF"/>
-    <rect x="712" y="712" width="86" height="86" rx="23" fill="#EEF3FF"/>
+    <rect x="518" y="227" width="85" height="85" rx="23" fill="#EEF3FF"/>
+    <rect x="615" y="227" width="85" height="85" rx="23" fill="#EEF3FF"/>
+    <rect x="324" y="324" width="85" height="85" rx="23" fill="#EEF3FF"/>
+    <rect x="615" y="324" width="85" height="85" rx="23" fill="#EEF3FF"/>
+    <rect x="324" y="421" width="85" height="85" rx="23" fill="#EEF3FF"/>
+    <rect x="615" y="518" width="85" height="85" rx="23" fill="#EEF3FF"/>
+    <rect x="324" y="615" width="85" height="85" rx="23" fill="#EEF3FF"/>
+    <rect x="324" y="712" width="85" height="85" rx="23" fill="#EEF3FF"/>
+    <rect x="615" y="712" width="85" height="85" rx="23" fill="#EEF3FF"/>
+    <rect x="712" y="712" width="85" height="85" rx="23" fill="#EEF3FF"/>
   </g>
 </svg>
