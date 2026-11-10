@@ -22,7 +22,7 @@
  */
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { diffRevisions } from "@earendil-works/chord/delta";
-import type { WatchCall } from "@earendil-works/chord";
+import type { WatchCall } from "@earendil-works/chord/watch";
 import {
   InboxDoc,
   LiveDoc,

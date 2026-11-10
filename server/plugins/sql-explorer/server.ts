@@ -4,7 +4,7 @@ import {
   type ToolExecutionApi,
   type ToolExecutionResult,
 } from "@earendil-works/pi-durable";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { defineExtension, defineFacet, DurableUI, Extensions } from "oppi/v1";
 
 const QUERY_TIMEOUT_SECONDS = 15;

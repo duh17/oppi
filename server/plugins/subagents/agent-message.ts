@@ -1,5 +1,5 @@
 // Pure transcript metadata: safe to import without loading the Durable runtime.
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 
 /**
  * Entry kind an input from another agent session is placed as, instead of `pi.user`

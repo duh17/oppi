@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { diffRevisions } from "@earendil-works/chord/delta";
-import type { JsonObject } from "@earendil-works/chord";
+import type { JsonObject } from "@earendil-works/chord/json";
 import type { EntryRecord } from "@earendil-works/pi-durable";
 
 import {

@@ -1,5 +1,6 @@
 import type { TranscriptCard } from "./transcript-card.js";
-import type { Context, JsonValue } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { defineDoc, type ToolExecutionApi, type TaskId } from "@earendil-works/pi-durable";
 
 // Structural Pi/Oppi UI payloads. No classic factory or server runtime is loaded.

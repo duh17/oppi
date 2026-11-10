@@ -18,7 +18,7 @@ import {
   type NestedToolSlot,
   type ToolSlot,
 } from "@earendil-works/pi-durable";
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { DurableUIClientDoc, sanitizeTranscriptCard } from "./durable-ui.js";
 import { agentMessageOrigin } from "../plugins/subagents/agent-message.js";
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";

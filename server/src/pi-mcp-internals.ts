@@ -131,7 +131,8 @@ async function loadInternals(): Promise<PiMcpInternals> {
   const dist = dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")));
   const load = (path: string): Promise<Record<string, unknown>> =>
     import(pathToFileURL(join(dist, path)).href) as Promise<Record<string, unknown>>;
-  const [config, runtime, tools, resources, mcp, servers, search] = await Promise.all([
+  // Tool naming moved to Pi's `@earendil-works/pi-mcp` package in 1.5.1.
+  const [config, runtime, tools, resources, mcp, servers, search, naming] = await Promise.all([
     load("extensions/mcp/config.js"),
     load("extensions/mcp/runtime.js"),
     load("extensions/mcp/tools.js"),
@@ -139,6 +140,7 @@ async function loadInternals(): Promise<PiMcpInternals> {
     load("extensions/mcp/index.js"),
     load("core/mcp-servers.js"),
     load("extensions/tool-search/tool.js"),
+    import("@earendil-works/pi-mcp") as Promise<Record<string, unknown>>,
   ]);
   const internals = {
     loadMcpConfig: config.loadMcpConfig,
@@ -147,11 +149,11 @@ async function loadInternals(): Promise<PiMcpInternals> {
     McpOAuthCredentialStore: runtime.McpOAuthCredentialStore,
     McpServerLog: runtime.McpServerLog,
     getMcpToolExposure: config.getMcpToolExposure,
-    createMcpToolName: tools.createMcpToolName,
+    createMcpToolName: naming.createMcpToolName,
     createMcpToolDefinition: tools.createMcpToolDefinition,
     createMcpResourceToolDefinitions: resources.createMcpResourceToolDefinitions,
     renderServersSection: mcp.renderServersSection,
-    mcpNamespace: servers.mcpNamespace,
+    mcpNamespace: naming.mcpNamespace,
     createToolNameMatcher: servers.createToolNameMatcher,
     isMcpToolName: servers.isMcpToolName,
     createToolSearchDocument: search.createToolSearchDocument,

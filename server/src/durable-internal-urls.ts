@@ -1,4 +1,5 @@
-import type { Context, JsonValue } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import type { ToolExecutionApi } from "@earendil-works/pi-durable";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import {

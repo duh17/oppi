@@ -1,4 +1,4 @@
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { answerRecord, decodePathSegment, type ControlWrite } from "oppi/v1";
 
 /**

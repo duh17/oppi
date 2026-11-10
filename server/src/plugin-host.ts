@@ -2,7 +2,8 @@ import * as chord from "@earendil-works/chord";
 import * as chordContext from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import * as chordDelta from "@earendil-works/chord/delta";
-import * as chordNext from "@earendil-works/chord/next";
+import * as chordJson from "@earendil-works/chord/json";
+import * as chordWatch from "@earendil-works/chord/watch";
 import {
   createHost,
   defineFacet,
@@ -13,7 +14,7 @@ import {
   type HostError,
   type PluginFacet,
   type RegistryTable,
-} from "@earendil-works/chord/next";
+} from "@earendil-works/chord";
 import * as piAi from "@earendil-works/pi-ai";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import * as piDurable from "@earendil-works/pi-durable";
@@ -248,7 +249,7 @@ export interface PluginCatalog {
 /** The core facet's plugin name; a plugin of this name is refused. */
 const CORE_PLUGIN = "@oppi/core";
 
-type Entry = { readonly loaded: LoadedPlugin; readonly facet: Facet<chordNext.Principal> };
+type Entry = { readonly loaded: LoadedPlugin; readonly facet: Facet<chord.Principal> };
 type Candidate = Entry & { readonly fresh: boolean };
 type Found = DiscoveredPlugin & {
   readonly source: PluginSource;
@@ -577,7 +578,7 @@ export class PluginHost {
     }
 
     // Commit on the Chord host: one batch replaces every changed plugin's contribution.
-    const facets: PluginFacet<chordNext.Principal>[] = [
+    const facets: PluginFacet<chord.Principal>[] = [
       { name: CORE_PLUGIN, facet: this.core },
       ...accepted.map((entry) => ({ name: entry.loaded.name, facet: entry.facet })),
     ];
@@ -867,7 +868,8 @@ const HOST_MODULES: Record<string, unknown> = {
   "@earendil-works/chord": chord,
   "@earendil-works/chord/context": chordContext,
   "@earendil-works/chord/delta": chordDelta,
-  "@earendil-works/chord/next": chordNext,
+  "@earendil-works/chord/json": chordJson,
+  "@earendil-works/chord/watch": chordWatch,
   "@earendil-works/pi-ai": piAi,
   "@earendil-works/pi-schema": piSchema,
 };
@@ -876,7 +878,7 @@ const HOST_MODULES: Record<string, unknown> = {
  * Import a facet with a fresh jiti (no module cache, so a reload re-reads the facet and every file
  * it imports) and check its default export is a facet.
  */
-async function evaluateFacet(file: string): Promise<Facet<chordNext.Principal>> {
+async function evaluateFacet(file: string): Promise<Facet<chord.Principal>> {
   const jiti = createJiti(import.meta.url, {
     moduleCache: false,
     tryNative: false,
@@ -886,10 +888,10 @@ async function evaluateFacet(file: string): Promise<Facet<chordNext.Principal>> 
   if (
     typeof facet !== "object" ||
     facet === null ||
-    typeof (facet as Facet<chordNext.Principal>).setup !== "function"
+    typeof (facet as Facet<chord.Principal>).setup !== "function"
   )
     throw new Error("The default export must be a facet (defineFacet from oppi/v1)");
-  return facet as Facet<chordNext.Principal>;
+  return facet as Facet<chord.Principal>;
 }
 
 /**
@@ -897,7 +899,7 @@ async function evaluateFacet(file: string): Promise<Facet<chordNext.Principal>> 
  * (Chord runs it again when it loads the plugin; a setup only declares). Throws when the setup
  * throws or contributes no valid extension.
  */
-function contributionOf(facet: Facet<chordNext.Principal>): {
+function contributionOf(facet: Facet<chord.Principal>): {
   extension: Extension;
   runtimes: readonly PluginRuntime[];
 } {

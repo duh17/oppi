@@ -1,4 +1,4 @@
-import { defineRegistry } from "@earendil-works/chord/next";
+import { defineRegistry } from "@earendil-works/chord";
 import type { Extension, RegistrySnapshot, ToolRegistration } from "@earendil-works/pi-durable";
 import { pluginRuntimes, type PluginRuntime } from "./plugin-runtimes.js";
 
@@ -28,12 +28,7 @@ import { pluginRuntimes, type PluginRuntime } from "./plugin-runtimes.js";
  * Chord's facet: a plugin's declarations on a host (`self.contribute`).
  * @public
  */
-export {
-  defineFacet,
-  type Facet,
-  type FacetHost,
-  type FacetSelf,
-} from "@earendil-works/chord/next";
+export { defineFacet, type Facet, type FacetHost, type FacetSelf } from "@earendil-works/chord";
 /** pi-durable's authoring API: tools, tasks, hooks, sections, wraps, documents. */
 export * from "@earendil-works/pi-durable";
 /** What only Oppi provides: its host (`oppiHost()`), extension UI dialogs and cards. */

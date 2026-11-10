@@ -34,7 +34,8 @@
  *   loading, transports, and the log, so the classic sandbox boundary applies unchanged.
  */
 import { join } from "node:path";
-import type { Context, JsonValue } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { McpExposure, McpServerEntry, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { num, obj, opt, str } from "@earendil-works/pi-schema";
