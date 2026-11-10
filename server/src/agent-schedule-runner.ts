@@ -97,17 +97,21 @@ export class AgentScheduleRunner {
   private materializeDueRuns(now: number): void {
     const store = this.deps.storage.getAgentScheduleStore();
     // A tick that finds a dispatch in flight evaluates nothing, so its minutes stay between
-    // lastCronMinute and the current one and are picked up here by the next evaluation.
+    // lastCronMinute and the current one and are picked up here by the next evaluation. If
+    // the clock stepped back, the window collapses to the current minute.
     const currentMinute = minuteStartOf(now);
     const cronFromMinute =
       this.lastCronMinute === null
         ? currentMinute
-        : Math.max(
-            this.lastCronMinute + MS_PER_MINUTE,
-            currentMinute - CRON_CATCH_UP_MINUTES * MS_PER_MINUTE,
+        : Math.min(
+            currentMinute,
+            Math.max(
+              this.lastCronMinute + MS_PER_MINUTE,
+              currentMinute - CRON_CATCH_UP_MINUTES * MS_PER_MINUTE,
+            ),
           );
-    this.lastCronMinute = Math.max(this.lastCronMinute ?? currentMinute, currentMinute);
-    for (const schedule of store.listSchedules()) {
+    const schedules = store.listSchedules();
+    for (const schedule of schedules) {
       if (schedule.status !== "active") continue;
       let slotKeys: string[];
       try {
@@ -141,6 +145,8 @@ export class AgentScheduleRunner {
         }
       }
     }
+    // Only after the schedules were read and walked, so a failed read keeps these minutes.
+    this.lastCronMinute = currentMinute;
   }
 
   private async dispatchReadyRuns(): Promise<void> {
@@ -189,8 +195,9 @@ export class AgentScheduleRunner {
 }
 
 /**
- * Slot keys due at `now`. A cron trigger tests the minute of `now`, or every minute from
- * `cronFromMinute` (a minute start) through it when the caller is catching up.
+ * Slot keys due at `now`. A cron trigger yields at most one slot: the latest matching minute
+ * from `cronFromMinute` (a minute start; default the minute of `now`) through the minute of
+ * `now`, so a catch-up never queues a burst of runs.
  */
 export function dueSlotKeysForSchedule(
   schedule: AgentSchedule,
@@ -223,12 +230,12 @@ function dueSlotKeys(
     return [`every:${slotTime}`];
   }
 
+  // One slot per evaluation, like "every": the latest matching minute in the window.
   const currentMinute = minuteStartOf(now);
-  const slots: string[] = [];
   for (
-    let minuteStart = cronFromMinute ?? currentMinute;
-    minuteStart <= currentMinute;
-    minuteStart += MS_PER_MINUTE
+    let minuteStart = currentMinute;
+    minuteStart >= (cronFromMinute ?? currentMinute);
+    minuteStart -= MS_PER_MINUTE
   ) {
     if (createdAt > minuteStart) continue;
     if (!cronMatchesNow(trigger.expression, trigger.timeZone, minuteStart)) continue;
@@ -237,7 +244,7 @@ function dueSlotKeys(
     if (earlierRepeatedWallClockMinute(trigger.timeZone, minuteStart, createdAt) !== undefined) {
       continue;
     }
-    slots.push(`cron:${minuteStart}`);
+    return [`cron:${minuteStart}`];
   }
-  return slots;
+  return [];
 }

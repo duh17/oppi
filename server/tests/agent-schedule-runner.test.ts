@@ -765,7 +765,7 @@ describe("agent schedule runner", () => {
       expect(slotKeys(earlier.id)).toEqual([]);
     });
 
-    it("replays only the last five missed minutes after a longer gap", async () => {
+    it("runs only the latest matching minute after a longer gap", async () => {
       const everyMinute = createCron("* * * * *");
       const clock = { now: minuteM };
       const runner = cronRunner(clock);
@@ -776,9 +776,66 @@ describe("agent schedule runner", () => {
       clock.now = resumed + 10_000;
       await runner.runOnce();
 
-      const expected = [`cron:${minuteM}`];
-      for (let back = 5; back >= 0; back--) expected.push(`cron:${resumed - back * 60_000}`);
-      expect(slotKeys(everyMinute.id)).toEqual(expected);
+      expect(slotKeys(everyMinute.id)).toEqual([`cron:${minuteM}`, `cron:${resumed}`].sort());
+    });
+
+    it("coalesces an every-minute cron across a missed window into one run", async () => {
+      const everyMinute = createCron("* * * * *");
+      const clock = { now: minuteM };
+      const runner = cronRunner(clock);
+      await runner.runOnce();
+
+      clock.now = minuteM + 3 * 60_000 + 10_000;
+      await runner.runOnce();
+
+      expect(slotKeys(everyMinute.id)).toEqual(
+        [`cron:${minuteM}`, `cron:${minuteM + 3 * 60_000}`].sort(),
+      );
+    });
+
+    it("runs the one matching minute missed inside the window", async () => {
+      const cron = createCron("30 12 * * *");
+      const clock = { now: minuteM - 90_000 };
+      const runner = cronRunner(clock);
+      await runner.runOnce();
+
+      clock.now = minuteM + 4 * 60_000 + 10_000;
+      await runner.runOnce();
+      clock.now = minuteM + 5 * 60_000 + 10_000;
+      await runner.runOnce();
+
+      expect(slotKeys(cron.id)).toEqual([slotM]);
+      expect(startSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not lose a minute when listing schedules fails on one evaluation", async () => {
+      const cron = createCron("30 12 * * *");
+      const clock = { now: minuteM - 30_000 };
+      const runner = cronRunner(clock);
+      await runner.runOnce();
+
+      vi.spyOn(store, "listSchedules").mockImplementationOnce(() => {
+        throw new Error("database is locked");
+      });
+      clock.now = minuteM + 10_000;
+      await runner.runOnce();
+      expect(slotKeys(cron.id)).toEqual([]);
+
+      clock.now = minuteM + 70_000;
+      await runner.runOnce();
+      expect(slotKeys(cron.id)).toEqual([slotM]);
+    });
+
+    it("still runs a cron minute after the clock steps back", async () => {
+      const cron = createCron("30 12 * * *");
+      const clock = { now: minuteM + 2 * 60_000 + 10_000 };
+      const runner = cronRunner(clock);
+      await runner.runOnce();
+      expect(slotKeys(cron.id)).toEqual([]);
+
+      clock.now = minuteM + 10_000;
+      await runner.runOnce();
+      expect(slotKeys(cron.id)).toEqual([slotM]);
     });
   });
 });
