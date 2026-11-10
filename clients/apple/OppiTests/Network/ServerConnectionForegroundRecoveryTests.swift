@@ -106,6 +106,44 @@ struct ServerConnectionForegroundRecoveryTests {
         #expect(bootstrapAttempts == 5)
     }
 
+    /// A manual Retry that cannot reach the server must not leave the route "recovering":
+    /// the connection would keep showing recovery and chat opens would keep waiting for an
+    /// attempt that is not coming, even after a later ordinary setup succeeds.
+    @Test func failedExplicitRetryDoesNotLeaveTheRouteRecovering() async throws {
+        let conn = ServerConnection()
+        let credentials = ServerCredentials(
+            host: "retry.example.test",
+            port: 443,
+            token: "sk_retry",
+            name: "Retry",
+            scheme: .https,
+            serverFingerprint: "sha256:retry"
+        )
+        var routeReachable = false
+        let apiFactory: ServerConnectionAPIClientFactory = { environment, _ in
+            makeForegroundRecoveryFailingAPIClient(environment: environment)
+        }
+        let bootstrap: ServerConnectionInfoBootstrap = { _, _ in
+            guard routeReachable else { throw URLError(.cannotConnectToHost) }
+            return foregroundRecoveryServerInfo()
+        }
+
+        #expect(!(await conn.route.reconfigureForExplicitRetry(
+            credentials: credentials,
+            apiClientFactory: apiFactory,
+            serverInfoBootstrap: bootstrap
+        )))
+        #expect(!conn.route.isTransportDemoting, "a failed Retry is not a route on its way back")
+
+        routeReachable = true
+        #expect(await conn.route.configureForUse(
+            credentials: credentials,
+            apiClientFactory: apiFactory,
+            serverInfoBootstrap: bootstrap
+        ))
+        #expect(!conn.route.isTransportDemoting)
+    }
+
     @Test func reconnectDoesNotTouchReducerTimeline() async {
         // With per-session reducers, the connection has no reducer to touch.
         // This test verifies foreground recovery doesn't crash without one.

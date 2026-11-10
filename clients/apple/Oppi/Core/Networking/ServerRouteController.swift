@@ -260,6 +260,8 @@ final class ServerRouteController {
         guard let host else { return false }
         let lanDeferred = pendingLANPromotion && host.hasActiveWork
         isTransportDemoting = true
+        // This function raised the flag, so every exit, a failed rebuild included, lowers it.
+        defer { isTransportDemoting = false }
         let focusedTarget = host.tearDownForRouteRebuild()
         let configured = await configureForUse(
             credentials: credentials,
@@ -273,7 +275,6 @@ final class ServerRouteController {
         )
         guard configured else { return false }
         host.rebindAfterRouteRebuild(focusedTarget)
-        isTransportDemoting = false
         return true
     }
 
@@ -430,7 +431,6 @@ final class ServerRouteController {
                 deviceCredentialDidChange: deviceCredentialDidChange,
                 tailnetRestartsUsed: tailnetRestartsUsed + 1
             )
-            if !rebuilt { isTransportDemoting = false }
             return rebuilt
         }
         return result
@@ -585,7 +585,7 @@ final class ServerRouteController {
         excluding exclusions: Set<ServerRouteCandidateKind> = []
     ) async {
         guard let credentials = host?.credentials else { return }
-        let configured = await reconfigureForExplicitRetry(
+        await reconfigureForExplicitRetry(
             credentials: credentials,
             excluding: exclusions,
             httpBootstrapDeadline: configuredHTTPBootstrapDeadlineFactory,
@@ -593,7 +593,6 @@ final class ServerRouteController {
             serverInfoBootstrap: configuredServerInfoBootstrap,
             deviceCredentialDidChange: deviceCredentialDidChange
         )
-        if !configured { isTransportDemoting = false }
     }
 
     // MARK: - Recovery
@@ -824,10 +823,7 @@ final class ServerRouteController {
             )
             // Once a healthy alternative hands off, authenticated bootstrap and
             // any failure keep the existing explicit-retry behavior. Do not replay.
-            guard configured else {
-                isTransportDemoting = false
-                return false
-            }
+            guard configured else { return false }
             await host.refreshListsAfterRouteRecovery()
             return true
         }
