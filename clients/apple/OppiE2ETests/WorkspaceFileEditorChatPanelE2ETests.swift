@@ -45,7 +45,7 @@ final class WorkspaceFileEditorChatPanelE2ETests: E2ETestCase {
             "the browser did not find the fixture file in the checkout"
         )
         tap(fixtureRow, named: "fixture file row", timeout: 5)
-        tap(app.buttons["workspace-file-editor.edit"], named: "Edit", timeout: 15)
+        tap(try XCTUnwrap(openReaderEditEntry(timeout: 15), "Edit did not appear"), named: "Edit")
         XCTAssertTrue(app.textViews["workspace-file-editor.text"].waitForExistence(timeout: 10), "editor did not open")
 
         let done = app.buttons["workspace-file-editor.done"]
@@ -57,9 +57,6 @@ final class WorkspaceFileEditorChatPanelE2ETests: E2ETestCase {
         add(shot)
 
         done.tap()
-        XCTAssertTrue(
-            app.buttons["workspace-file-editor.edit"].waitForExistence(timeout: 10),
-            "Done did not return to the reader"
-        )
+        XCTAssertTrue(readerOffersEdit(timeout: 10), "Done did not return to the reader")
     }
 }

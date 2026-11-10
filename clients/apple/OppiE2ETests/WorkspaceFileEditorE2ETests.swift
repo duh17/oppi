@@ -73,10 +73,7 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
         XCTAssertTrue((editorTextView.value as? String)?.contains("TYPED") == true, "text view lost the buffer")
 
         tap(app.buttons["workspace-file-editor.done"], named: "Done")
-        XCTAssertTrue(
-            app.buttons["workspace-file-editor.edit"].waitForExistence(timeout: 10),
-            "Done did not return to the reader"
-        )
+        XCTAssertTrue(readerOffersEdit(timeout: 10), "Done did not return to the reader")
     }
 
     /// The keyboard's Return reaches the Markdown list hook and the save.
@@ -200,7 +197,7 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
             app.descendants(matching: .any)["fileBrowser.tree"].waitForExistence(timeout: 10),
             "landscape Files did not show the file tree"
         )
-        tap(app.buttons["workspace-file-editor.edit"], named: "tree-pane Edit", timeout: 15)
+        tap(try XCTUnwrap(openReaderEditEntry(timeout: 15), "tree-pane Edit did not appear"), named: "tree-pane Edit")
         XCTAssertTrue(editorTextView.waitForExistence(timeout: 10), "editor text view did not appear")
         XCTAssertTrue(
             app.descendants(matching: .any)["fileBrowser.tree"].exists,
@@ -218,10 +215,7 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
         )
 
         tap(app.buttons["workspace-file-editor.done"], named: "Done")
-        XCTAssertTrue(
-            app.buttons["workspace-file-editor.edit"].waitForExistence(timeout: 10),
-            "Done did not return to the tree-pane reader"
-        )
+        XCTAssertTrue(readerOffersEdit(timeout: 10), "Done did not return to the tree-pane reader")
     }
 
     // MARK: Helpers
@@ -296,14 +290,9 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
 
     private func openFileInEditor() throws {
         try openFile()
-        // One pencil opens the editor in the reader's bar and in a tree pane's
-        // own bar.
-        let edit = app.buttons["workspace-file-editor.edit"]
-        let deadline = Date().addingTimeInterval(15)
-        while Date() < deadline, !edit.exists {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        }
-        tap(edit, named: "Edit", timeout: 5)
+        // One Edit opens the editor from the reader's bar (the pencil, or the
+        // overflow on a compact bar) and from a tree pane's own bar.
+        tap(try XCTUnwrap(openReaderEditEntry(timeout: 15), "Edit did not appear"), named: "Edit")
         XCTAssertTrue(editorTextView.waitForExistence(timeout: 10), "editor text view did not appear")
     }
 }

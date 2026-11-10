@@ -805,6 +805,52 @@ class E2ETestCase: XCTestCase {
         }
     }
 
+    /// The file reader's Edit entry, on screen and ready to tap. A wide bar shows
+    /// the pencil (`workspace-file-editor.edit`); a compact bar keeps Find and
+    /// Outline and folds Share, Copy and Edit into the system overflow
+    /// (`TopOverflowBarButtonItem`). Its menu items carry no identifier, so Edit
+    /// is found by its title. A user opens the overflow first, so this does too:
+    /// `viaOverflow` says the menu is open, nil when neither shows within `timeout`.
+    private func readerEditEntry(timeout: TimeInterval) -> (edit: XCUIElement, viaOverflow: Bool)? {
+        let pencil = app.buttons["workspace-file-editor.edit"]
+        let overflow = app.buttons.matching(identifier: "TopOverflowBarButtonItem").firstMatch
+        let menuEdit = app.buttons["Edit"]
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if pencil.exists { return (pencil, false) }
+            if overflow.exists {
+                overflow.tap()
+                if menuEdit.waitForExistence(timeout: 2) { return (menuEdit, true) }
+                // The overflow can open before the file's Edit joins it: close
+                // the menu and look again.
+                closeOverflowMenu()
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return nil
+    }
+
+    func openReaderEditEntry(timeout: TimeInterval) -> XCUIElement? {
+        readerEditEntry(timeout: timeout)?.edit
+    }
+
+    /// Whether the reader offers Edit, leaving the overflow menu closed.
+    func readerOffersEdit(timeout: TimeInterval) -> Bool {
+        guard let entry = readerEditEntry(timeout: timeout) else { return false }
+        if entry.viaOverflow { closeOverflowMenu() }
+        return true
+    }
+
+    /// Dismisses the overflow menu with a tap on the status bar's strip. The
+    /// open menu covers the overflow button, so it cannot be tapped again, and
+    /// nothing is tapped when no menu is open (Share only exists inside it).
+    private func closeOverflowMenu() {
+        let share = app.buttons["Share"]
+        guard share.exists else { return }
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.01)).tap()
+        _ = share.waitForNonExistence(timeout: 3)
+    }
+
     /// Scrolls the workspace list to the named workspace's open button. The list builds only the
     /// rows near the viewport, so a workspace below the fold does not exist for XCUITest.
     func revealWorkspace(named workspaceName: String, timeout: TimeInterval = 20) -> Bool {
