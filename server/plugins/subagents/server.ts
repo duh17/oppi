@@ -745,7 +745,7 @@ export function createDurableSessions(
     name: SUBAGENT_TOOL,
     description:
       "Manage child sessions by name. spawn (name, task; optional agent, model, thinking, wait, " +
-      "allowNestedDelegation, worktree, host, tools, excludeTools, readOnly) starts one: in the " +
+      "allowNestedDelegation, worktree, tools, excludeTools, readOnly) starts one: in the " +
       "background by default, its answer arrives later as a follow-up message; wait: true " +
       "returns its final answer instead, once it has no background work of its own pending. " +
       'worktree runs the child in a checkout of its own: "new" for a branch named after it, a ' +
@@ -753,10 +753,7 @@ export function createDurableSessions(
       "that may land should use worktree, so the parent's checkout stays untouched. Those " +
       "children's answers and list rows also report their worktree, commits ahead and whether " +
       "they are dirty. spawn never removes the worktree it made; landing or the daily cleanup " +
-      'does. host: "<machine>" (with worktree "new" or a branch) runs the child\'s bash, read, ' +
-      "edit and write on another machine, in a worktree there; its branch comes back here when " +
-      "it finishes. Paths and localhost in its task mean that machine; it has no ls, find or " +
-      "grep, and Oppi's oppi command is not set up there. " +
+      "does. " +
       "Tools narrow only: tools and readOnly name an exact set (readOnly keeps read and bash, " +
       "and bash is not a sandbox), while excludeTools only removes the tools it names. " +
       "send (name, message; " +
@@ -796,12 +793,6 @@ export function createDurableSessions(
               "for work that may land.",
           },
         ),
-      ),
-      host: opt(
-        str({
-          description:
-            "spawn: a machine from `oppi machines list`; needs worktree (new or a branch name).",
-        }),
       ),
       tools: opt(
         arr(str(), { description: "spawn: only these tools; a child never gains one you lack." }),
@@ -1002,7 +993,6 @@ export function createDurableSessions(
       wait?: boolean;
       allowNestedDelegation?: boolean;
       worktree?: string | { branch: string; base?: string };
-      host?: string;
       tools?: string[];
       excludeTools?: string[];
       readOnly?: boolean;
@@ -1018,15 +1008,6 @@ export function createDurableSessions(
     const request = worktreeRequest(args.worktree);
     if (typeof args.worktree === "string" && args.worktree.trim() === "")
       return reply(`worktree needs "new", a branch, or a worktree id.`, { name }, true);
-    const host = args.host?.trim();
-    if (args.host !== undefined && !host)
-      return reply("host needs a machine name.", { name }, true);
-    if (host && request === undefined)
-      return reply(
-        `host needs worktree "new" or a branch name: the child works in a worktree on ${host}.`,
-        { name },
-        true,
-      );
     const call = String(api.taskId);
     const before = await api.snapshot(Subagents, api.conversationId, context);
     const rerun = before?.calls[call] === name;
@@ -1046,7 +1027,6 @@ export function createDurableSessions(
             ...(args.tools ? { tools: args.tools } : {}),
             ...(args.excludeTools ? { excludeTools: args.excludeTools } : {}),
             ...(args.readOnly ? { readOnly: true } : {}),
-            ...(host ? { host } : {}),
           },
           await api.agent(context),
         );
@@ -1058,7 +1038,7 @@ export function createDurableSessions(
     const earlier = rerun ? before?.children[name] : undefined;
     let worktree: SubagentWorktree | undefined = earlier?.worktree;
     if (earlier === undefined && request !== undefined) {
-      const plan = await sessions.planWorktree(request, name, call, host);
+      const plan = await sessions.planWorktree(request, name, call);
       worktree = await sessions.provisionWorktree(plan, { call, adopt: request !== "new" });
     }
     const conversationId = await api.commit(async (tx) => {

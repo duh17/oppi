@@ -31,7 +31,6 @@ import { createLogger } from "./logger.js";
 import type { SessionRuntimes } from "./runtime-router.js";
 import { forkPiSessionFrom, resolveSdkSessionCwdAsync } from "./sdk-backend.js";
 import { deleteSessionAttachments } from "./session-attachments.js";
-import { remoteWorktreeRefusal } from "./machines/placements.js";
 import { sessionWorkRoot } from "./session-work-root.js";
 import {
   DEFAULT_SESSION_JSONL_META_READ_BYTES,
@@ -982,8 +981,6 @@ export class SessionLifecycleService {
     const requested = session.worktreeId?.trim();
     if (!requested || requested === "main") return "main";
     if (!workspace) return "main-missing";
-    // A worktree on a machine is not in this host's catalog: it never rebinds to the main checkout.
-    if (remoteWorktreeRefusal(this.deps.storage.getDataDir(), requested)) return "available";
     // A pending removal is hidden from the catalog. That is not "gone": if the
     // remove fails, rebinding now would strand the session on the main checkout.
     const removalPending = (): boolean => workspaceHasPendingWorktreeClaim(workspace.id, requested);

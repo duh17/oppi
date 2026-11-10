@@ -10,7 +10,6 @@ export const RUNNER_COMMANDS: ReadonlySet<string> = new Set([
   "dictionary",
   "workspace",
   "worktree",
-  "machines",
   "session",
   "extensions",
   "schedule",

@@ -23,6 +23,7 @@ import {
   type TaskId,
   type Tx,
 } from "@earendil-works/pi-durable";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import {
   CODEMODE_TOOL_NAME,
@@ -75,8 +76,7 @@ import type { SessionNotifyPort } from "./session-push-notifier.js";
 import type { SurfacePublisher } from "./durable-surface.js";
 import type { LiveVoiceRuntimePort } from "./live-voice-speech.js";
 import { LIVE_VOICE_EXTENSION } from "../plugins/live-voice/contract.js";
-import { executionEnv } from "./durable-execution-env.js";
-import { placementsFor } from "./machines/placements.js";
+import { OPPI_CALLER_SESSION_ID_ENV } from "./session-caller-identity.js";
 import { properLockfile } from "./pi-lockfile.js";
 import { DURABLE_STORE_LOCK_STALE_MS } from "./durable-store-lock.js";
 import { DurableSessionDoc } from "./durable-session-doc.js";
@@ -85,11 +85,8 @@ import type { ConversationStreamServerMessage, Session } from "./types.js";
 
 /** Persist the execution boundary so a resumed conversation cannot change runtime. */
 export const DurableRuntime = defineDoc<{
-  kind: "host" | "sandbox" | "remote";
+  kind: "host" | "sandbox";
   workspaceId?: string;
-  /** `remote`: the machine the tools run on, and the worktree path there. */
-  machine?: string;
-  root?: string;
   /**
    * The worktree this conversation's files live in, when it runs in one: a `subagent spawn`
    * with `worktree`. The child's Session row takes its `worktreeId` from here, so the crash
@@ -911,14 +908,25 @@ export class SessionHost {
           },
           env: async ({ conversationId, cwd, read }, context) => {
             const runtime = await read.snapshot(DurableRuntime, conversationId, context);
-            const env = executionEnv(runtime, {
-              conversationId,
-              cwd,
-              callerSessionId: this.runtime.sessionIdOf(this.storeId, conversationId),
-              bound: this.sandboxEnvs.get(conversationId),
-              dataDir: this.runtime.dataDir,
-              remember: (made) => this.bindSandboxEnv(conversationId, made),
-            });
+            if (runtime?.kind !== "sandbox") {
+              const callerSessionId = this.runtime.sessionIdOf(this.storeId, conversationId);
+              const env = new NodeExecutionEnv({
+                cwd: cwd ?? homedir(),
+                // Classic bash exports `OPPI_CALLER_SESSION_ID` from its shell prefix; a durable
+                // conversation's host bash and background jobs need it in the env so
+                // `oppi session create` run here is attributed to this conversation's own
+                // Session: parented, policy-checked, and unable to target itself. A conversation
+                // with no Session row adds none of its own (the server's process env still applies).
+                ...(callerSessionId
+                  ? { shellEnv: { [OPPI_CALLER_SESSION_ID_ENV]: callerSessionId } }
+                  : {}),
+              });
+              conversationsByEnv.set(env, { host: this, conversationId });
+              return env;
+            }
+            const env = this.sandboxEnvs.get(conversationId);
+            if (!env)
+              throw new Error("Durable sandbox workspace is not attached; refusing host execution");
             conversationsByEnv.set(env, { host: this, conversationId });
             return env;
           },
@@ -1239,10 +1247,6 @@ export class SessionHost {
       agent: await harness.snapshot(AgentDoc, sourceId, BACKGROUND_CONTEXT),
       launch: await harness.snapshot(OppiAgentDoc, sourceId, BACKGROUND_CONTEXT),
     };
-    if (carried.runtime?.kind === "remote")
-      throw new Error(
-        `This session's files are on ${carried.runtime.machine}; it cannot be forked.`,
-      );
     const carry =
       (copyEngineDocs: boolean) =>
       async (tx: Tx, id: ConversationId): Promise<void> => {
@@ -1534,10 +1538,7 @@ export class DurableHarness {
   constructor(
     readonly dataDir: string,
     private readonly builtInDir = BUILT_IN_PLUGINS_DIR,
-  ) {
-    // A start ended every remote command; resumed children mark their machines active again.
-    placementsFor(dataDir).clearActive();
-  }
+  ) {}
 
   /** Installed built-in plugins, in install order. */
   private get bundled(): readonly LoadedPlugin[] {

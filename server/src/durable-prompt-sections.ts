@@ -1,5 +1,4 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { Skill } from "@earendil-works/pi-coding-agent";
 import { AgentDoc, type Conversation } from "@earendil-works/pi-durable";
 import {
   PROJECT_CONTEXT_SECTIONS,
@@ -16,11 +15,7 @@ import {
  * The project resources a durable session presents, with Oppi's appends to its prompt: what
  * `oppiAppendSystemPrompt` returns, in its order.
  */
-export type PresentedResources = DurableProjectResources & {
-  readonly appends: readonly string[];
-  /** What the prompt lists instead of `skills` (their locations differ for a remote session). */
-  readonly presentedSkills?: readonly Skill[];
-};
+export type PresentedResources = DurableProjectResources & { readonly appends: readonly string[] };
 
 /**
  * Store the rendered sections; a changed section reaches the model on its next request. The
@@ -34,7 +29,7 @@ export async function syncProjectContext(
   const next: Record<ProjectContextField, string | undefined> = {
     oppiAppend: resources.appends.length > 0 ? resources.appends.join("\n\n") : undefined,
     projectContext: renderProjectContext(resources.contextFiles),
-    skills: renderSkills(resources.presentedSkills ?? resources.skills, tools),
+    skills: renderSkills(resources.skills, tools),
   };
   await conversation.commit(async (tx) => {
     const doc = await tx.doc(ProjectContextDoc, conversation.id);

@@ -2091,48 +2091,6 @@ describe("durable-native threads", () => {
     expect(await listWorkspaceWorktrees(f.workspace, { dataDir: f.dir })).toHaveLength(1);
   });
 
-  it("refuses a spawn host with no worktree, and a machine that is not set up, before any child exists", async () => {
-    const f = await fixture(
-      model(async ({ last, text }) => {
-        if (last.role === "toolResult") return fauxAssistantMessage("DONE");
-        if (text.includes("No tree"))
-          return spawnCall({ name: "Remote", task: "REMOTE_TASK", host: "build-mac" });
-        if (text.includes("No machine"))
-          return spawnCall({
-            name: "Remote",
-            task: "REMOTE_TASK",
-            worktree: "new",
-            host: "build-mac",
-          });
-        return fauxAssistantMessage("OK");
-      }),
-      { git: true },
-    );
-    await f.manager.startSession(f.parent.id, f.workspace);
-    const harness = await f.harness();
-    const parentConversation = conversationOf(f.storage, f.parent);
-    const refusal = async (prompt: string, results: number) => {
-      await f.manager.sendPrompt(f.parent.id, prompt);
-      await until(
-        async () => (await toolResults(harness, parentConversation)).length === results,
-        prompt,
-      );
-      return (await toolResults(harness, parentConversation))[results - 1];
-    };
-    expect(await refusal("No tree", 1)).toMatchObject({
-      toolName: "subagent",
-      isError: true,
-      text: expect.stringContaining('host needs worktree "new" or a branch name'),
-    });
-    expect(await refusal("No machine", 2)).toMatchObject({
-      toolName: "subagent",
-      isError: true,
-      text: expect.stringContaining('Unknown machine "build-mac"'),
-    });
-    expect(f.storage.listSessions().map((session) => session.id)).toEqual([f.parent.id]);
-    expect(await listWorkspaceWorktrees(f.workspace, { dataDir: f.dir })).toHaveLength(1);
-  });
-
   it("fails a worktree child closed when its worktree is gone, never in the main checkout", async () => {
     const f = await fixture(
       model(async ({ last, text }) => {

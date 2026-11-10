@@ -44,8 +44,6 @@ export type SubagentWorktree = {
   branch: string | null;
   /** The commit it branched from; commits ahead are counted from it. */
   base: string;
-  /** The machine the worktree is on, when the spawn named a `host`; `path` is a path there. */
-  machine?: string;
 };
 
 /** The children of a conversation by name, and which spawn call made which, so a rerun finds it. */

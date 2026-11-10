@@ -17,7 +17,6 @@ import {
 import { shouldShadowSandboxWorkspacePath } from "./gondolin-manager.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { internalUrls } from "./durable-internal-urls.js";
-import { RemoteHandsEnv } from "./machines/remote-env.js";
 
 // The host side of the `oppi.file-tools` built-in (`plugins/file-tools`), bound through
 // `oppi/v1`. Schemas and descriptions are Pi's. Each call runs where the invocation's env
@@ -131,9 +130,5 @@ function runtimeOf(
 ): { kind: "host"; env: NodeExecutionEnv } | { kind: "sandbox"; env: GondolinExecutionEnv } {
   if (env instanceof GondolinExecutionEnv) return { kind: "sandbox", env };
   if (env instanceof NodeExecutionEnv) return { kind: "host", env };
-  if (env instanceof RemoteHandsEnv)
-    throw new Error(
-      `ls, find and grep are not available on ${env.machine.name}: they search this host's disk. Use bash there (ls, find, rg).`,
-    );
   throw new Error("File tools require the server's host or Gondolin execution environment");
 }

@@ -147,12 +147,6 @@ async function executeCliCommand(args: readonly string[], options: CliRunOptions
     case "dictionary":
       await cmdDictionary(connection, positional[0], flags);
       return;
-    case "machines": {
-      // pi-env pulls in pi-durable, which the other commands never load.
-      const { cmdMachines } = await import("./commands/machines.js");
-      await cmdMachines(connection.getDataDir(), positional[0], positional.slice(1), flags);
-      return;
-    }
     case "workspace":
       await cmdWorkspace(connection, positional[0], positional.slice(1), flags);
       return;

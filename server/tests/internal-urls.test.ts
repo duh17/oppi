@@ -91,8 +91,8 @@ describe("internal URL resolution", () => {
     await expect(read("issue://4")).rejects.toThrow("gh issue view");
     await expect(read("omp://x")).rejects.toThrow("not available");
     await expect(read("local://notes.md")).rejects.toThrow("no shared scratch");
-    await expect(read("gopher://x")).rejects.toThrow(
-      /Unknown URL scheme "gopher:\/\/". Supported: .*agent:\/\//,
+    await expect(read("skill://x")).rejects.toThrow(
+      /Unknown URL scheme "skill:\/\/". Supported: .*agent:\/\//,
     );
   });
 

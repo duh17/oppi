@@ -3,7 +3,6 @@ import type { Dirent, Stats } from "node:fs";
 import { lstat, opendir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { resolveWorkspaceFileRoot } from "../current-file.js";
-import { remoteWorktreeRefusal } from "../machines/placements.js";
 import { listDirectoryEntries } from "../directory-listing.js";
 import {
   decodeWorkspaceRoutePath,
@@ -298,12 +297,12 @@ export function createWorkspaceFileRoutes(
     url: URL,
     res: ServerResponse,
   ): Promise<string | null> {
-    const worktreeId = url.searchParams.get("worktreeId") ?? undefined;
-    const root = await resolveWorkspaceFileRoot(workspace, worktreeId, ctx.storage.getDataDir());
-    if (!root) {
-      const remote = remoteWorktreeRefusal(ctx.storage.getDataDir(), worktreeId);
-      helpers.error(res, remote ? 409 : 404, remote ?? "Worktree not found");
-    }
+    const root = await resolveWorkspaceFileRoot(
+      workspace,
+      url.searchParams.get("worktreeId") ?? undefined,
+      ctx.storage.getDataDir(),
+    );
+    if (!root) helpers.error(res, 404, "Worktree not found");
     return root;
   }
 

@@ -107,7 +107,6 @@
     "@earendil-works/pi-codemode": "1.5.1",
     "@earendil-works/pi-coding-agent": "1.5.1",
     "@earendil-works/pi-durable": "1.5.1",
-    "@earendil-works/pi-env": "1.5.1",
     "@earendil-works/pi-mcp": "1.5.1",
     "@earendil-works/pi-schema": "1.5.1",
     "@earendil-works/pi-tui": "1.5.1",

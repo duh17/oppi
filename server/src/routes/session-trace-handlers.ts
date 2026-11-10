@@ -6,7 +6,6 @@ import {
   type SessionOverallDiffResult,
   type SessionTraceViewMode,
 } from "../session-trace-service.js";
-import { remoteFilesMessage } from "../machines/placements.js";
 import { admitSessionRoute } from "../session-route-scope.js";
 import type { Session, SessionEventsResponse } from "../types.js";
 import { getSessionAttachment, streamSessionAttachment } from "../session-attachments.js";
@@ -229,9 +228,6 @@ export function createSessionTraceRouteHandlers(
         return;
       case "workspace-root-not-found":
         helpers.error(res, 404, "Workspace root not found");
-        return;
-      case "files-on-machine":
-        helpers.error(res, 409, remoteFilesMessage(result.machine));
         return;
       case "current-file-not-found":
         helpers.error(res, 404, "Current file not found");

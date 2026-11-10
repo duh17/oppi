@@ -16,7 +16,6 @@ import {
   type SchemeReader,
 } from "./internal-urls.js";
 import { isRecord } from "./json-shape.js";
-import { readSkillUrl } from "./machines/remote-presentation.js";
 import type { TraceEvent } from "./trace.js";
 import type { Session } from "./types.js";
 
@@ -241,14 +240,6 @@ const BUILT_IN_READERS: ReadonlyMap<string, SchemeReader> = new Map<string, Sche
   ["history", sessionReader(readHistory)],
   ["agent", sessionReader(readAgent)],
   ["mcp", readMcp],
-  [
-    "skill",
-    (target, api) => {
-      const reading = oppiHost().sessions(api.env)?.reading;
-      if (!reading) throw new Error("skill:// needs an Oppi session, and this call has none.");
-      return readSkillUrl(reading.sessionId, target);
-    },
-  ],
   [
     "ssh",
     (target, api, context) => {
