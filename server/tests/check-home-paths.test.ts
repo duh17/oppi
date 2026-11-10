@@ -45,7 +45,7 @@ describe("isExemptPath", () => {
     for (const file of [
       "server/tests/session-events.test.ts",
       "server/e2e/paired-session.ts",
-      "pi-extensions/background-jobs/jobs.test.ts",
+      "server/plugins/background-jobs/jobs.test.ts",
       "clients/apple/OppiTests/Models/PendingFileReferenceTests.swift",
       "clients/apple/OppiMacTests/MacLocalHTTPTests.swift",
       "clients/apple/scripts/sim-pool-ops.test.ts",

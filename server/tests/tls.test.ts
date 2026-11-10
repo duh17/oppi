@@ -32,6 +32,7 @@ import {
   validateTailscaleMaterial,
 } from "../src/tls.js";
 import type { ServerConfig } from "../src/types.js";
+import { logSkip } from "./harness/cli-test-env.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -40,11 +41,6 @@ try {
   execSync("openssl version", { stdio: "ignore" });
 } catch {
   hasOpenSSL = false;
-}
-
-function logSkip(unavailable: boolean, suite: string, reason: string): boolean {
-  if (unavailable) console.warn(`[test] Skipping ${suite}: ${reason}`);
-  return unavailable;
 }
 
 async function waitForCondition(condition: () => boolean, timeoutMs = 5_000): Promise<void> {

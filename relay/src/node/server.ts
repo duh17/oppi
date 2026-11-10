@@ -21,7 +21,7 @@ export interface NodeRelayOptions {
   now?: () => number;
   host?: string;
   port?: number;
-  /** Behind a reverse proxy: take the client address from the first `X-Forwarded-For` entry. */
+  /** Behind a reverse proxy: take the client address from the last `X-Forwarded-For` entry (the one the proxy appended). */
   trustForwardedFor?: boolean;
 }
 

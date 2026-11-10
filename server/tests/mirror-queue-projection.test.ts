@@ -15,7 +15,7 @@ import {
   snapshotMirrorWidgetNativeSurface,
   terminalAskFallback,
   type MessageQueueState,
-} from "../../pi-extensions/oppi-mirror.ts";
+} from "../../pi-extensions/oppi-mirror/extensions/oppi-mirror.ts";
 import { serializeSessionTree } from "../src/session-tree.js";
 
 async function flushMicrotasks(count = 4): Promise<void> {

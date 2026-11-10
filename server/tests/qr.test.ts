@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { execSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { encode, renderTerminal } from "../src/qr.js";
+import { logSkip } from "./harness/cli-test-env.js";
 
 /** Write QR matrix as a scaled PGM image and decode with zbar. */
 function zbarDecode(matrix: boolean[][]): string | null {
@@ -44,11 +45,6 @@ try {
   hasZbar = true;
 } catch {
   hasZbar = false;
-}
-
-function logSkip(unavailable: boolean, suite: string, reason: string): boolean {
-  if (unavailable) console.warn(`[test] Skipping ${suite}: ${reason}`);
-  return unavailable;
 }
 
 describe("QR encoder", () => {
