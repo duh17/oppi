@@ -167,6 +167,16 @@ export async function fetchPlacementUnlessDown(
   return fetchOnce(dataDir, placement);
 }
 
+/**
+ * What `git ls-remote` of the worker's branch says to do: nothing when the branch is still at the
+ * commit it started from, else fetch. A branch the mirror does not have is an error, not "nothing".
+ */
+export function fetchDecision(lsRemote: string, base: string): "fetch" | "nothing-to-fetch" {
+  const tip = lsRemote.trim().split(/\s+/)[0];
+  if (!tip) throw new Error("the mirror has no such branch");
+  return tip === base ? "nothing-to-fetch" : "fetch";
+}
+
 async function fetchOnce(dataDir: string, placement: Placement): Promise<boolean> {
   const registry = new MachineRegistry(dataDir);
   const machine = registry.get(placement.machine);
@@ -175,16 +185,29 @@ async function fetchOnce(dataDir: string, placement: Placement): Promise<boolean
   const target = registry.target(machine);
   const mirror = `${machine.home}/${POOL_DIR}/${placement.workspaceId}.git`;
   try {
-    await git(
-      [
-        "fetch",
-        "--quiet",
-        helper(machine, "git-upload-pack"),
-        gitRemoteUrl(target, mirror),
-        `refs/heads/${placement.branch}:refs/heads/${placement.branch}`,
-      ],
-      { cwd: placement.repo, sshCommand: gitSshCommand(target), timeoutMs: FETCH_TIMEOUT_MS },
+    const options = {
+      cwd: placement.repo,
+      sshCommand: gitSshCommand(target),
+      timeoutMs: FETCH_TIMEOUT_MS,
+    };
+    const url = gitRemoteUrl(target, mirror);
+    // A worker that made no commits has nothing to bring home. Asking the mirror for the tip
+    // also fails when the machine is unreachable, which leaves the branch unfetched.
+    const tip = await git(
+      ["ls-remote", helper(machine, "git-upload-pack"), url, `refs/heads/${placement.branch}`],
+      options,
     );
+    if (fetchDecision(tip, placement.base) === "fetch")
+      await git(
+        [
+          "fetch",
+          "--quiet",
+          helper(machine, "git-upload-pack"),
+          url,
+          `refs/heads/${placement.branch}:refs/heads/${placement.branch}`,
+        ],
+        options,
+      );
     placementsFor(dataDir).update(placement.worktreeId, { fetched: true });
     failedFetchAt.delete(machine.name);
     log.info("machine.sync", {

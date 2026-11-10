@@ -6,6 +6,7 @@ import { sshArguments } from "@earendil-works/pi-env";
 import { afterEach, describe, expect, it } from "vitest";
 import { gitRemoteUrl, gitSshCommand } from "../src/machines/git-ssh.js";
 import { decideHostKey } from "../src/machines/host-keys.js";
+import { fetchDecision } from "../src/machines/provision.js";
 import {
   assertMachineName,
   authorizedKeyLine,
@@ -102,6 +103,19 @@ describe("git over a machine's ssh options", () => {
     expect(gitRemoteUrl(target, "/Users/alex/.oppi/pool/ws-1.git")).toBe(
       "ssh://alex@build-mac.local:2222/Users/alex/.oppi/pool/ws-1.git",
     );
+  });
+});
+
+describe("bringing a worker's branch home", () => {
+  const base = "a".repeat(40);
+
+  it("has nothing to fetch for a worker that made no commits, and fetches one that did", () => {
+    expect(fetchDecision(`${base}\trefs/heads/subagent/x\n`, base)).toBe("nothing-to-fetch");
+    expect(fetchDecision(`${"b".repeat(40)}\trefs/heads/subagent/x\n`, base)).toBe("fetch");
+  });
+
+  it("does not take a branch the mirror lacks for one with nothing to fetch", () => {
+    expect(() => fetchDecision("", base)).toThrow(/no such branch/);
   });
 });
 
