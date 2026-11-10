@@ -230,6 +230,10 @@ New rows use `settings|server|workspace.<page>.<row>` on the row button or contr
 - Readers open through `ChatViewController+Timeline.openTimelineReader` as a `.chatReader` route; a locked origin replaces the page with the lock cover. UIKit configures no off-screen cell, so live readers are fed by `ChatTimelineReaderTraces`, one weakly held trace per open reader; rows own no streams, and a row that leaves the timeline settles its reader.
 - Replaying the event ring over a busy session: the replayed `agent_start` marks the running tool interrupted and the replayed `tool_start` revives it; canonically finished calls stay finished.
 
+## Syntax grammars
+
+- `tree-sitter-css`, `-javascript`, `-python` and `-yaml` are forks under `duh17`: upstream's `Package.swift` adds `src/scanner.c` only if `FileManager` finds it at manifest cwd, which Xcode SPM misses (link failure). Each fork's `oppi-spm` branch is the upstream release tag plus that one-line fix, tagged `<upstream-tag>-oppi.N`, and `clients/apple/project.yml` pins it exactly. On a new upstream tag, rebase `oppi-spm` onto it and tag `<new-tag>-oppi.1`; drop the fork once upstream fixes the manifest. The weekly dependency check should flag a fork whose base tag trails upstream.
+
 ## Client boundary rules current code
 
 `server/scripts/check-architecture-boundaries.ts` enforces these in server checks (`--scope all`), the iOS build phase (`--scope ios`), and the Mac pre-push gate (`--scope mac`):

@@ -1,5 +1,5 @@
 {
-  "originHash" : "4d0d1effa58cbc0763d7e5d6a6942b5c752d52251c02162e754025915b91ca59",
+  "originHash" : "2c31a628c7e7543d7a7a3bb74bd3c6a47976244a7bad1ca1c33d920954ad55a7",
   "pins" : [
     {
       "identity" : "sparkle",
@@ -130,10 +130,10 @@
     {
       "identity" : "tree-sitter-css",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tree-sitter/tree-sitter-css",
+      "location" : "https://github.com/duh17/tree-sitter-css",
       "state" : {
-        "revision" : "c0d581e32d183a536731ed6c3a72758b27e20411",
-        "version" : "0.23.2"
+        "revision" : "75abc41f9dd2cf3909515ccaf460c8010f13cf51",
+        "version" : "0.25.0-oppi.1"
       }
     },
     {
@@ -166,19 +166,19 @@
     {
       "identity" : "tree-sitter-javascript",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tree-sitter/tree-sitter-javascript",
+      "location" : "https://github.com/duh17/tree-sitter-javascript",
       "state" : {
-        "revision" : "3a837b6f3658ca3618f2022f8707e29739c91364",
-        "version" : "0.23.1"
+        "revision" : "0b0b35dafa5607c60ec71e78dad74b9680754fea",
+        "version" : "0.25.0-oppi.1"
       }
     },
     {
       "identity" : "tree-sitter-python",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tree-sitter/tree-sitter-python",
+      "location" : "https://github.com/duh17/tree-sitter-python",
       "state" : {
-        "revision" : "bffb65a8cfe4e46290331dfef0dbf0ef3679de11",
-        "version" : "0.23.6"
+        "revision" : "4a1a6542b35b56370f095fd3a6f01426a27e69cf",
+        "version" : "0.25.0-oppi.1"
       }
     },
     {
@@ -220,9 +220,10 @@
     {
       "identity" : "tree-sitter-yaml",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/zed-industries/tree-sitter-yaml",
+      "location" : "https://github.com/duh17/tree-sitter-yaml",
       "state" : {
-        "revision" : "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a"
+        "revision" : "97aeee7747afafebe36ee86ae682ea0971684592",
+        "version" : "0.7.2-oppi.1"
       }
     }
   ],

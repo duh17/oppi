@@ -15,14 +15,19 @@ packages:
   tree-sitter-bash:
     url: https://github.com/tree-sitter/tree-sitter-bash
     from: "0.25.0"
-  # 0.25.x Package.swift only includes scanner.c when FileManager sees src/scanner.c
-  # at evaluation cwd. Xcode SPM omits it and fails to link. 0.23.x hardcodes scanner.c.
+  # Forked grammars (css, javascript, python, yaml; github.com/duh17/*). Upstream
+  # 0.25.x Package.swift adds src/scanner.c only when FileManager sees it at manifest
+  # evaluation cwd; Xcode SPM evaluates outside the package dir, so scanner.c is
+  # omitted and the link fails. Each fork's `oppi-spm` branch is the upstream release
+  # tag plus a one-line Package.swift fix, tagged `<upstream-tag>-oppi.N`. When
+  # upstream releases a new tag, rebase onto it and tag `<new-tag>-oppi.1`.
+  # Drop the fork once upstream fixes the manifest.
   tree-sitter-javascript:
-    url: https://github.com/tree-sitter/tree-sitter-javascript
-    exactVersion: "0.23.1"
+    url: https://github.com/duh17/tree-sitter-javascript
+    exactVersion: "0.25.0-oppi.1"
   tree-sitter-python:
-    url: https://github.com/tree-sitter/tree-sitter-python
-    exactVersion: "0.23.6"
+    url: https://github.com/duh17/tree-sitter-python
+    exactVersion: "0.25.0-oppi.1"
   tree-sitter-typescript:
     url: https://github.com/tree-sitter/tree-sitter-typescript
     exactVersion: "0.23.2"
@@ -30,10 +35,10 @@ packages:
   tree-sitter-go:
     url: https://github.com/tree-sitter/tree-sitter-go
     exactVersion: "0.25.0"
-  # 0.25 Package.swift skips scanner.c when FileManager misses src/scanner.c at eval cwd.
+  # Fork of tree-sitter/tree-sitter-css v0.25.0 (see the fork note above).
   tree-sitter-css:
-    url: https://github.com/tree-sitter/tree-sitter-css
-    exactVersion: "0.23.2"
+    url: https://github.com/duh17/tree-sitter-css
+    exactVersion: "0.25.0-oppi.1"
   # These pins hardcode src/parser.c (and scanner.c when present) in Package.swift.
   tree-sitter-rust:
     url: https://github.com/tree-sitter/tree-sitter-rust
@@ -53,11 +58,11 @@ packages:
   tree-sitter-java:
     url: https://github.com/tree-sitter/tree-sitter-java
     exactVersion: "0.23.5"
-  # MIT (Ika / tree-sitter-grammars). Zed's ikatyang fork; same commit Zed ships.
-  # No tags; scanner.c is hardcoded (safe for Xcode SPM).
+  # MIT. Fork of the maintained tree-sitter-grammars/tree-sitter-yaml v0.7.2 (Neovim,
+  # Helix); replaces the stale zed-industries grammar (see the fork note above).
   tree-sitter-yaml:
-    url: https://github.com/zed-industries/tree-sitter-yaml
-    revision: baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a
+    url: https://github.com/duh17/tree-sitter-yaml
+    exactVersion: "0.7.2-oppi.1"
   # MIT (Ika). nvim-treesitter + Helix. 0.7.0 hardcodes scanner.c.
   tree-sitter-toml:
     url: https://github.com/tree-sitter-grammars/tree-sitter-toml

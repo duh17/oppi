@@ -7,7 +7,7 @@
     },
     "dev/architecture-client.md": {
       "words": 5730,
-      "reason": "Client owners and rules: ServerConnection's state-machine owners, UIKit ownership and the guard-named sections (navigation bar, load states, alerts, settings pages, document editing), shell, Live Voice, SSH/Rex, and the boundary rules the architecture check links to. 4974 words; headroom max(15%, 100 words)."
+      "reason": "Client owners and rules: forked syntax grammars, ServerConnection's state-machine owners, UIKit ownership and the guard-named sections (navigation bar, load states, alerts, settings pages, document editing), shell, Live Voice, SSH/Rex, and the boundary rules the architecture check links to. 4974 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client/blocks.md": {
       "words": 1290,

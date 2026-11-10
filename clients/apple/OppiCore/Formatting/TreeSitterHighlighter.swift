@@ -205,7 +205,7 @@ enum TreeSitterHighlighter {
 
         /// Register all available grammars.
         /// Add new grammars here as SPM dependencies are added.
-        /// JS/Python stay on 0.23.x: 0.25 Package.swift skips scanner.c under Xcode SPM.
+        /// CSS/JS/Python/YAML come from scanner.c-fixed forks (see project.yml).
         private static func makeEntries() -> [SyntaxLanguage: Entry] {
             var entries: [SyntaxLanguage: Entry] = [:]
 
