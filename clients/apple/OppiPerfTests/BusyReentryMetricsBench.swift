@@ -561,9 +561,8 @@ struct BusyReentryMetricsBenchTests {
 
     // MARK: - Correctness invariant: gap must be zero after merge
 
-    /// This test will FAIL on the current codebase because shouldDeferRebuild
-    /// prevents the trace from being applied for busy sessions.
-    /// Autoresearch experiments must make this pass.
+    /// Guards the re-entry invariant: once the trace fetch completes for a busy
+    /// session, the timeline contains every trace event, with no gap left behind.
     @Test func gapMustBeZeroAfterMerge() async {
         let scenario = BusyReentryScenario(
             cacheEventCount: 50,
@@ -578,7 +577,6 @@ struct BusyReentryMetricsBenchTests {
 
         // THE KEY ASSERTION:
         // After the trace fetch completes, the timeline must contain ALL trace events.
-        // Currently fails because shouldDeferRebuild skips the trace for busy sessions.
         #expect(
             metrics.gapEventCount == 0,
             "Expected zero gap events, got \(metrics.gapEventCount) missing from timeline"
