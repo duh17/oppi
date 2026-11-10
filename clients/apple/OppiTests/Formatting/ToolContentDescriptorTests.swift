@@ -161,7 +161,7 @@ struct ToolContentDescriptorTests {
             return
         }
         #expect(file.filePath == "src/helper.py")
-        #expect(file.fileType == .code(language: .python))
+        #expect(file.fileKind == .code(language: .python))
         #expect(file.language == .python)
         #expect(file.text == source)
         #expect(file.startLine == 1)
@@ -206,7 +206,7 @@ struct ToolContentDescriptorTests {
             return
         }
         #expect(file.filePath == "README.md")
-        #expect(file.fileType == .markdown)
+        #expect(file.fileKind == .markdown)
         #expect(file.language == nil)
         #expect(file.text == body)
     }
@@ -227,7 +227,7 @@ struct ToolContentDescriptorTests {
             return
         }
         #expect(file.filePath == "notes.tex")
-        #expect(file.fileType == .latex)
+        #expect(file.fileKind == .latex)
         #expect(file.language == .latex)
         #expect(file.text == body)
 
@@ -322,7 +322,7 @@ struct ToolContentDescriptorTests {
             return
         }
         #expect(file.filePath == "icon.png")
-        #expect(file.fileType == .image)
+        #expect(file.fileKind == .image)
         #expect(file.attachments.count == 1)
         #expect(file.attachments.first?.id == "att-image-1")
         #expect(file.attachments.first?.mimeType == "image/png")

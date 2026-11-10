@@ -86,7 +86,7 @@ enum ToolContentDescriptor: Equatable, Sendable {
     struct File: Equatable, Sendable {
         var text: String
         var filePath: String?
-        var fileType: FileType?
+        var fileKind: FileKind?
         var language: SyntaxLanguage?
         var startLine: Int?
         var attachments: [ToolContentMediaAttachment]

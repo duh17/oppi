@@ -139,14 +139,7 @@ enum HostFilePreviewPolicy {
     }
 
     static func webViewLoadMode(for path: String) -> HostFilePreviewWebViewLoadMode {
-        switch FileType.detect(from: path) {
-        case .html:
-            return .htmlString
-        case .image where (path as NSString).pathExtension.lowercased() == "svg":
-            return .htmlString
-        default:
-            return .none
-        }
+        FileKindTable.rendersAsWebString(path: path) ? .htmlString : .none
     }
 }
 

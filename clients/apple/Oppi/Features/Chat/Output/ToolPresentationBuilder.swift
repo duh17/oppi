@@ -301,7 +301,7 @@ enum ToolPresentationBuilder {
               !isInterrupted,
               let path = file.path,
               !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              file.fileType?.previewCategory == .text else {
+              file.fileKind?.previewCategory == .text else {
             return nil
         }
         return ToolCurrentFileOpenIntent(path: path)
@@ -349,8 +349,8 @@ enum ToolPresentationBuilder {
             result.title = display?.label(fallback: tool) ?? (argsSummary.isEmpty ? tool : "\(tool) \(argsSummary)")
             result.toolNamePrefix = file.prefix
             result.titleLineBreakMode = .byTruncatingMiddle
-            result.languageBadge = file.fileType == .markdown || file.fileType == .image
-                ? file.fileType?.displayLabel : file.fileType?.syntaxLanguage?.displayName
+            result.languageBadge = file.fileKind == .markdown || file.fileKind == .image
+                ? file.fileKind?.displayLabel : file.fileKind?.syntaxLanguage?.displayName
             if !isError, file.operation == .edits, let stats = file.stats {
                 result.editAdded = stats.added
                 result.editRemoved = stats.removed
@@ -415,7 +415,7 @@ enum ToolPresentationBuilder {
         /// Source toggle (`DocumentFamily.sourceToggleTitle`).
         case document(DocumentFamily)
         /// Media renderer for images/audio in read output
-        case readMedia(output: String, filePath: String?, startLine: Int, attachments: [ToolMediaAttachment], fileType: FileType? = nil)
+        case readMedia(output: String, filePath: String?, startLine: Int, attachments: [ToolMediaAttachment], fileKind: FileKind? = nil)
         /// Audio message card with server-owned session attachment replay.
         case audioMessage(text: String, attachmentId: String, mimeType: String, durationSeconds: Double?, playbackBehavior: AudioPlaybackBehavior?)
         /// Lightweight non-copyable placeholder while an expanded tool has no body yet.
@@ -544,7 +544,7 @@ enum ToolPresentationBuilder {
                 text: file.text,
                 metadata: FilePresentationMetadata(
                     filePath: file.filePath,
-                    fileType: file.fileType,
+                    fileKind: file.fileKind,
                     language: file.language
                 ),
                 startLine: file.startLine ?? 1,
@@ -584,7 +584,7 @@ enum ToolPresentationBuilder {
 
     private struct FilePresentationMetadata {
         let filePath: String?
-        let fileType: FileType?
+        let fileKind: FileKind?
         let language: SyntaxLanguage?
     }
 
@@ -594,12 +594,12 @@ enum ToolPresentationBuilder {
         startLine: Int,
         attachments: [ToolMediaAttachment]
     ) -> ToolExpandedContent {
-        let fileType = metadata.fileType
-        if let fileType,
-           let document = DocumentFamily(fileType: fileType, text: text, filePath: metadata.filePath) {
+        let fileKind = metadata.fileKind
+        if let fileKind,
+           let document = DocumentFamily(fileKind: fileKind, text: text, filePath: metadata.filePath) {
             return .document(document)
         }
-        switch fileType {
+        switch fileKind {
         case .markdown:
             return .markdown(text: text, filePath: metadata.filePath)
         case .orgMode:
@@ -610,7 +610,7 @@ enum ToolPresentationBuilder {
                 filePath: metadata.filePath,
                 startLine: startLine,
                 attachments: attachments,
-                fileType: fileType
+                fileKind: fileKind
             )
         case .json:
             return .code(
@@ -619,10 +619,7 @@ enum ToolPresentationBuilder {
                 startLine: startLine,
                 filePath: metadata.filePath
             )
-        case .html, .plain, .code, .pdf, .usdz, .book, .binary,
-             .latex, .mermaid, .graphviz, .none,
-             // Classified above by `DocumentFamily`; listed so the switch stays exhaustive.
-             .csv, .tsv, .geojson, .topojson:
+        default:
             return .code(
                 text: text,
                 language: metadata.language,

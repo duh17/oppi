@@ -14,13 +14,13 @@ struct DocumentFamilyTests {
     """
 
     @Test func onlyDocumentFileTypesClassifyAsFamilies() {
-        #expect(DocumentFamily(fileType: .csv, text: "a", filePath: "a.csv") == .delimitedTable(text: "a", filePath: "a.csv"))
-        #expect(DocumentFamily(fileType: .tsv, text: "a", filePath: "a.tsv") == .delimitedTable(text: "a", filePath: "a.tsv"))
-        #expect(DocumentFamily(fileType: .geojson, text: "{}", filePath: nil) == .geoJSON(text: "{}", filePath: nil))
-        #expect(DocumentFamily(fileType: .topojson, text: "{}", filePath: "t.topojson") == .geoJSON(text: "{}", filePath: "t.topojson"))
-        #expect(DocumentFamily(fileType: .json, text: "{}", filePath: "a.json") == nil)
-        #expect(DocumentFamily(fileType: .markdown, text: "#", filePath: "a.md") == nil)
-        #expect(DocumentFamily(fileType: .plain, text: "a,b", filePath: "a.txt") == nil)
+        #expect(DocumentFamily(fileKind: .csv, text: "a", filePath: "a.csv") == .delimitedTable(text: "a", filePath: "a.csv"))
+        #expect(DocumentFamily(fileKind: .tsv, text: "a", filePath: "a.tsv") == .delimitedTable(text: "a", filePath: "a.tsv"))
+        #expect(DocumentFamily(fileKind: .geojson, text: "{}", filePath: nil) == .geoJSON(text: "{}", filePath: nil))
+        #expect(DocumentFamily(fileKind: .topojson, text: "{}", filePath: "t.topojson") == .geoJSON(text: "{}", filePath: "t.topojson"))
+        #expect(DocumentFamily(fileKind: .json, text: "{}", filePath: "a.json") == nil)
+        #expect(DocumentFamily(fileKind: .markdown, text: "#", filePath: "a.md") == nil)
+        #expect(DocumentFamily(fileKind: .plain, text: "a,b", filePath: "a.txt") == nil)
     }
 
     // MARK: - Full-screen reader

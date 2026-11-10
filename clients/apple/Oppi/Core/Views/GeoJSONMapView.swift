@@ -100,7 +100,7 @@ final class GeoJSONMapView: UIView, MKMapViewDelegate, ReaderBody {
         mapView.isScrollEnabled = allowsInteraction
         mapView.isZoomEnabled = allowsInteraction
         mapView.accessibilityIdentifier = "geojson.map"
-        mapView.accessibilityLabel = plan.kind.fileType.displayLabel
+        mapView.accessibilityLabel = plan.kind.fileKind.displayLabel
 
         statusView.translatesAutoresizingMaskIntoConstraints = false
         statusView.isHidden = true

@@ -190,7 +190,7 @@ final class DocumentEditOwner {
     func read() async -> ReadResult {
         let generation = generation
         let serverId = serverIdSource()
-        guard subject.fileType?.previewCategory == .text,
+        guard subject.fileKind?.previewCategory == .text,
               let backend = backendSource() else {
             reset()
             return .ownRead
@@ -470,7 +470,7 @@ final class DocumentEditOwner {
     ) -> ReaderTaskEditing? {
         guard allowsReaderEdits else { return nil }
         let dialect: TaskSourceEdit.Dialect
-        switch FileType.detect(from: path) {
+        switch FileKind.detect(from: path) {
         case .markdown: dialect = .markdown
         case .orgMode: dialect = .org
         default: return nil

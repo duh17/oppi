@@ -36,8 +36,8 @@ struct MacHTMLPreviewTests {
             return
         }
 
-        #expect(htmlFile.fileType == .html)
-        #expect(svgFile.fileType == .image)
+        #expect(htmlFile.fileKind == .html)
+        #expect(svgFile.fileKind == .image)
         #expect(MacMarkupPreviewKind.from(file: htmlFile) == .html)
         #expect(MacMarkupPreviewKind.from(file: svgFile) == .svg)
         #expect(MacToolDocumentColumnPaint.fileUsesMarkupPreview(htmlFile))

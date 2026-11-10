@@ -25,7 +25,7 @@ enum MacMarkdownAudioSource {
         let reference = request.embed.reference
         let path = request.embed.filePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty, reference.sourceServerID == nil,
-              reference.lineAnchor == nil, FileType.detect(from: path).previewCategory == .audio,
+              reference.lineAnchor == nil, FileKind.detect(from: path).previewCategory == .audio,
               !path.contains("\0"), !path.hasPrefix("//") else { throw Unavailable.source }
 
         var useHost = reference.kind == .hostFile

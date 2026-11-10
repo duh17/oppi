@@ -2294,7 +2294,7 @@ struct ToolPresentationBuilderTests {
 
         #expect(config.collapsedImageBase64 == nil)
         #expect(config.collapsedImageMimeType == nil)
-        #expect(config.languageBadge == FileType.image.displayLabel)
+        #expect(config.languageBadge == FileKind.image.displayLabel)
     }
 
     @Test("read non-image file has no collapsed image preview")
@@ -2353,7 +2353,7 @@ struct ToolPresentationBuilderTests {
             return
         }
         #expect(config.collapsedImageBase64 == nil)
-        #expect(config.languageBadge == FileType.image.displayLabel)
+        #expect(config.languageBadge == FileKind.image.displayLabel)
     }
 
     @Test("expanded image read uses attachment metadata without base64 output")
@@ -2386,13 +2386,13 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .readMedia(let output, let filePath, _, let attachments, let fileType) = config.expandedContent else {
+        guard case .readMedia(let output, let filePath, _, let attachments, let fileKind) = config.expandedContent else {
             Issue.record("Expected .readMedia content for image attachment read")
             return
         }
         #expect(output.isEmpty)
         #expect(filePath == "icon.png")
-        #expect(fileType == .image)
+        #expect(fileKind == .image)
         #expect(attachments.first?.id == "att-image-1")
         #expect(attachments.first?.sizeBytes == 1234)
         #expect(attachments.first?.sha256 == "abc123")

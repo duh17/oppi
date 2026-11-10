@@ -11,80 +11,10 @@ export const MAX_BROWSE_TEXT_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 export const MAX_BROWSE_BOOK_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 export const MAX_WORKSPACE_FILE_EDIT_BYTES = 1_048_576; // 1 MiB
 
-const IMAGE_CONTENT_TYPES: Record<string, string> = {
-  ".apng": "image/apng",
-  ".avif": "image/avif",
-  ".bmp": "image/bmp",
-  ".gif": "image/gif",
-  ".heic": "image/heic",
-  ".heif": "image/heif",
-  ".ico": "image/vnd.microsoft.icon",
-  ".jpeg": "image/jpeg",
-  ".jpg": "image/jpeg",
-  ".png": "image/png",
-  ".svg": "image/svg+xml",
-  ".tif": "image/tiff",
-  ".tiff": "image/tiff",
-  ".webp": "image/webp",
-};
+const TEXT_PLAIN = "text/plain; charset=utf-8";
 
-const SPECIAL_CONTENT_TYPES: Record<string, string> = {
-  ".json": "application/json; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".htm": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".xml": "text/xml; charset=utf-8",
-  ".csv": "text/csv; charset=utf-8",
-  ".pdf": "application/pdf",
-  ".usdz": "model/vnd.usdz+zip",
-  ".epub": "application/epub+zip",
-};
-
-const STREAMING_MEDIA_CONTENT_TYPES: Record<string, string> = {
-  // Audio
-  ".aac": "audio/aac",
-  ".aif": "audio/x-aiff",
-  ".aifc": "audio/x-aiff",
-  ".aiff": "audio/x-aiff",
-  ".amr": "audio/amr",
-  ".caf": "audio/x-caf",
-  ".flac": "audio/flac",
-  ".m4a": "audio/mp4",
-  ".m4b": "audio/mp4",
-  ".mid": "audio/midi",
-  ".midi": "audio/midi",
-  ".mp3": "audio/mpeg",
-  ".mpga": "audio/mpeg",
-  ".oga": "audio/ogg",
-  ".ogg": "audio/ogg",
-  ".opus": "audio/opus",
-  ".wav": "audio/wav",
-  ".wave": "audio/wav",
-  ".weba": "audio/webm",
-
-  // Video
-  ".3g2": "video/3gpp2",
-  ".3gp": "video/3gpp",
-  ".avi": "video/x-msvideo",
-  ".flv": "video/x-flv",
-  ".m2ts": "video/mp2t",
-  ".m4v": "video/x-m4v",
-  ".mkv": "video/x-matroska",
-  ".mov": "video/quicktime",
-  ".mp4": "video/mp4",
-  ".mpe": "video/mpeg",
-  ".mpeg": "video/mpeg",
-  ".mpg": "video/mpeg",
-  ".ogv": "video/ogg",
-  ".qt": "video/quicktime",
-  ".webm": "video/webm",
-  ".wmv": "video/x-ms-wmv",
-
-  // Playlists / streaming containers
-  ".m3u8": "application/vnd.apple.mpegurl",
-};
-
-export const TEXT_EXTENSIONS = new Set([
+/** Extensions served as plain text. One row of `FILE_KINDS` below. */
+const TEXT_EXTENSIONS = [
   ".txt",
   ".md",
   ".markdown",
@@ -169,7 +99,7 @@ export const TEXT_EXTENSIONS = new Set([
   ".nim",
   ".patch",
   ".diff",
-]);
+];
 
 const TEXT_FILENAMES = new Set([
   "makefile",
@@ -187,6 +117,95 @@ const TEXT_FILENAMES = new Set([
   "justfile",
   "brewfile",
 ]);
+
+/**
+ * How the browse routes treat a file: what the phone opens it as, which also
+ * picks its size cap (`browseSizeLimit`). `text` covers anything unrecognised.
+ */
+export type FileKindClass =
+  "image" | "pdf" | "usdz" | "book" | "audio" | "video" | "playlist" | "text";
+
+interface FileKindRow {
+  readonly kind: FileKindClass;
+  readonly contentType: string;
+  readonly extensions: readonly string[];
+}
+
+/**
+ * The one table of file types the server serves: extension to content type and
+ * class. A later row never overrides an earlier one for the same extension.
+ * The client keeps its own table (`FileKindTable.swift`); `protocol/file-kinds.json`
+ * pins the two together for every extension the phone opens as something other
+ * than text.
+ */
+export const FILE_KINDS: readonly FileKindRow[] = [
+  { kind: "image", contentType: "image/apng", extensions: [".apng"] },
+  { kind: "image", contentType: "image/avif", extensions: [".avif"] },
+  { kind: "image", contentType: "image/bmp", extensions: [".bmp"] },
+  { kind: "image", contentType: "image/gif", extensions: [".gif"] },
+  { kind: "image", contentType: "image/heic", extensions: [".heic"] },
+  { kind: "image", contentType: "image/heif", extensions: [".heif"] },
+  { kind: "image", contentType: "image/vnd.microsoft.icon", extensions: [".ico"] },
+  { kind: "image", contentType: "image/jpeg", extensions: [".jpeg", ".jpg"] },
+  { kind: "image", contentType: "image/png", extensions: [".png"] },
+  { kind: "image", contentType: "image/svg+xml", extensions: [".svg"] },
+  { kind: "image", contentType: "image/tiff", extensions: [".tif", ".tiff"] },
+  { kind: "image", contentType: "image/webp", extensions: [".webp"] },
+
+  { kind: "text", contentType: "application/json; charset=utf-8", extensions: [".json"] },
+  { kind: "text", contentType: "text/html; charset=utf-8", extensions: [".html", ".htm"] },
+  { kind: "text", contentType: "text/css; charset=utf-8", extensions: [".css"] },
+  { kind: "text", contentType: "text/xml; charset=utf-8", extensions: [".xml"] },
+  { kind: "text", contentType: "text/csv; charset=utf-8", extensions: [".csv"] },
+  { kind: "pdf", contentType: "application/pdf", extensions: [".pdf"] },
+  { kind: "usdz", contentType: "model/vnd.usdz+zip", extensions: [".usdz"] },
+  { kind: "book", contentType: "application/epub+zip", extensions: [".epub"] },
+  { kind: "text", contentType: TEXT_PLAIN, extensions: TEXT_EXTENSIONS },
+
+  { kind: "audio", contentType: "audio/aac", extensions: [".aac"] },
+  { kind: "audio", contentType: "audio/x-aiff", extensions: [".aif", ".aifc", ".aiff"] },
+  { kind: "audio", contentType: "audio/amr", extensions: [".amr"] },
+  { kind: "audio", contentType: "audio/x-caf", extensions: [".caf"] },
+  { kind: "audio", contentType: "audio/flac", extensions: [".flac"] },
+  { kind: "audio", contentType: "audio/mp4", extensions: [".m4a", ".m4b"] },
+  { kind: "audio", contentType: "audio/midi", extensions: [".mid", ".midi"] },
+  { kind: "audio", contentType: "audio/mpeg", extensions: [".mp3", ".mpga"] },
+  { kind: "audio", contentType: "audio/ogg", extensions: [".oga", ".ogg"] },
+  { kind: "audio", contentType: "audio/opus", extensions: [".opus"] },
+  { kind: "audio", contentType: "audio/wav", extensions: [".wav", ".wave"] },
+  { kind: "audio", contentType: "audio/webm", extensions: [".weba"] },
+
+  { kind: "video", contentType: "video/3gpp2", extensions: [".3g2"] },
+  { kind: "video", contentType: "video/3gpp", extensions: [".3gp"] },
+  { kind: "video", contentType: "video/x-msvideo", extensions: [".avi"] },
+  { kind: "video", contentType: "video/x-flv", extensions: [".flv"] },
+  { kind: "video", contentType: "video/mp2t", extensions: [".m2ts"] },
+  { kind: "video", contentType: "video/x-m4v", extensions: [".m4v"] },
+  { kind: "video", contentType: "video/x-matroska", extensions: [".mkv"] },
+  { kind: "video", contentType: "video/quicktime", extensions: [".mov", ".qt"] },
+  { kind: "video", contentType: "video/mp4", extensions: [".mp4"] },
+  { kind: "video", contentType: "video/mpeg", extensions: [".mpe", ".mpeg", ".mpg"] },
+  { kind: "video", contentType: "video/ogg", extensions: [".ogv"] },
+  { kind: "video", contentType: "video/webm", extensions: [".webm"] },
+  { kind: "video", contentType: "video/x-ms-wmv", extensions: [".wmv"] },
+
+  { kind: "playlist", contentType: "application/vnd.apple.mpegurl", extensions: [".m3u8"] },
+];
+
+const FILE_KIND_BY_EXTENSION = new Map<string, FileKindRow>();
+for (const row of FILE_KINDS) {
+  for (const extension of row.extensions) {
+    if (!FILE_KIND_BY_EXTENSION.has(extension)) FILE_KIND_BY_EXTENSION.set(extension, row);
+  }
+}
+
+/** Kinds whose content type is one fixed string, not a `type/` prefix. */
+const FILE_KIND_BY_EXACT_CONTENT_TYPE = new Map<string, FileKindClass>(
+  FILE_KINDS.filter((row) => ["pdf", "usdz", "book", "playlist"].includes(row.kind)).map((row) => [
+    row.contentType,
+    row.kind,
+  ]),
+);
 
 export const SEARCH_IGNORE_DIRS = new Set([
   ".git",
@@ -263,24 +282,23 @@ function normalizeExtension(ext: string, filename: string): string {
   return filename.slice(dotIndex).toLowerCase();
 }
 
-export function isStreamingMediaContentType(contentType: string): boolean {
+/** The class of a content type: its `type/` prefix for image, audio, and video, else the table. */
+export function fileKindOfContentType(contentType: string): FileKindClass {
   const normalized = normalizeContentType(contentType);
-  return (
-    normalized.startsWith("audio/") ||
-    normalized.startsWith("video/") ||
-    HLS_CONTENT_TYPES.has(normalized)
-  );
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("audio/")) return "audio";
+  if (normalized.startsWith("video/")) return "video";
+  if (HLS_CONTENT_TYPES.has(normalized)) return "playlist";
+  return FILE_KIND_BY_EXACT_CONTENT_TYPE.get(normalized) ?? "text";
+}
+
+export function isStreamingMediaContentType(contentType: string): boolean {
+  const kind = fileKindOfContentType(contentType);
+  return kind === "audio" || kind === "video" || kind === "playlist";
 }
 
 export function isBrowseMediaContentType(contentType: string): boolean {
-  const normalized = normalizeContentType(contentType);
-  return (
-    normalized.startsWith("image/") ||
-    normalized === "application/pdf" ||
-    normalized === "model/vnd.usdz+zip" ||
-    normalized === "application/epub+zip" ||
-    isStreamingMediaContentType(normalized)
-  );
+  return fileKindOfContentType(contentType) !== "text";
 }
 
 /**
@@ -288,7 +306,7 @@ export function isBrowseMediaContentType(contentType: string): boolean {
  * book files are larger than images, and streaming media has none.
  */
 export function isBookContentType(contentType: string): boolean {
-  return normalizeContentType(contentType) === "application/epub+zip";
+  return fileKindOfContentType(contentType) === "book";
 }
 
 /**
@@ -305,18 +323,10 @@ export function browseSizeLimit(contentType: string): number | null {
 export function getContentType(ext: string, filename: string): string {
   const normalizedExt = normalizeExtension(ext, filename);
 
-  const imageType = IMAGE_CONTENT_TYPES[normalizedExt];
-  if (imageType) return imageType;
+  const row = FILE_KIND_BY_EXTENSION.get(normalizedExt);
+  if (row) return row.contentType;
 
-  const special = SPECIAL_CONTENT_TYPES[normalizedExt];
-  if (special) return special;
-
-  if (TEXT_EXTENSIONS.has(normalizedExt)) return "text/plain; charset=utf-8";
-
-  if (TEXT_FILENAMES.has(filename.toLowerCase())) return "text/plain; charset=utf-8";
-
-  const mediaType = STREAMING_MEDIA_CONTENT_TYPES[normalizedExt];
-  if (mediaType) return mediaType;
+  if (TEXT_FILENAMES.has(filename.toLowerCase())) return TEXT_PLAIN;
 
   return "application/octet-stream";
 }

@@ -156,33 +156,33 @@ struct FileViewerPlan: Equatable, Sendable, Hashable, Identifiable {
 /// Parse workspace file bytes once. Platforms only paint the descriptor.
 enum FileViewerDescriptorBuilder {
     static func descriptor(path: String, data: Data) -> ToolContentDescriptor {
-        let fileType = FileType.detect(
+        let fileKind = FileKind.detect(
             from: path,
             content: String(data: data, encoding: .utf8)
         )
-        if let media = streamingMediaDescriptor(path: path, fileType: fileType) {
+        if let media = streamingMediaDescriptor(path: path, fileKind: fileKind) {
             return media
         }
         // USDZ is a zip. Route before UTF-8 so a textual header cannot become
         // a source descriptor, and never copy bytes into `File.text`.
-        if fileType == .usdz {
+        if fileKind == .usdz {
             return .file(
                 ToolContentDescriptor.File(
                     text: "",
                     filePath: path,
-                    fileType: .usdz,
+                    fileKind: .usdz,
                     language: nil,
                     startLine: 1,
                     attachments: []
                 )
             )
         }
-        if fileType == .pdf {
+        if fileKind == .pdf {
             return .file(
                 ToolContentDescriptor.File(
                     text: data.base64EncodedString(),
                     filePath: path,
-                    fileType: .pdf,
+                    fileKind: .pdf,
                     language: nil,
                     startLine: 1,
                     attachments: []
@@ -190,14 +190,14 @@ enum FileViewerDescriptorBuilder {
             )
         }
         guard let text = String(data: data, encoding: .utf8) else {
-            return .status(message: binaryStatus(fileType, path: path))
+            return .status(message: binaryStatus(fileKind, path: path))
         }
         return .file(
             ToolContentDescriptor.File(
                 text: text,
                 filePath: path,
-                fileType: fileType,
-                language: fileType.syntaxLanguage,
+                fileKind: fileKind,
+                language: fileKind.syntaxLanguage,
                 startLine: 1,
                 attachments: []
             )
@@ -207,7 +207,7 @@ enum FileViewerDescriptorBuilder {
     /// Audio and video stream through the Mac Unix-socket range adapter.
     /// Do not download their bytes into the descriptor.
     static func needsFileBytes(path: String) -> Bool {
-        switch FileType.detect(from: path) {
+        switch FileKind.detect(from: path) {
         case .audio, .video, .usdz:
             return false
         default:
@@ -217,9 +217,9 @@ enum FileViewerDescriptorBuilder {
 
     private static func streamingMediaDescriptor(
         path: String,
-        fileType: FileType
+        fileKind: FileKind
     ) -> ToolContentDescriptor? {
-        switch fileType {
+        switch fileKind {
         case .audio, .video:
             return .media(
                 ToolContentDescriptor.Media(
@@ -235,9 +235,9 @@ enum FileViewerDescriptorBuilder {
         }
     }
 
-    private static func binaryStatus(_ fileType: FileType, path: String) -> String {
+    private static func binaryStatus(_ fileKind: FileKind, path: String) -> String {
         let name = (path as NSString).lastPathComponent
-        switch fileType {
+        switch fileKind {
         case .image:
             return "\(name) is an image. Preview is not available in this column yet."
         case .usdz:

@@ -59,14 +59,7 @@ enum MacHTMLPreviewSecurity {
     }
 
     static func webViewLoadMode(for path: String) -> MacHTMLPreviewLoadMode {
-        switch FileType.detect(from: path) {
-        case .html:
-            return .htmlString
-        case .image where (path as NSString).pathExtension.lowercased() == "svg":
-            return .htmlString
-        default:
-            return .none
-        }
+        FileKindTable.rendersAsWebString(path: path) ? .htmlString : .none
     }
 
     static func usesMarkupPreview(path: String) -> Bool {
@@ -97,7 +90,7 @@ enum MacMarkupPreviewKind: Equatable, Hashable, Sendable {
     }
 
     static func from(file: ToolContentDescriptor.File) -> MacMarkupPreviewKind? {
-        if file.fileType == .html {
+        if file.fileKind == .html {
             return .html
         }
         if let path = file.filePath, MacHTMLPreviewSecurity.usesMarkupPreview(path: path) {

@@ -2527,7 +2527,7 @@ enum FlatSegment: Sendable {
     // MARK: - Wiki-link file icon decoration
 
     /// A non-text file preview category renders a recognizable leading icon,
-    /// reusing `FileIcon.forPath` and `FileType.previewCategory`. Text-like
+    /// reusing `FileIcon.forPath` and `FileKind.previewCategory`. Text-like
     /// files (code, markdown, JSON, plain) stay icon-free.
     private static func wikiLinkFileIcon(for destination: String?) -> FileIcon? {
         guard let destination,
@@ -2536,7 +2536,7 @@ enum FlatSegment: Sendable {
             return nil
         }
         let path = reference.fileCandidatePath ?? reference.target
-        guard FileType.detect(from: path).previewCategory != .text else {
+        guard FileKind.detect(from: path).previewCategory != .text else {
             return nil
         }
         return FileIcon.forPath(path)

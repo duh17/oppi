@@ -128,7 +128,7 @@ enum ToolCallDocumentBuilder {
         // Same Org reading view as the share/chat path (headings are not linked).
         case "org": return MarkdownBlockSerializer.serialize(OrgToMarkdownConverter.convert(located: OrgParser().parseLocated(text)))
         case "code":
-            let hint = language ?? filePath.flatMap { FileType.detect(from: $0).syntaxLanguage?.displayName.lowercased() } ?? "text"
+            let hint = language ?? filePath.flatMap { FileKind.detect(from: $0).syntaxLanguage?.displayName.lowercased() } ?? "text"
             return fence(text, language: safeLanguage(hint))
         case "diff": return fence(text, language: "diff")
         case "terminal": return fence(ANSIParser.strip(text), language: "text")

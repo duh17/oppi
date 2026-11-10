@@ -123,7 +123,7 @@ final class NativeGeoJSONBlockView: UIView {
         if !isUnavailable {
             isAccessibilityElement = true
             accessibilityIdentifier = "geojson.diagram.open"
-            accessibilityLabel = currentKind.fileType.displayLabel
+            accessibilityLabel = currentKind.fileKind.displayLabel
             accessibilityHint = String(localized: "Opens map full screen")
             accessibilityTraits = [.button]
         }

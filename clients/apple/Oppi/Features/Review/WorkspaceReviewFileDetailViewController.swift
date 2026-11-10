@@ -10,7 +10,7 @@ enum WorkspaceReviewFileRenderingPolicy {
         if status?.trimmingCharacters(in: .whitespacesAndNewlines) == "D" {
             return .review
         }
-        return FileType.detect(from: path).previewCategory == .text ? .review : .workspaceFile
+        return FileKind.detect(from: path).previewCategory == .text ? .review : .workspaceFile
     }
 }
 

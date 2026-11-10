@@ -985,7 +985,7 @@ private struct MacTextFileSourcePreview: View {
 
     var body: some View {
         let _ = typographyRevision
-        if case .orgMode = preview.fileType, let text = preview.text {
+        if case .orgMode = preview.fileKind, let text = preview.text {
             MacOrgDocumentPreview(content: text)
         } else if let language = preview.sourceLanguageLabel, let text = preview.text {
             MacCodeOutputPreview(

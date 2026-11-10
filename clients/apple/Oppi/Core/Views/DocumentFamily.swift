@@ -19,16 +19,15 @@ enum DocumentFamily: Equatable {
     case delimitedTable(text: String, filePath: String?)
     case geoJSON(text: String, filePath: String?)
 
-    /// The family that renders `fileType`, or nil when it is not a document
-    /// format. Exhaustive so a new `FileType` forces a decision here.
-    init?(fileType: FileType, text: String, filePath: String?) {
-        switch fileType {
+    /// The family that renders `fileKind`, or nil when it is not a document
+    /// format.
+    init?(fileKind: FileKind, text: String, filePath: String?) {
+        switch fileKind {
         case .csv, .tsv:
             self = .delimitedTable(text: text, filePath: filePath)
         case .geojson, .topojson:
             self = .geoJSON(text: text, filePath: filePath)
-        case .markdown, .html, .code, .json, .image, .audio, .video, .pdf, .usdz, .book,
-             .binary, .plain, .latex, .orgMode, .mermaid, .graphviz:
+        default:
             return nil
         }
     }

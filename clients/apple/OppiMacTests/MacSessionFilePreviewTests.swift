@@ -11,7 +11,7 @@ struct MacSessionFilePreviewTests {
         let preview = MacSessionFilePreview(path: "Sources/App.swift", data: data)
 
         #expect(preview.path == "Sources/App.swift")
-        #expect(preview.fileType == .code(language: .swift))
+        #expect(preview.fileKind == .code(language: .swift))
         #expect(preview.kind == .text)
         #expect(preview.text == "hello\nworld\n")
         #expect(preview.imageData == nil)
@@ -24,7 +24,7 @@ struct MacSessionFilePreviewTests {
 
         let preview = MacSessionFilePreview(path: "image.png", data: data)
 
-        #expect(preview.fileType == .image)
+        #expect(preview.fileKind == .image)
         #expect(preview.kind == .image)
         #expect(preview.text == nil)
         #expect(preview.imageData == data)
@@ -38,7 +38,7 @@ struct MacSessionFilePreviewTests {
 
         let preview = MacSessionFilePreview(path: "blob.bin", data: data)
 
-        #expect(preview.fileType == .binary)
+        #expect(preview.fileKind == .binary)
         #expect(preview.kind == .binary)
         #expect(preview.text == nil)
         #expect(preview.imageData == nil)
@@ -51,7 +51,7 @@ struct MacSessionFilePreviewTests {
 
         let preview = MacSessionFilePreview(path: "large.txt", data: data)
 
-        #expect(preview.fileType == .plain)
+        #expect(preview.fileKind == .plain)
         #expect(preview.text?.count == MacSessionFilePreview.maxPreviewCharacters)
         #expect(preview.truncated)
         #expect(preview.byteCount == data.count)
@@ -64,9 +64,9 @@ struct MacSessionFilePreviewTests {
         let mermaidPreview = MacSessionFilePreview(path: "diagram.mmd", data: mermaid)
         let orgPreview = MacSessionFilePreview(path: "notes.org", data: org)
 
-        #expect(mermaidPreview.fileType == .mermaid)
+        #expect(mermaidPreview.fileKind == .mermaid)
         #expect(mermaidPreview.sourceLanguageLabel == "Mermaid")
-        #expect(orgPreview.fileType == .orgMode)
+        #expect(orgPreview.fileKind == .orgMode)
         #expect(orgPreview.sourceLanguageLabel == "Org")
     }
 

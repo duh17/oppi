@@ -427,7 +427,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             worktreeId: configuration.worktreeId,
             path: path,
             skillFile: path == configuration.filePath ? configuration.skillFile : nil,
-            fileType: FileType.detect(from: path),
+            fileKind: FileKind.detect(from: path),
             context: FileEditReadContext(sessionId: configuration.sessionId, controlSessionId: configuration.controlSessionId)
         )
     }
@@ -1173,7 +1173,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         let requestedSelection = currentSelection
         let requestedPath = requestedSelection.path
         let requestedExtension = (requestedPath as NSString).pathExtension.lowercased()
-        let requestedCategory = FileType.detect(from: requestedPath).previewCategory
+        let requestedCategory = FileKind.detect(from: requestedPath).previewCategory
         let existingMedia: FileBrowserMediaLoadPolicy.Existing = {
             guard let loadedMediaPath else { return .none }
             switch content {
@@ -1379,7 +1379,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         category: FilePreviewCategory
     ) -> Phase {
         if configuration.source == .hostFile, HostFilePreviewPolicy.usesStringFetchViewer(for: path) {
-            if FileType.detect(from: path) == .html,
+            if FileKind.detect(from: path) == .html,
                let text = String(data: data, encoding: .utf8) {
                 return .text(text)
             }

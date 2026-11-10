@@ -541,15 +541,15 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     }
 
     private static func languageHint(for path: String) -> String? {
-        switch FileType.detect(from: path, content: "") {
+        let kind = FileKind.detect(from: path, content: "")
+        return switch kind {
         case .markdown: "markdown"
         case .json: "json"
-        case .code(let language): language.displayName
         case .latex: "latex"
         case .orgMode: "org"
         case .mermaid: "mermaid"
         case .graphviz: "dot"
-        default: nil
+        default: kind.codeLanguage?.displayName
         }
     }
 

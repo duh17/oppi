@@ -260,7 +260,7 @@ struct MacToolDocumentColumnTests {
         let file = ToolContentDescriptor.File(
             text: "func main() {}",
             filePath: "main.go",
-            fileType: .code(language: .go),
+            fileKind: .code(language: .go),
             language: .go,
             startLine: 1,
             attachments: []

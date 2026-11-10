@@ -23,7 +23,7 @@ struct DocumentEditOwnerTests {
 
     private func workspaceSubject(
         path: String = "notes.md",
-        fileType: FileType = .markdown
+        fileKind: FileKind = .markdown
     ) -> DocumentEditSubject {
         .file(
             serverId: "srv",
@@ -32,7 +32,7 @@ struct DocumentEditOwnerTests {
             worktreeId: nil,
             path: path,
             skillFile: nil,
-            fileType: fileType
+            fileKind: fileKind
         )
     }
 
@@ -44,7 +44,7 @@ struct DocumentEditOwnerTests {
             worktreeId: nil,
             path: "/Users/preview/.pi/agent/skills/release/\(path)",
             skillFile: SkillFileEditTarget(skillId: "release", path: path),
-            fileType: .markdown
+            fileKind: .markdown
         )
     }
 
@@ -239,7 +239,7 @@ struct DocumentEditOwnerTests {
 
     @Test func binaryBytesLeaveNoPencil() async {
         let owner = owner(
-            subject: workspaceSubject(path: "notes.txt", fileType: .plain),
+            subject: workspaceSubject(path: "notes.txt", fileKind: .plain),
             capability: capability,
             snapshot: WorkspaceFileDiskSnapshot(bytes: Data([0xC3, 0x28]), etag: "\"sha256-a\"")
         )
@@ -271,7 +271,7 @@ struct DocumentEditOwnerTests {
 
     @Test func nonTextFileHasNoPencil() async {
         let owner = owner(
-            subject: workspaceSubject(path: "photo.png", fileType: .image),
+            subject: workspaceSubject(path: "photo.png", fileKind: .image),
             capability: capability,
             agentAction: DocumentAgentEditAction { }
         )
@@ -327,7 +327,7 @@ struct DocumentEditOwnerTests {
             worktreeId: nil,
             path: "/Users/preview/oppi/src/a.ts",
             skillFile: nil,
-            fileType: .plain
+            fileKind: .plain
         )
         let owner = owner(subject: subject, serverId: "srv", capability: capability)
 
@@ -360,7 +360,7 @@ struct DocumentEditOwnerTests {
                 worktreeId: nil,
                 path: path,
                 skillFile: nil,
-                fileType: .markdown
+                fileKind: .markdown
             )
         }
 
@@ -405,7 +405,7 @@ struct DocumentEditOwnerTests {
                 worktreeId: worktreeId,
                 path: path,
                 skillFile: nil,
-                fileType: .markdown
+                fileKind: .markdown
             )
         }
 
@@ -458,7 +458,7 @@ struct DocumentEditOwnerTests {
             worktreeId: nil,
             path: "/Users/preview/.pi/agent/prompts/SYSTEM.md",
             skillFile: nil,
-            fileType: .markdown
+            fileKind: .markdown
         )
         let owner = owner(subject: subject, capability: capability)
 
@@ -496,7 +496,7 @@ struct DocumentEditOwnerTests {
             worktreeId: nil,
             path: "/Users/preview/oppi/notes.md",
             skillFile: nil,
-            fileType: .markdown,
+            fileKind: .markdown,
             context: FileEditReadContext(sessionId: "session-1")
         )
         let fromLink = owner(
@@ -548,7 +548,7 @@ struct DocumentEditOwnerTests {
             worktreeId: nil,
             path: "~/.ssh/notes.md",
             skillFile: nil,
-            fileType: .markdown
+            fileKind: .markdown
         )
         let owner = owner(
             subject: subject,
@@ -825,7 +825,7 @@ struct DocumentEditOwnerTests {
 
     private func readerEditOwner(
         path: String = "tasks.org",
-        fileType: FileType = .orgMode,
+        fileKind: FileKind = .orgMode,
         text: String,
         log: WriteLog,
         outcome: WorkspaceFileWriteOutcome,
@@ -839,7 +839,7 @@ struct DocumentEditOwnerTests {
             }
         )
         return owner(
-            subject: workspaceSubject(path: path, fileType: fileType),
+            subject: workspaceSubject(path: path, fileKind: fileKind),
             capability: capability,
             snapshot: WorkspaceFileDiskSnapshot(bytes: Data(text.utf8), etag: tag("a")),
             transport: transport,
@@ -913,7 +913,7 @@ struct DocumentEditOwnerTests {
             worktreeId: nil,
             path: "/Users/alex/notebook/projects/oppi.org",
             skillFile: nil,
-            fileType: .orgMode
+            fileKind: .orgMode
         )
         let host = owner(subject: hostFile, capability: capability, transport: transport)
         #expect(await host.read() == .ownRead)
@@ -921,7 +921,7 @@ struct DocumentEditOwnerTests {
         #expect(await host.saveReaderEdit { $0 + "x" } == .unavailable)
 
         let notEditable = owner(
-            subject: workspaceSubject(path: "tasks.org", fileType: .orgMode),
+            subject: workspaceSubject(path: "tasks.org", fileKind: .orgMode),
             capability: nil,
             transport: transport
         )
@@ -929,7 +929,7 @@ struct DocumentEditOwnerTests {
         #expect(!notEditable.allowsReaderEdits)
 
         let untagged = owner(
-            subject: workspaceSubject(path: "tasks.org", fileType: .orgMode),
+            subject: workspaceSubject(path: "tasks.org", fileKind: .orgMode),
             capability: capability,
             snapshot: WorkspaceFileDiskSnapshot(bytes: Data("* TODO a".utf8), etag: nil),
             transport: transport
@@ -953,7 +953,7 @@ struct DocumentEditOwnerTests {
             worktreeId: nil,
             path: path,
             skillFile: nil,
-            fileType: .orgMode
+            fileKind: .orgMode
         )
         let canonical = WorkspaceFileEditIdentity(serverId: "srv", hostPath: "/Users/alex/notebook/tasks.org")
         let snapshot = WorkspaceFileDiskSnapshot(bytes: Data("* TODO a\n- [ ] x\n".utf8), etag: tag("a"))

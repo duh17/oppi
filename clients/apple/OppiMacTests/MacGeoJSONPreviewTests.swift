@@ -23,8 +23,8 @@ struct MacGeoJSONPreviewTests {
             return
         }
 
-        #expect(geoFile.fileType == .geojson)
-        #expect(topoFile.fileType == .topojson)
+        #expect(geoFile.fileKind == .geojson)
+        #expect(topoFile.fileKind == .topojson)
         #expect(MacToolDocumentColumnPaint.fileUsesGeoJSONPreview(geoFile))
         #expect(MacToolDocumentColumnPaint.fileUsesGeoJSONPreview(topoFile))
         #expect(GeoJSONViewerPlan.opening(path: "rainier.geojson", text: geoFile.text) != nil)
@@ -43,7 +43,7 @@ struct MacGeoJSONPreviewTests {
 
         #expect(!MacToolDocumentColumnPaint.fileUsesGeoJSONPreview(file))
         #expect(GeoJSONViewerPlan.opening(path: "package.json", text: file.text) == nil)
-        #expect(file.fileType == .json)
+        #expect(file.fileKind == .json)
     }
 
     @Test func failureDoesNotLeaveAVisibleWorldMap() throws {

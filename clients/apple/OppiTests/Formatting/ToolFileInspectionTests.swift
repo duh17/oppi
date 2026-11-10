@@ -22,14 +22,14 @@ struct ToolFileInspectionTests {
         #expect(file.filePath == path)
         #expect(file.startLine == 42)
         #expect(file.text == text)
-        let expected: FileType = switch path {
+        let expected: FileKind = switch path {
         case "main.swift": .code(language: .swift)
         case "README.md": .markdown
         case "picture.png": .image
         case "data.csv": .csv
         default: .geojson
         }
-        #expect(file.fileType == expected)
+        #expect(file.fileKind == expected)
         #expect(value.inspection.file?.provenance == .result)
     }
 

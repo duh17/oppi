@@ -119,7 +119,7 @@ final class NativeExpandedReadMediaView: UIView {
             attachment.kind == "video" || attachment.mimeType.lowercased().hasPrefix("video/")
         }
         let isVideoFile = filePath.map { path in
-            if case .video = FileType.detect(from: path) { return true }
+            if case .video = FileKind.detect(from: path) { return true }
             return false
         } ?? false
         let hasVideoFileMediaSourceProvider = filePath != nil && sessionFileMediaSourceProvider != nil

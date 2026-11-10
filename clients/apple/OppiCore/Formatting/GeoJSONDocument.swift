@@ -6,7 +6,7 @@ struct GeoJSONViewerPlan: Equatable, Sendable {
         case geojson
         case topojson
 
-        var fileType: FileType {
+        var fileKind: FileKind {
             switch self {
             case .geojson: .geojson
             case .topojson: .topojson
@@ -14,15 +14,15 @@ struct GeoJSONViewerPlan: Equatable, Sendable {
         }
 
         init?(path: String, content: String? = nil) {
-            switch FileType.detect(from: path, content: content) {
+            switch FileKind.detect(from: path, content: content) {
             case .geojson: self = .geojson
             case .topojson: self = .topojson
             default: return nil
             }
         }
 
-        init?(fileType: FileType) {
-            switch fileType {
+        init?(fileKind: FileKind) {
+            switch fileKind {
             case .geojson: self = .geojson
             case .topojson: self = .topojson
             default: return nil
@@ -45,28 +45,27 @@ struct GeoJSONViewerPlan: Equatable, Sendable {
     }
 
     static func opening(
-        fileType: FileType,
+        fileKind: FileKind,
         path: String?,
         text: String
     ) -> GeoJSONViewerPlan? {
         if let path, let plan = opening(path: path, text: text) {
             return plan
         }
-        guard let kind = Kind(fileType: fileType) else { return nil }
+        guard let kind = Kind(fileKind: fileKind) else { return nil }
         return make(kind: kind, text: text)
     }
 
     static func resolved(path: String?, text: String) -> GeoJSONViewerPlan {
         if let plan = opening(
-            fileType: FileType.detect(from: path, content: text),
+            fileKind: FileKind.detect(from: path, content: text),
             path: path,
             text: text
         ) {
             return plan
         }
-        let ext = (path as NSString?)?.pathExtension.lowercased()
-        let kind: Kind = ext == "topojson" ? .topojson : .geojson
-        return make(kind: kind, text: text)
+        // `opening` takes every geojson and topojson path, so a path that reaches here is neither.
+        return make(kind: .geojson, text: text)
     }
 
     private static func make(kind: Kind, text: String) -> GeoJSONViewerPlan {
@@ -110,7 +109,7 @@ struct GeoJSONViewerPlan: Equatable, Sendable {
 
 enum GeographicJSONSniffer {
     /// GitHub-like sniff for `.json` files. Feature/Point roots stay ordinary JSON.
-    static func fileType(from content: String?) -> FileType? {
+    static func fileKind(from content: String?) -> FileKind? {
         guard let content else { return nil }
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.first == "{" else { return nil }

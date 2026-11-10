@@ -154,8 +154,8 @@ enum ToolContentDescriptorBuilder {
             } else if file.operation == .edits, isDone, let lines = file.diff {
                 leaf = .diff(.init(lines: lines, path: file.path))
             } else if !file.text.isEmpty || !mediaAttachments(from: context.details).isEmpty {
-                leaf = .file(.init(text: file.text, filePath: file.path, fileType: file.fileType,
-                                  language: file.fileType?.syntaxLanguage, startLine: file.startLine,
+                leaf = .file(.init(text: file.text, filePath: file.path, fileKind: file.fileKind,
+                                  language: file.fileKind?.syntaxLanguage, startLine: file.startLine,
                                   attachments: file.operation == .content ? mediaAttachments(from: context.details) : []))
             } else { leaf = .status(message: context.isLoadingOutput ? "Loading output…" : "Waiting for output…") }
             let copy = if !includeFileContent { "" } else if isError { output } else if file.operation == .edits, isDone, let lines = file.diff {
@@ -276,7 +276,7 @@ enum ToolContentDescriptorBuilder {
         nestedCalls: NestedToolCalls?
     ) -> ToolContentDescriptor.Markdown? {
         guard case .file(let native) = leaf,
-              native.fileType == .image || native.fileType == .audio || native.fileType == .video else {
+              native.fileKind == .image || native.fileKind == .audio || native.fileKind == .video else {
             return nil
         }
         var args = args ?? [:]

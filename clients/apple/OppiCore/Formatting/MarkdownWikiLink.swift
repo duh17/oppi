@@ -1131,7 +1131,7 @@ enum MarkdownWikiLinkRewriter {
     }
 
     /// Shared bang-embed decision: dialect parse → origin/scheme → allowed
-    /// ResourceReference or remote-image → FileType category.
+    /// ResourceReference or remote-image → FileKind category.
     private enum BangEmbedOutcome {
         case image(source: String)
         case video(MarkdownVideoEmbed)
@@ -1244,10 +1244,10 @@ enum MarkdownWikiLinkRewriter {
             ))
         }
 
-        // Origin is an allowed workspace or owner-host file. FileType decides
+        // Origin is an allowed workspace or owner-host file. FileKind decides
         // the embed category only after that origin check.
-        let fileType = FileType.detect(from: classified.path)
-        switch fileType.previewCategory {
+        let fileKind = FileKind.detect(from: classified.path)
+        switch fileKind.previewCategory {
         case .image:
             return .image(source: classified.path)
         case .video:
@@ -1275,7 +1275,7 @@ enum MarkdownWikiLinkRewriter {
             // Markdown `![]()` is image syntax. Extensionless workspace/host
             // targets stay images so byte inspection can still choose GIF/WebP/
             // SVG. Wiki `![[]]` keeps the `.md` suffix and file-link behavior.
-            if dialect == .markdown, fileType == .plain {
+            if dialect == .markdown, fileKind == .plain {
                 return .image(source: classified.path)
             }
             return .fileLink(fileLinkInline(
@@ -1289,7 +1289,7 @@ enum MarkdownWikiLinkRewriter {
 
     private static func remoteImageOrFailClosedAV(_ source: String) -> BangEmbedOutcome {
         let typePath = URL(string: source)?.path ?? source
-        switch FileType.detect(from: typePath).previewCategory {
+        switch FileKind.detect(from: typePath).previewCategory {
         case .video, .audio, .usdz:
             return .failClosed
         default:

@@ -55,7 +55,7 @@ enum MacToolDocumentColumnPaint {
         if DelimitedTableViewerPlan.opening(path: path, text: file.text) != nil {
             return true
         }
-        switch file.fileType {
+        switch file.fileKind {
         case .csv, .tsv:
             return true
         default:
@@ -68,7 +68,7 @@ enum MacToolDocumentColumnPaint {
         if GeoJSONViewerPlan.opening(path: path, text: file.text) != nil {
             return true
         }
-        switch file.fileType {
+        switch file.fileKind {
         case .geojson, .topojson:
             return true
         default:
@@ -77,20 +77,20 @@ enum MacToolDocumentColumnPaint {
     }
 
     static func fileUsesPDFPreview(_ file: ToolContentDescriptor.File) -> Bool {
-        if file.fileType == .pdf {
+        if file.fileKind == .pdf {
             return true
         }
-        if let path = file.filePath, FileType.detect(from: path) == .pdf {
+        if let path = file.filePath, FileKind.detect(from: path) == .pdf {
             return true
         }
         return false
     }
 
     static func fileUsesUSDZPreview(_ file: ToolContentDescriptor.File) -> Bool {
-        if file.fileType == .usdz {
+        if file.fileKind == .usdz {
             return true
         }
-        if let path = file.filePath, FileType.detect(from: path) == .usdz {
+        if let path = file.filePath, FileKind.detect(from: path) == .usdz {
             return true
         }
         return false
@@ -110,7 +110,7 @@ enum MacToolDocumentDiffLayout {
     /// a time, so the change ink stays on the marker, gutter, and band.
     static func syntaxLanguage(for diff: ToolContentDescriptor.Diff) -> SyntaxLanguage? {
         guard let path = diff.path else { return nil }
-        return FileType.detect(from: path).syntaxLanguage
+        return FileKind.detect(from: path).syntaxLanguage
     }
 
     static func rows(from diff: ToolContentDescriptor.Diff) -> [MacToolDocumentDiffRow] {
@@ -701,7 +701,7 @@ private struct MacToolDocumentFileView: View {
                 worktreeId: worktreeId
             )
         } else if let plan = DelimitedTableViewerPlan.opening(
-            fileType: file.fileType ?? .plain,
+            fileKind: file.fileKind ?? .plain,
             path: file.filePath,
             text: file.text
         ) {
@@ -712,7 +712,7 @@ private struct MacToolDocumentFileView: View {
             )
             .padding(12)
         } else if let plan = GeoJSONViewerPlan.opening(
-            fileType: file.fileType ?? .plain,
+            fileKind: file.fileKind ?? .plain,
             path: file.filePath,
             text: file.text
         ) {
@@ -741,7 +741,7 @@ private struct MacToolDocumentFileView: View {
                 ),
                 itemID: itemID
             )
-        } else if file.fileType == .markdown {
+        } else if file.fileKind == .markdown {
             ScrollView {
                 MacMarkdownDocumentView(
                     markdown: file.text,

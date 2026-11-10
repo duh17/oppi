@@ -61,19 +61,9 @@ actor CodeEditorHighlightEngine {
     /// Editor grammar for a file. Formats with no syntax (CSV, plain text)
     /// paint plain.
     static func grammar(forPath path: String) -> Grammar {
-        let language: SyntaxLanguage
-        switch FileType.detect(from: path) {
-        case .markdown: return .markdown
-        case .code(let detected): language = detected
-        case .json, .geojson, .topojson: language = .json
-        case .html: language = .html
-        case .latex: language = .latex
-        case .orgMode: language = .orgMode
-        case .mermaid: language = .mermaid
-        case .graphviz: language = .dot
-        case .csv, .tsv, .plain, .image, .audio, .video, .pdf, .usdz, .book, .binary: return .plain
-        }
-        if language == .unknown { return .plain }
+        let kind = FileKind.detect(from: path)
+        if kind == .markdown { return .markdown }
+        guard let language = kind.syntaxLanguage, language != .unknown else { return .plain }
         return TreeSitterHighlighter.supports(language) ? .treeSitter(language) : .scanner(language)
     }
 

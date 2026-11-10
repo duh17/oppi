@@ -29,7 +29,7 @@ struct MacDelimitedTablePreviewView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Label(plan.kind.fileType.displayLabel, systemImage: "tablecells")
+            Label(plan.kind.fileKind.displayLabel, systemImage: "tablecells")
                 .font(.caption)
                 .fontWeight(.semibold)
                 .foregroundStyle(theme.text.secondary)
@@ -66,7 +66,7 @@ struct MacDelimitedTablePreviewView: View {
                     .font(Font(FontPreferenceStore.macCodeFont()))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .accessibilityLabel(filePath ?? plan.kind.fileType.displayLabel)
+                    .accessibilityLabel(filePath ?? plan.kind.fileKind.displayLabel)
             }
             .frame(maxHeight: fillsColumn ? .infinity : 400)
         }

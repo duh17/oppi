@@ -14,7 +14,7 @@ struct MacPDFPreviewTests {
             return
         }
 
-        #expect(file.fileType == .pdf)
+        #expect(file.fileKind == .pdf)
         #expect(file.filePath == "docs/report.pdf")
         #expect(FileViewerDescriptorBuilder.needsFileBytes(path: "docs/report.pdf"))
         #expect(MacPDFPreviewData.data(from: file) == data)
@@ -53,7 +53,7 @@ struct MacPDFPreviewTests {
             return
         }
 
-        #expect(file.fileType == .pdf)
+        #expect(file.fileKind == .pdf)
         #expect(file.filePath == "docs/report.pdf")
         #expect(MacToolDocumentColumnPaint.fileUsesPDFPreview(file))
         #expect(MacPDFPreviewData.data(from: file) == nil)
@@ -64,7 +64,7 @@ struct MacPDFPreviewTests {
         let file = ToolContentDescriptor.File(
             text: data.base64EncodedString(),
             filePath: "docs/report.pdf",
-            fileType: .pdf,
+            fileKind: .pdf,
             language: nil,
             startLine: 1,
             attachments: []
@@ -79,7 +79,7 @@ struct MacPDFPreviewTests {
         let file = ToolContentDescriptor.File(
             text: "Binary file cannot be displayed as text.",
             filePath: "docs/report.pdf",
-            fileType: .pdf,
+            fileKind: .pdf,
             language: nil,
             startLine: 1,
             attachments: []
@@ -93,7 +93,7 @@ struct MacPDFPreviewTests {
         let file = ToolContentDescriptor.File(
             text: Data("not a pdf".utf8).base64EncodedString(),
             filePath: "docs/report.pdf",
-            fileType: .pdf,
+            fileKind: .pdf,
             language: nil,
             startLine: 1,
             attachments: []
@@ -204,7 +204,7 @@ struct MacPDFPreviewTests {
             return
         }
 
-        #expect(file.fileType == .pdf)
+        #expect(file.fileKind == .pdf)
         #expect(FileViewerDescriptorBuilder.needsFileBytes(path: "clip.m4a") == false)
         #expect(FileViewerDescriptorBuilder.needsFileBytes(path: "clip.mp4") == false)
         #expect(FileViewerDescriptorBuilder.needsFileBytes(path: "doc.pdf"))

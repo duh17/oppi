@@ -552,7 +552,7 @@ struct ToolPresentationConfigTests {
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         #expect(config.collapsedImageBase64 == nil)
         #expect(config.collapsedImageMimeType == nil)
-        #expect(config.languageBadge == FileType.image.displayLabel)
+        #expect(config.languageBadge == FileKind.image.displayLabel)
     }
 
     @Test func collapsedReadImageToolWithEmptyOutputHasNoPreview() throws {

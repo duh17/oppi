@@ -383,8 +383,8 @@ struct PromptEditTransportTests {
         #expect(DocumentEditSubject.agentInstructions(agentId: "agent-1").editIdentity(serverId: nil) == nil)
         #expect(DocumentEditSubject.snapshot.editIdentity(serverId: "s1") == nil)
         // Both prompts are Markdown, as their readers show them.
-        #expect(DocumentEditSubject.agentInstructions(agentId: "a").fileType == .markdown)
-        #expect(DocumentEditSubject.schedulePrompt(scheduleId: "s").fileType == .markdown)
+        #expect(DocumentEditSubject.agentInstructions(agentId: "a").fileKind == .markdown)
+        #expect(DocumentEditSubject.schedulePrompt(scheduleId: "s").fileKind == .markdown)
     }
 
     @Test func aPiAgentFileIsItsOwnDocument() {

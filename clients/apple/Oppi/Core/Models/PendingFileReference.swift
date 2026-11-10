@@ -330,8 +330,8 @@ struct UserMessagePathPill: Equatable, Sendable {
         case .gitCommit:
             return false
         case .uploadedFile, .reviewFile, .repoFile:
+            if FileKind.detect(from: path).previewCategory == .image { return true }
             let ext = (path as NSString).pathExtension.lowercased()
-            if ext == "svg" { return true }
             if let type = UTType(filenameExtension: ext) {
                 return type.conforms(to: .image)
             }

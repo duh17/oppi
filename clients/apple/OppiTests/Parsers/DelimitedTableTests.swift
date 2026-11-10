@@ -141,10 +141,10 @@ struct DelimitedTableViewerPlanTests {
         #expect(tsvPlan.kind == .tsv)
         #expect(csvPlan.table.headers == ["name", "watts"])
         #expect(tsvPlan.table.rows == [["Easy", "150"]])
-        #expect(FileType.detect(from: "rides.csv") == .csv)
-        #expect(FileType.detect(from: "rides.tsv") == .tsv)
-        #expect(FileType.detect(from: "rides.csv") != .plain)
-        #expect(FileType.detect(from: "notes.txt") == .plain)
+        #expect(FileKind.detect(from: "rides.csv") == .csv)
+        #expect(FileKind.detect(from: "rides.tsv") == .tsv)
+        #expect(FileKind.detect(from: "rides.csv") != .plain)
+        #expect(FileKind.detect(from: "notes.txt") == .plain)
         #expect(DelimitedTableViewerPlan.opening(path: "notes.txt", text: csv) == nil)
         #expect(DelimitedTableViewerPlan.opening(path: "sheet.xlsx", text: csv) == nil)
     }
@@ -171,7 +171,7 @@ struct DelimitedTableViewerPlanTests {
             return
         }
 
-        #expect(file.fileType == .csv)
+        #expect(file.fileKind == .csv)
         #expect(file.text == original)
         #expect(file.language == nil)
         #expect(DelimitedTableViewerPlan.opening(path: file.filePath ?? "", text: file.text) != nil)
@@ -189,7 +189,7 @@ struct DelimitedTableViewerPlanTests {
             return
         }
 
-        #expect(file.fileType == .tsv)
+        #expect(file.fileKind == .tsv)
         #expect(file.text == original)
         #expect(DelimitedTableViewerPlan.opening(path: file.filePath ?? "", text: file.text)?.kind == .tsv)
     }

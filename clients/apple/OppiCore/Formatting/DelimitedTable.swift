@@ -173,7 +173,7 @@ struct DelimitedTableViewerPlan: Equatable, Sendable {
             }
         }
 
-        var fileType: FileType {
+        var fileKind: FileKind {
             switch self {
             case .csv: .csv
             case .tsv: .tsv
@@ -181,15 +181,15 @@ struct DelimitedTableViewerPlan: Equatable, Sendable {
         }
 
         init?(path: String) {
-            switch FileType.detect(from: path) {
+            switch FileKind.detect(from: path) {
             case .csv: self = .csv
             case .tsv: self = .tsv
             default: return nil
             }
         }
 
-        init?(fileType: FileType) {
-            switch fileType {
+        init?(fileKind: FileKind) {
+            switch fileKind {
             case .csv: self = .csv
             case .tsv: self = .tsv
             default: return nil
@@ -226,7 +226,7 @@ struct DelimitedTableViewerPlan: Equatable, Sendable {
     }
 
     static func opening(
-        fileType: FileType,
+        fileKind: FileKind,
         path: String?,
         text: String,
         limits: DelimitedTable.Limits = .display
@@ -234,7 +234,7 @@ struct DelimitedTableViewerPlan: Equatable, Sendable {
         if let path, let plan = opening(path: path, text: text, limits: limits) {
             return plan
         }
-        guard let kind = Kind(fileType: fileType) else { return nil }
+        guard let kind = Kind(fileKind: fileKind) else { return nil }
         return make(kind: kind, text: text, limits: limits)
     }
 
@@ -244,15 +244,15 @@ struct DelimitedTableViewerPlan: Equatable, Sendable {
         limits: DelimitedTable.Limits = .display
     ) -> DelimitedTableViewerPlan {
         if let plan = opening(
-            fileType: FileType.detect(from: path, content: text),
+            fileKind: FileKind.detect(from: path, content: text),
             path: path,
             text: text,
             limits: limits
         ) {
             return plan
         }
-        let kind: Kind = (path as NSString?)?.pathExtension.lowercased() == "tsv" ? .tsv : .csv
-        return make(kind: kind, text: text, limits: limits)
+        // `opening` takes every csv and tsv path, so a path that reaches here is neither.
+        return make(kind: .csv, text: text, limits: limits)
     }
 
     private static func make(

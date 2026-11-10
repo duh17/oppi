@@ -6,7 +6,7 @@ struct ToolFileInspection: Equatable, Sendable {
     enum Provenance: String, Equatable, Sendable { case requested, result }
     var operation: Operation
     var path: String?
-    var fileType: FileType?
+    var fileKind: FileKind?
     var startLine: Int
     var text: String
     var diff: [DiffLine]?
@@ -55,9 +55,9 @@ struct ToolFileInspection: Equatable, Sendable {
         // Geographic JSON is the single documented content sniff, owned here (including ambiguous .json).
         // Summary consumers need operation/path/provenance/stats, not file bytes
         // or geographic JSON parsing. Painters keep the full resolution path.
-        let fileType = includeContent
-            ? (path.map { FileType.detect(from: $0, content: body) } ?? GeographicJSONSniffer.fileType(from: body)) : nil
-        return .init(operation: operation, path: path, fileType: fileType, startLine: startLine,
+        let fileKind = includeContent
+            ? (path.map { FileKind.detect(from: $0, content: body) } ?? GeographicJSONSniffer.fileKind(from: body)) : nil
+        return .init(operation: operation, path: path, fileKind: fileKind, startLine: startLine,
                      text: body, diff: diff, provenance: provenance)
     }
 

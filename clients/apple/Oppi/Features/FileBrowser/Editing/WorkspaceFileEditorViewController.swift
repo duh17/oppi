@@ -56,7 +56,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
     ) {
         self.session = session
         let path = session.identity.path
-        self.isMarkdown = FileType.detect(from: path) == .markdown
+        self.isMarkdown = FileKind.detect(from: path) == .markdown
         self.grammar = CodeEditorHighlightEngine.grammar(forPath: path)
         self.wrapKind = CodeEditorWrapKind(grammar: grammar)
         self.languageName = switch grammar {

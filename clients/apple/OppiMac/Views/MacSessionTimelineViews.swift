@@ -1000,11 +1000,11 @@ enum MacToolTimelineChrome {
     ) -> String? {
         if let path = ToolCallFormatting.filePath(from: args)
             ?? ToolCallFormatting.parseArgValue("path", from: argsSummary) {
-            switch FileType.detect(from: path) {
+            switch FileKind.detect(from: path) {
             case .plain, .binary:
                 break
-            case let fileType:
-                return fileType.displayLabel
+            case let fileKind:
+                return fileKind.displayLabel
             }
         }
         if ToolCallFormatting.isBashTool(tool) {
@@ -1601,7 +1601,7 @@ private struct ToolTimelineBubble: View {
                 .font(.system(size: row.codeSize * 0.85))
                 .foregroundStyle(.themeFg)
         } else if let plan = DelimitedTableViewerPlan.opening(
-            fileType: file.fileType ?? .plain,
+            fileKind: file.fileKind ?? .plain,
             path: file.filePath,
             text: file.text
         ) {
@@ -1613,7 +1613,7 @@ private struct ToolTimelineBubble: View {
             .frame(maxHeight: row.isExpanded ? 360 : 180)
             .clipped()
         } else if let plan = GeoJSONViewerPlan.opening(
-            fileType: file.fileType ?? .plain,
+            fileKind: file.fileKind ?? .plain,
             path: file.filePath,
             text: file.text
         ) {
@@ -1639,7 +1639,7 @@ private struct ToolTimelineBubble: View {
                 )
             )
             .frame(maxHeight: row.isExpanded ? 360 : 180)
-        } else if file.fileType == .markdown {
+        } else if file.fileKind == .markdown {
             MacMarkdownDocumentView(
                 markdown: file.text,
                 itemID: itemID,

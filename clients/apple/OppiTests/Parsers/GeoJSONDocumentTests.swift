@@ -39,49 +39,49 @@ struct GeoJSONDocumentTests {
     """
 
     @Test func geojsonAndTopojsonExtensionsAreMapTypes() {
-        #expect(FileType.detect(from: "places.geojson") == .geojson)
-        #expect(FileType.detect(from: "PARK.GEOJSON") == .geojson)
-        #expect(FileType.detect(from: "maps/rainier.topojson") == .topojson)
-        #expect(FileType.detect(from: "arcs.TOPOJSON") == .topojson)
-        #expect(FileType.geojson.displayLabel == "GeoJSON")
-        #expect(FileType.topojson.displayLabel == "TopoJSON")
-        #expect(FileType.geojson.previewCategory == .text)
-        #expect(FileType.topojson.previewCategory == .text)
-        #expect(FileType.geojson.syntaxLanguage == .json)
-        #expect(FileType.topojson.syntaxLanguage == .json)
+        #expect(FileKind.detect(from: "places.geojson") == .geojson)
+        #expect(FileKind.detect(from: "PARK.GEOJSON") == .geojson)
+        #expect(FileKind.detect(from: "maps/rainier.topojson") == .topojson)
+        #expect(FileKind.detect(from: "arcs.TOPOJSON") == .topojson)
+        #expect(FileKind.geojson.displayLabel == "GeoJSON")
+        #expect(FileKind.topojson.displayLabel == "TopoJSON")
+        #expect(FileKind.geojson.previewCategory == .text)
+        #expect(FileKind.topojson.previewCategory == .text)
+        #expect(FileKind.geojson.syntaxLanguage == .json)
+        #expect(FileKind.topojson.syntaxLanguage == .json)
     }
 
     @Test func jsonSniffPromotesFeatureCollectionGeometryCollectionAndTopology() {
         #expect(
-            FileType.detect(from: "places.json", content: rainierPoint) == .geojson
+            FileKind.detect(from: "places.json", content: rainierPoint) == .geojson
         )
         #expect(
-            FileType.detect(
+            FileKind.detect(
                 from: "shapes.json",
                 content: #"{"type":"GeometryCollection","geometries":[]}"#
             ) == .geojson
         )
         #expect(
-            FileType.detect(from: "arcs.json", content: sharedArcTopology) == .topojson
+            FileKind.detect(from: "arcs.json", content: sharedArcTopology) == .topojson
         )
     }
 
     @Test func ordinaryJSONIsNotAMap() {
-        #expect(FileType.detect(from: "package.json") == .json)
+        #expect(FileKind.detect(from: "package.json") == .json)
         #expect(
-            FileType.detect(
+            FileKind.detect(
                 from: "package.json",
                 content: #"{"name":"oppi","version":"1.0.0"}"#
             ) == .json
         )
         #expect(
-            FileType.detect(
+            FileKind.detect(
                 from: "config.json",
                 content: #"{"type":"module","main":"index.js"}"#
             ) == .json
         )
         #expect(
-            FileType.detect(
+            FileKind.detect(
                 from: "point.json",
                 content: #"{"type":"Feature","geometry":{"type":"Point","coordinates":[0,0]}}"#
             ) == .json

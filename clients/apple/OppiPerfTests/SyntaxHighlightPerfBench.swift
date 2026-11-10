@@ -160,7 +160,7 @@ struct SyntaxHighlightPerfBench {
         #expect(us < 500_000, "highlight GraphQL 200 lines: \(us)μs")
     }
 
-    @Test("Benchmark: FileType.detect 10K calls")
+    @Test("Benchmark: FileKind.detect 10K calls")
     func fileTypeDetect10K() {
         let paths = [
             "main.swift", "index.ts", "app.py", "Makefile",
@@ -172,11 +172,11 @@ struct SyntaxHighlightPerfBench {
         let us = Self.measureUs {
             for _ in 0..<500 {
                 for path in paths {
-                    _ = FileType.detect(from: path)
+                    _ = FileKind.detect(from: path)
                 }
             }
         }
         print("METRIC filetype_detect_10K=\(us)")
-        #expect(us < 100_000, "FileType.detect 10K calls: \(us)μs — should be <100ms")
+        #expect(us < 100_000, "FileKind.detect 10K calls: \(us)μs — should be <100ms")
     }
 }

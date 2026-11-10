@@ -5,7 +5,7 @@ struct MacSessionFilePreview: Sendable, Equatable {
     static let maxPreviewCharacters = 16_000
 
     let path: String
-    let fileType: FileType
+    let fileKind: FileKind
     let kind: MacSessionFilePreviewKind
     let text: String?
     let imageData: Data?
@@ -19,7 +19,7 @@ struct MacSessionFilePreview: Sendable, Equatable {
         byteCount = data.count
 
         if let decoded = String(data: data, encoding: .utf8) {
-            fileType = FileType.detect(from: path, content: decoded)
+            fileKind = FileKind.detect(from: path, content: decoded)
             kind = .text
             imageData = nil
             imageWidth = nil
@@ -34,7 +34,7 @@ struct MacSessionFilePreview: Sendable, Equatable {
             return
         }
 
-        fileType = FileType.detect(from: path)
+        fileKind = FileKind.detect(from: path)
 
         if let image = NSImage(data: data) {
             kind = .image
@@ -55,26 +55,13 @@ struct MacSessionFilePreview: Sendable, Equatable {
     }
 
     var sourceLanguageLabel: String? {
-        switch fileType {
-        case .code(let language):
-            return language.displayName
-        case .json:
-            return SyntaxLanguage.json.displayName
-        case .html:
-            return SyntaxLanguage.html.displayName
+        switch fileKind {
         case .markdown:
             return "Markdown"
-        case .latex:
-            return SyntaxLanguage.latex.displayName
-        case .orgMode:
-            return SyntaxLanguage.orgMode.displayName
-        case .mermaid:
-            return SyntaxLanguage.mermaid.displayName
-        case .graphviz:
-            return SyntaxLanguage.dot.displayName
-        case .plain, .image, .audio, .video, .pdf, .usdz, .book, .binary, .csv, .tsv,
-             .geojson, .topojson:
+        case .geojson, .topojson:
             return nil
+        default:
+            return fileKind.syntaxLanguage?.displayName
         }
     }
 
@@ -83,7 +70,7 @@ struct MacSessionFilePreview: Sendable, Equatable {
         switch kind {
         case .text:
             let suffix = truncated ? " · Preview truncated" : ""
-            return "\(size) · \(fileType.displayLabel)\(suffix)"
+            return "\(size) · \(fileKind.displayLabel)\(suffix)"
         case .image:
             if let imageWidth, let imageHeight {
                 return "\(size) · \(Int(imageWidth))×\(Int(imageHeight))"

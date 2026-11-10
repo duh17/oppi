@@ -950,9 +950,9 @@ enum MediaPlaybackTelemetry {
         if normalizedMime.hasPrefix("image/") { return .image }
 
         let ext = sourceFileExtension?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-        if ["mp4", "mov", "webm", "mkv"].contains(ext) { return .video }
-        if ["wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "opus"].contains(ext) { return .audio }
-        if ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff"].contains(ext) { return .image }
+        if FileKindTable.mimeType(forExtension: ext, prefix: "video/") != nil { return .video }
+        if FileKindTable.mimeType(forExtension: ext, prefix: "audio/") != nil { return .audio }
+        if FileKindTable.mimeType(forExtension: ext, prefix: "image/") != nil { return .image }
         return .unknown
     }
 

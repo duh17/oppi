@@ -317,43 +317,15 @@ enum MediaMimeType {
     }
 
     static func imageMimeType(forPathExtension pathExtension: String?) -> String? {
-        switch (pathExtension ?? "").lowercased() {
-        case "png": return "image/png"
-        case "jpg", "jpeg": return "image/jpeg"
-        case "gif": return "image/gif"
-        case "webp": return "image/webp"
-        case "bmp": return "image/bmp"
-        case "tif", "tiff": return "image/tiff"
-        case "svg": return "image/svg+xml"
-        case "ico": return "image/x-icon"
-        case "heic": return "image/heic"
-        case "heif": return "image/heif"
-        default: return nil
-        }
+        FileKindTable.mimeType(forExtension: pathExtension, prefix: "image/")
     }
 
     static func audioMimeType(forPathExtension pathExtension: String?) -> String? {
-        switch (pathExtension ?? "").lowercased() {
-        case "mp3": return "audio/mpeg"
-        case "m4a", "m4b", "aac": return "audio/mp4"
-        case "wav": return "audio/wav"
-        case "aif", "aiff", "aifc": return "audio/aiff"
-        case "caf": return "audio/x-caf"
-        case "ogg", "oga": return "audio/ogg"
-        case "flac": return "audio/flac"
-        case "opus": return "audio/opus"
-        default: return nil
-        }
+        FileKindTable.mimeType(forExtension: pathExtension, prefix: "audio/")
     }
 
     static func videoMimeType(forPathExtension pathExtension: String?) -> String? {
-        switch (pathExtension ?? "").lowercased() {
-        case "mp4", "m4v": return "video/mp4"
-        case "mov": return "video/quicktime"
-        case "webm": return "video/webm"
-        case "avi": return "video/x-msvideo"
-        default: return nil
-        }
+        FileKindTable.mimeType(forExtension: pathExtension, prefix: "video/")
     }
 
     static func preferredFileExtension(forAudio mimeType: String?, fallbackPathExtension: String? = nil) -> String {

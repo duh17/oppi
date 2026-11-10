@@ -30,7 +30,7 @@ struct MacGeoJSONPreviewView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Label(plan.kind.fileType.displayLabel, systemImage: "map")
+            Label(plan.kind.fileKind.displayLabel, systemImage: "map")
                 .font(.caption)
                 .fontWeight(.semibold)
                 .foregroundStyle(theme.text.secondary)
@@ -56,7 +56,7 @@ struct MacGeoJSONPreviewView: View {
                     .font(Font(FontPreferenceStore.macCodeFont()))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .accessibilityLabel(filePath ?? plan.kind.fileType.displayLabel)
+                    .accessibilityLabel(filePath ?? plan.kind.fileKind.displayLabel)
             }
             .frame(maxHeight: fillsColumn ? .infinity : 400)
         }

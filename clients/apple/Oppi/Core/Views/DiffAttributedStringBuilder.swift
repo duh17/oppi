@@ -345,7 +345,7 @@ enum DiffAttributedStringBuilder {
         filePath: String,
         options: Options = Options()
     ) -> BuildResult {
-        let language = FileType.detect(from: filePath).syntaxLanguage ?? .unknown
+        let language = FileKind.detect(from: filePath).syntaxLanguage ?? .unknown
         let style = StyleAttrs.current()
 
         var maxLineNum = 1
@@ -632,7 +632,7 @@ enum DiffAttributedStringBuilder {
     ) -> ChunkIndex {
         let safeLineLimit = max(1, maxLines)
         let safeByteLimit = max(1, maxUTF8Bytes)
-        let language = FileType.detect(from: filePath).syntaxLanguage ?? .unknown
+        let language = FileKind.detect(from: filePath).syntaxLanguage ?? .unknown
 
         var maxLineNumber = 1
         var totalLines = 0

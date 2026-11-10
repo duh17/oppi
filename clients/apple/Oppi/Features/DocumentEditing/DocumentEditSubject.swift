@@ -19,7 +19,7 @@ struct FileEditReadContext: Equatable {
 /// their own record.
 enum DocumentEditSubject: Equatable {
     /// A file the reader browsed. `source` says where it comes from,
-    /// `fileType` is what the reader renders it as, and `skillFile` names a
+    /// `fileKind` is what the reader renders it as, and `skillFile` names a
     /// host file that is one of an editable Skill's own files. The reader that
     /// builds the subject sets `skillFile` only for the file it was opened for,
     /// and `ServerSkillFilePresentation.editable` decides whether that Skill is
@@ -37,7 +37,7 @@ enum DocumentEditSubject: Equatable {
         worktreeId: String?,
         path: String,
         skillFile: SkillFileEditTarget?,
-        fileType: FileType,
+        fileKind: FileKind,
         context: FileEditReadContext = FileEditReadContext()
     )
     /// An Agent's custom prompt (`instructions.text`), edited in place. The
@@ -167,11 +167,11 @@ extension DocumentEditSubject {
 
     /// The type the reader renders the bytes as; nil for a snapshot. A record's
     /// prompt is Markdown, as the reader shows it.
-    var fileType: FileType? {
+    var fileKind: FileKind? {
         switch self {
-        case .file(_, _, _, _, _, _, let fileType, _): fileType
+        case .file(_, _, _, _, _, _, let fileKind, _): fileKind
         case .agentInstructions, .schedulePrompt: .markdown
-        case .piFile(let path, _): FileType.detect(from: path)
+        case .piFile(let path, _): FileKind.detect(from: path)
         case .snapshot: nil
         }
     }

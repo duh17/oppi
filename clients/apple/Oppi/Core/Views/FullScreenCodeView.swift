@@ -53,11 +53,11 @@ indirect enum FullScreenCodeContent {
 
     /// Build content from raw text and a file path by detecting the file type.
     static func fromText(_ text: String, filePath: String?) -> Self {
-        let fileType = FileType.detect(from: filePath, content: text)
-        if let document = DocumentFamily(fileType: fileType, text: text, filePath: filePath) {
+        let fileKind = FileKind.detect(from: filePath, content: text)
+        if let document = DocumentFamily(fileKind: fileKind, text: text, filePath: filePath) {
             return .document(document)
         }
-        switch fileType {
+        switch fileKind {
         case .markdown: return .markdown(content: text, filePath: filePath)
         case .html: return .html(content: text, filePath: filePath)
         case .latex: return .latex(content: text, filePath: filePath)
@@ -66,11 +66,10 @@ indirect enum FullScreenCodeContent {
         case .graphviz: return .graphviz(content: text, filePath: filePath)
         case .json:
             return .code(content: text, language: "json", filePath: filePath, startLine: 1)
-        case .code(let lang):
-            return .code(content: text, language: lang.displayName, filePath: filePath, startLine: 1)
-        case .plain:
-            return .plainText(content: text, filePath: filePath)
         default:
+            if let language = fileKind.codeLanguage {
+                return .code(content: text, language: language.displayName, filePath: filePath, startLine: 1)
+            }
             return .plainText(content: text, filePath: filePath)
         }
     }

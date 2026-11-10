@@ -101,12 +101,12 @@ enum FileShareService {
         /// content case. Used by hosting views (file browser, touched-file
         /// viewer, review detail) to create share content for the toolbar.
         static func fromText(_ text: String, filePath: String?) -> Self {
-            let fileType = FileType.detect(from: filePath, content: text)
+            let fileKind = FileKind.detect(from: filePath, content: text)
             let fileName = FileShareService.fileName(fromPath: filePath)
-            if let document = DocumentFamily(fileType: fileType, text: text, filePath: filePath) {
+            if let document = DocumentFamily(fileKind: fileKind, text: text, filePath: filePath) {
                 return document.shareableContent(fileName: fileName)
             }
-            switch fileType {
+            switch fileKind {
             case .markdown: return .markdown(text, fileName: fileName)
             case .html: return .html(text, fileName: fileName)
             case .json: return .json(text, fileName: fileName)
@@ -114,9 +114,11 @@ enum FileShareService {
             case .orgMode: return .orgMode(text, fileName: fileName, documentPath: filePath)
             case .mermaid: return .mermaid(text, fileName: fileName)
             case .graphviz: return .code(text, language: "dot", fileName: fileName)
-            case .code(let lang): return .code(text, language: lang.displayName, fileName: fileName)
-            case .plain: return .plainText(text, fileName: fileName)
-            default: return .plainText(text, fileName: fileName)
+            default:
+                if let language = fileKind.codeLanguage {
+                    return .code(text, language: language.displayName, fileName: fileName)
+                }
+                return .plainText(text, fileName: fileName)
             }
         }
     }

@@ -67,7 +67,7 @@ struct ChatReaderViewControllerTests {
             worktreeId: nil,
             path: "src/a.swift",
             skillFile: nil,
-            fileType: .code(language: .swift)
+            fileKind: .code(language: .swift)
         )
         let snapshot = WorkspaceFileDiskSnapshot(bytes: Data("let a = 1".utf8), etag: "\"sha256-a\"")
         let host = push(payload) { _ in

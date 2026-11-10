@@ -13,7 +13,7 @@ struct MacUSDZPreviewTests {
             return
         }
 
-        #expect(file.fileType == .usdz)
+        #expect(file.fileKind == .usdz)
         #expect(file.text.isEmpty)
         #expect(FileViewerDescriptorBuilder.needsFileBytes(path: "models/scene.usdz") == false)
         #expect(MacToolDocumentColumnPaint.fileUsesUSDZPreview(file))

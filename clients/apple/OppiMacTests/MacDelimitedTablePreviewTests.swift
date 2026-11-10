@@ -23,8 +23,8 @@ struct MacDelimitedTablePreviewTests {
             return
         }
 
-        #expect(csvFile.fileType == .csv)
-        #expect(tsvFile.fileType == .tsv)
+        #expect(csvFile.fileKind == .csv)
+        #expect(tsvFile.fileKind == .tsv)
         #expect(csvFile.text == "name,watts\nEasy,150\n")
         #expect(tsvFile.text == "name\twatts\nEasy\t150\n")
         #expect(MacToolDocumentColumnPaint.fileUsesTablePreview(csvFile))

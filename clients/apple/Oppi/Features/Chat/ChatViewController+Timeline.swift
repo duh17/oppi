@@ -195,7 +195,7 @@ extension ChatViewController {
                 worktreeId: nil,
                 path: path,
                 skillFile: nil,
-                fileType: FileType.detect(from: path),
+                fileKind: FileKind.detect(from: path),
                 context: FileEditReadContext(sessionId: sessionId)
             )
         }
@@ -206,7 +206,7 @@ extension ChatViewController {
             worktreeId: session?.worktreeId,
             path: workspacePath,
             skillFile: nil,
-            fileType: FileType.detect(from: workspacePath)
+            fileKind: FileKind.detect(from: workspacePath)
         )
     }
 

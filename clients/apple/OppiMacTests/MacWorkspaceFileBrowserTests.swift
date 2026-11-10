@@ -174,9 +174,9 @@ struct MacWorkspaceFileBrowserTests {
         #expect(swiftFile.filePath == "Sources/main.swift")
         #expect(swiftFile.language == .swift)
         #expect(swiftFile.text.contains("func main"))
-        #expect(markdownFile.fileType == .markdown)
-        #expect(htmlFile.fileType == .html)
-        #expect(svgFile.fileType == .image)
+        #expect(markdownFile.fileKind == .markdown)
+        #expect(htmlFile.fileKind == .html)
+        #expect(svgFile.fileKind == .image)
         #expect(MacToolDocumentColumnPaint.surface(for: .file(swiftFile)) == .file)
         #expect(MacToolDocumentColumnPaint.fileUsesSyntaxHighlighter(swiftFile))
     }
@@ -222,7 +222,7 @@ struct MacWorkspaceFileBrowserTests {
         }
         #expect(message.contains("is an image"))
         #expect(FileViewerDescriptorBuilder.needsFileBytes(path: "IMG_0001.HEIC"))
-        #expect(FileType.detect(from: "photo.heif") == .image)
+        #expect(FileKind.detect(from: "photo.heif") == .image)
     }
 
     @Test func fileBrowserReloadsDirectoryListingForTheSelectedWorktree() throws {

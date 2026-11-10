@@ -1,93 +1,93 @@
 import Testing
 @testable import Oppi
 
-/// Tests FileType detection for document renderer file extensions.
-@Suite("FileType Detection — Document Renderers")
+/// Tests FileKind detection for document renderer file extensions.
+@Suite("FileKind Detection — Document Renderers")
 struct FileTypeDetectionTests {
 
     // MARK: - LaTeX
 
     @Test func detectTexExtension() {
-        #expect(FileType.detect(from: "document.tex") == .latex)
+        #expect(FileKind.detect(from: "document.tex") == .latex)
     }
 
     @Test func detectLatexExtension() {
-        #expect(FileType.detect(from: "paper.latex") == .latex)
+        #expect(FileKind.detect(from: "paper.latex") == .latex)
     }
 
     @Test func detectTexInSubdirectory() {
-        #expect(FileType.detect(from: "src/math/equation.tex") == .latex)
+        #expect(FileKind.detect(from: "src/math/equation.tex") == .latex)
     }
 
     // MARK: - Org Mode
 
     @Test func detectOrgExtension() {
-        #expect(FileType.detect(from: "notes.org") == .orgMode)
+        #expect(FileKind.detect(from: "notes.org") == .orgMode)
     }
 
     @Test func detectOrgInSubdirectory() {
-        #expect(FileType.detect(from: "docs/TODO.org") == .orgMode)
+        #expect(FileKind.detect(from: "docs/TODO.org") == .orgMode)
     }
 
     // MARK: - Mermaid
 
     @Test func detectMmdExtension() {
-        #expect(FileType.detect(from: "diagram.mmd") == .mermaid)
+        #expect(FileKind.detect(from: "diagram.mmd") == .mermaid)
     }
 
     @Test func detectMermaidExtension() {
-        #expect(FileType.detect(from: "flow.mermaid") == .mermaid)
+        #expect(FileKind.detect(from: "flow.mermaid") == .mermaid)
     }
 
     // MARK: - Graphviz
 
     @Test func detectDotExtension() {
-        #expect(FileType.detect(from: "graph.dot") == .graphviz)
+        #expect(FileKind.detect(from: "graph.dot") == .graphviz)
     }
 
     @Test func detectGvExtension() {
-        #expect(FileType.detect(from: "tree.gv") == .graphviz)
+        #expect(FileKind.detect(from: "tree.gv") == .graphviz)
     }
 
     // MARK: - CSV / TSV
 
     @Test func detectCsvExtension() {
-        #expect(FileType.detect(from: "export.csv") == .csv)
-        #expect(FileType.detect(from: "EXPORT.CSV") == .csv)
-        #expect(FileType.detect(from: "metrics/rides.csv") == .csv)
+        #expect(FileKind.detect(from: "export.csv") == .csv)
+        #expect(FileKind.detect(from: "EXPORT.CSV") == .csv)
+        #expect(FileKind.detect(from: "metrics/rides.csv") == .csv)
     }
 
     @Test func detectTsvExtension() {
-        #expect(FileType.detect(from: "export.tsv") == .tsv)
-        #expect(FileType.detect(from: "notes.TSV") == .tsv)
+        #expect(FileKind.detect(from: "export.tsv") == .tsv)
+        #expect(FileKind.detect(from: "notes.TSV") == .tsv)
     }
 
     // MARK: - GeoJSON / TopoJSON
 
     @Test func detectGeojsonExtension() {
-        #expect(FileType.detect(from: "park.geojson") == .geojson)
-        #expect(FileType.detect(from: "PARK.GEOJSON") == .geojson)
+        #expect(FileKind.detect(from: "park.geojson") == .geojson)
+        #expect(FileKind.detect(from: "PARK.GEOJSON") == .geojson)
     }
 
     @Test func detectTopojsonExtension() {
-        #expect(FileType.detect(from: "counties.topojson") == .topojson)
+        #expect(FileKind.detect(from: "counties.topojson") == .topojson)
     }
 
     @Test func jsonBytesSniffGeographicCollections() {
         #expect(
-            FileType.detect(
+            FileKind.detect(
                 from: "places.json",
                 content: #"{"type":"FeatureCollection","features":[]}"#
             ) == .geojson
         )
         #expect(
-            FileType.detect(
+            FileKind.detect(
                 from: "places.json",
                 content: #"{"type":"GeometryCollection","geometries":[]}"#
             ) == .geojson
         )
         #expect(
-            FileType.detect(
+            FileKind.detect(
                 from: "places.json",
                 content: #"{"type":"Topology","objects":{},"arcs":[]}"#
             ) == .topojson
@@ -97,23 +97,23 @@ struct FileTypeDetectionTests {
     // MARK: - Display Labels
 
     @Test func displayLabels() {
-        #expect(FileType.latex.displayLabel == "LaTeX")
-        #expect(FileType.orgMode.displayLabel == "Org")
-        #expect(FileType.mermaid.displayLabel == "Mermaid")
-        #expect(FileType.graphviz.displayLabel == "Graphviz")
-        #expect(FileType.csv.displayLabel == "CSV")
-        #expect(FileType.tsv.displayLabel == "TSV")
-        #expect(FileType.geojson.displayLabel == "GeoJSON")
-        #expect(FileType.topojson.displayLabel == "TopoJSON")
-        #expect(FileType.usdz.displayLabel == "USDZ")
+        #expect(FileKind.latex.displayLabel == "LaTeX")
+        #expect(FileKind.orgMode.displayLabel == "Org")
+        #expect(FileKind.mermaid.displayLabel == "Mermaid")
+        #expect(FileKind.graphviz.displayLabel == "Graphviz")
+        #expect(FileKind.csv.displayLabel == "CSV")
+        #expect(FileKind.tsv.displayLabel == "TSV")
+        #expect(FileKind.geojson.displayLabel == "GeoJSON")
+        #expect(FileKind.topojson.displayLabel == "TopoJSON")
+        #expect(FileKind.usdz.displayLabel == "USDZ")
     }
 
     @Test func detectUSDZ() {
-        #expect(FileType.detect(from: "models/scene.usdz") == .usdz)
-        #expect(FileType.detect(from: "SCENE.USDZ") == .usdz)
-        #expect(FileType.detect(from: "models/scene.usdz").previewCategory == .usdz)
-        #expect(FileType.detect(from: "scene.glb") != .usdz)
-        #expect(FileType.detect(from: "scene.blend") != .usdz)
+        #expect(FileKind.detect(from: "models/scene.usdz") == .usdz)
+        #expect(FileKind.detect(from: "SCENE.USDZ") == .usdz)
+        #expect(FileKind.detect(from: "models/scene.usdz").previewCategory == .usdz)
+        #expect(FileKind.detect(from: "scene.glb") != .usdz)
+        #expect(FileKind.detect(from: "scene.blend") != .usdz)
     }
 
     // MARK: - SyntaxLanguage Detection
@@ -165,13 +165,13 @@ struct FileTypeDetectionTests {
     // MARK: - Existing Types Unaffected
 
     @Test func existingTypesUnchanged() {
-        #expect(FileType.detect(from: "file.md") == .markdown)
-        #expect(FileType.detect(from: "page.html") == .html)
-        #expect(FileType.detect(from: "app.swift") == .code(language: .swift))
-        #expect(FileType.detect(from: "data.json") == .json)
-        #expect(FileType.detect(from: "photo.png") == .image)
-        #expect(FileType.detect(from: "readme.txt") == .plain)
-        #expect(FileType.detect(from: "export.csv") != .plain)
-        #expect(FileType.detect(from: "export.tsv") != .plain)
+        #expect(FileKind.detect(from: "file.md") == .markdown)
+        #expect(FileKind.detect(from: "page.html") == .html)
+        #expect(FileKind.detect(from: "app.swift") == .code(language: .swift))
+        #expect(FileKind.detect(from: "data.json") == .json)
+        #expect(FileKind.detect(from: "photo.png") == .image)
+        #expect(FileKind.detect(from: "readme.txt") == .plain)
+        #expect(FileKind.detect(from: "export.csv") != .plain)
+        #expect(FileKind.detect(from: "export.tsv") != .plain)
     }
 }

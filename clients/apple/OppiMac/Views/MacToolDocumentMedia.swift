@@ -64,7 +64,7 @@ enum MacToolDocumentMediaPlayback {
 
     static func playerHeight(for media: ToolContentDescriptor.Media) -> CGFloat {
         if media.audio != nil { return 88 }
-        if case .audio = FileType.detect(from: media.filePath) { return 88 }
+        if case .audio = FileKind.detect(from: media.filePath) { return 88 }
         if let mime = media.attachments.first(where: isPlayableAttachment)?.mimeType,
            mime.lowercased().hasPrefix("audio/") {
             return 88
@@ -73,7 +73,7 @@ enum MacToolDocumentMediaPlayback {
     }
 
     private static func isPlayablePath(_ path: String) -> Bool {
-        switch FileType.detect(from: path) {
+        switch FileKind.detect(from: path) {
         case .audio, .video:
             return true
         default:

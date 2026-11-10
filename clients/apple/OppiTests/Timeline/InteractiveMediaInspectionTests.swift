@@ -73,7 +73,7 @@ struct InteractiveMediaInspectionTests {
                 nestedCalls: .init(calls: [.init(id: "c", name: "lookup", status: "ok")], complete: true),
                 outputPresentation: .init(kind: "fileContent", provenance: "result")))
         guard case .file(let file) = result.content else { Issue.record("Expected native file media"); return }
-        #expect(file.fileType == .image)
+        #expect(file.fileKind == .image)
         #expect(result.inspection.supplement?.text.contains("image.png") != true)
         #expect(result.inspection.supplement?.text.contains("## Input") != true)
         #expect(result.inspection.supplement?.text.contains("## Calls") == true)
@@ -85,7 +85,7 @@ struct InteractiveMediaInspectionTests {
             isError: false, isDone: true,
             context: .init(args: ["path": .string(path)], fullOutput: "Read image file [image/png]"))
         guard case .file(let file) = result.content else { Issue.record("Expected image read"); return }
-        #expect(file.fileType == .image)
+        #expect(file.fileKind == .image)
         #expect(file.filePath == path)
         #expect(result.inspection.supplement == nil)
     }

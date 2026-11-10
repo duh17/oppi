@@ -114,9 +114,9 @@ struct ToolRowViewportPolicy {
         output: String,
         filePath: String?,
         attachments: [ToolPresentationBuilder.ToolMediaAttachment],
-        fileType: FileType?
+        fileKind: FileKind?
     ) -> Self {
-        let facts = readMediaFacts(output: output, filePath: filePath, attachments: attachments, fileType: fileType)
+        let facts = readMediaFacts(output: output, filePath: filePath, attachments: attachments, fileKind: fileKind)
 
         if facts.isVoiceMessage {
             return Self(
@@ -170,8 +170,8 @@ struct ToolRowViewportPolicy {
             return .code
         case .markdown(_, let filePath):
             return .markdown(isCustomTool: filePath == nil)
-        case .readMedia(let output, let filePath, _, let attachments, let fileType):
-            return .readMedia(output: output, filePath: filePath, attachments: attachments, fileType: fileType)
+        case .readMedia(let output, let filePath, _, let attachments, let fileKind):
+            return .readMedia(output: output, filePath: filePath, attachments: attachments, fileKind: fileKind)
         case .audioMessage:
             return .audioMessage
         case .status:
@@ -212,17 +212,17 @@ struct ToolRowViewportPolicy {
         output: String,
         filePath: String?,
         attachments: [ToolPresentationBuilder.ToolMediaAttachment],
-        fileType: FileType?
+        fileKind: FileKind?
     ) -> ReadMediaFacts {
-        let isVideoFile = fileType.map { type in
+        let isVideoFile = fileKind.map { type in
             if case .video = type { return true }
             return false
         } ?? false
-        let isImageFile = fileType.map { type in
+        let isImageFile = fileKind.map { type in
             if case .image = type { return true }
             return false
         } ?? false
-        let isAudioFile = fileType.map { type in
+        let isAudioFile = fileKind.map { type in
             if case .audio = type { return true }
             return false
         } ?? false

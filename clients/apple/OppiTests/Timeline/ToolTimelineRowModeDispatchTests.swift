@@ -899,7 +899,7 @@ struct ToolTimelineRowModeDispatchTests {
                 filePath: "clips/demo.mp4",
                 startLine: 1,
                 attachments: [],
-                fileType: .video
+                fileKind: .video
             ),
             isExpanded: true
         )

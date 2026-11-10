@@ -234,7 +234,7 @@ enum ToolRowTextRenderer {
 
     static func diffLanguage(for filePath: String?) -> SyntaxLanguage? {
         guard let filePath, !filePath.isEmpty else { return nil }
-        return FileType.detect(from: filePath).syntaxLanguage
+        return FileKind.detect(from: filePath).syntaxLanguage
     }
 
     private static func withMonospaceFont(

@@ -1771,7 +1771,7 @@ struct ToolTimelineRowContentViewTests {
         )
         let imageLikeRead = makeTimelineToolConfiguration(
             title: "icon.png",
-            languageBadge: FileType.image.displayLabel,
+            languageBadge: FileKind.image.displayLabel,
             toolNamePrefix: "read",
             isExpanded: false
         )
@@ -1789,7 +1789,7 @@ struct ToolTimelineRowContentViewTests {
     @Test func collapsedReadImageDoesNotRenderInlinePreview() {
         let config = makeTimelineToolConfiguration(
             title: "icon.png",
-            languageBadge: FileType.image.displayLabel,
+            languageBadge: FileKind.image.displayLabel,
             toolNamePrefix: "read",
             isExpanded: false
         )
@@ -1806,7 +1806,7 @@ struct ToolTimelineRowContentViewTests {
 
     @MainActor
     @Test func imageBadgeUsesPhotoIcon() {
-        #expect(ToolTimelineRowUIHelpers.languageBadgeImage(for: FileType.image.displayLabel) != nil)
+        #expect(ToolTimelineRowUIHelpers.languageBadgeImage(for: FileKind.image.displayLabel) != nil)
     }
 
     @MainActor

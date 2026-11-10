@@ -1059,7 +1059,7 @@ private struct MacSessionShellVisualFixture: View {
         ToolContentDescriptor.File(
             text: "struct SessionShell {\n    let isPolished = true\n}",
             filePath: "Sources/SessionShell.swift",
-            fileType: .code(language: .swift),
+            fileKind: .code(language: .swift),
             language: .swift,
             startLine: 1,
             attachments: []

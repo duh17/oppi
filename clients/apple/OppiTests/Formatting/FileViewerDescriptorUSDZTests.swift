@@ -17,7 +17,7 @@ struct FileViewerDescriptorUSDZTests {
             return
         }
 
-        #expect(file.fileType == .usdz)
+        #expect(file.fileKind == .usdz)
         #expect(file.filePath == "models/scene.usdz")
         #expect(file.text.isEmpty)
         #expect(file.text != String(data: utf8Looking, encoding: .utf8))
@@ -38,7 +38,7 @@ struct FileViewerDescriptorUSDZTests {
             Issue.record("Expected file descriptor, got \(descriptor)")
             return
         }
-        #expect(file.fileType == .usdz)
+        #expect(file.fileKind == .usdz)
         if case .media = descriptor {
             Issue.record("USDZ must not become a streaming media descriptor")
         }
