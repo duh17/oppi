@@ -12,6 +12,7 @@ The docs have two tracks: **daily use** and **extension authoring**. Pi owns the
 - [Server configuration](server-configuration.md): config CLI, voice, push, MCP, project trust, auth module
 - [Reverse proxy](reverse-proxy.md): put Oppi behind Caddy, nginx, or Cloudflare Tunnel
 - [Sandbox workspaces](sandbox.md): run agent tools in a VM
+- [Run tools on another machine](run-on-another-machine.md): subagents that build and test on another Mac or Linux box
 - [Oppi Mirror](oppi-mirror.md): show a live terminal Pi session in Oppi
 - [Terminal](ssh-terminal.md): shell on a saved host
 - [Document viewers](document-viewers.md): viewers, wiki links, Org files, EPUB books, file editing

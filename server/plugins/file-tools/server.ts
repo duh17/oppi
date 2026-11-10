@@ -31,7 +31,7 @@ export const DurableFileTools: Extension = defineExtension<ToolRegistration>({
   wraps: [
     wrapTool(createReadTool(), (read) => ({
       ...read,
-      description: `${read.description} Sandbox sessions can also read PNG, JPEG, GIF and WebP images. Also reads internal URLs, read only: agent://<id> (a session you launched), history://<id> (a session in this workspace), proc://<id> (a background job), mcp://<resource-uri>, ssh://<host>/<path> (a file or directory over the server's own ssh; /~ is the remote HOME); the bare scheme lists what is readable. Ids may be unique prefixes.`,
+      description: `${read.description} Sandbox sessions can also read PNG, JPEG, GIF and WebP images. Also reads internal URLs, read only: agent://<id> (a session you launched), history://<id> (a session in this workspace), proc://<id> (a background job), mcp://<resource-uri>, skill://<name>/<file> (a Skill's own file, in a session whose tools run on another machine), ssh://<host>/<path> (a file or directory over the server's own ssh; /~ is the remote HOME); the bare scheme lists what is readable. Ids may be unique prefixes.`,
       async execute(args, api, context) {
         return (
           (await files.internalUrls.read(args, api, context)) ??

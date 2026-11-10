@@ -36,6 +36,13 @@ import type { Storage } from "./storage.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
 import type { SubagentWorktree } from "../plugins/subagents/contract.js";
 import { resolveSessionWorkRoot } from "./session-work-root.js";
+import {
+  provisionRemote,
+  REMOTE_EXCLUDED_TOOLS,
+  remoteWorktreeLine,
+  spawnMachine,
+} from "./durable-threads-remote.js";
+import { placementsFor } from "./machines/placements.js";
 import type { TraceEvent } from "./trace.js";
 import type { Session, Workspace } from "./types.js";
 import {
@@ -161,7 +168,8 @@ export class DurableThreads {
         return this.activate(sessionId, submit);
       },
       resolveAgent: (request, agent) => this.resolveAgent(request, host, caller, agent),
-      planWorktree: (request, name, call) => this.planWorktree(request, name, call, host, caller),
+      planWorktree: (request, name, call, machine) =>
+        this.planWorktree(request, name, call, host, caller, machine),
       provisionWorktree: (plan, options) => this.provisionWorktree(plan, options, host, caller),
       worktreeState: (worktree) => this.worktreeState(worktree),
     };
@@ -220,6 +228,9 @@ export class DurableThreads {
     const parentDoc = await harness.snapshot(OppiAgentDoc, parentId, BACKGROUND_CONTEXT);
     const parentRuntime = await harness.snapshot(DurableRuntime, parentId, BACKGROUND_CONTEXT);
     const runtime = parentRuntime?.kind === "sandbox" ? "sandbox" : "host";
+    // The child's tools run on a machine when it names one or its parent's do; they have no
+    // `ls`, `find` or `grep` there (those search this host's disk).
+    const onMachine = request.host !== undefined || parentRuntime?.kind === "remote";
     // A parent without the document (created before it existed) does not spawn.
     const grant = childDelegationGrant(
       {
@@ -289,12 +300,20 @@ export class DurableThreads {
       // Narrow-only: a spawn may take tools away from its child, never add one.
       ...(request.tools !== undefined ||
       request.excludeTools !== undefined ||
-      request.readOnly !== undefined
+      request.readOnly !== undefined ||
+      onMachine
         ? {
             narrow: {
               parentTools: agent.tools.map((tool) => tool.name),
               ...(request.tools !== undefined ? { tools: request.tools } : {}),
-              ...(request.excludeTools !== undefined ? { excludeTools: request.excludeTools } : {}),
+              ...(request.excludeTools !== undefined || onMachine
+                ? {
+                    excludeTools: [
+                      ...(request.excludeTools ?? []),
+                      ...(onMachine ? REMOTE_EXCLUDED_TOOLS : []),
+                    ],
+                  }
+                : {}),
               ...(request.readOnly !== undefined ? { readOnly: request.readOnly } : {}),
             },
           }
@@ -310,8 +329,13 @@ export class DurableThreads {
         // The child runs where its parent runs, unless its spawn gave it a worktree of its own.
         const from = await tx.doc(DurableRuntime, parentId);
         const to = await tx.doc(DurableRuntime, child);
-        to.kind = from.kind;
+        to.kind = worktree?.machine ? "remote" : from.kind;
         if (from.workspaceId !== undefined) to.workspaceId = from.workspaceId;
+        if (to.kind === "remote") {
+          // A machine's child runs there: in its own worktree, else in its parent's.
+          to.machine = worktree?.machine ?? from.machine;
+          to.root = worktree?.path ?? from.root;
+        }
         if (worktree) to.worktreeId = worktree.id;
         Object.assign(await tx.doc(OppiAgentDoc, child), structuredClone(doc));
         if (!worktree) return;
@@ -355,7 +379,7 @@ export class DurableThreads {
   ): Promise<{
     parent: Session;
     workspace: Workspace;
-    runtime: { kind: "host" | "sandbox"; worktreeId?: string } | undefined;
+    runtime: { kind: "host" | "sandbox" | "remote"; worktreeId?: string } | undefined;
   }> {
     const { harness } = await host.open();
     const runtime = await harness.snapshot(DurableRuntime, caller, BACKGROUND_CONTEXT);
@@ -389,6 +413,7 @@ export class DurableThreads {
     call: string,
     host: SessionHost,
     caller: ConversationId,
+    machine?: string,
   ): Promise<SubagentWorktreePlan> {
     const { parent, workspace, runtime } = await this.worktreeCaller(host, caller);
     if (runtime?.kind === "sandbox")
@@ -397,6 +422,13 @@ export class DurableThreads {
       );
     await workspaceGitRoot(workspace);
     const dataDir = this.deps.storage.getDataDir();
+    if (machine !== undefined) {
+      spawnMachine(dataDir, machine);
+      if (typeof request !== "string" && "id" in request)
+        throw new Error(
+          `host cannot adopt the existing worktree ${request.id}: its files are on this host. Use worktree "new" or a branch name.`,
+        );
+    }
     if (typeof request !== "string" && "id" in request) {
       const worktree = await resolveWorkspaceWorktree(workspace, request.id, { dataDir });
       if (!worktree || worktree.isMain)
@@ -413,13 +445,14 @@ export class DurableThreads {
       root.root,
       typeof request === "string" ? undefined : request.base,
     );
+    const onMachine = machine === undefined ? {} : { host: machine };
     if (request === "new") {
       const branch = await this.holdBranch(workspace, call, subagentWorktreeBranch(name), dataDir);
-      return { mode: "create", branch, base };
+      return { mode: "create", branch, base, ...onMachine };
     }
     const branch = typeof request === "string" ? "" : request.branch.trim();
     if (!branch) throw new Error('worktree needs a branch name or "new"');
-    return { mode: "create", branch, base };
+    return { mode: "create", branch, base, ...onMachine };
   }
 
   /**
@@ -447,6 +480,7 @@ export class DurableThreads {
           base: (await headCommit(worktree.path)) ?? "",
         };
       }
+      if (plan.host) return await provisionRemote(dataDir, plan, workspace);
       const existing = (await listWorkspaceWorktrees(workspace, { dataDir })).find(
         (worktree) => !worktree.isMain && worktree.branch === plan.branch,
       );
@@ -498,9 +532,13 @@ export class DurableThreads {
         dataDir,
         reservedWorktreeIds: this.reservedWorktreeIds(workspace.id),
       });
-      if (free === claimed) return free;
+      // A branch a worker holds on a machine is taken until it lands, though no ref names it here.
+      const heldOnMachine = placementsFor(dataDir)
+        .list()
+        .some((placement) => placement.workspaceId === workspace.id && placement.branch === free);
+      if (free === claimed && !heldOnMachine) return free;
       // The checkout already has that name: claim the one the check moved on to.
-      start = free;
+      start = heldOnMachine ? `${free}-${round + 2}` : free;
     }
     throw new Error(`No free branch name for ${base}`);
   }
@@ -521,6 +559,7 @@ export class DurableThreads {
 
   /** One compact line of where a child's worktree stands: branch, id, path, ahead, clean/dirty. */
   private async worktreeState(worktree: SubagentWorktree): Promise<string | undefined> {
+    if (worktree.machine) return remoteWorktreeLine(this.deps.storage.getDataDir(), worktree);
     if (!existsSync(worktree.path))
       return `${worktree.branch ?? "detached"} \u00b7 ${worktree.id} \u00b7 gone`;
     const { ahead, dirty } = await worktreeProgress(worktree.path, worktree.base || undefined);

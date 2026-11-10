@@ -75,6 +75,7 @@ export type SessionOverallDiffResult =
   | { kind: "trace-not-found" }
   | { kind: "mutations-not-found" }
   | { kind: "workspace-root-not-found" }
+  | { kind: "files-on-machine"; machine: string }
   | { kind: "current-file-not-found" }
   | { kind: "current-file-outside-workspace" }
   | { kind: "current-file-not-file" }
@@ -412,6 +413,8 @@ export class SessionTraceService {
     reqPath: string,
   ): Promise<CurrentFileTextResult> {
     const sessionRoot = await sessionWorkRoot(session, this.deps.storage, { create: false });
+    if (sessionRoot.kind === "remote")
+      return { kind: "files-on-machine", machine: sessionRoot.machine };
     if (sessionRoot.kind !== "ok") return { kind: "workspace-root-not-found" };
 
     const { root: workRoot, workspace } = sessionRoot;

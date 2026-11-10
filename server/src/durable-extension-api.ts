@@ -257,6 +257,8 @@ export type SubagentRequest = {
   excludeTools?: string[];
   /** Read and run commands only (`bash` is not a sandbox). */
   readOnly?: boolean;
+  /** A machine the child's tools run on (its worktree is created there). */
+  host?: string;
 };
 
 /** `subagent spawn`'s `worktree`, which runs the child in a checkout of its own. */
@@ -274,7 +276,9 @@ export type SubagentWorktreeRequest =
  * the untouched orphan stays for the daily safe cleanup.
  */
 export type SubagentWorktreePlan =
-  { mode: "adopt"; id: string } | { mode: "create"; branch: string; base: string };
+  | { mode: "adopt"; id: string }
+  /** `host`: a machine to create the worktree on, not this host. */
+  | { mode: "create"; branch: string; base: string; host?: string };
 
 /** A spawn the host resolved: how the child conversation is configured. */
 export interface ResolvedSubagent {
@@ -362,6 +366,7 @@ export interface DurableSessionsHost {
     request: SubagentWorktreeRequest,
     name: string,
     call: string,
+    host?: string,
   ): Promise<SubagentWorktreePlan>;
   /**
    * Create the planned worktree and release the name `call` held. `adopt` takes the worktree a

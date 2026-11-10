@@ -7,6 +7,7 @@ import {
   writeJsonEnvelope,
 } from "./output.js";
 import { THINKING_LEVELS } from "../thinking-levels.js";
+import { MACHINE_HELP_TOPICS } from "./help-machines.js";
 
 export type CliHelpPath = readonly string[];
 
@@ -48,6 +49,7 @@ export type HelpTopic = {
 type HelpJsonTopic = Omit<HelpTopic, "path"> & { path: string[] };
 
 const HELP_TOPICS: HelpTopic[] = [
+  ...MACHINE_HELP_TOPICS,
   {
     path: [],
     title: "Oppi CLI",
@@ -86,6 +88,7 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "edit server-owned dictation hints (also in Server Settings)",
       },
       { name: "worktree", summary: "list, create, open, and remove workspace worktrees" },
+      { name: "machines", summary: "set up other computers that sessions can run tools on" },
       {
         name: "session",
         summary: "list, launch, inspect, message, resume, fork, and stop sessions",
@@ -2229,6 +2232,7 @@ const DEFAULT_SUBCOMMANDS: Readonly<Record<string, string>> = {
   agent: "list",
   config: "show",
   devices: "list",
+  machines: "list",
   schedule: "list",
   server: "status",
   session: "list",

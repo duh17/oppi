@@ -99,7 +99,7 @@ import { keepAutoDiscoveryOffHost, resolveSandboxExtensions } from "./sandbox-ho
 import { canonicalServerResourcePath } from "./server-resource-id.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError } from "./host.js";
-import { resolveSessionWorkRoot } from "./session-work-root.js";
+import { resolveSessionWorkRoot, workspaceMountRoot } from "./session-work-root.js";
 import { resolveSandboxGuestCwd } from "./workspace-folder.js";
 import { oppiAppendSystemPrompt } from "./oppi-docs.js";
 import type { GondolinManager } from "./gondolin-manager.js";
@@ -427,6 +427,10 @@ export async function resolveSdkSessionCwdAsync(
   switch (result.kind) {
     case "ok":
       return result.root;
+    // The files are on a machine; this host's checkout is only where resources (AGENTS files,
+    // Skills, settings) are read, and a durable remote session never writes there.
+    case "remote":
+      return workspaceMountRoot(result.workspace, { create: false });
     case "worktree-unavailable":
       throw result.error;
     case "invalid-root":

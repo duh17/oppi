@@ -179,6 +179,7 @@ Start at [docs/index.md](docs/index.md). Public docs are two tracks: daily use a
 - [Server configuration](docs/server-configuration.md)
 - [Reverse proxy](docs/reverse-proxy.md)
 - [Sandbox workspaces](docs/sandbox.md)
+- [Run tools on another machine](docs/run-on-another-machine.md)
 - [Oppi Mirror](docs/oppi-mirror.md)
 - [Terminal](docs/ssh-terminal.md)
 - [Document viewers](docs/document-viewers.md)

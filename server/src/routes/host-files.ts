@@ -17,6 +17,7 @@ import {
   type ResolvedCurrentFile,
 } from "../current-file.js";
 import { listDirectoryEntries } from "../directory-listing.js";
+import { remoteFilesMessage, remoteWorktreeRefusal } from "../machines/placements.js";
 import {
   FILE_EDIT_ORIGIN_HEADER,
   FILE_EDIT_REFUSAL_HEADER,
@@ -70,7 +71,7 @@ const CURRENT_FILE_QUERY_KEYS = new Set([
   "skillId",
 ]);
 
-const SESSION_ROOT_ERRORS: Record<Exclude<SessionWorkRoot["kind"], "ok">, string> = {
+const SESSION_ROOT_ERRORS: Record<Exclude<SessionWorkRoot["kind"], "ok" | "remote">, string> = {
   "no-workspace": "Workspace not found",
   "workspace-missing": "Workspace not found",
   "root-missing": "Workspace root not found",
@@ -302,7 +303,12 @@ export function createHostFileRoutes(
         const workspace = ctx.storage.getWorkspace(workspaceId);
         if (!workspace) return { kind: "error", status: 404, message: "Workspace not found" };
         const root = await resolveWorkspaceFileRoot(workspace, worktreeId ?? undefined, dataDir);
-        if (!root) return { kind: "error", status: 404, message: "Worktree not found" };
+        if (!root) {
+          const remote = remoteWorktreeRefusal(dataDir, worktreeId ?? undefined);
+          return remote
+            ? { kind: "error", status: 409, message: remote }
+            : { kind: "error", status: 404, message: "Worktree not found" };
+        }
         return {
           kind: "ok",
           origin: { kind: "workspace", workspace, root },
@@ -325,6 +331,8 @@ export function createHostFileRoutes(
           });
           return { kind: "error", status: 500, message: "Session root not found" };
         }
+        if (resolved.kind === "remote")
+          return { kind: "error", status: 409, message: remoteFilesMessage(resolved.machine) };
         if (resolved.kind !== "ok") {
           return { kind: "error", status: 404, message: SESSION_ROOT_ERRORS[resolved.kind] };
         }

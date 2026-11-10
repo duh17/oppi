@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { isControlConversation } from "./control-session.js";
 import { resolveHostPath } from "./host.js";
+import { placementsFor, remoteFilesMessage } from "./machines/placements.js";
 import { ensureOwnerOnlyRealDirectory } from "./owner-directory.js";
 import type { Session, Workspace } from "./types.js";
 import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.js";
@@ -46,6 +47,11 @@ export type SessionWorkRoot =
   | { kind: "no-workspace" }
   /** The session names a workspace that no longer exists. */
   | { kind: "workspace-missing" }
+  /**
+   * The session's files are on a machine (a `subagent spawn host` worktree), not on this host:
+   * nothing here may read or write the same path of this host's checkout.
+   */
+  | { kind: "remote"; machine: string; root: string; workspace: Workspace }
   /** The session's host worktree is gone or cannot be resolved. */
   | { kind: "worktree-unavailable"; error: WorkspaceWorktreeError }
   /** A control directory is a symlink or not a directory; never followed. */
@@ -102,6 +108,10 @@ export async function resolveSessionWorkRoot(
     return session.workspaceId ? { kind: "workspace-missing" } : { kind: "no-workspace" };
   }
 
+  const remote =
+    dataDir && session.worktreeId ? placementsFor(dataDir).get(session.worktreeId) : undefined;
+  if (remote) return { kind: "remote", machine: remote.machine, root: remote.root, workspace };
+
   if (workspace.runtime !== "sandbox" && session.worktreeId) {
     try {
       const worktreePath = await resolveWorkspaceSessionCwd(workspace, session.worktreeId, {
@@ -148,6 +158,8 @@ export async function attachmentWorkRoot(
   switch (result.kind) {
     case "ok":
       return result.root;
+    case "remote":
+      throw new Error(remoteFilesMessage(result.machine));
     case "worktree-unavailable":
       throw result.error;
     case "invalid-root":

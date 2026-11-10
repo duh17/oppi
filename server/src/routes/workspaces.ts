@@ -4,6 +4,7 @@ import { getCommitDetail, getCommitFileDiff, getCommitGraph } from "../git-commi
 import { gitTrustForWorkspace } from "../git-safe.js";
 import { getGitStatus, getWorkspaceGitSummary } from "../git-status.js";
 import { isRecord } from "../json-shape.js";
+import { remoteWorktreeRefusal } from "../machines/placements.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { resolveInitialChatModel } from "../session-model-selection.js";
 import { isPiTuiTaskRecordSession } from "../pi-tui-session-classification.js";
@@ -385,7 +386,8 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       dataDir: ctx.storage.getDataDir(),
     });
     if (!worktree) {
-      helpers.error(res, 404, "Worktree not found");
+      const remote = remoteWorktreeRefusal(ctx.storage.getDataDir(), worktreeId);
+      helpers.error(res, remote ? 409 : 404, remote ?? "Worktree not found");
       return;
     }
 
@@ -547,7 +549,8 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       dataDir: ctx.storage.getDataDir(),
     });
     if (!worktree) {
-      helpers.error(res, 404, "Worktree not found");
+      const remote = remoteWorktreeRefusal(ctx.storage.getDataDir(), worktreeId);
+      helpers.error(res, remote ? 409 : 404, remote ?? "Worktree not found");
       return undefined;
     }
 

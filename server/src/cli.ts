@@ -76,6 +76,7 @@ import {
 import { localApiRequest } from "./cli/local-api-client.js";
 import { isNpmVersionNewer } from "./cli/npm-version.js";
 import { resolveInstallKind } from "./install-kind.js";
+import { machineDoctorChecks } from "./machines/doctor.js";
 import {
   fetchLatestPublishedVersion,
   installGlobalPackage,
@@ -802,7 +803,7 @@ async function cmdDoctor(storage: CliConnectionConfig): Promise<void> {
     message: `Oppi CLI: ${packageInfo.name}@${packageInfo.version}`,
   });
 
-  checks.push(...(service?.checks ?? []));
+  checks.push(...(service?.checks ?? []), ...machineDoctorChecks(storage.getDataDir()));
 
   let criticalFailures = 0;
   for (const check of checks) {

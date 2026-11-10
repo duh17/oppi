@@ -52,6 +52,9 @@ import { isControlConversation } from "./control-session.js";
 import { readRequestDisplay, type DurableAgentController } from "./durable-agent-controller.js";
 import { controlConversationTools } from "./durable-control-conversation.js";
 import { DurableRuntime, type SessionHost } from "./durable-harness.js";
+import { runtimeSwitched } from "./durable-execution-env.js";
+import { placementsFor } from "./machines/placements.js";
+import { presentRemoteSkills, remotePromptSection } from "./machines/remote-presentation.js";
 import { DurableSessionDoc } from "./durable-session-doc.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
@@ -328,7 +331,11 @@ export class DurableBackend implements AgentBackend {
     const hostCwd = await resolveSdkSessionCwdAsync(options.workspace, session, {
       dataDir: options.dataDir,
     });
-    const cwd = sandbox ? resolveSandboxGuestCwd(workspace) : hostCwd;
+    // A worktree on a machine: the tools run there, while resources and MCP stay on this host.
+    const remote = session.worktreeId
+      ? placementsFor(options.dataDir).get(session.worktreeId)
+      : undefined;
+    const cwd = sandbox ? resolveSandboxGuestCwd(workspace) : (remote?.root ?? hostCwd);
     const host = options.host;
     const agentDir = getAgentDir();
     const control = isControlConversation(session);
@@ -408,7 +415,12 @@ export class DurableBackend implements AgentBackend {
         ...(launched?.doc?.resources ? { resources: launched.doc.resources } : {}),
         projectContext: launched?.doc?.projectContext !== false,
       });
-      return { ...files, appends };
+      if (!remote) return { ...files, appends };
+      return {
+        ...files,
+        appends: [...appends, remotePromptSection(remote.machine, remote.root)],
+        presentedSkills: presentRemoteSkills(session.id, files.skills),
+      };
     };
     const resources = await loadResources();
     // An Oppi Control session selects an exact extension list; it gets no MCP tools, and an
@@ -421,7 +433,7 @@ export class DurableBackend implements AgentBackend {
             return DurableMcp.open({
               sessionId: session.id,
               // The MCP root servers see via roots/list: a sandbox gets only the guest path.
-              cwd,
+              cwd: remote ? hostCwd : cwd,
               agentDir,
               projectTrusted,
               ...(sandbox
@@ -464,6 +476,7 @@ export class DurableBackend implements AgentBackend {
         sandboxEnv,
         resources,
         loadResources,
+        machine: remote?.machine,
       });
     } catch (error) {
       await host.closeMcp(session.id);
@@ -542,6 +555,8 @@ export class DurableBackend implements AgentBackend {
       /** The owner plugins' extensions this attach selects; none on control. */
       packageExtensions: readonly Extension[];
       sandboxEnv: GondolinExecutionEnv | undefined;
+      /** The machine this session's worktree is on, when it is on one. */
+      machine: string | undefined;
       resources: PresentedResources;
       loadResources: () => Promise<PresentedResources>;
     },
@@ -568,11 +583,14 @@ export class DurableBackend implements AgentBackend {
       if (!existing) throw new Error(`Server durable conversation ${id} is missing`);
       const runtime = await harness.snapshot(DurableRuntime, existing.id, BACKGROUND_CONTEXT);
       if (
-        (runtime?.kind === "sandbox") !== sandbox ||
-        (sandbox && runtime?.workspaceId !== options.workspace?.id)
+        runtimeSwitched(runtime, {
+          sandbox,
+          workspaceId: options.workspace?.id,
+          machine: target.machine,
+        })
       )
         throw new Error(
-          "A bound server durable session cannot switch execution runtime or sandbox workspace",
+          "A bound server durable session cannot switch execution runtime, machine or sandbox workspace",
         );
       conversation = existing;
       await dropInstructionsWorkspacePrompt(existing, workspace?.systemPrompt);
