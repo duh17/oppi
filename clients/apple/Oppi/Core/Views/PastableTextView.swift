@@ -35,23 +35,6 @@ func applyComposerInputTraits(
     assistant.trailingBarButtonGroups = []
 }
 
-@MainActor
-private func requestSystemDictation(for textView: UITextView) {
-    // UIKit does not expose a direct public "start dictation now" method.
-    // This hints to the system that dictation is expected and ensures the
-    // text view is active so keyboard dictation can start immediately when
-    // supported by the current keyboard/input mode.
-    if #available(iOS 16.4, *) {
-        UITextInputContext.current()?.isDictationInputExpected = true
-    }
-
-    if !textView.isFirstResponder {
-        textView.becomeFirstResponder()
-    }
-
-    textView.reloadInputViews()
-}
-
 func composerVolatileTranscriptBackgroundColor() -> UIColor {
     // Needs to read clearly against the darker glass composer background
     // without looking like a full text selection.

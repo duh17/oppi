@@ -27,31 +27,6 @@ struct UsageColors {
     }
 }
 
-// MARK: - Section heading
-
-enum UsageText {
-    static func heading(_ text: String, colors: UsageColors) -> UILabel {
-        let label = UILabel()
-        label.text = text
-        label.font = .preferredFont(forTextStyle: .subheadline).withWeight(.semibold)
-        label.adjustsFontForContentSizeCategory = true
-        label.numberOfLines = 0
-        label.textColor = colors.fg
-        label.accessibilityTraits = .header
-        return label
-    }
-
-    static func caption(_ text: String, colors: UsageColors, style: UIFont.TextStyle = .caption1) -> UILabel {
-        let label = UILabel()
-        label.text = text
-        label.font = .preferredFont(forTextStyle: style)
-        label.adjustsFontForContentSizeCategory = true
-        label.numberOfLines = 0
-        label.textColor = colors.comment
-        return label
-    }
-}
-
 private extension UIFont {
     func withWeight(_ weight: UIFont.Weight) -> UIFont {
         let descriptor = fontDescriptor.addingAttributes([

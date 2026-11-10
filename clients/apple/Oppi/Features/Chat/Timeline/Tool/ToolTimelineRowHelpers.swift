@@ -1080,7 +1080,7 @@ enum ToolTimelineRowUIHelpers {
             return UIImage(systemName: "exclamationmark.triangle")
         }
 
-        // Check for a custom asset catalog icon first (lang-javascript, lang-python, etc.)
+        // Check for a custom asset catalog icon first (lang-nodejs, lang-python, etc.)
         let assetMap: [String: String] = [
             "javascript": "lang-nodejs",
             "typescript": "lang-typescript",

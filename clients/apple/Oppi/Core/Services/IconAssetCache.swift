@@ -3,17 +3,6 @@ import ImageIO
 import UIKit
 import UniformTypeIdentifiers
 
-struct IconAssetLoadKey: Equatable {
-    let assetId: String?
-    let cacheIdentity: ObjectIdentifier?
-
-    @MainActor
-    init(assetId: String?, cache: IconAssetCache?) {
-        self.assetId = assetId
-        cacheIdentity = cache.map(ObjectIdentifier.init)
-    }
-}
-
 @MainActor
 final class IconAssetCache {
     typealias Fetch = @Sendable (String) async throws -> Data
