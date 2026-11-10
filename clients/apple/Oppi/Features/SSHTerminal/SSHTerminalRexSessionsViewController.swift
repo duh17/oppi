@@ -120,7 +120,13 @@ final class SSHTerminalRexSessionsViewController: UIViewController {
         chrome?.sync()
         openLinkedPaneIfRead()
         let covered = session.showsTerminal || editAfterTerminal != nil || presentedViewController != nil
+        // The pass itself may start the sign-in (or raise its password prompt), which the
+        // chrome above has already looked past: look again, or the prompt never shows.
+        let signInBefore = (session.connecting, session.passwordPrompt, session.hostFailure == nil)
         follower.sync(active: isOnScreen && !isBackground && !covered)
+        if signInBefore != (session.connecting, session.passwordPrompt, session.hostFailure == nil) {
+            setNeedsUpdateProperties()
+        }
     }
 
     /// Rex has been read (or cannot be): open the linked pane, or say plainly why not.
