@@ -36,7 +36,6 @@
 		02A1F795892E82ECB9DD4792 /* MermaidSequenceParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84585D71B074E4FFDBF65F72 /* MermaidSequenceParser.swift */; };
 		02A436BD2C14BB5A630CE6D4 /* EPUBBook.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB363C7A1068AC483CE71C06 /* EPUBBook.swift */; };
 		02B1C1FE07B070120EDF08EA /* MarkdownTableMarkupRewriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA73F8952DA811631CE45052 /* MarkdownTableMarkupRewriter.swift */; };
-		0319F9323EC77505AB007F32 /* suzanne-garden.usdz in Resources */ = {isa = PBXBuildFile; fileRef = 6B4E8D2C6F1DC6232912DE51 /* suzanne-garden.usdz */; };
 		03383540C9064320F0718C74 /* ServerMetricsPageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 886A804E72C7BB3BFEECFFD2 /* ServerMetricsPageTests.swift */; };
 		036BF31F1FBD29BCECC9223E /* ProviderAuthFlowAttemptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9D47B9F2F749E3E646743C1 /* ProviderAuthFlowAttemptTests.swift */; };
 		03ABBEAC81245686CF6A0F1A /* StreamingAutoFollowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F63CD7097552FDF80941DF3 /* StreamingAutoFollowTests.swift */; };
@@ -2592,7 +2591,6 @@
 		F5079A83AC817294E0319DA5 /* RexTerminalStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B94BF3953D00D38E6C62D09 /* RexTerminalStream.swift */; };
 		F52706DCDA9807C8C5F18077 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 053E884C030215C064244A8D /* AppTheme.swift */; };
 		F5575A5E8C0D45CE67B8AF5E /* ExtensionSurfacePatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AEDEE028087B997F226AAE1 /* ExtensionSurfacePatch.swift */; };
-		F572AA36961CEC5DBE91BF24 /* AUDIT-RESULTS.md in Resources */ = {isa = PBXBuildFile; fileRef = 35FA3411D780C1DB10CED7BC /* AUDIT-RESULTS.md */; };
 		F59A573B01B8B8D6A6BF0851 /* IntentSessionOpenTrigger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81B5706E4C50B370DF565619 /* IntentSessionOpenTrigger.swift */; };
 		F5B91192148D951281BAA8B5 /* SettingsServerTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F556DEBAECD7556F2D0C528 /* SettingsServerTransportTests.swift */; };
 		F60DD1834D6C1DBF8616EBD3 /* MacSessionTimelineColumnPaintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD04C5EC9E86A68761B7249B /* MacSessionTimelineColumnPaintTests.swift */; };
@@ -3283,7 +3281,6 @@
 		35BF3FE30B7EC795027E2D18 /* TailscaleKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = TailscaleKit.xcframework; path = Vendor/TailscaleKit/TailscaleKit.xcframework; sourceTree = "<group>"; };
 		35F0F7021189F9C668C0B936 /* ProviderAuthFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderAuthFlow.swift; sourceTree = "<group>"; };
 		35F57C3EB7B70D151A45A6F4 /* TableColumnAlignmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableColumnAlignmentTests.swift; sourceTree = "<group>"; };
-		35FA3411D780C1DB10CED7BC /* AUDIT-RESULTS.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "AUDIT-RESULTS.md"; sourceTree = "<group>"; };
 		3622E44BB9790DF1FDF51AEF /* ThemeGalleryViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeGalleryViewController.swift; sourceTree = "<group>"; };
 		3676B62608949F0D8D754EF1 /* TelemetryModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryModeTests.swift; sourceTree = "<group>"; };
 		369CC8375740648865129C00 /* MacReviewCommentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacReviewCommentTests.swift; sourceTree = "<group>"; };
@@ -3734,7 +3731,6 @@
 		6B03E13EB1486F5CFBB693C6 /* OrgParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrgParser.swift; sourceTree = "<group>"; };
 		6B309372BA7339A6B0D5CDAC /* WorkspaceFileEditRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFileEditRecovery.swift; sourceTree = "<group>"; };
 		6B3663390119E359762046DE /* RexDirect.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexDirect.swift; sourceTree = "<group>"; };
-		6B4E8D2C6F1DC6232912DE51 /* suzanne-garden.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = "suzanne-garden.usdz"; sourceTree = "<group>"; };
 		6B53D6492D9B3BF02D02814E /* DeviceKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceKeyStore.swift; sourceTree = "<group>"; };
 		6B7B96D6E0AEE7633A3DC162 /* ServerSettingsRouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSettingsRouteTests.swift; sourceTree = "<group>"; };
 		6B818EE594819D34B9CD7A4E /* MacExtensionInteractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacExtensionInteractionTests.swift; sourceTree = "<group>"; };
@@ -5553,7 +5549,6 @@
 		25301EA00D988FA03CC34BF3 /* Support */ = {
 			isa = PBXGroup;
 			children = (
-				35FA3411D780C1DB10CED7BC /* AUDIT-RESULTS.md */,
 				90D9E984389470189D63C3A0 /* AuthenticatedRangeHTTPServer.swift */,
 				453D3ACBEE6D0E21C7AE0F9B /* ComposerOwnerTestScreen.swift */,
 				C95C8232C23FC95071664893 /* GeneratedH264Fixture.swift */,
@@ -7120,7 +7115,6 @@
 				F5922FB5923BE3BFAAEE9E4A /* mermaid-rendering-gallery.md */,
 				776FDBD7D6EB1C0D4603C712 /* mixed-markdown-stress-corpus.md */,
 				72DB23CDA5E1BC3D6397EC6C /* rex-kitty-image-snapshot.bin */,
-				6B4E8D2C6F1DC6232912DE51 /* suzanne-garden.usdz */,
 				096B1F033E9DFE4A1A7F02F8 /* synthetic-long-markdown.md */,
 			);
 			path = Fixtures;
@@ -9142,7 +9136,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				1B7D47808689D687E86B63DD /* 2026-08-22-anthropic-s1-report.md in Resources */,
-				F572AA36961CEC5DBE91BF24 /* AUDIT-RESULTS.md in Resources */,
 				ACEF24896B7C5CD12327E9C4 /* LICENSE in Resources */,
 				B8FBE906EF0BD834007AFA62 /* eleven-chapters.m4a in Resources */,
 				DC352F589D285632FC9224DB /* known-good-h264.mp4 in Resources */,
@@ -9150,7 +9143,6 @@
 				C0BB27F2808CFAAECD6B8DBA /* mixed-markdown-stress-corpus.md in Resources */,
 				26ABC078A55D4E1BA09C2CC1 /* protocol in Resources */,
 				545A96A05E21FFC97C2BACC2 /* rex-kitty-image-snapshot.bin in Resources */,
-				0319F9323EC77505AB007F32 /* suzanne-garden.usdz in Resources */,
 				FD3FED6CD03AE53F9499AE61 /* synthetic-long-markdown.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
