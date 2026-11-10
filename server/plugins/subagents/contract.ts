@@ -35,7 +35,12 @@ export type Child = {
    * child works: landing takes it, or Oppi's daily cleanup once it is clean, landed, and unused.
    */
   worktree?: SubagentWorktree;
+  /** Where `worktree` stood at the child's newest report: commits ahead of its base, and dirty. */
+  progress?: { ahead: number; dirty: boolean };
 };
+
+/** Where a child's worktree stands: gone, or its commits ahead of its base and whether it is dirty. */
+export type SubagentWorktreeState = { gone: true } | { gone: false; ahead: number; dirty: boolean };
 
 /** A child's worktree, as its spawn bound it and as `list` and its answers report it. */
 export type SubagentWorktree = {

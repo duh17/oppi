@@ -2,6 +2,7 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type {
   AssistantMessage,
   Message,
+  ToolCall,
   SimpleStreamOptions,
   TranscriptContext,
 } from "@earendil-works/pi-ai";
@@ -38,33 +39,61 @@ export function e2eFauxReplyText(prompt: string): string {
 }
 
 /**
- * A scripted tool call, so a UI test can drive tool rows and subagents. The last line of the
- * prompt decides it, and only when the prompt is the newest message (a tool result is answered
+ * Scripted tool calls, so a UI test can drive tool rows and subagents. The last line of the
+ * prompt decides them, and only when the prompt is the newest message (a tool result is answered
  * with text):
  *
  * - `faux:bash <command>` calls `bash` with the command.
  * - `faux:subagent <name> <task>` spawns a background subagent with the task; a task that is
  *   itself a directive makes the child call that tool.
  * - `faux:subagent-wait <name> <task>` spawns it in the foreground: the call waits for its answer.
+ * - `faux:subagents <name> <task> || <name> <task> ...` spawns several background subagents in
+ *   one answer, as a model does when it delegates in parallel.
+ * - `faux:ask <question>` asks the user the question, with two options, and waits for the answer.
  *
  * Only the last line counts, so a reply that echoes a directive (every reply ends with
- * `End of faux reply.`) never triggers another call.
+ * `End of faux reply.`) never triggers another call. No directive: no calls.
  */
-export function e2eFauxToolCall(
-  messages: readonly Message[],
-): { name: string; arguments: Record<string, string | boolean> } | undefined {
-  if (messages.at(-1)?.role !== "user") return undefined;
-  const line = lastUserText(messages).split("\n").at(-1)?.trim() ?? "";
+export function e2eFauxToolCalls(messages: readonly Message[]): FauxCall[] {
+  if (messages.at(-1)?.role !== "user") return [];
+  const line = lastDirective(messages);
+  const [, many] = /^faux:subagents\s+(.+)$/.exec(line) ?? [];
+  if (many)
+    return many.split("||").flatMap((spec) => directiveCall(`faux:subagent ${spec.trim()}`));
+  return directiveCall(line);
+}
+
+type FauxCall = { name: string; arguments: Record<string, unknown> };
+
+function directiveCall(line: string): FauxCall[] {
   const [, command] = /^faux:bash\s+(.+)$/.exec(line) ?? [];
-  if (command) return { name: "bash", arguments: { command } };
-  const [, mode, name, task] = /^faux:subagent(-wait)?\s+(\S+)\s+(.+)$/.exec(line) ?? [];
-  if (name && task) {
-    return {
-      name: "subagent",
-      arguments: { action: "spawn", name, task, ...(mode ? { wait: true } : {}) },
-    };
+  if (command) return [{ name: "bash", arguments: { command } }];
+  const [, question] = /^faux:ask\s+(.+)$/.exec(line) ?? [];
+  if (question) {
+    const options = [
+      { value: "first", label: "The first" },
+      { value: "second", label: "The second" },
+    ];
+    return [{ name: "ask", arguments: { questions: [{ id: "choice", question, options }] } }];
   }
-  return undefined;
+  const [, mode, name, task] = /^faux:subagent(-wait)?\s+(\S+)\s+(.+)$/.exec(line) ?? [];
+  if (!name || !task) return [];
+  const args = { action: "spawn", name, task, ...(mode ? { wait: true } : {}) };
+  return [{ name: "subagent", arguments: args }];
+}
+
+/**
+ * `faux:fail <error>`: the request fails with that error, as a provider's refused request does.
+ * Only for the newest message, as a tool call's directive.
+ */
+export function e2eFauxFailure(messages: readonly Message[]): string | undefined {
+  if (messages.at(-1)?.role !== "user") return undefined;
+  return /^faux:fail\s+(.+)$/.exec(lastDirective(messages))?.[1];
+}
+
+/** The last line of the newest user text: where a directive goes. */
+function lastDirective(messages: readonly Message[]): string {
+  return lastUserText(messages).split("\n").at(-1)?.trim() ?? "";
 }
 
 function lastUserText(messages: readonly Message[]): string {
@@ -100,9 +129,14 @@ export async function registerE2EFauxProvider(models: ModelRuntime): Promise<boo
     tokensPerSecond: E2E_FAUX_TOKENS_PER_SECOND,
   });
   const reply = (context: TranscriptContext): AssistantMessage => {
-    const call = e2eFauxToolCall(context.messages);
-    return call
-      ? fauxAssistantMessage(fauxToolCall(call.name, call.arguments), { stopReason: "toolUse" })
+    const failure = e2eFauxFailure(context.messages);
+    if (failure) return fauxAssistantMessage("", { stopReason: "error", errorMessage: failure });
+    const calls = e2eFauxToolCalls(context.messages);
+    return calls.length > 0
+      ? fauxAssistantMessage(
+          calls.map((call) => fauxToolCall(call.name, call.arguments as ToolCall["arguments"])),
+          { stopReason: "toolUse" },
+        )
       : fauxAssistantMessage(e2eFauxReplyText(lastUserText(context.messages)));
   };
   // The faux core answers from a queue. Queue the scripted step right before each request

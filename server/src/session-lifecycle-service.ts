@@ -158,6 +158,7 @@ export interface SessionLifecycleServiceDeps {
     forkServerDurableConversation(sessionId: string, entryId: string): Promise<number | undefined>;
     deleteUnusedServerDurableStore(storeId: string): Promise<boolean>;
     stopSession(sessionId: string): Promise<void>;
+    recordOwnerStop(sessionId: string): Promise<void>;
   };
   sessionRuntimes: Pick<
     SessionRuntimes,
@@ -853,6 +854,10 @@ export class SessionLifecycleService {
         throw error;
       }
     }
+
+    // The owner's Stop, not an idle child's auto-stop: it also dismisses a failure the parent's
+    // subagent pill keeps under Needs You.
+    if (session.serverDurable) await this.deps.sessions.recordOwnerStop(session.id);
 
     const updatedSession = this.deps.storage.getSession(session.id);
     return {

@@ -332,14 +332,48 @@ function worktreeRequest(
   return { branch: value.branch.trim(), ...(value.base ? { base: value.base } : {}) };
 }
 
-/** The one line a child with a worktree adds to `list` and to its answers. */
-async function worktreeLine(
+/**
+ * Where a child's worktree stands: the one line it adds to `list` and to its answers, and the
+ * progress its pill row shows (`noteProgress`).
+ */
+type WorktreeReport = { line: string; progress?: { ahead: number; dirty: boolean } };
+
+async function worktreeReport(
   sessions: DurableSessionsHost,
   worktree: SubagentWorktree | undefined,
-): Promise<string | undefined> {
+): Promise<WorktreeReport | undefined> {
   if (!worktree) return undefined;
   const state = await sessions.worktreeState(worktree);
-  return state === undefined ? undefined : `worktree: ${state}`;
+  const where = `worktree: ${worktree.branch ?? "detached"} \u00b7 ${worktree.id}`;
+  if (state.gone) return { line: `${where} \u00b7 gone` };
+  const { ahead, dirty } = state;
+  return {
+    line: [
+      where,
+      worktree.path,
+      ahead === 1 ? "1 commit ahead" : `${ahead} commits ahead`,
+      dirty ? "dirty" : "clean",
+    ].join(" \u00b7 "),
+    progress: { ahead, dirty },
+  };
+}
+
+/** Records on the child's entry where its worktree stood at this report, for the pill row. */
+function noteProgress(record: Child | undefined, report: WorktreeReport | undefined): void {
+  if (record && report?.progress) record.progress = report.progress;
+}
+
+/** `noteProgress` in a commit of its own, for a report whose commit does not touch the record. */
+async function recordProgress(
+  api: Pick<ToolExecutionApi, "commit" | "conversationId">,
+  name: string,
+  report: WorktreeReport | undefined,
+  context: Context,
+): Promise<void> {
+  if (!report?.progress) return;
+  await api.commit(async (tx) => {
+    noteProgress((await tx.doc(Subagents, api.conversationId)).children[name], report);
+  }, context);
 }
 
 /**
@@ -481,11 +515,12 @@ function defineReporter(
         const settled = await delivered.submitted.wait(context);
         // Read outside the commit: where a worktree child's tree stands is git work, not a
         // document read, and the Session line must not wait on it.
-        const state = await worktreeLine(
+        const worktree = await worktreeReport(
           host(await runtime.env(context)),
           (await runtime.snapshot(Subagents, runtime.conversationId, context))?.children[name]
             ?.worktree,
         );
+        const state = worktree?.line;
         // One commit decides the report and records the answer, so a restart does not decide again.
         await runtime.commit(async (tx) => {
           const next = (after: EntryId, report?: string, textOffset?: number, answer?: EntryId) =>
@@ -509,6 +544,7 @@ function defineReporter(
             );
           if (settled.type !== "input") return next(await newestEntry(tx, conversationId));
           const record = (await tx.doc(Subagents, runtime.conversationId)).children[name];
+          noteProgress(record, worktree);
           if (record) {
             // Read back from the draft: `??=` yields the plain value, not the stored draft.
             record.reported ??= [];
@@ -574,15 +610,17 @@ function defineReporter(
             // reporter.
             decide: async (check) => {
               let pending = [] as "again" | TaskId[];
-              const state = await worktreeLine(
+              const worktree = await worktreeReport(
                 sessions,
                 (await runtime.snapshot(Subagents, runtime.conversationId, context))?.children[name]
                   ?.worktree,
               );
+              const state = worktree?.line;
               await runtime.commit(async (tx) => {
                 pending = [];
                 const record = (await tx.doc(Subagents, runtime.conversationId)).children[name];
                 if (!record) return COMPLETED;
+                noteProgress(record, worktree);
                 if (record.follower !== reporter.id) {
                   // Another reporter already follows this child.
                   if (record.follower !== undefined && isLive(await tx.task(record.follower)))
@@ -908,13 +946,16 @@ export function createDurableSessions(
             idle.map(({ name, ids }) => ({ name, conversationId: ids.conversationId })),
             context,
           );
-          const states = await Promise.all(
+          const reports = await Promise.all(
             waited.map((result) =>
               result.error === undefined
-                ? worktreeLine(sessions, known[result.name]?.worktree)
+                ? worktreeReport(sessions, known[result.name]?.worktree)
                 : undefined,
             ),
           );
+          for (const [index, result] of waited.entries())
+            await recordProgress(api, result.name, reports[index], context);
+          const states = reports.map((report) => report?.line);
           const lines = waited.map((result, index) => {
             const line =
               result.error === undefined
@@ -957,7 +998,7 @@ export function createDurableSessions(
                 await Promise.all(wakers.map((id) => api.getTask(id, context)))
               ).some(isLive);
               const model = (await api.snapshot(AgentDoc, child.conversationId, context))?.model;
-              const worktree = await worktreeLine(sessions, child.worktree);
+              const worktree = (await worktreeReport(sessions, child.worktree))?.line;
               return {
                 line: [
                   name,
@@ -1126,10 +1167,12 @@ export function createDurableSessions(
     );
     if (error !== undefined) throw new Error(`Subagent ${name} (${sessionId}): ${error}`);
     const latest = await api.commit((tx) => latestText(tx, conversationId), context);
-    const state = await worktreeLine(
+    const report = await worktreeReport(
       sessions,
       (await api.snapshot(Subagents, api.conversationId, context))?.children[name]?.worktree,
     );
+    await recordProgress(api, name, report, context);
+    const state = report?.line;
     const answer = answerWithNote(latest, note);
     return reply(state ? `${answer}\n\n[${state}]` : answer, {
       name,

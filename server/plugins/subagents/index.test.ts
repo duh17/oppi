@@ -47,7 +47,7 @@ describe("subagent refresh", () => {
     const handlers = new Map<string, (...args: unknown[]) => void>();
     let tool: { execute: (...args: unknown[]) => Promise<unknown> } | undefined;
     let status: string | undefined;
-    type Row = { state: string; subtitle: string; detail?: string; progress?: number };
+    type Row = { state: string; subtitle?: string; detail?: string };
     let row: Row | undefined;
     let terminal: string[] | undefined;
     const { default: extension } = await import("./index.ts");
@@ -71,10 +71,10 @@ describe("subagent refresh", () => {
           const widget = (
             value as () => {
               render: (width: number) => string[];
-              renderNative: () => { blocks: Array<{ rows: Row[] }> };
+              renderNative: () => { blocks: Array<{ blocks: Array<{ rows: Row[] }> }> };
             }
           )();
-          row = widget.renderNative().blocks[0]?.rows[0];
+          row = widget.renderNative().blocks[0]?.blocks[0]?.rows[0];
           terminal = widget.render(52);
         },
       },
@@ -97,7 +97,7 @@ describe("subagent refresh", () => {
       '{"ok":true,"data":{"session_id":"child-1","status":"busy","pending_dialogs":1,"reason":"attention"}}',
     );
     waitChild!.emit("close", 0);
-    expect(status).toBe("Needs attention");
+    expect(status).toBe("1 needs you");
     getChildren[0]!.stdout.emit(
       "data",
       '{"ok":true,"data":{"session":{"id":"child-1","status":"busy","model":"test/model","contextTokens":50000,"contextWindow":100000}}}',
@@ -105,9 +105,7 @@ describe("subagent refresh", () => {
     getChildren[0]!.emit("close", 0);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(row?.state).toBe("warning");
-    expect(row?.subtitle).toBe("Needs attention · model");
-    expect(row?.detail).toBe("50%");
-    expect(row?.progress).toBeCloseTo(0.5);
+    expect(row?.detail).toBe("model");
     expect(terminal?.join("\n")).toContain("Needs attention");
     expect(terminal?.join("\n")).not.toContain("oppi://");
     const idleWait = waitChildren[1];
@@ -117,7 +115,8 @@ describe("subagent refresh", () => {
       '{"ok":true,"data":{"session_id":"child-1","status":"ready","reason":"idle"}}',
     );
     idleWait!.emit("close", 0);
-    expect(status).toBe("Done");
+    // Nothing live: the pill goes away.
+    expect(status).toBeUndefined();
     expect(calls.filter((args) => args[1] === "get")).toHaveLength(1);
     expect(intervals).toEqual([]);
     handlers.get("session_shutdown")?.();

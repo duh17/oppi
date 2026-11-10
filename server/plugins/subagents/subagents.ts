@@ -3,7 +3,7 @@
  *
  * The set is the create results this session saw. Status updates come from
  * `oppi session wait`; a one-time `oppi session get <id>` snapshot fills in
- * model and context metadata. There is no children list API.
+ * the model. There is no children list API.
  */
 
 export interface Subagent {
@@ -12,12 +12,30 @@ export interface Subagent {
   title: string;
   subtitle: string;
   link: string;
+  /**
+   * `warning` asks a question, `error` failed and was not stopped since: both need you.
+   * `running` works or waits on work of its own. `success` is finished.
+   */
   state: "running" | "success" | "warning" | "error";
+  /** Finished by a stop: its run was aborted, or its failure dismissed with Stop. */
+  stopped?: boolean;
   model?: string;
-  contextTokens?: number;
-  contextWindow?: number;
-  /** What a working child is doing right now: its running tool or its last line of text. */
+  thinking?: string;
+  /** What the row says on its second line: the step, the question, the wait, the error, the answer. */
   activity?: string;
+  /** Epoch ms the current state began: the question opened, the run started, the run failed. */
+  since?: number;
+  /** A finished child's newest run, start to end, in ms. */
+  took?: number;
+  /** When its newest run ended, epoch ms: the order of Recent. */
+  finishedAt?: number;
+  /** Spend so far, in dollars. */
+  cost?: number;
+  /**
+   * The worktree it works in, as of its newest report. `branch` only when it is not the one the
+   * spawn named after the child: the title already says that one.
+   */
+  worktree?: { branch?: string; ahead?: number; dirty?: boolean };
 }
 
 export interface SubagentRow {
@@ -25,10 +43,18 @@ export interface SubagentRow {
   title: string;
   subtitle?: string;
   detail?: string;
-  /** `inactive` is the thread row, which is a way to the whole thread and not a child. */
-  state: Subagent["state"] | "inactive";
+  /** `inactive`: a child finished by a stop. The thread row has no state. */
+  state?: Subagent["state"] | "inactive";
   link: string;
-  progress?: number;
+  since?: number;
+}
+
+/** A titled group of rows, as the native surface's `section` block holding an `activityList`. */
+export interface SubagentSection {
+  type: "section";
+  id: string;
+  title: string;
+  blocks: [{ type: "activityList"; id: string; rows: SubagentRow[] }];
 }
 
 export interface WidgetChrome {
@@ -36,8 +62,10 @@ export interface WidgetChrome {
   subtitle?: string;
 }
 
-/** Most children the pill shows as rows; the title and subtitle count every child. */
+/** Most live children (asking, failed, working) the pill shows as rows; the subtitle counts all. */
 export const MAX_PILL_ROWS = 8;
+/** Finished children listed under Recent, newest first. */
+export const MAX_RECENT_ROWS = 3;
 
 export function sessionLink(sessionId: string, workspaceId?: string): string {
   const url = `oppi://session/${sessionId}`;
@@ -66,8 +94,6 @@ export function applyGet(known: Subagent, payload: unknown): Subagent | null {
     title: titledWithAgent(name, asRecord(launch)?.agentIcon),
     state: mergePolledState(known.state, refreshed.state),
     model: refreshed.model ?? known.model,
-    contextTokens: refreshed.contextTokens ?? known.contextTokens,
-    contextWindow: refreshed.contextWindow ?? known.contextWindow,
   };
 }
 
@@ -238,7 +264,7 @@ const SHORT_STATUS_SPREAD = 3;
 
 /**
  * Terminal band for the same children the phone draws as an activity list.
- * A narrow pane keeps the state and the name, then the model, then usage.
+ * A narrow pane keeps the state and the name, then the model.
  * The session URL stays off the line; the phone row still carries the link.
  */
 export function renderSubagentTerminal(
@@ -257,68 +283,131 @@ export function renderSubagentTerminal(
   ];
 }
 
-/**
- * The children the pill draws as rows, from every child, newest first: the ones that need you
- * (asking), then the working ones, then the finished ones (done or errored), up to `max`. A
- * working or asking child never gives its place to a newer finished one, however long ago it
- * started; an errored child is finished, and ranks with the done ones by age.
- */
-export function selectPillRows(subagents: Subagent[], max = MAX_PILL_ROWS): Subagent[] {
-  const rank = (row: Subagent): number =>
-    row.state === "warning" ? 0 : row.state === "running" ? 1 : 2;
-  // Array.prototype.sort is stable: newest stays first within a rank.
-  return subagents
-    .slice()
-    .sort((a, b) => rank(a) - rank(b))
-    .slice(0, max);
+/** Asks a question or failed: the child waits on you. */
+export function needsYou(item: Subagent): boolean {
+  return item.state === "warning" || item.state === "error";
 }
 
-/** The pill's rows: the selected children, then a last row to the whole thread when any is hidden. */
-export function pillRows(
+/** Needs you or works: what keeps the pill on screen. */
+export function isLive(item: Subagent): boolean {
+  return item.state !== "success";
+}
+
+/**
+ * The children the pill draws as rows, from every child, newest first: those that need you, the
+ * oldest question or failure first; then the working ones, the oldest run first, so a row does
+ * not move while it works; up to `max` of those. Then the newest `MAX_RECENT_ROWS` finished, by
+ * when they finished. A child without times keeps the order it came in.
+ */
+export function selectPillRows(subagents: Subagent[], max = MAX_PILL_ROWS): Subagent[] {
+  const oldestFirst = (a: Subagent, b: Subagent): number =>
+    (a.since ?? Number.POSITIVE_INFINITY) - (b.since ?? Number.POSITIVE_INFINITY);
+  // Array.prototype.sort is stable: children without a time keep their order.
+  const live = [
+    ...subagents.filter(needsYou).sort(oldestFirst),
+    ...subagents.filter((item) => item.state === "running").sort(oldestFirst),
+  ].slice(0, max);
+  const recent = subagents
+    .filter((item) => !isLive(item))
+    .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
+    .slice(0, MAX_RECENT_ROWS);
+  return [...live, ...recent];
+}
+
+/**
+ * The pill's body: Needs You, Working, and Recent, each a section of rows, leaving out an empty
+ * one. When any child has no row, a last row in the last section opens the whole thread.
+ */
+export function pillSections(
   subagents: Subagent[],
   threadSessionId?: string,
   max = MAX_PILL_ROWS,
-): SubagentRow[] {
+): SubagentSection[] {
   const selected = selectPillRows(subagents, max);
-  const rows = subagentRows(selected);
-  if (threadSessionId && selected.length < subagents.length) {
-    rows.push({
+  const groups: Array<[id: string, title: string, rows: Subagent[]]> = [
+    ["needs-you", "Needs You", selected.filter(needsYou)],
+    ["working", "Working", selected.filter((item) => item.state === "running")],
+    ["recent", "Recent", selected.filter((item) => !isLive(item))],
+  ];
+  const sections = groups
+    .filter(([, , rows]) => rows.length > 0)
+    .map(([id, title, rows]): SubagentSection => ({
+      type: "section",
+      id: `subagents:${id}`,
+      title,
+      blocks: [{ type: "activityList", id: `subagents:${id}:rows`, rows: subagentRows(rows) }],
+    }));
+  const last = sections.at(-1);
+  if (last && threadSessionId && selected.length < subagents.length) {
+    last.blocks[0].rows.push({
       id: "thread",
-      title: `All ${subagents.length} in thread`,
-      state: "inactive",
+      title: `All ${subagents.length} in Thread`,
       link: threadLink(threadSessionId),
     });
   }
-  return rows;
+  return sections;
 }
 
-/** Title and subtitle count every child (`subagents` is all of them), not the rows shown. */
+/** Every row of the sections, for the surface's text fallback. */
+export function sectionRows(sections: SubagentSection[]): SubagentRow[] {
+  return sections.flatMap((section) => section.blocks[0].rows);
+}
+
+/** Title and subtitle; the subtitle counts every live child, not the rows shown. */
 export function widgetChrome(subagents: Subagent[], max = MAX_PILL_ROWS): WidgetChrome {
-  const title = subagents.length === 1 ? "1 subagent" : `${subagents.length} subagents`;
   const subtitle = panelSummary(subagents, max);
-  return {
-    title,
-    ...(subtitle && subtitle !== title ? { subtitle } : {}),
-  };
+  return { title: "Subagents", ...(subtitle ? { subtitle } : {}) };
 }
 
+/**
+ * One row per child. The title is its name; the second line says what changes (the step, the
+ * question, the wait, the error, the answer), with no state word: the section says the state.
+ * The quiet third line is the model and thinking level, the spend, the worktree's progress, and
+ * how long a finished run took. A live row's `since` lets the client tick its time.
+ */
 export function subagentRows(subagents: Subagent[]): SubagentRow[] {
   return subagents.map((item) => {
-    const model = shortModelName(item.model);
-    const usage = contextLabel(item.contextTokens, item.contextWindow);
-    const progress = contextProgress(item.contextTokens, item.contextWindow);
+    const detail = [
+      [shortModelName(item.model), item.thinking === "off" ? undefined : item.thinking]
+        .filter(Boolean)
+        .join(" "),
+      item.cost !== undefined && item.cost > 0 ? `$${item.cost.toFixed(2)}` : undefined,
+      worktreeLabel(item),
+      !isLive(item) && item.took !== undefined ? `took ${durationLabel(item.took)}` : undefined,
+    ]
+      .filter(Boolean)
+      .join(" \u00b7 ");
+    const activity = item.activity ?? (item.stopped ? "Stopped" : undefined);
     return {
       id: item.id,
       title: item.title,
-      subtitle: [statusLabel(item.state), model].filter(Boolean).join(" · "),
-      detail: item.activity
-        ? [usage, item.activity].filter(Boolean).join(" · ")
-        : (usage ?? item.subtitle),
-      state: item.state,
+      ...(activity ? { subtitle: activity } : {}),
+      ...(detail ? { detail } : {}),
+      state: item.stopped && !isLive(item) ? "inactive" : item.state,
       link: item.link,
-      ...(progress !== undefined ? { progress } : {}),
+      ...(isLive(item) && item.since !== undefined ? { since: item.since } : {}),
     };
   });
+}
+
+/** The worktree's progress: its branch when the spawn did not name it, commits ahead, dirty. */
+function worktreeLabel(item: Subagent): string | undefined {
+  const tree = item.worktree;
+  if (!tree) return undefined;
+  const parts = [
+    tree.branch,
+    tree.ahead !== undefined && tree.ahead > 0 ? `${tree.ahead} ahead` : undefined,
+    tree.dirty ? "dirty" : undefined,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(", ") : undefined;
+}
+
+function durationLabel(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 1) return `${Math.max(1, Math.round(ms / 1000))}s`;
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`;
 }
 
 function sessionRecord(payload: unknown): Record<string, unknown> | null {
@@ -334,8 +423,6 @@ function subagentFromSession(
   const workspaceId = stringField(session, "workspaceId");
   const name = stringField(session, "name") ?? shortId(id);
   const model = stringField(session, "model");
-  const contextTokens = numberField(session, "contextTokens");
-  const contextWindow = numberField(session, "contextWindow");
   return {
     id,
     parentId,
@@ -344,72 +431,30 @@ function subagentFromSession(
     link: sessionLink(id, workspaceId),
     state: stateFromStatus(stringField(session, "status"), boolField(session, "pendingWake")),
     ...(model ? { model } : {}),
-    ...(contextTokens !== undefined ? { contextTokens } : {}),
-    ...(contextWindow !== undefined ? { contextWindow } : {}),
   };
 }
 
+/**
+ * The live counts, most urgent first: `1 failed · 1 needs you · 2 working`. Nothing live: none,
+ * and the pill goes away. Live children past the rows add `+N more`.
+ */
 function panelSummary(rows: Subagent[], max: number): string | undefined {
-  if (rows.length === 0) return undefined;
+  const failed = rows.filter((row) => row.state === "error").length;
+  const asking = rows.filter((row) => row.state === "warning").length;
   const working = rows.filter((row) => row.state === "running").length;
-  const attention = rows.filter((row) => row.state === "warning").length;
-  const errors = rows.filter((row) => row.state === "error").length;
-  if (rows.length === 1) {
-    if (attention > 0) return "Needs attention";
-    if (working > 0) return "Working";
-    return errors > 0 ? "Error" : "Done";
-  }
   const parts: string[] = [];
+  if (failed > 0) parts.push(`${failed} failed`);
+  if (asking > 0) parts.push(asking === 1 ? "1 needs you" : `${asking} need you`);
   if (working > 0) parts.push(`${working} working`);
-  if (attention > 0) parts.push(attention === 1 ? "1 needs you" : `${attention} need you`);
-  if (errors > 0) parts.push(errors === 1 ? "1 error" : `${errors} errors`);
-  if (parts.length === 0) return "All done";
-  // Live children past the rows the pill has room for; the rows take those that need you first.
-  // Errors are finished and never count here.
-  const unseenAttention = Math.max(0, attention - max);
-  const unseenWorking = Math.max(0, working - Math.max(0, max - attention));
-  if (unseenAttention > 0) parts.push(`+${unseenAttention} more need you`);
-  if (unseenWorking > 0) parts.push(`+${unseenWorking} more working`);
-  return parts.join(" \u00b7 ");
+  const hidden = failed + asking + working - max;
+  if (hidden > 0) parts.push(`+${hidden} more`);
+  return parts.length > 0 ? parts.join(" \u00b7 ") : undefined;
 }
 
 function shortModelName(model: string | undefined): string | undefined {
   if (!model) return undefined;
   const name = model.split("/").pop() ?? model;
   return name.replace(/^claude-/, "").replace(/^gemini-/, "");
-}
-
-function contextLabel(tokens: number | undefined, window: number | undefined): string | undefined {
-  if (window !== undefined && window > 0 && tokens !== undefined && tokens >= 0) {
-    return `${Math.round((tokens / window) * 100)}%`;
-  }
-  if (tokens !== undefined && tokens > 0) return compactCount(tokens);
-  return undefined;
-}
-
-function contextProgress(
-  tokens: number | undefined,
-  window: number | undefined,
-): number | undefined {
-  if (window === undefined || window <= 0 || tokens === undefined || tokens < 0) return undefined;
-  return Math.min(1, tokens / window);
-}
-
-function compactCount(count: number): string {
-  if (count >= 1_000_000) {
-    const millions = count / 1_000_000;
-    return `${trimDecimal(millions)}M`;
-  }
-  if (count >= 1_000) {
-    const thousands = count / 1_000;
-    return `${trimDecimal(thousands)}k`;
-  }
-  return String(Math.round(count));
-}
-
-function trimDecimal(value: number): string {
-  const text = value < 10 && !Number.isInteger(value) ? value.toFixed(1) : value.toFixed(0);
-  return text.replace(/\.0$/, "");
 }
 
 export function titledWithAgent(name: string, icon: unknown): string {
@@ -501,11 +546,6 @@ function stringField(record: Record<string, unknown> | null, key: string): strin
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function numberField(record: Record<string, unknown> | null, key: string): number | undefined {
-  const value = record?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
 function boolField(record: Record<string, unknown> | null, key: string): boolean | undefined {
   const value = record?.[key];
   return typeof value === "boolean" ? value : undefined;
@@ -516,7 +556,6 @@ interface TerminalSpec {
   status: string;
   state: Subagent["state"];
   model?: string;
-  usage?: string;
 }
 
 interface TerminalPiece {
@@ -531,7 +570,6 @@ function terminalSpec(item: Subagent): TerminalSpec {
     status: statusLabel(item.state),
     state: item.state,
     model: shortModelName(item.model),
-    usage: contextLabel(item.contextTokens, item.contextWindow),
   };
 }
 
@@ -633,14 +671,14 @@ function fitRow(
     return {
       name: padColumns(spec.title, nameCol ?? columns(spec.title)),
       status: padColumns(spec.status, statusCol ?? columns(spec.status)),
-      meta: fitMeta(spec.model, spec.usage, Number.POSITIVE_INFINITY),
+      meta: fitMeta(spec.model, Number.POSITIVE_INFINITY),
     };
   }
   if (nameCol !== undefined) {
     const name = padColumns(truncateColumns(spec.title, nameCol), nameCol);
     const status = statusCol === undefined ? spec.status : padColumns(spec.status, statusCol);
     const used = TERMINAL_PREFIX_WIDTH + columns(name) + 1 + columns(status);
-    const meta = fitMeta(spec.model, spec.usage, width - used - 1);
+    const meta = fitMeta(spec.model, width - used - 1);
     return { name, status: meta ? status : status.trimEnd(), meta };
   }
   const statusW = columns(spec.status);
@@ -648,7 +686,7 @@ function fitRow(
   if (nameBudget >= 1) {
     const name = truncateColumns(spec.title, nameBudget);
     const used = TERMINAL_PREFIX_WIDTH + columns(name) + 1 + statusW;
-    return { name, status: spec.status, meta: fitMeta(spec.model, spec.usage, width - used - 1) };
+    return { name, status: spec.status, meta: fitMeta(spec.model, width - used - 1) };
   }
   return {
     name: truncateColumns(spec.title, Math.max(1, width - TERMINAL_PREFIX_WIDTH)),
@@ -657,17 +695,12 @@ function fitRow(
   };
 }
 
-function fitMeta(model: string | undefined, usage: string | undefined, remaining: number): string {
-  if (!Number.isFinite(remaining) || remaining === Number.POSITIVE_INFINITY) {
-    const full = [model, usage].filter(Boolean).join(" \u00b7 ");
-    return full ? `\u00b7 ${full}` : "";
-  }
+function fitMeta(model: string | undefined, remaining: number): string {
+  if (!model) return "";
+  if (remaining === Number.POSITIVE_INFINITY) return `\u00b7 ${model}`;
   if (remaining < 4) return "";
-  const both = [model, usage].filter(Boolean).join(" \u00b7 ");
-  if (both && columns(`\u00b7 ${both}`) <= remaining) return `\u00b7 ${both}`;
-  if (model && columns(`\u00b7 ${model}`) <= remaining) return `\u00b7 ${model}`;
-  if (usage && columns(`\u00b7 ${usage}`) <= remaining) return `\u00b7 ${usage}`;
-  if (model && remaining >= 10) return `\u00b7 ${truncateColumns(model, remaining - 2)}`;
+  if (columns(`\u00b7 ${model}`) <= remaining) return `\u00b7 ${model}`;
+  if (remaining >= 10) return `\u00b7 ${truncateColumns(model, remaining - 2)}`;
   return "";
 }
 

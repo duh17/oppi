@@ -30,6 +30,7 @@ import type {
   ServerConfig,
 } from "./types.js";
 import type { Storage } from "./storage.js";
+import { recordOwnerStop } from "./durable-ui.js";
 import { WorkspaceRuntime, resolveRuntimeLimits } from "./workspace-runtime.js";
 import { type SessionBackendEvent } from "./pi-events.js";
 import { MobileRendererRegistry } from "./mobile-renderer.js";
@@ -621,6 +622,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return (await this.durableHarness).withSession(session, (harness) =>
       read(harness, conversationId),
     );
+  }
+
+  /** The owner's Stop of a durable session (`recordOwnerStop`); auto-stop does not call it. */
+  async recordOwnerStop(sessionId: string): Promise<void> {
+    await this.withDurableConversation(sessionId, recordOwnerStop);
   }
 
   async getServerDurableInputCardOutput(

@@ -135,6 +135,7 @@ function makeService(
   sendPrompt: ReturnType<typeof vi.fn>;
   startSession: ReturnType<typeof vi.fn>;
   stopSession: ReturnType<typeof vi.fn>;
+  recordOwnerStop: ReturnType<typeof vi.fn>;
   stopSessionIfActive: ReturnType<typeof vi.fn>;
   isSessionConnected: ReturnType<typeof vi.fn>;
   getSessionSnapshot: ReturnType<typeof vi.fn>;
@@ -228,6 +229,7 @@ function makeService(
   const stopSession = vi.fn(async () => {
     if (options.stopError) throw options.stopError;
   });
+  const recordOwnerStop = vi.fn(async () => {});
   const stopSessionIfActive = vi.fn(async () => null);
   const isSessionConnected = vi.fn(() => options.mirrorConnected === true || options.live === true);
   const getSessionSnapshot = vi.fn(() => options.snapshot);
@@ -255,6 +257,7 @@ function makeService(
       sendPrompt,
       startSession,
       stopSession,
+      recordOwnerStop,
     },
     sessionRuntimes: {
       isSessionConnected,
@@ -286,6 +289,7 @@ function makeService(
     sendPrompt,
     startSession,
     stopSession,
+    recordOwnerStop,
     stopSessionIfActive,
     isSessionConnected,
     getSessionSnapshot,
@@ -1954,11 +1958,13 @@ describe("SessionLifecycleService", () => {
 
   describe("stopSession", () => {
     it("aborts a not-connected durable conversation before persisting stopped", async () => {
-      const { service, stopSession, saveSession } = makeService();
+      const { service, stopSession, saveSession, recordOwnerStop } = makeService();
       await service.stopSession(
         makeSession({ serverDurable: { conversationId: 1 }, status: "stopped" }),
       );
       expect(stopSession).toHaveBeenCalledWith("sess-1");
+      // The owner's Stop, also of a stopped session: it dismisses a failed child's failure.
+      expect(recordOwnerStop).toHaveBeenCalledWith("sess-1");
       expect(stopSession.mock.invocationCallOrder[0]).toBeLessThan(
         saveSession.mock.invocationCallOrder[0]!,
       );

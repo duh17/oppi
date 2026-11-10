@@ -8,7 +8,7 @@ import {
   E2E_FAUX_MODEL_ID,
   E2E_FAUX_PROVIDER_ID,
   e2eFauxReplyText,
-  e2eFauxToolCall,
+  e2eFauxToolCalls,
   registerE2EFauxProvider,
 } from "../src/e2e-faux-provider.js";
 import { makeTempDir } from "./harness/temp-dir.js";
@@ -85,10 +85,21 @@ describe("E2E faux provider", () => {
         arguments: { action: "spawn", name: "kid", task: "faux:bash echo tick" },
       },
     ]);
-    expect(e2eFauxToolCall(prompt("faux:subagent-wait kid faux:bash echo tick").messages)).toEqual({
-      name: "subagent",
-      arguments: { action: "spawn", name: "kid", task: "faux:bash echo tick", wait: true },
-    });
+    expect(e2eFauxToolCalls(prompt("faux:subagent-wait kid faux:bash echo tick").messages)).toEqual(
+      [
+        {
+          name: "subagent",
+          arguments: { action: "spawn", name: "kid", task: "faux:bash echo tick", wait: true },
+        },
+      ],
+    );
+    // Several children in one answer.
+    expect(
+      e2eFauxToolCalls(prompt("faux:subagents a Plan it. || b faux:bash sleep 9").messages),
+    ).toEqual([
+      { name: "subagent", arguments: { action: "spawn", name: "a", task: "Plan it." } },
+      { name: "subagent", arguments: { action: "spawn", name: "b", task: "faux:bash sleep 9" } },
+    ]);
     const child = await models.completeSimple(
       model,
       prompt("[From parent]\n\nfaux:bash echo tick"),
@@ -99,7 +110,7 @@ describe("E2E faux provider", () => {
 
     // The tool's result is answered with text, and an echoed directive is not a call.
     expect(
-      e2eFauxToolCall([
+      e2eFauxToolCalls([
         ...prompt("faux:bash echo tick").messages,
         {
           role: "toolResult",
@@ -110,9 +121,16 @@ describe("E2E faux provider", () => {
           timestamp: 0,
         },
       ]),
-    ).toBeUndefined();
+    ).toEqual([]);
+    expect(e2eFauxToolCalls(prompt(e2eFauxReplyText("faux:bash echo tick")).messages)).toEqual([]);
+
+    // A child can ask the user, and fail the way a provider refuses a request.
     expect(
-      e2eFauxToolCall(prompt(e2eFauxReplyText("faux:bash echo tick")).messages),
-    ).toBeUndefined();
+      e2eFauxToolCalls(prompt("[From parent]\n\nfaux:ask Land which first?").messages),
+    ).toMatchObject([
+      { name: "ask", arguments: { questions: [{ question: "Land which first?" }] } },
+    ]);
+    const failed = await models.completeSimple(model, prompt("faux:fail Bad request: refused"));
+    expect(failed).toMatchObject({ stopReason: "error", errorMessage: "Bad request: refused" });
   }, 60_000);
 });

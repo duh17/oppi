@@ -1,7 +1,13 @@
 import type { TranscriptCard } from "./transcript-card.js";
-import type { Context } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
-import { defineDoc, type ToolExecutionApi, type TaskId } from "@earendil-works/pi-durable";
+import {
+  defineDoc,
+  type ConversationId,
+  type Harness,
+  type ToolExecutionApi,
+  type TaskId,
+} from "@earendil-works/pi-durable";
 
 // Structural Pi/Oppi UI payloads. No classic factory or server runtime is loaded.
 // Re-export the pure helper; classic trace imports it without loading Durable.
@@ -54,6 +60,12 @@ export type UIState = {
   // Keys identify replacement slots, not extension identities. Keep explicit
   // empty notifications to clear previous client state (including after restart).
   notifications: Record<string, UINotification>;
+  /**
+   * When the owner last stopped this conversation's Session from a client, epoch ms. Stop also
+   * dismisses: a parent's subagent pill keeps a failed child under Needs You until it is
+   * messaged or stopped after the failure. An idle Session's own auto-stop does not write it.
+   */
+  stoppedAt?: number;
 };
 /** Only protocol UI fields may cross the document → session-event boundary. */
 export function sanitizeUIRequest(id: string, value: unknown): UIRequest | undefined {
@@ -179,6 +191,17 @@ export const DurableUIClientDoc = {
     return { requests, notifications };
   },
 } as const;
+
+/**
+ * Records that the owner stopped a conversation's Session from a client (`stoppedAt`). A parent's
+ * subagent pill reads it: Stop also dismisses a failed child.
+ */
+export async function recordOwnerStop(harness: Harness, id: ConversationId): Promise<void> {
+  const conversation = await harness.conversation(id, BACKGROUND_CONTEXT);
+  await conversation?.commit(async (tx) => {
+    (await tx.doc(DurableUI, id)).stoppedAt = Date.now();
+  }, BACKGROUND_CONTEXT);
+}
 
 /** Publish once per tool task; the answer survives a crash before the memo write. */
 export async function requestUI(

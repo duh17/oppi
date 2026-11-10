@@ -68,6 +68,7 @@ interface MockRouteContext {
     getActiveSession: ReturnType<typeof vi.fn>;
     forwardClientCommand: ReturnType<typeof vi.fn>;
     stopSession: ReturnType<typeof vi.fn>;
+    recordOwnerStop: ReturnType<typeof vi.fn>;
     getToolFullOutputPath: ReturnType<typeof vi.fn>;
     getCatchUp: ReturnType<typeof vi.fn>;
     refreshSessionState: ReturnType<typeof vi.fn>;
@@ -144,6 +145,7 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
     getActiveSessionIds: vi.fn().mockReturnValue(new Set<string>()),
     getActiveSession: vi.fn().mockReturnValue(undefined),
     stopSession: vi.fn().mockResolvedValue(undefined),
+    recordOwnerStop: vi.fn().mockResolvedValue(undefined),
     getToolFullOutputPath: vi.fn().mockReturnValue(undefined),
     getCatchUp: vi.fn().mockReturnValue({ events: [], currentSeq: 0, catchUpComplete: true }),
     refreshSessionState: vi.fn().mockResolvedValue(undefined),

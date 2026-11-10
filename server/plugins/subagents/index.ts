@@ -19,11 +19,13 @@ import type { ClassicParams } from "../classic-params.ts";
 import {
   applyWaitReading,
   isMissingSession,
+  isLive,
   launcherFromGet,
-  pillRows,
+  pillSections,
   refreshLaunched,
   selectPillRows,
   rowFallback,
+  sectionRows,
   sessionIdFromCreateOutput,
   sessionLink,
   subagentFromCreate,
@@ -280,13 +282,14 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
   const refreshWidget = (): void => {
     const ui = latestUi;
     if (!ui) return;
-    if (shown.length === 0) {
+    // The pill shows while a child needs you or works; finished children alone do not keep it.
+    if (!shown.some(isLive)) {
       ui.setStatus(WIDGET_KEY, undefined);
       ui.setWidget(WIDGET_KEY, undefined);
       return;
     }
     const agents = shown;
-    const rows = pillRows(agents, threadId);
+    const sections = pillSections(agents, threadId);
     const chrome = widgetChrome(agents);
     ui.setStatus(WIDGET_KEY, chrome.subtitle);
     ui.setWidget(WIDGET_KEY, (_tui, theme) => ({
@@ -306,8 +309,8 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
           title: chrome.title,
           subtitle: chrome.subtitle,
         },
-        blocks: [{ type: "activityList", id: "subagents", rows }],
-        fallback: { lines: rows.map(rowFallback) },
+        blocks: sections,
+        fallback: { lines: sectionRows(sections).map(rowFallback) },
       }),
       invalidate() {},
     }));
@@ -350,8 +353,6 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
               title: snapshot.title,
               link: snapshot.link,
               model: snapshot.model ?? row.model,
-              contextTokens: snapshot.contextTokens ?? row.contextTokens,
-              contextWindow: snapshot.contextWindow ?? row.contextWindow,
             };
           });
         }

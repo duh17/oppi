@@ -12,7 +12,7 @@ import type {
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import type { SurfacePublisher } from "./durable-surface.js";
 import type { Job } from "../plugins/background-jobs/contract.js";
-import type { SubagentWorktree } from "../plugins/subagents/contract.js";
+import type { SubagentWorktree, SubagentWorktreeState } from "../plugins/subagents/contract.js";
 import type { NotifyInput, NotifyOutcome } from "../plugins/notify/contract.js";
 import type { SchemeReader } from "./internal-urls.js";
 import type { TraceEvent } from "./trace.js";
@@ -372,8 +372,8 @@ export interface DurableSessionsHost {
     plan: SubagentWorktreePlan,
     options: { call: string; adopt: boolean },
   ): Promise<SubagentWorktree>;
-  /** One compact line of a child's worktree state, or undefined when it has none. */
-  worktreeState(worktree: SubagentWorktree): Promise<string | undefined>;
+  /** Where a child's worktree stands: its commits ahead of its base and whether it is dirty. */
+  worktreeState(worktree: SubagentWorktree): Promise<SubagentWorktreeState>;
 }
 
 // --- control (`oppi.control`) ----------------------------------------------------------------

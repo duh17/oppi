@@ -34,7 +34,7 @@ import { safeErrorMessage } from "./log-utils.js";
 import { resolveSessionSeedModel } from "./sdk-backend.js";
 import type { Storage } from "./storage.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
-import type { SubagentWorktree } from "../plugins/subagents/contract.js";
+import type { SubagentWorktree, SubagentWorktreeState } from "../plugins/subagents/contract.js";
 import { resolveSessionWorkRoot } from "./session-work-root.js";
 import type { TraceEvent } from "./trace.js";
 import type { Session, Workspace } from "./types.js";
@@ -519,18 +519,11 @@ export class DurableThreads {
     throw new Error(`No free branch name for ${start}`);
   }
 
-  /** One compact line of where a child's worktree stands: branch, id, path, ahead, clean/dirty. */
-  private async worktreeState(worktree: SubagentWorktree): Promise<string | undefined> {
-    if (!existsSync(worktree.path))
-      return `${worktree.branch ?? "detached"} \u00b7 ${worktree.id} \u00b7 gone`;
+  /** Where a child's worktree stands: gone, or its commits ahead of its base and dirty or clean. */
+  private async worktreeState(worktree: SubagentWorktree): Promise<SubagentWorktreeState> {
+    if (!existsSync(worktree.path)) return { gone: true };
     const { ahead, dirty } = await worktreeProgress(worktree.path, worktree.base || undefined);
-    return [
-      worktree.branch ?? "detached",
-      worktree.id,
-      worktree.path,
-      ahead === 1 ? "1 commit ahead" : `${ahead} commits ahead`,
-      dirty ? "dirty" : "clean",
-    ].join(" \u00b7 ");
+    return { gone: false, ahead, dirty };
   }
 
   /** The Session bound to `child`, a conversation of `storeId`; created and attached on first use. */

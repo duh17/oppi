@@ -31,11 +31,7 @@ import {
   ensureSubagentWidget,
 } from "../plugins/subagents/contract.js";
 import { DurableJobs } from "../plugins/background-jobs/contract.js";
-import {
-  ACTIVITY_INTERVAL_MS,
-  WAITING_ACTIVITY,
-  WATCH_INVOCATION_MS,
-} from "../plugins/subagents/widget.js";
+import { ACTIVITY_INTERVAL_MS, WATCH_INVOCATION_MS } from "../plugins/subagents/widget.js";
 import { collected } from "./helpers/collected.js";
 import { DurableUI } from "../src/durable-ui.js";
 import { OppiAgentDoc } from "../src/durable-agent.js";
@@ -568,13 +564,8 @@ describe("durable-native threads", () => {
     const pill = async () =>
       (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
         "widget:subagents"
-      ]?.nativeSurface as
-        | {
-            presentation: { title: string; subtitle?: string };
-            blocks: Array<{ rows: Array<Record<string, unknown>> }>;
-          }
-        | undefined;
-    const row = async () => (await pill())?.blocks[0]?.rows[0];
+      ]?.nativeSurface as PillView<Record<string, unknown>> | undefined;
+    const row = async () => pillRows(await pill())[0];
 
     // A row's state, model and link and the presentation beside them are one write: take one
     // snapshot per poll and wait on every field the assertions read, not on a state that landed
@@ -582,18 +573,20 @@ describe("durable-native threads", () => {
     await until(async () => {
       const view = await pill();
       return (
-        view?.blocks[0]?.rows[0]?.state === "running" &&
-        view.blocks[0]?.rows[0]?.subtitle === "Working · faux-1" &&
-        view.presentation.title === "1 subagent" &&
-        view.presentation.subtitle === "Working"
+        pillRows(view)[0]?.state === "running" &&
+        pillRows(view)[0]?.detail === "faux-1" &&
+        view?.presentation.title === "Subagents" &&
+        view.presentation.subtitle === "1 working"
       );
     }, "a working row with the child's model and the pill's presentation");
+    expect((await pill())?.blocks.map((section) => section.title)).toEqual(["Working"]);
     expect(await row()).toMatchObject({
       id: child.id,
       title: "Scout",
       link: `oppi://session/${child.id}`,
-      subtitle: "Working · faux-1",
+      detail: "faux-1",
     });
+    expect((await row())?.since).toEqual(expect.any(Number));
     // The client receives it through the generic widget projection.
     await until(
       () =>
@@ -601,21 +594,14 @@ describe("durable-native threads", () => {
           (message) =>
             message.type === "extension_ui_notification" &&
             message.widgetKey === "subagents" &&
-            message.nativeSurface?.presentation?.subtitle === "Working",
+            message.nativeSurface?.presentation?.subtitle === "1 working",
         ),
       "the projected widget",
     );
 
+    // Done, and nothing else is live: the pill goes away.
     childGate.open();
-    await until(async () => {
-      const view = await pill();
-      return (
-        view?.blocks[0]?.rows[0]?.state === "success" &&
-        view.blocks[0]?.rows[0]?.subtitle === "Done · faux-1" &&
-        view.presentation.title === "1 subagent" &&
-        view.presentation.subtitle === "Done"
-      );
-    }, "a done row with the pill's presentation");
+    await until(async () => (await pill()) === undefined, "the pill gone once nothing is live");
     await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
 
     // An idle store retires the watcher as a ticker (here: aborted directly); attaching the
@@ -643,7 +629,7 @@ describe("durable-native threads", () => {
       "the new watcher follows the child",
     );
     againGate.open();
-    await until(async () => (await row())?.state === "success", "done again");
+    await until(async () => (await pill()) === undefined, "done again");
   });
 
   it("counts every child in the pill, keeps an old working child in its rows, promotes a hidden one that starts again, and links the whole thread", async () => {
@@ -670,33 +656,30 @@ describe("durable-native threads", () => {
     await f.manager.sendPrompt(f.parent.id, "Delegate many");
     const harness = await f.harness();
     const parentConversation = conversationOf(f.storage, f.parent);
-    type Pill = {
-      presentation: { title: string; subtitle?: string };
-      blocks: Array<{ rows: Array<{ id: string; title: string; state: string; link: string }> }>;
-    };
+    type Row = { id: string; title: string; state?: string; link: string };
     const pill = async () =>
       (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
         "widget:subagents"
-      ]?.nativeSurface as Pill | undefined;
-    const rows = async () => (await pill())?.blocks[0]?.rows ?? [];
+      ]?.nativeSurface as PillView<Row> | undefined;
+    const rows = async () => pillRows(await pill());
     const byName = (name: string) =>
       f.storage.listSessions().find((session) => session.name === name)!;
+    const finished = async () => (await rows()).filter((row) => row.state === "success").length;
 
-    // The oldest child is still working; nine others finished.
-    await until(async () => (await pill())?.presentation.title === "10 subagents", "ten children");
+    // The oldest child is still working; nine others finished, the three newest under Recent.
     await until(
-      async () => (await pill())?.presentation.subtitle === "1 working",
+      async () => (await pill())?.presentation.subtitle === "1 working" && (await finished()) === 3,
       "nine children done",
     );
+    expect((await pill())?.presentation.title).toBe("Subagents");
+    expect((await pill())?.blocks.map((section) => section.title)).toEqual(["Working", "Recent"]);
     let shown = await rows();
-    expect(shown).toHaveLength(9);
-    expect(shown.slice(0, 8).map((row) => row.title)).toContain("C0");
+    expect(shown).toHaveLength(5);
     expect(shown[0]).toMatchObject({ title: "C0", state: "running" });
-    expect(shown.slice(1, 8).every((row) => row.state === "success")).toBe(true);
-    expect(shown[8]).toEqual({
+    expect(shown.slice(1, 4).every((row) => row.state === "success")).toBe(true);
+    expect(shown[4]).toEqual({
       id: "thread",
-      title: "All 10 in thread",
-      state: "inactive",
+      title: "All 10 in Thread",
       link: `oppi://thread/${f.parent.id}`,
     });
 
@@ -707,18 +690,12 @@ describe("durable-native threads", () => {
     await f.manager.sendPrompt(again.id, "AGAIN please");
     await until(async () => (await pill())?.presentation.subtitle === "2 working", "two working");
     shown = await rows();
-    expect(
-      shown
-        .slice(0, 2)
-        .map((row) => row.id)
-        .sort(),
-    ).toEqual([byName("C0").id, again.id].sort());
-    expect((await pill())?.presentation.title).toBe("10 subagents");
+    // The oldest run first: C0, then the one that started again.
+    expect(shown.slice(0, 2).map((row) => row.id)).toEqual([byName("C0").id, again.id]);
 
     slowGate.open();
     againGate.open();
-    await until(async () => (await pill())?.presentation.subtitle === "All done", "all done");
-    expect(await rows()).toHaveLength(9);
+    await until(async () => (await pill()) === undefined, "all done: the pill goes away");
   });
 
   it("restarts its watch invocation without scanning the children's answers again", async () => {
@@ -746,21 +723,27 @@ describe("durable-native threads", () => {
     const pill = async () =>
       (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
         "widget:subagents"
-      ]?.nativeSurface as
-        | {
-            presentation: { title: string; subtitle?: string };
-            blocks: Array<{ rows: Array<{ id: string; state: string }> }>;
-          }
-        | undefined;
+      ]?.nativeSurface as PillView<{ id: string; state: string }> | undefined;
     const byName = (name: string) =>
       f.storage.listSessions().find((session) => session.name === name)!;
-    await until(async () => (await pill())?.presentation.title === "6 subagents", "six children");
-    await until(async () => (await pill())?.presentation.subtitle === "All done", "all done");
-    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
     const watcher = async () => {
       const id = (await harness.snapshot(Subagents, parentConversation, context))?.widget;
       return (await harness.inspect(context)).tasks.find(({ record }) => record.id === id)?.record;
     };
+    const carried = async () =>
+      Object.values(
+        (
+          (await watcher())?.state as {
+            checkpoint?: { children?: Record<string, { busy: boolean }> };
+          }
+        )?.checkpoint?.children ?? {},
+      );
+    await until(
+      async () => (await carried()).filter((child) => !child.busy).length === 6,
+      "six children done",
+    );
+    await until(async () => (await pill()) === undefined, "all done: the pill goes away");
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
     const first = (await watcher())?.id;
 
     const again = byName("D0");
@@ -771,10 +754,10 @@ describe("durable-native threads", () => {
     vi.spyOn(Date, "now").mockImplementation(() => now() + WATCH_INVOCATION_MS);
     await f.manager.startSession(again.id, f.workspace);
     await f.manager.sendPrompt(again.id, "Once more");
-    const row = async () => (await pill())?.blocks[0]?.rows.find((r) => r.id === again.id);
+    const row = async () => pillRows(await pill()).find((r) => r.id === again.id);
     await until(async () => (await row())?.state === "running", "the child working");
     againGate.open();
-    await until(async () => (await row())?.state === "success", "the child done again");
+    await until(async () => (await pill()) === undefined, "the child done again");
     await until(async () => (await watcher())?.id === first, "the same watcher");
 
     // The new invocation read none of the other children's answers.
@@ -782,10 +765,6 @@ describe("durable-native threads", () => {
       ([query, limit]) => limit === 50 && others.has(query.conversationId as ConversationId),
     );
     expect(scanned).toHaveLength(0);
-    expect((await pill())?.presentation).toMatchObject({
-      title: "6 subagents",
-      subtitle: "All done",
-    });
     // What the watcher derived is in its checkpoint, to start the next invocation from.
     const checkpoint = (await watcher())?.state as {
       checkpoint?: { children?: Record<string, { busy: boolean; answer?: { provider: string } }> };
@@ -816,44 +795,37 @@ describe("durable-native threads", () => {
     await f.manager.sendPrompt(f.parent.id, "Delegate many");
     const harness = await f.harness();
     const parentConversation = conversationOf(f.storage, f.parent);
-    type Row = { id: string; state: string; detail?: string };
-    const rows = async (open: Harness = harness) =>
+    const watcherOf = async (open: Harness = harness) =>
+      (await open.snapshot(Subagents, parentConversation, context))?.widget;
+    // The checkpoint holds each child's answer and where it was read.
+    type Carried = { busy: boolean; answer?: { line?: string } };
+    const carriedOf = async (open: Harness, widget: number) =>
       (
-        (await open.snapshot(DurableUI, parentConversation, context))?.notifications[
-          "widget:subagents"
-        ]?.nativeSurface as { blocks: Array<{ rows: Row[] }> } | undefined
-      )?.blocks[0]?.rows;
-    await until(async () => (await rows())?.length === 3, "three rows");
-    await until(
-      async () => (await rows())?.every((row) => row.state === "success") === true,
-      "all done",
-    );
+        (await open.inspect(context)).tasks.find(({ record }) => record.id === widget)?.record
+          .state as { checkpoint?: { children?: Record<string, Carried> } }
+      ).checkpoint?.children ?? {};
+    await until(async () => {
+      const widget = await watcherOf();
+      if (widget === undefined) return false;
+      const children = Object.values(await carriedOf(harness, widget));
+      return children.length === 3 && children.every((child) => !child.busy && child.answer);
+    }, "the carried children, all done");
     await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
     const child = f.storage.listSessions().find((session) => session.name === "F0")!;
     const childConversation = conversationOf(f.storage, child);
-    const watcherOf = async (open: Harness = harness) =>
-      (await open.snapshot(Subagents, parentConversation, context))?.widget;
     const widget = (await watcherOf())!;
-    const detail = (await rows())?.find((row) => row.id === child.id)?.detail;
-    // The checkpoint holds the child's answer and where it was read.
-    await until(async () => {
-      const state = (await harness.inspect(context)).tasks.find(
-        ({ record }) => record.id === widget,
-      )?.record.state as { checkpoint?: { children?: Record<string, unknown> } };
-      return Object.keys(state.checkpoint?.children ?? {}).length === 3;
-    }, "the carried children");
 
     // A restart whose checkpoint is older than the child: it ran and ended in between (here the
-    // checkpoint says the answer used far more context, and was read before the child's entries).
+    // checkpoint says the answer said something else, and was read before the child's entries).
     recordLiveSessionsForRestart(f.storage, [f.manager.getActiveSession(f.parent.id)!]);
     await f.manager.close();
     managers.splice(managers.indexOf(f.manager), 1);
     const storeId = f.storage.getSession(f.parent.id)!.serverDurable!.storeId!;
     const db = new DatabaseSync(durableStoreSqlitePath(f.dir, storeId));
     try {
-      db.prepare("UPDATE tasks SET record = json_set(record, ?, 1, ?, 987654) WHERE id = ?").run(
+      db.prepare("UPDATE tasks SET record = json_set(record, ?, 1, ?, 'STALE') WHERE id = ?").run(
         `$.state.checkpoint.children.${childConversation}.head`,
-        `$.state.checkpoint.children.${childConversation}.answer.contextTokens`,
+        `$.state.checkpoint.children.${childConversation}.answer.line`,
         widget,
       );
     } finally {
@@ -864,23 +836,12 @@ describe("durable-native threads", () => {
     await restarted.resumeDurableSessions();
 
     const reopened = await f.harness();
-    const carriedTokens = async () =>
-      (
-        (await reopened.inspect(context)).tasks.find(({ record }) => record.id === widget)?.record
-          .state as {
-          checkpoint?: { children?: Record<string, { answer?: { contextTokens?: number } }> };
-        }
-      ).checkpoint?.children?.[String(childConversation)]?.answer?.contextTokens;
-    const rowDetail = async () =>
-      (await rows(reopened))?.find((row) => row.id === child.id)?.detail;
-    // The watcher's first pass after the restart either keeps the carried answer (its row then
-    // shows the stale usage) or reads the child again and writes what it read to the checkpoint.
-    await until(
-      async () => (await rowDetail()) !== detail || (await carriedTokens()) !== 987654,
-      "the first pass after the restart",
-    );
-    expect(await rowDetail()).toBe(detail);
-    expect(await carriedTokens()).not.toBe(987654);
+    const carriedLine = async () =>
+      (await carriedOf(reopened, widget))[String(childConversation)]?.answer?.line;
+    // The watcher's first pass after the restart reads the child again, as its newest entry is
+    // not the one the checkpoint read at, and writes what it read to the checkpoint.
+    await until(async () => (await carriedLine()) !== "STALE", "the first pass after the restart");
+    expect(await carriedLine()).toBe("CHILD_OK");
     // The same watcher went on from its checkpoint.
     expect(await watcherOf(reopened)).toBe(widget);
   });
@@ -919,11 +880,8 @@ describe("durable-native threads", () => {
         const where = address as { kind?: string; scope?: { conversationId?: number } };
         return where.kind === "oppi.extension-ui" && where.scope?.conversationId === ghost;
       }).length;
-    const pill = async () =>
-      (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
-        "widget:subagents"
-      ]?.nativeSurface as { presentation: { title: string } } | undefined;
-    await until(async () => (await pill())?.presentation.title === "2 subagents", "both children");
+    // The watcher has looked for the ghost's documents once.
+    await until(() => dialogLookups() >= 1, "both children");
     // Passes the pill makes for other reasons.
     for (let index = 0; index < 6; index += 1) {
       await harness.commit(async (tx) => {
@@ -959,11 +917,11 @@ describe("durable-native threads", () => {
     const harness = await f.harness();
     const parentConversation = conversationOf(f.storage, f.parent);
     const row = async () =>
-      (
+      pillRows(
         (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
           "widget:subagents"
-        ]?.nativeSurface as { blocks: Array<{ rows: Array<Record<string, unknown>> }> } | undefined
-      )?.blocks[0]?.rows[0];
+        ]?.nativeSurface as PillView<Record<string, unknown>> | undefined,
+      )[0];
     const watcher = async () => {
       const id = (await harness.snapshot(Subagents, parentConversation, context))?.widget;
       return (await harness.inspect(context)).tasks.find(({ record }) => record.id === id)?.record;
@@ -978,7 +936,8 @@ describe("durable-native threads", () => {
     vi.spyOn(Date, "now").mockImplementation(() => now() + WATCH_INVOCATION_MS);
     childGate.open();
 
-    await until(async () => (await row())?.state === "success", "the answer's row");
+    // Done, and nothing else is live: the pill goes away.
+    await until(async () => (await row()) === undefined, "the answer's end");
     await until(
       async () =>
         (await userTexts(harness, parentConversation)).some((t) => t.includes("[session")),
@@ -998,7 +957,7 @@ describe("durable-native threads", () => {
     await f.manager.sendPrompt(child.id, "Once more");
     await until(async () => (await row())?.state === "running", "the next run's row");
     againGate.open();
-    await until(async () => (await row())?.state === "success", "done again");
+    await until(async () => (await row()) === undefined, "done again");
   });
 
   it("shows what a working child does in its pill row, writing a new activity at most every two seconds", async () => {
@@ -1030,16 +989,15 @@ describe("durable-native threads", () => {
     const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
     const childConversation = conversationOf(f.storage, child);
     const row = async () =>
-      (
+      pillRows(
         (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
           "widget:subagents"
-        ]?.nativeSurface as { blocks: Array<{ rows: Array<Record<string, unknown>> }> } | undefined
-      )?.blocks[0]?.rows[0];
+        ]?.nativeSurface as PillView<Record<string, unknown>> | undefined,
+      )[0];
 
-    // A running tool: its name, after the context use of an answer the row has read, if any.
-    // Its output streams without a write, as the activity holds.
-    const activity = async () =>
-      /(?:^|\u00b7 )([^\u00b7]+)$/.exec(String((await row())?.detail))?.[1];
+    // A running tool: its name, the row's second line. Its output streams without a write, as
+    // the activity holds.
+    const activity = async () => (await row())?.subtitle as string | undefined;
     await until(async () => (await activity()) === "Running bash", "the running tool");
 
     // Streamed text: its last line, in writes at least the interval apart.
@@ -1086,14 +1044,13 @@ describe("durable-native threads", () => {
       const shown = await activity();
       return !!shown && shown !== "Running bash" && lines.some((line) => line.startsWith(shown));
     }, "a line of the streaming answer");
-    await until(async () => (await row())?.state === "success", "a done row");
+    // Done, and nothing else is live: the pill goes away.
+    await until(async () => (await row()) === undefined, "the run's end");
     unsubscribe();
-    // Idle: no activity, only the answer's context use.
-    expect((await row())?.detail).toMatch(/^\d+%$/);
     // The answer streamed through many `pi.live` commits; the row followed in a few writes.
     expect(liveChanges).toBeGreaterThan(10);
     const gaps = widgetWrites.slice(1).map((at, index) => at - widgetWrites[index]!);
-    // Every write but the last (Done, the busy edge) waited out the interval. Passes are spaced
+    // Every write but the last (the pill going away, the busy edge) waited out the interval. Passes are spaced
     // from their start, so a slower commit before a faster one shortens the gap between commits
     // a little; per-delta writes would be 100 ms apart.
     expect(widgetWrites.length).toBeGreaterThanOrEqual(3);
@@ -1118,15 +1075,54 @@ describe("durable-native threads", () => {
     await until(() => f.storage.listSessions().length === 2, "the child session");
     const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
     const state = async () =>
-      (
+      pillRows(
         (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
           "widget:subagents"
-        ]?.nativeSurface as { blocks: Array<{ rows: Array<{ state: string }> }> } | undefined
-      )?.blocks[0]?.rows[0]?.state;
+        ]?.nativeSurface as PillView<{ state: string }> | undefined,
+      )[0]?.state;
     await until(async () => (await state()) === "running", "a working row");
 
+    // Stopped: finished, not working and not failed, so nothing is live and the pill goes away.
     await f.manager.sendAbort(child.id);
-    await until(async () => (await state()) === "success", "a done row");
+    await until(async () => (await state()) === undefined, "the pill gone");
+  });
+
+  it("keeps a failed child under Needs You with its error until the owner stops it", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
+        if (text.includes("Delegate"))
+          return spawnCall({ task: "CHILD_TASK failing", name: "Failing" });
+        return fauxAssistantMessage("", {
+          stopReason: "error",
+          errorMessage: "Bad request: the provider refused the tool schema",
+        });
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await f.manager.sendPrompt(f.parent.id, "Delegate in the background");
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    const pill = async () =>
+      (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
+        "widget:subagents"
+      ]?.nativeSurface as PillView<Record<string, unknown>> | undefined;
+    await until(async () => pillRows(await pill())[0]?.state === "error", "a failed row");
+    expect((await pill())?.presentation.subtitle).toBe("1 failed");
+    expect((await pill())?.blocks.map((section) => section.title)).toEqual(["Needs You"]);
+    expect(pillRows(await pill())[0]).toMatchObject({
+      subtitle: "Bad request: the provider refused the tool schema",
+      since: expect.any(Number),
+    });
+    // The child settles and stops by itself; that does not dismiss the failure.
+    const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+    await until(() => f.storage.getSession(child.id)?.status === "stopped", "the child to stop");
+    expect(pillRows(await pill())[0]?.state).toBe("error");
+
+    // The owner's Stop does: nothing is live, so the pill goes away.
+    await f.manager.recordOwnerStop(child.id);
+    await until(async () => (await pill()) === undefined, "the failure dismissed");
   });
 
   it("keeps a child whose Session was deleted in a reattached pill, in list, and in wait", async () => {
@@ -1155,12 +1151,15 @@ describe("durable-native threads", () => {
       await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
       return (await toolResults(harness, parentConversation))[results - 1]!;
     };
-    const rows = async () =>
-      (
-        (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
-          "widget:subagents"
-        ]?.nativeSurface as { blocks: Array<{ rows: Array<{ title: string }> }> } | undefined
-      )?.blocks[0]?.rows.map((row) => row.title);
+    // Every child the watcher follows is in its checkpoint, by conversation.
+    const followed = async () => {
+      const id = (await harness.snapshot(Subagents, parentConversation, context))?.widget;
+      const record = (await harness.inspect(context)).tasks.find((task) => task.record.id === id);
+      return Object.keys(
+        (record?.record.state as { checkpoint?: { children?: Record<string, unknown> } })
+          ?.checkpoint?.children ?? {},
+      ).sort();
+    };
     await ask("Spawn gone", 1);
     await until(async () => (await reports(harness, parentConversation)).length === 1, "report");
     await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
@@ -1177,9 +1176,15 @@ describe("durable-native threads", () => {
     await f.manager.startSession(f.parent.id, f.workspace);
     await until(async () => (await widgetTask()) !== retired, "a new watcher");
     await ask("Spawn kept", 2);
-    await until(async () => (await rows())?.length === 2, "both rows");
-    // Newest first.
-    expect(await rows()).toEqual(["Kept", "Gone"]);
+    // Gone's Session is deleted: its conversation id comes from the children list.
+    const children = (await harness.snapshot(Subagents, parentConversation, context))!.children;
+    const expected = [children.Kept!.conversationId, children.Gone!.conversationId]
+      .map(String)
+      .sort();
+    await until(
+      async () => JSON.stringify(await followed()) === JSON.stringify(expected),
+      "both children followed",
+    );
 
     const list = await ask("List them", 3);
     expect(list.isError).toBeFalsy();
@@ -2808,20 +2813,16 @@ describe("durable-native threads", () => {
       const pill = async () =>
         (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
           "widget:subagents"
-        ]?.nativeSurface as
-          | {
-              presentation: { title: string; subtitle?: string };
-              blocks: Array<{ rows: Array<Record<string, unknown>> }>;
-            }
-          | undefined;
-      const row = async () => (await pill())?.blocks[0]?.rows[0];
+        ]?.nativeSurface as PillView<Record<string, unknown>> | undefined;
+      const row = async () => pillRows(await pill())[0];
 
+      // It says which job it waits on.
       await until(
-        async () => String((await row())?.detail).includes(WAITING_ACTIVITY),
+        async () => String((await row())?.subtitle).startsWith("Waiting on a background job: "),
         "the waiting row",
       );
-      expect(await row()).toMatchObject({ state: "running", subtitle: "Working · faux-1" });
-      expect((await pill())?.presentation).toMatchObject({ subtitle: "Working" });
+      expect(await row()).toMatchObject({ state: "running", detail: "faux-1" });
+      expect((await pill())?.presentation).toMatchObject({ subtitle: "1 working" });
       await f.manager.sendPrompt(f.parent.id, "List them");
       await until(
         async () => (await toolResults(harness, parentConversation)).length === 2,
@@ -2833,9 +2834,7 @@ describe("durable-native threads", () => {
       await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
 
       open();
-      await until(async () => (await row())?.state === "success", "a done row");
-      expect((await pill())?.presentation).toMatchObject({ subtitle: "Done" });
-      expect(String((await row())?.detail)).not.toContain(WAITING_ACTIVITY);
+      await until(async () => (await pill()) === undefined, "done: the pill goes away");
       await expectTwoReports(f, child, parentConversation);
     });
 
@@ -2843,16 +2842,13 @@ describe("durable-native threads", () => {
       const { f, child, parentConversation, open } = await jobFixture();
       const harness = await f.harness();
       const row = async () =>
-        (
+        pillRows(
           (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
             "widget:subagents"
-          ]?.nativeSurface as
-            { blocks: Array<{ rows: Array<{ state: string; detail?: string }> }> } | undefined
-        )?.blocks[0]?.rows[0];
-      await until(
-        async () => String((await row())?.detail).includes(WAITING_ACTIVITY),
-        "the waiting row",
-      );
+          ]?.nativeSurface as PillView<{ state: string; subtitle?: string }> | undefined,
+        )[0];
+      const waiting = async () => String((await row())?.subtitle).startsWith("Waiting on");
+      await until(waiting, "the waiting row");
       // A sandbox parent with no VM attached: the server refuses to build its env. The pill's
       // slot is cleared so the new watcher's first pass is what it shows.
       const setRuntime = (kind: "host" | "sandbox") =>
@@ -2875,12 +2871,12 @@ describe("durable-native threads", () => {
 
       await until(async () => (await row()) !== undefined, "the new watcher's row");
       expect(await row()).toMatchObject({ state: "running" });
-      expect(String((await row())?.detail)).toContain(WAITING_ACTIVITY);
+      expect(await waiting()).toBe(true);
 
       // The parent's follower needs its env again after the job.
       await setRuntime("host");
       open();
-      await until(async () => (await row())?.state === "success", "a done row");
+      await until(async () => (await row()) === undefined, "done: the pill goes away");
       await expectTwoReports(f, child, parentConversation);
     });
 
@@ -3804,3 +3800,14 @@ describe("subagent arguments", () => {
     ).toThrow("worktree.path: unknown field");
   });
 });
+
+/** The subagent pill as the tests read it: sections, each holding one activity list. */
+type PillView<Row> = {
+  presentation: { title: string; subtitle?: string };
+  blocks: Array<{ title?: string; blocks: Array<{ rows: Row[] }> }>;
+};
+
+/** The pill's rows across its sections (Needs You, Working, Recent), in order. */
+function pillRows<Row>(view: PillView<Row> | undefined): Row[] {
+  return view?.blocks.flatMap((section) => section.blocks[0]?.rows ?? []) ?? [];
+}
