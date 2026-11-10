@@ -665,4 +665,120 @@ describe("agent schedule runner", () => {
     expect(dueSlotKeysForSchedule(schedule, 1_000)).toEqual([]);
     expect(dueSlotKeysForSchedule(schedule, 3_601_000)).toEqual(["every:3601000"]);
   });
+
+  describe("cron catch-up across missed ticks", () => {
+    const minuteM = Date.parse("2026-06-29T12:30:00Z");
+    const slotM = `cron:${minuteM}`;
+
+    function cronRunner(clock: { now: number }) {
+      return new AgentScheduleRunner({
+        storage: storage(),
+        sessions: { startSession, sendPrompt },
+        ensureSessionContextWindow: (session) => session,
+        nowMs: () => clock.now,
+      });
+    }
+
+    function createCron(expression: string) {
+      return store.createSchedule(
+        {
+          name: expression,
+          trigger: { type: "cron", expression, timeZone: "UTC" },
+          action: action(),
+        },
+        Date.parse("2026-06-29T00:00:00Z"),
+      );
+    }
+
+    function slotKeys(scheduleId: string): string[] {
+      return store
+        .listRuns(scheduleId)
+        .map((run) => run.slotKey)
+        .sort();
+    }
+
+    it("runs a cron minute that passed while a dispatch was in flight, exactly once", async () => {
+      const cron = createCron("30 12 * * *");
+      const busy = store.createSchedule(
+        {
+          name: "Slow start",
+          trigger: { type: "at", at: minuteM - 90_000, timeZone: "UTC" },
+          action: action("slow"),
+        },
+        minuteM - 3_600_000,
+      );
+      let release: (() => void) | undefined;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      startSession.mockImplementationOnce(async (sessionId: string) => {
+        await gate;
+        return makeSession({ id: sessionId });
+      });
+      const clock = { now: minuteM - 60_000 };
+      const runner = cronRunner(clock);
+
+      const dispatch = runner.runOnce();
+      await vi.waitFor(() => expect(startSession).toHaveBeenCalledTimes(1));
+
+      // The M tick lands while the slow dispatch still holds the runner.
+      // runOnce hands back the in-flight dispatch, so this tick is not awaited.
+      clock.now = minuteM + 5_000;
+      const skipped = runner.runOnce();
+      expect(slotKeys(cron.id)).toEqual([]);
+
+      release?.();
+      await Promise.all([dispatch, skipped]);
+      clock.now = minuteM + 65_000;
+      await runner.runOnce();
+      clock.now = minuteM + 125_000;
+      await runner.runOnce();
+
+      expect(slotKeys(cron.id)).toEqual([slotM]);
+      expect(store.listRuns(cron.id).map((run) => run.status)).toEqual(["completed"]);
+      expect(slotKeys(busy.id)).toEqual(["at:" + (minuteM - 90_000)]);
+      expect(startSession).toHaveBeenCalledTimes(2);
+    });
+
+    it("runs the minute a tick jumped over, exactly once", async () => {
+      const cron = createCron("30 12 * * *");
+      const clock = { now: minuteM - 30_000 };
+      const runner = cronRunner(clock);
+      await runner.runOnce();
+
+      clock.now = minuteM + 70_000;
+      await runner.runOnce();
+      clock.now = minuteM + 130_000;
+      await runner.runOnce();
+
+      expect(slotKeys(cron.id)).toEqual([slotM]);
+      expect(startSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not backfill minutes before the first tick", async () => {
+      const cron = createCron("30 12 * * *");
+      await cronRunner({ now: minuteM + 20_000 }).runOnce();
+      expect(slotKeys(cron.id)).toEqual([slotM]);
+
+      const earlier = createCron("29 12 * * *");
+      await cronRunner({ now: minuteM + 20_000 }).runOnce();
+      expect(slotKeys(earlier.id)).toEqual([]);
+    });
+
+    it("replays only the last five missed minutes after a longer gap", async () => {
+      const everyMinute = createCron("* * * * *");
+      const clock = { now: minuteM };
+      const runner = cronRunner(clock);
+      await runner.runOnce();
+
+      // A laptop-sleep sized gap: two and a half hours between ticks.
+      const resumed = minuteM + 150 * 60_000;
+      clock.now = resumed + 10_000;
+      await runner.runOnce();
+
+      const expected = [`cron:${minuteM}`];
+      for (let back = 5; back >= 0; back--) expected.push(`cron:${resumed - back * 60_000}`);
+      expect(slotKeys(everyMinute.id)).toEqual(expected);
+    });
+  });
 });

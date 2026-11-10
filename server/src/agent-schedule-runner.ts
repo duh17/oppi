@@ -14,6 +14,12 @@ const DEFAULT_LEASE_MS = 10 * 60_000;
 const DEFAULT_LIMIT = 3;
 const DEFAULT_OWNER_ID = "agent-schedule-runner";
 const MS_PER_MINUTE = 60_000;
+/**
+ * How many minutes before the current one a cron evaluation may still run. Covers a dispatch
+ * that holds the runner past a few ticks and setInterval drift; a longer gap (laptop sleep)
+ * is not replayed.
+ */
+const CRON_CATCH_UP_MINUTES = 5;
 const log = createLogger({ base: { component: "agent_schedule_runner" } });
 
 export interface AgentScheduleRunnerDeps extends AgentScheduleDispatchDeps {
@@ -34,6 +40,9 @@ export class AgentScheduleRunner {
   private timer: ReturnType<typeof setInterval> | null = null;
   private runInFlight: Promise<void> | null = null;
   private stopped = false;
+  // Last minute whose cron slots were evaluated. In memory only: a restart begins at its
+  // first tick's minute and does not backfill earlier ones.
+  private lastCronMinute: number | null = null;
   private readonly nowMs: () => number;
   private readonly intervalMs: number;
   private readonly leaseMs: number;
@@ -87,11 +96,22 @@ export class AgentScheduleRunner {
 
   private materializeDueRuns(now: number): void {
     const store = this.deps.storage.getAgentScheduleStore();
+    // A tick that finds a dispatch in flight evaluates nothing, so its minutes stay between
+    // lastCronMinute and the current one and are picked up here by the next evaluation.
+    const currentMinute = minuteStartOf(now);
+    const cronFromMinute =
+      this.lastCronMinute === null
+        ? currentMinute
+        : Math.max(
+            this.lastCronMinute + MS_PER_MINUTE,
+            currentMinute - CRON_CATCH_UP_MINUTES * MS_PER_MINUTE,
+          );
+    this.lastCronMinute = Math.max(this.lastCronMinute ?? currentMinute, currentMinute);
     for (const schedule of store.listSchedules()) {
       if (schedule.status !== "active") continue;
       let slotKeys: string[];
       try {
-        slotKeys = dueSlotKeysForSchedule(schedule, now);
+        slotKeys = dueSlotKeysForSchedule(schedule, now, cronFromMinute);
       } catch (error) {
         log.warn("agent_schedule_runner.schedule_due_check.failed", {
           scheduleId: schedule.id,
@@ -102,6 +122,16 @@ export class AgentScheduleRunner {
       for (const slotKey of slotKeys) {
         try {
           store.createDueRun(schedule.id, slotKey, now);
+          if (slotKey.startsWith("cron:")) {
+            const lateMs = now - Number(slotKey.slice("cron:".length));
+            if (lateMs >= MS_PER_MINUTE) {
+              log.info("agent_schedule_runner.cron_slot.late", {
+                scheduleId: schedule.id,
+                slotKey,
+                lateMs,
+              });
+            }
+          }
         } catch (error) {
           log.warn("agent_schedule_runner.create_due_run.failed", {
             scheduleId: schedule.id,
@@ -158,12 +188,29 @@ export class AgentScheduleRunner {
   }
 }
 
-export function dueSlotKeysForSchedule(schedule: AgentSchedule, now: number): string[] {
+/**
+ * Slot keys due at `now`. A cron trigger tests the minute of `now`, or every minute from
+ * `cronFromMinute` (a minute start) through it when the caller is catching up.
+ */
+export function dueSlotKeysForSchedule(
+  schedule: AgentSchedule,
+  now: number,
+  cronFromMinute?: number,
+): string[] {
   if (schedule.status !== "active") return [];
-  return dueSlotKeys(schedule.trigger, schedule.createdAt, now);
+  return dueSlotKeys(schedule.trigger, schedule.createdAt, now, cronFromMinute);
 }
 
-function dueSlotKeys(trigger: AgentScheduleTrigger, createdAt: number, now: number): string[] {
+function minuteStartOf(ms: number): number {
+  return Math.floor(ms / MS_PER_MINUTE) * MS_PER_MINUTE;
+}
+
+function dueSlotKeys(
+  trigger: AgentScheduleTrigger,
+  createdAt: number,
+  now: number,
+  cronFromMinute?: number,
+): string[] {
   if (trigger.type === "at") {
     return now >= trigger.at && createdAt <= trigger.at ? [atSlotKey(trigger.at)] : [];
   }
@@ -176,13 +223,21 @@ function dueSlotKeys(trigger: AgentScheduleTrigger, createdAt: number, now: numb
     return [`every:${slotTime}`];
   }
 
-  const minuteStart = Math.floor(now / MS_PER_MINUTE) * MS_PER_MINUTE;
-  if (createdAt > minuteStart) return [];
-  if (!cronMatchesNow(trigger.expression, trigger.timeZone, minuteStart)) return [];
-  // Fall-back repeats a wall-clock hour; run it only on the first occurrence. A schedule
-  // created after the first occurrence never ran that minute, so the repeat still fires.
-  if (earlierRepeatedWallClockMinute(trigger.timeZone, minuteStart, createdAt) !== undefined) {
-    return [];
+  const currentMinute = minuteStartOf(now);
+  const slots: string[] = [];
+  for (
+    let minuteStart = cronFromMinute ?? currentMinute;
+    minuteStart <= currentMinute;
+    minuteStart += MS_PER_MINUTE
+  ) {
+    if (createdAt > minuteStart) continue;
+    if (!cronMatchesNow(trigger.expression, trigger.timeZone, minuteStart)) continue;
+    // Fall-back repeats a wall-clock hour; run it only on the first occurrence. A schedule
+    // created after the first occurrence never ran that minute, so the repeat still fires.
+    if (earlierRepeatedWallClockMinute(trigger.timeZone, minuteStart, createdAt) !== undefined) {
+      continue;
+    }
+    slots.push(`cron:${minuteStart}`);
   }
-  return [`cron:${minuteStart}`];
+  return slots;
 }
