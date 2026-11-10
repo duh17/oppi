@@ -2130,7 +2130,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         // Requires a presenter in the responder chain. UI test harnesses that
         // attach collection views directly to windows may intentionally skip
         // modal presentation and fall back to default row expansion behavior.
-        guard ToolTimelineRowPresentationHelpers.nearestViewController(from: self) != nil else {
+        guard nearestViewController != nil else {
             return false
         }
         ToolTimelineRowPresentationHelpers.presentFullScreenImage(image, from: self)

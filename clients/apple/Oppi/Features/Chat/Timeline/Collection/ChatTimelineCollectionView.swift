@@ -2604,9 +2604,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     /// `presentedViewController` also reports a modal presented by any
     /// ancestor, so this sees a router sheet over the chat's screen.
     private static func isCoveredByPresentation(_ view: UIView) -> Bool {
-        let owner = sequence(first: view as UIResponder, next: \.next)
-            .lazy.compactMap { $0 as? UIViewController }.first
-        return owner?.presentedViewController != nil
+        view.nearestViewController?.presentedViewController != nil
     }
 
     private func correctProgrammaticScrollAlignmentIfNeeded(

@@ -517,7 +517,7 @@ final class BookReaderBody: UIView {
 
     /// The reader's sheet is presented by whichever controller owns this body.
     @objc private func presentAppearanceMenu() {
-        guard let owner = hostingViewController else { return }
+        guard let owner = nearestViewController else { return }
         let menu = BookReaderAppearanceMenuViewController(
             store: appearanceStore,
             palette: palette,
@@ -615,7 +615,7 @@ final class BookReaderBody: UIView {
     }()
 
     @objc private func showTableOfContents() {
-        guard !tableOfContentsRows.isEmpty, let host = hostingViewController else { return }
+        guard !tableOfContentsRows.isEmpty, let host = nearestViewController else { return }
         let sheet = BookTableOfContentsViewController(
             bookTitle: document.book.title,
             rows: tableOfContentsRows,
@@ -630,17 +630,6 @@ final class BookReaderBody: UIView {
             presentation.prefersGrabberVisible = true
         }
         host.present(sheet, animated: true)
-    }
-
-    /// The chapter's header and the reader's sheets live in the controller that
-    /// installed this body.
-    private var hostingViewController: UIViewController? {
-        var responder: UIResponder? = self
-        while let current = responder {
-            if let controller = current as? UIViewController { return controller }
-            responder = current.next
-        }
-        return nil
     }
 
     /// Switches how the chapter is shown, staying on the words the person was

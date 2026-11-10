@@ -126,7 +126,7 @@ enum ToolTimelineRowPresentationHelpers {
         reviewCommentFilePath: String? = nil,
         reviewCommentTimelineItemId: String? = nil
     ) {
-        guard let presenter = nearestViewController(from: sourceView) else {
+        guard let presenter = sourceView.nearestViewController else {
             return
         }
         let reviewContext = reviewCommentSelectionContext
@@ -165,7 +165,7 @@ enum ToolTimelineRowPresentationHelpers {
     }
 
     static func presentFullScreenImage(_ image: UIImage, from sourceView: UIView) {
-        guard let presenter = nearestViewController(from: sourceView) else { return }
+        guard let presenter = sourceView.nearestViewController else { return }
         let destination = ComposerCanvasDestinationResolver.resolve(from: presenter)
         if ChatReaderOpenLookup.open(
             .image(image),
@@ -180,17 +180,6 @@ enum ToolTimelineRowPresentationHelpers {
             addToChatDestination: destination
         )
         ImagePreviewPresentationCoordinator.present(controller, from: presenter)
-    }
-
-    static func nearestViewController(from sourceView: UIView) -> UIViewController? {
-        var responder: UIResponder? = sourceView
-        while let current = responder {
-            if let controller = current as? UIViewController {
-                return controller
-            }
-            responder = current.next
-        }
-        return nil
     }
 
     private static func canPresentFocusedVisual(from presenter: UIViewController) -> Bool {

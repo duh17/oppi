@@ -191,7 +191,7 @@ final class DiffReaderView: UIView {
             open.dismiss(animated: true)
             return
         }
-        guard let presenter = nearestViewController() else { return }
+        guard let presenter = nearestViewController else { return }
         let options = FullScreenViewingOptionsController(
             family: Self.family,
             preferences: readerPreferences,
@@ -213,10 +213,6 @@ final class DiffReaderView: UIView {
         )
         viewingOptionsController = options
         presenter.present(options, animated: true)
-    }
-
-    private func nearestViewController() -> UIViewController? {
-        sequence(first: self as UIResponder, next: \.next).first { $0 is UIViewController } as? UIViewController
     }
 
     private func updateReaderPreferences(_ mutate: (inout FullScreenReaderPreferences) -> Void) {

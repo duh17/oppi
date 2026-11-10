@@ -258,11 +258,7 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, UIColl
         collectionView.deselectItem(at: indexPath, animated: true)
         guard allowsCellDetail else { return }
         let item = cellContent(at: indexPath.item)
-        var responder: UIResponder? = self
-        while let current = responder, !(current is UIViewController) {
-            responder = current.next
-        }
-        guard let presenter = responder as? UIViewController else { return }
+        guard let presenter = nearestViewController else { return }
         presenter.present(TableCellDetailViewController.makeNavigationController(
             title: columnTitle(of: item, at: indexPath),
             text: item.text,

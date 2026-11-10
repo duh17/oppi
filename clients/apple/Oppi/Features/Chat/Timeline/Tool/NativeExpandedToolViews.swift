@@ -790,7 +790,7 @@ final class NativeExpandedVideoAttachmentView: UIView {
         ) {
             return
         }
-        guard let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self) else { return }
+        guard let presenter = nearestViewController else { return }
         SystemVideoPlaybackPresenter.present(
             source: source,
             from: presenter,
@@ -1460,7 +1460,7 @@ final class NativeExpandedInlineImageView: UIView {
         ) {
             return
         }
-        guard let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self) else { return }
+        guard let presenter = nearestViewController else { return }
 
         FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType, from: presenter)
     }

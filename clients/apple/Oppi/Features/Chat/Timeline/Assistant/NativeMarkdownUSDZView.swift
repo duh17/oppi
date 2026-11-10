@@ -363,25 +363,13 @@ enum FullScreenUSDZPresenter {
         handle: USDZLocalFileStore.Handle?,
         fileProvider: MarkdownUSDZFileProvider?
     ) {
-        guard let presenter = nearestViewController(from: view) else { return }
+        guard let presenter = view.nearestViewController else { return }
         let screen = FullScreenUSDZViewController(
             embed: embed,
             initialHandle: handle,
             fileProvider: fileProvider
         )
         Router.present(screen, presentation: .fullScreen.inNavigation(), from: presenter)
-    }
-
-    @MainActor
-    private static func nearestViewController(from view: UIView) -> UIViewController? {
-        var current: UIResponder? = view
-        while let responder = current {
-            if let controller = responder as? UIViewController {
-                return controller
-            }
-            current = responder.next
-        }
-        return nil
     }
 }
 

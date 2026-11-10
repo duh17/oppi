@@ -125,7 +125,7 @@ final class USDZSceneView: UIView, UIGestureRecognizerDelegate {
         host.view.backgroundColor = .clear
         // The gestures live on this view, so the canvas takes no touches.
         host.view.isUserInteractionEnabled = false
-        let parent = nearestViewController()
+        let parent = nearestViewController
         parent?.addChild(host)
         addSubview(host.view)
         sendSubviewToBack(host.view)
@@ -145,10 +145,6 @@ final class USDZSceneView: UIView, UIGestureRecognizerDelegate {
         host.view.removeFromSuperview()
         host.removeFromParent()
         self.host = nil
-    }
-
-    private func nearestViewController() -> UIViewController? {
-        sequence(first: self as UIResponder, next: \.next).first { $0 is UIViewController } as? UIViewController
     }
 
     @objc private func handleOrbit(_ gesture: UIPanGestureRecognizer) {

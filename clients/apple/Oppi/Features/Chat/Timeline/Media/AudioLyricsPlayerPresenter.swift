@@ -47,7 +47,7 @@ enum AudioLyricsPlayerPresenter {
     ) {
         // Expand starts playback only when the caller opts in: already playing
         // this item, or a voice `playNow` reply. Markdown and file browser pass false.
-        guard let presenter = nearestViewController(from: view) else { return }
+        guard let presenter = view.nearestViewController else { return }
         if ChatReaderOpenLookup.open(
             .audioLyrics(
                 AudioLyricsReaderContent(
@@ -82,18 +82,6 @@ enum AudioLyricsPlayerPresenter {
         ))
         player.modalPresentationStyle = .fullScreen
         presenter.present(player, animated: true)
-    }
-
-    @MainActor
-    private static func nearestViewController(from view: UIView) -> UIViewController? {
-        var responder: UIResponder? = view
-        while let current = responder {
-            if let viewController = current as? UIViewController {
-                return viewController
-            }
-            responder = current.next
-        }
-        return nil
     }
 }
 

@@ -199,13 +199,7 @@ extension AppRootEnvironment {
         if let root = view.traitCollection.appRootEnvironment {
             return root
         }
-        var responder: UIResponder? = view.next
-        while let current = responder {
-            if let controller = current as? UIViewController {
-                return near(controller)
-            }
-            responder = current.next
-        }
-        return nil
+        guard let controller = view.nearestViewController else { return nil }
+        return near(controller)
     }
 }

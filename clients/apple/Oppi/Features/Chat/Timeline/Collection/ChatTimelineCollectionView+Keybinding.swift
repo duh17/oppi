@@ -135,7 +135,7 @@ extension ChatTimelineController {
     }
 
     private func dismissHardwareKeybindingViewer(from collectionView: UICollectionView) {
-        guard let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: collectionView) else {
+        guard let presenter = collectionView.nearestViewController else {
             return
         }
         var current: UIViewController? = presenter

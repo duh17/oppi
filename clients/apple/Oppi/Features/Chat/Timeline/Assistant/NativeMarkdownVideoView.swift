@@ -443,7 +443,7 @@ final class NativeMarkdownVideoView: UIView {
               let source = currentSource,
               let embed = currentEmbed,
               let window,
-              let parent = nearestViewController(),
+              let parent = nearestViewController,
               parent.viewIfLoaded?.window === window else { return }
         if let coordinator = activeTransitionCoordinator(from: parent) {
             isFirstMountQueued = true
@@ -601,7 +601,12 @@ final class NativeMarkdownVideoView: UIView {
         guard let slot = slotController, let host = playerController else { return }
         // The player sits above the still frame, which stays visible until AVKit
         // paints the first video frame, and below the status and play controls.
-        if slot.parent == nil, let parent = nearestViewController() {
+        // UIKit requires the slot's parent to be the controller that owns the
+        // nearest ancestor view. Skipping up to an outer container (e.g. the
+        // reader's `FullScreenCodeViewController` above its content controller)
+        // throws `UIViewControllerHierarchyInconsistency` when the slot view
+        // enters the window.
+        if slot.parent == nil, let parent = nearestViewController {
             parent.addChild(slot)
             if slot.view.superview != self {
                 insertSubview(slot.view, aboveSubview: stillImageView)
@@ -643,22 +648,6 @@ final class NativeMarkdownVideoView: UIView {
         statusLabel.adjustsFontForContentSizeCategory = true
         openButton.titleLabel?.font = font
         openButton.titleLabel?.adjustsFontForContentSizeCategory = true
-    }
-
-    /// UIKit requires the slot's parent to be the controller that owns the
-    /// nearest ancestor view. Skipping up to an outer container (e.g. the
-    /// reader's `FullScreenCodeViewController` above its content controller)
-    /// throws `UIViewControllerHierarchyInconsistency` when the slot view
-    /// enters the window.
-    private func nearestViewController() -> UIViewController? {
-        var responder: UIResponder? = next
-        while let current = responder {
-            if let viewController = current as? UIViewController {
-                return viewController
-            }
-            responder = current.next
-        }
-        return nil
     }
 
     @objc private func openReference() {

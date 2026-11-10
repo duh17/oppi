@@ -202,8 +202,7 @@ final class ErrorAlertPresenter {
             guard top.presentingViewController == nil,
                   let view = top.viewIfLoaded, top !== view.window?.rootViewController,
                   let superview = view.superview,
-                  let embedding = sequence(first: superview as UIResponder, next: { $0.next })
-                      .lazy.compactMap({ $0 as? UIViewController }).first
+                  let embedding = superview.nearestViewController
             else { return top }
             top = embedding
         }

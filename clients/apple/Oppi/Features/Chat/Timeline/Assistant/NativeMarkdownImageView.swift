@@ -1277,7 +1277,7 @@ final class NativeMarkdownImageView: UIView {
             if ChatReaderOpenLookup.open(.imageData(data, mimeType: mimeType), from: self) {
                 return true
             }
-            if let presenter = nearestViewController() {
+            if let presenter = presenterPreferringReader() {
                 FullScreenImageDataPreviewPresenter.present(
                     data: data,
                     mimeType: mimeType,
@@ -1292,7 +1292,7 @@ final class NativeMarkdownImageView: UIView {
         if ChatReaderOpenLookup.open(.image(image), from: self) {
             return true
         }
-        if let presenter = nearestViewController() {
+        if let presenter = presenterPreferringReader() {
             FullScreenImageViewController.present(image: image, from: presenter)
         } else {
             FullScreenImageViewController.present(image: image)
@@ -1314,7 +1314,7 @@ final class NativeMarkdownImageView: UIView {
         ) {
             return true
         }
-        guard let presenter = nearestViewController() else { return false }
+        guard let presenter = presenterPreferringReader() else { return false }
 
         FullScreenImageDataPreviewPresenter.present(
             data: data,
@@ -1324,7 +1324,9 @@ final class NativeMarkdownImageView: UIView {
         return true
     }
 
-    private func nearestViewController() -> UIViewController? {
+    /// The presenter for an image's full-screen preview: a full-screen reader on
+    /// top (or containing the image's controller) wins over the nearest controller.
+    private func presenterPreferringReader() -> UIViewController? {
         if var active = window?.rootViewController {
             while let presented = active.presentedViewController {
                 active = presented
@@ -1334,21 +1336,15 @@ final class NativeMarkdownImageView: UIView {
             }
         }
 
-        var responder: UIResponder? = self
-        while let current = responder {
-            if let viewController = current as? UIViewController {
-                var ancestor: UIViewController? = viewController
-                while let node = ancestor {
-                    if node is FullScreenCodeViewController {
-                        return node
-                    }
-                    ancestor = node.parent
-                }
-                return viewController
+        guard let viewController = nearestViewController else { return nil }
+        var ancestor: UIViewController? = viewController
+        while let node = ancestor {
+            if node is FullScreenCodeViewController {
+                return node
             }
-            responder = current.next
+            ancestor = node.parent
         }
-        return nil
+        return viewController
     }
 }
 

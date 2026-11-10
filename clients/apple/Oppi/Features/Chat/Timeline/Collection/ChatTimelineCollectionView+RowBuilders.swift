@@ -1,18 +1,5 @@
 import UIKit
 
-private extension UIView {
-    func nearestViewController() -> UIViewController? {
-        var responder: UIResponder? = self
-        while let current = responder {
-            if let viewController = current as? UIViewController {
-                return viewController
-            }
-            responder = current.next
-        }
-        return nil
-    }
-}
-
 // MARK: - Row Configuration Builders
 
 extension ChatTimelineController {
@@ -253,7 +240,7 @@ extension ChatTimelineController {
     func openUserMessagePathPill(_ pill: UserMessagePathPill, from sourceView: UIView) {
         guard let destination = pill.timelineDestination,
               let workspaceId, !workspaceId.isEmpty,
-              let presenter = sourceView.nearestViewController(),
+              let presenter = sourceView.nearestViewController,
               let openDestination else {
             return
         }

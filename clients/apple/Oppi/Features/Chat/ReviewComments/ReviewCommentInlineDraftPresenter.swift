@@ -53,7 +53,7 @@ enum ReviewCommentInlineDraftPresenter {
     ) {
         guard router.supportsInlineCommentComposer,
               let hostView = hostView(for: sourceView) else {
-            router.dispatch(request, presentingViewController: nearestViewController(from: sourceView))
+            router.dispatch(request, presentingViewController: sourceView.nearestViewController)
             return
         }
 
@@ -77,21 +77,10 @@ enum ReviewCommentInlineDraftPresenter {
     }
 
     private static func hostView(for sourceView: UIView) -> UIView? {
-        if let controller = nearestViewController(from: sourceView) {
+        if let controller = sourceView.nearestViewController {
             return controller.view
         }
         return sourceView.window
-    }
-
-    private static func nearestViewController(from responder: UIResponder) -> UIViewController? {
-        var current: UIResponder? = responder
-        while let node = current {
-            if let controller = node as? UIViewController {
-                return controller
-            }
-            current = node.next
-        }
-        return nil
     }
 
     private static func clearSelection(in textView: UITextView, range: NSRange) {

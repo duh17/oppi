@@ -66,19 +66,8 @@ final class ReviewCommentWKWebView: WKWebView {
                     router: router
                 )
             } else {
-                router.dispatch(request, presentingViewController: nearestViewController())
+                router.dispatch(request, presentingViewController: nearestViewController)
             }
         }
-    }
-
-    private func nearestViewController() -> UIViewController? {
-        var current: UIResponder? = self
-        while let node = current {
-            if let controller = node as? UIViewController {
-                return controller
-            }
-            current = node.next
-        }
-        return nil
     }
 }

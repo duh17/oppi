@@ -1393,7 +1393,7 @@ final class FullScreenReviewCommentTextView: UITextView, ReviewCommentSourceLine
                     range: effectiveRange
                 ),
                 router: router,
-                presentingViewController: nearestViewController(from: self),
+                presentingViewController: nearestViewController,
                 textView: self,
                 selectedRange: effectiveRange
             )
@@ -1500,7 +1500,7 @@ func buildFullScreenReviewCommentMenu(
         suggestedActions: suggestedActions,
         router: router,
         sourceContext: sourceContext,
-        presentingViewController: nearestViewController(from: textView)
+        presentingViewController: textView.nearestViewController
     ) {
         return menu
     }
@@ -1508,18 +1508,6 @@ func buildFullScreenReviewCommentMenu(
     // UITextView: nil means "no menu", not "use defaults". Preserve system actions.
     guard !suggestedActions.isEmpty else { return nil }
     return UIMenu(children: suggestedActions)
-}
-
-@MainActor
-private func nearestViewController(from responder: UIResponder) -> UIViewController? {
-    var current: UIResponder? = responder
-    while let node = current {
-        if let controller = node as? UIViewController {
-            return controller
-        }
-        current = node.next
-    }
-    return nil
 }
 
 @MainActor

@@ -167,9 +167,7 @@ final class ReaderTaskEditing: ReaderTaskControlHandling {
 
     private func presentDatePicker(kind: OrgPlanningKind, line: Int, from view: UIView) {
         guard allowsTaskControls else { return }
-        var responder: UIResponder? = view
-        while let next = responder, !(next is UIViewController) { responder = next.next }
-        guard let presenter = responder as? UIViewController else { return }
+        guard let presenter = view.nearestViewController else { return }
         let current = TaskSourceEdit.planningDate(in: source(), headingLine: line, kind: kind)
         let picker = OrgDatePickerViewController(
             title: kind.label,

@@ -121,7 +121,7 @@ final class SettingsActionRowCell: UICollectionViewListCell {
             action()
             return
         }
-        guard let owner = owningViewController else { return }
+        guard let owner = nearestViewController else { return }
         // The confirming button reads as destructive on a destructive row.
         question.isDestructive = tint == .destructive
         // An action sheet is a popover on iPad, from the row that asked.
@@ -278,17 +278,5 @@ final class SettingsStateRowCell: UICollectionViewListCell {
         reasonLabel.isHidden = true
         spinner.stopAnimating()
         isHighlighted = false
-    }
-}
-
-private extension UIResponder {
-    /// The view controller whose view this responder sits in.
-    var owningViewController: UIViewController? {
-        var responder = next
-        while let current = responder {
-            if let controller = current as? UIViewController { return controller }
-            responder = current.next
-        }
-        return nil
     }
 }

@@ -450,12 +450,8 @@ enum ComposerCanvasActiveDestination {
 @MainActor
 enum ComposerCanvasDestinationResolver {
     static func resolve(from view: UIView) -> ComposerCanvasDestination? {
-        var responder: UIResponder? = view
-        while let current = responder {
-            if let viewController = current as? UIViewController {
-                return resolve(from: viewController)
-            }
-            responder = current.next
+        if let viewController = view.nearestViewController {
+            return resolve(from: viewController)
         }
         return ComposerCanvasActiveDestination.current
     }
