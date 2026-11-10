@@ -86,20 +86,27 @@ go_is_new_enough() {
   minor="${BASH_REMATCH[2]}"
   patch="${BASH_REMATCH[4]:-0}"
   # libtailscale's go.mod requires go >= 1.27.1, and the vendor script sets
-  # GOTOOLCHAIN=local, so an older toolchain cannot upgrade itself.
-  [[ "$major" -gt 1 || "$minor" -gt 27 || ( "$minor" -eq 27 && "$patch" -ge 1 ) ]]
+  # GOTOOLCHAIN=local, so an older toolchain cannot upgrade itself. 1.27.3 is
+  # the floor because 1.27.1 carries unpatched standard-library advisories that
+  # ship inside TailscaleKit.
+  [[ "$major" -gt 1 || "$minor" -gt 27 || ( "$minor" -eq 27 && "$patch" -ge 3 ) ]]
 }
 
 ensure_go() {
   if go_is_new_enough; then
     return
   fi
-  local arch tarball url
+  local arch sha tarball url
   arch="$(host_arch)"
-  tarball="go1.27.1.darwin-${arch}.tar.gz"
+  case "$arch" in
+    arm64) sha=dd3908cf20959d798c1e06ebe5b72213f0505ce01373b40ce3110975a6cd99c2 ;;
+    amd64) sha=b6f8e931e4ab497fcde6da8ae4499a58f9d258e55c8a80824a516eae5950a750 ;;
+  esac
+  tarball="go1.27.3.darwin-${arch}.tar.gz"
   url="https://go.dev/dl/${tarball}"
-  echo "Installing Go 1.27.1"
+  echo "Installing Go 1.27.3"
   curl -fsSL "$url" -o "$TOOL_ROOT/$tarball"
+  echo "$sha  $TOOL_ROOT/$tarball" | shasum -a 256 -c -
   rm -rf "$TOOL_ROOT/go"
   tar -xzf "$TOOL_ROOT/$tarball" -C "$TOOL_ROOT"
   ln -sfn "$TOOL_ROOT/go/bin/go" "$TOOL_ROOT/bin/go"

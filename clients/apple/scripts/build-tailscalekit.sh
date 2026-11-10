@@ -32,8 +32,19 @@ LIBTAILSCALE_REPO="https://github.com/tailscale/libtailscale.git"
 # Bump deliberately; the stamp file forces a rebuild when this changes.
 # d1dc45d = libtailscale 0.2.0 (tailscale.com v1.104.1).
 LIBTAILSCALE_COMMIT="d1dc45d039edb7759ecbee6ba2aea0c4bca884b8"
-# Bump the suffix whenever OMIT_FEATURES changes so stale vendor/cache copies rebuild.
-BUILD_ID="$LIBTAILSCALE_COMMIT-omit-v2"
+# Bump the suffix whenever OMIT_FEATURES or GO_MODULE_FIXES changes so stale
+# vendor/cache copies rebuild.
+BUILD_ID="$LIBTAILSCALE_COMMIT-omit-v2-mods-v1"
+
+# libtailscale d1dc45d still requires dependency versions with published Go
+# advisories (x/net HTTP/2 and html, klauspost/compress frame panic, x/crypto
+# openpgp). These are raised past libtailscale's go.mod after checkout; drop an
+# entry once the pinned libtailscale commit requires at least that version.
+GO_MODULE_FIXES=(
+  golang.org/x/net@v0.62.0
+  golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2
+  github.com/klauspost/compress@v1.20.2
+)
 
 # tailscale.com feature tags compiled out (ts_omit_<name>; list them with
 # `go run tailscale.com/cmd/featuretags --list` in the libtailscale checkout).
@@ -176,6 +187,8 @@ export GOTOOLCHAIN="local"
 # compiles either way; keep the Go 1.25 default so encoding/json behavior does
 # not change with a toolchain bump.
 export GOEXPERIMENT="nojsonv2"
+
+(cd "$SRC_DIR" && go get "${GO_MODULE_FIXES[@]}")
 
 # The upstream Makefile hardcodes `-tags ios` and command-line tags override
 # GOFLAGS, so build its three c-archive targets here with the omit tags (same
