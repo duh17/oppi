@@ -314,7 +314,7 @@ class ExtensionStripPillControl: UIControl {
 
 // MARK: - Strip entries
 
-private extension String {
+extension String {
     var trimmedNonEmpty: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
@@ -347,7 +347,7 @@ private extension String {
     }
 }
 
-private extension Optional where Wrapped == String {
+extension Optional where Wrapped == String {
     var trimmedNonEmpty: String? { self?.trimmedNonEmpty }
 }
 
@@ -470,6 +470,12 @@ private enum ExtensionSurfaceStripEntry: Equatable {
         }
     }
 
+    /// The strip draws the surface's own pill line instead of the title and subtitle.
+    var hasComposedPill: Bool {
+        guard case .composable(let composable) = self else { return false }
+        return composable.surface.pill != nil && Self.composableFailureText(composable.surface) == nil
+    }
+
     var identifierSuffix: String {
         switch self {
         case .title(let title): "title-\(title.extensionAccessibilityIdentifierComponent)"
@@ -563,10 +569,17 @@ private enum ExtensionSurfaceStripEntry: Equatable {
     }
 
     private static func nativeTone(_ surface: ExtensionUINativeSurface) -> ExtensionSurfaceStripTone {
-        let rows = surface.nativeDisplayBlocks.flatMap { block -> [ExtensionUIActivityRow] in
-            if case .activityList(_, let rows) = block { return rows }
-            return []
+        // Rows of lists at the top level and inside sections.
+        func rows(_ blocks: [ExtensionUINativeBlock]) -> [ExtensionUIActivityRow] {
+            blocks.flatMap { block -> [ExtensionUIActivityRow] in
+                switch block {
+                case .activityList(_, let rows): rows
+                case .section(_, _, _, let children): rows(children.compactMap(\.nativeDisplayBlock))
+                default: []
+                }
+            }
         }
+        let rows = rows(surface.nativeDisplayBlocks)
         let tones = Set(rows.map { ExtensionNativeBlockPresentation.activityTone($0.state) })
         // The strip shows the most urgent row state; inactive and unknown rows leave it accent.
         let priority: [(ExtensionNativeBlockPresentation.ActivityTone, ExtensionSurfaceStripTone)] = [
@@ -814,6 +827,10 @@ struct ExtensionSurfaceDrawerActions {
     var liveComposableSurface: ((String) -> ExtensionUISurface?)?
     /// The composable surface action waiting on the server, read as the reader draws.
     var pendingAction: (@MainActor @Sendable () -> ExtensionSurfacePendingAction?)?
+    /// The menu of a session an activity row links to (`ExtensionNativeBlockContext.sessionMenu`).
+    var sessionMenu: (@MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?)?
+    /// The reader opens in the trailing column beside the chat rather than over it.
+    var readerOpensBeside = false
 }
 
 /// The expanded body of one strip entry, under the strip: a header with the
@@ -828,7 +845,9 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
     private let subtitleLabel = ExtensionChromeFont.label(.caption1, lines: 0)
     private let mediaLabel = ExtensionChromeFont.label(.caption1, .semibold)
     private let collapseButton = MinimumHitTargetButton(type: .custom)
-    /// A composable drawer's way to the whole surface, shown while its body is taller than the cap.
+    /// The way to the whole surface: full screen on a narrow screen, the trailing column beside the
+    /// chat on a wide one. Always shown for a native or widget body; a composable drawer shows it
+    /// while its body is taller than the cap.
     private let fullScreenButton = MinimumHitTargetButton(type: .custom)
     private var nativeViewport: ExtensionNativeBlockScrollView?
     /// A composable surface's cards, in a viewport that hugs them up to the drawer's cap.
@@ -863,9 +882,8 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
         collapseButton.accessibilityLabel = "Collapse \(entry.title) \(entry.kindLabel)"
         collapseButton.addAction(UIAction { [weak self] _ in self?.onCollapse?() }, for: .touchUpInside)
         fullScreenButton.layer.cornerRadius = 16
-        fullScreenButton.isHidden = true
+        fullScreenButton.isHidden = !entry.supportsFullScreen
         fullScreenButton.accessibilityIdentifier = "extension.strip.fullScreen.\(placementID)"
-        fullScreenButton.accessibilityLabel = String(localized: "Open full screen")
         fullScreenButton.addAction(UIAction { [weak self] _ in self?.openFullScreen() }, for: .touchUpInside)
         let header = UIStackView(arrangedSubviews: [titles, fullScreenButton, collapseButton])
         header.axis = .horizontal
@@ -873,17 +891,19 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
         header.spacing = 10
 
         stack.addArrangedSubview(header)
+        NSLayoutConstraint.activate([
+            collapseButton.widthAnchor.constraint(equalToConstant: 32),
+            collapseButton.heightAnchor.constraint(equalToConstant: 32),
+            fullScreenButton.heightAnchor.constraint(equalToConstant: 32),
+        ])
         for button in [fullScreenButton, collapseButton] {
-            NSLayoutConstraint.activate([
-                button.widthAnchor.constraint(equalToConstant: 32),
-                button.heightAnchor.constraint(equalToConstant: 32),
-            ])
             button.setContentHuggingPriority(.required, for: .horizontal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
         buildContent()
         if entry.supportsFullScreen {
             accessibilityCustomActions = [
-                UIAccessibilityCustomAction(name: "Open Full Screen") { [weak self] _ in
+                UIAccessibilityCustomAction(name: String(localized: "Open Full Screen")) { [weak self] _ in
                     self?.openFullScreen()
                     return true
                 },
@@ -915,17 +935,10 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             inset = box
             statusKeyLabel = keyLabel
             bodyLabel = textLabel
-        case .native:
+        case .native, .widget:
+            // The drawer is the container: its blocks sit on it with no second box. A terminal
+            // block draws its own inset.
             let viewport = ExtensionNativeBlockScrollView()
-            viewport.accessibilityHint = "Double tap to open full screen."
-            nativeViewport = viewport
-            let box = Self.subtleInset(viewport, padding: 0)
-            stack.addArrangedSubview(box)
-            inset = box
-        case .widget:
-            // The terminal block draws its own inset; no outer padding.
-            let viewport = ExtensionNativeBlockScrollView()
-            viewport.accessibilityHint = "Double tap to open full screen."
             nativeViewport = viewport
             stack.addArrangedSubview(viewport)
         case .composable:
@@ -974,9 +987,12 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
         self.entry = entry
         let palette = themeID.palette
         surface.apply(palette: palette)
+        // The pill right above already shows the title and subtitle, unless a composed pill
+        // replaced them with its own line: the header says only what the pill does not.
         titleLabel.text = entry.title
         titleLabel.textColor = palette.ui.fg
-        let subtitle = entry.subtitle?.trimmedNonEmpty
+        titleLabel.isHidden = !entry.hasComposedPill
+        let subtitle = entry.hasComposedPill ? entry.subtitle?.trimmedNonEmpty : nil
         subtitleLabel.text = subtitle
         subtitleLabel.textColor = palette.ui.comment
         subtitleLabel.isHidden = subtitle == nil
@@ -990,10 +1006,22 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
         buttonConfiguration.background.cornerRadius = 16
         buttonConfiguration.contentInsets = .zero
         collapseButton.configuration = buttonConfiguration
-        buttonConfiguration.image = UIImage.scaledSymbol(
-            "arrow.up.left.and.arrow.down.right", style: .caption1, weight: .bold, color: palette.ui.comment
+        let opensBeside = actions.readerOpensBeside
+        var fullScreen = buttonConfiguration
+        fullScreen.image = UIImage.scaledSymbol(
+            opensBeside ? "sidebar.trailing" : "arrow.up.left.and.arrow.down.right",
+            style: .caption1, weight: .bold, color: palette.ui.comment
         )
-        fullScreenButton.configuration = buttonConfiguration
+        fullScreen.title = opensBeside ? String(localized: "Show in Sidebar") : String(localized: "Full Screen")
+        fullScreen.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = UIFont.scaled(.caption1, .semibold)
+            attributes.foregroundColor = palette.ui.comment
+            return attributes
+        }
+        fullScreen.imagePadding = 5
+        fullScreen.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 10, bottom: 0, trailing: 12)
+        fullScreenButton.configuration = fullScreen
         inset?.backgroundColor = palette.ui.fg.withAlphaComponent(0.035)
         inset?.layer.borderColor = palette.ui.fg.withAlphaComponent(0.08).cgColor
         bodyLabel?.textColor = palette.ui.fg
@@ -1003,7 +1031,8 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             themeID: themeID,
             linkContext: actions.linkContext,
             onOpenURL: actions.onOpenURL,
-            sessionLiveTails: sessionLiveTails
+            sessionLiveTails: sessionLiveTails,
+            sessionMenu: actions.sessionMenu
         )
         switch entry {
         case .native(let nativeSurface, _):
@@ -1011,10 +1040,10 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
                 content: ExtensionNativeBlockContent(surface: nativeSurface.surface),
                 context: context,
                 sizing: .capped(maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight),
-                contentInsets: NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10),
+                contentInsets: NSDirectionalEdgeInsets(),
                 spacing: 10,
                 accessibilityIdentifier: "extension-native-surface-\(entry.identifierSuffix)-viewport",
-                onDoubleTap: { [weak self] in self?.openFullScreen() }
+                onDoubleTap: nil
             )
         case .widget(let widget, _, _):
             nativeViewport?.update(
@@ -1024,7 +1053,7 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
                 contentInsets: NSDirectionalEdgeInsets(),
                 spacing: 10,
                 accessibilityIdentifier: "extension-strip-\(placementID)-terminal-\(entry.identifierSuffix)",
-                onDoubleTap: { [weak self] in self?.openFullScreen() }
+                onDoubleTap: nil
             )
         case .messageQueue:
             if let configuration {
@@ -1070,7 +1099,9 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             : nil
     }
 
+    /// Opens the whole surface. Beside the chat the drawer closes: the column shows the same list.
     private func openFullScreen() {
+        defer { if actions.readerOpensBeside { onCollapse?() } }
         switch entry {
         case .native(let nativeSurface, _):
             let id = nativeSurface.surface.id
@@ -1085,6 +1116,7 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
                 subtitle: entry.subtitle,
                 linkContext: actions.linkContext,
                 onOpenURL: actions.onOpenURL,
+                sessionMenu: actions.sessionMenu,
                 liveSurface: liveSurface
             )))
         case .widget(let widget, _, _):
@@ -1296,9 +1328,8 @@ final class ExtensionSurfacePanelView: UIView {
         for entry: ExtensionSurfaceStripEntry,
         content: Content
     ) -> ExtensionSurfacePillContent? {
-        guard case .composable(let composable) = entry,
-              let pill = composable.surface.pill,
-              ExtensionSurfaceStripEntry.composableFailureText(composable.surface) == nil else {
+        guard entry.hasComposedPill, case .composable(let composable) = entry,
+              let pill = composable.surface.pill else {
             return nil
         }
         let pending = content.pendingAction.flatMap {

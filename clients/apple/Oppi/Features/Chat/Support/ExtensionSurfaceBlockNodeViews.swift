@@ -575,11 +575,20 @@ final class BlocksElapsedView: UIView {
         node surfaceNode: ExtensionUISurfaceNode,
         environment: ExtensionSurfaceBlocksEnvironment
     ) {
-        self.node = node
-        label.font = ExtensionSurfaceBlockMetrics.font(node.style, inline: environment.inline, monospacedDigits: true)
-        label.textColor = ExtensionSurfaceBlockMetrics.textColor(node.tone, style: node.style, environment.palette)
-        accessibilityLabel = node.base.accessibility?.label ?? Self.spokenName
+        apply(
+            node,
+            font: ExtensionSurfaceBlockMetrics.font(node.style, inline: environment.inline, monospacedDigits: true),
+            color: ExtensionSurfaceBlockMetrics.textColor(node.tone, style: node.style, environment.palette)
+        )
         accessibilityIdentifier = environment.identifier(for: surfaceNode)
+    }
+
+    /// A count outside a blocks body, such as an activity row's `since`, in the caller's font.
+    func apply(_ node: ExtensionUISurfaceElapsedNode, font: UIFont, color: UIColor) {
+        self.node = node
+        label.font = font
+        label.textColor = color
+        accessibilityLabel = node.base.accessibility?.label ?? Self.spokenName
         refresh(at: Date())
     }
 

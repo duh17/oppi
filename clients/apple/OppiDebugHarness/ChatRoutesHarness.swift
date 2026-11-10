@@ -18,6 +18,8 @@ import UIKit
 /// space above the composer. `chatRoutes.surfaceActions` lists the surface
 /// actions the chat sent over its socket. `CHAT_ROUTES_SURFACE=jobs` publishes the Background jobs
 /// surface with one running job and a long output block (`ChatRoutesJobsSurface`).
+/// `CHAT_ROUTES_NATIVE_WIDGET_FILE=<path>` publishes a version 1 native widget read from that file
+/// (`ChatRoutesNativeWidget`).
 /// `CHAT_ROUTES_SURFACE_FILE=<path>[,<path>...]` publishes the
 /// surface JSON in those files instead (a server's rendered `ExtensionUISurface`, so a panel is shown
 /// as the phone receives it). `CHAT_ROUTES_REVIEW_COMMENT=none` stages no review comment, leaving
@@ -379,6 +381,13 @@ enum ChatRoutesFixture {
     /// `CHAT_ROUTES_SURFACE=tall`: a table card of 14 rows, then an Actions card, in one
     /// surface above the composer. Reseeded like Share, since the connect loop clears surfaces.
     @MainActor static func seedSurfaceIfNeeded(on connection: ServerConnection) {
+        if let path = environment["CHAT_ROUTES_NATIVE_WIDGET_FILE"] {
+            guard connection.extensionSurfaces.surface(for: sessionId).state.nativeSurfaces.isEmpty else { return }
+            for notification in ChatRoutesNativeWidget.notifications(path: path) {
+                connection.extensionSurfaces.apply(notification, sessionId: sessionId)
+            }
+            return
+        }
         let documents: [Data] = if let paths = environment["CHAT_ROUTES_SURFACE_FILE"] {
             paths.split(separator: ",").compactMap { FileManager.default.contents(atPath: String($0)) }
         } else if environment["CHAT_ROUTES_SURFACE"] == "tall" {

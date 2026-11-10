@@ -99,6 +99,9 @@ struct ConversationChildTail: Equatable, Sendable {
     }
 
     static let maxLines = 6
+    /// The one line of a busy child that has shown nothing yet. A row that already says the
+    /// child works (an activity row's state) skips it.
+    static let busyPlaceholder = "Working\u{2026}"
     private static let textLines = 3
     private static let outputLines = 2
 
@@ -152,7 +155,7 @@ struct ConversationChildTail: Equatable, Sendable {
         if tail.isCompacting { lines.append(Line(kind: .status, text: "Compacting\u{2026}")) }
         if let retry = tail.retry { lines.append(Line(kind: .status, text: "Retrying: \(firstLine(retry.error))")) }
         // Busy before its first token, or between rounds.
-        if lines.isEmpty { lines.append(Line(kind: .status, text: "Working\u{2026}")) }
+        if lines.isEmpty { lines.append(Line(kind: .status, text: busyPlaceholder)) }
         return Array(lines.suffix(maxLines))
     }
 

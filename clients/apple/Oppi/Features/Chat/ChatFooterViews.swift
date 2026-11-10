@@ -38,8 +38,70 @@ private extension ChatViewController {
             },
             pendingAction: { [weak connection] in
                 connection?.extensionSurfaces.surface(for: sessionId).pendingAction
-            }
+            },
+            sessionMenu: { [weak self] linkedId, url, rowState in
+                self?.linkedSessionMenu(linkedId, url: url, rowState: rowState)
+            },
+            readerOpensBeside: usesTrailingSidePanel
         )
+    }
+
+    /// The menu of a session a drawer row links to: Open, Copy Branch when it works in a worktree,
+    /// Copy Session ID, and Stop last (HIG: destructive items at the end). Stop shows while the
+    /// session runs, and on a row that needs attention whatever the session's state: a failed
+    /// child stays in Needs You until it is messaged or stopped, so there Stop also dismisses it.
+    /// The session is read from the store when the menu opens.
+    private func linkedSessionMenu(_ linkedId: String, url: URL, rowState: String?) -> UIMenu {
+        let connection = connection
+        let session = connection.sessionStore.session(id: linkedId)
+        var items: [UIMenuElement] = [
+            UIAction(title: String(localized: "Open"), image: UIImage(systemName: "bubble.left.and.text.bubble.right")) { [weak self] _ in
+                _ = self?.openExtensionSurfaceURL(url)
+            },
+        ]
+        if let session, let workspaceId = session.workspaceId,
+           let worktreeId = session.worktreeId, worktreeId != WorkspaceWorktree.mainId {
+            items.append(Self.copyBranchItem(workspaceId: workspaceId, worktreeId: worktreeId, connection: connection))
+        }
+        items.append(UIAction(title: String(localized: "Copy Session ID"), image: UIImage(systemName: "doc.on.doc")) { _ in
+            UIPasteboard.general.string = linkedId
+            TransientConfirmationPill.show(String(localized: "Session ID Copied"))
+        })
+        let needsAttention = ["warning", "error"].contains(rowState ?? "")
+        if let session, session.status != .stopped || needsAttention, let scope = session.routeScope {
+            let stop = UIAction(title: String(localized: "Stop"), image: UIImage(systemName: "stop.circle")) { _ in
+                Task {
+                    await SessionListLifecycle.setRunning(false, session, scope: scope, connection: connection) {
+                        TransientConfirmationPill.show($0)
+                    }
+                }
+            }
+            stop.attributes = .destructive
+            items.append(stop)
+        }
+        return UIMenu(children: items)
+    }
+
+    /// Copy Branch, loaded when the menu opens: the session names its worktree, the workspace's
+    /// worktree list has the branch. Nothing shows for a detached worktree or a failed load.
+    private static func copyBranchItem(
+        workspaceId: String,
+        worktreeId: String,
+        connection: ServerConnection
+    ) -> UIMenuElement {
+        UIDeferredMenuElement.uncached { [weak connection] completion in
+            Task { @MainActor in
+                let worktrees = try? await connection?.apiClient?.listWorkspaceWorktrees(workspaceId: workspaceId)
+                guard let branch = worktrees?.first(where: { $0.id == worktreeId })?.branch, !branch.isEmpty else {
+                    completion([])
+                    return
+                }
+                completion([UIAction(title: String(localized: "Copy Branch"), image: UIImage(systemName: "arrow.triangle.branch")) { _ in
+                    UIPasteboard.general.string = branch
+                    TransientConfirmationPill.show(String(localized: "Branch Copied"))
+                }])
+            }
+        }
     }
 }
 

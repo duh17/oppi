@@ -87,24 +87,36 @@ struct ExtensionNativeBlockViewsTests {
         #expect(opened == [URL(string: link)])
     }
 
-    /// Any activity row linking to `oppi://session/<id>` shows that session's live tail while it
-    /// is busy; the row's identity, not the extension or tool, decides.
-    @Test func rowLinkingToABusySessionShowsItsLiveTail() throws {
-        let block = activityList(rowID: "task-1", subtitle: nil, link: "oppi://session/child-session")
+    /// A running activity row linking to `oppi://session/<id>` shows the newest tool or text line
+    /// of that session's live tail in place of its subtitle; the row's identity, not the extension
+    /// or tool, decides. Output, thinking and status lines never stand in for it, and a row that is
+    /// not running (a question, a failure) keeps its own words.
+    @Test func runningRowLinkingToABusySessionShowsItsNewestToolOrTextLine() throws {
+        let block = activityList(rowID: "task-1", subtitle: "Running bash", link: "oppi://session/child-session")
         let tail = ConversationChildTail(
             reference: ConversationChildReference(conversationId: 9, sessionId: "child-session", toolCallId: "call-s"),
-            lines: [.init(kind: .tool, text: "bash npm test"), .init(kind: .output, text: "42 passing")]
+            lines: [
+                .init(kind: .tool, text: "bash npm test"),
+                .init(kind: .output, text: "42 passing"),
+                .init(kind: .status, text: ConversationChildTail.busyPlaceholder),
+            ]
         )
         var busy = context()
-        busy.sessionLiveTails = ["child-session": tail, "other-session": tail]
+        busy.sessionLiveTails = ["child-session": tail]
         let stack = layout(.blocks([block]), context: busy)
-        #expect(visibleLabelTexts(of: ChildTailLinesView.self, in: stack) == ["bash npm test", "42 passing"])
-        #expect(control(id: "task-1", in: stack)?.accessibilityValue?.contains("42 passing") == true)
+        let label = { control(id: "task-1", in: stack)?.accessibilityLabel ?? "" }
+        #expect(label().contains("bash npm test"))
+        #expect(!label().contains("42 passing"))
+        #expect(!label().contains("Running bash"))
 
-        // Idle: the session leaves the tails and the row shows only its own text.
+        // Asking: the question stays, whatever the session streams.
+        stack.apply(.blocks([activityList(rowID: "task-1", subtitle: "Land which first?", link: "oppi://session/child-session", state: "warning")]), context: busy)
+        #expect(label().contains("Land which first?"))
+        #expect(!label().contains("bash npm test"))
+
+        // Idle: the session leaves the tails and the row shows its own subtitle.
         stack.apply(.blocks([block]), context: context())
-        stack.layoutIfNeeded()
-        #expect(visibleLabelTexts(of: ChildTailLinesView.self, in: stack).isEmpty)
+        #expect(label().contains("Running bash"))
     }
 
     @Test func disclosureRowBuildsOutputOnlyWhenOpenAndStaysOpenAcrossSnapshots() throws {
@@ -357,14 +369,19 @@ struct ExtensionNativeBlockViewsTests {
         .terminal(base: base(id), lines: [[ExtensionUITextSpan(text: line, role: nil, traits: nil, link: nil)]], text: nil)
     }
 
-    private func activityList(rowID: String, subtitle: String?, link: String? = nil) -> ExtensionUINativeBlock {
+    private func activityList(
+        rowID: String,
+        subtitle: String?,
+        link: String? = nil,
+        state: String = "running"
+    ) -> ExtensionUINativeBlock {
         .activityList(base: base("tasks"), rows: [
             ExtensionUIActivityRow(
                 id: rowID,
                 title: "Refactor the auth module and its session tests",
                 subtitle: subtitle,
                 detail: nil,
-                state: "running",
+                state: state,
                 progress: nil,
                 link: link,
                 children: [
@@ -408,22 +425,6 @@ struct ExtensionNativeBlockViewsTests {
                 return true
             }
             .flatMap { subviews(of: UITextView.self, in: $0) }
-            .compactMap(\.text)
-    }
-
-    /// Text of the visible labels inside visible views of `type`.
-    private func visibleLabelTexts<T: UIView>(of type: T.Type, in root: UIView) -> [String] {
-        subviews(of: type, in: root)
-            .filter { view in
-                var current: UIView? = view
-                while let candidate = current, candidate !== root {
-                    if candidate.isHidden { return false }
-                    current = candidate.superview
-                }
-                return true
-            }
-            .flatMap { subviews(of: UILabel.self, in: $0) }
-            .filter { !$0.isHidden && $0.alpha > 0 }
             .compactMap(\.text)
     }
 

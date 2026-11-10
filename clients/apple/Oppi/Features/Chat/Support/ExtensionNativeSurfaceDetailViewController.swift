@@ -91,6 +91,7 @@ final class ExtensionNativeSurfaceDetailViewController: UIViewController {
     private let subtitleText: String?
     private let linkContext: ExtensionSurfaceLinkContext
     private let onOpenURL: ((URL) -> Bool)?
+    private let sessionMenu: (@MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?)?
     /// Reads the session's current snapshot for this surface id. Observation
     /// re-renders the reader on each widget update, which the server already
     /// throttles and size-limits; no extra data is fetched. When the surface is
@@ -112,6 +113,7 @@ final class ExtensionNativeSurfaceDetailViewController: UIViewController {
         subtitle: String?,
         linkContext: ExtensionSurfaceLinkContext = .empty,
         onOpenURL: ((URL) -> Bool)? = nil,
+        sessionMenu: (@MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?)? = nil,
         liveSurface: (@MainActor () -> ExtensionUINativeSurface?)? = nil,
         onLeave: @escaping @MainActor () -> Void
     ) {
@@ -121,6 +123,7 @@ final class ExtensionNativeSurfaceDetailViewController: UIViewController {
         subtitleText = subtitle
         self.linkContext = linkContext
         self.onOpenURL = onOpenURL
+        self.sessionMenu = sessionMenu
         self.liveSurface = liveSurface
         self.onLeave = onLeave
         super.init(nibName: nil, bundle: nil)
@@ -173,7 +176,9 @@ final class ExtensionNativeSurfaceDetailViewController: UIViewController {
         lastLiveSurface = displayed
         blocks.update(
             content: ExtensionNativeBlockContent(surface: displayed),
-            context: ExtensionNativeBlockContext(themeID: themeID, linkContext: linkContext, onOpenURL: onOpenURL),
+            context: ExtensionNativeBlockContext(
+                themeID: themeID, linkContext: linkContext, onOpenURL: onOpenURL, sessionMenu: sessionMenu
+            ),
             sizing: .fill,
             contentInsets: NSDirectionalEdgeInsets(top: 18, leading: 18, bottom: 18, trailing: 18),
             spacing: 12,

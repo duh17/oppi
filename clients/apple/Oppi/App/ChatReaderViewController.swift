@@ -321,6 +321,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
                 subtitle: spec.subtitle,
                 linkContext: spec.linkContext,
                 onOpenURL: spec.onOpenURL,
+                sessionMenu: spec.sessionMenu,
                 liveSurface: spec.liveSurface,
                 onLeave: { back() }
             )

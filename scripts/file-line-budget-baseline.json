@@ -55,11 +55,6 @@
       "owner": "client markdown (M2)",
       "reason": "Segment cache, file URL identities, and the flat renderer; the URL identities move out first."
     },
-    "clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift": {
-      "budget": 1600,
-      "owner": "extension UI",
-      "reason": "One view per block kind, generic by protocol metadata; low churn, keep one file."
-    },
     "clients/apple/Oppi/Features/Chat/Support/WorkspaceContextBar.swift": {
       "budget": 2000,
       "owner": "WB1 commit graph",

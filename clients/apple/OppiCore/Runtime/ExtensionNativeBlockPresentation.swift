@@ -88,7 +88,7 @@ enum ExtensionNativeBlockPresentation {
         return .text(isActivity: trimmed.contains("⎿"))
     }
 
-    private static func joinedNonEmpty(_ values: [String?], separator: String) -> String {
+    static func joinedNonEmpty(_ values: [String?], separator: String) -> String {
         values
             .compactMap { value in
                 let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

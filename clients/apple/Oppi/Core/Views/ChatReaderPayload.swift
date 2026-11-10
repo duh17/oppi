@@ -33,6 +33,8 @@ struct ExtensionNativeReaderContent {
     let subtitle: String?
     var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)? = nil
+    /// The menu of a session an activity row links to, as the drawer offers it.
+    var sessionMenu: (@MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?)? = nil
     /// Current snapshot for the same surface id; the reader follows widget updates through it.
     var liveSurface: (@MainActor () -> ExtensionUINativeSurface?)? = nil
 }

@@ -22,6 +22,9 @@ struct ExtensionNativeBlockContext {
     /// Busy sessions' live tails by session id. An activity row linking to
     /// `oppi://session/<id>` shows its session's tail under its text.
     var sessionLiveTails: [String: ConversationChildTail] = [:]
+    /// The host's menu for a session an activity row links to (`url`), read when the menu
+    /// opens; `rowState` is the row's protocol state. Nil, or a nil menu, offers no menu.
+    var sessionMenu: (@MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?)?
 
     var palette: ThemePalette { themeID.palette }
 
@@ -627,26 +630,24 @@ final class ExtensionNativeTerminalView: UIView, ExtensionNativeBlockRendering {
 
 // MARK: - Section
 
+/// A titled group of blocks, drawn as a list section is: a grouped header over its blocks, with
+/// no box of its own, so a section of lists in a drawer is not a card inside a card.
 final class ExtensionNativeSectionBlockView: UIView, ExtensionNativeBlockRendering {
-    private let titleLabel = ExtensionNativeBlockStyle.label(.caption1, weight: .semibold)
-    private let subtitleLabel = ExtensionNativeBlockStyle.label(.caption2)
+    private let header = UIListContentView(configuration: .groupedHeader())
     private let children = ExtensionNativeBlockStackView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        let headerStack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
-        headerStack.axis = .vertical
-        headerStack.spacing = 2
-        let stack = UIStackView(arrangedSubviews: [headerStack, children])
+        let stack = UIStackView(arrangedSubviews: [header, children])
         stack.axis = .vertical
-        stack.spacing = 6
+        stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: Self.inset),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.inset),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.inset),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.inset),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         children.spacing = 6
     }
@@ -654,23 +655,23 @@ final class ExtensionNativeSectionBlockView: UIView, ExtensionNativeBlockRenderi
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    private static let inset: CGFloat = 10
-
     func adoptLayoutWidth(_ width: CGFloat) {
-        children.adoptLayoutWidth(width - 2 * Self.inset)
+        children.adoptLayoutWidth(width)
     }
 
     func apply(_ block: ExtensionUINativeBlock, context: ExtensionNativeBlockContext) {
         guard case .section(let base, let title, let subtitle, let blocks) = block else { return }
         let palette = context.palette
-        ExtensionNativeBlockStyle.applyInset(to: self, palette: palette)
-        titleLabel.text = title?.trimmingCharacters(in: .whitespacesAndNewlines)
-        titleLabel.textColor = palette.ui.fg
-        titleLabel.isHidden = titleLabel.text?.isEmpty ?? true
-        subtitleLabel.text = subtitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-        subtitleLabel.textColor = palette.ui.comment
-        subtitleLabel.isHidden = subtitleLabel.text?.isEmpty ?? true
-        titleLabel.superview?.isHidden = titleLabel.isHidden && subtitleLabel.isHidden
+        var configuration = UIListContentConfiguration.groupedHeader()
+        configuration.text = title?.trimmedNonEmpty
+        configuration.textProperties.color = palette.ui.comment
+        configuration.textProperties.font = ExtensionNativeBlockStyle.font(.footnote, weight: .semibold)
+        configuration.secondaryText = subtitle?.trimmedNonEmpty
+        configuration.secondaryTextProperties.color = palette.ui.comment
+        configuration.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 4, leading: 0, bottom: 2, trailing: 0)
+        header.configuration = configuration
+        header.isHidden = configuration.text == nil && configuration.secondaryText == nil
+        header.accessibilityTraits = .header
         children.apply(blocks: blocks, context: context)
         children.isHidden = blocks.isEmpty
         accessibilityLabel = base.accessibility?.label
@@ -769,362 +770,6 @@ final class ExtensionNativeProgressBlockView: UIView, ExtensionNativeBlockRender
         accessibilityLabel = base.accessibility?.label ?? labelText ?? "Progress"
         accessibilityValue = base.accessibility?.value
             ?? (isIndeterminate ? "In progress" : fraction.map(ExtensionNativeBlockPresentation.percentText))
-    }
-}
-
-// MARK: - Activity list
-
-final class ExtensionNativeActivityListView: UIView, ExtensionNativeBlockRendering {
-    private let stack = UIStackView()
-    private var rowViews: [String: ExtensionNativeActivityRowView] = [:]
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        stack.axis = .vertical
-        stack.spacing = 6
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func apply(_ block: ExtensionUINativeBlock, context: ExtensionNativeBlockContext) {
-        guard case .activityList(_, let rows) = block else { return }
-        apply(rows: rows, context: context)
-    }
-
-    func apply(rows: [ExtensionUIActivityRow], context: ExtensionNativeBlockContext) {
-        apply(rows: rows, context: context, accessibilityIdentifier: ExtensionNativeActivityRowView.defaultAccessibilityIdentifier)
-    }
-
-    /// `accessibilityIdentifier` names each row's control. The v1 block list names rows under
-    /// `extension.native.activity.row`; a composite that reuses the list names them under its own
-    /// surface and card.
-    func apply(
-        rows: [ExtensionUIActivityRow],
-        context: ExtensionNativeBlockContext,
-        accessibilityIdentifier: @escaping (ExtensionUIActivityRow) -> String
-    ) {
-        var next: [String: ExtensionNativeActivityRowView] = [:]
-        var ordered: [UIView] = []
-        for row in rows where next[row.id] == nil {
-            let view = rowViews[row.id] ?? ExtensionNativeActivityRowView()
-            view.accessibilityIdentifierForControl = accessibilityIdentifier
-            view.apply(row: row, context: context)
-            next[row.id] = view
-            ordered.append(view)
-        }
-        rowViews = next
-        guard !stack.arrangedSubviews.elementsEqual(ordered, by: ===) else { return }
-        for view in stack.arrangedSubviews where !ordered.contains(where: { $0 === view }) {
-            stack.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        for (index, view) in ordered.enumerated() {
-            stack.insertArrangedSubview(view, at: index)
-        }
-    }
-}
-
-/// One activity row: state marker, title/subtitle/detail, optional progress,
-/// nested children, and navigation when the row carries a link. A row with
-/// `blocks` is a disclosure row: tapping shows or hides the blocks, which are
-/// built only while shown, and a link moves to its own trailing button. Expansion survives snapshots because list views
-/// reuse row views by row id.
-final class ExtensionNativeActivityRowView: UIView {
-    /// The identifier this row's control carries, from the list that owns it.
-    static let defaultAccessibilityIdentifier: (ExtensionUIActivityRow) -> String = {
-        "extension.native.activity.row.\($0.id)"
-    }
-
-    var accessibilityIdentifierForControl: (ExtensionUIActivityRow) -> String =
-        ExtensionNativeActivityRowView.defaultAccessibilityIdentifier
-
-    private let control = UIControl()
-    private let marker = UIImageView()
-    private let titleLabel = ExtensionNativeBlockStyle.label(.caption1, weight: .semibold)
-    private let subtitleLabel = ExtensionNativeBlockStyle.label(.caption2)
-    private let detailLabel = ExtensionNativeBlockStyle.label(.caption2)
-    private let liveLines = ChildTailLinesView()
-    private let progressBar = ExtensionNativeProgressBar()
-    private let chevron = UIImageView()
-    private let childContainer = UIView()
-    private var childList: ExtensionNativeActivityListView?
-    private let detailContainer = UIView()
-    private let linkButton = UIButton(type: .system)
-    private var detailStack: ExtensionNativeBlockStackView?
-    private var isExpanded = false
-    private lazy var minimumHeight = control.heightAnchor.constraint(greaterThanOrEqualToConstant: 34)
-
-    private var row: ExtensionUIActivityRow?
-    private var context: ExtensionNativeBlockContext?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-
-        marker.contentMode = .center
-        marker.translatesAutoresizingMaskIntoConstraints = false
-        marker.isAccessibilityElement = false
-        chevron.contentMode = .center
-        chevron.isAccessibilityElement = false
-        chevron.setContentHuggingPriority(.required, for: .horizontal)
-        chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        liveLines.isHidden = true
-        let labels = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel, detailLabel, liveLines, progressBar])
-        labels.axis = .vertical
-        labels.spacing = 3
-        labels.setCustomSpacing(7, after: detailLabel)
-        labels.setCustomSpacing(7, after: liveLines)
-        labels.isUserInteractionEnabled = false
-
-        let markerColumn = UIView()
-        markerColumn.isUserInteractionEnabled = false
-        markerColumn.addSubview(marker)
-        let content = UIStackView(arrangedSubviews: [markerColumn, labels, chevron])
-        content.axis = .horizontal
-        content.alignment = .top
-        content.spacing = 10
-        content.isUserInteractionEnabled = false
-        content.translatesAutoresizingMaskIntoConstraints = false
-        control.addSubview(content)
-        control.layer.cornerRadius = 12
-        control.layer.cornerCurve = .continuous
-        control.addTarget(self, action: #selector(handleTap), for: .touchUpInside)
-
-        detailContainer.isHidden = true
-        linkButton.isHidden = true
-        linkButton.addTarget(self, action: #selector(handleLinkTap), for: .touchUpInside)
-        linkButton.setContentHuggingPriority(.required, for: .horizontal)
-        let header = UIStackView(arrangedSubviews: [control, linkButton])
-        header.axis = .horizontal
-        header.alignment = .center
-        header.spacing = 4
-        let column = UIStackView(arrangedSubviews: [header, detailContainer, childContainer])
-        column.axis = .vertical
-        column.spacing = 6
-        column.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(column)
-
-        NSLayoutConstraint.activate([
-            column.topAnchor.constraint(equalTo: topAnchor),
-            column.leadingAnchor.constraint(equalTo: leadingAnchor),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor),
-            content.topAnchor.constraint(equalTo: control.topAnchor, constant: 5),
-            content.leadingAnchor.constraint(equalTo: control.leadingAnchor, constant: 6),
-            content.trailingAnchor.constraint(equalTo: control.trailingAnchor, constant: -6),
-            content.bottomAnchor.constraint(lessThanOrEqualTo: control.bottomAnchor, constant: -5),
-            content.centerYAnchor.constraint(equalTo: control.centerYAnchor).withPriority(.defaultLow),
-            markerColumn.widthAnchor.constraint(equalToConstant: 14),
-            marker.topAnchor.constraint(equalTo: markerColumn.topAnchor, constant: 3),
-            marker.centerXAnchor.constraint(equalTo: markerColumn.centerXAnchor),
-            marker.widthAnchor.constraint(equalToConstant: 14),
-            marker.heightAnchor.constraint(equalToConstant: 14),
-            markerColumn.heightAnchor.constraint(greaterThanOrEqualToConstant: 17),
-            progressBar.heightAnchor.constraint(equalToConstant: 4),
-            linkButton.widthAnchor.constraint(equalToConstant: 44),
-            linkButton.heightAnchor.constraint(equalToConstant: 44),
-            minimumHeight,
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func apply(row: ExtensionUIActivityRow, context: ExtensionNativeBlockContext) {
-        self.row = row
-        self.context = context
-        render()
-    }
-
-    private var linkURL: URL? {
-        row.flatMap(ExtensionNativeBlockPresentation.activityRowURL)
-    }
-
-    private var detailBlocks: [ExtensionUINativeBlock] {
-        row?.blocks?.compactMap(\.nativeDisplayBlock) ?? []
-    }
-
-    private func render() {
-        guard let row, let context else { return }
-        let palette = context.palette
-        let tone = ExtensionNativeBlockPresentation.activityTone(row.state)
-        let accent = ExtensionNativeBlockStyle.activityColor(tone, palette: palette)
-        let detailBlocks = detailBlocks
-        let hasDetail = !detailBlocks.isEmpty
-        let rowLink = linkURL
-        // The row tap has one job: disclosure when the row has blocks, else
-        // navigation. A row with both keeps its link on a separate button.
-        let linkURL = hasDetail ? nil : rowLink
-
-        marker.image = UIImage(
-            systemName: Self.markerSymbol(tone),
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: tone == .inactive ? .regular : .semibold)
-        )
-        marker.tintColor = accent
-
-        titleLabel.text = row.title
-        titleLabel.textColor = palette.ui.fg
-        Self.setOptional(row.subtitle, on: subtitleLabel, color: palette.ui.comment)
-        Self.setOptional(row.detail, on: detailLabel, color: palette.ui.comment)
-        let liveTail = rowLink
-            .flatMap { SessionOpen(url: $0, origin: .inAppHyperlink)?.sessionId }
-            .flatMap { context.sessionLiveTails[$0] }
-        liveLines.isHidden = liveTail == nil
-        if let liveTail {
-            liveLines.apply(liveTail.lines, reserving: liveTail.reservedLines, palette: palette)
-        }
-
-        if let progress = ExtensionNativeBlockPresentation.normalizedProgress(row.progress) {
-            progressBar.isHidden = false
-            progressBar.apply(fraction: progress, palette: palette)
-        } else {
-            progressBar.isHidden = true
-        }
-
-        let isLinked = linkURL != nil
-        let isInteractive = isLinked || hasDetail
-        chevron.isHidden = !isInteractive
-        chevron.image = UIImage(
-            systemName: hasDetail ? (isExpanded ? "chevron.up" : "chevron.down") : "chevron.right",
-            withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption2, scale: .default)
-                .applying(UIImage.SymbolConfiguration(weight: .semibold))
-        )
-        chevron.tintColor = palette.ui.comment
-        minimumHeight.constant = isInteractive ? 44 : 34
-
-        let emphasized = tone == .running || tone == .warning || tone == .error
-        control.backgroundColor = palette.ui.fg.withAlphaComponent(emphasized ? 0.05 : 0)
-        control.layer.borderWidth = emphasized ? 1 : 0
-        control.layer.borderColor = palette.ui.comment.withAlphaComponent(0.16).cgColor
-        control.isUserInteractionEnabled = isInteractive
-
-        control.isAccessibilityElement = true
-        control.accessibilityIdentifier = accessibilityIdentifierForControl(row)
-        control.accessibilityLabel = ExtensionNativeBlockPresentation.activityRowAccessibilityLabel(row)
-        control.accessibilityValue = ([ExtensionNativeBlockPresentation.activityRowAccessibilityValue(row)]
-            + (liveTail?.lines.map(\.text) ?? []))
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
-        control.accessibilityTraits = isInteractive ? .button : .staticText
-        control.accessibilityHint = hasDetail
-            ? (isExpanded ? "Hides details" : "Shows details")
-            : linkURL.flatMap { url in
-            context.linkOutcome(for: url).flatMap {
-                ExtensionSurfaceLinkRouting.accessibilityHint(for: $0)
-            }
-            }
-
-        let separateLink = hasDetail ? rowLink : nil
-        linkButton.isHidden = separateLink == nil
-        linkButton.setImage(UIImage(
-            systemName: "arrow.up.right",
-            withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption1, scale: .default)
-                .applying(UIImage.SymbolConfiguration(weight: .semibold))
-        ), for: .normal)
-        linkButton.tintColor = palette.ui.comment
-        linkButton.accessibilityIdentifier = accessibilityIdentifierForControl(row) + ".link"
-        linkButton.accessibilityLabel = "Open \(row.title)"
-        linkButton.accessibilityHint = separateLink.flatMap { url in
-            context.linkOutcome(for: url).flatMap {
-                ExtensionSurfaceLinkRouting.accessibilityHint(for: $0)
-            }
-        }
-
-        if hasDetail, isExpanded {
-            let stack = detailStack ?? makeDetailStack()
-            stack.apply(blocks: detailBlocks, context: context)
-            detailContainer.isHidden = false
-        } else {
-            detailContainer.isHidden = true
-            if !hasDetail, let stack = detailStack {
-                stack.removeFromSuperview()
-                detailStack = nil
-                isExpanded = false
-            }
-        }
-
-        let children = row.children ?? []
-        if !children.isEmpty {
-            let list = childList ?? makeChildList()
-            list.apply(rows: children, context: context)
-            childContainer.isHidden = false
-        } else {
-            childContainer.isHidden = true
-        }
-    }
-
-    private func makeChildList() -> ExtensionNativeActivityListView {
-        let list = ExtensionNativeActivityListView()
-        list.translatesAutoresizingMaskIntoConstraints = false
-        childContainer.addSubview(list)
-        NSLayoutConstraint.activate([
-            list.topAnchor.constraint(equalTo: childContainer.topAnchor),
-            list.leadingAnchor.constraint(equalTo: childContainer.leadingAnchor, constant: 22),
-            list.trailingAnchor.constraint(equalTo: childContainer.trailingAnchor),
-            list.bottomAnchor.constraint(equalTo: childContainer.bottomAnchor),
-        ])
-        childList = list
-        return list
-    }
-
-    private func makeDetailStack() -> ExtensionNativeBlockStackView {
-        let stack = ExtensionNativeBlockStackView()
-        stack.spacing = 6
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        detailContainer.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: detailContainer.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: detailContainer.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: detailContainer.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: detailContainer.bottomAnchor),
-        ])
-        detailStack = stack
-        return stack
-    }
-
-    @objc private func handleTap() {
-        if !detailBlocks.isEmpty {
-            isExpanded.toggle()
-            render()
-            invalidateExtensionNativeBlockHost()
-            UIAccessibility.post(notification: .layoutChanged, argument: control)
-            return
-        }
-        guard let url = linkURL else { return }
-        context?.open(url)
-    }
-
-    @objc private func handleLinkTap() {
-        guard let url = linkURL else { return }
-        context?.open(url)
-    }
-
-    private static func setOptional(_ text: String?, on label: UILabel, color: UIColor) {
-        let value = text?.isEmpty == false ? text : nil
-        label.text = value
-        label.isHidden = value == nil
-        label.textColor = color
-    }
-
-    private static func markerSymbol(_ tone: ExtensionNativeBlockPresentation.ActivityTone) -> String {
-        switch tone {
-        case .running: "play.circle.fill"
-        case .success: "checkmark.circle.fill"
-        case .warning: "exclamationmark.circle.fill"
-        case .error: "xmark.circle.fill"
-        case .queued: "clock.circle.fill"
-        case .inactive: "circle"
-        case .neutral: "circle.fill"
-        }
     }
 }
 
