@@ -20,16 +20,12 @@ protocol FileRenderer: AnyObject {
 
     /// The page handles a horizontal back swipe itself (paging, 3D drag).
     var ownsBackSwipe: Bool { get }
-    /// Showing the same file again keeps this renderer and its player instead
-    /// of reading the file again (a full-screen modal over it, a resize).
-    var keepsOnReshow: Bool { get }
-    /// The viewer drops this renderer when it leaves the screen, and reads
-    /// the file again when it comes back.
-    var releasesOffScreen: Bool { get }
+    var retention: FileRendererRetention { get }
     /// Runs in the load after the page shows: reads that can follow it.
     func finishLoading() async
-    /// Called on every viewer update: theme colors and observed player state.
-    func update(palette: ThemePalette)
+    /// Called on every viewer update while mounted: theme colors and observed
+    /// player state.
+    func updateMounted(palette: ThemePalette)
     func viewerDidAppear()
     func viewerDidDisappear()
     /// The viewer stopped showing this renderer: free what it holds.
@@ -40,14 +36,25 @@ protocol FileRenderer: AnyObject {
 
 extension FileRenderer {
     var ownsBackSwipe: Bool { false }
-    var keepsOnReshow: Bool { false }
-    var releasesOffScreen: Bool { false }
+    var retention: FileRendererRetention { .reloadOnReshow }
     func finishLoading() async {}
-    func update(palette: ThemePalette) {}
+    func updateMounted(palette: ThemePalette) {}
     func viewerDidAppear() {}
     func viewerDidDisappear() {}
     func release() {}
     func makeShareItem(host: FileRendererHost) -> UIBarButtonItem? { nil }
+}
+
+/// What the viewer does with a renderer when its file shows again (a
+/// full-screen modal over it, a resize) or the viewer leaves the screen.
+enum FileRendererRetention {
+    /// Read the file again on every re-show.
+    case reloadOnReshow
+    /// Keep this renderer and its player when the same file shows again.
+    case keepOnReshow
+    /// Drop this renderer when the viewer leaves the screen; read the file
+    /// again when it comes back.
+    case releaseOffScreen
 }
 
 /// The renderer for each preview category the viewer does not show as text.

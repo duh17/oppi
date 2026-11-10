@@ -28,7 +28,7 @@ final class AudioFileRenderer: FileRenderer {
         return AudioFileRenderer(source: source, file: file)
     }
 
-    var keepsOnReshow: Bool { true }
+    var retention: FileRendererRetention { .keepOnReshow }
 
     func finishLoading() async {
         let result = await file.access.loadTimedText(api: file.api, path: file.path, kind: .audio)
@@ -58,7 +58,7 @@ final class AudioFileRenderer: FileRenderer {
     }
 
     /// The lyrics follow what plays: the viewer calls this from `updateProperties()`.
-    func update(palette: ThemePalette) {
+    func updateMounted(palette: ThemePalette) {
         player?.apply(configuration())
     }
 

@@ -24,7 +24,7 @@ final class VideoFileRenderer: FileRenderer {
         return VideoFileRenderer(source: source, timedTextLoader: file.timedTextLoader(kind: .video))
     }
 
-    var keepsOnReshow: Bool { true }
+    var retention: FileRendererRetention { .keepOnReshow }
 
     func mount(in host: FileRendererHost) -> UIView {
         let model = AuthenticatedMediaPlayerModel()
@@ -70,7 +70,7 @@ final class VideoFileRenderer: FileRenderer {
         )
     }
 
-    func update(palette: ThemePalette) {
+    func updateMounted(palette: ThemePalette) {
         page?.backgroundColor = palette.ui.bgDark
     }
 

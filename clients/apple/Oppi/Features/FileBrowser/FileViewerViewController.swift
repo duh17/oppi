@@ -270,7 +270,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         networkTask = nil
         if case .rendered(let renderer, _) = content {
             renderer.viewerDidDisappear()
-            if renderer.releasesOffScreen { content = .loading }
+            if renderer.retention == .releaseOffScreen { content = .loading }
         }
         if isLeaving {
             // Popped or dismissed: the editor hands its buffer to the session.
@@ -704,7 +704,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         }
         editOwner.updateEditorPage(palette: palette, checkoutSubtitle: checkoutSubtitle)
         if case .rendered(let renderer, _) = content {
-            renderer.update(palette: palette)
+            renderer.updateMounted(palette: palette)
         }
     }
 
@@ -825,7 +825,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         let requestedPath = requestedSelection.path
         let requestedCategory = FileKind.detect(from: requestedPath).previewCategory
         if !force, case .rendered(let renderer, let path) = content,
-           renderer.keepsOnReshow, path == requestedPath {
+           renderer.retention == .keepOnReshow, path == requestedPath {
             return
         }
 
@@ -945,9 +945,11 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     }
 
     /// The text the reader shows, or nil when the bytes are not text it shows.
+    /// Only text-category files get here, so a web string is HTML; its edit
+    /// draft does not apply.
     private func readerText(data: Data, editedText: String?, path: String) -> String? {
         if showsAsWebString(path) {
-            return FileKind.detect(from: path) == .html ? String(data: data, encoding: .utf8) : nil
+            return String(data: data, encoding: .utf8)
         }
         return editedText ?? String(data: data, encoding: .utf8)
     }

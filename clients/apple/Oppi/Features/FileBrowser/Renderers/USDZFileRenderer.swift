@@ -31,7 +31,7 @@ final class USDZFileRenderer: FileRenderer {
     /// The interactive scene keeps horizontal drags; the viewer adds no back swipe.
     var ownsBackSwipe: Bool { true }
     /// The local file goes when the viewer leaves the screen.
-    var releasesOffScreen: Bool { true }
+    var retention: FileRendererRetention { .releaseOffScreen }
 
     func release() {
         let handle = handle
