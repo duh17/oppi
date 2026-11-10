@@ -74,5 +74,5 @@ same jobs without buttons.
 
 The classic extension above is unchanged. It can publish only Pi's widget, which
 has no buttons, so it offers no Stop. See
-[Durable background jobs](../../dev/architecture-server/durable-extension-ui.md#background-jobs)
+[Durable background jobs](../../../dev/architecture-server/durable-extension-ui.md#background-jobs)
 for restart, output, and Stop details.

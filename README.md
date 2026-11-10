@@ -142,7 +142,7 @@ oppi status                  # server, network, and pairing status
 oppi doctor                  # security and environment diagnostics
 oppi workspace ...           # list/create/update/delete workspaces
 oppi worktree ...            # list/create/open/preview/remove worktrees
-oppi session ...             # create/send/watch/wait/inspect/resume/fork/delete sessions
+oppi session ...             # create/send/wait/inspect/resume/fork/delete sessions
 oppi agent ...               # manage saved Agents
 oppi schedule ...            # manage schedules and run history
 oppi server ...              # install/status/restart/stop/uninstall launchd service

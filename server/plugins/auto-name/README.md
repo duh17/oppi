@@ -8,7 +8,7 @@ A Pi extension that names an unnamed session from its first message. A small mod
 
 ## Turn it on
 
-In Oppi, the first `oppi serve` lists the package as an off extension: turn **Auto-Name** on in **Server Settings → Extensions** (every session, durable ones included) or in a workspace's **Extensions** list (that workspace's classic sessions). A server that had the old built-in Auto-Name on keeps it on ([upgrade](../../docs/extensions.md#auto-name)).
+In Oppi, the first `oppi serve` lists the package as an off extension: turn **Auto-Name** on in **Server Settings → Extensions** (every session, durable ones included) or in a workspace's **Extensions** list (that workspace's classic sessions). A server that had the old built-in Auto-Name on keeps it on ([upgrade](../../../docs/extensions.md#auto-name)).
 
 In terminal Pi, or from a checkout, link the package where Pi discovers extensions, and Pi loads it for every session; `pi config` turns it off:
 
