@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createLogger } from "../logger.js";
 import { openProbe, run } from "./checks.js";
 import { gitRemoteUrl, gitSshCommand } from "./git-ssh.js";
-import { Placements, type Placement } from "./placements.js";
+import { placementsFor, type Placement } from "./placements.js";
 import { MachineRegistry, type Machine } from "./registry.js";
 
 const log = createLogger({ base: { component: "machines" } });
@@ -10,21 +10,31 @@ const log = createLogger({ base: { component: "machines" } });
 /** Everything Oppi keeps on a machine lives under this directory of the target's home. */
 export const POOL_DIR = ".oppi/pool";
 
+const PUSH_TIMEOUT_MS = 30 * 60_000;
+
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
+/**
+ * Run git against the mirror. `skipHooks` is for the one push of `provisionRemoteWorktree` only:
+ * that push is Oppi's internal transport of commits to a mirror it owns, not a push the owner
+ * made, so the repository's pre-push gate (minutes of tests on every spawn) must not run on it.
+ * The bypass is this one command's `-c core.hooksPath`: no global config, no other git command,
+ * and the owner's own pushes and commits still run their hooks.
+ */
 function git(
   args: readonly string[],
-  options: { cwd: string; sshCommand: string },
+  options: { cwd: string; sshCommand: string; timeoutMs: number; skipHooks?: boolean },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       "git",
-      args,
+      [...(options.skipHooks ? ["-c", "core.hooksPath=/dev/null"] : []), ...args],
       {
         cwd: options.cwd,
-        timeout: 10 * 60_000,
+        timeout: options.timeoutMs,
         maxBuffer: 4 * 1024 * 1024,
         env: { ...process.env, GIT_SSH_COMMAND: options.sshCommand, GIT_TERMINAL_PROMPT: "0" },
+        killSignal: "SIGKILL",
       },
       (error, stdout, stderr) => {
         if (error) reject(new Error(`git ${args[0]} failed: ${stderr.trim() || error.message}`));
@@ -85,7 +95,12 @@ export async function provisionRemoteWorktree(request: RemoteWorktreeRequest): P
           gitRemoteUrl(target, mirror),
           `${request.base}:refs/heads/${branch}`,
         ],
-        { cwd: request.repo, sshCommand: gitSshCommand(target) },
+        {
+          cwd: request.repo,
+          sshCommand: gitSshCommand(target),
+          timeoutMs: PUSH_TIMEOUT_MS,
+          skipHooks: true,
+        },
       );
     }
     const added = await run(
@@ -133,6 +148,26 @@ export async function provisionRemoteWorktree(request: RemoteWorktreeRequest): P
  * work is on this host whatever happens to the machine. True when it is fetched.
  */
 export async function fetchPlacement(dataDir: string, placement: Placement): Promise<boolean> {
+  failedFetchAt.delete(placement.machine);
+  return fetchOnce(dataDir, placement);
+}
+
+/** When a fetch from each machine last failed: `list` does not wait on a machine that is down. */
+const failedFetchAt = new Map<string, number>();
+const FETCH_TIMEOUT_MS = 20_000;
+const FETCH_RETRY_AFTER_MS = 60_000;
+
+/** Like `fetchPlacement`, but a machine that failed a fetch less than a minute ago is not asked. */
+export async function fetchPlacementUnlessDown(
+  dataDir: string,
+  placement: Placement,
+): Promise<boolean> {
+  const failed = failedFetchAt.get(placement.machine);
+  if (failed !== undefined && Date.now() - failed < FETCH_RETRY_AFTER_MS) return false;
+  return fetchOnce(dataDir, placement);
+}
+
+async function fetchOnce(dataDir: string, placement: Placement): Promise<boolean> {
   const registry = new MachineRegistry(dataDir);
   const machine = registry.get(placement.machine);
   if (!machine) return false;
@@ -148,9 +183,10 @@ export async function fetchPlacement(dataDir: string, placement: Placement): Pro
         gitRemoteUrl(target, mirror),
         `refs/heads/${placement.branch}:refs/heads/${placement.branch}`,
       ],
-      { cwd: placement.repo, sshCommand: gitSshCommand(target) },
+      { cwd: placement.repo, sshCommand: gitSshCommand(target), timeoutMs: FETCH_TIMEOUT_MS },
     );
-    new Placements(dataDir).update(placement.worktreeId, { fetched: true });
+    placementsFor(dataDir).update(placement.worktreeId, { fetched: true });
+    failedFetchAt.delete(machine.name);
     log.info("machine.sync", {
       machine: machine.name,
       op: "fetch",
@@ -160,6 +196,7 @@ export async function fetchPlacement(dataDir: string, placement: Placement): Pro
     });
     return true;
   } catch {
+    failedFetchAt.set(machine.name, Date.now());
     log.warn("machine.sync", {
       machine: machine.name,
       op: "fetch",

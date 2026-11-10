@@ -37,6 +37,7 @@ import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
 import type { SubagentWorktree } from "../plugins/subagents/contract.js";
 import { resolveSessionWorkRoot } from "./session-work-root.js";
 import {
+  assertBranchFree,
   provisionRemote,
   REMOTE_EXCLUDED_TOOLS,
   remoteWorktreeLine,
@@ -452,6 +453,7 @@ export class DurableThreads {
     }
     const branch = typeof request === "string" ? "" : request.branch.trim();
     if (!branch) throw new Error('worktree needs a branch name or "new"');
+    if (machine !== undefined) await assertBranchFree(await workspaceGitRoot(workspace), branch);
     return { mode: "create", branch, base, ...onMachine };
   }
 

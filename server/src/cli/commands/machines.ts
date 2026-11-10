@@ -28,7 +28,10 @@ function terminalIo(json: boolean): SetupIo {
     confirm: async (question) => {
       // Nothing to ask without a terminal: the caller's flags are the approval.
       if (!process.stdin.isTTY) return false;
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const rl = createInterface({
+        input: process.stdin,
+        output: json ? process.stderr : process.stdout,
+      });
       try {
         return /^y(es)?$/i.test((await rl.question(`  ${question} [y/N] `)).trim());
       } finally {
@@ -125,7 +128,7 @@ async function runMachines(
       output({ machine: machine.name, test }, () => {
         for (const check of test.checks)
           writeHumanLine(
-            `  ${check.ok ? c.green("ok  ") : check.required ? c.red("FAIL") : c.yellow("note")} ${check.name}: ${check.detail}`,
+            `  ${check.ok ? c.green("ok  ") : c.red("FAIL")} ${check.name}: ${check.detail}`,
           );
       });
       if (!test.ok) setCapturedCliExitCode(1);

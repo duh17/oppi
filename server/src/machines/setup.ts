@@ -113,6 +113,10 @@ async function trustHostKey(
       throw new HostKeyChangedError(
         `The host key of ${target.host} differs from the one Oppi trusts. Check the machine; if it was reinstalled, run \`oppi machines remove ${options.name} --force\` and add it again.`,
       );
+    case "revoked":
+      throw new Error(
+        `The host key ${target.host} presents is marked @revoked in a known-hosts file. Do not trust this machine until you know why.`,
+      );
     case "conflicts-with-owner-known-hosts":
       throw new Error(
         `The host key ${target.host} presents differs from the one in your ~/.ssh/known_hosts. Check the machine before trusting it.`,
@@ -134,8 +138,8 @@ async function trustHostKey(
 }
 
 /**
- * `oppi machines add`: key, host key, login, helper, PATH and checks, saving only when every
- * required check passes. Returns the saved machine.
+ * `oppi machines add`: key, host key, login, helper, PATH and a connection test, saving only
+ * when it passes. Returns the saved machine.
  */
 export async function addMachine(
   registry: MachineRegistry,
@@ -193,10 +197,8 @@ export async function addMachine(
   };
   const test = await runMachineChecks(registry, machine);
   for (const check of test.checks)
-    io.say(
-      `${check.ok ? "ok  " : check.required ? "FAIL" : "note"} ${check.name}: ${check.detail}`,
-    );
-  if (!test.ok) throw new Error("A required check failed; the machine was not saved.");
+    io.say(`${check.ok ? "ok  " : "FAIL"} ${check.name}: ${check.detail}`);
+  if (!test.ok) throw new Error("The connection test failed; the machine was not saved.");
   registry.save({ ...machine, test });
   return { ...machine, test };
 }

@@ -20,13 +20,13 @@ A session that runs on a machine is a normal session in the app, with these limi
 - **Files:** the app cannot browse or diff its files, because they are on the other machine. The file and diff screens answer "This session's files are on build-mac." Its commits come back to the server's repository when it finishes, and you review them there.
 - **Fork:** you cannot fork it.
 - **Tools:** it has `bash`, `read`, `edit`, and `write`, but no `ls`, `find`, or `grep`; it uses `ls`, `find`, and `rg` through `bash`.
-- **`oppi` command:** it is not available on the machine. The subagent tool still starts further work.
+- **`oppi` command:** Oppi does not install it there, and the worker is not identified to this server. If the machine has its own Oppi, its `oppi` talks to that server, not to this one. The subagent tool starts further work.
 
 ## What the machine needs
 
 - **SSH (Remote Login):** on macOS, turn on **System Settings → General → Sharing → Remote Login**. The server must be able to reach it by name or address, for example over Tailscale.
 - **`git`:** Oppi keeps a mirror of your repository and worktrees under `~/.oppi/pool` in the account's home folder.
-- **Everything else is yours.** Oppi does not inspect or manage the machine: toolchains, a git identity for commits, disk space, and sleep settings are your setup, and a command that needs something missing fails with that tool's own error. The subagent runs with the `PATH` of the machine's login shell, which Oppi captures once when you add the machine. The login shell can be fish or zsh.
+- **Everything else is yours.** Oppi does not inspect or manage the machine: toolchains, a git identity for commits, disk space, and sleep settings are your setup, and a command that needs something missing fails with that tool's own error. The subagent runs with the `PATH` of the machine's login shell, which Oppi captures once when you add the machine; run `oppi machines add` again to capture it anew. The login shell can be fish or zsh.
 
 ## Set it up
 
@@ -59,7 +59,7 @@ In tool terms: `subagent spawn` with `host: "build-mac"` and `worktree: "new"` (
 1. Keeps a bare mirror of your repository on the machine (`~/.oppi/pool/<workspace>.git`) and pushes your current commit to it from the server.
 2. Adds a worktree of it for the child, under `~/.oppi/pool/worktrees`.
 3. Runs the child there. In its prompt, paths, programs, and `localhost` mean the machine.
-4. When the child finishes (or fails, or you stop it), fetches its branch into your repository. Landing then works as for any worktree child. If the machine is offline at that moment, the fetch is retried the next time the parent lists its children.
+4. When the child finishes (or fails, or you stop it), fetches its branch into your repository. The branch is an ordinary local branch there, with no worktree on the server: merge it, or check it out to review it. The parent's answer and `list` fetch again if the machine was offline at that moment. The first worker on a machine copies the repository to it, which can take minutes, and the spawn shows that while it runs.
 
 The child's `list` row and answers say `worktree: <branch> · on build-mac · 2 commits ahead · fetched`. Work that is not committed on the machine is not in the branch.
 
@@ -75,7 +75,7 @@ Long builds that must survive a server restart do not fit this yet. Server test 
 
 - **Skills** stay on the server. The worker sees each skill as a `skill://<name>/SKILL.md` location and reads it with `read`, from the skill's own folder on the server only. `/skill:` commands work as usual.
 - **MCP servers** keep running on the server, as for any session. A tool that needs the machine's files does not see them.
-- **The `oppi` command** is not on the machine, so the worker cannot manage sessions itself.
+- **The `oppi` command** on the machine, if there is one, belongs to that machine's own server, so the worker cannot manage this server's sessions with it.
 
 ## Safety
 

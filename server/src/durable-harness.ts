@@ -76,6 +76,7 @@ import type { SurfacePublisher } from "./durable-surface.js";
 import type { LiveVoiceRuntimePort } from "./live-voice-speech.js";
 import { LIVE_VOICE_EXTENSION } from "../plugins/live-voice/contract.js";
 import { executionEnv } from "./durable-execution-env.js";
+import { placementsFor } from "./machines/placements.js";
 import { properLockfile } from "./pi-lockfile.js";
 import { DURABLE_STORE_LOCK_STALE_MS } from "./durable-store-lock.js";
 import { DurableSessionDoc } from "./durable-session-doc.js";
@@ -1533,7 +1534,10 @@ export class DurableHarness {
   constructor(
     readonly dataDir: string,
     private readonly builtInDir = BUILT_IN_PLUGINS_DIR,
-  ) {}
+  ) {
+    // A start ended every remote command; resumed children mark their machines active again.
+    placementsFor(dataDir).clearActive();
+  }
 
   /** Installed built-in plugins, in install order. */
   private get bundled(): readonly LoadedPlugin[] {

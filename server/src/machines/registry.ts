@@ -14,7 +14,6 @@ const MACHINE_NAME = /^[a-z0-9][a-z0-9-]{0,30}$/;
 
 export interface MachineCheck {
   name: string;
-  required: boolean;
   ok: boolean;
   detail: string;
 }
@@ -22,7 +21,7 @@ export interface MachineCheck {
 /** The outcome of the last `oppi machines test`: what `list` and `doctor` show without a network. */
 export interface MachineTest {
   at: number;
-  /** Every required check passed. */
+  /** Every check passed. */
   ok: boolean;
   checks: MachineCheck[];
 }
@@ -70,12 +69,11 @@ function parseCheck(raw: unknown): MachineCheck {
   if (
     !isRecord(raw) ||
     typeof raw.name !== "string" ||
-    typeof raw.required !== "boolean" ||
     typeof raw.ok !== "boolean" ||
     typeof raw.detail !== "string"
   )
     throw new Error("a test check is malformed");
-  return { name: raw.name, required: raw.required, ok: raw.ok, detail: raw.detail };
+  return { name: raw.name, ok: raw.ok, detail: raw.detail };
 }
 
 function parseMachine(raw: unknown): Machine {

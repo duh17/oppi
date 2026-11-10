@@ -54,7 +54,11 @@ import { controlConversationTools } from "./durable-control-conversation.js";
 import { DurableRuntime, type SessionHost } from "./durable-harness.js";
 import { runtimeSwitched } from "./durable-execution-env.js";
 import { placementsFor } from "./machines/placements.js";
-import { presentRemoteSkills, remotePromptSection } from "./machines/remote-presentation.js";
+import {
+  forgetRemoteSkills,
+  presentRemoteSkills,
+  remotePromptSection,
+} from "./machines/remote-presentation.js";
 import { DurableSessionDoc } from "./durable-session-doc.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
@@ -1093,6 +1097,7 @@ export class DurableBackend implements AgentBackend {
     await this.detachForRestart();
     await this.host.unbindSandboxEnv(this.conversation.id);
     await this.host.closeMcp(this.session.id);
+    forgetRemoteSkills(this.session.id);
     return { disposal: "graceful" };
   }
   /**
@@ -1148,6 +1153,7 @@ export class DurableBackend implements AgentBackend {
       await this.detachForRestart();
       await this.host.unbindSandboxEnv(this.conversation.id);
       await this.host.closeMcp(this.session.id);
+      forgetRemoteSkills(this.session.id);
       this.transactions.poison(new Error("Server durable stop timed out"));
       return { disposal: "forced", cause: "lifecycle_timeout", operation: "stop", timeoutMs };
     };

@@ -7,16 +7,21 @@ import type { SshTarget } from "@earendil-works/pi-env";
 
 const execFileAsync = promisify(execFile);
 
-/** `<type> <base64>` of a known-hosts line (`[markers] hosts type key [comment]`). */
-function keysOf(lines: readonly string[]): Set<string> {
+/**
+ * `<type> <base64>` of the plain host-key lines of a known-hosts file (`hosts type key [comment]`),
+ * or, with `marker`, of the lines carrying that marker. A `@cert-authority` line holds a CA's key,
+ * never a host's, so it vouches for nothing.
+ */
+function keysOf(lines: readonly string[], marker?: "@revoked"): Set<string> {
   const keys = new Set<string>();
   for (const line of lines) {
     const fields = line.trim().split(/\s+/);
     if (fields.length < 3 || fields[0]?.startsWith("#")) continue;
-    // `@cert-authority` and `@revoked` lines carry a marker before the host field.
-    const offset = fields[0]?.startsWith("@") ? 1 : 0;
+    const marked = fields[0]?.startsWith("@") ? fields[0] : undefined;
+    if (marked !== marker) continue;
+    const offset = marked ? 1 : 0;
     const [type, key] = [fields[offset + 1], fields[offset + 2]];
-    if (type && key && fields[0] !== "@revoked") keys.add(`${type} ${key}`);
+    if (type && key) keys.add(`${type} ${key}`);
   }
   return keys;
 }
@@ -30,6 +35,8 @@ export type HostKeyDecision =
   | "changed"
   /** The owner's known-hosts holds another key of the same type for this host. */
   | "conflicts-with-owner-known-hosts"
+  /** A known-hosts file marks the presented key `@revoked`: never trust it. */
+  | "revoked"
   /** Nothing to compare with: show the fingerprints and ask. */
   | "ask";
 
@@ -44,6 +51,8 @@ export function decideHostKey(
   owners: readonly string[],
 ): HostKeyDecision {
   const presented = keysOf(scanned);
+  const revoked = keysOf([...ours, ...owners], "@revoked");
+  if ([...presented].some((key) => revoked.has(key))) return "revoked";
   const types = new Set([...presented].map((key) => key.split(" ")[0]));
   const conflicts = (known: Set<string>): boolean =>
     [...known].some((key) => types.has(key.split(" ")[0]) && !presented.has(key));

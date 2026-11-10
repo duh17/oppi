@@ -21,7 +21,7 @@ export function machineDoctorChecks(
         level: "warn",
         message: `machine ${machine.name}: not tested (\`oppi machines test ${machine.name}\`)`,
       };
-    const failed = machine.test.checks.filter((check) => check.required && !check.ok);
+    const failed = machine.test.checks.filter((check) => !check.ok);
     return machine.test.ok
       ? {
           level: "pass",

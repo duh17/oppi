@@ -62,7 +62,7 @@ export async function runMachineChecks(
 ): Promise<MachineTest> {
   const checks: MachineCheck[] = [];
   const add = (name: string, ok: boolean, detail: string): void => {
-    checks.push({ name, required: true, ok, detail });
+    checks.push({ name, ok, detail });
   };
   const probe = openProbe(registry, machine);
   try {

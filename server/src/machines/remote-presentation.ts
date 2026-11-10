@@ -6,7 +6,7 @@ import { isPathWithinRoot } from "../path-utils.js";
 
 /** The prompt section of a conversation whose tools run on a machine. */
 export function remotePromptSection(machine: string, root: string): string {
-  return `Your tools run on ${machine} in ${root}. Paths, programs and localhost refer to that machine. The \`oppi\` command is not available there; use the subagent tool to start work.`;
+  return `Your tools run on ${machine} in ${root}. Paths, programs and localhost refer to that machine. An \`oppi\` command there, if installed, talks to that machine's own server, not to this one; use the subagent tool to start work.`;
 }
 
 /** The most a `skill://` read returns: a Skill's own files, never a large asset. */
@@ -26,6 +26,11 @@ export function presentRemoteSkills(sessionId: string, skills: readonly Skill[])
     ...skill,
     filePath: `skill://${skill.name}/${relative(skill.baseDir, skill.filePath)}`,
   }));
+}
+
+/** Drop a session's Skills when its session ends. */
+export function forgetRemoteSkills(sessionId: string): void {
+  skillDirs.delete(sessionId);
 }
 
 /** `read skill://<name>[/<path>]` for session `sessionId`: a file's text, or a directory's listing. */

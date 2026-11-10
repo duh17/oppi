@@ -99,6 +99,7 @@ import { keepAutoDiscoveryOffHost, resolveSandboxExtensions } from "./sandbox-ho
 import { canonicalServerResourcePath } from "./server-resource-id.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError } from "./host.js";
+import { keepPreviousPiDefaults } from "./pi-defaults.js";
 import { resolveSessionWorkRoot, workspaceMountRoot } from "./session-work-root.js";
 import { resolveSandboxGuestCwd } from "./workspace-folder.js";
 import { oppiAppendSystemPrompt } from "./oppi-docs.js";
@@ -1176,9 +1177,9 @@ export class SdkBackend implements AgentBackend {
         modelsPath: join(runtimeAgentDir, "models.json"),
       });
       const trustManagedProject = managedSession && !sandboxMode;
-      const settingsManager = SettingsManager.create(hostCwd, runtimeAgentDir, {
-        projectTrusted: !trustManagedProject,
-      });
+      const settingsManager = keepPreviousPiDefaults(
+        SettingsManager.create(hostCwd, runtimeAgentDir, { projectTrusted: !trustManagedProject }),
+      );
       let sessionTrust: boolean | undefined;
       const resolveTrust = async (): Promise<void> => {
         if (!trustManagedProject) return;

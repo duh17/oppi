@@ -47,6 +47,11 @@ describe("host key trust", () => {
     ).toBe("changed");
   });
 
+  it("never trusts a key a known-hosts file revokes, or a CA line's key", () => {
+    expect(decideHostKey(scanned, [], [`@revoked build-mac ssh-ed25519 ${KEY_A}`])).toBe("revoked");
+    expect(decideHostKey(scanned, [], [`@cert-authority * ssh-ed25519 ${KEY_A}`])).toBe("ask");
+  });
+
   it("asks when nothing vouches for the key, and keeps a pinned key trusted", () => {
     expect(decideHostKey(scanned, [], [])).toBe("ask");
     // A key of another type proves nothing about this one.

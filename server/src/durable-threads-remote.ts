@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import type { SubagentWorktree } from "../plugins/subagents/contract.js";
 import type { SubagentWorktreePlan } from "./durable-extension-api.js";
 import { placementsFor } from "./machines/placements.js";
-import { fetchPlacement, provisionRemoteWorktree } from "./machines/provision.js";
+import { fetchPlacementUnlessDown, provisionRemoteWorktree } from "./machines/provision.js";
 import { MachineRegistry, type Machine } from "./machines/registry.js";
 import type { Workspace } from "./types.js";
 import { workspaceGitRoot } from "./worktrees.js";
@@ -37,6 +37,28 @@ const slug = (branch: string): string =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 30) || "child";
+
+/**
+ * A remote worktree's branch starts from the parent's HEAD and is fetched back as a new branch
+ * here, so a name this repository already has can never be fetched: refuse it up front.
+ */
+export function assertBranchFree(repo: string, branch: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "git",
+      ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+      { cwd: repo },
+      (error) =>
+        error
+          ? resolve()
+          : reject(
+              new Error(
+                `Branch ${branch} already exists here. A worktree on a machine starts from your HEAD and comes back as a new branch: pick a new name.`,
+              ),
+            ),
+    );
+  });
+}
 
 /** Create the planned branch's worktree on the machine and record where it is. */
 export async function provisionRemote(
@@ -74,8 +96,10 @@ function countAhead(repo: string, base: string, branch: string): Promise<number>
 
 /**
  * `list`'s and the answers' line for a child on a machine: the branch, where it is, and how far
- * ahead it is, read from the copy fetched here. A worker that finished and is not fetched yet is
- * fetched now (the fetch at its end may have failed); the machine's own path is never read here.
+ * ahead it is, read from the copy fetched here. A running worker, and one that finished and is
+ * not fetched yet (the fetch at its end may have failed), is fetched now, so an answer reports
+ * the commits it just made; a machine that failed a fetch a minute ago is not asked again, so
+ * `list` never waits long on one that is down. The machine's own path is never read here.
  */
 export async function remoteWorktreeLine(
   dataDir: string,
@@ -83,8 +107,8 @@ export async function remoteWorktreeLine(
 ): Promise<string> {
   const placements = placementsFor(dataDir);
   let placement = placements.get(worktree.id);
-  if (placement && !placement.fetched && !placement.active) {
-    await fetchPlacement(dataDir, placement);
+  if (placement && (placement.active || !placement.fetched)) {
+    await fetchPlacementUnlessDown(dataDir, placement);
     placement = placements.get(worktree.id);
   }
   const parts = [worktree.branch ?? "detached", `on ${worktree.machine}`];

@@ -756,7 +756,7 @@ export function createDurableSessions(
       'does. host: "<machine>" (with worktree "new" or a branch) runs the child\'s bash, read, ' +
       "edit and write on another machine, in a worktree there; its branch comes back here when " +
       "it finishes. Paths and localhost in its task mean that machine; it has no ls, find or " +
-      "grep, and no oppi command. " +
+      "grep, and Oppi's oppi command is not set up there. " +
       "Tools narrow only: tools and readOnly name an exact set (readOnly keeps read and bash, " +
       "and bash is not a sandbox), while excludeTools only removes the tools it names. " +
       "send (name, message; " +
@@ -1058,6 +1058,12 @@ export function createDurableSessions(
     const earlier = rerun ? before?.children[name] : undefined;
     let worktree: SubagentWorktree | undefined = earlier?.worktree;
     if (earlier === undefined && request !== undefined) {
+      // The first worktree on a machine copies the repository there: say so while it runs.
+      if (host)
+        await api.details(
+          { name, status: `Preparing a worktree on ${host}; the first one copies the repository.` },
+          context,
+        );
       const plan = await sessions.planWorktree(request, name, call, host);
       worktree = await sessions.provisionWorktree(plan, { call, adopt: request !== "new" });
     }

@@ -7,7 +7,7 @@ import {
 } from "@earendil-works/pi-env";
 import { createLogger } from "../logger.js";
 import { MachineRegistry, type Machine } from "./registry.js";
-import { Placements } from "./placements.js";
+import { placementsFor } from "./placements.js";
 import { machineFailure } from "./errors.js";
 import { fetchPlacement } from "./provision.js";
 
@@ -93,7 +93,7 @@ export function createRemoteEnv(options: {
     );
   const { connection } = sshConnection(registry.target(machine));
   explainFailures(connection, machine.name);
-  const placements = new Placements(options.dataDir);
+  const placements = placementsFor(options.dataDir);
   // New commits may land while a worker runs, so the fetched copy is stale until it ends.
   const mark = (active: boolean): void => {
     if (options.worktreeId)
