@@ -244,8 +244,11 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
     /// and still shows no edit control.
     func testAReadOnlyFileFolds() throws {
         launch(file: "notebook.org", readOnly: true)
-        XCTAssertTrue(fold(7).waitUntilExists(timeout: 20), "the heading offers a fold")
+        // The first screen holds the first task line: drawn, and without a control.
+        XCTAssertTrue(fold(1).waitUntilExists(timeout: 20), "the reader draws its headings")
         XCTAssertFalse(app.buttons["fileViewer.task.checkbox.10"].exists, "no edit control")
+        // Each heading is its own cell, so a heading below the screen has no fold until it scrolls in.
+        XCTAssertTrue(scrollUntilBuilt(fold(7)), "the heading offers a fold")
         tapHeading(7, at: 0.5)
         XCTAssertTrue(waitForFold(7, "Collapsed"))
         XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'No dev install'")).firstMatch.waitUntilExists(timeout: 2))
@@ -279,6 +282,17 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
         return element.waitUntilExists(timeout: 15) ? element.value as? String : nil
     }
 
+    /// Scrolls down until the element exists. The reader builds a cell only for what is near
+    /// the screen, so a heading further down has no fold element until it scrolls in.
+    private func scrollUntilBuilt(_ element: XCUIElement) -> Bool {
+        if element.waitUntilExists(timeout: 5) { return true }
+        for _ in 0..<12 {
+            app.swipeUp()
+            if element.waitUntilExists(timeout: 1) { return true }
+        }
+        return false
+    }
+
     /// Scrolls until the element's line is on screen: a coordinate tap does not scroll.
     private func reveal(_ element: XCUIElement) {
         let bottom = app.windows.firstMatch.frame.maxY - 90
@@ -299,7 +313,7 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
     /// anywhere along the line. `at` taps that far across the line instead.
     private func tapHeading(_ ordinal: Int, at dx: CGFloat? = nil) {
         let element = fold(ordinal)
-        XCTAssertTrue(element.waitUntilExists(timeout: 15), "fold \(ordinal) exists")
+        XCTAssertTrue(scrollUntilBuilt(element), "fold \(ordinal) exists")
         reveal(element)
         let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
         if let dx {

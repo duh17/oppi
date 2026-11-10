@@ -287,7 +287,8 @@ final class ReaderTaskEditPreviewController: PreviewRootController {
         // A second writer: the file changes on disk behind the reader's back.
         let change = UIButton(type: .system)
         change.setTitle("Change file on disk", for: .normal)
-        change.titleLabel?.font = .preferredFont(forTextStyle: .caption2)
+        // A fixed size: a Dynamic Type font outgrows the strip at the largest text size.
+        change.titleLabel?.font = .systemFont(ofSize: 11)
         change.accessibilityIdentifier = "harness.readerTask.changeDisk"
         change.translatesAutoresizingMaskIntoConstraints = false
         change.addAction(UIAction { [fileName] _ in
@@ -302,9 +303,11 @@ final class ReaderTaskEditPreviewController: PreviewRootController {
             readout.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             readout.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             readout.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            // Bottom-leading: the top trailing corner is the reader's bar.
+            // Bottom-leading, in the home-indicator strip below the reader's last line: the top
+            // trailing corner is the reader's bar, and a button inside the safe area covers the
+            // reader's text, so a test cannot tap the line under it.
             change.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
-            change.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            change.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         refreshReadout()
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
