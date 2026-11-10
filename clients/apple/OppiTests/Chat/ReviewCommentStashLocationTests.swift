@@ -38,19 +38,19 @@ struct ReviewCommentStashLocationTests {
             path: "clients/apple/Oppi/Features/Chat/ChatView.swift",
             startLine: 12
         )
-        let mac = comment(
-            id: "mac",
-            path: "clients/apple/OppiMac/Views/ChatView.swift",
+        let review = comment(
+            id: "review",
+            path: "clients/apple/Oppi/Features/Review/ChatView.swift",
             startLine: 12
         )
-        let stash = [ios, mac]
+        let stash = [ios, review]
 
         let iosCompact = ReviewCommentStashLocation.compactText(for: ios, among: stash)
-        let macCompact = ReviewCommentStashLocation.compactText(for: mac, among: stash)
+        let reviewCompact = ReviewCommentStashLocation.compactText(for: review, among: stash)
 
         #expect(iosCompact == "Chat/ChatView.swift:12")
-        #expect(macCompact == "Views/ChatView.swift:12")
-        #expect(locationPath(iosCompact) != locationPath(macCompact))
+        #expect(reviewCompact == "Review/ChatView.swift:12")
+        #expect(locationPath(iosCompact) != locationPath(reviewCompact))
     }
 
     @Test("Same immediate parent expands until distinct paths differ")

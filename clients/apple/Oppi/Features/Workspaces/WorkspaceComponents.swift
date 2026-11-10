@@ -65,8 +65,7 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
     }
 
     /// The palette slot the state paints with; `uiColor(_:)` (SessionListCollection)
-    /// resolves it against the screen's palette. A slot, not a shape style: the
-    /// SwiftUI face (`ThemeShapeStyle`) ships in `OppiMac`.
+    /// resolves it against the screen's palette.
     var tintRole: ServerBadgeTintRole {
         switch self {
         case .connected: return .green

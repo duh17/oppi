@@ -9,7 +9,6 @@ enum OnboardingMode {
 }
 
 /// Idle pairing choices on first-run and Add Server onboarding.
-/// Nearby Mac pairing is omitted until the Mac app can advertise.
 enum OnboardingIdlePairingCTA: Equatable {
     /// Tailscale, then a machine, then install and pair: no terminal needed.
     case setUpComputer

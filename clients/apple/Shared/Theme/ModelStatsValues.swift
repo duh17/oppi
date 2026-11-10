@@ -7,7 +7,7 @@ import Foundation
 
 // MARK: - Shared model presentation helpers
 
-/// Shared model presentation helpers used by iOS and macOS stats surfaces.
+/// Shared model presentation helpers used by the stats surfaces.
 ///
 /// Colors are derived from the stable model id, not the provider, so the same
 /// model keeps the same color even when served through different providers.
@@ -74,7 +74,7 @@ extension StatsMetric {
 
 // MARK: - Shared stats aggregations
 
-/// Hourly per-model cost used by the iOS, iPad, and Mac daily drill-down views.
+/// Hourly per-model cost used by the daily drill-down views.
 struct StatsHourlyCost: Identifiable {
     let hour: Int
     let model: String

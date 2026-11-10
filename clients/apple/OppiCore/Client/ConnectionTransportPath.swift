@@ -4,6 +4,7 @@ import Foundation
 enum ConnectionTransportPath: String, Sendable, Equatable {
     case paired
     case lan
-    /// Owner Unix socket used by the Mac live session window.
+    /// The server's owner Unix socket (`~/.config/oppi/run/oppi.sock`). No
+    /// shipping client connects through it today; telemetry keeps the value.
     case unix
 }

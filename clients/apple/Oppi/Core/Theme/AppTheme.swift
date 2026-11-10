@@ -3,9 +3,8 @@ import Foundation
 /// Centralized theme definition for the entire app.
 ///
 /// Organizes all visual tokens — colors, code metrics, diff styling —
-/// into a single `Sendable` value type. Tokens are `ThemeColor` (UIKit colors
-/// on iOS, SwiftUI `Color` on the Mac), so this file imports no SwiftUI; the
-/// Mac's `\.theme` environment lives in `OppiMac/Theme/Theme+SwiftUI.swift`.
+/// into a single `Sendable` value type. Tokens are `ThemeColor` (UIKit
+/// colors), so this file imports no SwiftUI.
 struct AppTheme: Sendable {
     let bg: BgColors
     let text: TextColors

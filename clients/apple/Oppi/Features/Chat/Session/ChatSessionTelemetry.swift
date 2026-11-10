@@ -3,8 +3,7 @@ import Foundation
 
 /// Chat runtime telemetry for the iOS client: process-start timing and the
 /// mapping from the shared runtime's telemetry events to catalog events.
-/// OppiCore (which the Mac target also compiles) stays free of generated
-/// catalog types; this is the one place its vocabulary becomes catalog values.
+/// OppiCore stays free of generated catalog types; this is the one place its vocabulary becomes catalog values.
 enum ChatSessionTelemetry {
 
     /// Process start timestamp for app launch metric.

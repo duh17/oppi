@@ -1,9 +1,7 @@
 import Foundation
 
-// `#RRGGBB` parsing for theme tokens, shared by the platform color adapters
-// (`Oppi/Core/Theme/ThemeColor.swift` and `OppiMac/Theme/ThemeColor.swift`) so
-// the rule lives in one place. A palette token's type is the platform's own
-// color, so only the construction is platform-specific.
+// `#RRGGBB` parsing for theme tokens, built through `ThemeColor.themeSRGB`
+// (`Oppi/Core/Theme/ThemeColor.swift`).
 
 /// A theme token from a `#RRGGBB` string; nil for an empty string or a shape
 /// other than six hex digits.

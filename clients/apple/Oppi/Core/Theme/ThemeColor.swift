@@ -1,7 +1,6 @@
 import UIKit
 
-/// A theme token's color value on iOS: `UIColor`, the same way the Mac's
-/// `ThemeColor` (`OppiMac/Theme/ThemeColor.swift`) is SwiftUI's `Color`.
+/// A theme token's color value: `UIColor`.
 ///
 /// The palette, the theme, and the contrast rules carry these, so no theme file
 /// imports SwiftUI, and a UIKit call site converts nothing: a palette token is
@@ -13,7 +12,7 @@ typealias ThemeColor = UIColor
 extension UIColor {
     /// An sRGB token from components. The one constructor the shared theme
     /// files use, so `ThemePalettes`, `RemoteTheme`, and `ThemeContrast` build
-    /// a token the same way on both platforms.
+    /// a token the same way.
     static func themeSRGB(_ red: Double, _ green: Double, _ blue: Double, alpha: Double = 1) -> UIColor {
         UIColor(red: red, green: green, blue: blue, alpha: alpha)
     }
@@ -34,8 +33,6 @@ extension UIColor {
         return (Double(red), Double(green), Double(blue), Double(alpha))
     }
 
-    /// The token's CGColor, non-optional on both platforms: the Mac's
-    /// `Color.cgColor` is optional (nil outside any color space) and a theme
-    /// token is always an sRGB value.
+    /// The token's CGColor; a theme token is always an sRGB value.
     var themeCGColor: CGColor { cgColor }
 }

@@ -9,9 +9,9 @@ struct ToolContentDescriptorTests {
 
     @Test("structured edit patch keeps absolute line numbers")
     func structuredDiffKeepsAbsoluteLineNumbers() throws {
-        // Line-prefix models (MacDiffOutputModel) drop hunk starts and treat
-        // `---` / `+++` as headers without old/new numbers. The shared builder
-        // must keep UnifiedPatchParser line numbers.
+        // Line-prefix diff models drop hunk starts and treat `---` / `+++` as
+        // headers without old/new numbers. The shared builder must keep
+        // UnifiedPatchParser line numbers.
         let presentation = build(
             tool: "edit",
             argsSummary: "path: App.swift",
@@ -83,8 +83,8 @@ struct ToolContentDescriptorTests {
 
     @Test("multi-file patches stay original unified text")
     func multiFileDiffStaysUnifiedText() {
-        // MacDiffOutputModel.shouldRender is true for these markers and then
-        // flattens every file into one line list. The descriptor must not.
+        // A line-prefix diff model flattens every file into one line list.
+        // The descriptor must not.
         let diffText = """
         --- a/A.swift
         +++ b/A.swift
@@ -146,8 +146,8 @@ struct ToolContentDescriptorTests {
 
     @Test("code language comes from file path not content heuristics")
     func codeLanguageComesFromFilePath() {
-        // MacCodeOutputModel.inferredLanguage sees `func ` + `{` and reports
-        // Swift even when the path is Python.
+        // A content heuristic sees `func ` + `{` and reports Swift even when
+        // the path is Python.
         let source = "func helper():\n    return 1"
         let presentation = build(
             tool: "read",
@@ -296,7 +296,7 @@ struct ToolContentDescriptorTests {
 
     @Test("read media uses attachment ids not inline data URIs")
     func readMediaUsesAttachmentMetadata() {
-        // MacMediaOutputModel parses base64 data URIs and ignores details.media.
+        // The descriptor reads details.media, not base64 data URIs.
         let presentation = build(
             tool: "read",
             argsSummary: "path: icon.png",

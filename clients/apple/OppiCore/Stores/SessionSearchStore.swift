@@ -8,8 +8,8 @@ private let logger = Logger(
 
 /// Platform HTTP client that can run session FTS.
 ///
-/// iOS `APIClient` and Mac `MacWorkspaceClient` both conform. The store stays
-/// UI-framework-free so Home and inbox can share one search policy.
+/// `APIClient` conforms. The store stays UI-framework-free so Home and inbox
+/// can share one search policy.
 protocol SessionSearching: Sendable {
     func searchSessions(
         query: String,

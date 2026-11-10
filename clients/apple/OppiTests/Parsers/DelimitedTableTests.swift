@@ -159,41 +159,6 @@ struct DelimitedTableViewerPlanTests {
         #expect(plan.table.rows == [["a,b", ""]])
     }
 
-    @Test func fileDescriptorKeepsCsvTypeAndOriginalText() throws {
-        let original = "col\n=SUM(1,2)\n"
-        let data = try #require(original.data(using: .utf8))
-
-        guard case .file(let file) = FileViewerDescriptorBuilder.descriptor(
-            path: "metrics.csv",
-            data: data
-        ) else {
-            Issue.record("Expected a file descriptor for CSV")
-            return
-        }
-
-        #expect(file.fileKind == .csv)
-        #expect(file.text == original)
-        #expect(file.language == nil)
-        #expect(DelimitedTableViewerPlan.opening(path: file.filePath ?? "", text: file.text) != nil)
-    }
-
-    @Test func fileDescriptorKeepsTsvTypeAndOriginalText() throws {
-        let original = "a\tb\n1\t2\n"
-        let data = try #require(original.data(using: .utf8))
-
-        guard case .file(let file) = FileViewerDescriptorBuilder.descriptor(
-            path: "metrics.tsv",
-            data: data
-        ) else {
-            Issue.record("Expected a file descriptor for TSV")
-            return
-        }
-
-        #expect(file.fileKind == .tsv)
-        #expect(file.text == original)
-        #expect(DelimitedTableViewerPlan.opening(path: file.filePath ?? "", text: file.text)?.kind == .tsv)
-    }
-
     @Test func fullScreenContentRoutesCsvAndTsvToTheTableViewer() {
         let csv = FullScreenCodeContent.fromText("a,b\n1,2\n", filePath: "export.csv")
         let tsv = FullScreenCodeContent.fromText("a\tb\n1\t2\n", filePath: "export.tsv")

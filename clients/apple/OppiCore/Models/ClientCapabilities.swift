@@ -14,8 +14,7 @@ enum ClientCapability {
     /// `ServerConnection.routeStreamMessage` sends this list on `stream_connected`, as the server
     /// begins replaying the session's surfaces; it declares again on every socket open, so a
     /// reconnect or a switch to another focused session is covered. A server that does not
-    /// advertise it is never sent the command. The Mac app does not send it and keeps the v1
-    /// projection.
+    /// advertise it is never sent the command.
     static let extensionNativeUIComposites = "extension-native-ui:v2:composites"
 
     /// `extension-native-ui:v2:blocks`: this build also draws a `blocks` section's tree of

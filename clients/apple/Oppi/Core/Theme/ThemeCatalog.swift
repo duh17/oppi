@@ -1,18 +1,14 @@
 import CoreGraphics
 import Foundation
 import os
-#if canImport(UIKit)
 import UIKit
-#endif
 
 /// Color palette for the entire app — 51 tokens (49 required, 2 optional on import).
 ///
-/// 13 base colors (used by `UIColor.theme*` static accessors and, on the Mac,
-/// `Color.theme*`) plus 38 semantic tokens for UI surfaces, syntax highlighting,
+/// 13 base colors (used by `UIColor.theme*` static accessors) plus 38 semantic tokens for UI surfaces, syntax highlighting,
 /// markdown, diffs, and thinking.
 ///
-/// A token's type is the platform's own color (`ThemeColor`: `UIColor` on iOS,
-/// `Color` on the Mac), so nothing here imports SwiftUI. UIKit call sites read
+/// A token's type is `ThemeColor` (`UIColor`), so nothing here imports SwiftUI. UIKit call sites read
 /// the palette's cached UIKit face, `palette.ui` (`ThemeUIKitPalette`).
 ///
 /// A palette does not change after it is built: `ThemeContrast` reads a seed and

@@ -2,8 +2,7 @@ import Foundation
 
 /// UIKit-free UserDefaults-backed preferences shared by Apple clients.
 ///
-/// Keys match iOS `AppPreferences` so a device-local value round-trips across
-/// the iOS and Mac apps. Platform Settings views paint these values.
+/// Keys match iOS `AppPreferences`. Platform Settings views paint these values.
 enum AppPreferenceStore {
 
     // MARK: - Voice

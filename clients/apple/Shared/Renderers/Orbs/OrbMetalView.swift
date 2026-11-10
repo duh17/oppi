@@ -1,16 +1,6 @@
-#if canImport(UIKit)
-import UIKit
-#elseif canImport(AppKit)
-import AppKit
-#endif
 import Metal
 import QuartzCore
-
-#if canImport(UIKit)
-typealias OrbPlatformView = UIView
-#else
-typealias OrbPlatformView = NSView
-#endif
+import UIKit
 
 /// Native Metal host for one orb.
 ///
@@ -18,7 +8,7 @@ typealias OrbPlatformView = NSView
 /// CPU-shared; rasterization is batched Metal. Hidden, inactive, offscreen, and
 /// Reduce Motion states stop the clock. Reduce Motion paints one still frame.
 @MainActor
-final class OrbMetalView: OrbPlatformView {
+final class OrbMetalView: UIView {
     var style: OrbStyle {
         didSet { if style != oldValue { invalidateStillFrame() } }
     }
@@ -42,7 +32,6 @@ final class OrbMetalView: OrbPlatformView {
         didSet { applyFrameRate() }
     }
 
-    #if canImport(UIKit)
     var tintUIColor: UIColor = .label {
         didSet {
             guard !Self.tintComponentsEqual(tintUIColor, oldValue, traits: traitCollection) else { return }
@@ -56,21 +45,6 @@ final class OrbMetalView: OrbPlatformView {
             invalidateStillFrame()
         }
     }
-    #else
-    var tintNSColor: NSColor = .labelColor {
-        didSet {
-            guard !Self.tintComponentsEqual(tintNSColor, oldValue) else { return }
-            fallbackLayer.fillColor = tintNSColor.cgColor
-            invalidateStillFrame()
-        }
-    }
-    var accentNSColors: [NSColor] = [] {
-        didSet {
-            guard !Self.accentColorsEqual(accentNSColors, oldValue) else { return }
-            invalidateStillFrame()
-        }
-    }
-    #endif
 
     private let renderer: OrbMetalRenderer?
     private(set) var unavailableReason: String?
@@ -79,10 +53,7 @@ final class OrbMetalView: OrbPlatformView {
     private let displayLinkProxy = DisplayLinkProxy()
     nonisolated(unsafe) private var cadenceLink: CADisplayLink?
     nonisolated(unsafe) private var defaultObserverTokens: [NSObjectProtocol] = []
-    nonisolated(unsafe) private var workspaceObserverTokens: [NSObjectProtocol] = []
-    nonisolated(unsafe) private var windowObserverTokens: [NSObjectProtocol] = []
     nonisolated(unsafe) private var visibilityObservations: [NSKeyValueObservation] = []
-    nonisolated(unsafe) private var clipBoundsTokens: [NSObjectProtocol] = []
     private var smoother = VoiceSpectrumSmoother()
     private var lastStepNow: TimeInterval?
     private var clockOrigin: TimeInterval?
@@ -103,9 +74,7 @@ final class OrbMetalView: OrbPlatformView {
         forceReduceMotion || (honorsSystemReduceMotion && systemReduceMotionEnabled)
     }
 
-    #if canImport(UIKit)
     override class var layerClass: AnyClass { CAMetalLayer.self }
-    #endif
 
     private var metalLayer: CAMetalLayer? { layer as? CAMetalLayer }
 
@@ -120,7 +89,6 @@ final class OrbMetalView: OrbPlatformView {
         if let reason = unavailableReason {
             OrbLog.logger.error("Thinking orb Metal unavailable: \(reason, privacy: .public)")
         }
-        #if canImport(UIKit)
         isOpaque = false
         backgroundColor = .clear
         clipsToBounds = true
@@ -132,17 +100,12 @@ final class OrbMetalView: OrbPlatformView {
             view.fallbackLayer.fillColor = view.tintUIColor.cgColor
             view.invalidateStillFrame()
         }
-        #else
-        wantsLayer = true
-        clipsToBounds = true
-        #endif
         configureLayer()
         renderer?.onFinished = { [ledger] cost in
             ledger.noteFinished(cost)
         }
         listenForLifecycle()
         sceneActive = currentSceneIsActive()
-        #if canImport(UIKit)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(owningSceneWillDeactivate(_:)),
@@ -155,10 +118,8 @@ final class OrbMetalView: OrbPlatformView {
             name: UIScene.didActivateNotification,
             object: nil
         )
-        #endif
     }
 
-    #if canImport(UIKit)
     @objc private func owningSceneWillDeactivate(_ note: Notification) {
         guard note.object as? UIScene === window?.windowScene else { return }
         sceneActive = false
@@ -170,7 +131,6 @@ final class OrbMetalView: OrbPlatformView {
         sceneActive = true
         updateRunning()
     }
-    #endif
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
@@ -184,41 +144,17 @@ final class OrbMetalView: OrbPlatformView {
             defaultCenter.removeObserver(token)
         }
         defaultObserverTokens = []
-        for token in windowObserverTokens {
-            defaultCenter.removeObserver(token)
-        }
-        windowObserverTokens = []
-        for token in clipBoundsTokens {
-            defaultCenter.removeObserver(token)
-        }
-        clipBoundsTokens = []
         for observation in visibilityObservations {
             observation.invalidate()
         }
         visibilityObservations = []
-        #if canImport(AppKit)
-        let workspaceCenter = NSWorkspace.shared.notificationCenter
-        for token in workspaceObserverTokens {
-            workspaceCenter.removeObserver(token)
-        }
-        workspaceObserverTokens = []
-        #endif
     }
-
-    #if canImport(AppKit)
-    override func makeBackingLayer() -> CALayer {
-        let metal = CAMetalLayer()
-        applyMetalProperties(to: metal)
-        return metal
-    }
-    #endif
 
     func stopAndDismantle() {
         stopLink()
         clearVisibilityObservation()
     }
 
-    #if canImport(UIKit)
     override var isHidden: Bool {
         didSet { updateRunning() }
     }
@@ -258,81 +194,14 @@ final class OrbMetalView: OrbPlatformView {
         updateRunning()
     }
 
-    #else
-    override var isHidden: Bool {
-        didSet { updateRunning() }
-    }
-
-    override var alphaValue: CGFloat {
-        didSet { updateRunning() }
-    }
-
-    override func viewWillMove(toWindow window: NSWindow?) {
-        super.viewWillMove(toWindow: window)
-        if window == nil {
-            stopLink()
-        }
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        sceneActive = currentSceneIsActive()
-        refreshVisibilityObservation()
-        updateRunning()
-    }
-
-    override func viewDidMoveToSuperview() {
-        super.viewDidMoveToSuperview()
-        refreshVisibilityObservation()
-        updateRunning()
-    }
-
-    override func viewDidHide() {
-        super.viewDidHide()
-        updateRunning()
-    }
-
-    override func viewDidUnhide() {
-        super.viewDidUnhide()
-        updateRunning()
-    }
-
-    override func removeFromSuperview() {
-        stopLink()
-        super.removeFromSuperview()
-    }
-
-    override func layout() {
-        super.layout()
-        layoutMetal()
-        updateRunning()
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        fallbackLayer.fillColor = tintNSColor.cgColor
-        invalidateStillFrame()
-    }
-    #endif
-
     private func configureLayer() {
-        fallbackLayer.fillColor = {
-            #if canImport(UIKit)
-            return tintUIColor.cgColor
-            #else
-            return tintNSColor.cgColor
-            #endif
-        }()
+        fallbackLayer.fillColor = tintUIColor.cgColor
         fallbackLayer.strokeColor = nil
         fallbackLayer.isHidden = renderer != nil
         if let metalLayer {
             applyMetalProperties(to: metalLayer)
         }
-        #if canImport(UIKit)
         layer.addSublayer(fallbackLayer)
-        #else
-        layer?.addSublayer(fallbackLayer)
-        #endif
     }
 
     private func applyMetalProperties(to metalLayer: CAMetalLayer) {
@@ -346,11 +215,7 @@ final class OrbMetalView: OrbPlatformView {
 
     private func layoutMetal() {
         let bounds = self.bounds
-        #if canImport(UIKit)
         let scale = max(traitCollection.displayScale, 1)
-        #else
-        let scale = max(window?.backingScaleFactor ?? 1, 1)
-        #endif
         let drawable = CGSize(
             width: max(1, bounds.width * scale),
             height: max(1, bounds.height * scale)
@@ -373,8 +238,6 @@ final class OrbMetalView: OrbPlatformView {
     }
 
     var isEffectivelyVisible: Bool {
-        guard window != nil else { return false }
-        #if canImport(UIKit)
         guard let window, !window.isHidden, window.alpha > 0.01 else { return false }
         guard !isHidden, alpha > 0.01 else { return false }
         var rect = bounds
@@ -391,33 +254,10 @@ final class OrbMetalView: OrbPlatformView {
         let inWindow = current.convert(rect, to: window)
         let clipped = inWindow.intersection(window.bounds)
         return !clipped.isNull && !clipped.isEmpty
-        #else
-        guard let window, window.isVisible, !window.isMiniaturized else { return false }
-        guard !isHidden, alphaValue > 0.01 else { return false }
-        var rect = bounds
-        var current: NSView = self
-        while let parent = current.superview {
-            if current.isHidden || current.alphaValue < 0.01 { return false }
-            rect = current.convert(rect, to: parent)
-            if parent.clipsToBounds || parent is NSClipView {
-                rect = rect.intersection(parent.bounds)
-                if rect.isNull || rect.isEmpty { return false }
-            }
-            current = parent
-        }
-        guard let content = window.contentView else { return true }
-        let inContent = current.convert(rect, to: content)
-        let clipped = inContent.intersection(content.bounds)
-        return !clipped.isNull && !clipped.isEmpty
-        #endif
     }
 
     private var isSceneAbleToRender: Bool {
-        #if canImport(UIKit)
         sceneActive
-        #else
-        currentSceneIsActive()
-        #endif
     }
 
     private var canSubmit: Bool {
@@ -432,9 +272,6 @@ final class OrbMetalView: OrbPlatformView {
     }
 
     private func updateRunning() {
-        #if canImport(AppKit)
-        sceneActive = currentSceneIsActive()
-        #endif
         if shouldRun {
             stillFramePresented = false
             startLinkIfNeeded()
@@ -451,11 +288,7 @@ final class OrbMetalView: OrbPlatformView {
             isDriving = true
             return
         }
-        #if canImport(UIKit)
         let link = CADisplayLink(target: displayLinkProxy, selector: #selector(DisplayLinkProxy.tick(_:)))
-        #else
-        let link = displayLink(target: displayLinkProxy, selector: #selector(DisplayLinkProxy.tick(_:)))
-        #endif
         cadenceLink = link
         applyFrameRate()
         link.add(to: .main, forMode: .common)
@@ -470,15 +303,6 @@ final class OrbMetalView: OrbPlatformView {
     }
 
     private func pauseOrStopLink() {
-        #if canImport(AppKit)
-        // NSView.displayLink does not invoke while the view is hidden or off-display.
-        // Keep that link so AppKit can resume without a layout pass.
-        if window != nil, cadenceLink != nil, !isEffectivelyVisible {
-            isDriving = false
-            lastStepNow = nil
-            return
-        }
-        #endif
         stopLink()
     }
 
@@ -553,11 +377,7 @@ final class OrbMetalView: OrbPlatformView {
             ledger.addSkipped()
             return false
         }
-        #if canImport(UIKit)
         let scale = max(traitCollection.displayScale, 1)
-        #else
-        let scale = max(window?.backingScaleFactor ?? 1, 1)
-        #endif
         if metalLayer.drawableSize.width < 1 || metalLayer.drawableSize.height < 1 {
             metalLayer.contentsScale = scale
             metalLayer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
@@ -585,7 +405,6 @@ final class OrbMetalView: OrbPlatformView {
     }
 
     private var currentTint: OrbTint {
-        #if canImport(UIKit)
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         tintUIColor.resolvedColor(with: traitCollection).getRed(&r, green: &g, blue: &b, alpha: &a)
         return OrbTint(
@@ -594,23 +413,10 @@ final class OrbMetalView: OrbPlatformView {
             blue: Float(b),
             isDark: isDarkBackground
         )
-        #else
-        let rgb = tintNSColor.usingColorSpace(.deviceRGB) ?? tintNSColor
-        return OrbTint(
-            red: Float(rgb.redComponent),
-            green: Float(rgb.greenComponent),
-            blue: Float(rgb.blueComponent),
-            isDark: isDarkBackground
-        )
-        #endif
     }
 
     private var systemReduceMotionEnabled: Bool {
-        #if canImport(UIKit)
         UIAccessibility.isReduceMotionEnabled
-        #else
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        #endif
     }
 
     private func invalidateStillFrame() {
@@ -619,20 +425,14 @@ final class OrbMetalView: OrbPlatformView {
     }
 
     private func currentSceneIsActive() -> Bool {
-        #if canImport(UIKit)
         if let state = window?.windowScene?.activationState {
             return state == .foregroundActive
         }
         return UIApplication.shared.applicationState != .background
-        #else
-        guard let window else { return false }
-        return window.isVisible && !window.isMiniaturized && !(NSApp?.isHidden ?? false)
-        #endif
     }
 
     private func listenForLifecycle() {
         let center = NotificationCenter.default
-        #if canImport(UIKit)
         defaultObserverTokens.append(contentsOf: [
             center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
@@ -669,52 +469,12 @@ final class OrbMetalView: OrbPlatformView {
                 MainActor.assumeIsolated { self?.applyFrameRate() }
             },
         ])
-        #else
-        defaultObserverTokens.append(contentsOf: [
-            center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.sceneActive = false
-                    self?.updateRunning()
-                }
-            },
-            center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.sceneActive = true
-                    self?.updateRunning()
-                }
-            },
-            center.addObserver(
-                forName: .NSProcessInfoPowerStateDidChange,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.applyFrameRate() }
-            },
-            center.addObserver(
-                forName: ProcessInfo.thermalStateDidChangeNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.applyFrameRate() }
-            },
-        ])
-        workspaceObserverTokens.append(
-            NSWorkspace.shared.notificationCenter.addObserver(
-                forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.updateRunning() }
-            }
-        )
-        #endif
     }
 
     private func refreshVisibilityObservation() {
         clearVisibilityObservation()
         guard window != nil else { return }
 
-        #if canImport(UIKit)
         var ancestor: UIView? = superview
         while let view = ancestor {
             observeVisibilityKeyPath(view, \.isHidden)
@@ -726,29 +486,6 @@ final class OrbMetalView: OrbPlatformView {
             }
             ancestor = view.superview
         }
-        #else
-        observeHostWindow(window)
-        var ancestor: NSView? = superview
-        while let view = ancestor {
-            observeVisibilityKeyPath(view, \.isHidden)
-            observeVisibilityKeyPath(view, \.alphaValue)
-            observeVisibilityKeyPath(view, \.bounds)
-            observeVisibilityKeyPath(view, \.frame)
-            if let clip = view as? NSClipView {
-                clip.postsBoundsChangedNotifications = true
-                clipBoundsTokens.append(
-                    NotificationCenter.default.addObserver(
-                        forName: NSView.boundsDidChangeNotification,
-                        object: clip,
-                        queue: nil
-                    ) { [weak self] _ in
-                        Self.deliverVisibilityPing(self)
-                    }
-                )
-            }
-            ancestor = view.superview
-        }
-        #endif
     }
 
     private func clearVisibilityObservation() {
@@ -756,15 +493,6 @@ final class OrbMetalView: OrbPlatformView {
             observation.invalidate()
         }
         visibilityObservations = []
-        let center = NotificationCenter.default
-        for token in windowObserverTokens {
-            center.removeObserver(token)
-        }
-        windowObserverTokens = []
-        for token in clipBoundsTokens {
-            center.removeObserver(token)
-        }
-        clipBoundsTokens = []
     }
 
     private func observeVisibilityKeyPath<T: NSObject, Value>(
@@ -777,32 +505,6 @@ final class OrbMetalView: OrbPlatformView {
             }
         )
     }
-
-    #if canImport(AppKit)
-    private func observeHostWindow(_ window: NSWindow?) {
-        guard let window else { return }
-        observeVisibilityKeyPath(window, \.isVisible)
-        observeVisibilityKeyPath(window, \.occlusionState)
-        let names: [Notification.Name] = [
-            NSWindow.didChangeOcclusionStateNotification,
-            NSWindow.didMiniaturizeNotification,
-            NSWindow.didDeminiaturizeNotification,
-            NSWindow.didBecomeKeyNotification,
-            NSWindow.didExposeNotification,
-        ]
-        for name in names {
-            windowObserverTokens.append(
-                NotificationCenter.default.addObserver(
-                    forName: name,
-                    object: window,
-                    queue: nil
-                ) { [weak self] _ in
-                    Self.deliverVisibilityPing(self)
-                }
-            )
-        }
-    }
-    #endif
 
     nonisolated private static func deliverVisibilityPing(_ owner: OrbMetalView?) {
         guard let owner else { return }
@@ -818,7 +520,6 @@ final class OrbMetalView: OrbPlatformView {
     }
 
     private var currentPalette: OrbPalette {
-        #if canImport(UIKit)
         let colors = accentUIColors
         let resolved: [SIMD3<Float>] = (0..<4).map { index in
             let color = index < colors.count ? colors[index] : tintUIColor
@@ -827,18 +528,8 @@ final class OrbMetalView: OrbPlatformView {
             return SIMD3(Float(r), Float(g), Float(b))
         }
         return OrbPalette(accents: resolved)
-        #else
-        let colors = accentNSColors
-        let resolved: [SIMD3<Float>] = (0..<4).map { index in
-            let raw = index < colors.count ? colors[index] : tintNSColor
-            let rgb = raw.usingColorSpace(.deviceRGB) ?? raw
-            return SIMD3(Float(rgb.redComponent), Float(rgb.greenComponent), Float(rgb.blueComponent))
-        }
-        return OrbPalette(accents: resolved)
-        #endif
     }
 
-    #if canImport(UIKit)
     private static func tintComponentsEqual(_ lhs: UIColor, _ rhs: UIColor, traits: UITraitCollection) -> Bool {
         var lr: CGFloat = 0, lg: CGFloat = 0, lb: CGFloat = 0, la: CGFloat = 0
         var rr: CGFloat = 0, rg: CGFloat = 0, rb: CGFloat = 0, ra: CGFloat = 0
@@ -851,21 +542,6 @@ final class OrbMetalView: OrbPlatformView {
         guard lhs.count == rhs.count else { return false }
         return zip(lhs, rhs).allSatisfy { tintComponentsEqual($0, $1, traits: traits) }
     }
-    #else
-    private static func tintComponentsEqual(_ lhs: NSColor, _ rhs: NSColor) -> Bool {
-        let left = lhs.usingColorSpace(.deviceRGB) ?? lhs
-        let right = rhs.usingColorSpace(.deviceRGB) ?? rhs
-        return left.redComponent == right.redComponent
-            && left.greenComponent == right.greenComponent
-            && left.blueComponent == right.blueComponent
-            && left.alphaComponent == right.alphaComponent
-    }
-
-    private static func accentColorsEqual(_ lhs: [NSColor], _ rhs: [NSColor]) -> Bool {
-        guard lhs.count == rhs.count else { return false }
-        return zip(lhs, rhs).allSatisfy { tintComponentsEqual($0, $1) }
-    }
-    #endif
 
     @MainActor
     private final class DisplayLinkProxy: NSObject {

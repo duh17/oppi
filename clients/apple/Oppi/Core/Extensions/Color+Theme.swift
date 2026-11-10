@@ -1,16 +1,9 @@
 import Foundation
-#if canImport(UIKit)
 import UIKit
-#endif
 
-// The theme's UIKit face and the platform-neutral surface and contrast rules.
-// Both targets compile this file; it imports no SwiftUI. The Mac's SwiftUI
-// face (`Color.theme*`, `ThemeShapeStyle`, the themed-surface modifiers,
-// `ThemeMotion`, `\.theme`) lives in `OppiMac/Theme/Theme+SwiftUI.swift`.
-//
-// Tokens here are `ThemeColor`: `UIColor` on iOS, `Color` on the Mac.
+// The theme's UIKit face and the surface and contrast rules. It imports no
+// SwiftUI. Tokens here are `ThemeColor` (`UIColor`).
 
-#if canImport(UIKit)
 /// UIKit-side theme colors.
 ///
 /// UIKit views read these instead of bridging a framework color at the call
@@ -69,7 +62,6 @@ extension UIColor {
         ThemeRuntimeState.currentUIKitPalette().surfaceStroke(role)
     }
 }
-#endif
 
 // MARK: - Themed Surface Roles
 
@@ -98,8 +90,8 @@ enum ThemeSurfaceRole: CaseIterable {
 }
 
 /// Resolved chrome for a `ThemeSurfaceRole`: fill, optional hairline stroke,
-/// and whether the fill must pair with a glass blur. SwiftUI call sites use
-/// `View.themedSurface(_:in:)`; UIKit paths read `palette.ui.surfaceFill(_:)`.
+/// and whether the fill must pair with a glass blur. UIKit paths read
+/// `palette.ui.surfaceFill(_:)`.
 struct ThemeSurfaceStyle {
     let fill: ThemeColor
     let stroke: ThemeColor?

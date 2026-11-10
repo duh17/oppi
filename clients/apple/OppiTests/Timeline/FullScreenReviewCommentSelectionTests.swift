@@ -1434,7 +1434,7 @@ struct FullScreenReviewCommentSelectionTests {
         let body = NativeFullScreenDiffBody(
             document: ToolDiffDocument(
                 lines: lines,
-                filePath: "/tmp/worktrees/foo/OppiMacApp.swift",
+                filePath: "/tmp/worktrees/foo/OppiApp.swift",
                 copyText: DiffEngine.formatUnified(lines)
             ),
             palette: ThemeID.dark.palette,
@@ -1456,7 +1456,7 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(rendered.contains("lines"))
 
         let labels = timelineAllViews(in: body).compactMap { $0 as? UILabel }
-        #expect(labels.contains { $0.text == "OppiMacApp.swift" })
+        #expect(labels.contains { $0.text == "OppiApp.swift" })
         #expect(labels.allSatisfy { label in
             guard let text = label.text else { return true }
             return !isFullScreenDiffHeaderChangeCount(text)

@@ -1,3 +1,4 @@
+import CryptoKit
 import Testing
 import Foundation
 import Network
@@ -397,7 +398,8 @@ private final class ReconnectWebSocketFixture: @unchecked Sendable {
             }
             let key = text.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("sec-websocket-key:") }?
                 .components(separatedBy: ":").last?.trimmingCharacters(in: .whitespaces) ?? ""
-            let accept = WebSocketFrameCodec.acceptKey(for: key)
+            // RFC 6455 section 4.2.2: base64(SHA-1(key + GUID)).
+            let accept = Data(Insecure.SHA1.hash(data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8))).base64EncodedString()
             let response = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \(accept)\r\n\r\n"
             let message = Data(#"{"type":"agent_start","sessionId":"s1"}"#.utf8)
             var bytes = Data(response.utf8)

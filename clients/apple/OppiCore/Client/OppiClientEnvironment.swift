@@ -3,7 +3,7 @@ import Foundation
 /// Platform-neutral inputs for the shared Apple API and stream clients.
 ///
 /// This value describes which Oppi server the client core should talk to. It does
-/// not own pairing UI, keychain storage, certificate trust evaluation, or the Mac
+/// not own pairing UI, keychain storage, certificate trust evaluation, or a
 /// local server process; those stay in platform adapters.
 struct OppiClientEnvironment: Equatable, Sendable {
     enum ProcessOwnership: String, Equatable, Sendable {

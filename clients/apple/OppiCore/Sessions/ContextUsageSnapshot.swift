@@ -38,20 +38,3 @@ struct ContextUsageSnapshot: Sendable, Equatable {
         return "Context usage \(percent) percent, \(tokens) of \(window) tokens"
     }
 }
-
-enum SessionContextUsagePresentation {
-    static func snapshot(for session: Session?) -> ContextUsageSnapshot {
-        ContextUsageSnapshot(
-            tokens: session?.contextTokens,
-            window: session?.contextWindow
-        )
-    }
-
-    /// Toolbar chip copy. Prefer session tokens; "Context" only when nothing is known.
-    static func toolbarTitle(_ snapshot: ContextUsageSnapshot) -> String {
-        if snapshot.tokens == nil && snapshot.windowTokens == 0 {
-            return "Context"
-        }
-        return snapshot.usageText
-    }
-}

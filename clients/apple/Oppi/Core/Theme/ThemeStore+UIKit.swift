@@ -1,7 +1,7 @@
 import UIKit
 
-// The theme store's UIKit face. iOS only: OppiMac compiles `ThemeStore.swift`
-// but not this file. It names no SwiftUI type, so it needs no `import SwiftUI`.
+// The theme store's UIKit face. It names no SwiftUI type, so it needs no
+// `import SwiftUI`.
 extension ThemeStore {
     /// The theme's color scheme for UIKit. System mode leaves it unspecified.
     var userInterfaceStyle: UIUserInterfaceStyle {

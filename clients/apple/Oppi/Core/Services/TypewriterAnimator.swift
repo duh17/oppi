@@ -1,10 +1,6 @@
 import Foundation
 import OSLog
-#if canImport(UIKit)
 import UIKit
-#elseif canImport(AppKit)
-import AppKit
-#endif
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Typewriter")
 
@@ -235,12 +231,6 @@ final class TypewriterAnimator {
     }
 
     private static var isReduceMotionEnabled: Bool {
-        #if canImport(UIKit)
         UIAccessibility.isReduceMotionEnabled
-        #elseif canImport(AppKit)
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        #else
-        false
-        #endif
     }
 }

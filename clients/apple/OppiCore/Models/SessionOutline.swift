@@ -2,8 +2,8 @@ import Foundation
 
 /// One lightweight row from `GET .../trace-outline`.
 ///
-/// Server JSON is the source of truth. UIKit-free so iOS and Mac share one
-/// decode. Platform views paint; they do not re-parse the payload.
+/// Server JSON is the source of truth. Views paint; they do not re-parse the
+/// payload.
 struct SessionOutlineEntrySnapshot: Codable, Identifiable, Equatable, Sendable {
     let id: String
     let kind: String
@@ -30,36 +30,4 @@ struct SessionOutlineSnapshot: Codable, Equatable, Sendable {
     let itemCount: Int
     let sourceCount: Int
     let jsonlBytes: Int
-}
-
-/// Timeline outline chips. Tree/fork navigation stays iOS-only.
-enum SessionOutlineFilter: String, CaseIterable, Sendable {
-    case all = "All"
-    case messages = "Messages"
-    case tools = "Tools"
-}
-
-/// Filter and search the decoded outline. Mac and tests call this instead of
-/// each painter inventing its own `contains` rules.
-enum SessionOutlineProjection {
-    static func displayedEntries(
-        _ entries: [SessionOutlineEntrySnapshot],
-        filter: SessionOutlineFilter,
-        query: String
-    ) -> [SessionOutlineEntrySnapshot] {
-        let prepared = FuzzyMatch.Query(query)
-        return entries.filter { entry in
-            switch filter {
-            case .all:
-                entry.passesAllFilter
-            case .messages:
-                entry.isMessage
-            case .tools:
-                entry.isTool
-            }
-        }.filter { entry in
-            guard let prepared else { return true }
-            return FuzzyMatch.bestScore(prepared, fields: [entry.summary, entry.tool]) != nil
-        }
-    }
 }

@@ -1,5 +1,5 @@
-// Shared terminal state code, linked only by the iOS app in this slice.
-// OppiMac does not yet link the VT library or consume this owner.
+// Shared terminal state code. It compiles only where the GhosttyVt library
+// links (the iOS app).
 #if canImport(GhosttyVt)
 import Foundation
 import GhosttyVt

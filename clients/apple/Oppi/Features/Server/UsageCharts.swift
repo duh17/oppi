@@ -33,7 +33,7 @@ struct UsageChartColors: Equatable {
     }
 }
 
-/// The daily stacked bars (`StatsDailyChart`, shared with the Mac): tap a bar to pick a day.
+/// The daily stacked bars (`StatsDailyChart`): tap a bar to pick a day.
 struct UsageDailyChartLeaf: View {
     let daily: [StatsDailyEntry]
     let metric: StatsMetric
