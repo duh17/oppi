@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 
 import type { AgentBackend } from "./agent-backend.js";
 
@@ -44,6 +44,7 @@ export type {
 } from "./session-share-redaction.js";
 
 const DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/";
+const GH_AUTH_STATUS_TIMEOUT_MS = 10_000;
 
 interface GhCommandResult {
   stdout: string;
@@ -101,7 +102,7 @@ export interface ShareSessionOptions {
 }
 
 interface ShareSessionDeps {
-  ensureGhAuthenticated?: () => void;
+  ensureGhAuthenticated?: () => void | Promise<void>;
   exportSessionToHtml?: (session: ShareSessionSource, outputPath: string) => Promise<void>;
   createSecretGist?: (htmlPath: string) => Promise<GhCommandResult>;
   makeShareViewerUrl?: (gistId: string) => string;
@@ -132,37 +133,6 @@ function normalizeShareError(error: unknown): ShareSessionError {
   }
 
   return shareError("share_unknown", message || "Share failed.");
-}
-
-function defaultEnsureGhAuthenticated(): void {
-  try {
-    const auth = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });
-    if (auth.error) {
-      const code = (auth.error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") {
-        throw shareError(
-          "gh_not_installed",
-          "GitHub CLI (gh) is not installed. Install it from https://cli.github.com/",
-        );
-      }
-      throw auth.error;
-    }
-
-    if (auth.status !== 0) {
-      throw shareError(
-        "gh_not_authenticated",
-        "GitHub CLI is not logged in. Run 'gh auth login' first.",
-      );
-    }
-  } catch (error) {
-    if (error instanceof ShareSessionError) {
-      throw error;
-    }
-    if (error instanceof Error) {
-      throw normalizeShareError(error);
-    }
-    throw shareError("share_unknown", String(error));
-  }
 }
 
 async function runGhCommand(args: string[], timeoutMs: number): Promise<GhCommandResult> {
@@ -215,6 +185,33 @@ async function runGhCommand(args: string[], timeoutMs: number): Promise<GhComman
       });
     });
   });
+}
+
+// Async so a slow `gh auth status` cannot stall the server's event loop.
+async function defaultEnsureGhAuthenticated(): Promise<void> {
+  try {
+    const auth = await runGhCommand(["auth", "status"], GH_AUTH_STATUS_TIMEOUT_MS);
+    if (auth.code !== 0) {
+      throw shareError(
+        "gh_not_authenticated",
+        "GitHub CLI is not logged in. Run 'gh auth login' first.",
+      );
+    }
+  } catch (error) {
+    if (error instanceof ShareSessionError) {
+      throw error;
+    }
+    if (error instanceof Error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw shareError(
+          "gh_not_installed",
+          "GitHub CLI (gh) is not installed. Install it from https://cli.github.com/",
+        );
+      }
+      throw normalizeShareError(error);
+    }
+    throw shareError("share_unknown", String(error));
+  }
 }
 
 async function defaultCreateSecretGist(htmlPath: string): Promise<GhCommandResult> {
@@ -412,7 +409,7 @@ export async function shareSession(
       );
     }
 
-    ensureGhAuthenticated();
+    await ensureGhAuthenticated();
 
     const gist = await createSecretGist(tempHtmlPath);
 

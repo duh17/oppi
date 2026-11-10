@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { __shareSessionTestUtils, shareSession } from "../src/session-share.js";
 
@@ -28,6 +28,73 @@ function decodeExportSessionData(html: string): Record<string, unknown> {
   }
   return JSON.parse(Buffer.from(match[1]!.trim(), "base64").toString("utf-8"));
 }
+
+describe("shareSession gh sign-in check", () => {
+  const originalPath = process.env.PATH;
+  let binDir: string | undefined;
+
+  afterEach(() => {
+    process.env.PATH = originalPath;
+    if (binDir) rmSync(binDir, { recursive: true, force: true });
+    binDir = undefined;
+  });
+
+  /** Points PATH at a temp dir holding a fake `gh` running `script`; no script = no gh at all. */
+  function useFakeGh(script?: string): void {
+    binDir = mkdtempSync(join(tmpdir(), "oppi-fake-gh-"));
+    if (script !== undefined) {
+      const ghPath = join(binDir, "gh");
+      writeFileSync(ghPath, `#!/bin/sh\n${script}\n`, "utf-8");
+      chmodSync(ghPath, 0o755);
+    }
+    process.env.PATH = binDir;
+  }
+
+  function publishWithDefaultAuthCheck(createSecretGist = vi.fn()) {
+    const result = shareSession(makeSession("/tmp/session.jsonl"), {
+      exportSessionToHtml: async (_session, outputPath) => {
+        writeFileSync(outputPath, "<html><body>ok</body></html>", "utf-8");
+      },
+      createSecretGist: async (htmlPath) => {
+        createSecretGist(htmlPath);
+        return { stdout: "https://gist.github.com/demo-user/abc123\n", stderr: "", code: 0 };
+      },
+      makeShareViewerUrl: (gistId) => `https://pi.dev/session/#${gistId}`,
+    });
+    return { result, createSecretGist };
+  }
+
+  it("publishes when gh auth status exits 0, without blocking the event loop", async () => {
+    useFakeGh("/bin/sleep 0.3\nexit 0");
+    let ticks = 0;
+    const timer = setInterval(() => {
+      ticks += 1;
+    }, 10);
+    try {
+      const { result, createSecretGist } = publishWithDefaultAuthCheck();
+      await expect(result).resolves.toMatchObject({ phase: "published" });
+      expect(createSecretGist).toHaveBeenCalledOnce();
+    } finally {
+      clearInterval(timer);
+    }
+    // A synchronous spawn would freeze timers for the whole 300ms gh run.
+    expect(ticks).toBeGreaterThan(5);
+  });
+
+  it("maps a non-zero gh auth status to gh_not_authenticated before any upload", async () => {
+    useFakeGh("exit 1");
+    const { result, createSecretGist } = publishWithDefaultAuthCheck();
+    await expect(result).rejects.toThrow("[share:gh_not_authenticated]");
+    expect(createSecretGist).not.toHaveBeenCalled();
+  });
+
+  it("maps a missing gh to gh_not_installed", async () => {
+    useFakeGh();
+    const { result, createSecretGist } = publishWithDefaultAuthCheck();
+    await expect(result).rejects.toThrow("[share:gh_not_installed]");
+    expect(createSecretGist).not.toHaveBeenCalled();
+  });
+});
 
 describe("shareSession", () => {
   it("fails when session has no persisted session file", async () => {
