@@ -199,6 +199,61 @@ describe("identity module", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "devicePublicKey required" });
   });
 
+  it.each([
+    ["/pair", "null"],
+    ["/pair", "[]"],
+    ["/pair", "3"],
+    ["/pair/approval-status", "null"],
+    ["/auth/challenge", "null"],
+    ["/auth/challenge", '"x"'],
+    ["/auth/refresh", "null"],
+    ["/auth/refresh", "[]"],
+    ["/auth/refresh", "3"],
+  ])("answers 400 Invalid JSON for POST %s with a non-object body %s", async (path, raw) => {
+    const issueChallenge = vi.fn();
+    const refresh = vi.fn();
+    const pairWithInvite = vi.fn();
+    const ctx = {
+      storage: { issueChallenge, refresh },
+      pairing: { customApproverAvailable: false, pairWithInvite },
+    } as unknown as RouteContext;
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    // Resolving (not throwing) matters: a throw reaches the server's 500 + error log path.
+    const handled = await dispatch({
+      method: "POST",
+      path,
+      url: new URL(`https://paired.example${path}`),
+      req: makeRawRequest(raw) as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "Invalid JSON" });
+    expect(issueChallenge).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(pairWithInvite).not.toHaveBeenCalled();
+  });
+
+  it("still validates an object body on POST /auth/refresh", async () => {
+    const refresh = vi.fn();
+    const ctx = { storage: { refresh } } as unknown as RouteContext;
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+    await dispatch({
+      method: "POST",
+      path: "/auth/refresh",
+      url: new URL("https://paired.example/auth/refresh"),
+      req: makeRequest({}) as never,
+      res: res as never,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "deviceId, nonce, and signature required" });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
   it("issues a challenge without a live access token", async () => {
     const issueChallenge = vi.fn(() => ({
       nonce: "n1",

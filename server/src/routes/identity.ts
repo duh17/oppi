@@ -70,6 +70,11 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
   ): Promise<{ ok: true; body: T } | { ok: false; status: number; error: string }> {
     try {
       const body = await helpers.parseBody<T>(req, { maxBytes: AUTH_BOOTSTRAP_MAX_BYTES });
+      // Valid JSON that is not an object (null, array, primitive) would make handlers
+      // throw on property access and surface as a 500 from the unauthenticated path.
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        return { ok: false, status: 400, error: "Invalid JSON" };
+      }
       return { ok: true, body };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Invalid JSON";
