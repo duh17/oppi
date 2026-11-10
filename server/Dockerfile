@@ -8,7 +8,10 @@ COPY server/package.json server/package-lock.json ./
 RUN npm ci --no-audit --no-fund --ignore-scripts
 
 COPY server/ ./
-# The built-in plugins are real files under server/plugins; the build needs nothing else.
+# The build bundles the Oppi docs into dist/docs/oppi from ../docs (copy-oppi-docs.mjs); the
+# runtime stage inherits dist/. Without them sessions in the container lose the docs hint.
+COPY docs/ /opt/docs/
+# The built-in plugins are real files under server/plugins.
 RUN npm run build \
     && npm prune --omit=dev --no-audit --no-fund
 

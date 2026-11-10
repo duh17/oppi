@@ -4,7 +4,7 @@
 node_modules/
 **/node_modules/
 clients/
-docs/
+docs/demo/
 protocol/
 server/dist/
 server/coverage/
@@ -12,6 +12,5 @@ server/.pi/
 server/.internal/
 server/*.log
 server/*.tsbuildinfo
-oppi-extensions/dist/
 .DS_Store
 .env*
