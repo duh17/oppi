@@ -17,6 +17,7 @@
  */
 
 import { translatePiEvent, type TranslationContext } from "../src/session-protocol.js";
+import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { sanitizeToolResultDetails } from "../src/visual-schema.js";
 import { EventRing, type SequencedMessage } from "../src/event-ring.js";
@@ -35,10 +36,11 @@ const BENCH_ITERATIONS = 5_000;
 function makeCtx(renderers?: MobileRendererRegistry): TranslationContext {
   return {
     sessionId: "bench-session-001",
-    partialResults: new Map(),
+    toolOutputSnapshots: new ToolOutputSnapshots(),
     streamedAssistantText: "",
     mobileRenderers: renderers,
     toolNames: new Map(),
+    streamingToolUpdatesSeen: new Map(),
     shellPreviewLastSent: new Map(),
   };
 }
@@ -298,7 +300,7 @@ function benchTranslatePiEvent(renderers: MobileRendererRegistry): BenchResult[]
   results.push(
     runBench("translate:tool_update:ansi", BENCH_ITERATIONS, () => {
       toolUpdateCtx.toolNames.set("tc_bench_001", "bash");
-      toolUpdateCtx.partialResults.delete("tc_bench_001");
+      toolUpdateCtx.toolOutputSnapshots.discard("tc_bench_001");
       translatePiEvent(TOOL_UPDATE_EVENT, toolUpdateCtx);
     }),
   );
@@ -308,7 +310,7 @@ function benchTranslatePiEvent(renderers: MobileRendererRegistry): BenchResult[]
   results.push(
     runBench("translate:tool_end:bash", BENCH_ITERATIONS, () => {
       toolEndCtx.toolNames.set("tc_bench_001", "bash");
-      toolEndCtx.partialResults.set("tc_bench_001", ANSI_RICH_OUTPUT.slice(0, 100));
+      toolEndCtx.toolOutputSnapshots.update("tc_bench_001", ANSI_RICH_OUTPUT.slice(0, 100));
       toolEndCtx.shellPreviewLastSent.delete("tc_bench_001");
       translatePiEvent(TOOL_END_EVENT, toolEndCtx);
     }),
