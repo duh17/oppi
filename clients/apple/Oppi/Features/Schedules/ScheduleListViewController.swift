@@ -151,7 +151,8 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
             self?.openSchedule?(schedule.id)
         }
         let palette = palette
-        cell.contentConfiguration = ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
+        // Room above the cadence label and under the timing, so neither hugs a separator.
+        cell.contentConfiguration = ControlViewContent(insets: .init(top: 14, leading: 0, bottom: 14, trailing: 0)) {
             ScheduleCardView.card(schedule, palette: palette)
         }
     }
