@@ -172,9 +172,12 @@ final class MarkdownTableClipText {
             range: NSRange(location: headerStart, length: result.length - headerStart)
         )
 
-        // Separator line, sized to the table's total width.
-        let dashWidth = NativeTableBlockView.measuredTextWidth("─", font: cellFont)
-        let separatorCharCount = max(1, Int(ceil(totalWidth / dashWidth)))
+        // Separator line, exactly the table's total width: the dashes that fit,
+        // with the remainder spread between them as kerning. The dash width is
+        // measured unrounded; rounding it up left the rule a dash in nine short.
+        let dashWidth = ("─" as NSString).size(withAttributes: [.font: cellFont]).width
+        let separatorCharCount = max(1, Int(totalWidth / dashWidth))
+        let kern = (totalWidth - CGFloat(separatorCharCount) * dashWidth) / CGFloat(separatorCharCount)
         // The separator has no tab stops so its dashes are not eaten by tabs.
         let separatorParagraph = NSMutableParagraphStyle()
         separatorParagraph.lineBreakMode = .byClipping
@@ -182,7 +185,9 @@ final class MarkdownTableClipText {
         result.append(newline)
         result.append(NSAttributedString(
             string: String(repeating: "─", count: separatorCharCount),
-            attributes: [.font: cellFont, .foregroundColor: dimColor, .paragraphStyle: separatorParagraph]
+            attributes: [
+                .font: cellFont, .foregroundColor: dimColor, .paragraphStyle: separatorParagraph, .kern: kern,
+            ]
         ))
         return result
     }

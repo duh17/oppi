@@ -97,6 +97,39 @@ struct TableColumnAlignmentTests {
         #expect(!attrText.string.isEmpty)
     }
 
+    /// The rule under the header spans the table: it ended short of the right
+    /// edge when its dash width was rounded up before counting the dashes.
+    @Test(arguments: [
+        ["Area", "Owner"],
+        ["Run", "Images", "Avg KB", "Total MB", "p50 ms", "p95 ms"],
+    ])
+    func headerRuleSpansTheTable(headerTexts: [String]) throws {
+        let text = NativeTableBlockView.makeTableAttributedText(
+            headers: headerTexts.map { [.text($0)] },
+            rows: [headerTexts.map { [.text("\($0) value")] }],
+            palette: ThemePalettes.dark
+        )
+        let storage = NSTextStorage(attributedString: text)
+        let layoutManager = NSLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        storage.addLayoutManager(layoutManager)
+        layoutManager.addTextContainer(container)
+        layoutManager.ensureLayout(for: container)
+
+        var lineWidths: [CGFloat] = []
+        layoutManager.enumerateLineFragments(forGlyphRange: NSRange(location: 0, length: layoutManager.numberOfGlyphs)) { _, used, _, _, _ in
+            lineWidths.append(used.width)
+        }
+        try #require(lineWidths.count >= 3, "header, rule, and a row")
+        // The table's width: its last tab stop plus the trailing pad.
+        let style = try #require(text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
+        let lastStop = try #require(style.tabStops.last).location
+        let pad = ("  " as NSString).size(withAttributes: [.font: AppFont.messageBody]).width
+        let tableWidth = lastStop + ceil(pad)
+        #expect(abs(lineWidths[1] - tableWidth) <= 1, "rule \(lineWidths[1]) vs table \(tableWidth)")
+    }
+
     // MARK: - Helpers
 
     /// Assert that all `│` separators in the rendered table align vertically
