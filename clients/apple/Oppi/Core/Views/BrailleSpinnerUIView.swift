@@ -66,13 +66,21 @@ final class BrailleSpinnerUIView: UIView {
         didSet { updateAnimationRunning() }
     }
 
+    /// Holds the current frame still, for Reduce Motion: `WorkingSpinnerUIView` sets it.
+    var isFrozen = false {
+        didSet { updateAnimationRunning() }
+    }
+
+    /// Whether frames advance now: in a window, shown, and not frozen.
+    var isTicking: Bool { timer != nil }
+
     override func didMoveToWindow() {
         super.didMoveToWindow()
         updateAnimationRunning()
     }
 
     private func updateAnimationRunning() {
-        if window != nil, !isHidden {
+        if window != nil, !isHidden, !isFrozen {
             startAnimation()
         } else {
             stopAnimation()

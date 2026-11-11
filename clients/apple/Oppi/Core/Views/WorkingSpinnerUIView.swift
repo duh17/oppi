@@ -4,16 +4,28 @@ import UIKit
 /// dots, or Game of Life), drawn in the model's color. Only the chosen style's
 /// view shows, and only while `isAnimating`, so the others' timers and the
 /// Metal loop stop. It follows a style change in Settings itself.
+///
+/// Under Reduce Motion every style holds one still frame: braille and Game of
+/// Life stop ticking here, and the orb paints its own still frame.
 final class WorkingSpinnerUIView: UIView {
     private let braille = BrailleSpinnerUIView()
     private let life = GameOfLifeUIView(gridSize: 6)
     private let orb = OrbMetalView(style: .working, sizeClass: .workingCompact)
     private(set) var style = SpinnerStyle.current
     nonisolated(unsafe) private var styleObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var motionObserver: NSObjectProtocol?
 
     var isAnimating = false {
         didSet { if isAnimating != oldValue { applyVisibility() } }
     }
+
+    /// Reduce Motion whatever the system says, as `OrbMetalView.forceReduceMotion`.
+    var forceReduceMotion = false {
+        didSet { applyMotion() }
+    }
+
+    /// Whether the shown style holds a still frame.
+    var isFrozen: Bool { forceReduceMotion || UIAccessibility.isReduceMotionEnabled }
 
     init(side: CGFloat) {
         super.init(frame: .zero)
@@ -38,6 +50,14 @@ final class WorkingSpinnerUIView: UIView {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.applyStyleFromPreferences() }
         }
+        motionObserver = NotificationCenter.default.addObserver(
+            forName: UIAccessibility.reduceMotionStatusDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyMotion() }
+        }
+        applyMotion()
         applyVisibility()
     }
 
@@ -45,9 +65,15 @@ final class WorkingSpinnerUIView: UIView {
     required init?(coder: NSCoder) { nil }
 
     deinit {
-        if let styleObserver {
-            NotificationCenter.default.removeObserver(styleObserver)
+        for observer in [styleObserver, motionObserver].compactMap({ $0 }) {
+            NotificationCenter.default.removeObserver(observer)
         }
+    }
+
+    private func applyMotion() {
+        braille.isFrozen = isFrozen
+        life.isFrozen = isFrozen
+        orb.forceReduceMotion = forceReduceMotion
     }
 
     private func applyStyleFromPreferences() {
@@ -64,6 +90,15 @@ final class WorkingSpinnerUIView: UIView {
         var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
         palette.ui.bg.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
         orb.isDarkBackground = OrbTint.isDarkBackground(red: red, green: green, blue: blue)
+    }
+
+    /// Whether the shown style's frames advance now.
+    var isTicking: Bool {
+        switch style {
+        case .brailleDots: braille.isTicking
+        case .gameOfLife: life.isTicking
+        case .working, .searching, .solving: orb.isDriving
+        }
     }
 
     private func applyVisibility() {

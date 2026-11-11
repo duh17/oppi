@@ -13,6 +13,40 @@ import UIKit
 /// shard held a live spinner (`WorkingIndicatorLiveTailPinTests` does, in the same shard as
 /// the appearance suite). Both writers of this key in the shard write `.working`, so a
 /// concurrent suite cannot supersede the style this test expects.
+/// Reduce Motion: braille and Game of Life hold their frame, shown, until it turns off.
+/// (The orb's still frame is `OrbMetalTests`'.) Driven through each view's `isFrozen`,
+/// which `WorkingSpinnerUIView` sets from the system setting, because the spinner's
+/// style is a process-wide preference other suites write concurrently.
+@Suite("Spinner Reduce Motion")
+@MainActor
+struct SpinnerReduceMotionTests {
+    @Test("braille and Game of Life stop ticking while frozen and stay shown")
+    func frozenSpinnersHoldStill() throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 100, height: 100)
+        window.makeKeyAndVisible()
+        defer { hideTestWindow(window) }
+        let braille = BrailleSpinnerUIView()
+        let life = GameOfLifeUIView(gridSize: 6)
+
+        for (name, view, ticking, freeze) in [
+            ("braille", braille as UIView, { braille.isTicking }, { braille.isFrozen = $0 }),
+            ("life", life as UIView, { life.isTicking }, { life.isFrozen = $0 }),
+        ] as [(String, UIView, () -> Bool, (Bool) -> Void)] {
+            window.addSubview(view)
+            #expect(ticking(), "\(name) ticks in a window")
+            freeze(true)
+            #expect(!ticking(), "\(name) holds its frame under Reduce Motion")
+            #expect(!view.isHidden && view.window != nil, "\(name) still shows its frame")
+            freeze(false)
+            #expect(ticking(), "\(name) ticks again when Reduce Motion turns off")
+            view.removeFromSuperview()
+            #expect(!ticking(), "\(name) stops out of the window")
+        }
+    }
+}
+
 @Suite("Working spinner style change")
 @MainActor
 struct WorkingSpinnerStyleChangeTests {
