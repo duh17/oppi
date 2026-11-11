@@ -2,11 +2,14 @@ import UIKit
 
 /// Pure layout policy for assistant markdown tables.
 ///
-/// A column's width is `min(naturalSingleLine, maxReadable)`. Whether a table
-/// needs the wrapping grid depends only on content: any column's natural width
-/// over `maxReadable`.
+/// A column's width starts at `min(naturalSingleLine, maxReadable)`. Whether a
+/// table needs the wrapping grid depends only on content: any column's natural
+/// width over `maxReadable`.
 ///
-/// The viewport decides one more thing, and only through `plan`: when a table is
+/// The viewport decides the rest, and only through `plan`. A wrapping table
+/// narrower than the text around it grows its wrapping columns into the spare
+/// width, each by its share of what it still wants, so on a wide screen a
+/// table of prose is as wide as the prose and wraps less. When a table is
 /// wider than the viewport, its columns are fit to the viewport if every column
 /// can stay at least `minimumFitCharacterCount` characters wide and as wide as
 /// its longest unbreakable word (so an identifier like `rowFoldLimit` never wraps mid-word), and
@@ -22,8 +25,10 @@ enum MarkdownTableColumnLayout {
     /// Gap between columns in grid mode (includes room for a thin divider).
     static let columnSpacing: CGFloat = 8
 
-    /// Readable wrap budget, in mono cells of `AppFont.monoMedium`.
-    /// 35 cells is about 280pt at the default 12pt SF Mono.
+    /// Where a long column starts wrapping, in mono cells of `AppFont.monoMedium`:
+    /// its width when the table has no spare width to grow into, and its weight
+    /// when the table is fit to a narrower viewport. 35 cells is about 280pt at
+    /// the default 12pt SF Mono.
     static let maxReadableCharacterCount: CGFloat = 35
 
     /// The narrowest a longer column may be fit to the viewport, in mono cells.
@@ -35,7 +40,7 @@ enum MarkdownTableColumnLayout {
     /// stay on one line.
     static let protectedCharacterCount: CGFloat = 10
 
-    /// One-column wrap cap shared by chat and Reader. Not viewport-derived.
+    /// One-column wrap start shared by chat and Reader. Not viewport-derived.
     static var maxReadableColumnWidth: CGFloat {
         maxReadableCharacterCount * monoAdvanceWidth
     }
@@ -111,6 +116,11 @@ enum MarkdownTableColumnLayout {
     ///   - clipContentWidth: width of the clip-mode text for these columns.
     ///   - availableWidth: the card's maximum width, or nil when not yet known
     ///     (the content-only layout: no fitting, the table may scroll).
+    ///   - fillWidth: the width a wrapping table grows to: the width of the text
+    ///     around it. Nil means `availableWidth`, which is the text's width
+    ///     wherever the table is laid out at the column's width (chat). The
+    ///     reader widens a table past its prose column only when it has to, so
+    ///     it passes the column.
     ///   - displayScale: widths are rounded down to this pixel grid, so a fitted
     ///     table never overshoots the viewport by a rounding sliver.
     static func plan(
@@ -118,6 +128,7 @@ enum MarkdownTableColumnLayout {
         longestWordWidths: [CGFloat],
         clipContentWidth: CGFloat,
         availableWidth: CGFloat?,
+        fillWidth: CGFloat? = nil,
         displayScale: CGFloat
     ) -> Plan {
         let capped = clampedColumnWidths(naturalWidths: naturalWidths)
@@ -135,8 +146,13 @@ enum MarkdownTableColumnLayout {
         }
         // Grid gaps are narrower than clip's `  │  ` separators, so a table that
         // overflows as clip text can still fit as a grid at its natural widths.
-        if gridContentWidth(columnWidths: capped) <= available {
-            return Plan(presentation: .grid, columnWidths: capped)
+        let cappedWidth = gridContentWidth(columnWidths: capped)
+        if cappedWidth <= available {
+            let fill = min(available, fillWidth ?? available)
+            return Plan(
+                presentation: .grid,
+                columnWidths: grown(capped, toward: naturalWidths, by: fill - cappedWidth, displayScale: displayScale)
+            )
         }
 
         let chrome = gridContentWidth(columnWidths: [CGFloat](repeating: 0, count: capped.count))
@@ -164,6 +180,26 @@ enum MarkdownTableColumnLayout {
             return ((floor + share) * scale).rounded(.down) / scale
         }
         return Plan(presentation: .grid, columnWidths: widths)
+    }
+
+    /// `capped` with `spare` width shared among the columns the cap wraps, each
+    /// in proportion to how much wider than its cap its content is, and none
+    /// past its natural width. A table with no wrapping column, or no spare
+    /// width, keeps `capped`.
+    private static func grown(
+        _ capped: [CGFloat],
+        toward naturalWidths: [CGFloat],
+        by spare: CGFloat,
+        displayScale: CGFloat
+    ) -> [CGFloat] {
+        let wants = zip(naturalWidths, capped).map { max(0, $0 - $1) }
+        let totalWant = wants.reduce(0, +)
+        guard spare > 0, totalWant > 0 else { return capped }
+        if totalWant <= spare { return zip(capped, wants).map { $0 + $1 } }
+        let scale = max(displayScale, 1)
+        return zip(capped, wants).map { width, want in
+            ((width + spare * want / totalWant) * scale).rounded(.down) / scale
+        }
     }
 
     /// Length in characters of the longest run in `text` that a wrapped cell

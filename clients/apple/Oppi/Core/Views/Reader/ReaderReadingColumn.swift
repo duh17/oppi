@@ -26,7 +26,7 @@ struct ReaderReadingColumn: Equatable {
 
     /// The leading and trailing inset of `segment` in `available` width.
     func inset(for segment: FlatSegment, in available: CGFloat) -> CGFloat {
-        inset(blockWidth: Self.naturalWidth(of: segment, in: available), in: available)
+        inset(blockWidth: naturalWidth(of: segment, in: available), in: available)
     }
 
     /// The leading and trailing inset of prose in `available` width.
@@ -41,18 +41,21 @@ struct ReaderReadingColumn: Equatable {
 
     /// The width a wide block draws at without sideways scrolling; nil for a
     /// block that reads in the prose column.
-    private static func naturalWidth(of segment: FlatSegment, in available: CGFloat) -> CGFloat? {
+    private func naturalWidth(of segment: FlatSegment, in available: CGFloat) -> CGFloat? {
         switch segment {
         case .table(let headers, let rows):
             // Mirrors NativeTableBlockView's card: the width its plan draws at
             // in `available`, so a table that fits as a grid narrower than the
-            // window centers instead of hugging the leading edge.
+            // window centers instead of hugging the leading edge. A wrapping
+            // table grows to the prose column, not the window: the table view,
+            // laid out at that width, fills it and plans the same columns.
             let metrics = NativeTableBlockView.measureNaturalColumns(headers: headers, rows: rows)
             let plan = MarkdownTableColumnLayout.plan(
                 naturalWidths: metrics.columnWidths,
                 longestWordWidths: metrics.longestWordWidths,
                 clipContentWidth: metrics.totalWidth,
                 availableWidth: available,
+                fillWidth: proseWidth,
                 displayScale: 1
             )
             switch plan.presentation {

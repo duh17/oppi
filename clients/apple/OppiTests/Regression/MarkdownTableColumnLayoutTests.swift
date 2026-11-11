@@ -121,6 +121,36 @@ struct MarkdownTableColumnLayoutTests {
         #expect(MarkdownTableColumnLayout.longestUnbreakableLength("表格的列宽") == 0)
     }
 
+    @Test func wrappingColumnsShareTheSpareWidthUpToTheirContent() {
+        let cap = MarkdownTableColumnLayout.maxReadableColumnWidth
+        let naturals: [CGFloat] = [100, cap + 600, cap + 200]
+        let chrome = MarkdownTableColumnLayout.gridContentWidth(columnWidths: [0, 0, 0])
+        let cappedWidth = chrome + 100 + 2 * cap
+
+        // 400pt to spare against 800pt wanted: each long column gets its share.
+        let shared = Self.plan(naturals, available: cappedWidth + 400, scale: 1)
+        #expect(shared.presentation == .grid)
+        // Widths round down to the pixel grid, and the cap is not a whole point.
+        for (width, expected) in zip(shared.columnWidths, [100, cap + 300, cap + 100]) {
+            #expect(width <= expected && width > expected - 1, "\(shared.columnWidths)")
+        }
+
+        // More room than wanted: every column at its natural width, no wider.
+        let roomy = Self.plan(naturals, available: cappedWidth + 2000, scale: 1)
+        #expect(roomy.columnWidths == naturals)
+
+        // The reader grows a table only to its prose column, not the window.
+        let reader = MarkdownTableColumnLayout.plan(
+            naturalWidths: naturals,
+            longestWordWidths: naturals.map { min($0, 40) },
+            clipContentWidth: naturals.reduce(0, +) + 120,
+            availableWidth: cappedWidth + 2000,
+            fillWidth: cappedWidth + 400,
+            displayScale: 1
+        )
+        #expect(reader.columnWidths == shared.columnWidths)
+    }
+
     @Test func clipTableThatFitsStaysClipText() {
         let plan = Self.plan([80, 80], available: 370)
         #expect(plan.presentation == .clip)
@@ -231,13 +261,53 @@ struct NativeTableWrapToFitTests {
         #expect(tableView.bounds.width <= 320.5)
     }
 
-    /// With room to spare, the long column wraps at the readable clamp and the
-    /// table does not stretch to the viewport.
-    @Test func longColumnClampsAtReadableWidthWhenViewportIsWide() {
+    /// On a wide screen (an iPad mini in landscape gives the chat about 1100pt)
+    /// a table of prose is as wide as the text around it: its long column takes
+    /// the spare width instead of wrapping at the clamp beside an empty half of
+    /// the screen, and its short column stays on one line.
+    @Test func proseTableFillsAWideViewport() {
+        let width: CGFloat = 1100
         let tableView = NativeTableBlockView()
         tableView.translatesAutoresizingMaskIntoConstraints = false
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 800))
+        container.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            tableView.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
 
-        let container = UIView(frame: CGRect(x: 0, y: 0, width: 700, height: 400))
+        let options = ["Shrink on read", "Drop older images", "Anthropic \u{201C}context editing\u{201D}"]
+        let detail = "Keep the newest few images in full and swap older ones for a short note with the file path, so the model can open one again if it needs to."
+        tableView.apply(
+            headers: [[.text("Option")], [.text("What it does")]],
+            rows: options.map { [[.text($0)], [.text(detail)]] },
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        let card = tableView.subviews.first { $0.layer.cornerRadius == 8 }
+        #expect(abs((card?.bounds.width ?? 0) - width) <= 1, "The table fills the width: \(card?.bounds.width ?? 0)")
+        let scroll = timelineAllScrollViews(in: tableView).first { !($0 is UITextView) }
+        #expect((scroll?.contentSize.width ?? .infinity) <= (scroll?.bounds.width ?? 0) + 1, "and does not scroll")
+        let cells = visibleTableCells(in: tableView)
+        for cell in cells where options.contains(timelineRenderedText(of: cell)) {
+            #expect(cellIsSingleLine(cell), "Short cell wrapped: \(timelineRenderedText(of: cell))")
+        }
+        let detailCell = cells.first { timelineRenderedText(of: $0) == detail }
+        #expect(
+            (detailCell?.bounds.width ?? 0) > MarkdownTableColumnLayout.maxReadableColumnWidth * 2,
+            "The long column takes the spare width: \(detailCell?.bounds.width ?? 0)"
+        )
+    }
+
+    /// A long column that fits on one line in the spare width stops at its own
+    /// width: the table does not stretch past its content.
+    @Test func tableGrowsNoWiderThanItsContent() {
+        let tableView = NativeTableBlockView()
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 1100, height: 400))
         container.addSubview(tableView)
         NSLayoutConstraint.activate([
             tableView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -254,18 +324,11 @@ struct NativeTableWrapToFitTests {
         container.setNeedsLayout()
         container.layoutIfNeeded()
 
-        let longCells = visibleTableCells(in: tableView).filter {
-            timelineRenderedText(of: $0).contains(longNotes)
-        }
-        #expect(!longCells.isEmpty)
-        for cell in longCells {
-            #expect(
-                abs(cell.bounds.width - MarkdownTableColumnLayout.maxReadableColumnWidth) <= 1,
-                "Long column should wrap at maxReadable, got \(cell.bounds.width)"
-            )
+        for cell in visibleTableCells(in: tableView) {
+            #expect(cellIsSingleLine(cell), "Nothing wraps with room to spare: \(timelineRenderedText(of: cell))")
         }
         let card = tableView.subviews.first { $0.layer.cornerRadius == 8 }
-        #expect((card?.bounds.width ?? 700) < 700, "A table that fits keeps its own width")
+        #expect((card?.bounds.width ?? 1100) < 700, "A table that fits keeps its own width")
     }
 
     @Test func wrappedHeightIsKnownDuringSelfSizingBeforeFirstLayout() {
