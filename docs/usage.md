@@ -94,6 +94,8 @@ In a chat whose workspace is a Git repository, **Git** in the top bar's menu (or
 
 **Files** in a chat browses the session's checkout (a sheet on iPhone, a column beside the chat on iPad), the same browser as a workspace's Files screen. Search finds files by name or path anywhere in the checkout; below the top folder, the scope bar narrows a search to **Everywhere** or the folder you are in. **View Options** sorts folders by **Name**, **Date Modified**, **Size**, or **Kind** (choose the same one again to reverse it), and turns **Folders First** and **Show Hidden Files** on or off (hidden files stay out of search too); the choice applies to every file browser on the device. A file Git reports changed carries a colored dot (green added, orange modified, red deleted or conflicted, purple renamed) and its line counts, and a folder with changes inside has a gray dot. Changes show only while the session's Git status is loaded; when Git reports more changes than it lists, the folder says how many files show no mark.
 
+Touch and hold a file for **Share…**, **Open**, and **Copy Path**; a folder offers **Open** and **Copy Path**. Every file viewer, including video, audio, 3D models, and books, has a **Share** button too. Share sends the file itself under its own name and type, so **Save to Files**, AirDrop, Photos, and Books can take it; a large file shows its download progress with **Cancel**, and a file over the server's read limit says so instead of sharing.
+
 A workspace's session list has the same **Git** button in its top bar, listing every change in the selected worktree.
 
 ### The iPad side column

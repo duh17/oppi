@@ -18,7 +18,7 @@ A document renderer does not touch session runtime, transport, the reducer, or t
 `FileViewerViewController` keeps loading, errors, size warning, and the text reader and editor (they share the edit owner). Other formats are `FileRenderer`s in `Oppi/Features/FileBrowser/Renderers/`, picked by preview category in `FileRendererRegistry`.
 
 1. **Table:** a `FileKindTable` row maps extensions to a kind; an extension for an existing renderer stops here. Non-text formats also go in `protocol/file-kinds.json` and the server's `FILE_KINDS`.
-2. **Renderer:** a new category is a `FilePreviewCategory` case, one renderer file (`load`, `mount`, only the hooks it uses), and its registry line; the compiler flags only the registry, so check the `default:` switches in `MarkdownWikiLink.swift` by hand. It reaches the viewer only through `FileRendererHost`; the viewer names no renderer or extension.
+2. **Renderer:** a new category is a `FilePreviewCategory` case, one renderer file (`load`, `mount`, its required `share`, only the hooks it uses), and its registry line; the compiler flags only the registry, so check the `default:` switches in `MarkdownWikiLink.swift` by hand. It reaches the viewer only through `FileRendererHost`; the viewer names no renderer or extension.
 
 ## Cleanup targets
 
