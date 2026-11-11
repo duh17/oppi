@@ -23,8 +23,15 @@ enum SSHDial {
 
     /// A tailnet name (`ServerTLSTrustPolicy.isTailscaleHostname`, with or
     /// without a trailing dot) uses the embedded node while it runs. Every
-    /// other host uses the current network.
-    static func route(host: String, tailnetRunning: Bool, whenNodeStopped: WhenNodeStopped) -> Route {
+    /// other host uses the current network, and so does every host where the
+    /// app has no node of its own (the Mac, through the Tailscale app).
+    static func route(
+        host: String,
+        tailnetRunning: Bool,
+        whenNodeStopped: WhenNodeStopped,
+        inAppTailnet: Bool = PlatformCapabilities.inAppTailnet
+    ) -> Route {
+        guard inAppTailnet else { return .direct }
         var name = host.trimmingCharacters(in: .whitespacesAndNewlines)
         while name.hasSuffix(".") { name.removeLast() }
         guard ServerTLSTrustPolicy.isTailscaleHostname(name) else { return .direct }

@@ -85,10 +85,8 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
         actionsItem.image = UIImage(systemName: "ellipsis.circle")
         actionsItem.accessibilityLabel = "Schedule actions"
         actionsItem.accessibilityIdentifier = "schedule.detail.actions"
-        if #available(iOS 27.1, *) {
-            editItem.axisBehavior = .verticalPreferred
-            actionsItem.axisBehavior = .verticalPreferred
-        }
+        SystemVerticalBar.prefersRail(editItem)
+        SystemVerticalBar.prefersRail(actionsItem)
     }
 
     @available(*, unavailable)

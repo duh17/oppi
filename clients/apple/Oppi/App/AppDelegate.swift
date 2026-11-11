@@ -122,6 +122,9 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate, @preconcurrency AppI
     /// for a scene adopted from SwiftUI, which UIKit already connected.
     func connect(_ scene: UIScene, urlContexts: Set<UIOpenURLContext>) {
         guard window == nil, let windowScene = scene as? UIWindowScene, let app else { return }
+        if let minimum = PlatformCapabilities.minimumWindowSize {
+            windowScene.sizeRestrictions?.minimumSize = minimum
+        }
         let window = UIWindow(windowScene: windowScene)
         // UIKit code anywhere in the window, presented controllers included,
         // finds the app root here (`AppRootEnvironment.near()`).

@@ -91,7 +91,7 @@ final class AppLockCoverViewController: UIViewController {
         titleLabel.textColor = .themeFg
         statusLabel.textColor = .themeComment
 
-        if let image = Self.appIcon {
+        if let image = InstalledAppIcon.image {
             iconView.image = image
             iconView.tintColor = nil
             iconView.contentMode = .scaleAspectFit
@@ -134,13 +134,4 @@ final class AppLockCoverViewController: UIViewController {
         unlockButton.configuration = configuration
         unlockButton.isEnabled = !service.isAuthenticating
     }
-
-    /// The installed app icon, or nil when the bundle has none.
-    private static let appIcon: UIImage? = {
-        let icons = Bundle.main.object(forInfoDictionaryKey: "CFBundleIcons") as? [String: Any]
-        let primary = icons?["CFBundlePrimaryIcon"] as? [String: Any]
-        let files = primary?["CFBundleIconFiles"] as? [String]
-        let names = (files ?? []).reversed() + [primary?["CFBundleIconName"] as? String, "AppIcon"].compactMap { $0 }
-        return names.lazy.compactMap { UIImage(named: $0) }.first
-    }()
 }

@@ -125,6 +125,12 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    with its reason. A new file has baseline 0. Assigning the trailing column's
  *    trait override, or passing a size class along, is not a read.
  *
+ *  - Platform checks are disallowed outside `platformCheckOwners`:
+ *    `PlatformCapabilities` answers what the Mac Catalyst build can do, so
+ *    `targetEnvironment(macCatalyst)` and `isMacCatalystApp` appear only there
+ *    and in the files that hide an iOS-only API from the Catalyst compiler,
+ *    each with its reason. A new entry needs an API the Catalyst SDK lacks.
+ *
  * Policy: dev/architecture-client.md, "UIKit and SwiftUI ownership".
  * Comments and string literals are stripped before matching.
  *
@@ -151,12 +157,14 @@ type Hit = { file: string; line: number; construct: string };
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 // `OppiCore/` and `Shared/` are here because the iOS app target compiles all of
 // them (project.yml): a SwiftUI file there ships in the app exactly like one
-// under `Oppi/`. The extension targets hold only Apple-required widget files.
+// under `Oppi/`. The share extension is UIKit and also builds for Mac Catalyst;
+// the other extension targets hold only Apple-required widget files.
 const scanRoots = [
   "clients/apple/Oppi",
   "clients/apple/OppiDebugHarness",
   "clients/apple/OppiCore",
   "clients/apple/Shared",
+  "clients/apple/OppiShareExtension",
 ].map((dir) => join(repoRoot, dir));
 const baselinePath = join(repoRoot, "scripts/uikit-structure-baseline.json");
 const guide = "dev/architecture-client.md, section \"UIKit and SwiftUI ownership\"";
@@ -292,6 +300,35 @@ const adaptiveWidthExceptions: { file: string; reason: string }[] = [
   },
 ];
 const adaptiveWidthExempt = adaptiveWidthExceptions.map((entry) => entry.file);
+
+/** Files that may test for Mac Catalyst, each with the API the Catalyst SDK lacks. */
+const platformCheckOwners: { file: string; reason: string }[] = [
+  {
+    file: "clients/apple/Oppi/Core/PlatformCapabilities.swift",
+    reason: "The owner: what the Mac build can do, for every other file to ask.",
+  },
+  {
+    file: "clients/apple/Oppi/Core/Views/SystemVerticalBar.swift",
+    reason: "The iOS 27.1 vertical-bar APIs are unavailable to Catalyst even behind #available.",
+  },
+  {
+    file: "clients/apple/Oppi/Core/Services/LiveActivityManager.swift",
+    reason: "ActivityKit's Activity is unavailable to Catalyst in the SDK the app builds with.",
+  },
+  {
+    file: "clients/apple/Shared/Activity/OppiActivityAttributes.swift",
+    reason: "ActivityKit's ActivityAttributes is unavailable to Catalyst in the SDK the app builds with.",
+  },
+  {
+    file: "clients/apple/Oppi/Features/Onboarding/QRScannerView.swift",
+    reason: "VisionKit's DataScannerViewController is unavailable to Catalyst.",
+  },
+  {
+    file: "clients/apple/Oppi/Core/Services/TailnetNodeController.swift",
+    reason: "TailscaleKit has no Catalyst build.",
+  },
+];
+const platformCheckExempt = platformCheckOwners.map((entry) => entry.file);
 const swiftUIExemptFiles = swiftUIImporterFiles;
 
 const constructs: Construct[] = [
@@ -362,6 +399,19 @@ const constructs: Construct[] = [
     pattern: /\bhorizontalSizeClass\s*[=!]=/g,
     disallowed: false,
     exemptFiles: adaptiveWidthExempt,
+  },
+  // Platform checks outside `PlatformCapabilities`: see `platformCheckOwners`.
+  {
+    name: "targetEnvironment(macCatalyst)",
+    pattern: /\btargetEnvironment\s*\(\s*macCatalyst\s*\)/g,
+    disallowed: true,
+    exemptFiles: platformCheckExempt,
+  },
+  {
+    name: "isMacCatalystApp",
+    pattern: /\bisMacCatalystApp\b/g,
+    disallowed: true,
+    exemptFiles: platformCheckExempt,
   },
   // Whole-screen and in-list load states outside `LoadState`: see "Load states" in the guide.
   {
@@ -648,6 +698,11 @@ for itself whether the layout is wide. Ask AdaptiveWidth.isWide(traitCollection)
 (or AdaptiveWidth.windowIsWide(view) for system chrome that follows the window,
 such as the search bar's Cancel). The idiom is for copy and keybindings only; see
 adaptiveWidthExceptions.
+
+targetEnvironment(macCatalyst) or isMacCatalystApp outside platformCheckOwners means
+a screen decides for itself what the Mac build can do. Ask PlatformCapabilities
+(add the capability there). Only a file that must hide an API the Catalyst SDK
+lacks may test the platform, with an entry and its reason.
 
 A page on ListScreenController that writes isLoadCancellation or an override
 func viewIsAppearing takes over the trigger or the outcome of the load the kit

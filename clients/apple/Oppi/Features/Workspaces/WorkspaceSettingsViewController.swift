@@ -152,11 +152,7 @@ final class WorkspaceSettingsViewController: ListScreenController<
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        if #available(iOS 27.1, *) {
-            registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (self: Self, _) in
-                self.setNeedsUpdateProperties()
-            }
-        }
+        SystemVerticalBar.observeEdgeChanges(of: self) { $0.setNeedsUpdateProperties() }
         // A cover added before the list was pinned would sit behind it.
         showLockCover()
     }

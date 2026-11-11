@@ -1,3 +1,6 @@
+// ActivityKit's `Activity` is unavailable to Mac Catalyst in the SDK the app builds
+// with; the Mac build gets the type at the end of this file instead.
+#if !targetEnvironment(macCatalyst)
 import ActivityKit
 import Foundation
 import OSLog
@@ -25,6 +28,8 @@ final class LiveActivityManager {
     typealias Counts = OppiActivityAttributes.ContentState
 
     static let noCounts = Counts(running: 0, needsYou: 0)
+    /// Whether Settings allows Live Activities for Oppi.
+    static var systemAllowsActivities: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
     /// An ended card leaves the Lock Screen this long after it ends; the relay uses the same.
     static let dismissalDelay: TimeInterval = 30
 
@@ -357,3 +362,19 @@ final class LiveActivityManager {
         }
     }
 }
+#else
+/// The Mac build has no Live Activities (`PlatformCapabilities.liveActivities`),
+/// so Settings shows no card switch and the inputs every platform sends here
+/// start and end nothing.
+@MainActor
+final class LiveActivityManager {
+    static let shared = LiveActivityManager()
+    static var systemAllowsActivities: Bool { false }
+
+    func sync(connectionId serverId: String, sessions: [Session]) {}
+    func removeConnection(_ serverId: String) {}
+    func settingsChanged(serverId: String) {}
+    func startObservingSystem() {}
+    func recoverIfNeeded() {}
+}
+#endif

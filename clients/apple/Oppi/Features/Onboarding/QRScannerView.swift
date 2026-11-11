@@ -1,4 +1,7 @@
 import UIKit
+// VisionKit's live scanner is unavailable to Mac Catalyst; the Mac build gets
+// the type at the end of this file instead.
+#if !targetEnvironment(macCatalyst)
 import VisionKit
 
 /// Scans an Oppi pairing QR code with VisionKit and reports the first code
@@ -93,3 +96,18 @@ final class QRScannerViewController: UIViewController, DataScannerViewController
         onScan(self, credentials)
     }
 }
+#else
+/// The Mac has no live scanner: `isAvailable` is false, so onboarding never
+/// offers Scan, and the Mac pairs by `oppi://` link or by hand.
+@MainActor
+final class QRScannerViewController: UIViewController {
+    static var isAvailable: Bool { false }
+
+    init(onScan: @escaping (QRScannerViewController, ServerCredentials) -> Void) {
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+}
+#endif

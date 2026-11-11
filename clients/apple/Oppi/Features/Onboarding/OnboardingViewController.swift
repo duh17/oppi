@@ -18,9 +18,11 @@ enum OnboardingIdlePairingCTA: Equatable {
     case enterManually
 
     /// Scanning needs a camera, so without one the screen offers set-up and
-    /// manual entry only.
-    static func visible(canScan: Bool) -> [Self] {
-        canScan ? [.setUpComputer, .scanQR, .enterManually] : [.setUpComputer, .enterManually]
+    /// manual entry only. Set-up finds the computer through Oppi's own
+    /// Tailscale node, which the Mac does not have (it pairs by link).
+    static func visible(canScan: Bool, canSetUpComputer: Bool = PlatformCapabilities.inAppTailnet) -> [Self] {
+        let all: [Self] = canScan ? [.setUpComputer, .scanQR, .enterManually] : [.setUpComputer, .enterManually]
+        return all.filter { $0 != .setUpComputer || canSetUpComputer }
     }
 
     var title: String {
@@ -761,15 +763,4 @@ private final class OnboardingFailureCard: UIView {
         }
         return text
     }
-}
-
-/// The installed app icon from the bundle, or nil when it has none.
-private enum InstalledAppIcon {
-    @MainActor static let image: UIImage? = {
-        let icons = Bundle.main.object(forInfoDictionaryKey: "CFBundleIcons") as? [String: Any]
-        let primary = icons?["CFBundlePrimaryIcon"] as? [String: Any]
-        let files = primary?["CFBundleIconFiles"] as? [String]
-        let names = (files ?? []).reversed() + [primary?["CFBundleIconName"] as? String, "AppIcon"].compactMap { $0 }
-        return names.lazy.compactMap { UIImage(named: $0) }.first
-    }()
 }

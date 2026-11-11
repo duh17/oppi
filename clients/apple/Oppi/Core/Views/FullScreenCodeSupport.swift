@@ -45,26 +45,6 @@ enum FullScreenViewerChrome {
     // Grep for `FullScreenViewerChrome` to find all adopters.
 }
 
-/// Whether the system may place a vertical bar for these traits.
-///
-/// `verticalBarEdge` is the preferred edge, not "a bar is on screen". It is
-/// `.unspecified` where iOS never places a vertical bar. Deployment stays
-/// 26.0, so the read is still availability-gated.
-enum SystemVerticalBar {
-    static func traitIsActive(_ traits: UITraitCollection) -> Bool {
-        if #available(iOS 27.1, *) {
-            return traits.verticalBarEdge != .unspecified
-        }
-        return false
-    }
-
-    @MainActor
-    static func isActive(_ viewController: UIViewController) -> Bool {
-        guard viewController.navigationController?.isNavigationBarHidden != true else { return false }
-        return traitIsActive(viewController.traitCollection)
-    }
-}
-
 enum FullScreenPickCommentPlacement {
     static func origin(
         for target: CGRect, in safeFrame: CGRect, avoiding controls: [CGRect] = [], size: CGFloat = 56

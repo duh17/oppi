@@ -29,10 +29,11 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
     }
 
     /// The rows of the pages section, in the order Settings shows them.
+    /// Tailscale is Oppi's own node, which the Mac does not have.
     private static let pages: [Item] = [
         .general, .appearance, .text, .editor, .chat, .sessions,
         .voice, .tailscale, .sshTerminal, .privacy, .experiments, .storage,
-    ]
+    ].filter { $0 != .tailscale || PlatformCapabilities.inAppTailnet }
 
     init(root: AppRootEnvironment) {
         self.root = root
@@ -45,11 +46,7 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        if #available(iOS 27.1, *) {
-            registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (self: Self, _) in
-                self.setNeedsUpdateProperties()
-            }
-        }
+        SystemVerticalBar.observeEdgeChanges(of: self) { $0.setNeedsUpdateProperties() }
     }
 
     override func viewWillAppear(_ animated: Bool) {

@@ -1,5 +1,7 @@
 import Accelerate
 @preconcurrency import AVFoundation
+// `UnsafeMutableAudioBufferListPointer`: AVFoundation re-exports it on iOS but not to Mac Catalyst.
+import CoreAudio
 import Foundation
 import Speech
 

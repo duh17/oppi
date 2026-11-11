@@ -10,7 +10,7 @@ import Foundation
 /// type (`attributes-type`) and its one attribute, so renaming either breaks remote starts.
 ///
 /// Shared between the main app (request/update/end) and the widget extension (render).
-struct OppiActivityAttributes: ActivityAttributes {
+struct OppiActivityAttributes {
     /// The phone's random name for the server this card counts (22 base64url characters). The
     /// relay copies it into the push-to-start payload, so an activity the server started and
     /// one the app started for the same server are the same card.
@@ -26,3 +26,8 @@ struct OppiActivityAttributes: ActivityAttributes {
         var needsYou: Int
     }
 }
+
+// ActivityKit's protocol is unavailable to Mac Catalyst in the SDK the app builds with.
+#if !targetEnvironment(macCatalyst)
+extension OppiActivityAttributes: ActivityAttributes {}
+#endif

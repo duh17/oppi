@@ -1,5 +1,8 @@
 import Foundation
 import OSLog
+// TailscaleKit has no Mac Catalyst build; the Mac build gets the type at the
+// end of this file instead.
+#if !targetEnvironment(macCatalyst)
 import TailscaleKit
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Tailnet")
@@ -18,9 +21,6 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Tail
 @MainActor @Observable
 final class TailnetNodeController {
     static let shared = TailnetNodeController()
-
-    /// Shown in the Tailscale admin console; control de-duplicates repeats.
-    nonisolated static let hostName = "oppi-ios"
 
     private(set) var isStarted = false
     private(set) var status = TailnetNodeStatus()
@@ -494,4 +494,41 @@ private struct TailnetLogSink: LogSink {
     func log(_ message: String) {
         logger.debug("\(message, privacy: .private)")
     }
+}
+#else
+/// The Mac has no embedded node (`PlatformCapabilities.inAppTailnet`): it reaches
+/// the tailnet through the Tailscale app, so a Tailscale name dials directly
+/// (`SSHDial`) and Settings has no Tailscale page. The node is always off.
+@MainActor @Observable
+final class TailnetNodeController {
+    static let shared = TailnetNodeController()
+
+    let snapshot: TailnetStatusSnapshot? = nil
+    var state: TailnetNodeState { .off }
+    var onlinePeers: [TailnetPeer] { [] }
+    @ObservationIgnored var onRouteChange: (@MainActor () -> Void)?
+
+    func startIfEnabled() {}
+    func startAtLaunchIfNeeded(pairedHosts: some Sequence<String>) {}
+    func connect() {}
+    func disconnect() async {}
+    func restart() async {}
+    func refresh() async {}
+    #if DEBUG
+    func applyPreviewSnapshot(_ snapshot: TailnetStatusSnapshot) {}
+    #endif
+
+    func waitUntilCurrentGenerationProxyReady(timeout: Duration = .seconds(20)) async throws {
+        throw SSHPreflightFailure.tailnetNotRunning
+    }
+
+    func dialTCP(host: String, port: UInt16, timeout: Duration) async throws -> Int32 {
+        throw SSHPreflightFailure.tailnetNotRunning
+    }
+}
+#endif
+
+extension TailnetNodeController {
+    /// Shown in the Tailscale admin console; control de-duplicates repeats.
+    nonisolated static let hostName = "oppi-ios"
 }

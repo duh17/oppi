@@ -939,8 +939,8 @@ enum SessionListBarItems {
 
     /// Navigation outranks the frequent actions, and an accessory leaves first.
     static func railItem(_ item: UIBarButtonItem, priority: VerticalRailItemPriority) -> UIBarButtonItem {
+        SystemVerticalBar.prefersRail(item)
         if #available(iOS 27.1, *) {
-            item.axisBehavior = .verticalPreferred
             item.visibilityPriority = switch priority {
             case .navigation: UIBarButtonItemVisibilityPriority(higherThan: .high)
             case .keep: .high
@@ -952,9 +952,7 @@ enum SessionListBarItems {
 
     /// Keeps a leading control in the top-left corner when a side rail exists.
     static func horizontalOnly(_ item: UIBarButtonItem) -> UIBarButtonItem {
-        if #available(iOS 27.1, *) {
-            item.axisBehavior = .horizontalOnly
-        }
+        SystemVerticalBar.keepsHorizontal(item)
         return item
     }
 
@@ -998,12 +996,7 @@ enum SessionListBarItems {
 
     /// Rail or horizontal bar: the bars rebuild when the vertical bar edge changes.
     static func updatesWithVerticalBarEdge(_ controller: UIViewController) {
-        if #available(iOS 27.1, *) {
-            let traits = UITraitCollection.systemTraitsAffectingVerticalBarEdge
-            controller.registerForTraitChanges(traits) { (controller: UIViewController, _: UITraitCollection) in
-                controller.setNeedsUpdateProperties()
-            }
-        }
+        SystemVerticalBar.observeEdgeChanges(of: controller) { $0.setNeedsUpdateProperties() }
     }
 }
 

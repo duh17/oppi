@@ -400,6 +400,16 @@ struct SSHPairMintTests {
         #expect(SSHDial.route(host: "studio.tail1234.ts.net", tailnetRunning: false, whenNodeStopped: .direct) == .direct)
     }
 
+    /// The Mac has no node of its own; the Tailscale app routes the name, so
+    /// even Set Up a Computer dials it directly instead of asking for a node.
+    @Test func withoutAnInAppNodeTailnetNamesDialDirectly() {
+        for stopped in [SSHDial.WhenNodeStopped.fail, .direct] {
+            #expect(SSHDial.route(
+                host: "studio.tail1234.ts.net", tailnetRunning: false, whenNodeStopped: stopped, inAppTailnet: false
+            ) == .direct)
+        }
+    }
+
     @Test func inviteJSONDecodesAndRejectsUnsafeOutput() throws {
         let invite = try SSHPairMint.invite(from: "\n" + Self.inviteJSON + "\n")
         #expect(invite.inviteURL == "oppi://connect?host=studio.local")

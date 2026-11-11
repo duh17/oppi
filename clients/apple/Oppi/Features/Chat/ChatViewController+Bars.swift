@@ -497,9 +497,7 @@ final class ChatBarItems {
     }
 
     private func joinsVerticalRail(_ item: UIBarButtonItem) {
-        if #available(iOS 27.1, *) {
-            item.axisBehavior = .verticalPreferred
-        }
+        SystemVerticalBar.prefersRail(item)
     }
 
     private func makeBackItem() -> UIBarButtonItem {

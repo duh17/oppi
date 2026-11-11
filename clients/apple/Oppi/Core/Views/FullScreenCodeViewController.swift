@@ -1319,11 +1319,7 @@ private final class FullScreenContentHostController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        if #available(iOS 27.1, *) {
-            registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (host: Self, _) in
-                host.onVerticalBarEdgeChange?()
-            }
-        }
+        SystemVerticalBar.observeEdgeChanges(of: self) { $0.onVerticalBarEdgeChange?() }
     }
 
     override func viewIsAppearing(_ animated: Bool) {

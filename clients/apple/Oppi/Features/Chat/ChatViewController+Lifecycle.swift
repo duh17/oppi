@@ -83,11 +83,7 @@ extension ChatViewController {
         ) { (self: Self, _) in
             self.setNeedsUpdateProperties()
         }
-        if #available(iOS 27.1, *) {
-            registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (self: Self, _) in
-                self.setNeedsUpdateProperties()
-            }
-        }
+        SystemVerticalBar.observeEdgeChanges(of: self) { $0.setNeedsUpdateProperties() }
     }
 
     /// The chrome follows the app root's theme, which a controller finds once

@@ -1,4 +1,3 @@
-import ActivityKit
 import UIKit
 
 /// Server Settings for one server: a summary of it, one index row per focused
@@ -172,13 +171,15 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             if notifications.pushStatus == .working { notificationItems.append(.pushWorking) }
             if notifications.pushFailure != nil { notificationItems.append(.pushError) }
         }
-        notificationItems.append(.liveActivitySwitch)
-        if notifications.liveActivityStatus == .working { notificationItems.append(.liveActivityWorking) }
-        if notifications.liveActivityStatus == .failed, notifications.liveActivityEnabled {
-            notificationItems.append(.liveActivityError)
-        }
-        if notifications.liveActivityEnabled, !ActivityAuthorizationInfo().areActivitiesEnabled {
-            notificationItems.append(.liveActivitySystemOff)
+        if PlatformCapabilities.liveActivities {
+            notificationItems.append(.liveActivitySwitch)
+            if notifications.liveActivityStatus == .working { notificationItems.append(.liveActivityWorking) }
+            if notifications.liveActivityStatus == .failed, notifications.liveActivityEnabled {
+                notificationItems.append(.liveActivityError)
+            }
+            if notifications.liveActivityEnabled, !LiveActivityManager.systemAllowsActivities {
+                notificationItems.append(.liveActivitySystemOff)
+            }
         }
 
         let serverSections: [ListSection<Section, Item>] = [

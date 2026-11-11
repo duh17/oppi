@@ -90,10 +90,8 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         actionsItem.image = UIImage(systemName: "ellipsis.circle")
         actionsItem.accessibilityLabel = "Agent actions"
         actionsItem.accessibilityIdentifier = "agents.detail.actions"
-        if #available(iOS 27.1, *) {
-            editItem.axisBehavior = .verticalPreferred
-            actionsItem.axisBehavior = .verticalPreferred
-        }
+        SystemVerticalBar.prefersRail(editItem)
+        SystemVerticalBar.prefersRail(actionsItem)
     }
 
     @available(*, unavailable)
