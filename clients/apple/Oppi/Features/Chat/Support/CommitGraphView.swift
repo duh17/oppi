@@ -147,7 +147,7 @@ enum CommitGraphView {
                 ))
             case .branch where ref.isHead == true:
                 head.append(Chip(
-                    text: ref.name, icon: .symbol("arrow.branch"), color: palette.ui.cyan,
+                    text: ref.name, icon: .symbol("arrow.triangle.branch"), color: palette.ui.cyan,
                     accessibility: String(localized: "current branch \(ref.name)")
                 ))
             case .branch:

@@ -540,7 +540,7 @@ final class WorkspaceContextBarView: UIView {
             stack.setContentHuggingPriority(.required, for: .horizontal)
         }
         branchIcon.contentMode = .center
-        branchIcon.image = UIImage(systemName: "arrow.branch")
+        branchIcon.image = UIImage(systemName: "arrow.triangle.branch")
         branchGroup.addArrangedSubview(branchIcon)
         branchGroup.addArrangedSubview(branchLabel)
         // The branch outranks the counts when the row is tight: the counts
