@@ -1,7 +1,7 @@
 import UIKit
 
 /// The mark for a worktree: a separate checkout of the same repository on its
-/// own branch, drawn as a tree in a box. The one owner: Quick Session's
+/// own branch, drawn as a folder with a branch. The one owner: Quick Session's
 /// worktree control and picker, a session row's worktree indicator, the
 /// workspace screen's worktree control and menu, and the commit graph's chip
 /// for a branch another checkout has out all draw it, so the same shape always
