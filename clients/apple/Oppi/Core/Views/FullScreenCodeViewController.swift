@@ -499,6 +499,7 @@ final class FullScreenCodeViewController: UIViewController {
         restorePendingMarkdownViewportIfNeeded(in: bodyView)
         scheduleLineAnchorNotice()
         updateAnnotateAvailability()
+        updateBodyBottomInset()
     }
 
     private func currentMarkdownViewportIntent() -> FullScreenMarkdownViewportIntent? {
@@ -568,6 +569,7 @@ final class FullScreenCodeViewController: UIViewController {
         // A control built after the body asked for the page alone stays out of the way.
         setImmersiveChromeHidden(isImmersiveChromeHidden, animated: false)
         applyContentSurface()
+        updateBodyBottomInset()
     }
 
     private func syncFloatingControlVisibility(on viewController: UIViewController) {
@@ -575,6 +577,24 @@ final class FullScreenCodeViewController: UIViewController {
         floatingViewingOptionsButton?.isHidden = sideRail
         annotateButton?.isHidden = sideRail
         stashButton.isHidden = sideRail
+        updateBodyBottomInset()
+    }
+
+    /// The body scrolls its last line above the taller of the two floating
+    /// stacks in the bottom corners: the host's previous/next file under
+    /// Annotate (leading), and its next file under Viewing Options (trailing).
+    private func updateBodyBottomInset() {
+        func shown(_ control: UIView?) -> Int { control?.superview != nil && control?.isHidden == false ? 1 : 0 }
+        let rows = max(
+            leadingFloatingAccessoryCount + shown(annotateButton),
+            trailingFloatingAccessoryCount + shown(floatingViewingOptionsButton)
+        )
+        let chrome = FullScreenFloatingControlChrome.self
+        let inset = rows == 0 ? 0 : chrome.bottomPadding
+            + CGFloat(rows) * chrome.controlSize
+            + CGFloat(rows - 1) * chrome.stackSpacing
+            + chrome.stackSpacing
+        installedBodyView?.setBottomContentInset(inset)
     }
 
     /// True while a body asked for the reader's controls to be out of the way. A
@@ -1004,6 +1024,7 @@ final class FullScreenCodeViewController: UIViewController {
         guard isViewLoaded, let host = contentHostController else { return }
         markupBottomConstraint?.constant = -markupBottomPadding
         configureFloatingStashButton(on: host, palette: bodyThemeID.palette)
+        updateBodyBottomInset()
     }
 
     private var viewingOptionsBottomPadding: CGFloat {
@@ -1019,6 +1040,7 @@ final class FullScreenCodeViewController: UIViewController {
         guard isViewLoaded else { return }
         viewingOptionsBottomConstraint?.constant = -viewingOptionsBottomPadding
         pickBottomConstraint?.constant = -pickControlsBottomPadding
+        updateBodyBottomInset()
         (contentHostController?.view ?? view).layoutIfNeeded()
     }
 

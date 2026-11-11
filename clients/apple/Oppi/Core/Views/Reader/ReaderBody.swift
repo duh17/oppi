@@ -63,6 +63,10 @@ protocol ReaderBody: UIView {
     var supportsFind: Bool { get }
 
     func presentFind()
+
+    /// Room past the document's last line, so it can scroll clear of the
+    /// floating controls the reader and its host draw over the bottom corners.
+    func setBottomContentInset(_ inset: CGFloat)
 }
 
 /// A page's own paper and the ink that holds on it.
@@ -106,6 +110,8 @@ extension ReaderBody {
     var supportsFind: Bool { false }
 
     func presentFind() {}
+
+    func setBottomContentInset(_ inset: CGFloat) {}
 
     var viewportIntent: FullScreenMarkdownViewportIntent? { nil }
 
