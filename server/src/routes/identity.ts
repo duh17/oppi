@@ -467,6 +467,9 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       capabilities: {
         sessionStream: { version: 1 },
         controlSessions: { version: 1 },
+        // `GET /schedules/calendar`: past runs with their sessions' outcomes, and upcoming
+        // occurrences expanded from each schedule's trigger.
+        scheduleCalendar: { version: 1 },
         currentFiles: { version: 1 },
         workspaceFileEditing: {
           version: 1,

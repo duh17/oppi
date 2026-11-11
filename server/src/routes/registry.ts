@@ -961,6 +961,14 @@ const rawApiRouteSpecs = [
     surface: "core",
     auth: "owner",
   },
+  // Before `/schedules/{scheduleId}`, which also matches it, so metrics name it by this row.
+  {
+    method: "GET",
+    path: "/schedules/calendar",
+    operationId: "getAgentScheduleCalendar",
+    surface: "core",
+    auth: "owner",
+  },
   {
     method: "GET",
     path: "/schedules/{scheduleId}",

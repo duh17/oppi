@@ -284,6 +284,15 @@ extension APIClient {
         return try JSONDecoder().decode(AgentScheduleListResponse.self, from: data).schedules
     }
 
+    /// Past runs with their sessions' outcomes and upcoming occurrences in `[from, to)`, at most
+    /// 62 days (`capabilities.scheduleCalendar`).
+    func scheduleCalendar(from: Date, to: Date) async throws -> ScheduleCalendarResponse {
+        let fromMs = Int64((from.timeIntervalSince1970 * 1000).rounded(.down))
+        let toMs = Int64((to.timeIntervalSince1970 * 1000).rounded(.down))
+        let data = try await get("/schedules/calendar?from=\(fromMs)&to=\(toMs)")
+        return try JSONDecoder().decode(ScheduleCalendarResponse.self, from: data)
+    }
+
     func getAgentSchedule(_ scheduleId: String) async throws -> AgentSchedule {
         let encodedScheduleId = try percentEncodePathSegment(scheduleId)
         let data = try await get("/schedules/\(encodedScheduleId)")

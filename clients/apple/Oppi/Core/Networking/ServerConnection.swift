@@ -185,6 +185,9 @@ final class ServerConnection {
     /// A Live Voice call can start (`capabilities.liveVoice`). A server that does not
     /// advertise it, such as one older than 0.53.0, cannot run a call.
     var liveVoiceAvailable: Bool { serverCapabilities?.liveVoice?.version ?? 0 >= 1 }
+    /// The server answers the schedule calendar (`capabilities.scheduleCalendar`); without it
+    /// Schedules shows only its list.
+    var scheduleCalendarAvailable: Bool { serverCapabilities?.scheduleCalendar?.version ?? 0 >= 1 }
     /// Relay the server pushes through (`capabilities.pushNotifications`); nil when it does not.
     var pushRelay: URL? { serverCapabilities?.pushRelay }
 

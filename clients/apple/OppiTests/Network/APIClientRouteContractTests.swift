@@ -760,6 +760,9 @@ extension APIClientEndpoint {
         APIClientEndpoint("listAgentScheduleRuns") {
             _ = try? await $0.listAgentScheduleRuns(scheduleId: Placeholder.schedule)
         },
+        APIClientEndpoint("scheduleCalendar") {
+            _ = try? await $0.scheduleCalendar(from: Date(timeIntervalSince1970: 0), to: Date(timeIntervalSince1970: 86_400))
+        },
     ]
 
     private static let dailyTrigger = AgentScheduleTrigger.cron(expression: "0 3 * * *", timeZone: "UTC")

@@ -1,0 +1,290 @@
+{
+  "_meta": {
+    "description": "One GET /schedules/calendar answer: past runs joined to their sessions (done, failed, needs you, running, a run that never started, a manual run, a prompt sent into an existing session) and upcoming occurrences (no run). Built by server/tests/schedule-calendar-fixtures.ts; server/tests/schedule-calendar-fixtures.test.ts fails when the committed bytes differ, and Apple ScheduleCalendarContractTests decodes it.",
+    "source": "server/src/agent-schedule-calendar.ts"
+  },
+  "body": {
+    "from": 1794384000000,
+    "to": 1794470400000,
+    "now": 1794415320000,
+    "schedules": [
+      {
+        "id": "kypu0005",
+        "name": "Nightly Kypu sync",
+        "status": "active",
+        "trigger": {
+          "type": "cron",
+          "expression": "5 0 * * *",
+          "timeZone": "America/Los_Angeles"
+        },
+        "action": {
+          "type": "new_session",
+          "workspaceId": "kypu",
+          "promptChars": 212
+        },
+        "model": "anthropic/claude-sonnet-5-5"
+      },
+      {
+        "id": "night330",
+        "name": "Night shift",
+        "status": "active",
+        "trigger": {
+          "type": "cron",
+          "expression": "30 3 * * *",
+          "timeZone": "America/Los_Angeles"
+        },
+        "action": {
+          "type": "new_session",
+          "workspaceId": "oppi",
+          "agentId": "night-agent",
+          "promptChars": 840
+        },
+        "model": "anthropic/claude-opus-5-5",
+        "thinkingLevel": "high"
+      },
+      {
+        "id": "digest07",
+        "name": "Daily personalized HN + X digest",
+        "status": "active",
+        "trigger": {
+          "type": "cron",
+          "expression": "0 7 * * *",
+          "timeZone": "America/Los_Angeles"
+        },
+        "action": {
+          "type": "new_session",
+          "workspaceId": "chaosdonkey",
+          "promptChars": 1310
+        },
+        "model": "anthropic/claude-opus-5-5"
+      },
+      {
+        "id": "jobhunt1",
+        "name": "Weekday job hunt",
+        "status": "active",
+        "trigger": {
+          "type": "cron",
+          "expression": "30 8 * * 1-5",
+          "timeZone": "America/Los_Angeles"
+        },
+        "action": {
+          "type": "new_session",
+          "workspaceId": "jobsearch",
+          "promptChars": 655
+        },
+        "model": "anthropic/claude-sonnet-5-5"
+      },
+      {
+        "id": "mirror06",
+        "name": "Daily upstream mirror sync",
+        "status": "paused",
+        "trigger": {
+          "type": "cron",
+          "expression": "0 6 * * *",
+          "timeZone": "America/Los_Angeles"
+        },
+        "action": {
+          "type": "new_session",
+          "workspaceId": "oppi",
+          "promptChars": 96
+        }
+      },
+      {
+        "id": "hawaii01",
+        "name": "Clear Hawaii no-install override",
+        "status": "active",
+        "trigger": {
+          "type": "at",
+          "at": 1794416400000,
+          "timeZone": "America/Los_Angeles"
+        },
+        "action": {
+          "type": "existing_session",
+          "workspaceId": "oppi",
+          "sessionId": "sess-hawaii",
+          "promptChars": 120
+        },
+        "model": "anthropic/claude-opus-5-5"
+      },
+      {
+        "id": "nanny917",
+        "name": "Nanny mail triage",
+        "status": "active",
+        "trigger": {
+          "type": "cron",
+          "expression": "0 9,17 * * *",
+          "timeZone": "America/Los_Angeles"
+        },
+        "action": {
+          "type": "new_session",
+          "workspaceId": "nanny",
+          "promptChars": 402
+        },
+        "model": "anthropic/claude-sonnet-5-5"
+      },
+      {
+        "id": "pulse015",
+        "name": "Queue pulse",
+        "status": "active",
+        "trigger": {
+          "type": "every",
+          "intervalMs": 300000,
+          "timeZone": "America/Los_Angeles"
+        },
+        "action": {
+          "type": "new_session",
+          "workspaceId": "oppi",
+          "promptChars": 40
+        },
+        "upcomingTruncated": true
+      }
+    ],
+    "entries": [
+      {
+        "scheduleId": "kypu0005",
+        "slotKey": "cron:1794384300000",
+        "at": 1794384300000,
+        "run": {
+          "id": "run-kypu",
+          "kind": "due",
+          "status": "completed",
+          "createdAt": 1794384301000,
+          "startedAt": 1794384302000,
+          "completedAt": 1794384304000,
+          "promptDispatch": "delivered",
+          "session": {
+            "id": "sess-kypu",
+            "workspaceId": "kypu",
+            "status": "stopped",
+            "programStatus": {
+              "state": "done",
+              "since": 1794384460000
+            },
+            "cost": 0.42,
+            "model": "anthropic/claude-sonnet-5-5",
+            "settledAt": 1794384460000
+          }
+        }
+      },
+      {
+        "scheduleId": "night330",
+        "slotKey": "cron:1794396600000",
+        "at": 1794396600000,
+        "run": {
+          "id": "run-night",
+          "kind": "due",
+          "status": "completed",
+          "createdAt": 1794396601000,
+          "startedAt": 1794396602000,
+          "completedAt": 1794396605000,
+          "promptDispatch": "delivered",
+          "session": {
+            "id": "sess-night",
+            "workspaceId": "oppi",
+            "status": "busy",
+            "programStatus": {
+              "state": "working",
+              "since": 1794415200000
+            },
+            "cost": 4.88,
+            "model": "anthropic/claude-opus-5-5"
+          }
+        }
+      },
+      {
+        "scheduleId": "mirror06",
+        "slotKey": "cron:1794405600000",
+        "at": 1794405600000,
+        "run": {
+          "id": "run-mirror",
+          "kind": "due",
+          "status": "failed",
+          "createdAt": 1794405601000,
+          "startedAt": 1794405602000,
+          "completedAt": 1794405602000,
+          "error": "approval_required_noninteractive: bash git push"
+        }
+      },
+      {
+        "scheduleId": "digest07",
+        "slotKey": "cron:1794409200000",
+        "at": 1794409200000,
+        "run": {
+          "id": "run-digest",
+          "kind": "due",
+          "status": "completed",
+          "createdAt": 1794409201000,
+          "startedAt": 1794409202000,
+          "completedAt": 1794409204000,
+          "promptDispatch": "delivered",
+          "session": {
+            "id": "sess-digest",
+            "workspaceId": "chaosdonkey",
+            "status": "stopped",
+            "programStatus": {
+              "state": "error",
+              "message": "Provider returned 529",
+              "since": 1794409510000
+            },
+            "cost": 1.65,
+            "model": "anthropic/claude-opus-5-5",
+            "settledAt": 1794409510000
+          }
+        }
+      },
+      {
+        "scheduleId": "jobhunt1",
+        "slotKey": "cron:1794414600000",
+        "at": 1794414600000,
+        "run": {
+          "id": "run-jobs",
+          "kind": "due",
+          "status": "completed",
+          "createdAt": 1794414601000,
+          "startedAt": 1794414602000,
+          "completedAt": 1794414604000,
+          "promptDispatch": "delivered",
+          "session": {
+            "id": "sess-jobs",
+            "workspaceId": "jobsearch",
+            "status": "ready",
+            "programStatus": {
+              "state": "blocked",
+              "kind": "question",
+              "message": "Apply to these three?",
+              "since": 1794414840000
+            },
+            "cost": 0.58,
+            "model": "anthropic/claude-sonnet-5-5"
+          }
+        }
+      },
+      {
+        "scheduleId": "nanny917",
+        "slotKey": "manual:req-7f3a",
+        "at": 1794415200000,
+        "run": {
+          "id": "run-nanny-manual",
+          "kind": "manual",
+          "status": "pending",
+          "createdAt": 1794415200000
+        }
+      },
+      {
+        "scheduleId": "hawaii01",
+        "slotKey": "at:1794416400000",
+        "at": 1794416400000
+      },
+      {
+        "scheduleId": "nanny917",
+        "slotKey": "cron:1794416400000",
+        "at": 1794416400000
+      },
+      {
+        "scheduleId": "nanny917",
+        "slotKey": "cron:1794445200000",
+        "at": 1794445200000
+      }
+    ]
+  }
+}

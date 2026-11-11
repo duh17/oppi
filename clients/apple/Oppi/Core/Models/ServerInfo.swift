@@ -130,6 +130,9 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var pushNotifications: PushNotificationsCapability? = nil
         /// Live streams take `auth_renew`, so access-token rotation never reconnects them.
         var streamAuthRenewal: CapabilityVersion? = nil
+        /// `GET /schedules/calendar`: past runs with their outcomes and upcoming occurrences.
+        /// Missing means Schedules shows only its list.
+        var scheduleCalendar: CapabilityVersion? = nil
 
         /// The relay origin, when the server pushes and names an https relay (http only on
         /// loopback, for local testing).

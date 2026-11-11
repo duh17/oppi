@@ -88,6 +88,7 @@ describe("schedule routes", () => {
     const storage = {
       getAgentScheduleStore: () => store,
       getAgentDefinitionStore: () => ({
+        getAgent: (agentId: string) => agents.get(agentId),
         resolveAgent: vi.fn(
           (agentId: string) =>
             agents.get(agentId) ??
@@ -523,6 +524,58 @@ describe("schedule routes", () => {
     expect(errors).toEqual([]);
     const runs = (responses[0]?.data as { runs: Array<{ id: string }> }).runs;
     expect(runs.map((run) => run.id)).toEqual([newest.id, middle.id]);
+  });
+
+  it("answers the calendar, not a schedule named calendar, and refuses a bad range", async () => {
+    const schedule = store.createSchedule(
+      {
+        name: "calendar",
+        trigger: { type: "every", intervalMs: 3_600_000, timeZone: "UTC" },
+        action: {
+          type: "new_session",
+          workspaceId: workspace.id,
+          prompt: "go",
+          agentId: "agent-1",
+        },
+      },
+      0,
+    );
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const get = (query: string) =>
+      dispatch({
+        method: "GET",
+        path: "/schedules/calendar",
+        url: new URL(`https://localhost/schedules/calendar?${query}`),
+        req: requestBody({}),
+        res: {} as ServerResponse,
+      });
+    const now = 1_794_400_000_123;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+
+    await get(`from=${now}&to=${now + 3 * 3_600_000}`);
+    clock.mockRestore();
+    await get("from=10&to=5");
+
+    expect(errors).toEqual([{ status: 400, message: "to must be after from" }]);
+    const calendar = responses[0]?.data as {
+      schedules: Array<{ id: string; model?: string }>;
+      entries: Array<{ scheduleId: string; at: number }>;
+    };
+    expect(calendar.schedules).toEqual([
+      expect.objectContaining({ id: schedule.id, model: "agent-model" }),
+    ]);
+    // Hourly from creation at 0: each whole hour after now, inside the three hours.
+    const hours: number[] = [];
+    for (
+      let at = Math.floor(now / 3_600_000 + 1) * 3_600_000;
+      at < now + 3 * 3_600_000;
+      at += 3_600_000
+    ) {
+      hours.push(at);
+    }
+    expect(calendar.entries).toEqual(
+      hours.map((at) => ({ scheduleId: schedule.id, slotKey: `every:${at}`, at })),
+    );
   });
 
   it("rejects malformed run history queries", async () => {

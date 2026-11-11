@@ -1,5 +1,10 @@
 import type { ServerResponse } from "node:http";
 
+import {
+  ScheduleCalendarRangeError,
+  buildScheduleCalendar,
+  parseScheduleCalendarRange,
+} from "../agent-schedule-calendar.js";
 import { createAgentScheduleDispatchHooks } from "../agent-schedule-dispatch.js";
 import {
   SCHEDULE_IDEMPOTENCY_CONFLICT_CODE,
@@ -265,6 +270,13 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return handleScheduleCollection(method, url, req, res);
     }
 
+    // Before the member route: `calendar` is not a schedule id or name.
+    if (path === "/schedules/calendar") {
+      if (method !== "GET") return false;
+      handleCalendar(url, res);
+      return true;
+    }
+
     const member = path.match(/^\/schedules\/([^/]+)$/);
     if (member?.[1]) {
       return handleScheduleMember(decodeURIComponent(member[1]), method, url, req, res);
@@ -306,6 +318,32 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
 
     return false;
   };
+
+  function handleCalendar(url: URL, res: ServerResponse): void {
+    let range: { from: number; to: number };
+    try {
+      range = parseScheduleCalendarRange(url);
+    } catch (error) {
+      if (!(error instanceof ScheduleCalendarRangeError)) throw error;
+      helpers.error(res, 400, error.message);
+      return;
+    }
+    const schedules = getSchedules();
+    const agents = ctx.storage.getAgentDefinitionStore();
+    helpers.json(
+      res,
+      buildScheduleCalendar(
+        {
+          listSchedules: () => schedules.listSchedules(),
+          listRunsCreatedBetween: (from, to) => schedules.listRunsCreatedBetween(from, to),
+          getSession: (sessionId) => ctx.storage.getSession(sessionId),
+          agentDefaultModel: (agentId) =>
+            agents.getAgent(agentId)?.definition.sessionDefaults?.model,
+        },
+        { ...range, now: Date.now() },
+      ),
+    );
+  }
 
   function filterScheduleSummaries(
     schedules: AgentScheduleSummary[],

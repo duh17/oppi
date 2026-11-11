@@ -20,6 +20,10 @@ import {
   serializeMediaInfoFixture,
 } from "../tests/media-info-fixtures.js";
 import {
+  SCHEDULE_CALENDAR_SNAPSHOT_FILE,
+  serializeScheduleCalendarFixture,
+} from "../tests/schedule-calendar-fixtures.js";
+import {
   buildSurfaceFixtures,
   serializeSurfaceFixture,
   SURFACE_FIXTURES_DIR,
@@ -63,6 +67,8 @@ const fixtures = [
   { path: ROUTES_SNAPSHOT_PATH, content: serializeRouteFixture() },
   // The media-info body shape the client decodes.
   { path: MEDIA_INFO_SNAPSHOT_FILE, content: serializeMediaInfoFixture() },
+  // One schedule calendar answer, every entry shape.
+  { path: SCHEDULE_CALENDAR_SNAPSHOT_FILE, content: serializeScheduleCalendarFixture() },
   // One surface per composite, plus the action, patch, and unknown-composite messages, decoded
   // by the server's tests and the Apple Codable tests from these same bytes.
   ...Object.entries(buildSurfaceFixtures()).map(([name, value]) => ({

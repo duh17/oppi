@@ -477,6 +477,18 @@ export class AgentScheduleStore {
     return rows.map(runFromRow);
   }
 
+  /** Every schedule's runs created in `[from, to)`, oldest first. */
+  listRunsCreatedBetween(from: number, to: number): AgentScheduleRun[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM agent_schedule_runs
+           WHERE created_at >= ? AND created_at < ? ORDER BY created_at, id`,
+        )
+        .all(from, to) as RunRow[]
+    ).map(runFromRow);
+  }
+
   listRunSummaries(
     scheduleId: string,
     options: AgentScheduleListRunOptions = {},
@@ -725,6 +737,8 @@ export class AgentScheduleStore {
         ON agent_schedule_runs(status, lease_expires_at, created_at);
       CREATE INDEX IF NOT EXISTS agent_schedule_runs_schedule_idx
         ON agent_schedule_runs(schedule_id, created_at);
+      CREATE INDEX IF NOT EXISTS agent_schedule_runs_created_idx
+        ON agent_schedule_runs(created_at);
     `);
     // A database created before versions: every Schedule starts at 0.
     const columns = this.db.prepare("PRAGMA table_info(agent_schedules)").all() as Array<{
@@ -787,7 +801,7 @@ function scheduleSummary(schedule: AgentSchedule): AgentScheduleSummary {
   };
 }
 
-function runSummary(run: AgentScheduleRun): AgentScheduleRunSummary {
+export function runSummary(run: AgentScheduleRun): AgentScheduleRunSummary {
   return {
     id: run.id,
     scheduleId: run.scheduleId,
@@ -822,7 +836,7 @@ function runResultSummary(result: unknown): {
   };
 }
 
-function actionSummary(action: AgentScheduleAction): AgentScheduleActionSummary {
+export function actionSummary(action: AgentScheduleAction): AgentScheduleActionSummary {
   return {
     type: action.type,
     workspaceId: action.workspaceId,
