@@ -31,8 +31,9 @@ enum KeyboardCommandMenu {
 
         if builder.menu(for: .sidebar) != nil {
             builder.replace(menu: .sidebar, with: inline([.toggleSidebar], identifier: .sidebar))
+            builder.insertSibling(inline([.toggleFileTree]), afterMenu: .sidebar)
         } else {
-            builder.insertChild(inline([.toggleSidebar]), atStartOfMenu: .view)
+            builder.insertChild(inline([.toggleSidebar, .toggleFileTree]), atStartOfMenu: .view)
         }
         builder.insertChild(inline(KeyboardCommand.panes.map(KeyboardCommand.pane)), atStartOfMenu: .view)
 

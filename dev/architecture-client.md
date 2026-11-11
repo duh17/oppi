@@ -86,6 +86,7 @@ One owner per layout question. `userInterfaceIdiom` is never a layout signal: th
 - Presentation: a choice or options panel opened from a control is `ModalPresentation.popoverOrSheet`, with that control as the source; UIKit makes it a sheet when compact. A screen that presents directly configures through `apply(to:source:)`.
 - Content width: a full-width content column caps at `ReadableContentWidth`, by width alone; bars, backgrounds, and scroll views stay full-bleed. Reader prose keeps `ReaderReadingColumn`.
 - Media: a media view whose box the content does not size uses `ImageViewportSizing.aspectFit` (`AspectFitMediaView` for a page).
+- File Browser: `FileBrowserViewController.Layout` alone arranges the tree and the open file; whether a regular-width tree is tucked away is the app-wide `FileBrowserViewOptionsStore.hidesTree`, toggled only through `toggleTree()`.
 
 ### Presentation gotchas
 

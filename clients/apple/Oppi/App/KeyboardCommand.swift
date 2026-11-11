@@ -15,6 +15,8 @@ enum KeyboardCommand: Hashable, Sendable {
     case settings
     case close
     case toggleSidebar
+    /// The File Browser's folder tree beside the open file (regular width).
+    case toggleFileTree
     /// Files, Git, Outline or Context: the chat's top-bar action of that name.
     case pane(ChatTopBarAction)
     case stop
@@ -24,7 +26,7 @@ enum KeyboardCommand: Hashable, Sendable {
 
     /// Every command, in menu order.
     static let all: [KeyboardCommand] = [
-        .newSession, .settings, .close, .toggleSidebar,
+        .newSession, .settings, .close, .toggleSidebar, .toggleFileTree,
         .pane(.files), .pane(.git), .pane(.outline), .pane(.context),
         .stop, .focusComposer, .nextSession, .previousSession,
     ]
@@ -39,6 +41,7 @@ enum KeyboardCommand: Hashable, Sendable {
         case .settings: "settings"
         case .close: "close"
         case .toggleSidebar: "toggleSidebar"
+        case .toggleFileTree: "toggleFileTree"
         case .pane(let action): "pane.\(action.rawValue)"
         case .stop: "stop"
         case .focusComposer: "focusComposer"
@@ -60,6 +63,7 @@ enum KeyboardCommand: Hashable, Sendable {
         case .settings: String(localized: "Settings\u{2026}")
         case .close: String(localized: "Close")
         case .toggleSidebar: String(localized: "Show Sidebar")
+        case .toggleFileTree: String(localized: "Show File Tree")
         case .pane(let action): String(localized: "Show \(action.label)")
         case .stop: String(localized: "Stop Response")
         case .focusComposer: String(localized: "Focus Composer")
@@ -75,6 +79,7 @@ enum KeyboardCommand: Hashable, Sendable {
         case .settings: (",", .command)
         case .close: ("w", .command)
         case .toggleSidebar: ("s", [.control, .command])
+        case .toggleFileTree: ("l", [.command, .shift])
         case .pane(let action):
             ("\((Self.panes.firstIndex(of: action) ?? 0) + 1)", [.alternate, .command])
         case .stop: (".", .command)

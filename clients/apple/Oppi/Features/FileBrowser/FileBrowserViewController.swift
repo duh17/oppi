@@ -130,6 +130,9 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private var paneOnlyConstraints: [NSLayoutConstraint] = []
     private var collectionTopInList: NSLayoutConstraint?
     private var collectionTopInColumn: NSLayoutConstraint?
+    /// The tree at the leading edge, or tucked past it (`.columnTreeHidden`).
+    private var treeLeading: NSLayoutConstraint?
+    private var treeTucked: NSLayoutConstraint?
     private var appliedLayout: Layout?
 
     // The open file.
@@ -145,6 +148,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private var lastThemeID: ThemeID?
     private var appliedBars: BarState?
     private var sidebarToggle: UIBarButtonItem?
+    private lazy var treeToggle = makeTreeToggle()
     private lazy var viewOptionsItem = Self.makeViewOptionsItem()
     private var lastChrome: FileBrowserEmbeddedChrome?
     /// The listing's order and the checkout's Git changes, read each pass.
@@ -258,6 +262,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             subview.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(subview)
         }
+        // A tucked tree sits past the leading edge, over the split's sidebar.
+        view.clipsToBounds = true
         dividerTint.translatesAutoresizingMaskIntoConstraints = false
         divider.addSubview(dividerTint)
         for subview in [columnSearch, collectionView, stateView] {
@@ -325,10 +331,18 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         }
 
         let isLocked = lockTarget.map { ScopedLockService.shared.isLocked($0) } ?? false
+        // Read before any return, so a change from another browser or the
+        // keyboard re-runs this pass.
+        let hidesTree = viewOptions.hidesTree
         // The sidebar toggle stays on the lock cover and "Connecting":
-        // only the column Back belongs to the content.
+        // the tree toggle and the column Back belong to the content.
         if isShellRoute {
-            syncLeadingItems(showsColumnBack: !isLocked && services != nil && replacesStackBackButton)
+            let showsContent = !isLocked && services != nil
+            syncLeadingItems(
+                showsTreeToggle: showsContent && canToggleTree,
+                hidesTree: hidesTree,
+                showsColumnBack: showsContent && replacesStackBackButton
+            )
         }
         if isLocked {
             show(.locked)
@@ -556,8 +570,32 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     }
 
     private var currentLayout: Layout {
-        if showsColumn { return .column }
+        if showsColumn { return canToggleTree && viewOptions.hidesTree ? .columnTreeHidden : .column }
         return state.selectedFile == nil ? .list : .selectedFile
+    }
+
+    /// The tree can make way only for an open file: with none, it shows.
+    private var canToggleTree: Bool {
+        showsColumn && state.selectedFile != nil
+    }
+
+    /// Hides or shows the tree beside the open file, animated. The bar button,
+    /// its accessibility activation, and the keyboard command all run this.
+    func toggleTree() {
+        guard canToggleTree else { return }
+        viewOptions.hidesTree.toggle()
+        setNeedsUpdateProperties()
+        view.layoutIfNeeded()
+        UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState]) {
+            self.updatePropertiesIfNeeded()
+            self.view.layoutIfNeeded()
+        }
+    }
+
+    /// The keyboard command's state: whether the tree toggle is offered, and
+    /// whether it would show the tree.
+    var treeToggleState: (available: Bool, hidden: Bool) {
+        (isOnScreen && phase == .content && canToggleTree, viewOptions.hidesTree)
     }
 
     private var canGoBack: Bool {
@@ -1000,10 +1038,13 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         let treeWidth = treeColumn.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: 0.5, constant: -0.5)
         treeWidth.priority = .defaultHigh
         let hairline = 1 / max(1, traitCollection.displayScale)
+        let treeLeading = treeColumn.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+        self.treeLeading = treeLeading
+        treeTucked = treeColumn.trailingAnchor.constraint(equalTo: view.leadingAnchor)
         NSLayoutConstraint.activate([
             treeColumn.topAnchor.constraint(equalTo: view.topAnchor),
             treeColumn.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            treeColumn.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            treeLeading,
             columnSearch.topAnchor.constraint(equalTo: treeColumn.safeAreaLayoutGuide.topAnchor),
             columnSearch.leadingAnchor.constraint(equalTo: treeColumn.leadingAnchor),
             columnSearch.trailingAnchor.constraint(equalTo: treeColumn.trailingAnchor),
@@ -1058,13 +1099,21 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         let previous = appliedLayout
         appliedLayout = layout
         NSLayoutConstraint.deactivate(listConstraints + columnConstraints + paneOnlyConstraints)
-        let column = layout == .column
+        treeTucked?.isActive = false
+        // The tree keeps its rows and width while tucked, so it slides out
+        // and back in place of reflowing.
+        let column = layout.isColumn
+        let tucked = layout == .columnTreeHidden
+        treeLeading?.isActive = !tucked
         switch layout {
         case .list: NSLayoutConstraint.activate(listConstraints)
-        case .column: NSLayoutConstraint.activate(columnConstraints)
+        case .column, .columnTreeHidden: NSLayoutConstraint.activate(columnConstraints)
         case .selectedFile: NSLayoutConstraint.activate(paneOnlyConstraints)
         }
+        treeTucked?.isActive = tucked
         treeColumn.accessibilityIdentifier = column ? "fileBrowser.tree" : nil
+        // Off screen, but not hidden: hiding it would cut the slide short.
+        treeColumn.accessibilityElementsHidden = tucked
         // The tree searches in its own field (workspace files only).
         let showsSearchField = column && !isHostHome
         columnSearch.isHidden = !showsSearchField
@@ -1075,11 +1124,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         divider.isHidden = !column
         paneContainer.isHidden = layout == .list
         paneEmpty.isHidden = true
-        if !column, columnSearch.textField.isFirstResponder {
+        if layout != .column, columnSearch.textField.isFirstResponder {
             columnSearch.textField.resignFirstResponder()
         }
         // Rows and spacing differ between the list and the tree.
-        if previous == nil || (previous == .column) != column {
+        if previous == nil || (previous?.isColumn ?? false) != column {
             collectionView.collectionViewLayout.invalidateLayout()
         }
     }
@@ -1090,7 +1139,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         UICollectionViewCompositionalLayout { [weak self] index, environment in
             guard let self else { return nil }
             let section = dataSource?.sectionIdentifier(for: index) ?? .body
-            let column = appliedLayout == .column
+            let column = appliedLayout?.isColumn ?? false
             var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
             configuration.backgroundColor = .clear
             configuration.showsSeparators = !column && section == .body
@@ -1190,7 +1239,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     private func applySnapshot(layout: Layout, indexIsLoading: Bool, reconfigureAll: Bool) {
         guard let dataSource, layout != .selectedFile else { return }
-        let column = layout == .column
+        let column = layout.isColumn
         var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
         var nextRows: [Item: Row] = [:]
         var nextTaps: [Item: Tap] = [:]
@@ -1418,7 +1467,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             content.text = "Showing first \(count) entries"
             content.textProperties.font = UIFont.preferredFont(forTextStyle: .caption1)
             content.textProperties.color = comment
-            if appliedLayout == .column {
+            if appliedLayout?.isColumn == true {
                 content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 0, trailing: 8)
             }
             cell.contentConfiguration = content
@@ -1852,9 +1901,10 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         navigationItem.hidesBackButton = replacesStackBackButton
 
         // The open file's own items (Edit, the editor's status, Preview, and
-        // Done) join this screen's bar, outside the folder's View Options.
+        // Done) join this screen's bar, outside the folder's View Options,
+        // which go with the tree.
         var rightItems = paneViewer?.bar.trailingItems ?? []
-        if layout != .selectedFile {
+        if layout == .list || layout == .column {
             rightItems.append(viewOptionsItem)
         }
         if !(navigationItem.rightBarButtonItems ?? []).elementsEqual(rightItems, by: ===) {
@@ -1875,61 +1925,12 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         columnSearch.setScopes(isSearching ? scopeTitles : nil, selected: effectiveSearchScope.rawValue)
     }
 
-    /// View Options (Files.app's): sort by Name, Date Modified, Size, or Kind
-    /// (the chosen key again flips its direction), Folders First, and Show
-    /// Hidden Files. The menu is read when it opens, so it always shows the
-    /// device's current choice, whichever browser made it.
-    static func makeViewOptionsItem() -> UIBarButtonItem {
-        let menu = UIMenu(children: [UIDeferredMenuElement.uncached { completion in
-            completion(viewOptionsMenuElements(store: .shared))
-        }])
-        let item = UIBarButtonItem(
-            title: String(localized: "View Options"),
-            image: UIImage(systemName: "arrow.up.arrow.down"),
-            menu: menu
-        )
-        item.accessibilityIdentifier = "fileBrowser.viewOptions"
-        return item
-    }
-
-    private static func viewOptionsMenuElements(store: FileBrowserViewOptionsStore) -> [UIMenuElement] {
-        let options = store.options
-        let sorts = FileBrowserSortKey.allCases.map { key in
-            let chosen = options.sortKey == key
-            let action = UIAction(
-                title: key.title,
-                image: chosen ? UIImage(systemName: options.ascending ? "chevron.up" : "chevron.down") : nil
-            ) { _ in
-                store.update { $0.choose(key) }
-            }
-            action.state = chosen ? .on : .off
-            action.accessibilityIdentifier = "fileBrowser.sort.\(key.rawValue)"
-            if chosen {
-                action.accessibilityValue = options.ascending ? String(localized: "Ascending") : String(localized: "Descending")
-            }
-            return action
-        }
-        let foldersFirst = UIAction(title: String(localized: "Folders First")) { _ in
-            store.update { $0.foldersFirst.toggle() }
-        }
-        foldersFirst.state = options.foldersFirst ? .on : .off
-        foldersFirst.accessibilityIdentifier = "fileBrowser.foldersFirst"
-        let hidden = UIAction(title: String(localized: "Show Hidden Files")) { _ in
-            store.update { $0.showsHidden.toggle() }
-        }
-        hidden.state = options.showsHidden ? .on : .off
-        hidden.accessibilityIdentifier = "fileBrowser.showHidden"
-        return [
-            UIMenu(title: String(localized: "Sort By"), options: .displayInline, children: sorts),
-            UIMenu(options: .displayInline, children: [foldersFirst, hidden]),
-        ]
-    }
-
-    /// The split detail root's sidebar toggle in every phase, then the
-    /// column Back while the content shows.
-    private func syncLeadingItems(showsColumnBack: Bool) {
+    /// The split detail root's sidebar toggle in every phase, then the tree
+    /// toggle and the column Back while the content shows.
+    private func syncLeadingItems(showsTreeToggle: Bool, hidesTree: Bool, showsColumnBack: Bool) {
         let bars = BarState(
             showsSidebarToggle: showsSidebarToggle,
+            showsTreeToggle: showsTreeToggle,
             showsColumnBack: showsColumnBack,
             themeID: root.themeStore.activeThemeID
         )
@@ -1940,11 +1941,34 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         if let sidebarToggle {
             WorkspaceSplitSidebarToggle.sync(sidebarToggle, root: root)
         }
+        if showsTreeToggle {
+            treeToggle.title = hidesTree ? String(localized: "Show File Tree") : String(localized: "Hide File Tree")
+            treeToggle.tintColor = root.themeStore.activeThemeID.palette.ui.fg
+        }
     }
+
+    /// The tree's toggle, in Mail's place for its sidebar control. The title
+    /// says what a tap does; the bar shows only the symbol.
+    private func makeTreeToggle() -> UIBarButtonItem {
+        let item = UIBarButtonItem(
+            title: String(localized: "Hide File Tree"),
+            image: UIImage(systemName: Self.treeToggleSymbol),
+            primaryAction: UIAction { [weak self] _ in self?.toggleTree() }
+        )
+        item.accessibilityIdentifier = "fileBrowser.treeToggle"
+        return SessionListBarItems.horizontalOnly(item)
+    }
+
+    /// Not `sidebar.leading`: the split's own sidebar toggle sits beside it
+    /// with that symbol, and two identical buttons would not say which is which.
+    static let treeToggleSymbol = "sidebar.squares.leading"
 
     private func installBarItems(_ bars: BarState) {
         sidebarToggle = bars.showsSidebarToggle ? WorkspaceSplitSidebarToggle.makeItem(root: root) : nil
         var leading: [UIBarButtonItem] = sidebarToggle.map { [$0] } ?? []
+        if bars.showsTreeToggle {
+            leading.append(treeToggle)
+        }
         if bars.showsColumnBack {
             let back = UIBarButtonItem(
                 title: String(localized: "Back"),
@@ -2002,9 +2026,15 @@ private extension FileBrowserViewController {
         case list
         /// The tree beside the open file (regular width).
         case column
+        /// Regular width with the tree tucked away by its toggle: the open
+        /// file takes the whole width. The tree keeps its rows.
+        case columnTreeHidden
         /// The open file alone: a column selection kept in compact width or
         /// across a stack/split swap.
         case selectedFile
+
+        /// The tree's rows and spacing, shown or tucked away.
+        var isColumn: Bool { self == .column || self == .columnTreeHidden }
     }
 
     struct ContentState {
@@ -2127,6 +2157,7 @@ private extension FileBrowserViewController {
 
     struct BarState: Equatable {
         let showsSidebarToggle: Bool
+        let showsTreeToggle: Bool
         let showsColumnBack: Bool
         let themeID: ThemeID
     }

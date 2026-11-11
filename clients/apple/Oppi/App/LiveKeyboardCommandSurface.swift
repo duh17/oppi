@@ -109,6 +109,10 @@ final class LiveKeyboardCommandSurface {
             let (action, isShown) = toggleSidebar()
             run = action
             title = isShown ? String(localized: "Hide Sidebar") : String(localized: "Show Sidebar")
+        case .toggleFileTree:
+            let browser = frontFileBrowser
+            run = browser.map { browser -> @MainActor () -> Void in { [weak browser] in browser?.toggleTree() } }
+            if browser?.treeToggleState.hidden == false { title = String(localized: "Hide File Tree") }
         case .pane(let pane):
             run = togglePane(pane)
             if frontChat?.isPaneOpen(pane) == true { title = String(localized: "Hide \(pane.label)") }
@@ -181,6 +185,18 @@ final class LiveKeyboardCommandSurface {
                   drawer.canToggleSidebar else { return (nil, false) }
             return ({ [weak drawer] in drawer?.toggleSidebar() }, drawer.isSidebarOpen)
         }
+    }
+
+    /// The File Browser in front that offers its tree toggle (a file open in
+    /// regular width). Its open file is a child, so the front screen is the
+    /// file's and the browser is found above it.
+    private var frontFileBrowser: FileBrowserViewController? {
+        guard isInteractive, topPresented == nil else { return nil }
+        let browser = FrontScreens.screens().lazy.compactMap { screen in
+            sequence(first: screen, next: \.parent).lazy.compactMap { $0 as? FileBrowserViewController }.first
+        }.first
+        guard let browser, browser.treeToggleState.available else { return nil }
+        return browser
     }
 
     private func togglePane(_ action: ChatTopBarAction) -> (@MainActor () -> Void)? {

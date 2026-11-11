@@ -512,6 +512,7 @@
 		3B7E7C8BF1359E20A76F02BF /* ReviewableControlMarkdownViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120F7DC9CE3A3B30E07A23F3 /* ReviewableControlMarkdownViewController.swift */; };
 		3BA10821AFB3F509A2DAA9A0 /* ChatReviewCommentsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7747D21079361CEEF3827D17 /* ChatReviewCommentsController.swift */; };
 		3BCA69F04A04D519639B487C /* TimelineExpandableTextInteractionSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85FDEC28CC33C2B50CE5A4D9 /* TimelineExpandableTextInteractionSpec.swift */; };
+		3BCCA02C7BC02C66AC076CD0 /* FileBrowserColumnPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = C224EDCDEA76F836BC19992A /* FileBrowserColumnPreview.swift */; };
 		3BD273930F9709369C6CF1FC /* LocalDataProtection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E38F93E098B5307B62EDEE0 /* LocalDataProtection.swift */; };
 		3BF4369780575B3F5F95811B /* AudioClipTimelineRowContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DCA50BD67AB2B3F967E6FF0 /* AudioClipTimelineRowContent.swift */; };
 		3C084FEE7DE237140E9146AD /* OrderedJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2DC840922C07555826152A /* OrderedJSON.swift */; };
@@ -1942,6 +1943,7 @@
 		E4E02639B31A9F94B92E45D5 /* TreeNavigationComposerUpdateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E62B91BF516910616377502B /* TreeNavigationComposerUpdateTests.swift */; };
 		E4EF91B41B1C74246C25248A /* TimelineScrollCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66FF391C8FD9D17F3CD14300 /* TimelineScrollCoordinator.swift */; };
 		E4F57E0EEE4D756F22354F68 /* FiraCode-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D025BF3A0FA22EAA8DB373CB /* FiraCode-Bold.ttf */; };
+		E50009A231E93906504324D4 /* FileBrowserTreeToggleUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A053F23D162AD0A75938312 /* FileBrowserTreeToggleUITests.swift */; };
 		E500CD1D488AD9572BD73352 /* DeviceAuthPairTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07489F1A058FF1C292D3B82D /* DeviceAuthPairTypes.swift */; };
 		E51975B60FD34F75DA96904C /* SessionContentAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = F473C423F334F7F179062477 /* SessionContentAccess.swift */; };
 		E5276CB03FA9EF9ABC3BC00C /* RexSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A2CE1597226D02FF6DD3DA4 /* RexSession.swift */; };
@@ -2737,6 +2739,7 @@
 		38E30BD4C80566D95B038D95 /* TelemetryErrorKind.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryErrorKind.swift; sourceTree = "<group>"; };
 		395634C298C4CAA8C79AF252 /* FileIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileIcon.swift; sourceTree = "<group>"; };
 		39705D8053422F602353730C /* WorkspaceMarkdownImageFileLookupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceMarkdownImageFileLookupTests.swift; sourceTree = "<group>"; };
+		3A053F23D162AD0A75938312 /* FileBrowserTreeToggleUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileBrowserTreeToggleUITests.swift; sourceTree = "<group>"; };
 		3A06177A382FDA09970056E3 /* ExpandedComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpandedComposerView.swift; sourceTree = "<group>"; };
 		3A253DB384481674A74F2779 /* PairedDeviceRosterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairedDeviceRosterTests.swift; sourceTree = "<group>"; };
 		3A257B5363B745C40F77A350 /* TestDoubles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestDoubles.swift; sourceTree = "<group>"; };
@@ -3842,6 +3845,7 @@
 		C190FFF2449BF01316954A90 /* USDZFileRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USDZFileRenderer.swift; sourceTree = "<group>"; };
 		C1943EFBC7980C6E3B18D13E /* AskCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskCard.swift; sourceTree = "<group>"; };
 		C1FE564EA32548BD48D1D76A /* SSHTerminalSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalSurface.swift; sourceTree = "<group>"; };
+		C224EDCDEA76F836BC19992A /* FileBrowserColumnPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileBrowserColumnPreview.swift; sourceTree = "<group>"; };
 		C254090F53F0DC2CAC8DF42A /* ChatTimelineOwnedClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTimelineOwnedClockTests.swift; sourceTree = "<group>"; };
 		C255F570C7EE296DBD9D61B4 /* WorkspaceExtensionsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceExtensionsViewController.swift; sourceTree = "<group>"; };
 		C26272FDFFC758CD701ABF96 /* ExtensionSurfaceDrawerLongContentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionSurfaceDrawerLongContentTests.swift; sourceTree = "<group>"; };
@@ -5261,6 +5265,7 @@
 				57EB3ADB300AE76A9BF3C3AB /* ChatRoutesUITests.swift */,
 				23A583CDEFCA7971615F374A /* CodeBlockWrappingUITests.swift */,
 				D27150D99B3C650DFFC08F4D /* FileBrowserMotionUITests.swift */,
+				3A053F23D162AD0A75938312 /* FileBrowserTreeToggleUITests.swift */,
 				AE043DCB4817E8000AD0DA46 /* FullScreenReviewCommentUITests.swift */,
 				A66536F726394E7E49E5AE18 /* HarnessLaunchReuseUITests.swift */,
 				CCC9E73056927423B46F3E92 /* InAppBrowserPresentationUITests.swift */,
@@ -6024,6 +6029,7 @@
 			isa = PBXGroup;
 			children = (
 				6C690BCB7DB5ED460BE52B2E /* AudioScreenshotPreview.swift */,
+				C224EDCDEA76F836BC19992A /* FileBrowserColumnPreview.swift */,
 				BBF572092BBA00A70FA494F8 /* FileBrowserMotionPreviewSupport.swift */,
 				BFB2FE4FA64252769A7690EF /* FileViewerVideoScreenshotPreview.swift */,
 				81CFAA61EC2DEBB9AC1B9284 /* MarkdownTablesPreview.swift */,
@@ -8224,6 +8230,7 @@
 				0DC4A4457C40EC7432586666 /* ChatRoutesUITests.swift in Sources */,
 				07A04B07869655FEC380C82B /* CodeBlockWrappingUITests.swift in Sources */,
 				5FA737713C03075508F021B5 /* FileBrowserMotionUITests.swift in Sources */,
+				E50009A231E93906504324D4 /* FileBrowserTreeToggleUITests.swift in Sources */,
 				2BB4C4C4A5EE3C99BC642B5D /* FullScreenReviewCommentUITests.swift in Sources */,
 				FAE17C642714EEACE203414F /* HarnessLaunchReuseUITests.swift in Sources */,
 				8E742ADD391C6F6421F2D6FD /* InAppBrowserPresentationUITests.swift in Sources */,
@@ -9372,6 +9379,7 @@
 				E206AA35699BD737AF29BD37 /* FeatureEducationTips.swift in Sources */,
 				317E15B7483F173CD003F43C /* FileBrowserCache.swift in Sources */,
 				6191C7DBC03250768586E708 /* FileBrowserChangeMarks.swift in Sources */,
+				3BCCA02C7BC02C66AC076CD0 /* FileBrowserColumnPreview.swift in Sources */,
 				478AFB61F9BFB5C4EAF7B807 /* FileBrowserListViews.swift in Sources */,
 				911D0101BF2CA06E1BF7345B /* FileBrowserMotionPreviewSupport.swift in Sources */,
 				017BB839F27F85F275EF5AA1 /* FileBrowserNavigation.swift in Sources */,

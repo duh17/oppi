@@ -1,4 +1,4 @@
-import Foundation
+import UIKit
 import Observation
 
 /// What a folder listing sorts by. Files.app's keys: tapping the chosen key
@@ -125,12 +125,24 @@ final class FileBrowserViewOptionsStore {
 
     private(set) var options: FileBrowserViewOptions
 
+    /// Regular width: the folder tree is tucked away so the open file takes
+    /// the whole width. One choice for the app, like Mail's sidebar. Stored
+    /// apart from `options`, whose saved form has no such key.
+    var hidesTree: Bool {
+        didSet {
+            guard hidesTree != oldValue else { return }
+            defaults.set(hidesTree, forKey: Self.hidesTreeKey)
+        }
+    }
+
     @ObservationIgnored private let defaults: UserDefaults
     private static let key = "\(AppIdentifiers.subsystem).fileBrowser.viewOptions"
+    private static let hidesTreeKey = "\(AppIdentifiers.subsystem).fileBrowser.hidesTree"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         options = Self.load(from: defaults)
+        hidesTree = defaults.bool(forKey: Self.hidesTreeKey)
     }
 
     private static func load(from defaults: UserDefaults) -> FileBrowserViewOptions {
@@ -144,6 +156,7 @@ final class FileBrowserViewOptionsStore {
     /// in-process reset clears defaults, and this copy was read from them once.
     func resetForTesting() {
         options = Self.load(from: defaults)
+        hidesTree = defaults.bool(forKey: Self.hidesTreeKey)
     }
 #endif
 
@@ -182,5 +195,57 @@ enum FileBrowserSearchScope: Int, Sendable {
         guard self == .folder, !folder.isEmpty, folder != "/" else { return paths }
         let prefix = folder.hasSuffix("/") ? folder : folder + "/"
         return paths.filter { $0.hasPrefix(prefix) }
+    }
+}
+
+extension FileBrowserViewController {
+    /// View Options (Files.app's): sort by Name, Date Modified, Size, or Kind
+    /// (the chosen key again flips its direction), Folders First, and Show
+    /// Hidden Files. The menu is read when it opens, so it always shows the
+    /// device's current choice, whichever browser made it.
+    static func makeViewOptionsItem() -> UIBarButtonItem {
+        let menu = UIMenu(children: [UIDeferredMenuElement.uncached { completion in
+            completion(viewOptionsMenuElements(store: .shared))
+        }])
+        let item = UIBarButtonItem(
+            title: String(localized: "View Options"),
+            image: UIImage(systemName: "arrow.up.arrow.down"),
+            menu: menu
+        )
+        item.accessibilityIdentifier = "fileBrowser.viewOptions"
+        return item
+    }
+
+    fileprivate static func viewOptionsMenuElements(store: FileBrowserViewOptionsStore) -> [UIMenuElement] {
+        let options = store.options
+        let sorts = FileBrowserSortKey.allCases.map { key in
+            let chosen = options.sortKey == key
+            let action = UIAction(
+                title: key.title,
+                image: chosen ? UIImage(systemName: options.ascending ? "chevron.up" : "chevron.down") : nil
+            ) { _ in
+                store.update { $0.choose(key) }
+            }
+            action.state = chosen ? .on : .off
+            action.accessibilityIdentifier = "fileBrowser.sort.\(key.rawValue)"
+            if chosen {
+                action.accessibilityValue = options.ascending ? String(localized: "Ascending") : String(localized: "Descending")
+            }
+            return action
+        }
+        let foldersFirst = UIAction(title: String(localized: "Folders First")) { _ in
+            store.update { $0.foldersFirst.toggle() }
+        }
+        foldersFirst.state = options.foldersFirst ? .on : .off
+        foldersFirst.accessibilityIdentifier = "fileBrowser.foldersFirst"
+        let hidden = UIAction(title: String(localized: "Show Hidden Files")) { _ in
+            store.update { $0.showsHidden.toggle() }
+        }
+        hidden.state = options.showsHidden ? .on : .off
+        hidden.accessibilityIdentifier = "fileBrowser.showHidden"
+        return [
+            UIMenu(title: String(localized: "Sort By"), options: .displayInline, children: sorts),
+            UIMenu(options: .displayInline, children: [foldersFirst, hidden]),
+        ]
     }
 }

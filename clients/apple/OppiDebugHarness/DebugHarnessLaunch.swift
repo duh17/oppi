@@ -114,6 +114,8 @@ enum DebugHarnessLaunch {
         // terminal's three fixture connections, and the script reader.
         case "file-browser-motion": return FileBrowserMotionPreviewController(review: false)
         case "review-file-motion": return FileBrowserMotionPreviewController(review: true)
+        // The workspace File Browser route on a long Org file, tree beside it.
+        case "file-browser-column": return FileBrowserColumnPreviewController()
         // The reader's task controls over files on the simulator's disk.
         case "reader-task-edit": return ReaderTaskEditPreviewController()
         // The viewer on a portrait or landscape fixture clip, over loopback.
