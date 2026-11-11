@@ -79,13 +79,18 @@ struct MarkdownTableColumnLayoutTests {
 
     @Test func shortColumnsKeepTheirNaturalWidthWhenTheTableIsFit() {
         let protected = MarkdownTableColumnLayout.protectedColumnWidth
-        let naturals: [CGFloat] = [protected, protected, 274, 274]
-        let plan = Self.plan(naturals, available: 370)
+        let long = MarkdownTableColumnLayout.maxReadableColumnWidth
+        let naturals: [CGFloat] = [protected, protected, long, long]
+        // Room for every column's floor, not for the long columns' natural width.
+        let available = MarkdownTableColumnLayout.gridContentWidth(
+            columnWidths: [protected, protected, long / 2, long / 2]
+        )
+        let plan = Self.plan(naturals, available: available)
 
         #expect(plan.presentation == .grid)
         #expect(plan.columnWidths[0] == protected)
         #expect(plan.columnWidths[1] == protected)
-        #expect(MarkdownTableColumnLayout.gridContentWidth(columnWidths: plan.columnWidths) <= 370)
+        #expect(MarkdownTableColumnLayout.gridContentWidth(columnWidths: plan.columnWidths) <= available)
     }
 
     @Test func tableScrollsWhenColumnsCannotStayReadable() {
@@ -98,7 +103,7 @@ struct MarkdownTableColumnLayoutTests {
     }
 
     @Test func fittedColumnsNeverBreakTheirLongestWord() {
-        let advance = MarkdownTableColumnLayout.monoAdvanceWidth
+        let advance = MarkdownTableColumnLayout.characterWidth
         // An identifier column (16 characters, one word) beside a prose column.
         let identifier = ceil(16 * advance)
         let naturals: [CGFloat] = [identifier, 274]
@@ -113,12 +118,34 @@ struct MarkdownTableColumnLayoutTests {
         #expect(scrolled == Self.plan(four, words: four, available: nil))
     }
 
-    @Test func longestUnbreakableRunEndsAtSpacesSlashesHyphensAndOtherScripts() {
-        #expect(MarkdownTableColumnLayout.longestUnbreakableLength("chooses clip or grid") == 7)
-        #expect(MarkdownTableColumnLayout.longestUnbreakableLength("plan(width:)") == 12)
-        #expect(MarkdownTableColumnLayout.longestUnbreakableLength("src/views/TableChrome.swift") == 17)
-        #expect(MarkdownTableColumnLayout.longestUnbreakableLength("well-known") == 5)
-        #expect(MarkdownTableColumnLayout.longestUnbreakableLength("表格的列宽") == 0)
+    @Test func unbreakableRunsEndAtSpacesSlashesHyphensAndOtherScripts() {
+        func longest(_ text: String) -> Int {
+            TableInlineText.unbreakableRuns(in: text as NSString).map(\.length).max() ?? 0
+        }
+        #expect(longest("chooses clip or grid") == 7)
+        #expect(longest("plan(width:)") == 12)
+        #expect(longest("src/views/TableChrome.swift") == 17)
+        #expect(longest("well-known") == 5)
+        #expect(longest("表格的列宽") == 0)
+    }
+
+    /// Cells are proportional, so a word's floor is its drawn width, not its
+    /// length: eight W's need far more room than eight i's, and a code span is
+    /// measured in the code font it draws in.
+    @Test @MainActor func wordFloorsAreMeasuredInTheFontsTheCellsDrawIn() {
+        let fonts = TableInlineText.Fonts.current
+        func width(_ text: String, _ font: UIFont) -> CGFloat {
+            ceil((text as NSString).size(withAttributes: [.font: font]).width)
+        }
+        let wide = TableInlineText.measure([.text("iiiiiiiiii WWWWWWWW")], fonts: fonts, isHeader: false)
+        #expect(abs(wide.word - width("WWWWWWWW", fonts.body)) <= 1, "\(wide.word)")
+        #expect(wide.word > width("iiiiiiiiii", fonts.body) + 20, "The widest run wins, not the longest")
+
+        let code = TableInlineText.measure([.text("call "), .code("fold(rows:)")], fonts: fonts, isHeader: false)
+        #expect(abs(code.word - width("fold(rows:)", fonts.code)) <= 1, "\(code.word)")
+
+        let header = TableInlineText.measure([.text("Owner")], fonts: fonts, isHeader: true)
+        #expect(abs(header.natural - width("Owner", fonts.bold)) <= 1, "Headers are measured bold")
     }
 
     @Test func wrappingColumnsShareTheSpareWidthUpToTheirContent() {
@@ -159,7 +186,12 @@ struct MarkdownTableColumnLayoutTests {
 
     @Test func fittedWidthsNeverOvershootTheViewport() {
         let naturals: [CGFloat] = [120, 90, 274, 150]
-        for available in stride(from: CGFloat(330), through: 600, by: 7) {
+        // From where every column's floor fits up to where nothing needs fitting.
+        let floors = MarkdownTableColumnLayout.gridContentWidth(columnWidths: [
+            MarkdownTableColumnLayout.minimumFitColumnWidth, 90,
+            MarkdownTableColumnLayout.minimumFitColumnWidth, MarkdownTableColumnLayout.minimumFitColumnWidth,
+        ])
+        for available in stride(from: ceil(floors), through: 700, by: 7) {
             let plan = Self.plan(naturals, available: available)
             #expect(
                 MarkdownTableColumnLayout.gridContentWidth(columnWidths: plan.columnWidths) <= available,
@@ -550,14 +582,17 @@ struct NativeTableWrapToFitTests {
         | 01:48:21 | auth.refresh_succeeded |
         | 01:49:48 | iOS background again; last WS activity 01a0140d; keepalive timeout (27s) |
         """
-        let row = AssistantTimelineRowContentView(
-            configuration: AssistantTimelineRowConfiguration(
-                text: markdown,
-                isStreaming: false,
-                canFork: false,
-                onFork: nil
-            )
+        var configuration = AssistantTimelineRowConfiguration(
+            text: markdown,
+            isStreaming: false,
+            canFork: false,
+            onFork: nil
         )
+        // The width the timeline gives the markdown (`assistantMarkdownWidth`).
+        let card = configuration.chromeStyle.assistantBubble
+        configuration.markdownWidth = 320 - card.margins.leading - card.margins.trailing
+            - card.padding.leading - card.padding.trailing
+        let row = AssistantTimelineRowContentView(configuration: configuration)
         row.bounds = CGRect(x: 0, y: 0, width: 320, height: 10)
         let fitted = row.systemLayoutSizeFitting(
             CGSize(width: 320, height: UIView.layoutFittingCompressedSize.height),

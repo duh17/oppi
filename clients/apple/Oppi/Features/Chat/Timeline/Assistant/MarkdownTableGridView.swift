@@ -77,7 +77,7 @@ final class MarkdownTableGridRenderer: NSObject, CALayerDelegate, @unchecked Sen
                         width: frame.width,
                         height: frame.height - MarkdownTableGridLayout.cellVerticalInset
                     ),
-                    options: [.usesLineFragmentOrigin],
+                    options: MarkdownTableGridLayout.cellDrawingOptions,
                     context: nil
                 )
             }

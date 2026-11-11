@@ -27,13 +27,11 @@ final class MarkdownTableClipText {
         height: CGFloat.greatestFiniteMagnitude
     ))
 
-    private let cellFont = AppFont.monoMedium
-    private let headerFont = AppFont.monoMediumBold
+    private let fonts: TableInlineText.Fonts
+    private var cellFont: UIFont { fonts.body }
     private let paragraph = NSMutableParagraphStyle()
     private let dimColor: UIColor
-    private let cellColor: UIColor
-    private let linkColor: UIColor
-    private let codeColor: UIColor
+    private let cellColors: TableInlineText.Colors
     private let altRowBackground: UIColor
     /// The line break between rows. It carries the table font: a bare newline
     /// takes whatever default a text view fills in, so the string would depend
@@ -44,13 +42,17 @@ final class MarkdownTableClipText {
     /// UTF-16 offset where each body row's text (with its leading newline) starts.
     private var bodyRowStarts: [Int] = []
 
-    init(headers: [[MarkdownInline]], columnWidths: [CGFloat], palette: ThemePalette) {
+    init(headers: [[MarkdownInline]], columnWidths: [CGFloat], palette: ThemePalette, fonts: TableInlineText.Fonts) {
         self.columnWidths = columnWidths
+        self.fonts = fonts
         paletteIdentity = ObjectIdentifier(palette.uiCache)
         dimColor = palette.ui.comment.withAlphaComponent(0.4)
-        cellColor = palette.ui.fg
-        linkColor = palette.ui.blue
-        codeColor = palette.ui.mdCode
+        cellColors = TableInlineText.Colors(
+            text: palette.ui.fg,
+            link: palette.ui.blue,
+            code: palette.ui.mdCode,
+            codeBackground: palette.ui.bgHighlight
+        )
         altRowBackground = palette.ui.bgHighlight.withAlphaComponent(0.45)
 
         storage.addLayoutManager(layoutManager)
@@ -125,19 +127,35 @@ final class MarkdownTableClipText {
         let result = NSMutableAttributedString()
         let headerColor = palette.ui.cyan
         let headerStart = result.length
+        let headerColors = TableInlineText.Colors(
+            text: headerColor,
+            link: cellColors.link,
+            code: cellColors.code,
+            codeBackground: cellColors.codeBackground
+        )
         for (index, header) in headers.enumerated() {
-            let text = plainText(from: header)
             // Leading pad for the first column; tab-to-separator for the rest.
             if index == 0 {
                 result.append(NSAttributedString(string: "  ", attributes: [
                     .font: cellFont, .foregroundColor: dimColor, .paragraphStyle: paragraph,
                 ]))
             }
-            result.append(NSAttributedString(string: text, attributes: [
-                .font: headerFont, .foregroundColor: headerColor, .paragraphStyle: paragraph,
-                // Selection reads the cell back from this, not the padding.
-                TableSelectionText.cellAttribute: TableSelectionText.attributeValue(row: 0, column: index),
-            ]))
+            // Drawn as the grid draws it, so it is as wide as it was measured.
+            let cellStart = result.length
+            TableInlineText.appendCell(
+                header,
+                to: result,
+                fonts: fonts,
+                isHeader: true,
+                colors: headerColors,
+                paragraph: paragraph
+            )
+            // Selection reads the cell back from this, not the padding.
+            result.addAttribute(
+                TableSelectionText.cellAttribute,
+                value: TableSelectionText.attributeValue(row: 0, column: index),
+                range: NSRange(location: cellStart, length: result.length - cellStart)
+            )
             if index < columnWidths.count - 1 {
                 result.append(NSAttributedString(string: "\t  │  ", attributes: [
                     .font: cellFont, .foregroundColor: dimColor, .paragraphStyle: paragraph,
@@ -185,10 +203,9 @@ final class MarkdownTableClipText {
             TableInlineText.appendCell(
                 inlines,
                 to: result,
-                font: cellFont,
-                defaultColor: cellColor,
-                linkColor: linkColor,
-                codeColor: codeColor,
+                fonts: fonts,
+                isHeader: false,
+                colors: cellColors,
                 paragraph: paragraph
             )
             result.addAttribute(
@@ -207,11 +224,11 @@ final class MarkdownTableClipText {
             .font: cellFont, .paragraphStyle: paragraph,
         ]))
         if rowIndex % 2 == 1 {
-            result.addAttribute(
-                .backgroundColor,
-                value: altRowBackground,
-                range: NSRange(location: rowStart, length: result.length - rowStart)
-            )
+            // The stripe goes under the row, not over an inline code span's own background.
+            let row = NSRange(location: rowStart, length: result.length - rowStart)
+            result.enumerateAttribute(.backgroundColor, in: row) { value, range, _ in
+                if value == nil { result.addAttribute(.backgroundColor, value: altRowBackground, range: range) }
+            }
         }
         return result
     }

@@ -13,10 +13,9 @@ struct MarkdownTableGridStyle: Equatable, @unchecked Sendable {
     let bodyText: UIColor
     let link: UIColor
     let code: UIColor
-    let headerFont: UIFont
-    let bodyFont: UIFont
+    let fonts: TableInlineText.Fonts
 
-    init(palette: ThemePalette, traits: UITraitCollection) {
+    init(palette: ThemePalette, traits: UITraitCollection, fonts: TableInlineText.Fonts) {
         let highlight = palette.ui.bgHighlight.resolvedColor(with: traits)
         headerBackground = highlight
         zebraBackground = highlight.withAlphaComponent(0.45)
@@ -25,8 +24,15 @@ struct MarkdownTableGridStyle: Equatable, @unchecked Sendable {
         bodyText = palette.ui.fg.resolvedColor(with: traits)
         link = palette.ui.blue.resolvedColor(with: traits)
         code = palette.ui.mdCode.resolvedColor(with: traits)
-        headerFont = AppFont.monoMediumBold
-        bodyFont = AppFont.monoMedium
+        self.fonts = fonts
+    }
+
+    var cellColors: TableInlineText.Colors {
+        TableInlineText.Colors(text: bodyText, link: link, code: code, codeBackground: headerBackground)
+    }
+
+    var headerColors: TableInlineText.Colors {
+        TableInlineText.Colors(text: headerText, link: link, code: code, codeBackground: headerBackground)
     }
 }
 
@@ -43,6 +49,11 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
     static let verticalPadding: CGFloat = 6
     /// Space above and below a cell's text.
     static let cellVerticalInset: CGFloat = 5
+    /// How a cell's text is measured and drawn. The body font has leading (the
+    /// system font's is about 1.7pt at 17pt), and the text view mounted on a
+    /// touched cell is TextKit 2, which adds it to every line; measuring and
+    /// drawing without it would make that view taller than its row.
+    static let cellDrawingOptions: NSStringDrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
 
     let columnWidths: [CGFloat]
     let style: MarkdownTableGridStyle
@@ -171,23 +182,21 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
         isHeader: Bool,
         style: MarkdownTableGridStyle
     ) -> NSAttributedString {
-        let font = isHeader ? style.headerFont : style.bodyFont
-        let color = isHeader ? style.headerText : style.bodyText
+        let colors = isHeader ? style.headerColors : style.cellColors
         let paragraph = cellParagraphStyle()
         let result = NSMutableAttributedString()
         TableInlineText.appendCell(
             inlines,
             to: result,
-            font: font,
-            defaultColor: color,
-            linkColor: style.link,
-            codeColor: style.code,
+            fonts: style.fonts,
+            isHeader: isHeader,
+            colors: colors,
             paragraph: paragraph
         )
         if result.length == 0 {
             result.append(NSAttributedString(string: " ", attributes: [
-                .font: font,
-                .foregroundColor: color,
+                .font: isHeader ? style.fonts.bold : style.fonts.body,
+                .foregroundColor: colors.text,
                 .paragraphStyle: paragraph,
             ]))
         }
@@ -213,7 +222,7 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
     private static func cellHeight(_ text: NSAttributedString, width: CGFloat) -> CGFloat {
         let bounds = text.boundingRect(
             with: CGSize(width: max(1, width), height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin],
+            options: cellDrawingOptions,
             context: nil
         )
         return ceil(bounds.height) + cellVerticalInset * 2

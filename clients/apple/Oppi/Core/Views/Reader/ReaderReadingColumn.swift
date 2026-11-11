@@ -67,7 +67,9 @@ struct ReaderReadingColumn: Equatable {
         case .codeBlock(_, let code):
             let longestLine = code.split(separator: "\n", omittingEmptySubsequences: false)
                 .reduce(0) { max($0, $1.count) }
-            return ceil(CGFloat(longestLine) * MarkdownTableColumnLayout.monoAdvanceWidth)
+            // Code is monospaced: its width is its longest line in advances.
+            let advance = ("0" as NSString).size(withAttributes: [.font: AppFont.monoMedium]).width
+            return ceil(CGFloat(longestLine) * advance)
                 + NativeCodeBlockView.codeHorizontalPadding
         default:
             return nil

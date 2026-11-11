@@ -772,7 +772,7 @@ extension NativeCodeBlockView: UITextViewDelegate {
 
 /// UIKit markdown table.
 ///
-/// Default path keeps monospaced single-line columns with horizontal scroll
+/// Default path keeps single-line columns in the body font with horizontal scroll
 /// (pixel-aligned via tab stops). Grid mode is used when a column's natural
 /// width exceeds the readable clamp, or when wrapping lets a too-wide table fit
 /// the viewport (`MarkdownTableColumnLayout.plan`); a table that cannot fit
@@ -913,7 +913,7 @@ final class NativeTableBlockView: UIView {
     /// were measured in.
     private var measuredHeaderWidths: [CellWidth] = []
     private var measuredRowWidths: [[CellWidth]] = []
-    private var measuredFonts: [UIFont] = []
+    private var measuredFonts: TableInlineText.Fonts?
 
     private lazy var longPressCopyGesture: UILongPressGestureRecognizer = {
         UILongPressGestureRecognizer(target: self, action: #selector(longPressCopy(_:)))
@@ -1136,7 +1136,7 @@ final class NativeTableBlockView: UIView {
             || unchangedRows != rows.count
             || unchangedRows != currentRows.count
 
-        let fonts = [AppFont.monoMediumBold, AppFont.monoMedium]
+        let fonts = TableInlineText.Fonts.current
         let fontsChanged = fonts != measuredFonts
         // A streaming tick that finished no row applies the same table again.
         // Nothing to measure, lay out, or draw.
@@ -1153,15 +1153,15 @@ final class NativeTableBlockView: UIView {
         if fontsChanged {
             measuredFonts = fonts
             measuredRowWidths = []
-            measuredHeaderWidths = Self.naturalCellWidths(headers, font: AppFont.monoMediumBold)
+            measuredHeaderWidths = Self.naturalCellWidths(headers, isHeader: true, fonts: fonts)
             clipText = nil
         } else if headerChanged {
-            measuredHeaderWidths = Self.naturalCellWidths(headers, font: AppFont.monoMediumBold)
+            measuredHeaderWidths = Self.naturalCellWidths(headers, isHeader: true, fonts: fonts)
         }
         let measuredRows = min(unchangedRows, measuredRowWidths.count)
         measuredRowWidths.removeSubrange(measuredRows...)
         for row in rows[measuredRows...] {
-            measuredRowWidths.append(Self.naturalCellWidths(row, font: AppFont.monoMedium))
+            measuredRowWidths.append(Self.naturalCellWidths(row, isHeader: false, fonts: fonts))
         }
 
         currentHeaders = headers
@@ -1178,7 +1178,8 @@ final class NativeTableBlockView: UIView {
         planning.natural = Self.naturalColumnMetrics(
             headerWidths: measuredHeaderWidths,
             rowWidths: measuredRowWidths,
-            columnCount: Self.columnCount(headers: headers, rows: rows)
+            columnCount: Self.columnCount(headers: headers, rows: rows),
+            font: fonts.body
         )
 
         // Only snap horizontal offset when the table body actually changed.
@@ -1191,8 +1192,8 @@ final class NativeTableBlockView: UIView {
         // later width change re-plans in `replanIfNeeded`.
         let previousMode = isWrapMode
         let plan = planning.plan(width: bounds.width, hint: availableWidthHint, displayScale: traitCollection.displayScale)
-        let force = contentChanged || plan != planning.rendered
-        render(plan, palette: palette, force: force, keptRows: headerChanged ? nil : unchangedRows)
+        let force = contentChanged || fontsChanged || plan != planning.rendered
+        render(plan, palette: palette, force: force, keptRows: headerChanged || fontsChanged ? nil : unchangedRows)
 
         if previousMode != isWrapMode || foldChanged {
             notifyHeightMayHaveChanged()
@@ -1289,7 +1290,8 @@ final class NativeTableBlockView: UIView {
             let text = MarkdownTableClipText(
                 headers: currentHeaders,
                 columnWidths: columnWidths,
-                palette: palette
+                palette: palette,
+                fonts: measuredFonts ?? .current
             )
             text.replaceRows(keeping: 0, with: currentRows)
             clipText = text
@@ -1319,7 +1321,7 @@ final class NativeTableBlockView: UIView {
             return
         }
 
-        let style = MarkdownTableGridStyle(palette: palette, traits: traitCollection)
+        let style = MarkdownTableGridStyle(palette: palette, traits: traitCollection, fonts: measuredFonts ?? .current)
         let scale = max(traitCollection.displayScale, 1)
 
         // Kept rows were laid out for these columns, header, colors, fonts, and
@@ -1429,19 +1431,20 @@ final class NativeTableBlockView: UIView {
         max(headers.count, rows.first?.count ?? 0)
     }
 
-    /// One cell's single-line width and its longest unbreakable word, in characters.
+    /// One cell's single-line width and its widest unbreakable run, as drawn.
     private struct CellWidth {
         let natural: CGFloat
-        let wordLength: Int
+        let word: CGFloat
     }
 
-    private static func naturalCellWidths(_ cells: [[MarkdownInline]], font: UIFont) -> [CellWidth] {
+    private static func naturalCellWidths(
+        _ cells: [[MarkdownInline]],
+        isHeader: Bool,
+        fonts: TableInlineText.Fonts
+    ) -> [CellWidth] {
         cells.map { cell in
-            let text = plainText(from: cell)
-            return CellWidth(
-                natural: measuredTextWidth(text, font: font),
-                wordLength: MarkdownTableColumnLayout.longestUnbreakableLength(text)
-            )
+            let measured = TableInlineText.measure(cell, fonts: fonts, isHeader: isHeader)
+            return CellWidth(natural: measured.natural, word: measured.word)
         }
     }
 
@@ -1450,10 +1453,12 @@ final class NativeTableBlockView: UIView {
         headers: [[MarkdownInline]],
         rows: [[[MarkdownInline]]]
     ) -> MarkdownTableColumnLayout.NaturalColumns {
-        naturalColumnMetrics(
-            headerWidths: naturalCellWidths(headers, font: AppFont.monoMediumBold),
-            rowWidths: rows.map { naturalCellWidths($0, font: AppFont.monoMedium) },
-            columnCount: columnCount(headers: headers, rows: rows)
+        let fonts = TableInlineText.Fonts.current
+        return naturalColumnMetrics(
+            headerWidths: naturalCellWidths(headers, isHeader: true, fonts: fonts),
+            rowWidths: rows.map { naturalCellWidths($0, isHeader: false, fonts: fonts) },
+            columnCount: columnCount(headers: headers, rows: rows),
+            font: fonts.body
         )
     }
 
@@ -1462,18 +1467,18 @@ final class NativeTableBlockView: UIView {
     private static func naturalColumnMetrics(
         headerWidths: [CellWidth],
         rowWidths: [[CellWidth]],
-        columnCount colCount: Int
+        columnCount colCount: Int,
+        font cellFont: UIFont
     ) -> MarkdownTableColumnLayout.NaturalColumns {
         guard colCount > 0 else { return .empty }
 
-        let cellFont = AppFont.monoMedium
         var colWidths = [CGFloat](repeating: 0, count: colCount)
-        var wordLengths = [Int](repeating: 0, count: colCount)
+        var wordWidths = [CGFloat](repeating: 0, count: colCount)
 
         func include(_ row: [CellWidth]) {
             for (index, width) in row.enumerated() where index < colCount {
                 colWidths[index] = max(colWidths[index], width.natural)
-                wordLengths[index] = max(wordLengths[index], width.wordLength)
+                wordWidths[index] = max(wordWidths[index], width.word)
             }
         }
         include(headerWidths)
@@ -1489,8 +1494,7 @@ final class NativeTableBlockView: UIView {
         let total = leadPadWidth + content + separators + trailPadWidth
         return MarkdownTableColumnLayout.NaturalColumns(
             columnWidths: colWidths,
-            // SF Mono keeps one advance across weights, headers included.
-            longestWordWidths: wordLengths.map { ceil(CGFloat($0) * MarkdownTableColumnLayout.monoAdvanceWidth) },
+            longestWordWidths: wordWidths,
             totalWidth: ceil(total)
         )
     }
@@ -1501,15 +1505,11 @@ final class NativeTableBlockView: UIView {
         rows: [[[MarkdownInline]]],
         palette: ThemePalette
     ) -> NSAttributedString {
-        // Column widths come from the rendered text: SF Mono is monospaced for
-        // ASCII, but CJK and emoji fall back to fonts whose advances do not
-        // divide evenly into the ASCII space width.
-        let columnWidths = naturalColumnMetrics(
-            headerWidths: naturalCellWidths(headers, font: AppFont.monoMediumBold),
-            rowWidths: rows.map { naturalCellWidths($0, font: AppFont.monoMedium) },
-            columnCount: columnCount(headers: headers, rows: rows)
-        ).columnWidths
-        let text = MarkdownTableClipText(headers: headers, columnWidths: columnWidths, palette: palette)
+        // Column widths come from the rendered text, so tab stops line up
+        // whatever the glyphs' advances: proportional text, CJK, and emoji.
+        let fonts = TableInlineText.Fonts.current
+        let columnWidths = measureNaturalColumns(headers: headers, rows: rows).columnWidths
+        let text = MarkdownTableClipText(headers: headers, columnWidths: columnWidths, palette: palette, fonts: fonts)
         text.replaceRows(keeping: 0, with: rows)
         return NSAttributedString(attributedString: text.storage)
     }

@@ -25,39 +25,42 @@ enum MarkdownTableColumnLayout {
     /// Gap between columns in grid mode (includes room for a thin divider).
     static let columnSpacing: CGFloat = 8
 
-    /// Where a long column starts wrapping, in mono cells of `AppFont.monoMedium`:
-    /// its width when the table has no spare width to grow into, and its weight
-    /// when the table is fit to a narrower viewport. 35 cells is about 280pt at
-    /// the default 12pt SF Mono.
+    /// Where a long column starts wrapping, in digits of the cell font: its
+    /// width when the table has no spare width to grow into, and its weight when
+    /// the table is fit to a narrower viewport. 35 digits is about 360pt at the
+    /// default 17pt body, some 47 characters of prose.
     static let maxReadableCharacterCount: CGFloat = 35
 
-    /// The narrowest a longer column may be fit to the viewport, in mono cells.
+    /// The narrowest a longer column may be fit to the viewport, in digits.
     /// Below this, words break mid-token and the table scrolls instead.
     static let minimumFitCharacterCount: CGFloat = 8
 
-    /// A column at most this wide, in mono cells, keeps its natural width when
-    /// the table is fit: it holds a value (a time, a date, a number) that must
-    /// stay on one line.
+    /// A column at most this wide, in digits, keeps its natural width when the
+    /// table is fit: it holds a value (a time, a date, a number) that must stay
+    /// on one line.
     static let protectedCharacterCount: CGFloat = 10
 
     /// One-column wrap start shared by chat and Reader. Not viewport-derived.
     static var maxReadableColumnWidth: CGFloat {
-        maxReadableCharacterCount * monoAdvanceWidth
+        maxReadableCharacterCount * characterWidth
     }
 
     /// Natural widths are measured rounded up to whole points, so the thresholds
-    /// are too: a column of exactly `protectedCharacterCount` characters must
+    /// are too: a column of exactly `protectedCharacterCount` digits must
     /// compare as protected.
     static var minimumFitColumnWidth: CGFloat {
-        ceil(minimumFitCharacterCount * monoAdvanceWidth)
+        ceil(minimumFitCharacterCount * characterWidth)
     }
 
     static var protectedColumnWidth: CGFloat {
-        ceil(protectedCharacterCount * monoAdvanceWidth)
+        ceil(protectedCharacterCount * characterWidth)
     }
 
-    static var monoAdvanceWidth: CGFloat {
-        ("0" as NSString).size(withAttributes: [.font: AppFont.monoMedium]).width
+    /// The advance of a digit in the cell font (`AppFont.messageBody`), the
+    /// unit of the counts above. System digits are tabular, so a value of N
+    /// digits is N of these wide; it follows Dynamic Type with the cells.
+    static var characterWidth: CGFloat {
+        ("0" as NSString).size(withAttributes: [.font: AppFont.messageBody]).width
     }
 
     /// Never shrink a column below its natural width unless that natural width
@@ -112,7 +115,8 @@ enum MarkdownTableColumnLayout {
     /// - Parameters:
     ///   - naturalWidths: single-line width of each column.
     ///   - longestWordWidths: each column's widest run that line breaking cannot
-    ///     split (`longestUnbreakableLength`); a fitted column is never narrower.
+    ///     split (`TableInlineText.unbreakableRuns`), measured in the fonts the
+    ///     cells draw in; a fitted column is never narrower.
     ///   - clipContentWidth: width of the clip-mode text for these columns.
     ///   - availableWidth: the card's maximum width, or nil when not yet known
     ///     (the content-only layout: no fitting, the table may scroll).
@@ -202,27 +206,6 @@ enum MarkdownTableColumnLayout {
         }
     }
 
-    /// Length in characters of the longest run in `text` that a wrapped cell
-    /// cannot break inside: a run of ASCII letters, digits, and punctuation ends
-    /// at a space, and after a `/` or `-`, where line breaking may split a path
-    /// or a hyphenated word. Other scripts can break between characters, so they
-    /// end a run too. Cells are monospaced, so a run's width is its length times
-    /// the advance.
-    static func longestUnbreakableLength(_ text: String) -> Int {
-        var longest = 0
-        var run = 0
-        for scalar in text.unicodeScalars {
-            guard scalar.value > 0x20, scalar.value < 0x7F else {
-                run = 0
-                continue
-            }
-            run += 1
-            longest = max(longest, run)
-            if scalar == "/" || scalar == "-" { run = 0 }
-        }
-        return longest
-    }
-
     // MARK: - Overflow
 
     /// Right edge of each column in clip text, in content coordinates:
@@ -269,7 +252,7 @@ enum MarkdownTableColumnLayout {
         case .grid:
             return gridTrailingEdges(columnWidths: plan.columnWidths)
         case .clip:
-            let font = AppFont.monoMedium
+            let font = AppFont.messageBody
             func width(_ text: String) -> CGFloat {
                 ceil((text as NSString).size(withAttributes: [.font: font]).width)
             }

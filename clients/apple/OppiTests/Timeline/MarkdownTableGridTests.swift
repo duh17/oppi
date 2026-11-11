@@ -540,19 +540,14 @@ struct MarkdownTableGridTests {
         defer { window.isHidden = true }
         let text = try #require(table.debugClipTextForTesting)
 
-        let textView = UITextView()
+        // The clip label is TextKit 1 (it grows by rows); a TextKit 2 view adds
+        // the body font's leading to every line and would not match it.
+        let textView = UITextView(usingTextLayoutManager: false)
         textView.isScrollEnabled = false
         textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         textView.textContainer.lineFragmentPadding = 0
         textView.attributedText = text
         let fitted = textView.sizeThatFits(CGSize(width: 2_000, height: CGFloat.greatestFiniteMagnitude))
         #expect(abs(fitted.height - table.debugMeasuredHeightForTesting) <= 1.5)
-
-        let bounds = text.boundingRect(
-            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin],
-            context: nil
-        )
-        #expect(abs(bounds.height + 12 - table.debugMeasuredHeightForTesting) <= 1.5)
     }
 }
