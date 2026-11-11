@@ -203,9 +203,10 @@ function gitTopLevel(cwd: string): string | null {
  * and the dedicated slot range; explicit OPPI_SIM_DEVICE_TYPE, OPPI_SIM_RUNTIME,
  * OPPI_SIM_POOL_SLOT_START, and OPPI_SIM_POOL_COUNT still win.
  *
- * Slot map: 0-5 iPhone runs, 6-9 iPad runs, 10 Duo runs. `claim` hands out
- * session-owned simulators from a separate range per profile (20-27 iPhone,
- * 30-37 Duo, 40-47 iPad) so a long-lived claim never blocks a run lane.
+ * Slot map: 0-5 iPhone runs, 6-9 iPad runs, 10 Duo runs, 11 large-iPad runs.
+ * `claim` hands out session-owned simulators from a separate range per profile
+ * (20-27 iPhone, 30-37 Duo, 40-47 iPad, 50-57 large iPad) so a long-lived
+ * claim never blocks a run lane.
  */
 export type DeviceProfile = {
   deviceType: string;
@@ -242,6 +243,16 @@ export const DEVICE_PROFILES: Record<string, DeviceProfile> = {
     slotStart: 10,
     count: 1,
     claimSlotStart: 30,
+    claimCount: 8,
+  },
+  // Large iPads ship with the Mac (Catalyst) build: the 13-inch iPad Pro (1032x1376 pt)
+  // checks the widest iPad window. iPad work otherwise targets the mini (`ipad`).
+  "ipad-large": {
+    deviceType: "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB",
+    runtime: "",
+    slotStart: 11,
+    count: 1,
+    claimSlotStart: 50,
     claimCount: 8,
   },
 };
@@ -2829,6 +2840,7 @@ clients/apple, even if the script was launched from another tree.
   iphone  iPhone 16 Pro, run slots 0-5 (the default pool), claim slots 20-27
   ipad    iPad mini (A17 Pro), run slots 6-9, claim slots 40-47
   duo     iPhone Duo on iOS 27.1, run slot 10, claim slots 30-37
+  ipad-large  iPad Pro 13-inch (M5), run slot 11, claim slots 50-57
 Explicit OPPI_SIM_DEVICE_TYPE, OPPI_SIM_RUNTIME, OPPI_SIM_POOL_SLOT_START, and
 OPPI_SIM_POOL_COUNT override the profile.
 Every command builds with DEVELOPER_DIR, defaulting to the Xcode in
