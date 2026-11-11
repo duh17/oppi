@@ -296,6 +296,10 @@ enum ScheduleCardView {
             color: palette.ui.comment,
             lines: 2
         )
-        return ControlRowViews.stack([header, name, ControlRowViews.divider(palette), timing], spacing: 14)
+        // The timing hugs its own title, and the list's row separator is the only rule, so
+        // the timing never reads as the next schedule's.
+        let stack = ControlRowViews.stack([header, name, timing], spacing: 4)
+        stack.setCustomSpacing(6, after: header)
+        return stack
     }
 }
