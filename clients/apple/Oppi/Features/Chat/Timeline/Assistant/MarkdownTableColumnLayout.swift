@@ -137,9 +137,21 @@ enum MarkdownTableColumnLayout {
     ) -> Plan {
         let capped = clampedColumnWidths(naturalWidths: naturalWidths)
         let needsGrid = needsGridMode(naturalWidths: naturalWidths)
+        // The narrowest each column may be: a short column its whole width, a
+        // longer one `minimumFitColumnWidth` or its longest word, never past its
+        // content. A word can be longer than the cap (a commit hash).
+        let protected = protectedColumnWidth
+        let minimum = minimumFitColumnWidth
+        let floors = capped.indices.map { index -> CGFloat in
+            guard capped[index] > protected else { return capped[index] }
+            let word = index < longestWordWidths.count ? longestWordWidths[index] : 0
+            return min(naturalWidths[index], max(minimum, word))
+        }
+        // The cap, widened where a word needs it, so no layout below breaks one.
+        let base = zip(capped, floors).map { max($0, $1) }
         // Content-only: the table scrolls if it is wider than the viewport.
         let contentOnly = needsGrid
-            ? Plan(presentation: .grid, columnWidths: capped)
+            ? Plan(presentation: .grid, columnWidths: base)
             : Plan(presentation: .clip, columnWidths: naturalWidths)
         guard let available = availableWidth, available > 0, !naturalWidths.isEmpty else {
             return contentOnly
@@ -150,25 +162,17 @@ enum MarkdownTableColumnLayout {
         }
         // Grid gaps are narrower than clip's `  │  ` separators, so a table that
         // overflows as clip text can still fit as a grid at its natural widths.
-        let cappedWidth = gridContentWidth(columnWidths: capped)
-        if cappedWidth <= available {
+        let baseWidth = gridContentWidth(columnWidths: base)
+        if baseWidth <= available {
             let fill = min(available, fillWidth ?? available)
             return Plan(
                 presentation: .grid,
-                columnWidths: grown(capped, toward: naturalWidths, by: fill - cappedWidth, displayScale: displayScale)
+                columnWidths: grown(base, toward: naturalWidths, by: fill - baseWidth, displayScale: displayScale)
             )
         }
 
         let chrome = gridContentWidth(columnWidths: [CGFloat](repeating: 0, count: capped.count))
         let budget = available - chrome
-        let protected = protectedColumnWidth
-        let minimum = minimumFitColumnWidth
-        let floors = capped.indices.map { index -> CGFloat in
-            let width = capped[index]
-            guard width > protected else { return width }
-            let word = index < longestWordWidths.count ? longestWordWidths[index] : 0
-            return min(width, max(minimum, word))
-        }
         guard budget >= floors.reduce(0, +) else {
             // Even every column at its floor does not fit: scroll.
             return contentOnly
@@ -176,20 +180,21 @@ enum MarkdownTableColumnLayout {
 
         // Spread what is left over the columns by how much each still wants.
         let extra = budget - floors.reduce(0, +)
-        let wants = zip(capped, floors).map { $0 - $1 }
+        let wants = zip(capped, floors).map { max(0, $0 - $1) }
         let totalWant = wants.reduce(0, +)
         let scale = max(displayScale, 1)
         let widths = zip(floors, wants).map { floor, want in
             let share = totalWant > 0 ? extra * want / totalWant : 0
-            return ((floor + share) * scale).rounded(.down) / scale
+            // Only the share is rounded: a floor is a word that must fit whole.
+            return floor + (share * scale).rounded(.down) / scale
         }
         return Plan(presentation: .grid, columnWidths: widths)
     }
 
-    /// `capped` with `spare` width shared among the columns the cap wraps, each
-    /// in proportion to how much wider than its cap its content is, and none
-    /// past its natural width. A table with no wrapping column, or no spare
-    /// width, keeps `capped`.
+    /// `capped` with `spare` width shared among the columns that still wrap,
+    /// each in proportion to how much wider than its width its content is, and
+    /// none past its natural width. A table with no wrapping column, or no
+    /// spare width, keeps `capped`.
     private static func grown(
         _ capped: [CGFloat],
         toward naturalWidths: [CGFloat],
@@ -202,7 +207,7 @@ enum MarkdownTableColumnLayout {
         if totalWant <= spare { return zip(capped, wants).map { $0 + $1 } }
         let scale = max(displayScale, 1)
         return zip(capped, wants).map { width, want in
-            ((width + spare * want / totalWant) * scale).rounded(.down) / scale
+            width + (spare * want / totalWant * scale).rounded(.down) / scale
         }
     }
 

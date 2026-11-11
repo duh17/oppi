@@ -178,6 +178,25 @@ struct MarkdownTableColumnLayoutTests {
         #expect(reader.columnWidths == shared.columnWidths)
     }
 
+    /// A word wider than the wrap cap, such as a commit hash beside a column of
+    /// paths, keeps its whole width wherever the table has room for it, and in
+    /// a table that scrolls; the paths wrap at their slashes instead.
+    @Test func aWordWiderThanTheCapNeverBreaks() {
+        let cap = MarkdownTableColumnLayout.maxReadableColumnWidth
+        let hash = cap + 20
+        let naturals: [CGFloat] = [cap + 300, hash]
+        let words: [CGFloat] = [150, hash]
+        let room = MarkdownTableColumnLayout.gridContentWidth(columnWidths: [cap, hash]) + 40
+
+        let fitted = Self.plan(naturals, words: words, available: room, scale: 1)
+        #expect(fitted.presentation == .grid)
+        #expect(fitted.columnWidths[1] >= hash, "\(fitted.columnWidths)")
+        #expect(MarkdownTableColumnLayout.gridContentWidth(columnWidths: fitted.columnWidths) <= room)
+
+        let scrolled = Self.plan(naturals, words: words, available: hash / 2, scale: 1)
+        #expect(scrolled.columnWidths[1] >= hash, "\(scrolled.columnWidths)")
+    }
+
     @Test func clipTableThatFitsStaysClipText() {
         let plan = Self.plan([80, 80], available: 370)
         #expect(plan.presentation == .clip)
