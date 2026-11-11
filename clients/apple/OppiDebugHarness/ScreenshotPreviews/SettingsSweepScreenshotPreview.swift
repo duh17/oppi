@@ -520,7 +520,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
             return stack { ThemeImportViewController(root: root) }
         case "schedules", "schedules-failed":
             // `-failed`: the schedules request answers 404.
-            return stack { ScheduleListViewController(root: root) }
+            return stack { SchedulesViewController(root: root) }
         case "agents":
             return stack { AgentListViewController(root: root) }
         case "agents-pi", "agents-pi-file":

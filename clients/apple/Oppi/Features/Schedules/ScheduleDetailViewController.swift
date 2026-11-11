@@ -608,15 +608,13 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
             defer { self?.isMutating = false }
             do {
                 let modelId = try await Self.runModelId(of: action, apiClient: apiClient, sessionStore: connection.sessionStore)
-                let allowed = await AISharingConsentPrompt.requestModelSharing(
+                guard let run = try await ScheduleRunNow.run(
+                    scheduleId,
                     modelId: modelId,
-                    serverId: nil,
+                    apiClient: apiClient,
                     connection: connection,
                     from: self
-                )
-                guard allowed else { return }
-                let run = try await apiClient.runAgentSchedule(scheduleId)
-                guard let self else { return }
+                ), let self else { return }
                 runs = scheduleRunsByInsertingNewest(run, into: runs, limit: 20)
                 if run.sessionId != nil {
                     openRunSession(run)

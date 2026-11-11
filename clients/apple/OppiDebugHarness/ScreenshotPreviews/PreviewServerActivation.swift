@@ -10,14 +10,16 @@ extension ConnectionCoordinator {
     /// `server.host`. Give preview servers a reserved `.invalid` host (RFC 6761):
     /// it never resolves, so those requests fail as unreachable instead of
     /// reaching a real machine, whose refusal would fail the route closed.
-    /// `durableSessions` advertises Durable sessions in that `/server/info`.
+    /// `durableSessions` advertises Durable sessions in that `/server/info`, and
+    /// `scheduleCalendar` the schedule calendar.
     @discardableResult
     func activatePreviewServer(
         _ server: PairedServer,
         apiClient: APIClient? = nil,
-        durableSessions: Bool = false
+        durableSessions: Bool = false,
+        scheduleCalendar: Bool = false
     ) -> ServerConnection {
-        let info = Self.previewServerInfo(durableSessions: durableSessions)
+        let info = Self.previewServerInfo(durableSessions: durableSessions, scheduleCalendar: scheduleCalendar)
         _serverInfoBootstrapForTesting = { _, _ in info }
         _initialLANEndpointForTesting = { _ in nil }
         if let apiClient {
@@ -31,7 +33,7 @@ extension ConnectionCoordinator {
         return connection
     }
 
-    private static func previewServerInfo(durableSessions: Bool) -> ServerInfo {
+    private static func previewServerInfo(durableSessions: Bool, scheduleCalendar: Bool) -> ServerInfo {
         ServerInfo(
             name: "Preview",
             version: ServerReleaseVersion.minimumSupported,
@@ -50,7 +52,8 @@ extension ConnectionCoordinator {
                 dictationStream: nil,
                 appEventStream: nil,
                 extensionNativeUI: nil,
-                durableSessions: durableSessions ? .init(version: 1) : nil
+                durableSessions: durableSessions ? .init(version: 1) : nil,
+                scheduleCalendar: scheduleCalendar ? .init(version: 1) : nil
             ),
             stats: .init(
                 workspaceCount: 0,

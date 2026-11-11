@@ -156,6 +156,8 @@ The sidebar holds saved **Agents** and **Schedules**.
 - Agents store reusable definitions and can use one Unicode emoji or SF Symbol as an icon.
 - **Edit Agent → Chat Style** picks how that Agent's sessions look on this device: **Full**, **Compact**, **Chat**, or **Settings** to follow **Settings → Chat → Style**. The choice is per device and restyles the Agent's open sessions too.
 - Schedules support `at`, `every`, and `cron` triggers. A one-time `at` schedule moves to Archived after its run succeeds; a failed run keeps it active. A `cron` time inside the hour that repeats when daylight saving time ends runs on its first occurrence only. A schedule targets a workspace, a saved Agent, or an existing session. Oppi keeps run history for manual and approved automatic runs.
+- **Schedules** opens on **Calendar**; **List** is the other side of the switch at the top, and the app remembers your choice until it quits. The calendar shows one day at a time. A week strip marks each day with a red dot if a run failed and an orange dot if one is waiting on you. Under it, one line counts the day's runs and adds up their cost.
+- Runs between midnight and 6 AM sit in an **Overnight** band, where runs that finished cleanly fold into one row; tap it to see each. Failed runs, runs waiting on you (with **Answer**), and running runs (with their time and cost so far) are tinted. A blue line marks now, and runs still to come count down. Tap a past or running run to open its session, or a run still to come to open its schedule. Touch and hold a run for **Run Now**, **Pause Schedule**, **Show Schedule**, and **Last Run's Session**. The calendar needs a server that offers it; an older server shows only the list.
 
 ## Edit with Oppi
 

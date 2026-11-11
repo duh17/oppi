@@ -87,6 +87,8 @@ enum DebugHarnessLaunch {
         case "router-routes": return RouterRoutesPreviewController()
         case "router-modal-sites": return RouterModalSitesPreviewController()
         case "workspace-shell": return WorkspaceShellPreviewController()
+        // Schedules over a fixture server's real week of runs, in the same shell.
+        case "schedules-calendar": return ScheduleCalendarPreviewController()
         // The chat over the chat-routes fixtures. `chat-routes` pins the panel
         // buttons its tests drive; the top-bar screens pin the bar under test.
         case "chat-routes":

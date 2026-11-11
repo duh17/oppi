@@ -85,7 +85,7 @@ enum ShellRouteScreens {
             screen.traitOverrides.appRootEnvironment = root
             return screen
         case .schedules:
-            return ScheduleListViewController(root: root, showsSidebarToggle: showsSidebarToggle)
+            return SchedulesViewController(root: root, showsSidebarToggle: showsSidebarToggle)
         case .agents:
             return AgentListViewController(root: root, showsSidebarToggle: showsSidebarToggle)
         case .mcpServers:
@@ -123,8 +123,8 @@ enum ShellRouteScreens {
             list.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
-        if let list = screen as? ScheduleListViewController {
-            list.showsSidebarToggle = placement == .splitDetailRoot
+        if let schedules = screen as? SchedulesViewController {
+            schedules.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
         if let list = screen as? AgentListViewController {

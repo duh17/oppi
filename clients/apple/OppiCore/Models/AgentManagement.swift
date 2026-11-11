@@ -393,7 +393,7 @@ enum ExistingSessionStreamingBehavior: String, Codable, CaseIterable, Sendable, 
     }
 }
 
-enum AgentScheduleTrigger: Sendable, Equatable {
+enum AgentScheduleTrigger: Sendable, Hashable {
     case at(Date, timeZone: String)
     case every(intervalMs: Int64, timeZone: String)
     case cron(expression: String, timeZone: String)

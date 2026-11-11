@@ -183,7 +183,7 @@ A UIKit settings page subclasses `ListScreenController` (`Oppi/Features/Settings
 ### The pieces
 
 - `ListScreenController<Section, Item>`: `listIdentifier` is `<feature>.<page>.list` (`settings.<page>.list` in Settings); `sections()` runs inside `updateProperties()`; a reorder stays in its section (`ListSlot`, `pageItem`); an empty section (no rows, state, header, or footer) is not drawn.
-- `ScheduleListViewController` (`Features/Schedules`) uses the kit's cards (`rowStyle` `.card`) with its state row first in the card section, so a failed reload keeps the cards it has.
+- `ScheduleListViewController` (`Features/Schedules`) uses the kit's cards (`rowStyle` `.card`) with its state row first in the card section, so a failed reload keeps the cards it has. `SchedulesViewController` (the route) embeds it or the calendar and owns bar and composer.
 - A section that is not a list of rows (theme gallery cards, icon picker symbols) is laid out by the page through `layoutSection(for:environment:)`, declaring its boundary header item; the kit still fills the heading from `ListSection.header`.
 - `inputs(of:)`: the default key differs every pass, so an unkeyed row cannot go stale. Key rows that hold selectable text, an open `UIMenu`, a switch in flight, or a text field; the theme is in the key.
 - Colours come from `SettingsStyle` roles, painted through the base's cell provider (keeping the pressed look); a title is never `.label` or a one-off colour.

@@ -1,20 +1,16 @@
 import UIKit
 
-/// Schedules: the server's schedules as cards, filtered by status, with a
-/// swipe to pause, resume, or restore, and the guided composer to describe a
-/// new one. A card opens the schedule's detail, which reports changes back.
+/// Schedules' list: the server's schedules as cards, filtered by status, with a
+/// swipe to pause, resume, or restore. A card opens the schedule's detail through
+/// `openSchedule`. `SchedulesViewController` embeds it beside the calendar and owns
+/// the bar (it places `filterItem`) and the composer.
 ///
 /// A `ListScreenController`: the base owns the list, the theme, each row's
 /// redraw key, the swipe actions, and the load on appearance and pull to
 /// refresh, with its one state row (loading, failed with one Retry, or empty)
-/// above the cards. This page keeps its cards, its status filter, its composer,
-/// and the sidebar toggle.
+/// above the cards. This page keeps its cards and its status filter.
 @MainActor
 final class ScheduleListViewController: ListScreenController<ScheduleListViewController.Section, ScheduleListViewController.Item> {
-    var showsSidebarToggle: Bool {
-        didSet { setNeedsUpdateProperties() }
-    }
-
     enum Section: Hashable, Sendable {
         /// The schedules the filter shows. The list's own state is this
         /// section's first row, where the schedules it already has stay under it.
@@ -26,9 +22,12 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
     }
 
     private let root: AppRootEnvironment
-    private let composer: GuidedControlComposerController
-    private var sidebarToggle: UIBarButtonItem?
-    private let filterItem = UIBarButtonItem()
+    /// The status filter, for the container's bar.
+    let filterItem = UIBarButtonItem()
+    /// The container's composer says an action's failure.
+    var onActionErrorChange: ((String?) -> Void)?
+    /// A card opens its schedule's detail; the container pushes it.
+    var openSchedule: ((String) -> Void)?
 
     private var schedules: [AgentScheduleSummary] = [] {
         didSet { setNeedsUpdateProperties() }
@@ -39,7 +38,7 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
     /// Why the change the person asked for failed: the composer says it, and the
     /// list keeps the rows it shows.
     private(set) var actionError: String? {
-        didSet { setNeedsUpdateProperties() }
+        didSet { onActionErrorChange?(actionError) }
     }
 
     /// The schedules the list shows now, in order: what a test checks stayed on
@@ -51,17 +50,8 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
         }
     }
 
-    init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
+    init(root: AppRootEnvironment) {
         self.root = root
-        self.showsSidebarToggle = showsSidebarToggle
-        composer = GuidedControlComposerController(
-            configuration: GuidedControlComposerConfiguration(
-                domain: .schedules,
-                intent: .create,
-                placeholder: "Describe what should happen and when…"
-            ),
-            root: root
-        )
         super.init(
             title: "Schedules",
             listIdentifier: "schedules.list",
@@ -80,44 +70,14 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
 
     // MARK: - Lifecycle
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        composer.install(in: self)
-    }
-
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        navigationController?.setToolbarHidden(true, animated: animated)
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        composer.insetContent(of: collectionView)
-    }
-
     override func updateProperties() {
         super.updateProperties()
-        updateBarItems()
-        composer.setScreenError(actionError, identifier: "schedules.error")
-    }
-
-    private func updateBarItems() {
         filterItem.title = selectedStatus.filterTitle
         filterItem.menu = UIMenu(title: "Status", options: .singleSelection, children: AgentScheduleStatus.filterOrder.map { status in
             UIAction(title: status.filterTitle, state: status == selectedStatus ? .on : .off) { [weak self] _ in
                 self?.selectedStatus = status
             }
         })
-        ListScreen.setBarItems(trailing: [filterItem], leading: sidebarItems(), on: navigationItem)
-    }
-
-    /// The sidebar toggle at the split detail root.
-    private func sidebarItems() -> [UIBarButtonItem] {
-        guard showsSidebarToggle else { return [] }
-        let toggle = sidebarToggle ?? WorkspaceSplitSidebarToggle.makeItem(root: root)
-        sidebarToggle = toggle
-        WorkspaceSplitSidebarToggle.sync(toggle, root: root)
-        return [toggle]
     }
 
     // MARK: - Load
@@ -188,7 +148,7 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
             label: "\(schedule.name), \(timing), \(schedule.status.rawValue)",
             contextMenu: rowMenu(for: item)
         ) { [weak self] in
-            self?.openSchedule(schedule.id)
+            self?.openSchedule?(schedule.id)
         }
         let palette = palette
         cell.contentConfiguration = ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
@@ -228,14 +188,7 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
 
     /// The pushed detail reports changes here; the list shows them when it is
     /// back on screen.
-    private func openSchedule(_ scheduleId: String) {
-        let detail = ScheduleDetailViewController(root: root, scheduleId: scheduleId) { [weak self] updated in
-            self?.scheduleChanged(updated)
-        }
-        Router.push(detail, from: self)
-    }
-
-    private func scheduleChanged(_ updated: AgentScheduleSummary) {
+    func scheduleChanged(_ updated: AgentScheduleSummary) {
         schedules = schedules.map { $0.id == updated.id ? updated : $0 }
         if selectedStatus == .archived, updated.status == .active {
             selectedStatus = .active
