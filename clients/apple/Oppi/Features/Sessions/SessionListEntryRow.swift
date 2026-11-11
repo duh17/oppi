@@ -284,7 +284,7 @@ final class SessionThreadLinkView: UIControl {
         layer.cornerCurve = .continuous
 
         let font = UIFont.scaled(.caption1, .semibold)
-        glyph.image = UIImage.scaledSymbol("point.3.connected.trianglepath.dotted", style: .caption1, weight: .semibold)
+        glyph.image = UIImage.scaledSymbol("bubble.left.and.bubble.right", style: .caption1, weight: .semibold)
         titleLabel.text = String(localized: "In thread")
         titleLabel.font = font
         detailLabel.font = UIFont.scaled(.caption1)
