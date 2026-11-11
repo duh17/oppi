@@ -11,7 +11,7 @@ import UIKit
 /// The container (`SchedulesViewController`) owns the model, the composer, and the bar.
 @MainActor
 final class ScheduleCalendarDayViewController: UIViewController, UICollectionViewDelegate {
-    enum Section: Hashable { case summary, night, day }
+    enum Section: Hashable { case summary, night, day, more }
 
     enum ID: Hashable {
         /// The day's summary, a row only at accessibility sizes (else it sits in the header).
@@ -20,6 +20,8 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         case cluster(String)
         case entry(String)
         case now
+        /// "More runs not shown": the server listed only part of a dense schedule's runs.
+        case truncated
     }
 
     /// What a row draws, keyed so that only a changed row redraws.
@@ -29,6 +31,7 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         case cluster(ScheduleCalendarAgenda.Cluster)
         case entry(ScheduleCalendarAgenda.Item, showsTime: Bool, isNext: Bool)
         case now(Date)
+        case truncated([String])
     }
 
     let model: ScheduleCalendarModel
@@ -89,8 +92,11 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         collectionView.selfSizingInvalidation = .enabledIncludingConstraints
         let refresh = UIRefreshControl()
         refresh.addAction(UIAction { [weak self, weak refresh] _ in
-            self?.model.reload()
-            refresh?.endRefreshing()
+            // The spinner stays until the answer lands or fails.
+            Task { @MainActor in
+                await self?.model.refresh()
+                refresh?.endRefreshing()
+            }
         }, for: .valueChanged)
         collectionView.refreshControl = refresh
         stateView.translatesAutoresizingMaskIntoConstraints = false
@@ -118,9 +124,32 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
 
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
-        model.tick()
-        model.loadIfNeeded()
+        model.appear()
         startMinuteTimer()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        alignHeaderToRows()
+    }
+
+    /// The header's text starts and ends on the rows' edges at every width. The header is
+    /// the readable column, centered in the safe area; the rows are inset by the list's
+    /// layout, which beside an iPad's sidebar is not the same origin. Measured from a row
+    /// as it is laid out; a day with no rows keeps the last measure.
+    private func alignHeaderToRows() {
+        guard let indexPath = collectionView.indexPathsForVisibleItems.first,
+              let row = collectionView.layoutAttributesForItem(at: indexPath) else { return }
+        let frame = collectionView.convert(row.frame, to: view)
+        let insets = (left: max(0, frame.minX - header.frame.minX), right: max(0, header.frame.maxX - frame.maxX))
+        if abs(header.edgeInsets.left - insets.left) > 0.5 || abs(header.edgeInsets.right - insets.right) > 0.5 {
+            header.edgeInsets = insets
+        }
+    }
+
+    /// The rows' inset from the list's sides: 16 pt, or what centers the readable column.
+    private static func rowInset(width: CGFloat) -> CGFloat {
+        max(16, (width - ReadableContentWidth.column) / 2)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -155,6 +184,7 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         let selected = model.selectedDay
         let expanded = model.expandedClusters
         let failure = model.failure
+        let isLoaded = response != nil && model.isSelectedDayLoaded
         let isAccessibilitySize = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
         let live = liveSessions(for: response)
         workspaces = Dictionary(connection.workspaceStore.workspaces.map {
@@ -176,13 +206,12 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             calendar: calendar,
             palette: palette
         )
-        applySummary(agenda: agenda, day: selected, now: now, isAccessibilitySize: isAccessibilitySize)
-        applyRows(agenda: agenda, day: selected, now: now, expanded: expanded, isAccessibilitySize: isAccessibilitySize)
-        applyState(
-            response: response,
-            isEmpty: agenda?.items(on: selected, calendar: calendar).isEmpty ?? true,
-            failure: failure
-        )
+        // A day the answer does not cover (another week on its way) draws nothing of the
+        // old answer's.
+        let shown = isLoaded ? agenda : nil
+        applySummary(agenda: shown, day: selected, now: now, isAccessibilitySize: isAccessibilitySize)
+        let isEmpty = applyRows(agenda: shown, day: selected, now: now, expanded: expanded, isAccessibilitySize: isAccessibilitySize)
+        applyState(isLoaded: isLoaded, hasSchedules: response?.schedules.isEmpty == false, isEmpty: isEmpty, failure: failure)
     }
 
     /// The app's live copy of the sessions the answer names: running and blocked changes
@@ -216,13 +245,14 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         )
     }
 
+    /// Draws `day`'s rows; true when it has none.
     private func applyRows(
         agenda: ScheduleCalendarAgenda?,
         day: Date,
         now: Date,
         expanded: Set<String>,
         isAccessibilitySize: Bool
-    ) {
+    ) -> Bool {
         var snapshot = NSDiffableDataSourceSnapshot<Section, ID>()
         var rows: [ID: RowData] = [:]
         var inputs: [ID: AnyHashable] = [:]
@@ -238,7 +268,7 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
 
         if let agenda, !agenda.items(on: day, calendar: calendar).isEmpty {
             let (night, later) = agenda.rows(on: day, now: now, calendar: calendar, expandedClusters: expanded)
-            let next = agenda.nextUpcoming(after: now)?.id
+            let nextTime = agenda.nextUpcomingTime(after: now)
             if isAccessibilitySize {
                 let summary = agenda.summary(on: day, calendar: calendar)
                 snapshot.appendSections([.summary])
@@ -257,8 +287,10 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
                         previousTime = item.at
                         // A row that counts time redraws each minute; others only when they change.
                         let ticking = item.outcome == .upcoming || item.outcome.isActive
-                        add(.entry(item.id), .entry(item, showsTime: showsTime, isNext: item.id == next), to: section, key: AnyHashable([
-                            AnyHashable(item), AnyHashable(showsTime), AnyHashable(item.id == next),
+                        // Runs due at the same next minute are all next.
+                        let isNext = item.outcome == .upcoming && item.at == nextTime
+                        add(.entry(item.id), .entry(item, showsTime: showsTime, isNext: isNext), to: section, key: AnyHashable([
+                            AnyHashable(item), AnyHashable(showsTime), AnyHashable(isNext),
                             AnyHashable(ticking ? now : .distantPast),
                         ]))
                     case .cluster(let cluster):
@@ -279,6 +311,11 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
                 addRows(later, to: .day)
             }
         }
+        let truncated = agenda?.truncatedSchedules(on: day, now: now, calendar: calendar) ?? []
+        if !truncated.isEmpty {
+            snapshot.appendSections([.more])
+            add(.truncated, .truncated(truncated), to: .more, key: AnyHashable(truncated))
+        }
 
         let changed = inputs.compactMap { id, key in rowInputs[id].map { $0 != key ? id : nil } ?? nil }
         snapshot.reconfigureItems(changed.filter { snapshot.indexOfItem($0) != nil })
@@ -286,7 +323,9 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         rowInputs = inputs
         dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
             self?.scrollToNowIfNeeded(day: day, now: now)
+            self?.alignHeaderToRows()
         }
+        return rows.isEmpty
     }
 
     /// On opening a day: today puts the now line about a third of the way down, so the
@@ -304,15 +343,22 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         }
         let visible = collectionView.bounds.height - collectionView.adjustedContentInset.top - collectionView.adjustedContentInset.bottom
         let maxOffset = max(-collectionView.adjustedContentInset.top, collectionView.contentSize.height + collectionView.adjustedContentInset.bottom - collectionView.bounds.height)
-        let target = min(maxOffset, max(-collectionView.adjustedContentInset.top, attributes.frame.minY - visible / 3))
+        let top = collectionView.adjustedContentInset.top
+        var target = min(maxOffset, max(-top, attributes.frame.minY - visible / 3))
+        // Rest on a row's top edge: a row cut by the header shows only the tip of its rail.
+        if let cut = collectionView.indexPathForItem(at: CGPoint(x: collectionView.bounds.midX, y: target + top)),
+           let row = collectionView.layoutAttributesForItem(at: cut) {
+            target = max(-top, row.frame.minY - top - 4)
+        }
         collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: false)
     }
 
     /// Loading, failed with one Retry, or empty, over the list. A refresh that fails with
-    /// runs on screen keeps them.
-    private func applyState(response: ScheduleCalendarResponse?, isEmpty: Bool, failure: String?) {
+    /// runs on screen keeps them. A day the answer does not cover is loading or failed,
+    /// never empty: nothing is known about it yet.
+    private func applyState(isLoaded: Bool, hasSchedules: Bool, isEmpty: Bool, failure: String?) {
         let state: LoadState?
-        if response == nil {
+        if !isLoaded {
             if let failure {
                 state = .failed(
                     title: String(localized: "Couldn't Load the Calendar"),
@@ -327,7 +373,7 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             state = .empty(
                 title: String(localized: "No Runs This Day"),
                 systemImage: "calendar",
-                message: response?.schedules.isEmpty == true && isToday
+                message: !hasSchedules && isToday
                     ? String(localized: "Describe what should happen and when below.")
                     : nil
             )
@@ -354,7 +400,7 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             configuration.backgroundColor = .clear
             let section = NSCollectionLayoutSection.list(using: configuration, layoutEnvironment: environment)
             let width = environment.container.effectiveContentSize.width
-            let side = max(12, (width - ReadableContentWidth.column) / 2)
+            let side = Self.rowInset(width: width)
             section.interGroupSpacing = 4
             let kind = self.flatMap { $0.dataSource.sectionIdentifier(for: index) }
             switch kind {
@@ -448,10 +494,15 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
                 ? String(localized: "Opens the session")
                 : String(localized: "Opens the schedule")
             cell.accessibilityIdentifier = "schedules.calendar.entry.\(item.id)"
-            cell.accessibilityCustomActions = menuActions(for: item).map { action in
-                UIAccessibilityCustomAction(name: action.title) { _ in
-                    action.perform()
-                    return true
+            // Built when VoiceOver asks, from the row as it is then: a schedule paused since
+            // the row was drawn offers no Pause.
+            cell.accessibilityCustomActionsBlock = { [weak self] in
+                guard let self, case .entry(let item, _, _) = rows[id] else { return [] }
+                return menuActions(for: item).map { action in
+                    UIAccessibilityCustomAction(name: action.title) { _ in
+                        action.perform()
+                        return true
+                    }
                 }
             }
         case .now(let date):
@@ -461,6 +512,16 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             }
             cell.isAccessibilityElement = false
             cell.accessibilityElementsHidden = true
+        case .truncated(let names):
+            let text = names.count == 1
+                ? String(localized: "More runs of \(names[0]) are not shown.")
+                : String(localized: "More runs of \(names.count) schedules are not shown.")
+            cell.contentConfiguration = ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
+                ControlRowViews.label(text, style: .footnote, color: palette.ui.fgDim)
+            }
+            cell.isAccessibilityElement = true
+            cell.accessibilityLabel = text
+            cell.accessibilityIdentifier = "schedules.calendar.truncated"
         }
     }
 
@@ -508,8 +569,11 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         if summary.failed > 0 { parts.append(String(localized: "\(summary.failed) failed")) }
         if summary.needsYou > 0 { parts.append(String(localized: "\(summary.needsYou) need you")) }
         if summary.upcoming > 0 { parts.append(String(localized: "\(summary.upcoming) upcoming")) }
-        let cost = SessionFormatting.costString(summary.cost)
-        parts.append(isToday ? String(localized: "\(cost) so far") : cost)
+        // A day with nothing run yet has no cost to say.
+        if summary.hasRuns {
+            let cost = SessionFormatting.costString(summary.cost)
+            parts.append(isToday ? String(localized: "\(cost) so far") : cost)
+        }
         return parts.joined(separator: ", ")
     }
 
@@ -660,14 +724,27 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             countdown.setContentHuggingPriority(.required, for: .horizontal)
             head.append(countdown)
         }
-        var detail = [schedule?.trigger.scheduleScreenTiming() ?? ""]
-        if let workspace = context.workspace { detail.append(workspace.name) }
-        if let model = schedule?.model ?? item.model { detail.append(ScheduleCalendarRowViews.modelName(model)) }
-        let detailLabel = ControlRowViews.label(detail.joined(separator: " · "), style: .subheadline, color: palette.ui.fgDim)
-        var lines: [UIView] = [ControlRowViews.stack(head, axis: .horizontal, spacing: 8, alignment: .firstBaseline), detailLabel]
+        // Each line is one line, truncating, so the preview's height is the same at any
+        // width: an iPad shows it narrower than it was measured, and wrapped text ran
+        // under the outcomes.
+        title.numberOfLines = 1
+        title.lineBreakMode = .byTruncatingTail
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        var lines: [UIView] = [ControlRowViews.stack(head, axis: .horizontal, spacing: 8, alignment: .firstBaseline)]
+        var place: [String] = []
+        if let workspace = context.workspace { place.append(workspace.name) }
+        if let model = schedule?.model ?? item.model { place.append(ScheduleCalendarRowViews.modelName(model)) }
+        for detail in [schedule?.trigger.scheduleScreenTiming(), place.isEmpty ? nil : place.joined(separator: " · ")] {
+            guard let detail else { continue }
+            let label = ControlRowViews.label(detail, style: .subheadline, color: palette.ui.fgDim, lines: 1)
+            label.lineBreakMode = .byTruncatingTail
+            lines.append(label)
+        }
         if !recent.isEmpty {
             let glyphs = recent.map { ScheduleCalendarRowViews.glyph(.init($0, palette: palette), palette: palette, textStyle: .subheadline) }
-            var row: [UIView] = [ControlRowViews.label(String(localized: "Last \(recent.count) runs"), style: .footnote, color: palette.ui.fgDim, lines: 1)]
+            let caption = ControlRowViews.label(String(localized: "Last \(recent.count) runs"), style: .footnote, color: palette.ui.fgDim, lines: 1)
+            caption.setContentCompressionResistancePriority(.required, for: .horizontal)
+            var row: [UIView] = [caption]
             row += glyphs
             row.append(ControlRowViews.spacer())
             if !costs.isEmpty {
@@ -687,8 +764,9 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             stack.topAnchor.constraint(equalTo: controller.view.topAnchor, constant: 14),
             stack.bottomAnchor.constraint(equalTo: controller.view.bottomAnchor, constant: -14),
         ])
-        // Measured at the width it is shown at, so wrapped timing keeps the outcomes in view.
-        let width = min(view.bounds.width - 32, 420)
+        // Narrow enough to sit beside its menu on an iPad mini: a wider preview is shrunk
+        // to fit, height with it, and a line is squeezed out.
+        let width = min(view.bounds.width - 32, 340)
         let height = controller.view.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
@@ -715,8 +793,8 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
                 ) {
                     starting = self?.model.insertStarting(scheduleId: scheduleId)
                 }
-                guard let self, starting != nil else { return }
-                model.reload()
+                guard let self, let starting else { return }
+                model.startingAccepted(starting)
                 reportError(nil)
             } catch {
                 if let starting { self?.model.removeStarting(starting) }
@@ -754,7 +832,7 @@ final class ScheduleCalendarCell: UICollectionViewListCell {
         accessibilityHint = nil
         accessibilityIdentifier = nil
         accessibilityTraits = .none
-        accessibilityCustomActions = nil
+        accessibilityCustomActionsBlock = nil
         setNeedsUpdateConfiguration()
     }
 
@@ -762,7 +840,9 @@ final class ScheduleCalendarCell: UICollectionViewListCell {
         var background = UIBackgroundConfiguration.clear()
         let palette = ThemeRuntimeState.currentUIKitPalette()
         if state.isHighlighted || state.isSelected {
-            background.backgroundColor = palette.fg.withAlphaComponent(0.08)
+            // A pressed tinted row deepens its own colour; a plain one greys.
+            background.backgroundColor = fill.map { $0.withAlphaComponent($0.cgColor.alpha * 1.8) }
+                ?? palette.fg.withAlphaComponent(0.08)
         } else {
             background.backgroundColor = fill ?? .clear
         }

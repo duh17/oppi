@@ -23,7 +23,6 @@ struct ScheduleCalendarSchedule: Identifiable, Sendable, Equatable {
     var action: AgentScheduleActionSummary
     /// The model a run asks for, as the server's dispatch picks it.
     var model: String?
-    var thinkingLevel: ThinkingLevel?
     /// The range held more upcoming occurrences than the server listed.
     var upcomingTruncated: Bool
 }
@@ -33,7 +32,8 @@ struct ScheduleCalendarEntry: Sendable, Equatable {
     var slotKey: String
     /// The slot's time (a manual run's creation).
     var at: Date
-    /// Nil for an upcoming occurrence.
+    /// Nil for an occurrence with no run yet: one still to come, or one that just came due
+    /// (`at` at or before the answer's `now`) and waits for the server's runner to record it.
     var run: ScheduleCalendarRun?
 
     /// Unique within one response: one run per schedule and slot.
@@ -44,7 +44,9 @@ struct ScheduleCalendarRun: Sendable, Equatable {
     var id: String
     var kind: AgentScheduleRunKind
     /// Dispatch status only: `completed` means the session launched or the prompt was sent.
-    var status: AgentScheduleRunStatus
+    /// Nil for a status this app version does not know, so a newer server's run draws as
+    /// neutral instead of failing the whole calendar.
+    var status: AgentScheduleRunStatus?
     var createdAt: Date
     var startedAt: Date?
     var completedAt: Date?
@@ -83,7 +85,7 @@ extension ScheduleCalendarResponse: Decodable {
 
 extension ScheduleCalendarSchedule: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case id, name, status, trigger, action, model, thinkingLevel, upcomingTruncated
+        case id, name, status, trigger, action, model, upcomingTruncated
     }
 
     init(from decoder: Decoder) throws {
@@ -94,7 +96,6 @@ extension ScheduleCalendarSchedule: Decodable {
         trigger = try c.decode(AgentScheduleTrigger.self, forKey: .trigger)
         action = try c.decode(AgentScheduleActionSummary.self, forKey: .action)
         model = try c.decodeIfPresent(String.self, forKey: .model)
-        thinkingLevel = try c.decodeIfPresent(ThinkingLevel.self, forKey: .thinkingLevel)
         upcomingTruncated = try c.decodeIfPresent(Bool.self, forKey: .upcomingTruncated) ?? false
     }
 }
@@ -120,7 +121,7 @@ extension ScheduleCalendarRun: Decodable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         kind = try c.decode(AgentScheduleRunKind.self, forKey: .kind)
-        status = try c.decode(AgentScheduleRunStatus.self, forKey: .status)
+        status = AgentScheduleRunStatus(rawValue: try c.decode(String.self, forKey: .status))
         createdAt = try c.decodeMilliseconds(.createdAt)
         startedAt = try c.decodeMillisecondsIfPresent(.startedAt)
         completedAt = try c.decodeMillisecondsIfPresent(.completedAt)

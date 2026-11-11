@@ -66,7 +66,6 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         }
         XCTAssertFalse(menuButton("Skip").exists, "No Skip: the server has no way to skip a run")
         attachScreenshot("menu")
-        keep("menu-\(UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone")")
     }
 
     /// The iPad mini turned to landscape keeps the day's summary and runs in view.
@@ -80,18 +79,12 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         let summary = app.descendants(matching: .any)["schedules.calendar.summary"]
         XCTAssertTrue(waitFor(summary.exists && summary.isHittable, timeout: 10), "The summary shows in landscape")
         XCTAssertTrue(pastRun(named: "Weekday job hunt").waitUntilExists(timeout: 5), "The morning's runs show in landscape")
-        attachScreenshot("landscape")
-        keep("ipad-mini-landscape")
-    }
-
-    /// A capture for the review, when `OPPI_SCHEDULE_SHOTS` names a folder: the whole
-    /// screen, which keeps an iPad in landscape the right way round.
-    private func keep(_ name: String) {
-        guard let directory = ProcessInfo.processInfo.environment["OPPI_SCHEDULE_SHOTS"] else { return }
-        try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-        try? XCUIScreen.main.screenshot().pngRepresentation.write(
-            to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png")
-        )
+        // The whole screen: an app screenshot of a landscape iPad comes out on a portrait
+        // canvas, half of it black.
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = "landscape"
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     // MARK: - Helpers

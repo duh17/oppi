@@ -25,7 +25,6 @@ struct ScheduleCalendarContractTests {
         let night = try #require(try Self.body().schedules.first { $0.id == "night330" })
         #expect(night.action.agentId == "night-agent")
         #expect(night.model == "anthropic/claude-opus-5-5")
-        #expect(night.thinkingLevel == .high)
         #expect(night.upcomingTruncated == false)
         let pulse = try #require(try Self.body().schedules.first { $0.id == "pulse015" })
         #expect(pulse.upcomingTruncated)

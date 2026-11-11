@@ -17,8 +17,12 @@ enum ScheduleCalendarOutcome: Hashable, Sendable {
     case needsYou(SessionStatusKind)
     case failed
     case done
-    /// A prompt delivered into an existing session that is not working on it now.
+    /// A prompt delivered into an existing session. That session's state and cost belong to
+    /// everything sent into it, so the run says only that it was sent.
     case sent
+    /// A run in a state this app version does not know (a newer server's): drawn neutral,
+    /// with no claim about how it went.
+    case other
 
     var label: String {
         switch self {
@@ -30,6 +34,7 @@ enum ScheduleCalendarOutcome: Hashable, Sendable {
         case .failed: String(localized: "Failed")
         case .done: String(localized: "Done")
         case .sent: String(localized: "Sent")
+        case .other: String(localized: "Unknown")
         }
     }
 
@@ -54,20 +59,19 @@ enum ScheduleCalendarOutcome: Hashable, Sendable {
     /// The run is over or in progress: it has a session to open, or a reason it has none.
     var isPast: Bool { self != .upcoming }
 
-    /// What one live session says about a run, for a new-session run or an existing one.
+    /// A run's outcome. A new-session run reads its own session; a run that sent into an
+    /// existing session never does, or every past send would turn Running whenever that
+    /// session is busy.
     static func resolve(
         run: ScheduleCalendarRun?,
         session: ScheduleCalendarAgenda.SessionFacts?,
         sendsIntoExistingSession: Bool
     ) -> ScheduleCalendarOutcome {
         guard let run else { return .upcoming }
-        if run.status == .failed { return .didNotStart }
-        guard let session else {
-            switch run.status {
-            case .pending, .claimed, .running: return .starting
-            case .completed, .failed: return sendsIntoExistingSession ? .sent : .done
-            }
-        }
+        guard let status = run.status else { return .other }
+        if status == .failed { return .didNotStart }
+        if sendsIntoExistingSession { return status == .completed ? .sent : .starting }
+        guard let session else { return status == .completed ? .done : .starting }
         let kind: SessionStatusKind? = session.programStatus.flatMap {
             // Unseen on purpose: done and error stay what they were.
             SessionStatusKind.resolve(programStatus: $0, isStopped: session.status == .stopped, seenAt: nil)
@@ -78,14 +82,14 @@ enum ScheduleCalendarOutcome: Hashable, Sendable {
         case .needsApproval, .question, .signIn:
             return .needsYou(kind ?? .question)
         case .error:
-            return sendsIntoExistingSession ? .sent : .failed
+            return .failed
         case .done, .idle, .stopped:
-            return sendsIntoExistingSession ? .sent : .done
+            return .done
         case nil:
             switch session.status {
             case .starting, .busy: return .running
-            case .error: return sendsIntoExistingSession ? .sent : .failed
-            case .ready, .stopping, .stopped: return sendsIntoExistingSession ? .sent : .done
+            case .error: return .failed
+            case .ready, .stopping, .stopped: return .done
             }
         }
     }
@@ -115,11 +119,12 @@ struct ScheduleCalendarAgenda: Sendable {
         let sessionId: String?
         let workspaceId: String
         let model: String?
-        /// The session's cost, nil before a session exists.
+        /// The run's session's cost; nil before a session exists, and for a run sent into an
+        /// existing session (that session's cost is not this run's).
         let cost: Double?
         /// When the run's work began: the run's start, else its creation.
         let startedAt: Date?
-        /// When the session last settled.
+        /// When the run's own session last settled.
         let settledAt: Date?
         /// The dispatch error of a run that never started.
         let runError: String?
@@ -134,9 +139,9 @@ struct ScheduleCalendarAgenda: Sendable {
             guard let startedAt else { return nil }
             switch outcome {
             case .running, .starting: return max(0, now.timeIntervalSince(startedAt))
-            case .done, .failed, .sent:
+            case .done, .failed:
                 return settledAt.map { max(0, $0.timeIntervalSince(startedAt)) }
-            case .needsYou, .didNotStart, .upcoming: return nil
+            case .needsYou, .didNotStart, .upcoming, .sent, .other: return nil
             }
         }
     }
@@ -166,7 +171,9 @@ struct ScheduleCalendarAgenda: Sendable {
         var needsYou = 0
         var upcoming = 0
         var cost: Double = 0
-        var isEmpty: Bool { done + running + failed + needsYou + upcoming == 0 }
+        /// Something ran or is running: the day has outcomes and a cost to show.
+        var hasRuns: Bool { done + running + failed + needsYou > 0 }
+        var isEmpty: Bool { !hasRuns && upcoming == 0 }
     }
 
     /// One day's mark in the week strip.
@@ -197,8 +204,9 @@ struct ScheduleCalendarAgenda: Sendable {
             let served = run?.session.map {
                 SessionFacts(status: $0.status, programStatus: $0.programStatus, cost: $0.cost)
             }
-            let session = run?.session.flatMap { live[$0.id] } ?? served
             let existing = schedule.action.type == .existingSession
+            // An existing session's facts cover everything sent into it, not this run.
+            let session = existing ? nil : run?.session.flatMap { live[$0.id] } ?? served
             let outcome = ScheduleCalendarOutcome.resolve(run: run, session: session, sendsIntoExistingSession: existing)
             return Item(
                 id: entry.key,
@@ -214,7 +222,7 @@ struct ScheduleCalendarAgenda: Sendable {
                 model: run?.session?.model ?? schedule.model,
                 cost: session?.cost,
                 startedAt: run.map { $0.startedAt ?? $0.createdAt },
-                settledAt: run?.session?.settledAt,
+                settledAt: existing ? nil : run?.session?.settledAt,
                 runError: run?.status == .failed ? run?.error : nil,
                 sessionMessage: Self.message(session: session, outcome: outcome),
                 trigger: schedule.trigger,
@@ -299,10 +307,9 @@ struct ScheduleCalendarAgenda: Sendable {
         return rows
     }
 
-    /// `day`'s counts and spend. A session that several runs sent into counts its cost once.
+    /// `day`'s counts and spend. A run in a state this version does not know counts nowhere.
     func summary(on day: Date, calendar: Calendar) -> Summary {
         var summary = Summary()
-        var costedSessions = Set<String>()
         for item in items(on: day, calendar: calendar) {
             switch item.outcome {
             case .upcoming: summary.upcoming += 1
@@ -310,12 +317,24 @@ struct ScheduleCalendarAgenda: Sendable {
             case .failed, .didNotStart: summary.failed += 1
             case .needsYou: summary.needsYou += 1
             case .done, .sent: summary.done += 1
+            case .other: break
             }
-            if let cost = item.cost, let sessionId = item.sessionId, costedSessions.insert(sessionId).inserted {
-                summary.cost += cost
-            }
+            summary.cost += item.cost ?? 0
         }
         return summary
+    }
+
+    /// The schedules whose later runs the server left out (`upcomingTruncated`) from `day`
+    /// on: the names for the day's "more runs not shown" line. A truncated schedule's list
+    /// stops at its last listed occurrence, so the line shows on that day and after it.
+    func truncatedSchedules(on day: Date, now: Date, calendar: Calendar) -> [String] {
+        let start = calendar.startOfDay(for: day)
+        guard let end = calendar.date(byAdding: .day, value: 1, to: start), end > now else { return [] }
+        return schedules.values.filter { schedule in
+            guard schedule.upcomingTruncated else { return false }
+            let last = items.last { $0.scheduleId == schedule.id && $0.outcome == .upcoming }
+            return (last?.at ?? now) < end
+        }.map(\.name).sorted()
     }
 
     func health(on day: Date, calendar: Calendar) -> DayHealth {
@@ -340,9 +359,10 @@ struct ScheduleCalendarAgenda: Sendable {
         items.last { $0.scheduleId == scheduleId && $0.sessionId != nil && $0.at <= now }
     }
 
-    /// The first occurrence still to come, the one whose countdown is bold.
-    func nextUpcoming(after now: Date) -> Item? {
-        items.first { $0.outcome == .upcoming && $0.at > now }
+    /// When the next occurrence still to come is due. Every occurrence at that time is
+    /// next, and each one's countdown is bold.
+    func nextUpcomingTime(after now: Date) -> Date? {
+        items.first { $0.outcome == .upcoming && $0.at > now }?.at
     }
 
     /// `2026-11-11` in `calendar`'s zone: a day's stable identifier.

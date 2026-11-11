@@ -114,10 +114,10 @@ final class SchedulesViewController: UIViewController {
         view.backgroundColor = palette.ui.bg
         let child: UIViewController = mode == .calendar ? calendarDay() : list
         show(child)
-        if mode == .calendar, connection.apiClient != nil, calendar?.day.model.response == nil,
-           calendar?.day.model.isLoading == false {
-            // A client installed after a failed first load: try again.
-            calendar?.day.model.reload()
+        if mode == .calendar {
+            // A client installed after a first load failed for want of one loads again. A
+            // load that failed for any other reason waits for Retry.
+            calendar?.day.model.clientAvailable(connection.apiClient != nil)
         }
         modeControl.selectedSegmentIndex = mode.rawValue
         navigationItem.titleView = available ? modeControl : nil

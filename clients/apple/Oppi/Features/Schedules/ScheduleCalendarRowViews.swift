@@ -25,6 +25,8 @@ struct ScheduleCalendarOutcomeStyle {
             self.init(color: palette.ui.orange, symbol: "questionmark.bubble.fill", fillsRow: true)
         case .done, .sent:
             self.init(color: palette.ui.green, symbol: "checkmark.circle.fill", fillsRow: false)
+        case .other:
+            self.init(color: palette.ui.comment, symbol: "minus.circle", fillsRow: false)
         }
     }
 
@@ -97,25 +99,21 @@ enum ScheduleCalendarRowViews {
             secondLine.append(chip)
         }
 
+        // One order for every row: the title, what the run says, then its status.
         var lines: [UIView] = [ControlRowViews.stack(firstLine, axis: .horizontal, spacing: 8, alignment: .firstBaseline)]
-        if let question = question(item, context: context) { lines.append(question) }
+        if let said = said(item, context: context) { lines.append(said) }
         lines.append(ControlRowViews.stack(secondLine, axis: .horizontal, spacing: 8, alignment: .center))
-        if let reason = failureReason(item, context: context) { lines.append(reason) }
         return timed(ControlRowViews.stack(lines, spacing: 4), item: item, style: style, context: context)
     }
 
-    /// What a needs-you run asks, under its title. One line; VoiceOver reads all of it.
-    private static func question(_ item: ScheduleCalendarAgenda.Item, context: ScheduleCalendarRowContext) -> UILabel? {
-        guard item.outcome.isNeedsYou, let message = item.sessionMessage else { return nil }
-        return secondaryLine(message, context: context)
+    /// What the run says, directly under its title: what a needs-you run asks, or why a
+    /// failed one failed. One line; VoiceOver reads all of it.
+    private static func said(_ item: ScheduleCalendarAgenda.Item, context: ScheduleCalendarRowContext) -> UILabel? {
+        guard let text = item.outcome.isNeedsYou ? item.sessionMessage : failureReason(item) else { return nil }
+        return secondaryLine(text, context: context)
     }
 
-    /// Why a failed run failed: the session's error, or why the run never started. One
-    /// line; VoiceOver reads all of it.
-    private static func failureReason(_ item: ScheduleCalendarAgenda.Item, context: ScheduleCalendarRowContext) -> UILabel? {
-        guard let reason = Self.failureReason(item) else { return nil }
-        return secondaryLine(reason, context: context)
-    }
+    /// Why a failed run failed: the session's error, or why the run never started.
 
     static func failureReason(_ item: ScheduleCalendarAgenda.Item) -> String? {
         switch item.outcome {
@@ -174,9 +172,8 @@ enum ScheduleCalendarRowViews {
         )
         let title = ControlRowViews.label(item.name, style: .body, weight: .semibold, color: palette.ui.fg)
         var lines: [UIView] = [time, title]
-        if let question = question(item, context: context) { lines.append(question) }
+        if let said = said(item, context: context) { lines.append(said) }
         lines.append(statusLine(item, context: context, wraps: true))
-        if let reason = failureReason(item, context: context) { lines.append(reason) }
         if let trailing = trailing(item, context: context) {
             lines.append(ControlRowViews.stack([trailing, ControlRowViews.spacer()], axis: .horizontal, spacing: 0, alignment: .center))
         }
@@ -208,9 +205,16 @@ enum ScheduleCalendarRowViews {
         let parts = ScheduleCalendarText.timeParts(date, calendar: context.calendar)
         let time = ControlRowViews.label(parts.time, style: .subheadline, weight: .medium, color: palette.ui.fg, lines: 1)
         time.textAlignment = .right
-        let period = ControlRowViews.label(parts.period, style: .caption2, color: palette.ui.comment, lines: 1)
+        // `fgDim`, not `comment`: at caption size the fainter token washes out on a tinted row.
+        let period = ControlRowViews.label(parts.period, style: .caption2, color: palette.ui.fgDim, lines: 1)
         period.textAlignment = .right
-        let column = ControlRowViews.stack([time, period], spacing: 0, alignment: .trailing)
+        // The row stretches the column to its height; the filler takes the slack, so the
+        // time and its period stay together at the top of a tall row.
+        let filler = UIView()
+        filler.setContentHuggingPriority(.fittingSizeLevel, for: .vertical)
+        filler.setContentCompressionResistancePriority(.fittingSizeLevel, for: .vertical)
+        for label in [time, period] { label.setContentHuggingPriority(.required, for: .vertical) }
+        let column = ControlRowViews.stack([time, period, filler], spacing: 0, alignment: .trailing)
         time.alpha = context.showsTime ? 1 : 0
         period.alpha = context.showsTime ? 1 : 0
         let width = ("12:00" as NSString).size(withAttributes: [.font: UIFont.scaled(.subheadline, .medium)]).width.rounded(.up) + 2
@@ -253,7 +257,7 @@ enum ScheduleCalendarRowViews {
             return hugging(ControlRowViews.label(
                 ScheduleCalendarText.duration(duration), style: .subheadline, color: palette.ui.comment, lines: 1
             ))
-        case .didNotStart:
+        case .didNotStart, .other:
             return nil
         }
     }
@@ -438,7 +442,7 @@ enum ScheduleCalendarRowViews {
     }
 
     /// "Today ✓5 ▦1 ⚠1 ?1 … $10.84 so far"; at accessibility sizes the counts say their words
-    /// and wrap.
+    /// and wrap. A day with nothing run yet says "3 upcoming" and no cost.
     static func summary(
         _ summary: ScheduleCalendarAgenda.Summary,
         dayTitle: String,
@@ -454,12 +458,12 @@ enum ScheduleCalendarRowViews {
                 .withTintColor(color, renderingMode: .alwaysOriginal) else { return }
             text.append(NSAttributedString(attachment: NSTextAttachment(image: image)))
         }
-        func count(_ value: Int, _ symbol: String, _ color: UIColor, _ word: String) {
+        func count(_ value: Int, _ symbol: String, _ color: UIColor, _ word: String, spelled: Bool = false) {
             guard value > 0 else { return }
             if text.length > 0 { text.append(NSAttributedString(string: words ? "   " : " ", attributes: [.font: font])) }
             attachment(symbol, color)
             // No-break spaces keep a glyph, its number, and its word on one line.
-            let group = words
+            let group = words || spelled
                 ? "\u{00A0}\(value)\u{00A0}\(word.replacingOccurrences(of: " ", with: "\u{00A0}"))"
                 : "\u{00A0}\(value)"
             text.append(NSAttributedString(string: group, attributes: [.font: font, .foregroundColor: palette.ui.fg]))
@@ -472,6 +476,9 @@ enum ScheduleCalendarRowViews {
         count(summary.running, "circle.grid.3x3.fill", palette.ui.blue, String(localized: "running"))
         count(summary.failed, "exclamationmark.triangle.fill", palette.ui.red, String(localized: "failed"))
         count(summary.needsYou, "questionmark.bubble.fill", palette.ui.orange, String(localized: "needs you"))
+        if !summary.hasRuns {
+            count(summary.upcoming, "circle.dashed", palette.ui.comment, String(localized: "upcoming"), spelled: true)
+        }
 
         let label = UILabel()
         label.attributedText = text
@@ -479,6 +486,7 @@ enum ScheduleCalendarRowViews {
         // One line beside the cost; at accessibility sizes the groups wrap whole.
         label.numberOfLines = words ? 0 : 1
         label.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        guard summary.hasRuns else { return label }
         let costText = NSMutableAttributedString(
             string: SessionFormatting.costString(summary.cost),
             attributes: [.font: UIFont.scaled(.subheadline, .bold), .foregroundColor: palette.ui.fg]

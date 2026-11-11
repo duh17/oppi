@@ -8,28 +8,42 @@ import Observation
 /// One per Schedules container, bound to the connection it was made for. A load for a
 /// new range cancels the one in flight, and an answer for a range no longer wanted is
 /// dropped. A failed refresh keeps what is shown.
+///
+/// Nothing here retries a failed load on its own. A load starts when the screen appears,
+/// the person asks (pull, Retry, another week, Run Now, Pause), the connection gains its
+/// API client, or a minute passes while the server still owes a run: an occurrence that
+/// came due with no run yet, or a run whose dispatch has not finished.
 @MainActor
 @Observable
 final class ScheduleCalendarModel {
     /// The server's answer. Nil until the first load lands.
     private(set) var response: ScheduleCalendarResponse?
     private(set) var isLoading = false
-    /// Why the last load failed; cleared by the next one that lands.
+    /// Why the last load failed; cleared when the next one starts.
     private(set) var failure: String?
+    /// The range `response` answers. A day outside it has nothing to show yet.
+    private(set) var loadedRange: DateInterval?
     /// The day the agenda shows, as any instant in it.
     private(set) var selectedDay: Date
     /// The minute the screen draws as now: countdowns, the now line, running times.
     private(set) var now: Date
     /// Night clusters opened in place, by `ScheduleCalendarAgenda.Cluster.id`.
     var expandedClusters: Set<String> = []
-    /// Run Now entries drawn as Starting until the server's answer holds the real run.
+    /// Run Now entries drawn as Starting until a load that began after the server accepted
+    /// the run lands: that answer holds the real run.
     private(set) var startingEntries: [ScheduleCalendarEntry] = []
 
     let calendar: Calendar
     @ObservationIgnored private let clock: @MainActor () -> Date
     @ObservationIgnored private let fetch: @MainActor (Date, Date) async throws -> ScheduleCalendarResponse
     @ObservationIgnored private var loadTask: Task<Void, Never>?
-    @ObservationIgnored private var loadedRange: DateInterval?
+    @ObservationIgnored private var loadingRange: DateInterval?
+    /// The Starting entries whose Run Now the server accepted, by slot key.
+    @ObservationIgnored private var acceptedStarting: Set<String> = []
+    /// The server's clock minus this device's, from the last answer. What is due is the
+    /// server's call: a phone running ahead must not poll for runs the server does not owe.
+    @ObservationIgnored private var serverClockOffset: TimeInterval = 0
+    @ObservationIgnored private var hadClient = false
 
     init(
         calendar: Calendar = .autoupdatingCurrent,
@@ -73,6 +87,10 @@ final class ScheduleCalendarModel {
 
     var isShowingToday: Bool { calendar.isDate(selectedDay, inSameDayAs: now) }
 
+    /// Whether the answer covers the selected day. While it does not (another week is on
+    /// its way), the day is loading, not empty.
+    var isSelectedDayLoaded: Bool { loadedRange?.contains(selectedDay) == true }
+
     func select(_ day: Date) {
         selectedDay = day
         loadIfNeeded()
@@ -88,28 +106,40 @@ final class ScheduleCalendarModel {
     /// The selected week and the one before it (the menu's last seven outcomes), unless
     /// already loaded.
     func loadIfNeeded() {
-        guard let range = wantedRange, loadedRange.map({ $0.contains(range.start) && $0.end >= range.end }) != true else {
+        guard let range = wantedRange else { return }
+        if isLoading, loadingRange == range { return }
+        if loadedRange.map({ $0.contains(range.start) && $0.end >= range.end }) == true {
+            // A load still out for a week since left would replace this week's answer.
+            if isLoading {
+                loadTask?.cancel()
+                isLoading = false
+            }
             return
         }
         reload()
     }
 
-    /// Fetches the wanted range again: a pull, a countdown that reached zero, after Run
-    /// Now or Pause.
+    /// Fetches the wanted range again: a pull, Retry, after Pause or a schedule's edit.
     func reload() {
         guard let range = wantedRange else { return }
         loadTask?.cancel()
         isLoading = true
+        loadingRange = range
+        failure = nil
+        // Every Run Now accepted before this load began is in its answer.
+        let settled = acceptedStarting
         loadTask = Task { [weak self, fetch] in
             do {
                 let answer = try await fetch(range.start, range.end)
                 guard !Task.isCancelled, let self else { return }
                 response = answer
                 loadedRange = range
-                failure = nil
+                serverClockOffset = answer.now.timeIntervalSince(clock())
                 isLoading = false
-                // The server now has every Run Now that asked before this answer.
-                startingEntries.removeAll { $0.at <= answer.now }
+                // By key, never by comparing clocks: a phone ahead of the server would
+                // keep a ghost row.
+                startingEntries.removeAll { settled.contains($0.slotKey) }
+                acceptedStarting.subtract(settled)
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 failure = error.localizedDescription
@@ -118,15 +148,48 @@ final class ScheduleCalendarModel {
         }
     }
 
-    /// The minute changed. An upcoming occurrence that came due since the last tick has a
-    /// run on the server now, so the range is fetched again.
+    /// `reload`, returning when it lands or fails: a pull to refresh ends then.
+    func refresh() async {
+        reload()
+        await loadTask?.value
+    }
+
+    /// The screen came on: the clock is read and the range fetched, since runs and their
+    /// sessions moved on while it was away.
+    func appear() {
+        now = clock()
+        if !isLoading { reload() }
+    }
+
+    /// Whether the connection has its API client, told on every pass of the container. Only
+    /// the client's arrival loads, for a first load that failed for want of one; a failed
+    /// load is otherwise left to Retry, so a server that keeps failing is not asked in a loop.
+    func clientAvailable(_ available: Bool) {
+        let arrived = available && !hadClient
+        hadClient = available
+        if arrived, response == nil, !isLoading { reload() }
+    }
+
+    /// The minute changed. While the server owes a run the range is fetched again, each
+    /// minute until the answer holds it: the server's runner records a due run on its own
+    /// tick, up to a few minutes after the slot, so one fetch on the minute usually lands
+    /// before the run exists.
     func tick() {
-        let previous = now
-        let date = clock()
-        now = date
-        guard let response else { return }
-        if response.entries.contains(where: { $0.run == nil && $0.at > previous && $0.at <= date }) {
+        now = clock()
+        guard let response, !isLoading else { return }
+        let serverNow = now.addingTimeInterval(serverClockOffset)
+        if !acceptedStarting.isEmpty || response.entries.contains(where: { Self.awaitsRun($0, serverNow: serverNow) }) {
             reload()
+        }
+    }
+
+    /// An occurrence that came due with no run yet (the server lists it only while its
+    /// runner can still record it), or a run whose dispatch has not finished.
+    private static func awaitsRun(_ entry: ScheduleCalendarEntry, serverNow: Date) -> Bool {
+        guard let run = entry.run else { return entry.at <= serverNow }
+        switch run.status {
+        case .pending, .claimed, .running: return true
+        case .completed, .failed, nil: return false
         }
     }
 
@@ -142,8 +205,16 @@ final class ScheduleCalendarModel {
         return key
     }
 
+    /// The Run Now failed: its Starting row goes.
     func removeStarting(_ key: String) {
         startingEntries.removeAll { $0.slotKey == key }
+    }
+
+    /// The server accepted the Run Now: the range is fetched, and that answer's real run
+    /// replaces the Starting row. If that load fails, the row stays until one lands.
+    func startingAccepted(_ key: String) {
+        acceptedStarting.insert(key)
+        reload()
     }
 
     private var wantedRange: DateInterval? {

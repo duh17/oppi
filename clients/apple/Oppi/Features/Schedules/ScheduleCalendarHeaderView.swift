@@ -16,6 +16,17 @@ final class ScheduleCalendarHeaderView: UIView {
     var onSelect: ((Date) -> Void)?
     /// Moves the selection by this many days: ±7 pages a week, ±1 steps a day.
     var onStep: ((Int) -> Void)?
+    /// How far the header's content sits in from its sides, so it starts and ends on the
+    /// rows' edges.
+    var edgeInsets: (left: CGFloat, right: CGFloat) = (16, 16) {
+        didSet {
+            leftInset?.constant = edgeInsets.left
+            rightInset?.constant = -edgeInsets.right
+        }
+    }
+
+    private var leftInset: NSLayoutConstraint?
+    private var rightInset: NSLayoutConstraint?
 
     private let titleLabel = UILabel()
     private let strip = UIStackView()
@@ -28,8 +39,6 @@ final class ScheduleCalendarHeaderView: UIView {
     private let divider = UIView()
     /// The day's one-line summary, under the strip so it stays in view while the day scrolls.
     private let summary = UIView()
-    private var content: Content?
-    private var calendar = Calendar.autoupdatingCurrent
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -87,9 +96,13 @@ final class ScheduleCalendarHeaderView: UIView {
         hug.isActive = true
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        let left = stack.leftAnchor.constraint(equalTo: leftAnchor, constant: edgeInsets.left)
+        let right = stack.rightAnchor.constraint(equalTo: rightAnchor, constant: -edgeInsets.right)
+        leftInset = left
+        rightInset = right
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: layoutMarginsGuide.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: layoutMarginsGuide.trailingAnchor),
+            left,
+            right,
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
@@ -130,8 +143,6 @@ final class ScheduleCalendarHeaderView: UIView {
     @objc private func previousWeek() { onStep?(-7) }
 
     func apply(_ content: Content, calendar: Calendar, palette: ThemePalette) {
-        self.calendar = calendar
-        self.content = content
         let month = content.selected.formatted(.dateTime.month(.wide))
         let year = content.selected.formatted(.dateTime.year())
         let title = NSMutableAttributedString(string: month, attributes: [
@@ -236,6 +247,10 @@ private final class DayButton: UIControl {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    override var isHighlighted: Bool {
+        didSet { alpha = isHighlighted ? 0.5 : 1 }
+    }
 
     override func accessibilityActivate() -> Bool {
         sendActions(for: .touchUpInside)

@@ -115,7 +115,94 @@ struct ScheduleCalendarAgendaTests {
         #expect(!(night + later).contains(.now(response.now)), "Another day has no now line")
     }
 
-    @Test("the day sums each outcome and each session's cost once")
+    @Test("a run sent into an existing session reads Sent with no cost, whatever that session does now")
+    func existingSessionSend() throws {
+        var response = try Self.response()
+        let sentAt = Self.date("2026-11-10T17:00:00Z")
+        // Yesterday's send into the session that today's one-shot also sends into. The
+        // session is busy now and has cost $40 over its life.
+        let session = ScheduleCalendarSession(
+            id: "sess-hawaii", status: .busy,
+            programStatus: ProgramStatus(state: .working, since: response.now), cost: 40
+        )
+        response.entries.append(ScheduleCalendarEntry(
+            scheduleId: "hawaii01", slotKey: "manual:yesterday", at: sentAt,
+            run: ScheduleCalendarRun(
+                id: "run-hawaii", kind: .manual, status: .completed, createdAt: sentAt,
+                promptDispatch: "delivered", session: session
+            )
+        ))
+        let live = ScheduleCalendarAgenda.SessionFacts(
+            status: .ready, programStatus: ProgramStatus(state: .blocked, kind: .question, since: response.now), cost: 41
+        )
+        let agenda = ScheduleCalendarAgenda(response: response, live: ["sess-hawaii": live])
+        let sent = try #require(agenda.items.first { $0.runId == "run-hawaii" })
+        #expect(sent.outcome == .sent)
+        #expect(sent.cost == nil)
+        #expect(sent.duration(now: response.now) == nil)
+        #expect(sent.sessionId == "sess-hawaii", "It still opens that session")
+        let summary = agenda.summary(on: sentAt, calendar: Self.calendar)
+        #expect(summary.done == 1 && summary.running == 0 && summary.needsYou == 0)
+        #expect(summary.cost == 0, "The session's lifetime cost is not this day's")
+
+        // Until its dispatch finishes it is starting; a failed dispatch never sent.
+        for (status, outcome) in [(AgentScheduleRunStatus.pending, ScheduleCalendarOutcome.starting), (.failed, .didNotStart)] {
+            #expect(ScheduleCalendarOutcome.resolve(
+                run: ScheduleCalendarRun(id: "r", kind: .due, status: status, createdAt: sentAt, session: session),
+                session: nil, sendsIntoExistingSession: true
+            ) == outcome)
+        }
+    }
+
+    @Test("a run status this version does not know decodes and draws neutral")
+    func unknownRunStatus() throws {
+        let json = Data("""
+        {"scheduleId":"nanny917","slotKey":"cron:1","at":1794416400000,
+         "run":{"id":"run-skipped","kind":"due","status":"skipped","createdAt":1794416400000}}
+        """.utf8)
+        var response = try Self.response()
+        response.entries = [try JSONDecoder().decode(ScheduleCalendarEntry.self, from: json)]
+        let agenda = ScheduleCalendarAgenda(response: response)
+        let item = try #require(agenda.items.first)
+        #expect(item.outcome == .other)
+        #expect(!item.outcome.isFailure && !item.outcome.isClean)
+        #expect(agenda.summary(on: item.at, calendar: Self.calendar).isEmpty, "It counts as nothing the app can name")
+    }
+
+    @Test("a day with nothing run yet has only what is upcoming to say")
+    func upcomingOnlyDay() throws {
+        var response = try Self.response()
+        response.entries.removeAll { $0.run != nil }
+        let summary = ScheduleCalendarAgenda(response: response).summary(on: response.now, calendar: Self.calendar)
+        #expect(summary.upcoming == 3)
+        #expect(!summary.hasRuns && !summary.isEmpty)
+    }
+
+    @Test("every occurrence at the next due minute is next")
+    func nextUpcomingTime() throws {
+        let response = try Self.response()
+        let agenda = ScheduleCalendarAgenda(response: response)
+        let next = try #require(agenda.nextUpcomingTime(after: response.now))
+        #expect(next == Self.date("2026-11-11T17:00:00Z"))
+        #expect(agenda.items.filter { $0.outcome == .upcoming && $0.at == next }.map(\.scheduleId) == ["hawaii01", "nanny917"])
+    }
+
+    @Test("a schedule whose later runs the server left out says so from its last listed day on")
+    func truncatedSchedules() throws {
+        var response = try Self.response()
+        // Nanny's occurrences were cut after today's 5 PM.
+        let index = try #require(response.schedules.firstIndex { $0.id == "nanny917" })
+        response.schedules[index].upcomingTruncated = true
+        response.schedules.removeAll { $0.id == "pulse015" }
+        let agenda = ScheduleCalendarAgenda(response: response)
+        let calendar = Self.calendar
+        let day = { (offset: Int) in calendar.date(byAdding: .day, value: offset, to: response.now) ?? response.now }
+        #expect(agenda.truncatedSchedules(on: day(0), now: response.now, calendar: calendar) == [response.schedules[index].name])
+        #expect(agenda.truncatedSchedules(on: day(1), now: response.now, calendar: calendar).count == 1)
+        #expect(agenda.truncatedSchedules(on: day(-1), now: response.now, calendar: calendar).isEmpty, "A past day is whole")
+    }
+
+    @Test("the day sums each outcome and each run's cost")
     func summary() throws {
         let response = try Self.response()
         let agenda = ScheduleCalendarAgenda(response: response)
