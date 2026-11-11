@@ -3,16 +3,6 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// A live spinner follows a style change, and one posted off the main thread must not trap it.
-///
-/// The style change reaches this view through `NotificationCenter`, and
-/// `AppearanceStylePreferenceTests` posts it from whatever thread Swift Testing gives the
-/// test (not the main actor). A selector observer without a delivery queue ran the main-actor
-/// update on that thread and killed the test host with
-/// `Fatal error: Incorrect actor executor assumption` whenever another suite in the same
-/// shard held a live spinner (`WorkingIndicatorLiveTailPinTests` does, in the same shard as
-/// the appearance suite). Both writers of this key in the shard write `.working`, so a
-/// concurrent suite cannot supersede the style this test expects.
 /// Reduce Motion: braille and Game of Life hold their frame, shown, until it turns off.
 /// (The orb's still frame is `OrbMetalTests`'.) Driven through each view's `isFrozen`,
 /// which `WorkingSpinnerUIView` sets from the system setting, because the spinner's
@@ -47,6 +37,16 @@ struct SpinnerReduceMotionTests {
     }
 }
 
+/// A live spinner follows a style change, and one posted off the main thread must not trap it.
+///
+/// The style change reaches this view through `NotificationCenter`, and
+/// `AppearanceStylePreferenceTests` posts it from whatever thread Swift Testing gives the
+/// test (not the main actor). A selector observer without a delivery queue ran the main-actor
+/// update on that thread and killed the test host with
+/// `Fatal error: Incorrect actor executor assumption` whenever another suite in the same
+/// shard held a live spinner (`WorkingIndicatorLiveTailPinTests` does, in the same shard as
+/// the appearance suite). Both writers of this key in the shard write `.working`, so a
+/// concurrent suite cannot supersede the style this test expects.
 @Suite("Working spinner style change")
 @MainActor
 struct WorkingSpinnerStyleChangeTests {

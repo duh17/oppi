@@ -19,14 +19,6 @@ final class WorkingSpinnerUIView: UIView {
         didSet { if isAnimating != oldValue { applyVisibility() } }
     }
 
-    /// Reduce Motion whatever the system says, as `OrbMetalView.forceReduceMotion`.
-    var forceReduceMotion = false {
-        didSet { applyMotion() }
-    }
-
-    /// Whether the shown style holds a still frame.
-    var isFrozen: Bool { forceReduceMotion || UIAccessibility.isReduceMotionEnabled }
-
     init(side: CGFloat) {
         super.init(frame: .zero)
         isUserInteractionEnabled = false
@@ -71,9 +63,8 @@ final class WorkingSpinnerUIView: UIView {
     }
 
     private func applyMotion() {
-        braille.isFrozen = isFrozen
-        life.isFrozen = isFrozen
-        orb.forceReduceMotion = forceReduceMotion
+        braille.isFrozen = UIAccessibility.isReduceMotionEnabled
+        life.isFrozen = UIAccessibility.isReduceMotionEnabled
     }
 
     private func applyStyleFromPreferences() {
@@ -90,15 +81,6 @@ final class WorkingSpinnerUIView: UIView {
         var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
         palette.ui.bg.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
         orb.isDarkBackground = OrbTint.isDarkBackground(red: red, green: green, blue: blue)
-    }
-
-    /// Whether the shown style's frames advance now.
-    var isTicking: Bool {
-        switch style {
-        case .brailleDots: braille.isTicking
-        case .gameOfLife: life.isTicking
-        case .working, .searching, .solving: orb.isDriving
-        }
     }
 
     private func applyVisibility() {
