@@ -41,7 +41,7 @@ final class FileViewerVideoPreviewController: PreviewRootController {
 
 /// A three-second H.264 clip with a labelled frame, so a capture shows the
 /// picture's own edges and a letterbox as a different color.
-private enum FixtureVideoClip {
+enum FixtureVideoClip {
     static func encode(portrait: Bool) -> Task<Data, Error> {
         Task.detached {
             let size = portrait ? CGSize(width: 576, height: 1024) : CGSize(width: 1024, height: 576)

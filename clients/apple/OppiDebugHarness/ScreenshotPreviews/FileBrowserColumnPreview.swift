@@ -1,10 +1,18 @@
 #if DEBUG
+import os
 import UIKit
 
 /// `SCREENSHOT_SCREEN=file-browser-column`: the workspace File Browser route
 /// (the real `FileBrowserViewController`) over a fixture server, opened on a
 /// long Org file in `projects/`. Regular width shows the folder tree beside the
 /// file, with the tree's toggle in the bar; compact width shows the file alone.
+///
+/// `SCREENSHOT_FILE_BROWSER_FOLDER=media/` opens that folder with no file
+/// selected instead: a video, an image, a slow download, and a file over the
+/// server's size limit, for the rows' Share. `SCREENSHOT_FILE_BROWSER_FILE`
+/// names a file of that folder to open with it. The preview hosts the browser
+/// without the app shell, so a compact row's linked-file route goes nowhere;
+/// a file opens in compact width only this way.
 enum FileBrowserColumnFixture {
     static let workspaceId = "notebook"
     static let host = "file-browser-column.invalid"
@@ -13,7 +21,7 @@ enum FileBrowserColumnFixture {
     /// The workspace's folders, as `/workspaces/notebook/contents[/<folder>]` lists them.
     static let listings: [String: [(name: String, isDirectory: Bool, size: Int)]] = [
         "": [
-            ("journal", true, 0), ("notes", true, 0), ("projects", true, 0),
+            ("journal", true, 0), ("media", true, 0), ("notes", true, 0), ("projects", true, 0),
             ("inbox.org", false, 2_310), ("index.org", false, 4_120), ("README.md", false, 860),
         ],
         "projects/": [
@@ -22,7 +30,38 @@ enum FileBrowserColumnFixture {
             ("home-network.org", false, 5_120), ("reading-list.org", false, 2_700),
             ("tax-2026.org", false, 1_940),
         ],
+        "media/": [
+            ("stills", true, 0),
+            ("harvest.mp4", false, 412_000), ("long-take.mov", false, slowFileBytes),
+            ("raised-beds.png", false, 86_000), ("planting-notes.md", false, 1_200),
+            ("sensor-trace.log", false, 64_000_000),
+        ],
     ]
+
+    /// `media/long-take.mov` arrives a piece at a time, so its Share shows progress.
+    static let slowFileBytes = 48 * 1_024 * 1_024
+    static let video = FixtureVideoClip.encode(portrait: false)
+
+    static let plantingNotes = """
+    # Planting notes
+
+    - Peas along the trellis, two rows
+    - Lettuce once nights stay above 5 °C
+    - Mulch the strawberries before the first warm week
+    """
+
+    /// A drawn picture of the beds, so the share sheet has a real PNG to preview.
+    static let photo: Data = {
+        let size = CGSize(width: 640, height: 400)
+        return UIGraphicsImageRenderer(size: size).pngData { context in
+            UIColor.systemGreen.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor.brown.setFill()
+            for bed in 0..<4 {
+                context.fill(CGRect(x: 40 + bed * 150, y: 120, width: 110, height: 220))
+            }
+        }
+    }()
 
     static var indexPaths: [String] {
         listings.flatMap { folder, entries in
@@ -123,7 +162,9 @@ final class FileBrowserColumnURLProtocol: URLProtocol {
     }
 
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func stopLoading() {}
+    override func stopLoading() { stopped.withLock { $0 = true } }
+
+    private let stopped = OSAllocatedUnfairLock(initialState: false)
 
     override func startLoading() {
         guard let url = request.url else {
@@ -138,29 +179,89 @@ final class FileBrowserColumnURLProtocol: URLProtocol {
             body = Self.listing("")
         case ("GET", "\(workspace)/contents/projects"):
             body = Self.listing("projects/")
+        case ("GET", "\(workspace)/contents/media"):
+            body = Self.listing("media/")
         case ("GET", "\(workspace)/paths"):
             body = try? JSONSerialization.data(withJSONObject: [
                 "paths": FileBrowserColumnFixture.indexPaths,
                 "truncated": false,
             ])
         case ("GET", "/files/current"):
-            contentType = "text/plain"
-            body = Data(FileBrowserColumnFixture.gardenOrg.utf8)
+            let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "path" }?.value ?? ""
+            switch path {
+            case "media/harvest.mp4":
+                // The clip is encoded on first use; the answer waits for it.
+                // URLProtocol is not Sendable; the loading system never touches
+                // this instance again until it reports through its client.
+                nonisolated(unsafe) let fixture = self
+                Task {
+                    let clip = (try? await FileBrowserColumnFixture.video.value) ?? Data()
+                    fixture.respond(url: url, status: 200, contentType: "video/mp4", body: clip)
+                }
+                return
+            case "media/long-take.mov":
+                streamSlowFile(url: url)
+                return
+            case "media/sensor-trace.log":
+                respond(url: url, status: 413, contentType: "application/json", body: Data(#"{"error":"File too large (max 10MB)"}"#.utf8))
+                return
+            case "media/raised-beds.png":
+                contentType = "image/png"
+                body = FileBrowserColumnFixture.photo
+            case "media/planting-notes.md":
+                contentType = "text/plain"
+                body = Data(FileBrowserColumnFixture.plantingNotes.utf8)
+            default:
+                contentType = "text/plain"
+                body = Data(FileBrowserColumnFixture.gardenOrg.utf8)
+            }
         default:
             body = nil
         }
+        respond(
+            url: url,
+            status: body == nil ? 404 : 200,
+            contentType: contentType,
+            body: body ?? Data(#"{"error":"Not found"}"#.utf8)
+        )
+    }
+
+    private func respond(url: URL, status: Int, contentType: String, body: Data) {
         guard let response = HTTPURLResponse(
             url: url,
-            statusCode: body == nil ? 404 : 200,
+            statusCode: status,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": contentType]
+            headerFields: ["Content-Type": contentType, "Content-Length": String(body.count)]
         ) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return
         }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: body ?? Data(#"{"error":"Not found"}"#.utf8))
+        client?.urlProtocol(self, didLoad: body)
         client?.urlProtocolDidFinishLoading(self)
+    }
+
+    /// The whole file over about ten seconds, until the request is cancelled.
+    private func streamSlowFile(url: URL) {
+        let total = FileBrowserColumnFixture.slowFileBytes
+        guard let response = HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "video/quicktime", "Content-Length": String(total)]
+        ) else { return }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        let piece = Data(count: total / 96)
+        nonisolated(unsafe) let fixture = self
+        Task {
+            for _ in 0..<96 {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !fixture.stopped.withLock({ $0 }) else { return }
+                fixture.client?.urlProtocol(fixture, didLoad: piece)
+            }
+            fixture.client?.urlProtocolDidFinishLoading(fixture)
+        }
     }
 
     private static func listing(_ folder: String) -> Data? {
@@ -208,12 +309,17 @@ final class FileBrowserColumnPreviewController: PreviewRootController {
             createdAt: Date(timeIntervalSince1970: 1_770_000_000),
             updatedAt: Date(timeIntervalSince1970: 1_770_000_000)
         ), serverId: server.id)
+        let folder = ProcessInfo.processInfo.environment["SCREENSHOT_FILE_BROWSER_FOLDER"]
         let target = FileBrowserNavTarget(
             serverId: server.id,
             scope: .workspace(workspaceId: FileBrowserColumnFixture.workspaceId, worktreeId: nil),
-            path: "",
-            columnDirectoryPath: "projects/",
-            columnSelectedFile: FileBrowserColumnFixture.openFile
+            path: folder ?? "",
+            columnDirectoryPath: folder ?? "projects/",
+            columnSelectedFile: folder.map { folder in
+                ProcessInfo.processInfo.environment["SCREENSHOT_FILE_BROWSER_FILE"].map {
+                    FileBrowserSelection(path: folder + $0, name: $0, size: nil)
+                }
+            } ?? FileBrowserColumnFixture.openFile
         )
         super.init(
             root: root,

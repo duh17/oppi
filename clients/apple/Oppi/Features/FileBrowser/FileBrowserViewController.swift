@@ -86,7 +86,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     /// The shell route's server stores once its server is ready; the panel's
     /// from the start.
-    private var services: FileBrowserServices? {
+    private(set) var services: FileBrowserServices? {
         didSet { setNeedsUpdateProperties() }
     }
 
@@ -1014,7 +1014,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         FileBrowserViewerFactory.pushReader(readerRequest(selection, context: context, services: services), from: self)
     }
 
-    private func readerRequest(
+    func readerRequest(
         _ selection: FileBrowserSelection,
         context: FileBrowserNavigationContext?,
         services: FileBrowserServices
@@ -1603,9 +1603,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             content.accessibilityTraits = .none
             content.accessibilityLabel = nil
             content.accessibilityIdentifier = nil
+            content.accessibilityCustomActions = nil
             cell.accessibilityElements = nil
             return
         }
+        content.accessibilityCustomActions = rowAccessibilityActions(path: path)
         content.isAccessibilityElement = true
         content.accessibilityTraits = element.isSelected ? [.button, .selected] : .button
         content.accessibilityLabel = element.label
@@ -1808,6 +1810,21 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
         guard let item = dataSource?.itemIdentifier(for: indexPath), let tap = taps[item] else { return }
+        activate(tap)
+    }
+
+    func rowPath(at indexPath: IndexPath) -> String? { dataSource?.itemIdentifier(for: indexPath)?.path }
+
+    /// The entry at `path` for its row menu (`FileBrowserViewController+RowMenu.swift`):
+    /// its file (nil for a folder), its cell, and what a tap on it does.
+    func rowMenuEntry(path: String) -> (file: FileBrowserSelection?, cell: UIView?, open: @MainActor () -> Void)? {
+        guard let (item, tap) = taps.first(where: { $0.key.path == path }) else { return nil }
+        let file: FileBrowserSelection? = if case .file(let selection, _) = tap { selection } else { nil }
+        let cell = dataSource?.indexPath(for: item).flatMap { collectionView.cellForItem(at: $0) }
+        return (file, cell, { [weak self] in self?.activate(tap) })
+    }
+
+    private func activate(_ tap: Tap) {
         switch tap {
         case .directory(let path):
             // A shell route's list row always pushes the folder as a route;
