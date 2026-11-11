@@ -250,6 +250,42 @@ describe("schedule calendar", () => {
     ]);
   });
 
+  it("keeps a slot that just came due until the runner records its run, then lists the run once", async () => {
+    const digest = cron("0 7 * * *", "UTC", 0, "Digest");
+    const from = Date.parse("2026-11-11T00:00:00Z");
+    const due = Date.parse("2026-11-11T07:00:00Z");
+    const range = { from, to: from + DAY };
+    const listed = (now: number) =>
+      buildScheduleCalendar(sources, { ...range, now }).entries.map((entry) => [
+        entry.at,
+        entry.run !== undefined,
+      ]);
+
+    // The runner ticks on its own interval: at 7:00:20 it has not seen the minute yet.
+    expect(listed(due + 20_000)).toEqual([[due, false]]);
+    // Still inside the runner's catch-up window, so the run can still be recorded.
+    expect(listed(due + 5 * 60_000)).toEqual([[due, false]]);
+    // Past the window the runner will not record it: not shown, as before.
+    expect(listed(due + 5 * 60_000 + 1)).toEqual([]);
+
+    await completeRun(digest.id, `cron:${due}`, due + 40_000, "sess-digest");
+    expect(listed(due + 60_000)).toEqual([[due, true]]);
+  });
+
+  it("lists only the latest of several slots already due, as the runner records only that one", () => {
+    cron("* * * * *", "UTC", 0, "Every minute");
+    const from = Date.parse("2026-11-11T00:00:00Z");
+    const now = from + 7 * HOUR + 30_000;
+
+    const calendar = buildScheduleCalendar(sources, { from, to: now + 2 * 60_000, now });
+
+    expect(calendar.entries.map((entry) => entry.at - from - 7 * HOUR)).toEqual([
+      0,
+      60_000,
+      120_000,
+    ]);
+  });
+
   it("keeps a paused schedule's runs and lists no upcoming ones for it", async () => {
     const nightly = cron("30 3 * * *", "UTC", 0, "Night shift");
     const ranAt = Date.parse("2026-11-11T03:30:00Z");

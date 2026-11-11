@@ -19,7 +19,7 @@ const MS_PER_MINUTE = 60_000;
  * that holds the runner past a few ticks and setInterval drift; a longer gap (laptop sleep)
  * is not replayed.
  */
-const CRON_CATCH_UP_MINUTES = 5;
+export const CRON_CATCH_UP_MINUTES = 5;
 const log = createLogger({ base: { component: "agent_schedule_runner" } });
 
 export interface AgentScheduleRunnerDeps extends AgentScheduleDispatchDeps {

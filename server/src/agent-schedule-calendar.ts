@@ -1,4 +1,5 @@
 import { cronOccurrences } from "./agent-schedule-cron.js";
+import { CRON_CATCH_UP_MINUTES } from "./agent-schedule-runner.js";
 import type { ThinkingLevel } from "./agent-launch-service.js";
 import {
   actionSummary,
@@ -26,6 +27,9 @@ export const SCHEDULE_CALENDAR_UPCOMING_LIMIT = 200;
  * server, so a stopped session the device never loaded still shows its outcome. Upcoming
  * entries are expanded from active schedules' triggers here, with the runner's own cron and
  * daylight-saving rules (`cronOccurrences`), so no client keeps a second cron parser.
+ *
+ * An entry without a run whose time is at or before `now` is due: the runner has not recorded
+ * its run yet. A client keeps it on screen and asks again until the run appears.
  */
 export interface ScheduleCalendarResponse {
   from: number;
@@ -141,14 +145,20 @@ export function buildScheduleCalendar(
     });
   }
 
-  // Only what is still to come: a past slot with no run is not shown (the server keeps no
-  // pause history, so it cannot tell a missed run from a paused one).
-  const upcomingFrom = Math.max(from, now + 1);
+  // What is still to come, and what just came due. The runner ticks on its own interval, not
+  // on the minute, and may record a slot up to its catch-up window late, so a slot inside that
+  // window with no run yet stays listed: dropping it would make the run vanish from a calendar
+  // read between its minute and the runner's tick. An older slot with no run is not shown (the
+  // server keeps no pause history, so it cannot tell a missed run from a paused one).
+  const upcomingFrom = Math.max(from, now - CRON_CATCH_UP_MINUTES * 60_000);
   for (const schedule of schedules.values()) {
     if (schedule.status !== "active" || upcomingFrom >= to) continue;
     const { at, truncated } = upcomingOccurrences(schedule, upcomingFrom, to);
+    // Of the slots already due, the runner records only the latest (`dueSlotKeys`).
+    const firstUpcoming = at.findIndex((time) => time > now);
+    const firstListed = firstUpcoming === -1 ? at.length - 1 : Math.max(0, firstUpcoming - 1);
     let listed = false;
-    for (const time of at) {
+    for (const time of at.slice(firstListed)) {
       const slotKey = slotKeyFor(schedule.trigger, time);
       if (takenSlots.has(`${schedule.id}\n${slotKey}`)) continue;
       entries.push({ scheduleId: schedule.id, slotKey, at: time });
