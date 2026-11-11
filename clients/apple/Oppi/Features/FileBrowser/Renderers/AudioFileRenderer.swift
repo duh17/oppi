@@ -109,33 +109,5 @@ final class AudioFileRenderer: FileRenderer {
     }
 
     /// Media stays range-streamed until the person asks to share the file.
-    func makeShareItem(host: FileRendererHost) -> UIBarButtonItem? {
-        let source = source
-        let filename = file.fileName
-        let box = Weak<UIBarButtonItem>()
-        let item = UIBarButtonItem(
-            title: String(localized: "Share"),
-            image: UIImage(systemName: "square.and.arrow.up"),
-            primaryAction: UIAction { [weak host] _ in
-                guard let button = box.value else { return }
-                let token = BarButtonLoadingToken(button: button, tintColor: nil)
-                Task { @MainActor in
-                    token.start()
-                    defer { token.stop() }
-                    do {
-                        let data = try await source.loadFileData()
-                        let item = FileShareService.fileShareItem(data: data, filename: filename)
-                        FileSharePresenter.presentActivityController(item: item)
-                    } catch is CancellationError {
-                        return
-                    } catch {
-                        host?.errorAlerts.showShareFailure()
-                    }
-                }
-            }
-        )
-        item.accessibilityIdentifier = "fileBrowser.audio.share"
-        box.value = item
-        return item
-    }
+    var share: ShareableFile { .remote(file.remoteShare) }
 }

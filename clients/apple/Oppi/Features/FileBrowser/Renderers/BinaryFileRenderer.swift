@@ -24,9 +24,7 @@ final class BinaryFileRenderer: FileRenderer {
         ))
     }
 
-    func makeShareItem(host: FileRendererHost) -> UIBarButtonItem? {
-        FileShareService.ShareableContent.fileData(data, filename: fileName).shareBarItem
-    }
+    var share: ShareableFile { .loaded(.fileData(data, filename: fileName)) }
 }
 
 /// The generic file view's description of a file no viewer renders: its type and size.

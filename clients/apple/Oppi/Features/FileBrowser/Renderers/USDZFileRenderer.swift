@@ -4,10 +4,14 @@ import UIKit
 final class USDZFileRenderer: FileRenderer {
     private let handle: USDZLocalFileStore.Handle
     private let fileName: String
+    /// The scene's bytes for Share, mapped from the local file so the page
+    /// holds no second copy in memory.
+    private let data: Data
 
-    private init(handle: USDZLocalFileStore.Handle, fileName: String) {
+    private init(handle: USDZLocalFileStore.Handle, fileName: String, data: Data) {
         self.handle = handle
         self.fileName = fileName
+        self.data = data
     }
 
     static func load(_ file: FileRenderInput) async throws -> USDZFileRenderer? {
@@ -25,8 +29,11 @@ final class USDZFileRenderer: FileRenderer {
             await USDZLocalFileStore.shared.release(handle)
             return nil
         }
-        return USDZFileRenderer(handle: handle, fileName: file.fileName)
+        let mapped = (try? Data(contentsOf: handle.url, options: .alwaysMapped)) ?? read.data
+        return USDZFileRenderer(handle: handle, fileName: file.fileName, data: mapped)
     }
+
+    var share: ShareableFile { .loaded(.fileData(data, filename: fileName)) }
 
     /// The interactive scene keeps horizontal drags; the viewer adds no back swipe.
     var ownsBackSwipe: Bool { true }

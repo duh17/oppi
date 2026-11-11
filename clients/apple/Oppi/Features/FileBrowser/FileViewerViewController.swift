@@ -54,6 +54,21 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         /// Read the file as Git stores it at this revision, not the working
         /// tree (a diff's Before or After of a file with no text diff). Never edited.
         var revision: String? = nil
+
+        /// Reads the file the way its viewer does; reader resources resolve
+        /// against the same origin. A list row shares its file through it too.
+        var fileAccess: FileViewerFileAccess {
+            FileViewerFileAccess(
+                source: source,
+                serverId: serverId,
+                workspaceId: workspaceId,
+                worktreeId: worktreeId,
+                sessionId: sessionId,
+                controlSessionId: controlSessionId,
+                workspaceRuntime: workspaceRuntime,
+                revision: revision
+            )
+        }
     }
 
     /// The server-scoped services the viewer reads through.
@@ -216,20 +231,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         if isOnScreen { startLoad() }
     }
 
-    /// Reads the file the way this viewer does; reader resources resolve
-    /// against the same origin.
-    var fileAccess: FileViewerFileAccess {
-        FileViewerFileAccess(
-            source: configuration.source,
-            serverId: configuration.serverId,
-            workspaceId: configuration.workspaceId,
-            worktreeId: configuration.worktreeId,
-            sessionId: configuration.sessionId,
-            controlSessionId: configuration.controlSessionId,
-            workspaceRuntime: configuration.workspaceRuntime,
-            revision: configuration.revision
-        )
-    }
+    var fileAccess: FileViewerFileAccess { configuration.fileAccess }
 
     // MARK: Lifecycle
 
@@ -740,7 +742,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
                 items.append(contentsOf: editOwner.barItems.reversed())
                 items.append(contentsOf: readerNavigationItems())
             }
-            if configuration.chromeMode == .pushed, !isUsingFileViewer, let share = shareBarItem() {
+            // Share is on every file's bar. A pushed reader has its own bar
+            // with Share on it; everywhere else it is this one.
+            if !(isUsingFileViewer && sharesReaderBar), let share = shareBarItem() {
                 items.append(share)
             }
             items.reverse()
@@ -755,8 +759,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         if shareItemKey == contentGeneration, let shareItem { return shareItem }
         shareItemKey = contentGeneration
         shareItem = switch content {
-        case .text(let text): FileShareService.ShareableContent.fromText(text, filePath: currentFilePath).shareBarItem
-        case .rendered(let renderer, _): renderer.makeShareItem(host: self)
+        case .text(let text): ShareableFile.loaded(.fromText(text, filePath: currentFilePath)).barItem
+        case .rendered(let renderer, _): renderer.share.barItem
         case .loading, .sizeWarning, .error: nil
         }
         return shareItem

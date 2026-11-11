@@ -50,7 +50,5 @@ final class PDFFileRenderer: FileRenderer {
         return page
     }
 
-    func makeShareItem(host: FileRendererHost) -> UIBarButtonItem? {
-        FileShareService.ShareableContent.pdfData(data, filename: fileName).shareBarItem
-    }
+    var share: ShareableFile { .loaded(.pdfData(data, filename: fileName)) }
 }

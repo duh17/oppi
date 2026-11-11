@@ -74,6 +74,43 @@ struct AuthenticatedMediaSource: Sendable {
         try await authenticatedGET(url, configuration: configuration)
     }
 
+    /// Downloads the complete file to `destination` for Share, reporting bytes
+    /// as they arrive. Nothing is held in memory, so a long video costs disk
+    /// only. Cancelling the task stops the transfer. A refused request throws
+    /// `FileDownloadError.rejected` with the server's status and words.
+    func downloadFile(
+        to destination: URL,
+        configuration: URLSessionConfiguration,
+        onProgress: @escaping @Sendable (FileDownloadProgress) -> Void
+    ) async throws {
+        let authorization = try await authorizationProvider()
+        guard !authorization.isEmpty else {
+            throw URLError(.userAuthenticationRequired)
+        }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+        request.httpMethod = "GET"
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+
+        let delegate = AuthenticatedFileDownloadTaskDelegate(
+            pinnedLeafFingerprint: tlsCertFingerprint,
+            expectedServerName: tlsServerName,
+            destination: destination,
+            onProgress: onProgress
+        )
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        let task = session.downloadTask(with: request)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                delegate.start(continuation)
+                task.resume()
+            }
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
     /// Header-derived length, without downloading audio bytes. Nil when the
     /// source has no media-info route or the server could not read a length.
     func loadDurationSeconds(
@@ -127,7 +164,7 @@ struct AuthenticatedMediaSource: Sendable {
 
 /// Keeps file sharing on the same TLS trust boundary as range playback and
 /// refuses redirects so an Authorization header cannot be replayed elsewhere.
-final class AuthenticatedMediaFileDownloadDelegate: NSObject, @unchecked Sendable,
+class AuthenticatedMediaFileDownloadDelegate: NSObject, @unchecked Sendable,
     URLSessionDelegate, URLSessionTaskDelegate {
     private let trustDelegate: PinnedServerTrustDelegate
 
@@ -164,6 +201,102 @@ final class AuthenticatedMediaFileDownloadDelegate: NSObject, @unchecked Sendabl
         completionHandler: @escaping @Sendable (URLRequest?) -> Void
     ) {
         completionHandler(nil)
+    }
+}
+
+/// Bytes of a file download so far. `expected` is nil when the response
+/// states no length.
+struct FileDownloadProgress: Sendable, Equatable {
+    let received: Int64
+    let expected: Int64?
+}
+
+enum FileDownloadError: Error, Equatable {
+    /// The server answered with a status that is not success: 413 for a file
+    /// over its size limit for the kind. `message` is its JSON `error`, when
+    /// it sent one.
+    case rejected(status: Int, message: String?)
+}
+
+/// One download task's delegate: progress while bytes arrive, then the file
+/// moved into place, or the reason there is none.
+private final class AuthenticatedFileDownloadTaskDelegate: AuthenticatedMediaFileDownloadDelegate,
+    URLSessionDownloadDelegate, @unchecked Sendable {
+    private let destination: URL
+    private let onProgress: @Sendable (FileDownloadProgress) -> Void
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Error>?
+    /// What `didFinishDownloadingTo` made of the response; the task's
+    /// completion resumes with it.
+    private var failure: Error?
+
+    init(
+        pinnedLeafFingerprint: String?,
+        expectedServerName: String?,
+        destination: URL,
+        onProgress: @escaping @Sendable (FileDownloadProgress) -> Void
+    ) {
+        self.destination = destination
+        self.onProgress = onProgress
+        super.init(pinnedLeafFingerprint: pinnedLeafFingerprint, expectedServerName: expectedServerName)
+    }
+
+    func start(_ continuation: CheckedContinuation<Void, Error>) {
+        lock.withLock { self.continuation = continuation }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        // An error body is not the file: its bytes are not progress.
+        guard let http = downloadTask.response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return }
+        onProgress(FileDownloadProgress(
+            received: totalBytesWritten,
+            expected: totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : nil
+        ))
+    }
+
+    /// The temporary file is gone when this returns, so it is moved or read here.
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        let result: Error?
+        if let http = downloadTask.response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
+            do {
+                try FileManager.default.createDirectory(
+                    at: destination.deletingLastPathComponent(), withIntermediateDirectories: true
+                )
+                try FileManager.default.moveItem(at: location, to: destination)
+                result = nil
+            } catch {
+                result = error
+            }
+        } else {
+            struct Body: Decodable { let error: String }
+            let body = try? Data(contentsOf: location)
+            result = FileDownloadError.rejected(
+                status: (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0,
+                message: body.flatMap { try? JSONDecoder().decode(Body.self, from: $0).error }
+            )
+        }
+        lock.withLock { failure = result }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        let (continuation, failure) = lock.withLock {
+            defer { self.continuation = nil }
+            return (self.continuation, self.failure)
+        }
+        if let error {
+            let cancelled = (error as? URLError)?.code == .cancelled
+            continuation?.resume(throwing: cancelled ? CancellationError() : error)
+        } else if let failure {
+            continuation?.resume(throwing: failure)
+        } else {
+            continuation?.resume()
+        }
     }
 }
 

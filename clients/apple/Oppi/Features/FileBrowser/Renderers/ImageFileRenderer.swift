@@ -46,7 +46,5 @@ final class ImageFileRenderer: FileRenderer {
         return page
     }
 
-    func makeShareItem(host: FileRendererHost) -> UIBarButtonItem? {
-        FileShareService.ShareableContent.imageData(data, filename: file.fileName).shareBarItem
-    }
+    var share: ShareableFile { .loaded(.imageData(data, filename: file.fileName)) }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 // MARK: - FileKind
 
@@ -121,6 +122,24 @@ struct FileKind: Equatable, Sendable {
         return .plain
     }
 
+    /// The uniform type a file is shared as, so the app that receives it
+    /// knows what it is: a video for Photos, a scene for Quick Look, a book
+    /// for Books. The system's type for the extension when it fits what the
+    /// table opens the path as (a `.ts` source file is text, not a transport
+    /// stream), else the type of the table's MIME type, else the category's.
+    static func contentType(forPath path: String) -> UTType {
+        let ext = (path as NSString).pathExtension.lowercased()
+        let base = detect(from: path).previewCategory.baseContentType
+        if let byExtension = UTType(filenameExtension: ext), byExtension.isDeclared, byExtension.conforms(to: base) {
+            return byExtension
+        }
+        if let mimeType = FileKindTable.row(forExtension: ext)?.mimeType,
+           let byMimeType = UTType(mimeType: mimeType), byMimeType.isDeclared {
+            return byMimeType
+        }
+        return base
+    }
+
     private static func shebangLanguage(from content: String?) -> SyntaxLanguage? {
         guard let content, !content.isEmpty else { return nil }
         guard let firstLine = content.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first else {
@@ -178,4 +197,18 @@ enum FilePreviewCategory: Equatable {
     case book
     case text
     case binary
+
+    /// The widest uniform type every file of this category is.
+    var baseContentType: UTType {
+        switch self {
+        case .image: .image
+        case .audio: .audio
+        case .video: .movie
+        case .pdf: .pdf
+        case .usdz: .usdz
+        case .book: .epub
+        case .text: .text
+        case .binary: .data
+        }
+    }
 }

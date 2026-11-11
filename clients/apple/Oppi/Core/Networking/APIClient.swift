@@ -2750,6 +2750,9 @@ actor APIClient: ClientLogUploading {
         }
     }
 
+    /// A copy of the API session's configuration, for a session that outlives its resource timeout (a file download).
+    nonisolated var sessionConfiguration: URLSessionConfiguration { session.configuration }
+
     private static func requireNonEmptyBearer(_ token: String) throws -> String {
         guard !token.isEmpty else {
             throw DeviceAuthError.challengeUnavailable

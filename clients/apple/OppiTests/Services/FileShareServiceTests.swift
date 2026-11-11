@@ -227,7 +227,7 @@ struct FileShareServiceTests {
 
         #expect(url.lastPathComponent == "xiaoge-story.wav")
         #expect(try Data(contentsOf: url) == bytes)
-        #expect(item.activityItems.compactMap { $0 as? URL }.first?.lastPathComponent == "xiaoge-story.wav")
+        #expect(item.activityItems.compactMap { ($0 as? FileActivityItemSource)?.url }.first?.lastPathComponent == "xiaoge-story.wav")
     }
 
     // MARK: - Render Default
@@ -1036,7 +1036,7 @@ struct FileShareServiceTests {
     }
 
     private func activityItemFileName(_ item: FileShareService.ShareItem) -> String? {
-        item.activityItems.compactMap { $0 as? URL }.first?.lastPathComponent
+        item.activityItems.compactMap { ($0 as? FileActivityItemSource)?.url }.first?.lastPathComponent
     }
 
     private func assertRenderedImage(
@@ -1080,7 +1080,7 @@ struct FileShareServiceTests {
             return
         }
         #expect(item.activityItems.count == 1)
-        #expect(item.activityItems.first is URL)
+        #expect(item.activityItems.first is FileActivityItemSource)
 
         FileShareService.cleanupTempFiles()
     }

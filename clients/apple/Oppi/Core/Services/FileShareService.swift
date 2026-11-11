@@ -142,9 +142,9 @@ enum FileShareService {
                 return [image]
             case .pdf(let data, let filename):
                 // Temp file URL so Save to Files / AirDrop use lastPathComponent.
-                return [FileShareService.writeTempData(data: data, filename: filename)]
+                return [FileActivityItemSource(url: FileShareService.writeTempData(data: data, filename: filename))]
             case .file(let url):
-                return [url]
+                return [FileActivityItemSource(url: url)]
             }
         }
     }
@@ -1163,6 +1163,12 @@ enum FileShareService {
         let url = dir.appendingPathComponent(filename)
         try? data.write(to: url)
         return url
+    }
+
+    /// Where a download for Share is written: `fileName` in a directory of
+    /// its own, removed with the rest when the share sheet closes.
+    nonisolated static func temporaryFileURL(named fileName: String) -> URL {
+        makeExportTempDirectory().appendingPathComponent(self.fileName(fromPath: fileName) ?? "file")
     }
 
     /// Turn downloaded bytes into a file-backed activity item. The isolated

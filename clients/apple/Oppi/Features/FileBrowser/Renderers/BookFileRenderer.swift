@@ -4,12 +4,15 @@ import UIKit
 /// and Previous/Next, at the position this book was left.
 final class BookFileRenderer: FileRenderer {
     private let book: EPUBBook
+    /// The archive as it was read, for Share.
+    private let data: Data
     private let file: FileRenderInput
     /// The host path the server resolved the file to, when it reported one.
     private let resolvedHostPath: String?
 
-    private init(book: EPUBBook, file: FileRenderInput, resolvedHostPath: String?) {
+    private init(book: EPUBBook, data: Data, file: FileRenderInput, resolvedHostPath: String?) {
         self.book = book
+        self.data = data
         self.file = file
         self.resolvedHostPath = resolvedHostPath
     }
@@ -17,8 +20,10 @@ final class BookFileRenderer: FileRenderer {
     static func load(_ file: FileRenderInput) async throws -> BookFileRenderer? {
         guard let read = try await file.bytes() else { return nil }
         let book = try EPUBBook.open(data: read.data)
-        return BookFileRenderer(book: book, file: file, resolvedHostPath: read.resolvedHostPath)
+        return BookFileRenderer(book: book, data: read.data, file: file, resolvedHostPath: read.resolvedHostPath)
     }
+
+    var share: ShareableFile { .loaded(.fileData(data, filename: file.fileName)) }
 
     /// The reader handles the back swipe itself, as it does for text.
     var ownsBackSwipe: Bool { true }

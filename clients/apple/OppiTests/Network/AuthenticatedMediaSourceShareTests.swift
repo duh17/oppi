@@ -98,6 +98,117 @@ struct AuthenticatedMediaSourceShareTests {
         }
     }
 
+    private func shareDestination() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("oppi-share-download-tests/\(UUID().uuidString)/clip.mp4")
+    }
+
+    @Test("a row's share downloads the raw file to a temporary file, reporting progress")
+    @MainActor
+    func sharesAWorkspaceFileThroughTheRawFileRoute() async throws {
+        defer { AudioShareURLProtocol.handler = nil }
+        let expected = Data(repeating: 0x5A, count: 300_000)
+        AudioShareURLProtocol.handler = { request in
+            let url = try #require(request.url)
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            #expect(request.httpMethod == "GET")
+            #expect(url.path == "/files/current")
+            #expect(query.contains(URLQueryItem(name: "origin", value: "workspace")))
+            #expect(query.contains(URLQueryItem(name: "workspaceId", value: "w1")))
+            #expect(query.contains(URLQueryItem(name: "path", value: "media/clip.mp4")))
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer share-token")
+            return (
+                expected,
+                (try #require(HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "video/mp4", "Content-Length": String(expected.count)]
+                )))
+            )
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AudioShareURLProtocol.self]
+        let api = APIClient(
+            baseURL: testUnwrap(URL(string: "https://server.example.com")),
+            token: "share-token",
+            configuration: configuration
+        )
+        let access = FileViewerViewController.Configuration(
+            workspaceId: "w1", filePath: "media/clip.mp4", fileName: "clip.mp4"
+        ).fileAccess
+        let share = access.remoteFileShare(api: api, path: "media/clip.mp4", fileName: "clip.mp4", size: expected.count)
+        #expect(share.fileName == "clip.mp4")
+        #expect(share.expectedBytes == Int64(expected.count))
+
+        let destination = shareDestination()
+        defer { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()) }
+        let reported = ProgressCapture()
+        try await share.download(destination) { reported.record($0) }
+
+        #expect(try Data(contentsOf: destination) == expected)
+        #expect(reported.last == FileDownloadProgress(received: Int64(expected.count), expected: Int64(expected.count)))
+    }
+
+    @Test("a file over the server's size limit is refused with the server's reason")
+    func reportsAFileOverTheSizeLimit() async throws {
+        defer { AudioShareURLProtocol.handler = nil }
+        AudioShareURLProtocol.handler = { request in
+            (
+                Data(#"{"error":"File too large (max 10MB)"}"#.utf8),
+                (try #require(HTTPURLResponse(
+                    url: testUnwrap(request.url),
+                    statusCode: 413,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )))
+            )
+        }
+        let source = AuthenticatedMediaSource(
+            url: testUnwrap(URL(string: "https://server.example.com/files/current?path=big.log")),
+            authorizationHeaderValue: "Bearer token",
+            tlsCertFingerprint: nil,
+            contentTypeHint: nil,
+            sourceFileExtension: "log"
+        )
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AudioShareURLProtocol.self]
+        let destination = shareDestination()
+        let reported = ProgressCapture()
+
+        let refusal = await #expect(throws: FileDownloadError.self) {
+            try await source.downloadFile(to: destination, configuration: configuration) { reported.record($0) }
+        }
+        #expect(refusal == .rejected(status: 413, message: "File too large (max 10MB)"))
+        #expect(!FileManager.default.fileExists(atPath: destination.path), "an error body is not the file")
+        #expect(reported.last == nil, "an error body is not progress")
+    }
+
+    @Test("cancelling a share download stops it and leaves no file")
+    func cancelsADownload() async throws {
+        let source = AuthenticatedMediaSource(
+            url: testUnwrap(URL(string: "https://server.example.com/files/current?path=long.mov")),
+            authorizationHeaderValue: "Bearer token",
+            tlsCertFingerprint: nil,
+            contentTypeHint: nil,
+            sourceFileExtension: "mov"
+        )
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StalledDownloadURLProtocol.self]
+        let destination = shareDestination()
+        let started = ProgressCapture()
+        let download = Task {
+            try await source.downloadFile(to: destination, configuration: configuration) { started.record($0) }
+        }
+        // The first bytes arrive and the rest never will: wait for the transfer
+        // to be under way, without requiring a progress report to say so.
+        for _ in 0..<200 where started.last == nil { try await Task.sleep(for: .milliseconds(10)) }
+        download.cancel()
+
+        await #expect(throws: CancellationError.self) { try await download.value }
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+    }
+
     @Test("clip length comes from the media-info route, not audio bytes")
     func loadsDurationFromMediaInfo() async throws {
         defer { AudioShareURLProtocol.handler = nil }
@@ -197,6 +308,36 @@ private final class RedirectRequestCapture: @unchecked Sendable {
             called = true
         }
     }
+}
+
+private final class ProgressCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var latest: FileDownloadProgress?
+
+    var last: FileDownloadProgress? { lock.withLock { latest } }
+
+    func record(_ progress: FileDownloadProgress) {
+        lock.withLock { latest = progress }
+    }
+}
+
+/// Answers with the head and first bytes of a large file, then nothing.
+private final class StalledDownloadURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url, let response = HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Length": "50000000"]
+        ) else { return }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(count: 200_000))
+    }
+
+    override func stopLoading() {}
 }
 
 private final class AudioShareURLProtocol: URLProtocol, @unchecked Sendable {

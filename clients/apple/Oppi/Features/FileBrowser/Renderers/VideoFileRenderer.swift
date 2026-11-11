@@ -4,13 +4,20 @@ import UIKit
 final class VideoFileRenderer: FileRenderer {
     private let source: AuthenticatedMediaSource
     private let timedTextLoader: () async -> TimedText.LoadResult
+    /// The player ranges over the video; Share downloads the whole file.
+    let share: ShareableFile
     private var model: AuthenticatedMediaPlayerModel?
     private var player: AuthenticatedMediaPlayerHostController?
     private var page: AspectFitMediaView?
 
-    private init(source: AuthenticatedMediaSource, timedTextLoader: @escaping () async -> TimedText.LoadResult) {
+    private init(
+        source: AuthenticatedMediaSource,
+        timedTextLoader: @escaping () async -> TimedText.LoadResult,
+        share: RemoteFileShare
+    ) {
         self.source = source
         self.timedTextLoader = timedTextLoader
+        self.share = .remote(share)
     }
 
     static func load(_ file: FileRenderInput) async throws -> VideoFileRenderer? {
@@ -21,7 +28,11 @@ final class VideoFileRenderer: FileRenderer {
             sourceFileExtension: file.fileExtension
         )
         guard file.isCurrent() else { return nil }
-        return VideoFileRenderer(source: source, timedTextLoader: file.timedTextLoader(kind: .video))
+        return VideoFileRenderer(
+            source: source,
+            timedTextLoader: file.timedTextLoader(kind: .video),
+            share: file.remoteShare
+        )
     }
 
     var retention: FileRendererRetention { .keepOnReshow }

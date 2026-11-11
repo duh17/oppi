@@ -88,6 +88,25 @@ struct FileViewerFileAccess {
         }
     }
 
+    /// The file at `path` as Share downloads it: the raw-file or blob read
+    /// the players range over, written whole to a temporary file. `size` is
+    /// the folder listing's, when there is one.
+    func remoteFileShare(api: APIClient, path: String, fileName: String, size: Int?) -> RemoteFileShare {
+        let access = self
+        return RemoteFileShare(fileName: fileName, expectedBytes: size.map(Int64.init)) { destination, onProgress in
+            let source = try await access.mediaSource(
+                api: api,
+                path: path,
+                contentTypeHint: nil,
+                sourceFileExtension: (path as NSString).pathExtension
+            )
+            // The API session gives a resource 30 seconds; a large file needs longer.
+            let configuration = api.sessionConfiguration
+            configuration.timeoutIntervalForResource = 3_600
+            try await source.downloadFile(to: destination, configuration: configuration, onProgress: onProgress)
+        }
+    }
+
     func loadTimedText(
         api: APIClient,
         path: String,

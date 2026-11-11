@@ -8,8 +8,8 @@ import UIKit
 /// reader and editor share the file's edit owner.
 ///
 /// A renderer instance lives as long as the viewer shows its file. Everything
-/// but `load` and `mount` has a default; a renderer implements only the hooks
-/// it needs.
+/// but `load`, `mount`, and `share` has a default; a renderer implements only
+/// the hooks it needs.
 @MainActor
 protocol FileRenderer: AnyObject {
     /// Reads `file` and holds what `mount` shows. Nil when the viewer moved to
@@ -17,6 +17,9 @@ protocol FileRenderer: AnyObject {
     static func load(_ file: FileRenderInput) async throws -> Self?
     /// The page for the loaded file, added to `host`'s page.
     func mount(in host: FileRendererHost) -> UIView
+    /// What the bar's Share sends: the real file, from the bytes the renderer
+    /// holds or downloaded when asked. No default, so no kind goes without.
+    var share: ShareableFile { get }
 
     /// The page handles a horizontal back swipe itself (paging, 3D drag).
     var ownsBackSwipe: Bool { get }
@@ -30,8 +33,6 @@ protocol FileRenderer: AnyObject {
     func viewerDidDisappear()
     /// The viewer stopped showing this renderer: free what it holds.
     func release()
-    /// The bar's Share item, or nil when the file is not shareable from here.
-    func makeShareItem(host: FileRendererHost) -> UIBarButtonItem?
 }
 
 extension FileRenderer {
@@ -42,7 +43,6 @@ extension FileRenderer {
     func viewerDidAppear() {}
     func viewerDidDisappear() {}
     func release() {}
-    func makeShareItem(host: FileRendererHost) -> UIBarButtonItem? { nil }
 }
 
 /// What the viewer does with a renderer when its file shows again (a
@@ -106,6 +106,11 @@ struct FileRenderInput {
         return (data, nil)
     }
 
+    /// This file as Share downloads it, for a renderer that streams it.
+    var remoteShare: RemoteFileShare {
+        access.remoteFileShare(api: api, path: path, fileName: fileName, size: nil)
+    }
+
     /// Captions or lyrics beside this media file, read when the player asks.
     func timedTextLoader(kind: TimedText.MediaKind) -> () async -> TimedText.LoadResult {
         let (api, access, path) = (api, access, path)
@@ -135,11 +140,12 @@ protocol FileRendererHost: UIViewController {
     func navigateBack()
 }
 
-extension FileShareService.ShareableContent {
-    /// The viewer's titled Share item for content it holds in memory.
-    @MainActor var shareBarItem: UIBarButtonItem {
+extension ShareableFile {
+    /// The viewer's titled Share item.
+    @MainActor var barItem: UIBarButtonItem {
         let item = FileSharePresenter.makeShareBarButtonItem(for: self)
         item.title = String(localized: "Share")
+        item.accessibilityIdentifier = "fileViewer.share"
         return item
     }
 }
