@@ -849,6 +849,9 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
     /// chat on a wide one. Always shown for a native or widget body; a composable drawer shows it
     /// while its body is taller than the cap.
     private let fullScreenButton = MinimumHitTargetButton(type: .custom)
+    /// The full-screen button as an icon, the collapse button's size: at accessibility sizes its
+    /// words would not fit beside the collapse button, so they are only its spoken label.
+    private lazy var fullScreenIconWidth = fullScreenButton.widthAnchor.constraint(equalToConstant: 32)
     private var nativeViewport: ExtensionNativeBlockScrollView?
     /// A composable surface's cards, in a viewport that hugs them up to the drawer's cap.
     private var compositesViewport: ExtensionSurfaceCompositesView?
@@ -1007,12 +1010,20 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
         buttonConfiguration.contentInsets = .zero
         collapseButton.configuration = buttonConfiguration
         let opensBeside = actions.readerOpensBeside
+        let iconOnly = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
+        let fullScreenSymbol = opensBeside ? "sidebar.trailing" : "arrow.up.left.and.arrow.down.right"
         var fullScreen = buttonConfiguration
-        fullScreen.image = UIImage.scaledSymbol(
-            opensBeside ? "sidebar.trailing" : "arrow.up.left.and.arrow.down.right",
-            style: .caption1, weight: .bold, color: palette.ui.comment
-        )
-        fullScreen.title = opensBeside ? String(localized: "Show in Sidebar") : String(localized: "Full Screen")
+        // Icon only, the symbol keeps the size that fits the 32 pt circle.
+        fullScreen.image = iconOnly
+            ? UIImage(
+                systemName: fullScreenSymbol,
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .bold)
+            )?.withTintColor(palette.ui.comment, renderingMode: .alwaysOriginal)
+            : UIImage.scaledSymbol(fullScreenSymbol, style: .caption1, weight: .bold, color: palette.ui.comment)
+        let fullScreenTitle = opensBeside ? String(localized: "Show in Sidebar") : String(localized: "Full Screen")
+        fullScreen.title = iconOnly ? nil : fullScreenTitle
+        fullScreenButton.accessibilityLabel = fullScreenTitle
+        fullScreenIconWidth.isActive = iconOnly
         fullScreen.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
             var attributes = attributes
             attributes.font = UIFont.scaled(.caption1, .semibold)
@@ -1020,7 +1031,9 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             return attributes
         }
         fullScreen.imagePadding = 5
-        fullScreen.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 10, bottom: 0, trailing: 12)
+        fullScreen.contentInsets = iconOnly
+            ? .zero
+            : NSDirectionalEdgeInsets(top: 0, leading: 10, bottom: 0, trailing: 12)
         fullScreenButton.configuration = fullScreen
         inset?.backgroundColor = palette.ui.fg.withAlphaComponent(0.035)
         inset?.layer.borderColor = palette.ui.fg.withAlphaComponent(0.08).cgColor
