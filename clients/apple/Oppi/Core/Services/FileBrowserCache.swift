@@ -30,8 +30,7 @@ actor FileBrowserCache {
         if let root {
             self.root = root
         } else {
-            guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { fatalError("No caches directory") }
-            self.root = caches.appendingPathComponent("FileBrowser", isDirectory: true)
+            self.root = AppLibrary.caches().appendingPathComponent("FileBrowser", isDirectory: true)
         }
         serversRoot = self.root.appendingPathComponent("servers", isDirectory: true)
         try? FileManager.default.createDirectory(at: serversRoot, withIntermediateDirectories: true)

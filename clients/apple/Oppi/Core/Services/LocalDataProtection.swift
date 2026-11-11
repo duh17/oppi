@@ -15,6 +15,12 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Data
 /// class to new files. Builds before that entitlement left files at the system
 /// default, Class C, which stays readable from first unlock until reboot, so a
 /// one-time pass upgrades what is already on disk. It never weakens a class.
+///
+/// The pass walks only Oppi's own folders (`storageRoots`). On iOS those are
+/// the app's container. The Mac build is not sandboxed, so its Application
+/// Support, Caches and temporary folder are the user's, shared with every other
+/// app: there the pass walks Oppi's folders inside them (`AppLibrary`) and the
+/// app group, and never the shared folders themselves.
 enum LocalDataProtection {
     static let fileProtection = FileProtectionType.completeUnlessOpen
 
@@ -35,9 +41,10 @@ enum LocalDataProtection {
 
         Task.detached(priority: .utility) {
             let fileManager = FileManager.default
+            let layout = StorageLayout.current(fileManager: fileManager)
             let result = upgradeFiles(
-                under: storageRoots(fileManager: fileManager),
-                excluding: excludedPaths(fileManager: fileManager),
+                under: storageRoots(layout),
+                excluding: excludedPaths(appGroup: layout.appGroup),
                 fileManager: fileManager
             )
             logger.notice(
@@ -50,6 +57,45 @@ enum LocalDataProtection {
         }
     }
 
+    /// The system folders the app was given, and whether they are its own.
+    struct StorageLayout {
+        /// The system's Application Support, Caches and temporary folders: the
+        /// app's container on iOS, the user's on the unsandboxed Mac build.
+        var applicationSupport: URL
+        var caches: URL
+        var temporary: URL
+        var appGroup: URL?
+        var bundleIdentifier: String
+        /// `PlatformCapabilities.sharesUserLibrary`.
+        var sharesUserLibrary: Bool
+
+        static func current(fileManager: FileManager) -> StorageLayout {
+            StorageLayout(
+                applicationSupport: fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0],
+                caches: fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0],
+                temporary: fileManager.temporaryDirectory,
+                appGroup: fileManager.containerURL(forSecurityApplicationGroupIdentifier: SharedConstants.appGroupIdentifier),
+                bundleIdentifier: AppIdentifiers.subsystem,
+                sharesUserLibrary: PlatformCapabilities.sharesUserLibrary
+            )
+        }
+    }
+
+    /// The folders the pass walks. In a shared Library only Oppi's own folders
+    /// count, and the temporary folder (`$TMPDIR`, every app's) not at all.
+    static func storageRoots(_ layout: StorageLayout) -> [URL] {
+        var roots = [layout.applicationSupport, layout.caches].map {
+            AppLibrary.folder(in: $0, sharesUserLibrary: layout.sharesUserLibrary, bundleIdentifier: layout.bundleIdentifier)
+        }
+        if !layout.sharesUserLibrary {
+            roots.append(layout.temporary)
+        }
+        if let group = layout.appGroup {
+            roots.append(group)
+        }
+        return roots
+    }
+
     /// Upgrades each root and everything below it, skipping symlinks and the
     /// excluded directories' subtrees.
     private static func upgradeFiles(
@@ -58,8 +104,25 @@ enum LocalDataProtection {
         fileManager: FileManager
     ) -> UpgradeResult {
         var result = UpgradeResult()
+        let enumerationFailures = walk(roots, excluding: excluded, fileManager: fileManager) { path in
+            upgradeItem(atPath: path, fileManager: fileManager, result: &result)
+        }
+        result.failed += enumerationFailures
+        return result
+    }
+
+    /// Calls `visit` with each root and every path below it, without entering
+    /// the excluded directories or following a symlink. Returns the number of
+    /// failures enumeration reported, and a root it could not enumerate.
+    static func walk(
+        _ roots: [URL],
+        excluding excluded: Set<String>,
+        fileManager: FileManager,
+        visit: (String) -> Void
+    ) -> Int {
+        var failures = 0
         for root in roots where fileManager.fileExists(atPath: root.path) {
-            upgradeItem(atPath: root.path, fileManager: fileManager, result: &result)
+            visit(root.path)
             var enumerationFailures = 0
             guard let enumerator = fileManager.enumerator(
                 at: root,
@@ -71,7 +134,7 @@ enum LocalDataProtection {
                     return true
                 }
             ) else {
-                result.failed += 1
+                failures += 1
                 continue
             }
 
@@ -81,11 +144,11 @@ enum LocalDataProtection {
                     enumerator.skipDescendants()
                     continue
                 }
-                upgradeItem(atPath: path, fileManager: fileManager, result: &result)
+                visit(path)
             }
-            result.failed += enumerationFailures
+            failures += enumerationFailures
         }
-        return result
+        return failures
     }
 
     /// Only unprotected, Class C, or unreported files move to the policy class.
@@ -120,25 +183,11 @@ enum LocalDataProtection {
         }
     }
 
-    private static func storageRoots(fileManager: FileManager) -> [URL] {
-        var roots = [
-            fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
-            fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first,
-            fileManager.temporaryDirectory,
-        ].compactMap { $0 }
-        if let group = fileManager.containerURL(forSecurityApplicationGroupIdentifier: SharedConstants.appGroupIdentifier) {
-            roots.append(group)
-        }
-        return roots
-    }
-
     /// Shared `UserDefaults` plists belong to cfprefsd, not to Oppi's stores. Push state stays
     /// `completeUntilFirstUserAuthentication` by design: the Notification Service Extension
     /// opens it while the phone is locked (`PushSharedStore`).
-    private static func excludedPaths(fileManager: FileManager) -> Set<String> {
-        guard let group = fileManager.containerURL(forSecurityApplicationGroupIdentifier: SharedConstants.appGroupIdentifier) else {
-            return []
-        }
+    static func excludedPaths(appGroup: URL?) -> Set<String> {
+        guard let group = appGroup else { return [] }
         return [
             group.appending(path: "Library/Preferences", directoryHint: .isDirectory).standardizedFileURL.path,
             group.appending(path: PushSharedStore.stateDirectoryName, directoryHint: .isDirectory).standardizedFileURL.path,

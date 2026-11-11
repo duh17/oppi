@@ -405,7 +405,7 @@ final class ComposerDraftStore {
     /// The Siri-to-app handoff has its own protected draft file, so it cannot
     /// race the app's in-memory composer store or put prompt text in preferences.
     static func intentSessionPromptFileURL(fileManager: FileManager = .default) -> URL {
-        fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        AppLibrary.applicationSupport(fileManager: fileManager)
             .appending(path: "ComposerDrafts", directoryHint: .isDirectory)
             .appending(path: "intent-session-prompt.json", directoryHint: .notDirectory)
     }
@@ -1018,7 +1018,7 @@ final class ComposerDraftStore {
     }
 
     private static func defaultFileURL(fileManager: FileManager) -> URL {
-        fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        AppLibrary.applicationSupport(fileManager: fileManager)
             .appending(path: "ComposerDrafts", directoryHint: .isDirectory)
             .appending(path: "drafts-v1.json", directoryHint: .notDirectory)
     }

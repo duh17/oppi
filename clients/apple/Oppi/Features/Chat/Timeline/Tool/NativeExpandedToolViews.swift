@@ -841,8 +841,7 @@ private enum ToolAudioAttachmentCache {
     }
 
     private static func cacheDirectory() throws -> URL {
-        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        let directory = base.appendingPathComponent("OppiToolAudio", isDirectory: true)
+        let directory = AppLibrary.caches().appendingPathComponent("OppiToolAudio", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }
