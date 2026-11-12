@@ -65,6 +65,13 @@ extension AppNavigation {
         case .split:
             guard let index = splitDetailPathElements.firstIndex(of: .paneEntry(entry)),
                   let pathElement = Self.splitPathElement(element) else { return }
+            // A session at the bottom of an empty detail column is its root,
+            // as opening it from the list makes it.
+            if index == 0, splitDetailTarget == nil, case .session(let target) = element {
+                splitDetailTarget = .session(target)
+                splitDetailPathElements.removeFirst()
+                return
+            }
             splitDetailPathElements[index] = pathElement
         }
     }
@@ -117,10 +124,15 @@ extension AppNavigation {
         func matches(_ target: WorkspaceSessionNavTarget) -> Bool {
             target.serverId == serverId && target.sessionId == sessionId
         }
-        /// A pane entry stands for a session route; any other entry, for none.
+        /// A pane entry for a session or one of its panels stands for a
+        /// session route; any other entry, for none.
         func entrySession(_ entry: PaneStackEntry) -> WorkspaceSessionNavTarget? {
-            guard case .session(let id) = entry.route else { return nil }
-            return WorkspaceSessionNavTarget(serverId: entry.serverId, sessionId: id)
+            switch entry.route {
+            case .session(let id), .panel(let id, _):
+                return WorkspaceSessionNavTarget(serverId: entry.serverId, sessionId: id)
+            default:
+                return nil
+            }
         }
         switch workspaceNavigationPresentation {
         case .stack:

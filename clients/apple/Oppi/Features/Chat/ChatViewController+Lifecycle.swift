@@ -257,6 +257,7 @@ extension ChatViewController {
         barItems.update()
         updateTopBarTip()
         updateSidePanels()
+        openPendingPanel()
         updateModals()
         canvasAnchor.destination = canvasDestination
         canvasAnchor.reviewCommentSelectionRouter = reviewCommentSelectionRouter

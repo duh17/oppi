@@ -75,9 +75,68 @@ struct PaneRestorationTests {
         after.navigation.panes.restore(navigation: after.navigation, coordinator: after.coordinator)
 
         #expect(after.navigation.primaryStackElements == chatInWorkspace("s-1"))
-        #expect(after.navigation.panes.takeRestoredPanel(for: "s-1") == .git(workspace: "ws-1", worktree: nil))
+        #expect(after.navigation.panes.takePendingPanel(for: "s-1") == .git(workspace: "ws-1", worktree: nil))
         #expect(abs((after.navigation.panes.companionFraction ?? 0) - 0.4) < 1e-9)
         #expect(after.navigation.panes.takeRestoredCompanionFocus())
+    }
+
+    /// O1: relaunched offline, the chat is a leaf state until its server
+    /// answers, so its extension panel and reading position wait. A save
+    /// meanwhile keeps both, and the next launch still has them.
+    @Test func aSaveBeforeTheChatShowsKeepsItsWaitingPanelAndPosition() async throws {
+        let store = try makeStore()
+        let chat = PaneLeaf(
+            id: ScenePanes.primaryLeafID, name: nil,
+            stack: [
+                PaneStackEntry(serverId: serverId, route: .sessions(workspace: nil)),
+                PaneStackEntry(serverId: serverId, route: .session("s-offline")),
+            ],
+            attachedTo: nil, origin: .split
+        )
+        let panel = PaneStackEntry(serverId: serverId, route: .panel(session: "s-offline", id: "jobs"))
+        let side = PaneLeaf(id: ScenePanes.companionLeafID, name: nil, stack: [panel], attachedTo: chat.id, origin: .attached)
+        let scroll = PaneChatScroll(sessionId: "s-offline", itemId: "item-9", relativeY: 0.25)
+        store.save(PaneLayoutArchive(
+            restorable: PaneLayout(
+                root: .split(axis: .row, children: [.leaf(chat), .leaf(side)], weights: [0.6, 0.4]),
+                focus: chat.id, recency: [chat.id, side.id]
+            ),
+            chatScroll: [chat.id: scroll],
+            companionFraction: 0.4
+        ), scene: "scene-offline")
+
+        let root = try await makeRoot(sessions: [])
+        root.navigation.panes.connect(scene: "scene-offline", store: store)
+        root.navigation.panes.restore(navigation: root.navigation, coordinator: root.coordinator)
+        #expect(root.navigation.primaryStackElements == [.paneEntry(PaneStackEntry(serverId: serverId, route: .session("s-offline")))])
+        root.navigation.panes.flush()
+
+        let saved = try #require(store.load(scene: "scene-offline"))
+        #expect(saved.layout.leaves.first { $0.attachedTo != nil }?.stack == [panel])
+        #expect(saved.chatScroll[chat.id] == scroll)
+    }
+
+    /// A panel link whose chat is not on screen stands as "Chat not shown";
+    /// Open Chat puts the chat in its place and hands the chat its panel.
+    @Test func aPanelWithoutItsChatOpensTheChatWithThePanelBesideIt() async throws {
+        let root = try await makeRoot(sessions: [session("s-1")])
+        let entry = PaneStackEntry(serverId: serverId, route: .panel(session: "s-1", id: "jobs"))
+        root.navigation.pushPaneEntry(entry)
+        let screen = PaneLeafStateViewController(entry: entry, root: root)
+        let window = try makeWindow()
+        window.rootViewController = screen
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        screen.updatePropertiesIfNeeded()
+        #expect(screen.shownState == .chatNotShown)
+        #expect(screen.view.accessibilityIdentifier == "pane.state.chatNotShown")
+
+        let config = try #require(screen.stateConfigurationForTesting)
+        config.buttonProperties.primaryAction?.performWithSender(nil, target: nil)
+        #expect(root.navigation.primaryStackElements == [
+            .session(WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-1", workspaceId: "ws-1")),
+        ])
+        #expect(root.navigation.panes.pendingPanel(for: "s-1") == entry.route)
     }
 
     /// X1, X3: each entry resolves on its own. A session the stores do not
@@ -155,6 +214,10 @@ struct PaneRestorationTests {
         root.navigation.panes.connect(scene: "scene-c", store: store)
         root.navigation.panes.restore(navigation: root.navigation, coordinator: root.coordinator)
         root.navigation.restorePrimaryStack(chatInWorkspace("s-incognito"))
+        // Its extension panel goes with it.
+        root.navigation.panes.companionDidChange(
+            PaneStackEntry(serverId: serverId, route: .panel(session: "s-incognito", id: "jobs")), shown: true
+        )
         root.navigation.panes.flush()
         let saved = try #require(store.load(scene: "scene-c"))
         #expect(saved.layout.leaves.flatMap(\.stack).map(\.route) == [.sessions(workspace: "ws-1")])

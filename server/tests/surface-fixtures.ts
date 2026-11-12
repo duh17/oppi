@@ -33,6 +33,56 @@ export function buildSurfaceFixtures(): Record<string, unknown> {
     "client-capabilities.json": clientCapabilitiesMessage(),
     "patch.json": patchMessage(),
     "unknown-composite.json": unknownCompositeSurface(),
+    "panel-hints.json": panelHintsSurface(),
+    "native-panel-hints.json": nativePanelHintsSurface(),
+  };
+}
+
+/**
+ * A surface that opens in a pane: a `panel` placement, so its pill opens the pane with no drawer,
+ * and the pane's icon and designed width. Only a client that declares `v2:panel` is sent it so;
+ * every other client gets it placed as `strip` with no hints.
+ */
+function panelHintsSurface(): unknown {
+  return baseSurface({
+    id: "jobs",
+    title: "Jobs",
+    placement: { kind: "panel", preferred: "aboveComposer" },
+    panel: { icon: "terminal", size: "wide" },
+    header: { title: "Jobs", subtitle: "1 running · 2 finished" },
+    sections: [
+      {
+        composite: "blocks",
+        id: "list",
+        state: { kind: "content" },
+        actions: ["refresh"],
+        fallback: { text: "1 job running" },
+        body: {
+          type: "stack",
+          children: [{ type: "text", text: "npm test · running" }],
+        },
+      },
+    ],
+    actions: { refresh: { title: "Refresh" } },
+    fallback: { text: "1 job running" },
+  });
+}
+
+/** A classic extension's widget with the same pane hints on its `presentation`. */
+function nativePanelHintsSurface(): unknown {
+  return {
+    version: 1,
+    id: "widget:agents",
+    source: "widget",
+    presentation: {
+      style: "surfacePanel",
+      title: "Agents",
+      subtitle: "1 running",
+      icon: "person.2",
+      size: "narrow",
+    },
+    blocks: [{ type: "text", id: "summary", spans: [{ text: "1 agent running" }] }],
+    fallback: { text: "1 agent running" },
   };
 }
 
@@ -275,7 +325,14 @@ function blocksPanelSurface(): unknown {
                 { type: "badge", id: "state", text: "2 of 4", tone: "warning", icon: "clock" },
               ],
             },
-            { type: "progress", id: "progress", label: "Tests", value: 0.4, kind: "bar", tone: "success" },
+            {
+              type: "progress",
+              id: "progress",
+              label: "Tests",
+              value: 0.4,
+              kind: "bar",
+              tone: "success",
+            },
             { type: "progress", id: "waiting", label: "Retrying", kind: "ring", tone: "warning" },
             {
               type: "keyValue",
@@ -285,7 +342,11 @@ function blocksPanelSurface(): unknown {
                 { key: "Commit", value: "4f2c1ab", tone: "accent" },
               ],
             },
-            { type: "markdown", id: "notes", markdown: "Two gates remain; the test gate retries once." },
+            {
+              type: "markdown",
+              id: "notes",
+              markdown: "Two gates remain; the test gate retries once.",
+            },
             {
               type: "table",
               id: "gates",

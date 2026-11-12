@@ -51,6 +51,8 @@ export interface ExtensionUINativePresentation {
   style: "surfacePanel";
   title?: string;
   subtitle?: string;
+  icon?: string; // pane glyph; see Panel panes
+  size?: "narrow" | "regular" | "wide"; // pane width; see Panel panes
 }
 
 export interface ExtensionUINativeFallback {
@@ -255,7 +257,7 @@ belowEditor strip
 ```
 
 - A collapsed strip is one row of pills that scrolls horizontally; empty strips are hidden. One pill is one widget or one standalone status entry. The pill label comes from, in order: native `presentation.title` and `subtitle`, an attached `setStatus` value, the `widgetKey`, then the first fallback line. Accessibility sizes can change row height or promote content to a sheet, but the collapsed state stays bounded.
-- Each placement has one drawer. Tapping a pill opens that widget there, tapping another pill replaces the content, and tapping the active pill or the collapse control closes it. The drawer has a maximum height and scrolls. Its header button opens the whole widget: full screen on a narrow screen, or in a pane beside the chat on a wide one, where the drawer closes so the content shows only once. The pill above the drawer shows the widget's title and status, so the drawer's header does not repeat them. `renderNative()` content renders as native blocks; a widget without it shows the sanitized terminal fallback.
+- Each placement has one drawer. Tapping a pill opens that widget there, tapping another pill replaces the content, and tapping the active pill or the collapse control closes it. The drawer has a maximum height and scrolls. Its header button opens the whole widget: full screen on a narrow screen, or in its [panel pane](#panel-panes) beside the chat on a wide one, where the drawer closes so the content shows only once. The pill above the drawer shows the widget's title and status, so the drawer's header does not repeat them. `renderNative()` content renders as native blocks; a widget without it shows the sanitized terminal fallback.
 - `setStatus(key, text)` attaches to a widget when `key === widgetKey`. If exactly one status and one widget share an extension scope, a client can attach them by scope. Other statuses render as standalone pills in the same group.
 - Native blocks are viewport-independent. Clients decide iPhone, iPad, Dynamic Type, color scheme, and scroll ownership locally.
 
@@ -422,6 +424,43 @@ An `elapsed` node shows the time since `since`, in epoch milliseconds. The clien
 
 A client that cannot tick the node gets the count as it was when the server sent the surface. A client that draws blocks but not `elapsed` gets a `text` node with the same words, `style`, and `tone`, and the version 1 projection shows the same words. That text changes only when the surface is published again.
 
+## Panel panes
+
+On a wide window, such as an iPad's, any native or composable surface can open in a pane beside its chat, at full height. The pane shows the same surface as the pill and the drawer; an extension declares nothing to make it possible. The pane's bar shows the surface's title and subtitle and Close. The line under the bar shows the panel's icon, the extension's display name, and the chat it belongs to. The body is the surface's full-screen reader: every block or section, with no height cap, and working actions on a composable surface.
+
+A panel pane opens in three ways:
+
+- The drawer header's button, which opened the whole widget beside the chat before.
+- **Open in Pane** in the pill's context menu (wide windows only).
+- A link: `oppi://panel?session=<session id>&id=<surface id>`. The `id` is the surface's own `id` (`widget:<key>` for a version 1 surface). The chat opens with the pane beside it.
+
+While a pane shows a surface, its pill is drawn selected, and tapping it focuses the pane instead of opening the drawer. The pane follows the session's snapshots the same way the drawer does, and it shows the newest one when it returns after being hidden. A narrow window (iPhone, or a narrow iPad window) shows the same surface full screen instead.
+
+A pane belongs to its chat: it closes with the chat, and a relaunch reopens it beside the chat. If its surface has not been published, the pane says it is waiting while the session works, and that the panel is not available once the session is idle. If the extension clears the surface, or the session ends, the pane keeps the last snapshot, dimmed, under **Ended**, with **Close Pane**.
+
+Two optional hints change how the pane looks. They are the same for both versions: on a composable surface they go in `panel`, and on a version 1 surface they go in `presentation`.
+
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `icon` | An SF Symbol name from the server's allow-list, the same list the `icon` node uses. | A generic extension glyph |
+| `size` | The width the panel is designed for: `narrow` (a list, 320 pt), `regular` (400 pt), or `wide` (tables and charts, 560 pt). Oppi uses it only for the pane's first width; after the person resizes a pane, their width wins. | `regular` |
+
+On a composable surface, `placement.kind: "panel"` makes the pill open the pane directly, with no drawer, for a surface that does not fit a capped drawer (a board or a long table). On a narrow window the pill opens it full screen.
+
+```ts
+surface({
+  id: "jobs",
+  title: "Jobs",
+  placement: { kind: "panel" },
+  panel: { icon: "terminal", size: "wide" },
+  // view, actions, fallback as usual
+});
+```
+
+The server refuses a composable surface whose `panel.icon` is not on the allow-list or whose `size` is not one of the three values. On a version 1 surface, the server drops a hint it cannot use and keeps the widget.
+
+Oppi reads only protocol fields to draw a pane, so every extension's panel takes the same path.
+
 ## Capabilities and fallback
 
 The server advertises these capability levels and clients must support at least text fallback:
@@ -435,8 +474,9 @@ The server advertises these capability levels and clients must support at least 
 | `extension-native-ui:v2:composites` | Composable surfaces with the closed composites, and their actions |
 | `extension-native-ui:v2:blocks` | `blocks` sections and composed pills |
 | `extension-native-ui:v2:elapsed` | The `elapsed` node, ticked by the client, and pill text at the strip's size |
+| `extension-native-ui:v2:panel` | [Panel panes](#panel-panes): a composable surface's `panel` hints and the `panel` placement |
 
-A client names the version 2 capabilities it draws in a `client_capabilities` message on its session stream, and the server sends each client the shape it can draw. A client without `composites` gets the version 1 projection of every composable surface. A client without `blocks` gets the projection of a surface that has a `blocks` section or a pill. A client without `elapsed` gets each `elapsed` node as static text, and a pill's `headline` text as `caption`, because it draws `headline` too large for the strip.
+A client names the version 2 capabilities it draws in a `client_capabilities` message on its session stream, and the server sends each client the shape it can draw. A client without `composites` gets the version 1 projection of every composable surface. A client without `blocks` gets the projection of a surface that has a `blocks` section or a pill. A client without `elapsed` gets each `elapsed` node as static text, and a pill's `headline` text as `caption`, because it draws `headline` too large for the strip. A client without `panel` gets each composable surface without its `panel` hints, and a `panel` placement as `strip`, so its pill opens the drawer as before. Version 1 hints go to every client: a client that does not read them ignores them.
 
 Terminal fallback is part of the contract:
 

@@ -505,6 +505,22 @@ private enum ExtensionSurfaceStripEntry: Equatable {
         return nil
     }
 
+    /// The surface id a panel pane shows this entry by (`PaneRoute.panel`): a native or
+    /// composable surface; nil for an entry that is not a surface.
+    var panelSurfaceId: String? {
+        switch self {
+        case .native(let nativeSurface, _): nativeSurface.surface.id
+        case .composable(let entry): entry.surface.id
+        case .title, .status, .widget, .messageQueue: nil
+        }
+    }
+
+    /// The surface's pill opens its pane, with no drawer (`placement.kind: "panel"`).
+    var opensPanel: Bool {
+        guard case .composable(let entry) = self else { return false }
+        return entry.surface.placement.opensPanel
+    }
+
     /// Native surfaces and terminal widgets open full screen on a double tap. A composable
     /// drawer holds controls, so it offers a button once its body outgrows the cap instead.
     var supportsFullScreen: Bool {
@@ -635,6 +651,16 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
     private var spokenLabel: (() -> String?)?
     private var spokenValue: (() -> String?)?
     var onTap: (() -> Void)?
+    /// Opens the surface in its pane: the pill's menu and its accessibility action. Nil where there
+    /// is no pane to open (a narrow window, an entry that is not a surface, or one already shown).
+    var openInPane: (() -> Void)? {
+        didSet {
+            isContextMenuInteractionEnabled = openInPane != nil
+            accessibilityCustomActions = openInPane.map { open in
+                [UIAccessibilityCustomAction(name: String(localized: "Open in Pane")) { _ in open(); return true }]
+            }
+        }
+    }
 
     override var accessibilityLabel: String? {
         get { spokenLabel.map { $0() } ?? super.accessibilityLabel }
@@ -686,9 +712,21 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
         }, for: .touchUpInside)
     }
 
+    override func contextMenuInteraction(
+        _ interaction: UIContextMenuInteraction,
+        configurationForMenuAtLocation location: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard let openInPane else { return nil }
+        let image = UIImage(systemName: "rectangle.righthalf.inset.filled")
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
+            UIMenu(children: [UIAction(title: String(localized: "Open in Pane"), image: image) { _ in openInPane() }])
+        }
+    }
+
     func apply(
         _ entry: ExtensionSurfaceStripEntry,
         isActive: Bool,
+        inPane: Bool = false,
         placement: ExtensionSurfacePlacementGroup,
         palette: ThemePalette,
         pill: ExtensionSurfacePillContent?,
@@ -731,7 +769,9 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
         // each carries its own scoped id: a person or a driver names them, never their words.
         drawerButton.accessibilityIdentifier = "\(identifier).drawer"
         content.accessibilityIdentifier = "\(identifier).body"
-        applyAccessibility(entry: entry, isActive: isActive, showsContent: showsContent, pill: pill, media: media)
+        applyAccessibility(
+            entry: entry, isActive: isActive, inPane: inPane, showsContent: showsContent, pill: pill, media: media
+        )
     }
 
     /// Who says what. A pill whose tap opens the drawer is one element. A pill whose tap sends an
@@ -740,6 +780,7 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
     private func applyAccessibility(
         entry: ExtensionSurfaceStripEntry,
         isActive: Bool,
+        inPane: Bool,
         showsContent: Bool,
         pill: ExtensionSurfacePillContent?,
         media: String?
@@ -752,10 +793,13 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
         let bodyWords = { [weak content] in
             [content?.words, kindLabel].compactMap(\.self).joined(separator: ", ")
         }
-        let drawerWords = "\(isActive ? "Collapse" : "Expand") \(entry.title) \(entry.kindLabel)"
+        let drawerWords = inPane
+            ? "\(entry.title) \(entry.kindLabel)"
+            : "\(isActive ? "Collapse" : "Expand") \(entry.title) \(entry.kindLabel)"
+        let state = inPane ? String(localized: "Shown in Pane") : (isActive ? "Expanded" : "Collapsed")
         let value = { [weak content] in
             let parts = [showsContent ? content?.words : subtitle, media].compactMap(\.self)
-            return parts.isEmpty ? (isActive ? "Expanded" : "Collapsed") : parts.joined(separator: " • ")
+            return parts.isEmpty ? state : parts.joined(separator: " • ")
         }
         let sendsAction = onPillAction != nil
         isAccessibilityElement = !sendsAction
@@ -832,6 +876,10 @@ struct ExtensionSurfaceDrawerActions {
     var sessionMenu: (@MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?)?
     /// The reader opens in the attached leaf beside the chat rather than over it.
     var readerOpensBeside = false
+    /// Opens a surface, by id, in its panel pane beside the chat (full screen on a narrow one).
+    var openPanel: ((String) -> Void)?
+    /// Focuses the panel pane beside the chat, for a pill whose surface it already shows.
+    var focusPanel: (() -> Void)?
 }
 
 /// The expanded body of one strip entry, under the strip: a header with the
@@ -1113,9 +1161,14 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             : nil
     }
 
-    /// Opens the whole surface. Beside the chat the drawer closes: the column shows the same list.
+    /// Opens the whole surface. Beside the chat it opens in its panel pane and the drawer closes,
+    /// so the content shows once; on a narrow screen it opens full screen.
     private func openFullScreen() {
         defer { if actions.readerOpensBeside { onCollapse?() } }
+        if actions.readerOpensBeside, let id = entry.panelSurfaceId, let openPanel = actions.openPanel {
+            openPanel(id)
+            return
+        }
         switch entry {
         case .native(let nativeSurface, _):
             let id = nativeSurface.surface.id
@@ -1184,6 +1237,9 @@ final class ExtensionSurfacePanelView: UIView {
         var sessionLiveTails: [String: ConversationChildTail] = [:]
         /// The composable surface action waiting on the server, if one is.
         var pendingAction: ExtensionSurfacePendingAction?
+        /// The surface the chat's panel pane shows: its pill draws selected, and a tap on it
+        /// focuses the pane instead of opening the drawer.
+        var paneSurfaceId: String?
     }
 
     let placement: ExtensionSurfacePlacementGroup
@@ -1284,16 +1340,31 @@ final class ExtensionSurfacePanelView: UIView {
         let summaryOnly = !AdaptiveWidth.isWide(traitCollection)
         for entry in entries {
             let pill = pills[entry.id] ?? ExtensionSurfaceStripPill()
+            let surfaceId = entry.panelSurfaceId
+            let inPane = surfaceId != nil && surfaceId == content.paneSurfaceId
             pill.apply(
                 entry,
-                isActive: entry.id == expandedEntryID,
+                isActive: entry.id == expandedEntryID || inPane,
+                inPane: inPane,
                 placement: placement,
                 palette: palette,
                 pill: pillContent(for: entry, content: content),
                 summaryOnly: summaryOnly
             )
             let id = entry.id
-            pill.onTap = { [weak self] in self?.toggle(id) }
+            let actions = actions
+            if inPane {
+                // The pane already shows it: the drawer would show it twice.
+                pill.onTap = { actions.focusPanel?() }
+            } else if entry.opensPanel, let surfaceId, let openPanel = actions.openPanel {
+                pill.onTap = { openPanel(surfaceId) }
+            } else {
+                pill.onTap = { [weak self] in self?.toggle(id) }
+            }
+            // Open in Pane, beside the chat only: a narrow window has no pane to open.
+            pill.openInPane = actions.readerOpensBeside && !inPane
+                ? surfaceId.flatMap { surfaceId in actions.openPanel.map { open in { open(surfaceId) } } }
+                : nil
             keptPills[entry.id] = pill
             arranged.append(pill)
         }

@@ -4,9 +4,10 @@ import Foundation
 // `PaneLinkCodec`. A link opens on the server it names, else the server it
 // came from, else the active one. What the primary leaf can show opens
 // there; content the app cannot show yet (a server this device has not
-// paired, a server still connecting, a session it must look up) opens as the
-// entry's leaf state (`PaneLeafStateViewController`), which turns into the
-// content when it can.
+// paired, a server still connecting, a session it must look up, content
+// behind a scoped lock) opens as the entry's leaf state
+// (`PaneLeafStateViewController`), which turns into the content when it can.
+// A panel opens beside its session's chat (`ScenePanes.openPanel`).
 extension AppOpener {
     func performPane(_ link: PaneLink, sourceServerID: String?, generation: UInt64) async -> AppOpenOutcome {
         guard let serverId = link.server ?? sourceServerID ?? coordinator.activeServerId else {
@@ -15,17 +16,21 @@ extension AppOpener {
         }
         let entry = PaneStackEntry(serverId: serverId, route: link.route)
         switch link.route {
-        case .git, .commit, .panel:
-            // Git and panel panes arrive with the per-window tree and panel leaves.
+        case .git, .commit:
+            // Git panes arrive with the per-window tree.
             toast(String(localized: "Oppi can\u{2019}t open this kind of link yet"))
             return .finished
         default:
             break
         }
-        guard serverStore.server(for: serverId) != nil else {
+        // A locked entry asks only when its leaf is tapped, so the window's
+        // server does not switch under the lock.
+        guard serverStore.server(for: serverId) != nil,
+              !ScopedLockService.shared.isLocked(PaneEntries.lockTarget(entry)) else {
             navigation.pushPaneEntry(entry)
             return .finished
         }
+        let previousServerId = coordinator.activeServerId
         let switched = await openServer(serverId, generation: generation)
         guard isCurrent(generation) else { return .finished }
         guard switched else {
@@ -36,6 +41,21 @@ extension AppOpener {
         if case .sessions(nil) = link.route {
             navigation.showAllWorkspaceSessions()
             return .finished
+        }
+        if case .panel(let sessionId, _) = link.route,
+           let connection = coordinator.connection(for: serverId),
+           connection.sessionStore.session(id: sessionId) != nil {
+            // The chat opens as a session link does, and the panel beside it.
+            navigation.panes.openPanel(link.route, beside: sessionId)
+            return await openPreparedSession(
+                serverId: serverId,
+                sessionId: sessionId,
+                workspaceIdHint: nil,
+                connection: connection,
+                origin: .externalURL,
+                previousServerId: previousServerId,
+                generation: generation
+            )
         }
         switch PaneEntries.element(for: entry, coordinator: coordinator) {
         case .workspace(let target)?:

@@ -15,9 +15,10 @@ protocol PaneChatScrollReporting: AnyObject {
 /// (`PaneTreeStore`, 500 ms after the last change, and at once when the
 /// scene goes to the background), and restores it at launch.
 ///
-/// Only a chat's Files and Git panels have links (`.files`, `.git`), so they
-/// are the companions that restore; Outline, Context, Share, readers and a
-/// commit's diff are `.local` and are not saved.
+/// A chat's Files and Git panels and its extension panels have links
+/// (`.files`, `.git`, `.panel`), so they are the companions that restore;
+/// Outline, Context, Share, readers and a commit's diff are `.local` and are
+/// not saved.
 @MainActor @Observable
 final class ScenePanes {
     static let primaryLeafID = leafID("main")
@@ -40,7 +41,10 @@ final class ScenePanes {
     @ObservationIgnored private var sceneIdentifier: String?
     @ObservationIgnored private var store = PaneTreeStore()
     @ObservationIgnored private var pending: PaneLayoutArchive?
-    @ObservationIgnored private var restoredPanel: (sessionId: String, route: PaneRoute)?
+    /// The panel a chat opens beside itself once it shows: the restored
+    /// companion, or a panel link. Observed, so a chat already on screen
+    /// opens it too, and a save while it waits keeps it in the tree.
+    private var pendingPanel: PendingPanel?
     @ObservationIgnored private var restoredScroll: PaneChatScroll?
     @ObservationIgnored private var restoredCompanionFocus = false
     @ObservationIgnored private let chats = NSHashTable<AnyObject>.weakObjects()
@@ -59,6 +63,11 @@ final class ScenePanes {
     private struct Saved: Equatable, Sendable {
         var layout: PaneLayout
         var companionFraction: Double?
+    }
+
+    private struct PendingPanel: Equatable {
+        var sessionId: String
+        var route: PaneRoute
     }
 
     // MARK: Scene
@@ -92,11 +101,23 @@ final class ScenePanes {
         chats.add(chat)
     }
 
-    /// The panel a restored chat reopens beside itself, once.
-    func takeRestoredPanel(for sessionId: String) -> PaneRoute? {
-        guard let panel = restoredPanel, panel.sessionId == sessionId else { return nil }
-        restoredPanel = nil
-        return panel.route
+    /// A panel link: the session's chat opens `route` beside itself when it
+    /// shows (`pendingPanel(for:)`), replacing one still waiting.
+    func openPanel(_ route: PaneRoute, beside sessionId: String) {
+        pendingPanel = PendingPanel(sessionId: sessionId, route: route)
+    }
+
+    /// The panel waiting for this session's chat; reading it observes it.
+    func pendingPanel(for sessionId: String) -> PaneRoute? {
+        guard let pendingPanel, pendingPanel.sessionId == sessionId else { return nil }
+        return pendingPanel.route
+    }
+
+    /// The panel waiting for this session's chat, once.
+    func takePendingPanel(for sessionId: String) -> PaneRoute? {
+        guard let route = pendingPanel(for: sessionId) else { return nil }
+        pendingPanel = nil
+        return route
     }
 
     /// The reading position a restored chat starts at, once.
@@ -109,7 +130,7 @@ final class ScenePanes {
     /// A restored entry was closed before its chat showed: the chat's panel
     /// and position must not open when the person opens it later by hand.
     func dropRestoredHandoffs() {
-        restoredPanel = nil
+        pendingPanel = nil
         restoredScroll = nil
         restoredCompanionFocus = false
     }
@@ -123,22 +144,30 @@ final class ScenePanes {
     // MARK: Snapshot
 
     /// The window's tree now. The companion is kept only beside a chat, the
-    /// one screen whose panels have links.
+    /// one screen whose panels have links. A panel still waiting for its chat
+    /// (the chat is a leaf state until its server connects) stays in the
+    /// tree, so a save meanwhile does not lose it.
     func layout(navigation: AppNavigation, rootServerId: String) -> PaneLayout {
         let stack = PaneEntries.primaryStack(navigation.primaryStackElements, rootServerId: rootServerId)
         let main = PaneLeaf(id: Self.primaryLeafID, name: nil, stack: stack, attachedTo: nil, origin: .split)
-        guard companionIsShown, case .session? = stack.last?.route else {
+        guard let top = stack.last, case .session(let sessionId) = top.route else {
             return PaneLayout(single: main)
         }
+        let waiting = pendingPanel(for: sessionId).map { PaneStackEntry(serverId: top.serverId, route: $0) }
+        guard companionIsShown || waiting != nil else {
+            return PaneLayout(single: main)
+        }
+        let route = companionIsShown ? companionRoute : waiting
         let side = PaneLeaf(
             id: Self.companionLeafID,
             name: nil,
-            stack: [companionRoute ?? PaneStackEntry(serverId: rootServerId, route: .local(PaneLocalToken(raw: "panel")))],
+            stack: [route ?? PaneStackEntry(serverId: rootServerId, route: .local(PaneLocalToken(raw: "panel")))],
             attachedTo: Self.primaryLeafID,
             origin: .attached
         )
         let share = Double(min(max(companionFraction ?? 0.4, 0.05), 0.95))
-        let focus = companionIsFocused ? Self.companionLeafID : Self.primaryLeafID
+        let focus = companionIsFocused || (!companionIsShown && restoredCompanionFocus)
+            ? Self.companionLeafID : Self.primaryLeafID
         return PaneLayout(
             root: .split(axis: .row, children: [.leaf(main), .leaf(side)], weights: [1 - share, share]),
             focus: focus,
@@ -210,7 +239,7 @@ final class ScenePanes {
         restoredScroll = archive.chatScroll[primary.id].flatMap { $0.sessionId == sessionId ? $0 : nil }
         guard let companion = layout.leaves.first(where: { $0.attachedTo == primary.id }),
               let route = companion.stack.last?.route else { return }
-        restoredPanel = (sessionId, route)
+        pendingPanel = PendingPanel(sessionId: sessionId, route: route)
         restoredCompanionFocus = layout.focus == companion.id
     }
 
@@ -273,7 +302,7 @@ final class ScenePanes {
             var leaf = leaf
             leaf.stack = leaf.stack.map { entry in
                 let sessionId: String? = switch entry.route {
-                case .session(let id), .file(.session(let id), _, _): id
+                case .session(let id), .file(.session(let id), _, _), .panel(let id, _): id
                 default: nil
                 }
                 guard let sessionId,
@@ -286,7 +315,10 @@ final class ScenePanes {
         var scroll: [PaneID: PaneChatScroll] = [:]
         if case .session(let sessionId)? = layout.leaf(Self.primaryLeafID)?.stack.last?.route {
             let reports = chats.allObjects.compactMap { ($0 as? PaneChatScrollReporting)?.paneChatScroll }
+            // A restored position the chat has not taken yet is still the
+            // reader's place.
             scroll[Self.primaryLeafID] = reports.first { $0.sessionId == sessionId }
+                ?? restoredScroll.flatMap { $0.sessionId == sessionId ? $0 : nil }
         }
         return PaneLayoutArchive(restorable: layout, chatScroll: scroll, companionFraction: saved.companionFraction)
     }

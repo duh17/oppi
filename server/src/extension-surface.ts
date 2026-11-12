@@ -15,6 +15,7 @@ import type {
   ExtensionUISurfaceCompositeKind,
   ExtensionUISurfaceNode,
   ExtensionUISurfaceNodeAction,
+  ExtensionUISurfacePanelHints,
   ExtensionUISurfacePill,
   ExtensionUISurfaceSection,
   ExtensionUISurfaceState,
@@ -1019,8 +1020,8 @@ function validateSurface(value: unknown): ExtensionUISurface {
   if (value.version !== EXTENSION_UI_SURFACE_VERSION)
     throw new SurfaceShapeError(`a surface is not version ${EXTENSION_UI_SURFACE_VERSION}`);
   if (!isRecord(value.placement)) throw new SurfaceShapeError("placement is not an object");
-  // Slice 1 draws `strip` only; any other placement is refused rather than drawn wrong.
-  const kind = oneOf(["strip"] as const, value.placement.kind);
+  const kind = oneOf(["strip", "panel"] as const, value.placement.kind);
+  const panel = value.panel === undefined ? undefined : panelHints(value.panel);
   if (!isRecord(value.header)) throw new SurfaceShapeError("the surface header is not an object");
   if (!isRecord(value.fallback))
     throw new SurfaceShapeError("the surface fallback is not an object");
@@ -1066,6 +1067,7 @@ function validateSurface(value: unknown): ExtensionUISurface {
             ),
           }),
     },
+    ...(panel ? { panel } : {}),
     lifecycle,
     ...(timeoutAt === undefined ? {} : { timeoutAt }),
     header: {
@@ -1097,6 +1099,18 @@ function validateSurface(value: unknown): ExtensionUISurface {
       : { publishedAt: wireMilliseconds(value.publishedAt) as number }),
   };
   return result;
+}
+
+/** The pane hints: an allowed icon and a declared width. An empty object is no hints. */
+function panelHints(value: unknown): ExtensionUISurfacePanelHints | undefined {
+  if (!isRecord(value)) throw new SurfaceShapeError("panel is not an object");
+  const hints: ExtensionUISurfacePanelHints = {
+    ...(value.icon === undefined ? {} : { icon: iconName(value.icon) }),
+    ...(value.size === undefined
+      ? {}
+      : { size: oneOf(["narrow", "regular", "wide"] as const, value.size) }),
+  };
+  return Object.keys(hints).length === 0 ? undefined : hints;
 }
 
 function revision(value: unknown): number {

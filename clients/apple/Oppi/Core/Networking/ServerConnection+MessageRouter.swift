@@ -450,8 +450,10 @@ extension ServerConnection {
         var capabilities = [ClientCapability.extensionNativeUIComposites]
         guard advertised.contains(ClientCapability.extensionNativeUIBlocks) else { return capabilities }
         capabilities.append(ClientCapability.extensionNativeUIBlocks)
-        if advertised.contains(ClientCapability.extensionNativeUIElapsed) {
-            capabilities.append(ClientCapability.extensionNativeUIElapsed)
+        guard advertised.contains(ClientCapability.extensionNativeUIElapsed) else { return capabilities }
+        capabilities.append(ClientCapability.extensionNativeUIElapsed)
+        if advertised.contains(ClientCapability.extensionNativeUIPanel) {
+            capabilities.append(ClientCapability.extensionNativeUIPanel)
         }
         return capabilities
     }

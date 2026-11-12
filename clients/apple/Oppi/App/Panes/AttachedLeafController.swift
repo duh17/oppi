@@ -264,6 +264,8 @@ final class AttachedLeafController: UIViewController {
     /// The panel's own screen, mounted at the root of the leaf's navigation
     /// controller, so a test can assert which destination it shows.
     var mountedScreenForTesting: UIViewController? { isMounted ? container?.viewControllers.first : nil }
+    /// The mounted panel's link, as the window saves it.
+    var mountedRouteForTesting: PaneStackEntry? { isMounted ? installed?.route : nil }
     /// Every screen on the leaf's navigation controller, root first.
     var mountedStackForTesting: [UIViewController]? { isMounted ? container?.viewControllers : nil }
     /// The leaf's navigation controller while it exists, mounted or parked.

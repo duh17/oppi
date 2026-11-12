@@ -9,6 +9,7 @@ import type {
 } from "./types.js";
 import { terminalLineToTextSpans, terminalLineVisibleText } from "./ansi.js";
 import { isRecord } from "./json-shape.js";
+import { isExtensionUISurfaceIconName } from "./extension-surface-icons.js";
 
 export const EXTENSION_UI_FIRE_AND_FORGET_METHODS = new Set([
   "notify",
@@ -73,6 +74,13 @@ export const EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY = "extension-native-ui:v2:blo
  */
 export const EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY = "extension-native-ui:v2:elapsed";
 /**
+ * v2 panel: the client opens a surface in a pane beside the chat. It alone is sent a v2 surface's
+ * `panel` hints and a `panel` placement; any other client gets the surface without the hints and
+ * placed as `strip`. Implies `blocks` and `elapsed`: a client that names it without them draws
+ * what those name.
+ */
+export const EXTENSION_NATIVE_UI_PANEL_CAPABILITY = "extension-native-ui:v2:panel";
+/**
  * Pane layouts: the client draws a `layout_proposal` as a card. Declared in the same
  * `client_capabilities` list; a socket that has not named it is never sent one.
  */
@@ -85,6 +93,7 @@ export const EXTENSION_NATIVE_UI_SERVER_CAPABILITIES = [
   EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
   EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
   EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+  EXTENSION_NATIVE_UI_PANEL_CAPABILITY,
 ] as const;
 export const EXTENSION_NATIVE_UI_RENDER_NATIVE_CAPABILITIES = [
   EXTENSION_NATIVE_UI_TEXT_FALLBACK_CAPABILITY,
@@ -338,7 +347,28 @@ function clipNativeBlocks(value: unknown): unknown[] {
 }
 
 function clipNativeSurface(value: Record<string, unknown>): Record<string, unknown> {
-  return { ...value, blocks: clipNativeBlocks(value.blocks) };
+  return {
+    ...value,
+    ...(isRecord(value.presentation)
+      ? { presentation: clipNativePresentationHints(value.presentation) }
+      : {}),
+    blocks: clipNativeBlocks(value.blocks),
+  };
+}
+
+/**
+ * A widget's pane hints pass only when the host can draw them: an `icon` from the allow-list and a
+ * known `size`. A classic extension's hint is decoration, so a bad one is dropped, not the widget.
+ */
+function clipNativePresentationHints(
+  presentation: Record<string, unknown>,
+): Record<string, unknown> {
+  const { icon, size, ...rest } = presentation;
+  return {
+    ...rest,
+    ...(typeof icon === "string" && isExtensionUISurfaceIconName(icon) ? { icon } : {}),
+    ...(size === "narrow" || size === "regular" || size === "wide" ? { size } : {}),
+  };
 }
 
 interface NativeSurfaceLimits {

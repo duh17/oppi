@@ -39,6 +39,32 @@ describe("surface fixtures", () => {
     }
   });
 
+  it("keeps a surface's pane hints, and refuses ones the host cannot draw", () => {
+    const value = readSurfaceFixture("panel-hints.json") as Record<string, unknown>;
+    const read = readExtensionUISurface(value);
+    if ("problem" in read) throw new Error(read.problem);
+    expect(read.surface.placement.kind).toBe("panel");
+    expect(read.surface.panel).toEqual({ icon: "terminal", size: "wide" });
+    expect(readExtensionUISurface({ ...value, panel: { icon: "flame" } })).toMatchObject({
+      problem: '"flame" is not an allowed icon name',
+    });
+    expect("problem" in readExtensionUISurface({ ...value, panel: { size: "huge" } })).toBe(true);
+  });
+
+  it("keeps a widget's pane hints, and drops ones the host cannot draw", () => {
+    const value = readSurfaceFixture("native-panel-hints.json") as {
+      presentation: Record<string, unknown>;
+    };
+    expect(normalizeExtensionUINativeSurface(value)?.presentation).toEqual(value.presentation);
+    const unknown = { ...value, presentation: { ...value.presentation, icon: "flame", size: 3 } };
+    // A classic widget's hint is decoration: the widget still shows, without it.
+    expect(normalizeExtensionUINativeSurface(unknown)?.presentation).toEqual({
+      style: "surfacePanel",
+      title: "Agents",
+      subtitle: "1 running",
+    });
+  });
+
   it("keeps the unknown-composite fixture undrawable on the server and readable on the phone", () => {
     const surface = readSurfaceFixture("unknown-composite.json") as {
       sections: Array<{ composite: string; fallback: { text: string } }>;

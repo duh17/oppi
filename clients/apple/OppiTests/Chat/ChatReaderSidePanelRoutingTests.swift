@@ -113,6 +113,106 @@ struct ChatReaderSidePanelRoutingTests {
         #expect(host.chat.model.showShareRedactionSheet == false)
     }
 
+    // MARK: - Extension panels
+
+    /// The `panel-hints.json` surface with its header subtitle and revision replaced.
+    private func jobsSurface(subtitle: String, revision: Int) throws -> ExtensionUISurface {
+        let data = try ProtocolFixtures.data("surfaces/panel-hints.json")
+        var json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var header = try #require(json["header"] as? [String: Any])
+        header["subtitle"] = subtitle
+        json["header"] = header
+        json["revision"] = revision
+        return try JSONDecoder().decode(ExtensionUISurface.self, from: JSONSerialization.data(withJSONObject: json))
+    }
+
+    private func mountedPanel(_ host: Host) -> ExtensionPanelViewController? {
+        host.chat.attachedLeaf.mountedScreenForTesting as? ExtensionPanelViewController
+    }
+
+    @Test("a surface opens in its panel pane beside the chat, linked, and follows the session's snapshots")
+    func aSurfaceOpensInItsPanelPane() async throws {
+        let host = try await makeHost(horizontalSizeClass: .regular)
+        defer { host.hide() }
+        let surfaces = host.chat.connection.extensionSurfaces
+        surfaces.apply(try jobsSurface(subtitle: "1 running", revision: 7), sessionId: host.chat.sessionId)
+
+        let openPanel = try #require(host.chat.extensionDrawerActions().openPanel)
+        openPanel("jobs")
+        let mounted = await waitForMainActorCondition(timeout: .seconds(3)) { mountedPanel(host) != nil }
+        #expect(mounted, "the panel never mounted in the attached leaf")
+        let panel = try #require(mountedPanel(host))
+        panel.updatePropertiesIfNeeded()
+        #expect(panel.shownState == .content)
+        #expect(panel.navigationItem.title == "Jobs")
+        #expect(panel.navigationItem.subtitle == "1 running")
+        #expect(host.chat.shownPanelSurfaceId == "jobs")
+        #expect(host.chat.attachedLeaf.mountedRouteForTesting == PaneStackEntry(
+            serverId: "sha256:reader-routing", route: .panel(session: host.chat.sessionId, id: "jobs")
+        ), "the pane has a link, so the window restores it")
+
+        // P3: parked behind a full-screen cover, the pane misses an update and
+        // draws the newest snapshot when it returns.
+        let cover = UIViewController()
+        cover.modalPresentationStyle = .fullScreen
+        host.chat.present(cover, animated: false)
+        let parked = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.chat.attachedLeaf.mountedScreenForTesting == nil
+        }
+        #expect(parked, "the pane stayed mounted under the cover")
+        surfaces.apply(try jobsSurface(subtitle: "2 finished", revision: 8), sessionId: host.chat.sessionId)
+        host.chat.dismiss(animated: false)
+        let returned = await waitForMainActorCondition(timeout: .seconds(3)) {
+            mountedPanel(host)?.updatePropertiesIfNeeded()
+            return mountedPanel(host)?.navigationItem.subtitle == "2 finished"
+        }
+        #expect(returned, "the returning pane did not draw the newest snapshot")
+    }
+
+    @Test("SD2: a panel whose session goes away keeps its last snapshot, ended, with Close Pane")
+    func aPanelWhoseSessionEndsShowsEnded() async throws {
+        let host = try await makeHost(horizontalSizeClass: .regular)
+        defer { host.hide() }
+        let surfaces = host.chat.connection.extensionSurfaces
+        surfaces.apply(try jobsSurface(subtitle: "1 running", revision: 7), sessionId: host.chat.sessionId)
+        host.chat.openExtensionPanel("jobs")
+        _ = await waitForMainActorCondition(timeout: .seconds(3)) { mountedPanel(host) != nil }
+        let panel = try #require(mountedPanel(host))
+        panel.updatePropertiesIfNeeded()
+        #expect(panel.shownState == .content)
+
+        // The session is deleted: the server clears its surfaces, and the store drops it.
+        surfaces.clear(sessionId: host.chat.sessionId)
+        host.chat.connection.sessionStore.remove(id: host.chat.sessionId)
+        panel.updatePropertiesIfNeeded()
+        #expect(panel.shownState == .ended)
+        #expect(panel.navigationItem.title == "Jobs", "the last snapshot stays")
+        let ended = try #require(panel.view.firstSubview(identifiedAs: "extensionPanel.ended"))
+        #expect(!ended.isHidden)
+        #expect(panel.children.first?.view.alpha ?? 1 < 1, "the snapshot is dimmed")
+    }
+
+    @Test("a panel its idle session has not published says so; a busy one waits")
+    func anUnpublishedPanelWaitsOrIsUnavailable() async throws {
+        let host = try await makeHost(horizontalSizeClass: .regular)
+        defer { host.hide() }
+        host.chat.openExtensionPanel("jobs")
+        _ = await waitForMainActorCondition(timeout: .seconds(3)) { mountedPanel(host) != nil }
+        let panel = try #require(mountedPanel(host))
+        panel.updatePropertiesIfNeeded()
+        #expect(panel.shownState == .unavailable)
+
+        host.chat.connection.sessionStore.upsert(makeTestSession(id: host.chat.sessionId, status: .busy))
+        panel.updatePropertiesIfNeeded()
+        #expect(panel.shownState == .waiting)
+
+        host.chat.connection.extensionSurfaces.apply(
+            try jobsSurface(subtitle: "1 running", revision: 7), sessionId: host.chat.sessionId
+        )
+        panel.updatePropertiesIfNeeded()
+        #expect(panel.shownState == .content)
+    }
+
     // MARK: - Fixture
 
     private struct Host {
@@ -183,7 +283,9 @@ struct ChatReaderSidePanelRoutingTests {
 
         let appNavigation = AppNavigation()
         let appRoot = makeTestAppRoot()
-        let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: appNavigation)
+        let chat = ChatViewController(
+            sessionId: sessionId, connection: connection, navigation: appNavigation, serverIdHint: "sha256:reader-routing"
+        )
 
         let scene = try #require(
             UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
@@ -199,5 +301,15 @@ struct ChatReaderSidePanelRoutingTests {
         chat.view.layoutIfNeeded()
 
         return Host(chat: chat, appNavigation: appNavigation, appRoot: appRoot, window: window)
+    }
+}
+
+private extension UIView {
+    func firstSubview(identifiedAs identifier: String) -> UIView? {
+        if accessibilityIdentifier == identifier { return self }
+        for subview in subviews {
+            if let found = subview.firstSubview(identifiedAs: identifier) { return found }
+        }
+        return nil
     }
 }

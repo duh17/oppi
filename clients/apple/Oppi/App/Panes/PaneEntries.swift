@@ -135,6 +135,9 @@ enum PaneEntries {
         if element(for: entry, coordinator: coordinator) != nil { return .present }
         guard let connection = coordinator.connection(for: entry.serverId) else { return .unknown }
         switch entry.route {
+        case .panel(let sessionId, _):
+            // A panel opens beside its chat, so it is there when its session is.
+            return connection.sessionStore.session(id: sessionId) != nil ? .present : lookedUp
         case .session, .file(.session, _, _):
             return lookedUp
         case .sessions(let workspaceId?), .files(let workspaceId, _), .file(.workspace(let workspaceId, _), _, _):
@@ -163,7 +166,7 @@ enum PaneEntries {
     static func lockTarget(_ entry: PaneStackEntry) -> ScopedLockTarget {
         let locks = ScopedLockService.shared
         switch entry.route {
-        case .session(let id), .file(.session(let id), _, _):
+        case .session(let id), .file(.session(let id), _, _), .panel(let id, _):
             return locks.sessionTarget(serverId: entry.serverId, sessionId: id)
         case .sessions(let workspaceId?), .files(let workspaceId, _), .file(.workspace(let workspaceId, _), _, _):
             return .workspace(serverId: entry.serverId, workspaceId: workspaceId)

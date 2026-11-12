@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "id": "jobs",
+  "title": "Jobs",
+  "placement": {
+    "kind": "panel",
+    "preferred": "aboveComposer"
+  },
+  "lifecycle": "persistent",
+  "header": {
+    "title": "Jobs",
+    "subtitle": "1 running · 2 finished"
+  },
+  "actions": {
+    "refresh": {
+      "title": "Refresh"
+    }
+  },
+  "fallback": {
+    "text": "1 job running"
+  },
+  "revision": 7,
+  "extensionScopeId": "npm:deploy-helper",
+  "extensionDisplayName": "Deploy Helper",
+  "panel": {
+    "icon": "terminal",
+    "size": "wide"
+  },
+  "sections": [
+    {
+      "composite": "blocks",
+      "id": "list",
+      "state": {
+        "kind": "content"
+      },
+      "actions": [
+        "refresh"
+      ],
+      "fallback": {
+        "text": "1 job running"
+      },
+      "body": {
+        "type": "stack",
+        "children": [
+          {
+            "type": "text",
+            "text": "npm test · running"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -35,6 +35,25 @@ enum PaneMissingContent: Hashable, Sendable {
     case session, file, workspace, server
 }
 
+/// What a panel leaf has seen of its surface.
+enum PanePanelSurface: Hashable, Sendable {
+    /// The session holds the surface now.
+    case published
+    /// The leaf showed the surface, and the session no longer holds it.
+    case cleared
+    /// Not published since the leaf opened.
+    case notPublished
+}
+
+/// What a panel's session is doing.
+enum PanePanelSession: Hashable, Sendable {
+    /// Working, or starting up: a panel may still arrive.
+    case busy
+    case idle
+    /// Stopped, or gone from its server.
+    case ended
+}
+
 /// What a leaf shows instead of, or as, its content (build plan §1.11).
 enum PaneLeafState: Hashable, Sendable {
     case content
@@ -47,6 +66,16 @@ enum PaneLeafState: Hashable, Sendable {
     case unreachable(PaneConnectionRemedy)
     /// A leaf kind from a newer Oppi.
     case unsupported
+    /// A panel nobody has published yet while its session works.
+    case waiting
+    /// A panel its idle session has not published.
+    case unavailable
+    /// A panel whose surface was cleared or whose session ended: the last
+    /// snapshot, dimmed, with Close Pane.
+    case ended
+    /// A panel leaf without its chat beside it, before panels can be pinned:
+    /// Open Chat.
+    case chatNotShown
 
     /// The state of a leaf showing `route`. Pure: the app passes what it
     /// knows. Content known locally shows even while its server reconnects;
@@ -70,6 +99,18 @@ enum PaneLeafState: Hashable, Sendable {
             case .connected, .connecting, .removed: return .connecting
             case .unreachable(let remedy): return .unreachable(remedy)
             }
+        }
+    }
+
+    /// The state of a panel leaf (`.panel`) whose session the app holds.
+    /// Pure: the leaf passes what it sees of its surface and session. Until
+    /// panels can be pinned, a panel shows only beside its own chat.
+    static func panel(surface: PanePanelSurface, session: PanePanelSession, chatShown: Bool) -> Self {
+        guard chatShown else { return .chatNotShown }
+        switch surface {
+        case .published: return session == .ended ? .ended : .content
+        case .cleared: return .ended
+        case .notPublished: return session == .busy ? .waiting : .unavailable
         }
     }
 

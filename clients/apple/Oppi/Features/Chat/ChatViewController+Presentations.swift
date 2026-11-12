@@ -149,6 +149,7 @@ extension ChatViewController {
         if model.showShareRedactionSheet { return .share }
         if let target = model.sidePanelReaderTarget { return .reader(target) }
         if let target = model.sidePanelTimelineTarget { return .timeline(target) }
+        if let surfaceId = model.sidePanelSurfaceId { return .panel(surfaceId) }
         if model.isFilePanelVisible { return .files }
         if model.showOutline { return .outline }
         if model.showGit { return .git }
@@ -176,6 +177,11 @@ extension ChatViewController {
             ChatTimelineDestinationPresenter(connection: connection)
                 .open(target.request(sourceView: view, presenter: self))
         }
+        if !AdaptiveWidth.isWide(traitCollection), let surfaceId = model.sidePanelSurfaceId {
+            // Narrow width shows the panel full screen, as it opens there.
+            model.sidePanelSurfaceId = nil
+            Router.push(makeExtensionPanel(surfaceId, closes: false), from: self)
+        }
         let panel = activeSidePanel
         attachedLeaf.show(
             panel.map { panel in
@@ -194,36 +200,109 @@ extension ChatViewController {
     }
 
     /// A panel's link, so the window restores it beside this chat: Files and
-    /// Git name the chat's workspace; Outline, Context, Share and readers
-    /// have none.
+    /// Git name the chat's workspace, an extension panel its session and
+    /// surface; Outline, Context, Share and readers have none.
     private func paneEntry(for panel: ChatSidePanel) -> PaneStackEntry? {
-        guard let serverId = connection.currentServerId ?? serverIdHint,
-              let workspaceId = session?.workspaceId ?? workspaceIdHint else { return nil }
+        guard let serverId = connection.currentServerId ?? serverIdHint else { return nil }
+        if case .panel(let surfaceId) = panel {
+            return PaneStackEntry(serverId: serverId, route: .panel(session: sessionId, id: surfaceId))
+        }
+        guard let workspaceId = session?.workspaceId ?? workspaceIdHint else { return nil }
         switch panel {
         case .files:
             return PaneStackEntry(serverId: serverId, route: .files(workspace: workspaceId, path: nil))
         case .git:
             return PaneStackEntry(serverId: serverId, route: .git(workspace: workspaceId, worktree: session?.worktreeId))
-        case .outline, .context, .share, .reader, .timeline:
+        case .outline, .context, .share, .reader, .timeline, .panel:
             return nil
         }
     }
 
-    /// A relaunch reopens the panel this chat had beside it, where panels
-    /// still open beside (a narrower window keeps it closed rather than
-    /// raising a sheet), and starts at the saved reading position.
+    /// A relaunch starts at the saved reading position.
     func takeRestoredPaneState() {
         if let scroll = appNavigation.panes.takeRestoredScroll(for: sessionId) {
             scrollController.adoptReentryIntent(
                 ChatScrollReentryIntent(savedItemID: scroll.itemId, relativeY: CGFloat(scroll.relativeY))
             )
         }
-        guard let route = appNavigation.panes.takeRestoredPanel(for: sessionId), opensPanelsBeside else { return }
-        switch route {
-        case .files: showSidePanel(.files)
-        case .git: showSidePanel(.git)
-        default: break
+    }
+
+    /// Opens the panel waiting for this chat (`ScenePanes.pendingPanel`): the
+    /// one it had beside it before a relaunch, or a panel link. Read in the
+    /// update pass, so a chat already on screen opens it too. Where panels
+    /// open beside, it opens there; a narrower window keeps a restored Files
+    /// or Git closed rather than raising a sheet, and shows an extension
+    /// panel full screen.
+    func openPendingPanel() {
+        // Read in the pass, so handing this chat a panel runs the pass again;
+        // opened after it, since opening changes what the pass reads.
+        guard appNavigation.panes.pendingPanel(for: sessionId) != nil else { return }
+        Task { @MainActor [weak self] in
+            guard let self, viewIfLoaded?.window != nil,
+                  let route = appNavigation.panes.takePendingPanel(for: sessionId) else { return }
+            switch route {
+            case .files where opensPanelsBeside: showSidePanel(.files)
+            case .git where opensPanelsBeside: showSidePanel(.git)
+            case .panel(_, let surfaceId): openExtensionPanel(surfaceId)
+            default: break
+            }
         }
+    }
+
+    /// The pane hints of one of this session's surfaces, as it holds them now.
+    private func panelHints(_ surfaceId: String) -> ExtensionUISurfacePanelHints? {
+        let layout = connection.extensionSurfaces.surface(for: sessionId).layout
+        if let native = layout.nativeSurfaces[surfaceId] { return native.surface.presentation.panelHints }
+        return layout.composableSurfaces[surfaceId]?.surface.panel
+    }
+
+    /// Opens a surface's panel pane beside this chat, or full screen where
+    /// panels do not open beside.
+    func openExtensionPanel(_ surfaceId: String) {
+        if opensPanelsBeside {
+            showSidePanel(.panel(surfaceId))
+        } else {
+            Router.push(makeExtensionPanel(surfaceId, closes: false), from: self)
+        }
+    }
+
+    /// The panel pane for a surface of this chat's session. `closes`: it is
+    /// the attached leaf, with Close; a pushed page leaves by Back.
+    func makeExtensionPanel(_ surfaceId: String, closes: Bool) -> ExtensionPanelViewController {
+        let connection = connection
+        let sessionId = sessionId
+        let sessionStore = sessionStore
+        return ExtensionPanelViewController(
+            source: ExtensionPanelSource(
+                surfaceId: surfaceId,
+                actions: extensionDrawerActions(),
+                snapshot: { [weak connection] in
+                    guard let layout = connection?.extensionSurfaces.surface(for: sessionId).layout else { return nil }
+                    if let native = layout.nativeSurfaces[surfaceId] { return .native(native) }
+                    return layout.composableSurfaces[surfaceId].map { .composable($0.surface) }
+                },
+                session: {
+                    switch sessionStore.session(id: sessionId)?.status {
+                    case .starting?, .busy?: .busy
+                    case .ready?, .error?: .idle
+                    case .stopping?, .stopped?, nil: .ended
+                    }
+                },
+                chatTitle: { sessionStore.session(id: sessionId)?.displayTitle }
+            ),
+            onClose: closes ? { [weak self] in self?.showSidePanel(nil) } : nil
+        )
+    }
+
+    /// The surface this chat's panel pane shows beside it, for its pill.
+    var shownPanelSurfaceId: String? {
+        if case .panel(let surfaceId)? = activeSidePanel { return surfaceId }
+        return nil
+    }
+
+    /// A tap on the pill of the surface the pane shows: the pane takes focus.
+    func focusExtensionPanel() {
+        PaneHostController.hosting(self)?.focusCompanion()
     }
 
     /// Outline, Git, Context, and Files are UIKit screens; the reader is a
@@ -238,6 +317,10 @@ extension ChatViewController {
         case .share: shareRedactionController()
         case .reader(let target): readerPanelController(target)
         case .timeline(let target): timelinePanelController(target)
+        case .panel(let surfaceId):
+            panelController("The extension panel presents only while its chat is alive") {
+                $0.makeExtensionPanel(surfaceId, closes: true)
+            }
         }
     }
 
@@ -247,6 +330,11 @@ extension ChatViewController {
         switch panel {
         case .files, .outline, .git, .context: (320, 400, 640)
         case .reader, .share, .timeline: (360, 520, 820)
+        case .panel(let surfaceId):
+            {
+                let widths = ExtensionPanelSnapshot.widths(for: panelHints(surfaceId))
+                return (widths.minimum, widths.ideal, widths.maximum ?? 820)
+            }()
         }
     }
 

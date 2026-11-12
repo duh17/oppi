@@ -16,6 +16,19 @@ struct ExtensionUISurfaceTests {
         return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
+    /// The pane hints both surface versions carry, and the placement that opens the pane.
+    @Test func decodesPaneHintsOnBothSurfaceVersions() throws {
+        let surface = try surface("panel-hints.json")
+        #expect(surface.placement.opensPanel)
+        #expect(surface.panel == ExtensionUISurfacePanelHints(icon: "terminal", size: "wide"))
+        let native = try JSONDecoder().decode(
+            ExtensionUINativeSurface.self, from: ProtocolFixtures.data("surfaces/native-panel-hints.json")
+        )
+        #expect(native.presentation.panelHints == ExtensionUISurfacePanelHints(icon: "person.2", size: "narrow"))
+        // A surface without hints opens with the defaults.
+        #expect(try self.surface("status-card.json").panel == nil)
+    }
+
     @Test func decodesTheStatusCardSurface() throws {
         let surface = try surface("status-card.json")
         #expect(surface.version == 2)

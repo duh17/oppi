@@ -579,6 +579,7 @@ describe("identity module", () => {
         "extension-native-ui:v2:composites",
         "extension-native-ui:v2:blocks",
         "extension-native-ui:v2:elapsed",
+        "extension-native-ui:v2:panel",
       ],
     });
     expect(body.capabilities.workspaceFileEditing).toEqual({

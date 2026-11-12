@@ -60,6 +60,11 @@ final class PaneLeafStateViewController: UIViewController {
             open(element)
             return
         }
+        if state == .content, case .panel = entry.route {
+            // A panel shows only beside its own chat until panels can be
+            // pinned; this entry stands without it.
+            state = .chatNotShown
+        }
         // A server that just connected is asked again.
         let status = PaneEntries.connectionStatus(serverId: entry.serverId, coordinator: coordinator)
         if status == .connected, lastStatus != .connected {
@@ -100,7 +105,7 @@ final class PaneLeafStateViewController: UIViewController {
         }
         let sessionId: String
         switch entry.route {
-        case .session(let id), .file(.session(let id), _, _): sessionId = id
+        case .session(let id), .file(.session(let id), _, _), .panel(let id, _): sessionId = id
         default: return
         }
         let serverId = entry.serverId
@@ -149,6 +154,18 @@ final class PaneLeafStateViewController: UIViewController {
 
     private func closePane() {
         root.navigation.closePaneEntry(entry)
+    }
+
+    /// The panel's chat takes this entry's place, and opens the panel beside
+    /// itself as it shows.
+    private func openChat() {
+        guard case .panel(let sessionId, _) = entry.route,
+              let session = coordinator.connection(for: entry.serverId)?.sessionStore.session(id: sessionId) else { return }
+        let navigation = root.navigation
+        navigation.panes.openPanel(entry.route, beside: sessionId)
+        navigation.resolvePaneEntry(entry, with: .session(WorkspaceSessionNavTarget(
+            serverId: entry.serverId, sessionId: sessionId, workspaceId: session.workspaceId
+        )))
     }
 
     // MARK: Presentation
@@ -202,6 +219,18 @@ final class PaneLeafStateViewController: UIViewController {
                 message: String(localized: "Update Oppi to open this pane.")
             ), palette: palette)
             addCloseButton(to: &config)
+        case .chatNotShown:
+            config = .loadState(.empty(
+                title: String(localized: "Chat Not Shown"),
+                systemImage: "puzzlepiece.extension",
+                message: String(localized: "This panel shows beside its chat.")
+            ), palette: palette)
+            config.setProminentButton(String(localized: "Open Chat")) { [weak self] in self?.openChat() }
+            addCloseButton(to: &config)
+        case .waiting, .unavailable, .ended:
+            // A panel's own pane shows these beside its chat
+            // (`ExtensionPanelViewController`); an entry never resolves to them.
+            config = .loadState(.connecting, palette: palette)
         }
         return config
     }
@@ -213,6 +242,10 @@ final class PaneLeafStateViewController: UIViewController {
         config.secondaryButtonProperties.primaryAction = UIAction { [weak self] _ in self?.closePane() }
     }
 
+    var stateConfigurationForTesting: UIContentUnavailableConfiguration? {
+        stateView.configuration as? UIContentUnavailableConfiguration
+    }
+
     private static func identifier(for state: PaneLeafState) -> String {
         switch state {
         case .content, .connecting: "connecting"
@@ -220,12 +253,17 @@ final class PaneLeafStateViewController: UIViewController {
         case .missing(let content): "missing.\(content)"
         case .unreachable: "unreachable"
         case .unsupported: "unsupported"
+        case .chatNotShown: "chatNotShown"
+        case .waiting: "waiting"
+        case .unavailable: "unavailable"
+        case .ended: "ended"
         }
     }
 
     private static func title(for route: PaneRoute) -> String {
         switch route {
-        case .session, .thread, .panel: String(localized: "Session")
+        case .session, .thread: String(localized: "Session")
+        case .panel: String(localized: "Panel")
         case .file: String(localized: "File")
         case .files: String(localized: "Files")
         case .sessions: String(localized: "Sessions")

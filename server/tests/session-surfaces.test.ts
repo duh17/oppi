@@ -4,6 +4,7 @@ import {
   EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
   EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
   EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+  EXTENSION_NATIVE_UI_PANEL_CAPABILITY,
 } from "../src/extension-ui-contract.js";
 import { readExtensionUISurface } from "../src/extension-surface.js";
 import type { ExtensionUISurfaceAudience } from "../src/extension-surface-runtime.js";
@@ -318,6 +319,49 @@ describe("SessionSurfaces", () => {
     expect(pillText(resent?.surface)).toMatchObject({ text: "web → staging", style: "caption" });
   });
 
+  it("sends pane hints and a panel placement only to a client that opens panes", async () => {
+    const h = harness();
+    const read = readExtensionUISurface(JSON.parse(JSON.stringify(fixtures["panel-hints.json"])));
+    if ("problem" in read) throw new Error(read.problem);
+    const current = [
+      EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+      EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+      EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+    ];
+    h.surfaces.declare("pane-phone", [...current, EXTENSION_NATIVE_UI_PANEL_CAPABILITY]);
+    h.surfaces.declare("older-phone", current);
+    expect(h.surfaces.audience("pane-phone")).toBe("panel");
+    expect(h.surfaces.audience("older-phone")).toBe("elapsed");
+    // The answer moves the surface back to the strip and widens it: a patch the older client's
+    // copy, which never had the hints, cannot take as it is.
+    h.surfaces.publisher.publish(read.surface, async () => ({
+      patch: { "panel.size": "regular", "header.subtitle": "2 finished" },
+    }));
+
+    const forPane = h.of("extension_ui_surface", "panel")[0]?.surface;
+    const forOlder = h.of("extension_ui_surface", "elapsed")[0]?.surface;
+    expect(forPane?.placement.kind).toBe("panel");
+    expect(forPane?.panel).toEqual({ icon: "terminal", size: "wide" });
+    // An older build draws only strip surfaces: it gets this one as a strip, without the hints.
+    expect(forOlder?.placement).toEqual({ kind: "strip", preferred: "aboveComposer" });
+    expect(forOlder?.panel).toBeUndefined();
+    expect(forOlder?.sections).toEqual(forPane?.sections);
+    const handed = h.surfaces
+      .messages("older-phone")
+      .find((message) => message.type === "extension_ui_surface");
+    expect(handed?.surface.placement.kind).toBe("strip");
+
+    await h.surfaces.act(
+      tap({ surfaceId: "jobs", compositeId: "list", actionId: "refresh", revision: 7 }),
+      "pane-phone",
+    );
+    expect(h.of("extension_ui_patch", "panel")).toHaveLength(1);
+    expect(h.of("extension_ui_patch", "elapsed")).toEqual([]);
+    const resent = h.of("extension_ui_surface", "elapsed").at(-1);
+    expect(resent?.surface.header.subtitle).toBe("2 finished");
+    expect(resent?.surface.panel).toBeUndefined();
+  });
+
   it("keeps the shape a client already draws", () => {
     const h = harness();
     h.surfaces.publisher.publish(surfaceOf(), undefined);
@@ -377,7 +421,7 @@ describe("SessionSurfaces", () => {
     const before = h.frames.length;
     h.surfaces.stop();
     // Every shape a client could hold is cleared: each v2 audience and the v1 widget slot.
-    for (const audience of ["elapsed", "blocks", "composites"] as const) {
+    for (const audience of ["panel", "elapsed", "blocks", "composites"] as const) {
       expect(h.of("extension_ui_patch", audience)).toEqual([
         expect.objectContaining({ removed: true }),
       ]);
@@ -389,10 +433,10 @@ describe("SessionSurfaces", () => {
 
     // Nothing is left to fire: the deadline took its timer with it.
     vi.advanceTimersByTime(60_000);
-    expect(h.frames).toHaveLength(before + 4);
+    expect(h.frames).toHaveLength(before + 5);
     expect(h.surfaces.messages("phone")).toEqual([]);
     h.surfaces.publisher.publish(surfaceOf(), undefined);
-    expect(h.frames).toHaveLength(before + 4);
+    expect(h.frames).toHaveLength(before + 5);
     expect(h.surfaces.audience("phone")).toBe("v1-projection");
   });
 

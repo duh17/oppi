@@ -818,6 +818,33 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// A surface placed as a panel (`placement.kind: "panel"`) has no drawer: its pill opens the
+    /// surface in its pane beside the chat on a wide window, and full screen on a narrow one, under
+    /// Oppi's bar with the surface's title and subtitle.
+    func testAPanelPlacedSurfaceOpensItsPaneFromThePill() throws {
+        launch(environment: ["CHAT_ROUTES_SURFACE": "panel", "CHAT_ROUTES_REVIEW_COMMENT": "none"])
+        let pill = app.descendants(matching: .any)["extension-strip-aboveEditor-pill-surface-jobs"]
+        XCTAssertTrue(pill.waitUntilExists(timeout: 10), "The panel surface shows its pill")
+        pill.tap()
+
+        let bar = app.navigationBars["Jobs"]
+        XCTAssertTrue(bar.waitUntilExists(timeout: 5), "The pill opens the surface's pane")
+        let drawer = app.descendants(matching: .any)["extension-strip-aboveEditor-drawer-surface-jobs"]
+        XCTAssertFalse(drawer.exists, "A panel surface has no drawer")
+        XCTAssertTrue(app.staticTexts["npm test · running"].waitUntilExists(timeout: 5), "The pane draws the surface")
+        let wide = app.windows.firstMatch.horizontalSizeClass == .regular
+        XCTAssertEqual(app.collectionViews["chat.timeline"].isHittable, wide, "Beside the chat when wide, over it when narrow")
+        attachScreenshot(wide ? "panel-surface-beside-chat" : "panel-surface-full-screen")
+
+        if wide {
+            app.buttons["extensionPanel.close"].tap()
+        } else {
+            bar.buttons.firstMatch.tap()
+        }
+        XCTAssertTrue(bar.waitUntilGone(timeout: 5), "The pane closes")
+        assertRunning()
+    }
+
     /// A job card whose output block outgrows the drawer's cap: the drawer scrolls under a finger
     /// that starts on the output, the block's expand control opens its text in the reader, and the
     /// drawer's own full-screen button opens every card with its Stop button in reach.
@@ -857,12 +884,15 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         close.tap()
         XCTAssertTrue(close.waitUntilGone(timeout: 5), "Back returns to the chat")
 
-        // The drawer's full-screen button: every card, uncapped.
+        // The drawer's full-screen button: every card, uncapped. At regular width it opens the
+        // surface's panel pane beside the chat, which leaves by its Close.
         XCTAssertTrue(waitFor(fullScreen.isHittable), "The drawer is still open after the reader")
         fullScreen.tap()
-        let back = app.buttons["extension.surfaceReader.back.surface-background_2djobs"]
+        let back = app.windows.firstMatch.horizontalSizeClass == .regular
+            ? app.buttons["extensionPanel.close"]
+            : app.buttons["extension.surfaceReader.back.surface-background_2djobs"]
         XCTAssertTrue(back.waitUntilExists(timeout: 5), "The drawer's full-screen button opens the surface reader")
-        // At regular width the reader sits in the column beside the chat, whose
+        // At regular width the reader sits in the pane beside the chat, whose
         // drawer keeps its own Stop with the same identifier: ask the reader's.
         let stop = app.scrollViews["extension.surfaceReader.scroll.surface-background_2djobs"]
             .buttons["extension.surface.background_2djobs.jobs.stop_3abash_2d72"]

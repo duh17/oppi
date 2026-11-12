@@ -58,6 +58,9 @@ final class ChatScreenModel {
     /// A timeline file or commit pill shown in the attached leaf at regular
     /// width, where narrow width presents it as a modal.
     var sidePanelTimelineTarget: ChatTimelineSidePanelTarget?
+    /// An extension surface shown in its panel pane, the attached leaf, at
+    /// regular width; narrow width pushes it full screen instead.
+    var sidePanelSurfaceId: String?
     var showModelPicker = false
     /// The control that opened the picker, which its popover points at.
     @ObservationIgnored private(set) weak var modelPickerSource: UIView?

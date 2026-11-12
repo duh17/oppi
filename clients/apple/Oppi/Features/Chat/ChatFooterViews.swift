@@ -6,20 +6,20 @@ import UIKit
 // in `updateProperties()`, so UIKit observation repaints it when what it
 // shows changes; their heights follow from Auto Layout in the footer stack.
 
-private extension ChatViewController {
+extension ChatViewController {
     /// What an expanded drawer shows under rows linking to child sessions. A closed drawer
     /// reads nothing, so streaming children do not repaint the footer.
-    var drawerSessionLiveTails: [String: ConversationChildTail] {
+    fileprivate var drawerSessionLiveTails: [String: ConversationChildTail] {
         model.extensionDrawerExpanded ? sessionManager.childTails : [:]
     }
 
-    var chromeThemeID: ThemeID {
+    fileprivate var chromeThemeID: ThemeID {
         root?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
     }
 
-    /// What an extension drawer opens: this chat's links and reader. The
-    /// reader looks a native surface up by protocol id each time it renders,
-    /// so it follows the updates the drawer would show.
+    /// What an extension drawer opens: this chat's links and reader, and its
+    /// panel pane. The reader and the pane look a surface up by protocol id
+    /// each time they render, so they follow the updates the drawer would show.
     func extensionDrawerActions() -> ExtensionSurfaceDrawerActions {
         let sessionId = sessionId
         let connection = connection
@@ -42,7 +42,9 @@ private extension ChatViewController {
             sessionMenu: { [weak self] linkedId, url, rowState in
                 self?.linkedSessionMenu(linkedId, url: url, rowState: rowState)
             },
-            readerOpensBeside: opensPanelsBeside
+            readerOpensBeside: opensPanelsBeside,
+            openPanel: { [weak self] in self?.openExtensionPanel($0) },
+            focusPanel: { [weak self] in self?.focusExtensionPanel() }
         )
     }
 
@@ -268,7 +270,8 @@ final class ChatFooterAboveView: UIView {
                 themeID: themeID,
                 collapseRequestID: chat.model.extensionDrawerCollapseRequestID,
                 sessionLiveTails: chat.drawerSessionLiveTails,
-                pendingAction: chat.extensionSurface.pendingAction
+                pendingAction: chat.extensionSurface.pendingAction,
+                paneSurfaceId: chat.shownPanelSurfaceId
             ))
         }
 
@@ -522,7 +525,8 @@ final class ChatFooterBelowView: UIView {
             themeID: chat.chromeThemeID,
             collapseRequestID: chat.model.extensionDrawerCollapseRequestID,
             sessionLiveTails: chat.drawerSessionLiveTails,
-            pendingAction: chat.extensionSurface.pendingAction
+            pendingAction: chat.extensionSurface.pendingAction,
+            paneSurfaceId: chat.shownPanelSurfaceId
         ))
     }
 }

@@ -627,6 +627,8 @@ export interface SurfaceDefinition<State> {
   id: string;
   title: string;
   placement?: ExtensionUISurface["placement"];
+  /** How the surface looks in a pane: an allowed `icon` and a `size` for the pane's first width. */
+  panel?: ExtensionUISurface["panel"];
   /** `persistent` (default) survives turns; `oneShot` needs a deadline at publish time. */
   lifecycle?: ExtensionUISurface["lifecycle"];
   /** The words the host uses for an empty surface, when a view has nothing to show. */
@@ -705,6 +707,7 @@ export function surface<State>(
       id: definition.id,
       title: definition.title,
       placement: definition.placement ?? { kind: "strip" },
+      ...(definition.panel === undefined ? {} : { panel: definition.panel }),
       lifecycle: definition.lifecycle ?? "persistent",
       ...(timeoutAt === undefined ? {} : { timeoutAt }),
       header: view.header,

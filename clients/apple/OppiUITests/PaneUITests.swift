@@ -125,6 +125,36 @@ final class PaneUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// An extension surface opens in its panel pane from the pill's menu: Oppi's bar with the
+    /// surface's title and Close, the line naming where it comes from, and the chat beside it.
+    /// While the pane shows it, the pill focuses the pane instead of opening the drawer.
+    func testExtensionSurfaceOpensInItsPanelPane() throws {
+        try launchChatRoutes(environment: ["CHAT_ROUTES_SURFACE": "jobs"])
+        let pill = app.descendants(matching: .any)["extension-strip-aboveEditor-pill-surface-background_2djobs"]
+        XCTAssertTrue(pill.waitUntilExists(timeout: 10), "The jobs surface shows its pill")
+        pill.press(forDuration: 1.0)
+        let open = app.buttons["Open in Pane"]
+        XCTAssertTrue(open.waitUntilExists(timeout: 5), "The pill's menu offers Open in Pane")
+        open.tap()
+
+        let bar = app.navigationBars["Background jobs"]
+        XCTAssertTrue(bar.waitUntilExists(timeout: 5), "The panel pane did not open")
+        XCTAssertTrue(divider.waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["extensionPanel.source"].exists, "The pane names its source")
+        let stop = app.scrollViews["extension.surfaceReader.scroll.surface-background_2djobs"]
+            .buttons["extension.surface.background_2djobs.jobs.stop_3abash_2d72"]
+        XCTAssertTrue(stop.waitUntilExists(timeout: 5), "The pane draws the surface's cards with their actions")
+        assertChatBesideCompanion("extension-panel")
+
+        pill.tap()
+        let drawer = app.descendants(matching: .any)["extension-strip-aboveEditor-drawer-surface-background_2djobs"]
+        XCTAssertFalse(drawer.waitUntilExists(timeout: 1), "The pane shows the surface; its pill must not open the drawer too")
+
+        app.buttons["extensionPanel.close"].tap()
+        XCTAssertTrue(bar.waitUntilGone(timeout: 5), "Close closes the pane")
+        assertRunning()
+    }
+
     /// I5: a second link replaces the open companion, and a window that
     /// narrows to compact (Split View) presents it as the sheet it is there,
     /// not dropping it.

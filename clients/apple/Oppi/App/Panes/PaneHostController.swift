@@ -89,8 +89,10 @@ final class PaneHostController: UIViewController {
 
     /// What each leaf's screens were last told, by leaf controller: the
     /// visibility and the screens that heard it, so a screen pushed inside
-    /// a leaf later hears the current visibility once.
-    private var reported: [ObjectIdentifier: (visibility: PaneVisibility, screens: Set<ObjectIdentifier>)] = [:]
+    /// a leaf later hears the current visibility once. The screens are held
+    /// weakly by identity, so a new screen at a freed screen's address has
+    /// not heard anything. A leaf's entry goes when the leaf leaves the host.
+    private var reported: [ObjectIdentifier: (visibility: PaneVisibility, screens: NSHashTable<UIViewController>)] = [:]
 
     init(primary: UIViewController, panes: ScenePanes? = nil, parkedViewLifetime: TimeInterval = 10) {
         self.primary = primary
@@ -503,6 +505,12 @@ final class PaneHostController: UIViewController {
         focus(inCompanion ? .companion : .primary)
     }
 
+    /// The companion takes focus, as a touch in it does: its owner asked
+    /// (a tap on the pill of the panel it shows).
+    func focusCompanion() {
+        focus(.companion)
+    }
+
     private func focus(_ leaf: Leaf) {
         guard focusedLeaf != leaf, leaf == .primary || companion != nil else { return }
         focusedLeaf = leaf
@@ -548,14 +556,16 @@ final class PaneHostController: UIViewController {
     private func report(_ visibility: PaneVisibility, to leaf: UIViewController) {
         let key = ObjectIdentifier(leaf)
         let screens = PaneLeafScreens.adopters(in: leaf, as: (any PaneVisibilityObserving).self)
-        let ids = Set(screens.map { ObjectIdentifier($0) })
         let previous = reported[key]
-        guard previous?.visibility != visibility || previous?.screens != ids else { return }
-        reported[key] = (visibility, ids)
         // A changed visibility reaches every screen; an unchanged one only a
         // screen that has not heard it (pushed since).
-        let heard = previous?.visibility == visibility ? previous?.screens ?? [] : []
-        for screen in screens where !heard.contains(ObjectIdentifier(screen)) {
+        let heard = previous?.visibility == visibility ? previous?.screens : nil
+        let unheard = screens.filter { heard?.contains($0) != true }
+        guard previous?.visibility != visibility || !unheard.isEmpty else { return }
+        let current = NSHashTable<UIViewController>.weakObjects()
+        for screen in screens { current.add(screen) }
+        reported[key] = (visibility, current)
+        for screen in unheard {
             screen.paneVisibilityDidChange(visibility)
         }
     }

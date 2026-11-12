@@ -21,7 +21,9 @@ import {
 import {
   extensionUISurfacePillUsesHeadline,
   extensionUISurfaceUsesElapsed,
+  extensionUISurfaceUsesPanelHints,
   withPillHeadlinesAsCaption,
+  withoutPanelHints,
   withStaticElapsed,
 } from "./extension-surface-projection.js";
 import type {
@@ -48,17 +50,20 @@ import type {
  */
 
 /**
- * What a client draws, named by the newest capability it declared. `elapsed` draws every node
- * kind; `blocks` draws a tree but predates the elapsed node and the strip's pill type sizes, so it
+ * What a client draws, named by the newest capability it declared. `panel` draws every node kind
+ * and opens a surface in a pane, so it alone is sent a surface's `panel` hints and a `panel`
+ * placement; every other audience gets the surface without them, placed as `strip`
+ * (`withoutPanelHints`). `elapsed` draws every node kind; `blocks` draws a tree but predates the elapsed node and the strip's pill type sizes, so it
  * is sent each elapsed node as static text and a pill's `headline` as `caption`
  * (`surfaceForAudience`); `composites` draws only the closed set, so it gets the v1 projection of
  * a surface that uses a tree; and a client that has said nothing draws v1 widgets, as every client
  * did before surfaces existed.
  */
-export type ExtensionUISurfaceAudience = "elapsed" | "blocks" | "composites" | "v1-projection";
+export type ExtensionUISurfaceAudience =
+  "panel" | "elapsed" | "blocks" | "composites" | "v1-projection";
 
 /** The audiences that draw a tree of primitives. */
-const TREE_AUDIENCES: readonly ExtensionUISurfaceAudience[] = ["elapsed", "blocks"];
+const TREE_AUDIENCES: readonly ExtensionUISurfaceAudience[] = ["panel", "elapsed", "blocks"];
 
 /** Every audience; the filters over it keep this order, so each emitted list is stable. */
 const ALL_AUDIENCES: readonly ExtensionUISurfaceAudience[] = [
@@ -92,18 +97,27 @@ function rewritesForBlocks(surface: ExtensionUISurface): boolean {
   return extensionUISurfaceUsesElapsed(surface) || extensionUISurfacePillUsesHeadline(surface);
 }
 
+/** Whether this audience is sent a rewritten copy of this surface rather than the surface itself. */
+function rewritesFor(audience: ExtensionUISurfaceAudience, surface: ExtensionUISurface): boolean {
+  if (audience === "panel") return false;
+  if (extensionUISurfaceUsesPanelHints(surface)) return true;
+  return audience === "blocks" && rewritesForBlocks(surface);
+}
+
 /**
- * A surface in the shape this audience draws. Only `blocks` needs a copy: a node kind newer than
- * its build becomes the static shape it can draw, formatted at `now`, and a pill's `headline`
- * becomes the `caption` it draws at the strip's size. Any other surface is returned as it is.
+ * A surface in the shape this audience draws. Every audience but `panel` loses the pane hints.
+ * `blocks` also gets a node kind newer than its build as the static shape it can draw, formatted
+ * at `now`, and a pill's `headline` as the `caption` it draws at the strip's size. A surface that
+ * needs none of that is returned as it is.
  */
 export function surfaceForAudience(
   surface: ExtensionUISurface,
   audience: ExtensionUISurfaceAudience,
   now: number,
 ): ExtensionUISurface {
-  if (audience !== "blocks") return surface;
-  let shaped = surface;
+  if (!rewritesFor(audience, surface)) return surface;
+  let shaped = extensionUISurfaceUsesPanelHints(surface) ? withoutPanelHints(surface) : surface;
+  if (audience !== "blocks") return shaped;
   if (extensionUISurfaceUsesElapsed(shaped)) shaped = withStaticElapsed(shaped, now);
   if (extensionUISurfacePillUsesHeadline(shaped)) shaped = withPillHeadlinesAsCaption(shaped);
   return shaped;
@@ -555,16 +569,19 @@ export class ExtensionSurfaceRuntime {
   /**
    * Whether a patch can reach this audience as it is. A client that holds a rewritten copy cannot
    * apply a patch written against the original: an elapsed node's `since` would land on a text
-   * node and change nothing, and a patch can write a pill `headline` back in. Such a client is
-   * sent the whole surface again instead.
+   * node and change nothing, a patch can write a pill `headline` back in, and a patch can write
+   * pane hints into a copy that left them out. Such a client is sent the whole surface again
+   * instead.
    */
   private patchReaches(
     audience: ExtensionUISurfaceAudience,
     previous: ExtensionUISurface | undefined,
     next: ExtensionUISurface,
   ): boolean {
-    if (audience !== "blocks") return true;
-    return !(rewritesForBlocks(next) || (previous !== undefined && rewritesForBlocks(previous)));
+    return !(
+      rewritesFor(audience, next) ||
+      (previous !== undefined && rewritesFor(audience, previous))
+    );
   }
 
   /**
@@ -613,7 +630,7 @@ export class ExtensionSurfaceRuntime {
         buildExtensionUINotificationMessage(extensionUISurfaceProjectionClearRequest(surfaceId)),
         "composites",
       );
-      this.options.emit(buildExtensionUISurfaceMessage(this.options.sessionId, next), "composites");
+      this.emitWhole(next, "composites");
     }
     if (!wasBlocks && usesBlocks) {
       // The card this client holds cannot show a tree: clear it, the projection below replaces it.

@@ -49,6 +49,13 @@ struct ExtensionUINativePresentation: Sendable, Equatable, Decodable {
     let style: String
     let title: String?
     let subtitle: String?
+    /// The pane hints a classic widget may give (`ExtensionUISurfacePanelHints`).
+    var icon: String? = nil
+    var size: String? = nil
+
+    var panelHints: ExtensionUISurfacePanelHints? {
+        icon == nil && size == nil ? nil : ExtensionUISurfacePanelHints(icon: icon, size: size)
+    }
 }
 
 struct ExtensionUINativeFallback: Sendable, Equatable, Decodable {

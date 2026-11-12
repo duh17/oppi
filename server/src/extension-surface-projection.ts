@@ -94,6 +94,22 @@ export function withPillHeadlinesAsCaption(surface: ExtensionUISurface): Extensi
   return { ...surface, pill: { ...pill, content: { ...pill.content, children } } };
 }
 
+/** Does the surface carry pane hints: a `panel` placement or `panel` icon and size? */
+export function extensionUISurfaceUsesPanelHints(surface: ExtensionUISurface): boolean {
+  return surface.panel !== undefined || surface.placement.kind === "panel";
+}
+
+/**
+ * The surface for a client that predates panel panes: no `panel` hints, and a `panel` placement
+ * sent as `strip`. Those builds draw only `strip` surfaces, so a `panel` one would vanish; as a
+ * strip its pill opens the drawer and the drawer's full screen, as before. Call only when
+ * `extensionUISurfaceUsesPanelHints`.
+ */
+export function withoutPanelHints(surface: ExtensionUISurface): ExtensionUISurface {
+  const { panel: _panel, ...rest } = surface;
+  return { ...rest, placement: { ...surface.placement, kind: "strip" } };
+}
+
 function elapsedAsText(
   node: ExtensionUISurfaceElapsedNode,
   now: number,

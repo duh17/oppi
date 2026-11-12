@@ -410,7 +410,13 @@ export type ExtensionUINativeBlock =
       truncated?: boolean;
     });
 
-export interface ExtensionUINativePresentation {
+/** Pane hints: an allow-listed SF Symbol, and the width that sets only the pane's first width. */
+export interface ExtensionUISurfacePanelHints {
+  icon?: string;
+  size?: "narrow" | "regular" | "wide";
+}
+
+export interface ExtensionUINativePresentation extends ExtensionUISurfacePanelHints {
   style: "surfacePanel";
   title?: string;
   subtitle?: string;
@@ -763,8 +769,8 @@ export interface ExtensionUISurfacePill {
 export type ExtensionUISurfaceCompositeKind = ExtensionUISurfaceSection["composite"];
 
 export interface ExtensionUISurfacePlacement {
-  /** Slice 1 draws `strip` only: a pill that opens the drawer. */
-  kind: "strip";
+  /** `strip`: the pill opens the drawer. `panel`: it opens the pane (older clients get `strip`). */
+  kind: "strip" | "panel";
   preferred?: "aboveComposer" | "belowComposer";
 }
 
@@ -777,6 +783,7 @@ export interface ExtensionUISurface {
   id: string;
   title: string;
   placement: ExtensionUISurfacePlacement;
+  panel?: ExtensionUISurfacePanelHints;
   lifecycle: "persistent" | "oneShot";
   /** `oneShot` only, required there: epoch milliseconds the surface settles by. */
   timeoutAt?: number;

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "id": "widget:agents",
+  "source": "widget",
+  "presentation": {
+    "style": "surfacePanel",
+    "title": "Agents",
+    "subtitle": "1 running",
+    "icon": "person.2",
+    "size": "narrow"
+  },
+  "blocks": [
+    {
+      "type": "text",
+      "id": "summary",
+      "spans": [
+        {
+          "text": "1 agent running"
+        }
+      ]
+    }
+  ],
+  "fallback": {
+    "text": "1 agent running"
+  }
+}

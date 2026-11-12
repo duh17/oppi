@@ -59,4 +59,19 @@ struct PaneLeafStateTests {
         #expect(resolve(web, .connected, .present) == .unsupported)
         #expect(resolve(web, .removed, .unknown) == .unsupported)
     }
+
+    /// SD2 and the panel states of §1.11: a panel its session has not
+    /// published waits while the session works and is unavailable once it
+    /// rests; one it cleared, or whose session ended, has ended; and until
+    /// panels can be pinned, a panel stands only beside its own chat.
+    @Test func aPanelLeafFollowsItsSurfaceAndItsSession() {
+        #expect(PaneLeafState.panel(surface: .published, session: .busy, chatShown: true) == .content)
+        #expect(PaneLeafState.panel(surface: .published, session: .idle, chatShown: true) == .content)
+        #expect(PaneLeafState.panel(surface: .published, session: .ended, chatShown: true) == .ended)
+        #expect(PaneLeafState.panel(surface: .cleared, session: .busy, chatShown: true) == .ended)
+        #expect(PaneLeafState.panel(surface: .notPublished, session: .busy, chatShown: true) == .waiting)
+        #expect(PaneLeafState.panel(surface: .notPublished, session: .idle, chatShown: true) == .unavailable)
+        #expect(PaneLeafState.panel(surface: .notPublished, session: .ended, chatShown: true) == .unavailable)
+        #expect(PaneLeafState.panel(surface: .published, session: .busy, chatShown: false) == .chatNotShown)
+    }
 }

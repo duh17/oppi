@@ -28,4 +28,10 @@ enum ClientCapability {
     /// the node draws it as unsupported, and a pill's `headline` as `caption`, because it draws a
     /// pill's `headline` at a card title's size.
     static let extensionNativeUIElapsed = "extension-native-ui:v2:elapsed"
+
+    /// `extension-native-ui:v2:panel`: this build opens a surface in a pane beside its chat
+    /// (`ExtensionPanelViewController`), reads a surface's `panel` hints, and draws a `panel`
+    /// placement's pill as the way into that pane. A client that does not name it is sent each
+    /// surface without the hints and placed as `strip`.
+    static let extensionNativeUIPanel = "extension-native-ui:v2:panel"
 }

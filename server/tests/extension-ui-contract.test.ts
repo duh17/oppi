@@ -139,6 +139,7 @@ describe("extension UI contract", () => {
       "extension-native-ui:v2:composites",
       "extension-native-ui:v2:blocks",
       "extension-native-ui:v2:elapsed",
+      "extension-native-ui:v2:panel",
     ]);
     expect([...EXTENSION_NATIVE_UI_RENDER_NATIVE_CAPABILITIES]).toEqual([
       "extension-native-ui:v1:text-fallback",

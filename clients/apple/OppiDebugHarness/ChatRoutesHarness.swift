@@ -19,6 +19,8 @@ import UIKit
 /// space above the composer. `chatRoutes.surfaceActions` lists the surface
 /// actions the chat sent over its socket. `CHAT_ROUTES_SURFACE=jobs` publishes the Background jobs
 /// surface with one running job and a long output block (`ChatRoutesJobsSurface`).
+/// `CHAT_ROUTES_SURFACE=panel` publishes a surface placed as a panel, with pane hints (the shape
+/// of `protocol/surfaces/panel-hints.json`), whose pill opens its pane with no drawer.
 /// `CHAT_ROUTES_NATIVE_WIDGET_FILE=<path>` publishes a version 1 native widget read from that file
 /// (`ChatRoutesNativeWidget`).
 /// `CHAT_ROUTES_SURFACE_FILE=<path>[,<path>...]` publishes the
@@ -416,6 +418,8 @@ enum ChatRoutesFixture {
             [Data(tallSurfaceJSON.utf8)]
         } else if environment["CHAT_ROUTES_SURFACE"] == "jobs" {
             [Data(ChatRoutesJobsSurface.json.utf8)]
+        } else if environment["CHAT_ROUTES_SURFACE"] == "panel" {
+            [Data(panelSurfaceJSON.utf8)]
         } else {
             []
         }
@@ -434,6 +438,17 @@ enum ChatRoutesFixture {
     static let tallSurfaceId = "query"
     static let tallSurfaceActionsCardId = "actions"
     static let tallSurfaceActionId = "again"
+
+    private static let panelSurfaceJSON = #"""
+    {"version":2,"id":"jobs","title":"Jobs","placement":{"kind":"panel","preferred":"aboveComposer"},
+     "panel":{"icon":"terminal","size":"wide"},"lifecycle":"persistent",
+     "header":{"title":"Jobs","subtitle":"1 running · 2 finished"},
+     "sections":[{"composite":"blocks","id":"list","state":{"kind":"content"},"actions":["refresh"],
+       "fallback":{"text":"1 job running"},
+       "body":{"type":"stack","children":[{"type":"text","text":"npm test · running"}]}}],
+     "actions":{"refresh":{"title":"Refresh"}},"fallback":{"text":"1 job running"},"revision":7,
+     "extensionScopeId":"npm:deploy-helper","extensionDisplayName":"Deploy Helper"}
+    """#
 
     private static var tallSurfaceJSON: String {
         let rows = (1...14).map { index in

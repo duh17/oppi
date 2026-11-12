@@ -8,6 +8,8 @@ struct ExtensionUISurface: Sendable, Equatable, Identifiable, Codable {
     let id: String
     let title: String
     let placement: ExtensionUISurfacePlacement
+    /// How the surface asks to look in a pane; nil uses the host's defaults.
+    let panel: ExtensionUISurfacePanelHints?
     let lifecycle: String
     /// `oneShot` only: epoch milliseconds by which the surface settles.
     let timeoutAt: Double?
@@ -54,6 +56,7 @@ struct ExtensionUISurface: Sendable, Equatable, Identifiable, Codable {
         id = try c.decode(String.self, forKey: .id)
         title = try c.decode(String.self, forKey: .title)
         placement = try c.decode(ExtensionUISurfacePlacement.self, forKey: .placement)
+        panel = (try? c.decodeIfPresent(ExtensionUISurfacePanelHints.self, forKey: .panel)) ?? nil
         lifecycle = (try? c.decode(String.self, forKey: .lifecycle)) ?? "persistent"
         timeoutAt = (try? c.decodeIfPresent(Double.self, forKey: .timeoutAt)) ?? nil
         header = try c.decode(ExtensionUISurfaceHeader.self, forKey: .header)
@@ -72,7 +75,7 @@ struct ExtensionUISurface: Sendable, Equatable, Identifiable, Codable {
     }
 
     private enum Keys: String, CodingKey {
-        case version, id, title, placement, lifecycle, timeoutAt, header, pill, sections, actions
+        case version, id, title, placement, panel, lifecycle, timeoutAt, header, pill, sections, actions
         case fallback, revision, extensionScopeId, extensionDisplayName, publishedAt
     }
 }
@@ -80,6 +83,29 @@ struct ExtensionUISurface: Sendable, Equatable, Identifiable, Codable {
 struct ExtensionUISurfacePlacement: Sendable, Equatable, Codable {
     let kind: String
     let preferred: String?
+
+    /// The pill opens the surface's pane, with no drawer (`kind: "panel"`).
+    var opensPanel: Bool { kind == "panel" }
+}
+
+/// A surface's pane hints (`panel` on a v2 surface, the same two fields on a v1 presentation).
+/// The app reads them for the pane's glyph and first width only.
+struct ExtensionUISurfacePanelHints: Sendable, Equatable, Codable {
+    /// An SF Symbol name from the server's allow-list.
+    let icon: String?
+    /// `narrow`, `regular` or `wide`; anything else reads as `regular`.
+    let size: String?
+
+    init(icon: String?, size: String?) {
+        self.icon = icon
+        self.size = size
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        icon = (try? c.decodeIfPresent(String.self, forKey: .icon)) ?? nil
+        size = (try? c.decodeIfPresent(String.self, forKey: .size)) ?? nil
+    }
 }
 
 struct ExtensionUISurfaceHeader: Sendable, Equatable, Codable {

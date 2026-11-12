@@ -302,8 +302,11 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         let fullScreenButton = app.buttons["extension.strip.fullScreen.aboveEditor"]
         tap(fullScreenButton, named: "native surface full-screen button", timeout: 5)
 
-        // Then the native surface opens in the chat reader, which pushes the detail with Back chrome.
-        let detailBackButton = app.buttons["extension-native-surface-\(identifierSuffix)-detail-back"]
+        // Then the native surface opens in the chat reader, which pushes the detail with Back chrome;
+        // at regular width it opens in its panel pane beside the chat, which leaves by Close.
+        let detailBackButton = app.windows.firstMatch.horizontalSizeClass == .regular
+            ? app.buttons["extensionPanel.close"]
+            : app.buttons["extension-native-surface-\(identifierSuffix)-detail-back"]
         XCTAssertTrue(
             detailBackButton.waitForExistence(timeout: 5),
             "Tapping Full Screen on an expanded native surface should open full-screen detail"

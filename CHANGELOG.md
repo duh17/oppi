@@ -82,6 +82,7 @@ The file reader gets Org folding and badges, heading links, Outline and Find, ta
 - **Server:** The command list of a durable session includes `/compact` and `/share`.
 - **Server:** A durable session's `read` tool also reads internal URLs: a child session's answer (`agent://`), a transcript from the same workspace (`history://`), a background job's output (`proc://`), an MCP resource (`mcp://`), and a file or folder over the server account's `ssh` (`ssh://`). See [Durable Sessions](docs/usage.md#durable-sessions).
 - **Client/Server:** Extension authors can publish composable surfaces: panels and strip pills built from blocks (rows, text, badges, tables, charts, code, buttons, toggles, menus, and live elapsed timers) that the app draws natively and whose taps reach the plugin. Clients that cannot draw them get a v1 widget. See [Composable surfaces](docs/extension-native-ui.md#composable-surfaces-version-2).
+- **Client/Server:** On iPad, any extension surface opens in its own pane beside its chat, from the drawer's full-screen button, **Open in Pane** in the pill's menu, or an `oppi://panel` link. The pane follows updates and returns after a relaunch. Extensions can give it an icon and a width, or open it straight from the pill with no drawer. See [Panel panes](docs/extension-native-ui.md#panel-panes).
 
 ### Changed
 

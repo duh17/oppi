@@ -161,9 +161,9 @@ struct ExtensionSurfaceState: Equatable, Sendable {
         let hasStatuses = !statuses.isEmpty
         let hasWidgets = widgets.values.contains { !$0.lines.isEmpty }
         let hasNativeSurfaces = nativeSurfaces.values.contains { $0.hasVisibleContent }
-        // Only the placement this build draws (the strip) makes the panel visible; a surface for a
-        // presentation that arrives in a later slice stays in state without drawing anything.
-        let hasComposableSurfaces = composableSurfaces.values.contains { $0.surface.placement.kind == "strip" }
+        // Only the placements this build draws (a strip pill, or a pill into its pane) make the
+        // panel visible; a surface for a placement from a later build stays in state, undrawn.
+        let hasComposableSurfaces = composableSurfaces.values.contains { Self.drawsPill($0.surface.placement) }
         return hasTitle || hasStatuses || hasWidgets || hasNativeSurfaces || hasComposableSurfaces
     }
 
@@ -198,6 +198,11 @@ struct ExtensionSurfaceState: Equatable, Sendable {
         dismissedComposableSurfaces.removeAll { $0.surfaceId == surfaceId }
     }
 
+    /// A `strip` surface's pill opens its drawer; a `panel` surface's pill opens its pane.
+    private static func drawsPill(_ placement: ExtensionUISurfacePlacement) -> Bool {
+        placement.kind == "strip" || placement.opensPanel
+    }
+
     mutating func nextWidgetOrder() -> Int {
         widgetOrderCursor += 1
         return widgetOrderCursor
@@ -207,7 +212,7 @@ struct ExtensionSurfaceState: Equatable, Sendable {
     func composableSurfaceEntries(in placement: ExtensionSurfacePlacementGroup) -> [ExtensionComposableSurfaceState] {
         composableSurfaces.values
             .filter { entry in
-                entry.surface.placement.kind == "strip"
+                Self.drawsPill(entry.surface.placement)
                     && placement.includes(composablePlacement: entry.surface.placement.preferred)
             }
             .sorted { lhs, rhs in

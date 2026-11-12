@@ -4,6 +4,7 @@ import {
   EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
   EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
   EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+  EXTENSION_NATIVE_UI_PANEL_CAPABILITY,
 } from "./extension-ui-contract.js";
 import {
   extensionUISurfaceProjectionClearRequest,
@@ -26,8 +27,10 @@ import type {
 
 /** What a capability list says this client draws: the strongest shape it names. */
 function declaredAudience(capabilities: readonly string[]): ExtensionUISurfaceAudience {
-  if (capabilities.includes(EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY))
-    return capabilities.includes(EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY) ? "elapsed" : "blocks";
+  if (capabilities.includes(EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY)) {
+    if (!capabilities.includes(EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY)) return "blocks";
+    return capabilities.includes(EXTENSION_NATIVE_UI_PANEL_CAPABILITY) ? "panel" : "elapsed";
+  }
   if (capabilities.includes(EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY)) return "composites";
   return "v1-projection";
 }
@@ -38,6 +41,7 @@ const AUDIENCE_RANK: Record<ExtensionUISurfaceAudience, number> = {
   composites: 1,
   blocks: 2,
   elapsed: 3,
+  panel: 4,
 };
 
 /**
