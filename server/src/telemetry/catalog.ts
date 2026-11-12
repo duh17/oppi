@@ -642,6 +642,7 @@ const OPT_COUNT = { unit: "count", optional: true } as const;
 const OPT_MS = { unit: "ms", optional: true } as const;
 const OPT_MB = { unit: "mb", optional: true } as const;
 const OPT_BOOL = { unit: "bool", optional: true } as const;
+const FOOTPRINT_CHANGE = { footprint_before_mb: OPT_MB, footprint_after_mb: OPT_MB } as const;
 
 /** The longest plausible screen load; a longer sample is an abandoned visit. */
 const LOAD_CEILING_MS = 60_000;
@@ -979,6 +980,12 @@ const EVENTS = {
     },
     spansBackground: true,
   },
+  "app.file_open": {
+    description: "What did showing a file in the viewer cost in time and memory, by kind and size?",
+    group: "rendering",
+    fields: { duration_ms: "ms", ...FOOTPRINT_CHANGE },
+    tags: { content_type: { required: true }, input_size: { required: true } },
+  },
   "app.terminal_scroll_visit": {
     description:
       "How smoothly did scrolling run in one SSH terminal visit (every gesture, finger down through coasting, summed)?",
@@ -1273,12 +1280,7 @@ const EVENTS = {
   "app.memory_warning": {
     description: "How large was the app when iOS sent a memory warning, and what did it free?",
     group: "device",
-    fields: {
-      footprint_before_mb: OPT_MB,
-      footprint_after_mb: OPT_MB,
-      cache_entries: "count",
-      cache_bytes: "bytes",
-    },
+    fields: { ...FOOTPRINT_CHANGE, cache_entries: "count", cache_bytes: "bytes" },
     tags: { screen: {} },
   },
   "app.foreground": {

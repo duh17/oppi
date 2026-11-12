@@ -440,7 +440,7 @@ enum FlatSegment: Sendable {
             sourceLineRanges: blocks.map(\.lineRange),
             mergeAdjacentTextSegments: mergeAdjacentTextSegments,
             splitsAtHeadings: splitsAtHeadings
-        )
+        ).boundingTextSegments()
     }
 
     private static func buildResult(

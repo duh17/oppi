@@ -1987,6 +1987,50 @@ struct AppDiffReaderSession: TelemetryEvent {
     }
 }
 
+/// What did showing a file in the viewer cost in time and memory, by kind and size?
+struct AppFileOpen: TelemetryEvent {
+    static let name = "app.file_open"
+
+    let durationMs: Double
+    let footprintBeforeMb: Double?
+    let footprintAfterMb: Double?
+    let contentType: String
+    let inputSize: TelemetryTag.InputSize
+
+    init(
+        durationMs: Double,
+        footprintBeforeMb: Double? = nil,
+        footprintAfterMb: Double? = nil,
+        contentType: String,
+        inputSize: TelemetryTag.InputSize
+    ) {
+        self.durationMs = durationMs
+        self.footprintBeforeMb = footprintBeforeMb
+        self.footprintAfterMb = footprintAfterMb
+        self.contentType = contentType
+        self.inputSize = inputSize
+    }
+
+    var fieldValues: [String: Double] {
+        var values: [String: Double] = [:]
+        values["duration_ms"] = durationMs
+        if let footprintBeforeMb { values["footprint_before_mb"] = footprintBeforeMb }
+        if let footprintAfterMb { values["footprint_after_mb"] = footprintAfterMb }
+        return values
+    }
+
+    var passesEmitPolicy: Bool {
+        true
+    }
+
+    var tagValues: [String: String] {
+        var values: [String: String] = [:]
+        values["content_type"] = TelemetryName.sanitize(contentType)
+        values["input_size"] = inputSize.rawValue
+        return values
+    }
+}
+
 /// How smoothly did scrolling run in one SSH terminal visit (every gesture, finger down through coasting, summed)?
 struct AppTerminalScrollVisit: TelemetryEvent {
     static let name = "app.terminal_scroll_visit"

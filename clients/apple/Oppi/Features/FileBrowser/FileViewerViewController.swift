@@ -873,7 +873,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         do {
             if let renderer = FileRendererRegistry.renderer(for: requestedCategory) {
                 guard let rendered = try await renderer.load(renderInput(api: api, path: requestedPath)) else { return }
-                content = .rendered(rendered, path: requestedPath)
+                showMeasured(.rendered(rendered, path: requestedPath), bytes: requestedSelection.size) {
+                    "\(requestedCategory)"
+                }
                 await rendered.finishLoading()
                 return
             }
@@ -888,8 +890,10 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
                     loadedHostFilePath = resolvedHostPath
                 }
                 if let text = readerText(data: data, editedText: editedText, path: requestedPath) {
-                    content = .text(text)
                     loadedTextPath = requestedPath
+                    showMeasured(.text(text), bytes: data.count) {
+                        FullScreenCodeContent.fromText(text, filePath: requestedPath).kindName
+                    }
                     return
                 }
                 // Bytes the reader cannot show open as the category their path
@@ -903,6 +907,35 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         } catch {
             guard isCurrentFile(requestedPath) else { return }
             content = .error(error.localizedDescription)
+        }
+    }
+
+    /// Shows a freshly read file and records `app.file_open`: how long mounting
+    /// and laying it out took, and the footprint before and 2 s after, once its
+    /// drawing and any deferred render have landed. A file of unknown size, or
+    /// one the person left within those 2 s, is not recorded. No path or name
+    /// leaves the device: only the shown kind and a size bucket.
+    private func showMeasured(_ loaded: Phase, bytes: Int?, kind: () -> String) {
+        let footprintBefore = AppDiagnosticsService.currentFootprintMB()
+        let start = ContinuousClock.now
+        content = loaded
+        updatePropertiesIfNeeded()
+        view.layoutIfNeeded()
+        let elapsed = start.duration(to: .now).components
+        let durationMs = Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15
+        guard let bytes else { return }
+        let kind = kind()
+        let path = currentFilePath
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, currentFilePath == path, content == loaded else { return }
+            Telemetry.record(AppFileOpen(
+                durationMs: durationMs,
+                footprintBeforeMb: footprintBefore.map(Double.init),
+                footprintAfterMb: AppDiagnosticsService.currentFootprintMB().map(Double.init),
+                contentType: kind,
+                inputSize: TelemetryTag.InputSize(bytes: bytes)
+            ))
         }
     }
 

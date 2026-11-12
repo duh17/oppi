@@ -592,7 +592,8 @@ struct MarkdownReaderRenderAheadContractTests {
     @MainActor
     @Test("a non-scrolling inline reader lays out one viewport of a long text segment, a scrolling reader all of it")
     func inlineReaderTrimsLongTextToViewport() throws {
-        let content = (1...80).map { index in
+        // One merged text segment, still under `textSegmentCharacterLimit`.
+        let content = (1...60).map { index in
             "## Section \(index)\n\n- first point \(index)\n- second point \(index)\n\nParagraph \(index) explains the section at some length so that it wraps."
         }.joined(separator: "\n\n")
 
