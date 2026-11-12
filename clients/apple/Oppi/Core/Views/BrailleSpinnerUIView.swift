@@ -10,7 +10,7 @@ final class BrailleSpinnerUIView: UIView {
 
     // MARK: - Configuration
 
-    private static let brailleFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    static let brailleFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
     /// Tick interval in seconds.
     static let tickInterval: TimeInterval = 0.16

@@ -3,14 +3,14 @@ import UIKit
 // MARK: - Inbox thread strip
 
 /// Thread control under a thread root row: a blocked child by name, a dot for each
-/// active member, the Agent summary, and the status counts with the cost. The
-/// list makes it the tap target that folds the thread's child rows open or
+/// member that needs you or is in error, the working mark, the Agent summary, and
+/// the status counts with the cost. The list makes it the tap target that folds the thread's child rows open or
 /// closed; the root row above it opens the root chat. The chevron turns down
 /// while the thread is open.
 ///
-/// The strip describes the children only: the dots, the status counts, the Agent
-/// summary, and the VoiceOver child count all cover the thread's other sessions,
-/// so they add up. The root row above already shows its own status. Both the dots
+/// The strip describes the children only: the status marks, the status counts, the
+/// Agent summary, and the VoiceOver child count all cover the thread's other sessions,
+/// so they add up. The root row above already shows its own status. Both the marks
 /// and the counts read the list's own classification of a member, without this
 /// device's seen state, so the stopped count is the count of the thread's stopped
 /// fold and opening a member never changes the strip.
@@ -18,11 +18,11 @@ import UIKit
 /// The strip starts a line only for what the thread needs. It names a blocked
 /// child, so the person knows where to answer, and never lists the working ones,
 /// which the counts already name. Display choices only hide the Agent summary and
-/// the cost total. The chevron, a blocked child, the dots, and the status counts
+/// the cost total. The chevron, a blocked child, the marks, and the status counts
 /// always stay.
 ///
 /// A thread with nothing active, working, or in error draws one line: the counts,
-/// the Agents, and the chevron. While a member is active the strip adds its dot
+/// the Agents, and the chevron. While a member is active the strip adds its status
 /// line, and a blocked child adds its line above it, so no state holds an empty
 /// line. The row changes height only when a child becomes blocked, or when the
 /// thread's first member wakes or its last one settles, never as a member moves
@@ -57,13 +57,13 @@ final class SessionThreadStripView: UIControl {
     private let stack = UIStackView()
     private let headline = UILabel()
     private let statusRow = SessionThreadStatusRow()
-    private var dots: SessionThreadStatusDotsView { statusRow.dots }
+    private var marks: SessionThreadStatusMarksView { statusRow.marks }
     private var agents: SessionThreadAgentClusterView { statusRow.agents }
     private let footer = SessionThreadCountsLine()
     private var summaryLabel: SessionThreadSummaryLabel { footer.summary }
     private var chevron: UIImageView { footer.chevron }
     private var verticalPadding: [NSLayoutConstraint] = []
-    /// The counts line holds the Agents while the thread is settled; the dot line holds them while active.
+    /// The counts line holds the Agents while the thread is settled; the status line holds them while active.
     private var agentsAreSettled: Bool?
     private var isSettled = false
     private var summary = ""
@@ -110,7 +110,7 @@ final class SessionThreadStripView: UIControl {
 
         let statusSummary = SessionThreadStripSummary(rollup: rollup, classify: content.classification)
         // The strip draws a line only while that line has something to say: the blocked child's line, the
-        // dots of an active thread, and always the counts.
+        // status line of an active thread, and always the counts.
         isSettled = !statusSummary.isActive
         placeAgents(settled: isSettled)
         let blockedMember = content.blockedMember
@@ -128,7 +128,9 @@ final class SessionThreadStripView: UIControl {
             headline.attributedText = nil
         }
 
-        dots.apply(statusSummary.dots, hiddenCount: statusSummary.hiddenDotCount, style: style)
+        marks.apply(
+            statusSummary.dots, hiddenCount: statusSummary.hiddenDotCount, working: statusSummary.workingCount, style: style
+        )
 
         let showsAgents = display.showsThreadAgentSummary && !content.hidesDetails
         agents.setHiddenIfChanged(!showsAgents)
@@ -147,8 +149,8 @@ final class SessionThreadStripView: UIControl {
         if let cost { parts.append(cost) }
         summary = parts.joined(separator: " · ")
         // The line draws the counts, then the cost, then the spacer, the Agents, and the chevron. The counts
-        // hold only what the dots do not already draw (the summary's quiet counts), so an active thread names
-        // its idle and stopped members here and leaves working, needs you, and error to the dots. The cost
+        // hold only what the marks do not already draw (the summary's quiet counts), so an active thread names
+        // its idle and stopped members here and leaves working, needs you, and error to the marks. The cost
         // keeps its own room beside them, the cross-workspace note goes first, and only then does the tail
         // truncate. VoiceOver (above) always hears every bucket.
         summaryLabel.setCounts(
@@ -181,7 +183,7 @@ final class SessionThreadStripView: UIControl {
             : String(localized: "Shows the thread's sessions")
     }
 
-    /// The Agents sit on the dot line while a member is active, where the dots leave them the whole width,
+    /// The Agents sit on the status line while a member is active, where the marks leave them the whole width,
     /// and join the counts line once the thread settles, so a settled strip stays one line. They move only
     /// when the thread wakes or settles, never as a member changes state.
     private func placeAgents(settled: Bool) {
@@ -198,14 +200,14 @@ final class SessionThreadStripView: UIControl {
 
 // MARK: - Status row
 
-/// The strip's dots on the left and, while a member is active, the Agents on the right. The dots keep
-/// their width; the Agents take what is left and drop trailing groups to fit, so the row never overflows.
+/// The strip's status marks on the left and, while a member is active, the Agents on the right. The marks
+/// keep their width; the Agents take what is left and drop trailing groups to fit, so the row never overflows.
 final class SessionThreadStatusRow: UIStackView {
-    /// The least room the row keeps between the dots and the Agents. `layoutSubviews` fits the Agents in
+    /// The least room the row keeps between the marks and the Agents. `layoutSubviews` fits the Agents in
     /// what is left after it, so the spacer and the fit read the same number.
     private static let spacerMinWidth: CGFloat = 4
 
-    let dots = SessionThreadStatusDotsView()
+    let marks = SessionThreadStatusMarksView()
     let agents = SessionThreadAgentClusterView()
 
     init() {
@@ -213,7 +215,7 @@ final class SessionThreadStatusRow: UIStackView {
         axis = .horizontal
         alignment = .center
         spacing = 8
-        [dots, SessionRowSpacer(minWidth: Self.spacerMinWidth), agents].forEach(addArrangedSubview)
+        [marks, SessionRowSpacer(minWidth: Self.spacerMinWidth), agents].forEach(addArrangedSubview)
     }
 
     @available(*, unavailable)
@@ -224,7 +226,7 @@ final class SessionThreadStatusRow: UIStackView {
         // trailing groups fold into "+N". Fitting first hides them in this same pass, so the row never lays
         // out over-wide against its required width. A settled thread hosts the Agents on its counts line.
         if agents.superview === self, !agents.isHidden {
-            agents.fit(maxWidth: bounds.width - dots.intrinsicContentSize.width - spacing * 2 - Self.spacerMinWidth)
+            agents.fit(maxWidth: bounds.width - marks.intrinsicContentSize.width - spacing * 2 - Self.spacerMinWidth)
         }
         super.layoutSubviews()
     }
@@ -232,11 +234,11 @@ final class SessionThreadStatusRow: UIStackView {
 
 // MARK: - Counts line
 
-/// The strip's counts line: the counts the dots leave out, the thread's cost, the chevron, and, while the
+/// The strip's counts line: the counts the marks leave out, the thread's cost, the chevron, and, while the
 /// thread is settled, the Agents. The cost keeps its room and the Agents fold into what the counts leave, so
 /// the line never overflows and never loses the cost.
 final class SessionThreadCountsLine: UIStackView {
-    /// The least room kept between the counts and what follows, as the dot line keeps.
+    /// The least room kept between the counts and what follows, as the status line keeps.
     private static let spacerMinWidth: CGFloat = 4
 
     let summary = SessionThreadSummaryLabel()
@@ -268,7 +270,7 @@ final class SessionThreadCountsLine: UIStackView {
     required init(coder: NSCoder) { fatalError("Not supported") }
 
     override func layoutSubviews() {
-        // Fit before `super`, for the reason the dot line does it: a settled strip draws the Agents here.
+        // Fit before `super`, for the reason the status line does it: a settled strip draws the Agents here.
         if let agents = arrangedSubviews.compactMap({ $0 as? SessionThreadAgentClusterView }).first,
            !agents.isHidden {
             // Gaps between the pieces still on the line: a hidden cost leaves no gap behind it.
@@ -394,131 +396,132 @@ final class SessionThreadAgentClusterView: UIStackView {
     }
 }
 
-// MARK: - Status dots
+// MARK: - Status marks
 
-/// One dot per active thread member (working, needs you, error) in its status
-/// tint, then "+N" for the members past the cap. Working dots pulse, until
-/// Reduce Motion is turned on. The view is always as tall as `height` or the
-/// "+N" line, with or without dots, so the strip never changes height as members
-/// start and stop. Dot layers are reused across `apply`s.
-final class SessionThreadStatusDotsView: UIView {
+/// The strip's status line: one dot per member that needs the person or is in error, in its status tint,
+/// "+N" for those past the cap, then one working mark for every working member with "×N" beside it when
+/// more than one works. The view is always as tall as the tallest of a dot, the "+N" line, and the working mark,
+/// shown or not, so the strip never changes height as members start and stop. Dot layers are reused across
+/// `apply`s. VoiceOver hears the strip's own label, so nothing here is an element.
+final class SessionThreadStatusMarksView: UIView {
     static let dotSize: CGFloat = 7
     static let dotSpacing: CGFloat = 4
     static let height: CGFloat = 14
-    private static let overflowGap: CGFloat = 4
-    private static let pulseKey = "pulse"
+    private static let gap: CGFloat = 4
+    private static let countGap: CGFloat = 2
 
     private var dotLayers: [CALayer] = []
     private var shownCount = 0
     private let overflow = UILabel()
-    private var applied: (buckets: [SessionThreadStripSummary.Bucket], hiddenCount: Int, style: SessionRowStyle)?
+    let workingMark = WorkingMarkView(textStyle: .caption1)
+    private let workingCount = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isAccessibilityElement = false
         accessibilityElementsHidden = true
-        overflow.font = UIFont.scaled(.caption2, monospacedDigits: true)
-        overflow.adjustsFontForContentSizeCategory = true
-        overflow.isHidden = true
-        addSubview(overflow)
+        for label in [overflow, workingCount] {
+            label.font = UIFont.scaled(.caption2, monospacedDigits: true)
+            label.adjustsFontForContentSizeCategory = true
+            label.isHidden = true
+            addSubview(label)
+        }
+        workingMark.isHidden = true
+        addSubview(workingMark)
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
-        // A change of text size resizes "+N" and the line; Reduce Motion stops or starts the pulse.
+        // A change of text size resizes "+N", "×N", the working mark, and the line.
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: Self, _) in
             view.invalidateIntrinsicContentSize()
             view.setNeedsLayout()
         }
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(motionPreferenceChanged),
-            name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil
-        )
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    @objc private func motionPreferenceChanged() {
-        guard let applied else { return }
-        apply(applied.buckets, hiddenCount: applied.hiddenCount, style: applied.style)
-    }
-
-    func apply(_ buckets: [SessionThreadStripSummary.Bucket], hiddenCount: Int, style: SessionRowStyle) {
-        applied = (buckets, hiddenCount, style)
-        shownCount = buckets.count
-        while dotLayers.count < buckets.count {
+    /// `dots` are the needs-you and error members (`SessionThreadStripSummary.dots`); `working` counts the
+    /// working ones, drawn as the workingMark.
+    func apply(_ dots: [SessionThreadStripSummary.Bucket], hiddenCount: Int, working: Int, style: SessionRowStyle) {
+        shownCount = dots.count
+        while dotLayers.count < dots.count {
             let dot = CALayer()
             dot.bounds = CGRect(x: 0, y: 0, width: Self.dotSize, height: Self.dotSize)
             dot.cornerRadius = Self.dotSize / 2
             layer.addSublayer(dot)
             dotLayers.append(dot)
         }
-        let pulses = !UIAccessibility.isReduceMotionEnabled
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for (index, dot) in dotLayers.enumerated() {
-            guard index < buckets.count else {
-                dot.isHidden = true
-                dot.removeAnimation(forKey: Self.pulseKey)
-                continue
-            }
-            dot.isHidden = false
-            dot.backgroundColor = style.tint(buckets[index].kind).cgColor
-            if pulses, buckets[index] == .working {
-                if dot.animation(forKey: Self.pulseKey) == nil {
-                    let pulse = CABasicAnimation(keyPath: "opacity")
-                    pulse.fromValue = 1.0
-                    pulse.toValue = 0.35
-                    pulse.duration = 0.6
-                    pulse.autoreverses = true
-                    pulse.repeatCount = .infinity
-                    pulse.isRemovedOnCompletion = false
-                    dot.add(pulse, forKey: Self.pulseKey)
-                }
-            } else {
-                dot.removeAnimation(forKey: Self.pulseKey)
-            }
+            dot.isHidden = index >= dots.count
+            if index < dots.count { dot.backgroundColor = style.tint(dots[index].kind).cgColor }
         }
         CATransaction.commit()
         overflow.isHidden = hiddenCount == 0
         overflow.text = "+\(hiddenCount)"
         overflow.textColor = style.colors.comment
+
+        workingMark.isHidden = working == 0
+        if working > 0 { workingMark.apply(tint: style.tint(.working), palette: style.themeID.palette) }
+        workingCount.isHidden = working < 2
+        workingCount.text = "×\(working)"
+        workingCount.textColor = style.colors.comment
         invalidateIntrinsicContentSize()
         setNeedsLayout()
     }
 
-    private var dotsWidth: CGFloat {
-        shownCount == 0 ? 0 : CGFloat(shownCount) * Self.dotSize + CGFloat(shownCount - 1) * Self.dotSpacing
+    /// The pieces shown, left to right, each with its width.
+    private var pieces: [(view: AnyObject, width: CGFloat)] {
+        var result: [(AnyObject, CGFloat)] = []
+        if shownCount > 0 {
+            result.append((layer, CGFloat(shownCount) * Self.dotSize + CGFloat(shownCount - 1) * Self.dotSpacing))
+        }
+        if !overflow.isHidden { result.append((overflow, overflow.intrinsicContentSize.width)) }
+        if !workingMark.isHidden { result.append((workingMark, workingMark.side)) }
+        if !workingCount.isHidden { result.append((workingCount, workingCount.intrinsicContentSize.width)) }
+        return result
+    }
+
+    private func spacing(before view: AnyObject) -> CGFloat {
+        view === workingCount ? Self.countGap : Self.gap
     }
 
     override var intrinsicContentSize: CGSize {
-        let overflowWidth = overflow.isHidden ? 0 : Self.overflowGap + overflow.intrinsicContentSize.width
-        return CGSize(width: dotsWidth + overflowWidth, height: max(Self.height, ceil(overflow.font.lineHeight)))
+        let pieces = pieces
+        let width = pieces.reduce(0) { $0 + $1.width }
+            + pieces.dropFirst().reduce(0) { $0 + spacing(before: $1.view) }
+        let height = max(Self.height, ceil(overflow.font.lineHeight), workingMark.side)
+        return CGSize(width: width, height: height)
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        for index in 0..<shownCount {
-            dotLayers[index].position = CGPoint(
-                x: CGFloat(index) * (Self.dotSize + Self.dotSpacing) + Self.dotSize / 2,
-                y: bounds.midY
-            )
+        var x: CGFloat = 0
+        for (index, piece) in pieces.enumerated() {
+            if index > 0 { x += spacing(before: piece.view) }
+            if piece.view === layer {
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                for dot in 0..<shownCount {
+                    dotLayers[dot].position = CGPoint(
+                        x: x + CGFloat(dot) * (Self.dotSize + Self.dotSpacing) + Self.dotSize / 2,
+                        y: bounds.midY
+                    )
+                }
+                CATransaction.commit()
+            } else if let view = piece.view as? UIView {
+                let height = view === workingMark ? workingMark.side : view.intrinsicContentSize.height
+                view.frame = CGRect(x: x, y: (bounds.height - height) / 2, width: piece.width, height: height)
+            }
+            x += piece.width
         }
-        CATransaction.commit()
-        let size = overflow.intrinsicContentSize
-        overflow.frame = CGRect(
-            x: dotsWidth + (shownCount == 0 ? 0 : Self.overflowGap),
-            y: (bounds.height - size.height) / 2,
-            width: size.width,
-            height: size.height
-        )
     }
 }
 
 // MARK: - Summary line
 
-/// The strip's counts label: the counts the dots leave out, then the cross-workspace note, each kept only
+/// The strip's counts label: the counts the marks leave out, then the cross-workspace note, each kept only
 /// while the whole of it fits. The note goes first and the counts truncate at the tail beside the cost's own
 /// room on the same line. Every step measures with the label's own font at the width the line gave it, so a
 /// width or text-size change refits the line instead of ellipsizing it.

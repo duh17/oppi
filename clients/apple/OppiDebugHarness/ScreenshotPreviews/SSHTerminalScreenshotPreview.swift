@@ -5,6 +5,8 @@ import UIKit
 /// Which OSC 7501 report this preview feeds through the real terminal engine.
 enum SSHTerminalScreenshotStatus: String {
     case none, blocked
+    /// A program reporting OSC 7501 working, so the status glyph draws the working spinner.
+    case working
     /// A Rex session terminal: three panes in one window, over a fake host,
     /// so the pane switcher, the minimap, and the swipe draw.
     case rexPanes
@@ -18,7 +20,7 @@ enum SSHTerminalScreenshotStatus: String {
     var measuresScroll: Bool { self == .scrollback || self == .rexScrollback || self == .rexBusy }
 }
 
-/// `SCREENSHOT_SCREEN=ssh-terminal`, `-status-blocked`, `-rex-panes`: the real
+/// `SCREENSHOT_SCREEN=ssh-terminal`, `-status-blocked`, `-status-working`, `-rex-panes`: the real
 /// terminal at the root of a router stack, over an in-memory connection. A
 /// Herdr-like screen in the grid, and `herdr api snapshot` answered with one
 /// blocked agent so the toolbar overview and its badge render, beside two saved
@@ -132,7 +134,7 @@ final class SSHTerminalPreviewController: PreviewRootController {
         let screen = switch status {
         case .none: herdrScreen(esc)
         case .scrollback: scrollbackScreen(esc, lines: Self.historyLines)
-        case .blocked, .rexPanes, .rexScrollback, .rexBusy: statusScreen(esc)
+        case .blocked, .working, .rexPanes, .rexScrollback, .rexBusy: statusScreen(esc)
         }
         var bytes = Data(screen.utf8)
         bytes.append(statusReports(status))
@@ -230,6 +232,8 @@ final class SSHTerminalPreviewController: PreviewRootController {
             return Data()
         case .blocked:
             return osc("state=blocked:kind=permission:app=pi:msg=\(b64("Allow running rg in the repo?"))")
+        case .working:
+            return osc("state=working:app=pi:msg=\(b64("Running the test suite"))")
         }
     }
 

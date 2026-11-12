@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import Testing
 @testable import Oppi
 
@@ -180,15 +181,9 @@ struct WorkspaceSidebarSessionStatusTests {
             makeTestSession(id: "working", status: .busy, messageCount: 1, firstMessage: "Working"),
             makeTestSession(id: "done", status: .ready, messageCount: 1, firstMessage: "Finished"),
         ])
-        let text = WorkspaceSidebarRowContentView.statusText(
-            status,
-            colors: ComposerThemeColors(palette: ThemeID.dark.palette)
-        )
-        let size = text.boundingRect(
-            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin],
-            context: nil
-        ).size
+        let view = WorkspaceSidebarStatusView()
+        view.apply(status, colors: ComposerThemeColors(palette: ThemeID.dark.palette), palette: ThemeID.dark.palette)
+        let size = view.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
 
         #expect(size.width <= 64)
         #expect(size.height <= 44)

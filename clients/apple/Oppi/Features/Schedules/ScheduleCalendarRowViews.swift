@@ -6,7 +6,7 @@ import UIKit
 @MainActor
 struct ScheduleCalendarOutcomeStyle {
     let color: UIColor
-    /// nil draws the working spinner (running, starting).
+    /// nil draws the working mark (running, starting).
     let symbol: String?
     /// Loud for attention: failed, needs you, and running rows are filled with their colour.
     let fillsRow: Bool
@@ -509,7 +509,7 @@ enum ScheduleCalendarRowViews {
     // MARK: - Pieces
 
     static func glyph(_ style: ScheduleCalendarOutcomeStyle, palette: ThemePalette, textStyle: UIFont.TextStyle) -> UIView {
-        guard let symbol = style.symbol else { return spinner(palette) }
+        guard let symbol = style.symbol else { return workingMark(palette) }
         let view = UIImageView(image: UIImage.scaledSymbol(symbol, style: textStyle))
         view.tintColor = style.color
         view.contentMode = .center
@@ -518,15 +518,11 @@ enum ScheduleCalendarRowViews {
         return view
     }
 
-    /// The working indicator in the style chosen in Settings; still under Reduce Motion.
-    static func spinner(_ palette: ThemePalette) -> UIView {
-        let side = UIFont.scaled(.subheadline).pointSize
-        let spinner = WorkingSpinnerUIView(side: side)
-        spinner.apply(tint: palette.ui.blue, palette: palette)
-        spinner.isAnimating = true
-        spinner.widthAnchor.constraint(equalToConstant: side).isActive = true
-        spinner.heightAnchor.constraint(equalToConstant: side).isActive = true
-        return spinner
+    /// The still working mark in the style chosen in Settings.
+    static func workingMark(_ palette: ThemePalette) -> UIView {
+        let mark = WorkingMarkView(textStyle: .subheadline)
+        mark.apply(tint: palette.ui.blue, palette: palette)
+        return mark
     }
 
     /// A chip's short model name: the family when the rest is a version ("Opus" for

@@ -77,6 +77,8 @@ final class SessionRowView: UIView {
     private let statusCluster = UIStackView()
     private let blockedBadge = UIImageView()
     private let statusLabel = UILabel()
+    /// Stands in for the status word while the session is working.
+    private let workingMark = WorkingMarkView(textStyle: .caption1)
 
     private var topPadding: NSLayoutConstraint?
     private var bottomPadding: NSLayoutConstraint?
@@ -271,6 +273,11 @@ final class SessionRowView: UIView {
             blockedBadge.tintColor = tint
             blockedBadge.accessibilityIdentifier = content.map { "session.attentionBadge.\($0.presentation.session.id)" }
         }
+        // A working session shows the still working mark where other states show their word.
+        let working = status == .working
+        workingMark.setHiddenIfChanged(!working)
+        if working { workingMark.apply(tint: tint, palette: style.themeID.palette) }
+        statusLabel.setHiddenIfChanged(working)
         statusLabel.text = status.label
         statusLabel.font = UIFont.scaled(.caption2, status.needsAttention ? .semibold : .medium)
         statusLabel.textColor = tint
@@ -471,7 +478,7 @@ final class SessionRowView: UIView {
         [
             icon, titleLabel, lockLabel, durableLabel, callLabel, timeLabel, snippetLabel,
             workspaceLabel, providerIcon, modelLabel, compactionLabel, worktreeIcon, attentionLabel, mirrorIndicator,
-            gauge.valueLabel, incognitoBadge, costLabel, filesLabel, statusLabel,
+            gauge.valueLabel, incognitoBadge, costLabel, filesLabel, statusLabel, workingMark,
         ].filter(\.isShownForAutomation)
     }
 
@@ -573,7 +580,7 @@ final class SessionRowView: UIView {
         metricsCluster.spacing = Self.detailSpacing
         [gauge, incognitoBadge, costLabel, filesLabel].forEach(metricsCluster.addArrangedSubview)
 
-        // Status cluster: a blocked session's badge, then the status word.
+        // Status cluster: a blocked session's badge, then the status word, or the working mark.
         blockedBadge.isAccessibilityElement = false
         statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.textAlignment = .natural
@@ -582,6 +589,8 @@ final class SessionRowView: UIView {
         statusCluster.spacing = Self.detailSpacing
         statusCluster.addArrangedSubview(blockedBadge)
         statusCluster.addArrangedSubview(statusLabel)
+        workingMark.isHidden = true
+        statusCluster.addArrangedSubview(workingMark)
 
         for view in [contextCluster, metricsCluster, statusCluster, mirrorIndicator] as [UIView] {
             view.setContentHuggingPriority(.required, for: .horizontal)

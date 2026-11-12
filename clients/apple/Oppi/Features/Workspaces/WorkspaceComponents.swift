@@ -228,7 +228,7 @@ final class WorkspaceSidebarRowContentView: UIView, UIContentView {
     private let icon = IconChoiceUIView(size: 26 * 0.78, frameSize: 32)
     private let nameLabel = UILabel()
     private let lockLabel = UILabel()
-    private let statusLabel = UILabel()
+    private let statusView = WorkspaceSidebarStatusView()
     private let descriptionLabel = UILabel()
     private let gitLabel = UILabel()
     private var applied: WorkspaceSidebarRowConfiguration
@@ -257,9 +257,7 @@ final class WorkspaceSidebarRowContentView: UIView, UIContentView {
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         lockLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         lockLabel.setContentHuggingPriority(.required, for: .horizontal)
-        statusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        statusLabel.setContentHuggingPriority(.required, for: .horizontal)
-        let nameRow = UIStackView(arrangedSubviews: [nameLabel, lockLabel, SessionRowSpacer(minWidth: 0), statusLabel])
+        let nameRow = UIStackView(arrangedSubviews: [nameLabel, lockLabel, SessionRowSpacer(minWidth: 0), statusView])
         nameRow.alignment = .firstBaseline
         nameRow.spacing = 5
         nameRow.setCustomSpacing(8, after: lockLabel)
@@ -326,8 +324,8 @@ final class WorkspaceSidebarRowContentView: UIView, UIContentView {
         SessionRowText.setLockBadge(configuration.lockBadge, on: lockLabel, color: colors.comment, key: workspace.id)
 
         let status = configuration.status
-        statusLabel.isHidden = !status.isVisible || hidesDetails
-        statusLabel.attributedText = Self.statusText(status, colors: colors)
+        statusView.isHidden = !status.isVisible || hidesDetails
+        statusView.apply(status, colors: colors, palette: configuration.themeID.palette)
 
         let description = workspace.description ?? ""
         descriptionLabel.isHidden = hidesDetails || description.isEmpty
@@ -340,22 +338,6 @@ final class WorkspaceSidebarRowContentView: UIView, UIContentView {
         } else {
             gitLabel.isHidden = true
         }
-    }
-
-    /// Attention, working, and done counts, each a small glyph and its count.
-    static func statusText(_ status: WorkspaceSidebarSessionStatus, colors: ComposerThemeColors) -> NSAttributedString {
-        var metrics: [(String, Int, UIColor)] = []
-        if status.attentionCount > 0 {
-            metrics.append(("exclamationmark.triangle.fill", status.attentionCount, status.errorCount > 0 ? colors.red : colors.orange))
-        }
-        if status.workingCount > 0 { metrics.append(("bolt.fill", status.workingCount, colors.blue)) }
-        if status.showsDone { metrics.append(("checkmark", status.doneCount, colors.green)) }
-        return metricLine(
-            metrics.map { (symbol: $0.0, text: SessionFormatting.compactCount($0.1), color: $0.2, small: true) },
-            weight: .semibold,
-            itemSpacing: 7,
-            glyphSpacing: 2
-        )
     }
 
     /// Changes, ahead, and behind.
@@ -375,7 +357,7 @@ final class WorkspaceSidebarRowContentView: UIView, UIContentView {
 
     /// Each metric a small glyph and its text (`SessionRowText.symbolAndText`),
     /// `itemSpacing` apart.
-    private static func metricLine(
+    static func metricLine(
         _ metrics: [(symbol: String, text: String, color: UIColor, small: Bool)],
         weight: UIFont.Weight,
         itemSpacing: CGFloat,
@@ -391,4 +373,67 @@ final class WorkspaceSidebarRowContentView: UIView, UIContentView {
         }
         return result
     }
+}
+
+/// A sidebar workspace's session counts: attention, then the working mark with
+/// its count, then done. Working draws the still working mark, as session rows
+/// do; the others are a small glyph and a count. The row's name sits on the
+/// counts' baseline, so the first count shown is the baseline.
+final class WorkspaceSidebarStatusView: UIStackView {
+    private let attention = UILabel()
+    private let mark = WorkingMarkView(textStyle: .caption2)
+    private let workingCount = UILabel()
+    private lazy var working = UIStackView(arrangedSubviews: [mark, workingCount])
+    private let done = UILabel()
+
+    init() {
+        super.init(frame: .zero)
+        axis = .horizontal
+        alignment = .center
+        spacing = 7
+        working.alignment = .center
+        working.spacing = 2
+        workingCount.font = UIFont.scaled(.caption2, .semibold, monospacedDigits: true)
+        for label in [attention, workingCount, done] {
+            label.adjustsFontForContentSizeCategory = true
+        }
+        [attention, working, done].forEach(addArrangedSubview)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        setContentHuggingPriority(.required, for: .horizontal)
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) { fatalError("Not supported") }
+
+    func apply(_ status: WorkspaceSidebarSessionStatus, colors: ComposerThemeColors, palette: ThemePalette) {
+        attention.isHidden = status.attentionCount == 0
+        if status.attentionCount > 0 {
+            attention.attributedText = WorkspaceSidebarRowContentView.metricLine(
+                [(
+                    "exclamationmark.triangle.fill", SessionFormatting.compactCount(status.attentionCount),
+                    status.errorCount > 0 ? colors.red : colors.orange, true
+                )],
+                weight: .semibold, itemSpacing: 0, glyphSpacing: 2
+            )
+        }
+        working.isHidden = status.workingCount == 0
+        if status.workingCount > 0 {
+            mark.apply(tint: colors.blue, palette: palette)
+            workingCount.text = SessionFormatting.compactCount(status.workingCount)
+            workingCount.textColor = colors.blue
+        }
+        done.isHidden = !status.showsDone
+        if status.showsDone {
+            done.attributedText = WorkspaceSidebarRowContentView.metricLine(
+                [("checkmark", SessionFormatting.compactCount(status.doneCount), colors.green, true)],
+                weight: .semibold, itemSpacing: 0, glyphSpacing: 2
+            )
+        }
+    }
+
+    override var forFirstBaselineLayout: UIView {
+        [attention, workingCount, done].first { !$0.isHidden && $0.superview?.isHidden == false } ?? attention
+    }
+
+    override var forLastBaselineLayout: UIView { forFirstBaselineLayout }
 }

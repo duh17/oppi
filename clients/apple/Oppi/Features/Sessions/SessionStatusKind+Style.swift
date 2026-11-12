@@ -25,7 +25,9 @@ extension SessionStatusKind {
     }
 
     /// Toolbar and terminal glyph. No border: the bar already contains it.
-    /// Session rows keep `badgeSymbol`.
+    /// Session rows keep `badgeSymbol`. A working program draws the working
+    /// mark instead (`WorkingMarkView`); its symbol here is only for
+    /// the Large Content Viewer, which shows an image.
     var terminalSymbol: String {
         switch self {
         case .working: "progress.indicator"

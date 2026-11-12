@@ -2,7 +2,7 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// The Thread strip's status dots and summary as a list cell draws them: live dots for members still
+/// The Thread strip's status marks and summary as a list cell draws them: marks for members still
 /// going, counts in the list's words, one line while the thread is settled, and a strip that keeps its
 /// height as members change state.
 @MainActor
@@ -118,11 +118,7 @@ struct SessionThreadStripViewTests {
             let child = descendants(of: view, type)[0]
             return child.convert(child.bounds, to: view).midY
         }
-        return (middle(SessionThreadAgentClusterView.self), middle(SessionThreadStatusDotsView.self), middle(SessionThreadSummaryLabel.self))
-    }
-
-    private func shownDots(_ view: SessionThreadStatusDotsView) -> [CALayer] {
-        (view.layer.sublayers ?? []).filter { !$0.isHidden }
+        return (middle(SessionThreadAgentClusterView.self), middle(SessionThreadStatusMarksView.self), middle(SessionThreadSummaryLabel.self))
     }
 
     /// The words on the strip's lines, top to bottom: a label counts while neither it nor a parent is
@@ -138,43 +134,6 @@ struct SessionThreadStripViewTests {
                 return true
             }
             .map { $0.attributedText?.string ?? $0.text ?? "" }
-    }
-
-    // MARK: Dots
-
-    @Test func dotsTakeTheirStatusTintAndOnlyWorkingOnesPulse() {
-        let view = SessionThreadStatusDotsView()
-        view.apply([.needsYou, .error, .working, .working], hiddenCount: 0, style: style)
-
-        let dots = shownDots(view)
-        #expect(dots.count == 4)
-        #expect(dots.map { $0.backgroundColor.map(UIColor.init(cgColor:)) } == [
-            style.tint(.needsApproval), style.tint(.error), style.tint(.working), style.tint(.working),
-        ])
-        #expect(dots.map { $0.animation(forKey: "pulse") != nil } == [false, false, true, true])
-    }
-
-    @Test func reusingTheViewForFewerDotsLeavesNoStaleDotOrPulse() {
-        let view = SessionThreadStatusDotsView()
-        view.apply([.working, .working, .working, .working, .working], hiddenCount: 0, style: style)
-        view.apply([.needsYou], hiddenCount: 0, style: style)
-
-        let all = view.layer.sublayers ?? []
-        #expect(shownDots(view).count == 1)
-        #expect(shownDots(view).first?.animation(forKey: "pulse") == nil, "A needs-you dot does not pulse")
-        #expect(all.filter(\.isHidden).allSatisfy { $0.animation(forKey: "pulse") == nil })
-    }
-
-    @Test func theDotLineKeepsItsHeightWithAndWithoutDots() {
-        let view = SessionThreadStatusDotsView()
-        view.apply([], hiddenCount: 0, style: style)
-        let empty = view.intrinsicContentSize
-        view.apply(Array(repeating: .working, count: SessionThreadStripSummary.maxDots), hiddenCount: 5, style: style)
-        let full = view.intrinsicContentSize
-
-        #expect(empty.width == 0)
-        #expect(empty.height == full.height)
-        #expect(full.width > empty.width)
     }
 
     // MARK: Strip
@@ -209,7 +168,7 @@ struct SessionThreadStripViewTests {
 
         let (working, _) = strip([.working, .working, .stopped], display: withoutAgents)
         let workingLines = shownLabels(working)
-        #expect(workingLines == ["1 stopped"], Comment(rawValue: workingLines.description))
+        #expect(workingLines == ["×2", "1 stopped"], Comment(rawValue: workingLines.description))
 
         let (blocked, _) = strip([.question, .working, .stopped], display: withoutAgents)
         let blockedLines = shownLabels(blocked)
@@ -351,14 +310,14 @@ struct SessionThreadStripViewTests {
         #expect(fit(width: 330) == "1 idle · 102 stopped · 2 workspaces")
     }
 
-    /// The Agents sit on the dot line while a member is active, where they have the whole width, and join
+    /// The Agents sit on the status line while a member is active, where they have the whole width, and join
     /// the counts line once the thread settles, so the settled strip stays one line.
     @Test func theAgentsShareTheCountsLineOnlyWhileTheThreadIsSettled() {
         func lines(_ children: [SessionStatusKind]) -> (agents: CGRect, counts: CGRect, dots: CGRect, view: UIView) {
             let (view, _) = strip(children, agents: ["a", "b"])
             let agents = descendants(of: view, SessionThreadAgentClusterView.self)[0]
             let counts = descendants(of: view, SessionThreadSummaryLabel.self)[0]
-            let dots = descendants(of: view, SessionThreadStatusDotsView.self)[0]
+            let dots = descendants(of: view, SessionThreadStatusMarksView.self)[0]
             return (agents.convert(agents.bounds, to: view), counts.convert(counts.bounds, to: view), dots.convert(dots.bounds, to: view), view)
         }
 
@@ -367,7 +326,7 @@ struct SessionThreadStripViewTests {
         #expect(settled.agents.maxY <= settled.view.bounds.maxY)
 
         let active = lines([.working, .stopped])
-        #expect(abs(active.agents.midY - active.dots.midY) < 1, "An active strip keeps the Agents on the dot line")
+        #expect(abs(active.agents.midY - active.dots.midY) < 1, "An active strip keeps the Agents on the status line")
         #expect(active.counts.minY > active.dots.minY)
     }
 
@@ -393,7 +352,7 @@ struct SessionThreadStripViewTests {
                 let freshRows = rows(of: fresh)
                 #expect(abs(reusedRows.agents - freshRows.agents) < 0.5, "The Agents sit elsewhere after a reuse")
                 if isActive {
-                    #expect(abs(reusedRows.agents - reusedRows.dots) < 1, "The Agents left the dot line of an active strip")
+                    #expect(abs(reusedRows.agents - reusedRows.dots) < 1, "The Agents left the status line of an active strip")
                 } else {
                     #expect(abs(reusedRows.agents - reusedRows.counts) < 1, "The Agents left the counts line of a settled strip")
                 }
@@ -440,23 +399,28 @@ struct SessionThreadStripViewTests {
         #expect(counts == ["×3", "×2", "×2"])
     }
 
-    /// 12 dots, "+N", and three Agent groups on a phone-width strip and a narrow split: the dots keep their
-    /// width and the Agents give way, so nothing reaches past the strip or over the dots.
-    @Test(arguments: [330.0, 260.0])
-    func aFullDotLineAndThreeAgentGroupsNeverOverflowTheStatusRow(width: Double) {
-        let children = Array(repeating: SessionStatusKind.working, count: 14) + [.question] + Array(repeating: .stopped, count: 5)
-        let (view, _) = strip(children, agents: ["worker", "reviewer", "scout"], width: CGFloat(width))
-        let dots = descendants(of: view, SessionThreadStatusDotsView.self)[0]
-        let cluster = descendants(of: view, SessionThreadAgentClusterView.self)[0]
-        let dotsFrame = dots.convert(dots.bounds, to: view)
-        let clusterFrame = cluster.convert(cluster.bounds, to: view)
-        let groups = cluster.arrangedSubviews.compactMap { $0 as? UIStackView }.filter { !$0.isHidden }
+    /// 12 dots, "+N", the working spinner with its count, and three Agent groups on a phone-width strip and a
+    /// narrow split: the marks keep their width and the Agents give way, so nothing reaches past the strip or
+    /// over the marks.
+    @Test func aFullStatusLineAndThreeAgentGroupsNeverOverflowTheStatusRow() {
+        let children = Array(repeating: SessionStatusKind.error, count: 14) + [.question]
+            + Array(repeating: .working, count: 3) + Array(repeating: .stopped, count: 5)
+        var shownGroups: [Int] = []
+        for width in [330.0, 260.0] as [CGFloat] {
+            let (view, _) = strip(children, agents: ["worker", "reviewer", "scout"], width: width)
+            let marks = descendants(of: view, SessionThreadStatusMarksView.self)[0]
+            let cluster = descendants(of: view, SessionThreadAgentClusterView.self)[0]
+            let marksFrame = marks.convert(marks.bounds, to: view)
+            let clusterFrame = cluster.convert(cluster.bounds, to: view)
+            let groups = cluster.arrangedSubviews.compactMap { $0 as? UIStackView }.filter { !$0.isHidden }
 
-        #expect(dotsFrame.width == dots.intrinsicContentSize.width, "The dots keep their full width")
-        #expect(dotsFrame.maxX <= view.bounds.maxX - 8 + 0.5)
-        #expect(clusterFrame.maxX <= view.bounds.maxX - 8 + 0.5, "Agents reach past the strip: \(clusterFrame)")
-        if !groups.isEmpty { #expect(dotsFrame.maxX <= clusterFrame.minX, "Agents overlap the dots") }
-        #expect(width > 300 ? groups.count == 3 : groups.count < 3)
+            #expect(marksFrame.width == marks.intrinsicContentSize.width, "The marks keep their full width")
+            #expect(marksFrame.maxX <= view.bounds.maxX - 8 + 0.5)
+            #expect(clusterFrame.maxX <= view.bounds.maxX - 8 + 0.5, "Agents reach past the strip: \(clusterFrame)")
+            if !groups.isEmpty { #expect(marksFrame.maxX <= clusterFrame.minX, "Agents overlap the marks") }
+            shownGroups.append(groups.count)
+        }
+        #expect(shownGroups[1] < shownGroups[0], "The narrow strip folds Agent groups: \(shownGroups)")
     }
 
     /// A settled strip never runs past its width either: the counts keep their room and the Agents fold.

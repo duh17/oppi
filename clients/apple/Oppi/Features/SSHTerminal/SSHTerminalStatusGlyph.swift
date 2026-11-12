@@ -2,25 +2,28 @@ import GhosttyVt
 import UIKit
 
 /// One program-status symbol for the terminal's floating controls, the
-/// blocked card, Herdr rows, and the status list.
+/// blocked card, Herdr rows, and the status list. A working program draws the
+/// still working mark instead of a symbol, as session rows do.
 ///
 /// The floating copy is a button that opens the record list. Settle timing for a
 /// just-finished root lives here, so the timer does not invalidate the terminal
 /// screen or resize the grid.
 final class SSHTerminalStatusMarkView: UIView {
     enum Style {
-        /// Floating controls: entry effects, and variable colour while working.
+        /// Floating controls: entry effects.
         case toolbar
-        /// Herdr agent rows: variable colour while working, nothing else.
+        /// Herdr agent rows: no effects.
         case row
         /// Blocked card: a periodic wiggle for attention.
         case banner
-        /// Status list rows: still.
+        /// Status list rows: no effects.
         case detail
     }
 
     let style: Style
     private let imageView = UIImageView()
+    /// Stands in for the symbol while the program works.
+    let workingMark = WorkingMarkView(textStyle: .body)
     /// The OSC 9;4 ring around the symbol; only the floating controls draw it.
     let ring = SSHTerminalProgressRingView()
     private var progress: SSHTerminalProgressReport?
@@ -42,6 +45,9 @@ final class SSHTerminalStatusMarkView: UIView {
         ring.translatesAutoresizingMaskIntoConstraints = false
         if style == .toolbar { addSubview(ring) }
         addSubview(imageView)
+        workingMark.translatesAutoresizingMaskIntoConstraints = false
+        workingMark.isHidden = true
+        addSubview(workingMark)
         if style == .toolbar {
             NSLayoutConstraint.activate([
                 ring.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -53,6 +59,8 @@ final class SSHTerminalStatusMarkView: UIView {
         NSLayoutConstraint.activate([
             imageView.centerXAnchor.constraint(equalTo: centerXAnchor),
             imageView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            workingMark.centerXAnchor.constraint(equalTo: centerXAnchor),
+            workingMark.centerYAnchor.constraint(equalTo: centerYAnchor),
             widthAnchor.constraint(greaterThanOrEqualToConstant: style == .toolbar ? SSHTerminalGlassPill.height : 20),
             heightAnchor.constraint(greaterThanOrEqualToConstant: style == .toolbar ? SSHTerminalGlassPill.height : 20),
         ])
@@ -110,7 +118,13 @@ final class SSHTerminalStatusMarkView: UIView {
         checkDrawn = false
         imageView.removeAllSymbolEffects()
         imageView.image = nil
+        showWorkingMark(false)
         ring.apply(nil, color: .clear, reduceMotion: true)
+    }
+
+    private func showWorkingMark(_ shows: Bool) {
+        workingMark.isHidden = !shows
+        imageView.isHidden = shows
     }
 
     private func render() {
@@ -124,6 +138,7 @@ final class SSHTerminalStatusMarkView: UIView {
             checkTask?.cancel()
             imageView.removeAllSymbolEffects()
             imageView.image = nil
+            showWorkingMark(false)
             return
         }
         let previous = shown
@@ -132,6 +147,8 @@ final class SSHTerminalStatusMarkView: UIView {
 
         let drawsCheck = style == .toolbar && shown == .done && !reduceMotion
         imageView.tintColor = shown.tint(themeID.appTheme)
+        showWorkingMark(shown == .working)
+        if shown == .working { workingMark.apply(tint: shown.tint(themeID.appTheme), palette: palette) }
         let scale: UIImage.SymbolScale = shown == .idle && style == .toolbar ? .small : .medium
         imageView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body, scale: scale)
         imageView.removeAllSymbolEffects()
@@ -151,10 +168,7 @@ final class SSHTerminalStatusMarkView: UIView {
         } else {
             checkDrawn = false
             checkTask?.cancel()
-            imageView.image = UIImage(systemName: shown.terminalSymbol)
-            if shown == .working && !reduceMotion && (style == .toolbar || style == .row) {
-                imageView.addSymbolEffect(.variableColor.iterative, options: .repeating, animated: true)
-            }
+            imageView.image = shown == .working ? nil : UIImage(systemName: shown.terminalSymbol)
             if style == .banner && !reduceMotion {
                 imageView.addSymbolEffect(.wiggle, options: .repeat(.periodic(delay: 3)), animated: true)
             }
@@ -342,7 +356,7 @@ final class SSHTerminalStatusDetailController: UIViewController, RouterModalCont
             content.imageProperties.tintColor = self.themeID.palette.ui.comment
             cell.contentConfiguration = content
         }
-        let cell = UICollectionView.CellRegistration<UICollectionViewListCell, SSHTerminalStatusRow> {
+        let cell = UICollectionView.CellRegistration<SSHTerminalStatusDetailCell, SSHTerminalStatusRow> {
             [weak self] cell, _, row in
             guard let self else { return }
             var content = UIListContentConfiguration.subtitleCell()
@@ -350,13 +364,15 @@ final class SSHTerminalStatusDetailController: UIViewController, RouterModalCont
             content.secondaryText = [row.message, row.status.label].filter { !$0.isEmpty }.joined(separator: "\n")
             content.textProperties.color = self.themeID.palette.ui.fg
             content.secondaryTextProperties.color = row.status.tint(self.themeID.appTheme)
-            content.image = UIImage(systemName: row.status.terminalSymbol)
-            content.imageProperties.tintColor = row.status.tint(self.themeID.appTheme)
-            content.directionalLayoutMargins.leading = 16 + CGFloat(row.depth) * 16
             content.textProperties.numberOfLines = 1
             content.secondaryTextProperties.numberOfLines = 3
             cell.contentConfiguration = content
-            cell.accessories = []
+            cell.indentationLevel = row.depth
+            cell.indentationWidth = 16
+            cell.mark.apply(status: row.status, themeID: self.themeID, reduceMotion: UIAccessibility.isReduceMotionEnabled)
+            cell.accessories = [.customView(configuration: .init(
+                customView: cell.mark, placement: .leading(), reservedLayoutWidth: .custom(24)
+            ))]
             cell.isUserInteractionEnabled = false
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, id in
@@ -381,6 +397,12 @@ final class SSHTerminalStatusDetailController: UIViewController, RouterModalCont
             onDismissed()
         }
     }
+}
+
+/// A status list row with the same status mark as the floating glyph, kept
+/// across reconfiguration.
+final class SSHTerminalStatusDetailCell: UICollectionViewListCell {
+    let mark = SSHTerminalStatusMarkView(style: .detail)
 }
 
 struct SSHTerminalStatusRow: Identifiable, Equatable, Sendable {
