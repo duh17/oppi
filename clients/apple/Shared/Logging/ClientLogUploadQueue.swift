@@ -5,7 +5,9 @@ actor ClientLogUploadQueue {
     private let appInstanceId: String
     private let bootId: String
     private let isUploadAllowed: @Sendable () -> Bool
-    private let nowMs: @Sendable () -> Int64
+    /// Callers stamp an entry with this clock at the log call, before it waits
+    /// behind earlier work for the actor.
+    nonisolated let nowMs: @Sendable () -> Int64
     private let maxPending: Int
     private let maxBatchSize: Int
     private let flushInterval: Duration
@@ -64,7 +66,11 @@ actor ClientLogUploadQueue {
         }
     }
 
+    /// `ts` is the time of the log call. The actor can reach an entry much later:
+    /// a flushed entry waits on its upload, and every entry queued behind it
+    /// would otherwise share the stamp of whenever the upload settled.
     func record(
+        ts: Int64,
         level: ClientLogUploadLevel,
         category: String,
         message: String,
@@ -91,7 +97,7 @@ actor ClientLogUploadQueue {
 
         backlog.append(
             ClientLogUploadEntry(
-                ts: nowMs(),
+                ts: ts,
                 seq: nextSeq,
                 level: level,
                 category: cleanCategory.isEmpty ? "General" : cleanCategory,

@@ -26,8 +26,10 @@ final class ClientLogUploadDispatcher: @unchecked Sendable {
         metadata: [String: String],
         flush: Bool = false
     ) {
+        let ts = queue.nowMs()
         enqueue { [queue] in
             await queue.record(
+                ts: ts,
                 level: level,
                 category: category,
                 message: message,

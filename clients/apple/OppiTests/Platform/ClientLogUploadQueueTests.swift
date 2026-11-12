@@ -35,6 +35,55 @@ private actor FlakyClientLogUploader: ClientLogUploading {
     }
 }
 
+/// Holds every upload until `release()`, the way a slow network holds a flushed entry.
+private actor HeldClientLogUploader: ClientLogUploading {
+    private(set) var entries: [ClientLogUploadEntry] = []
+    private(set) var attempts = 0
+    private var released = false
+    private var held: [CheckedContinuation<Void, Never>] = []
+
+    func uploadClientLogs(request: ClientLogUploadRequest) async throws {
+        attempts += 1
+        if !released {
+            await withCheckedContinuation { held.append($0) }
+        }
+        entries += request.entries
+    }
+
+    func release() {
+        released = true
+        for continuation in held { continuation.resume() }
+        held.removeAll()
+    }
+
+    func waitForAttempts(_ count: Int, timeout: Duration = .seconds(5)) async -> Int {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while attempts < count, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return attempts
+    }
+}
+
+private final class TestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Int64
+
+    init(_ value: Int64) { self.value = value }
+
+    var nowMs: Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func set(_ value: Int64) {
+        lock.lock()
+        self.value = value
+        lock.unlock()
+    }
+}
+
 @Suite("ClientLogUploadQueue")
 struct ClientLogUploadQueueTests {
     private static let retryInterval: Duration = .seconds(2)
@@ -59,7 +108,7 @@ struct ClientLogUploadQueueTests {
 
     private func record(_ count: Int, on queue: ClientLogUploadQueue) async {
         for index in 0 ..< count {
-            await queue.record(level: .warn, category: "Test", message: "entry \(index)")
+            await queue.record(ts: 1, level: .warn, category: "Test", message: "entry \(index)")
         }
     }
 
@@ -94,6 +143,41 @@ struct ClientLogUploadQueueTests {
         // No retry is pending after the success: a full batch uploads at once.
         await record(50, on: queue)
         #expect(await uploader.waitForUploadedEntries(150, timeout: .milliseconds(1_500)) == 150)
+    }
+
+    @Test func entriesLoggedWhileAFlushIsUploadingKeepTheirCallTime() async {
+        let clock = TestClock(1_000)
+        let uploader = HeldClientLogUploader()
+        let queue = ClientLogUploadQueue(
+            clientKind: .ios,
+            appInstanceId: "app-1",
+            bootId: "boot-1",
+            isUploadAllowed: { true },
+            nowMs: { clock.nowMs },
+            flushInterval: .seconds(60)
+        )
+        await queue.setMetadata(ClientLogUploadMetadata(
+            appVersion: "1", buildNumber: "1", osVersion: "test", deviceModel: "test"
+        ))
+        await queue.setUploader(uploader)
+        let dispatcher = ClientLogUploadDispatcher(queue: queue)
+
+        // Errors flush. The first one's upload hangs, and the next two are logged meanwhile.
+        dispatcher.record(level: .error, category: "Test", message: "first", metadata: [:], flush: true)
+        #expect(await uploader.waitForAttempts(1) == 1)
+        clock.set(2_000)
+        dispatcher.record(level: .error, category: "Test", message: "second", metadata: [:], flush: true)
+        clock.set(3_000)
+        dispatcher.record(level: .error, category: "Test", message: "third", metadata: [:], flush: true)
+
+        clock.set(9_000)
+        await uploader.release()
+        await dispatcher.waitUntilIdleForTesting()
+
+        let entries = await uploader.entries
+        #expect(entries.map(\.message) == ["first", "second", "third"])
+        #expect(entries.map(\.ts) == [1_000, 2_000, 3_000])
+        #expect(entries.map(\.seq) == [1, 2, 3])
     }
 }
 
