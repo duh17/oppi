@@ -846,8 +846,11 @@ struct StickyRefreshReconciliationTests {
             awaitHandshake: true
         )
 
-        #expect(requestCounter.count(path: "/workspaces") == 1)
-        #expect(requestCounter.count(path: "/skills") == 1)
+        // A failed session list repairs the session list; the catalog reloads only when it
+        // failed itself (a fresh, healthy one follows its freshness window).
+        let catalogReads = failedProjection == "workspace" ? 1 : 0
+        #expect(requestCounter.count(path: "/workspaces") == catalogReads)
+        #expect(requestCounter.count(path: "/skills") == catalogReads)
         #expect(requestCounter.count(path: "/sessions/recent") == 1)
         #expect(connection.workspaceStore.lastSyncFailed == false)
         #expect(connection.sessionStore.lastSyncFailed == false)
@@ -856,6 +859,7 @@ struct StickyRefreshReconciliationTests {
     @Test func snapshotRequiredRefreshesBothProjectionsBeforeQueuedEvent() async throws {
         let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
+        makeCatalogStale(connection)
         connection.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
 
         let workspaceGate = BlockingReconciliationRequestGate()
@@ -890,6 +894,7 @@ struct StickyRefreshReconciliationTests {
     @Test func lateRefreshFailureAfterAppEventConnectionGetsOneFullFollowUp() async throws {
         let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
+        makeCatalogStale(connection)
         let requestGate = BlockingReconciliationRequestGate()
         let requestCounter = ReconciliationRequestCounter()
 
@@ -931,6 +936,7 @@ struct StickyRefreshReconciliationTests {
     @Test func failedLateRepairIsBoundedWithoutNetworkFanOut() async throws {
         let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
+        makeCatalogStale(connection)
         let requestGate = BlockingReconciliationRequestGate()
         let requestCounter = ReconciliationRequestCounter()
 
@@ -1050,6 +1056,7 @@ struct StickyRefreshReconciliationTests {
     @Test func cancelingRepairPreventsStartingTheNextListLeg() async throws {
         let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
+        makeCatalogStale(connection)
         let workspaceGate = BlockingReconciliationRequestGate()
         let requestCounter = ReconciliationRequestCounter()
 
@@ -1155,6 +1162,14 @@ struct StickyRefreshReconciliationTests {
         #expect(endMetadata["statusCode"] == "503")
         #expect(endMetadata.values.allSatisfy { !$0.contains("secret.example.test") })
         #expect(endMetadata.values.allSatisfy { !$0.contains("sk_secret") })
+    }
+
+    /// A catalog past its freshness window: the handshake's repair reads it again, where a fresh
+    /// one is left alone.
+    private func makeCatalogStale(_ connection: ServerConnection) {
+        connection.workspaceStore.markSyncSucceeded(
+            at: Date().addingTimeInterval(-ServerConnection.listRefreshMinimumInterval - 1)
+        )
     }
 
     private func makeReconciliationConnection() async -> ServerConnection {

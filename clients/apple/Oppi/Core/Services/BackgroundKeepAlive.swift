@@ -7,7 +7,8 @@ import UIKit
 /// agents are `starting`, `busy`, or `stopping` (a runtime still winding down,
 /// including a durable abort that lands before `agent_start`). This keeps the WebSocket alive
 /// so status updates arrive promptly and session re-entry doesn't require a
-/// multi-second TLS reconnect.
+/// multi-second TLS reconnect. An idle app borrows the same task for a short grace
+/// window (`closeAfterGrace`) before it closes its sockets.
 ///
 /// The task ends when:
 /// - All sessions leave those states (observed via polling). The sockets
@@ -83,6 +84,32 @@ final class BackgroundKeepAlive {
                 let leftDesc = left > 99_999 ? "unlimited" : String(format: "%.0fs", left)
                 Self.log.debug("Background keep-alive polling (remaining: \(leftDesc))")
             }
+        }
+    }
+
+    /// How long an idle app keeps its sockets after it leaves the foreground. Long enough for
+    /// a glance at another app or a notification, short enough that a real absence closes
+    /// them well inside iOS's background-task allowance.
+    static let closeGrace: Duration = .seconds(10)
+
+    /// Idle background: hold the sockets for `closeGrace`, then `close` them as the no-agents
+    /// path does. A return inside the window cancels the close (`end()`), so the same sockets
+    /// serve it and nothing reconnects or reloads. A refused or expired task closes at once.
+    func closeAfterGrace(close: @escaping @MainActor () -> Void) {
+        stopPolling()
+        guard let epoch = window.begin(onExpired: { [weak self] in
+            close()
+            self?.stopPolling()
+        }) else {
+            close()
+            return
+        }
+        polling = Task { [weak self, sleep] in
+            do { try await sleep(Self.closeGrace) } catch { return }
+            guard !Task.isCancelled else { return }
+            close()
+            self?.stopPolling()
+            self?.window.end(epoch)
         }
     }
 

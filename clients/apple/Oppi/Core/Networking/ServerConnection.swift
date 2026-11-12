@@ -633,7 +633,10 @@ final class ServerConnection {
 
         // Reconnect with the updated (Tailscale) endpoint.
         connectStream()
-        if appEventStreamAvailable {
+        // A stream on its first attempt is already on the current route: the foreground
+        // that reopened it also found the focused socket closed, and the path report that
+        // follows a wake must not drop it for an identical second attempt.
+        if appEventStreamAvailable, !appEventStreamCoordinator.isOpeningFirstAttempt {
             disconnectAppEventStream()
             startAppEventStreamIfAvailable()
         }
@@ -832,10 +835,14 @@ final class ServerConnection {
         disconnectAppEventStream()
     }
 
-    /// Reopens the app-event stream when it is not running.
-    func resumeAppEventStreamIfStopped() {
-        guard appEventStreamAvailable, !appEventStreamCoordinator.isRunning else { return }
+    /// Reopens the app-event stream when it is not running. Returns whether this call started
+    /// one: its handshake then reads the lists (`refreshAfterAppEventConnection`), so the
+    /// caller has nothing left to refresh.
+    @discardableResult
+    func resumeAppEventStreamIfStopped() -> Bool {
+        guard appEventStreamAvailable, !appEventStreamCoordinator.isRunning else { return false }
         startAppEventStreamIfAvailable()
+        return appEventStreamTransportState == .connecting
     }
 
     func routeStreamMessage(_ frameEvent: StreamFrameEvent) {

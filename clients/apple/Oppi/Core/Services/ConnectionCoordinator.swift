@@ -1376,8 +1376,13 @@ final class ConnectionCoordinator {
             guard connection.apiClient != nil else { continue }
             // Backgrounding closed this server's app-event stream; only the active
             // server runs `reconnectIfNeeded`.
-            connection.resumeAppEventStreamIfStopped()
-            await connection.refreshWorkspaceAndSessionLists(force: true)
+            // A stream reopened here reads the lists in its own handshake; one that never
+            // stopped lost no events. Without a stream (not offered, or no route), nothing
+            // else tells these lists the app returned.
+            let streamReopened = connection.resumeAppEventStreamIfStopped()
+            if !streamReopened {
+                await connection.refreshWorkspaceAndSessionLists(force: !connection.appEventStreamAvailable)
+            }
             await connection.refreshPairingApprovals()
         }
     }

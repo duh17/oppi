@@ -27,6 +27,10 @@ final class AppEventStreamCoordinator {
         return !consumptionTask.isCancelled
     }
 
+    /// The first attempt of the current client has not received a frame yet. A client in
+    /// reconnect backoff is not this: its attempts have already failed.
+    var isOpeningFirstAttempt: Bool { client?.status == .connecting }
+
     var tailnetRoute: TailnetTransportRoute.Snapshot? { client?.tailnetRoute }
 
     func isCurrentClient(_ candidate: AppEventStreamClient) -> Bool {

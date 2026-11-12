@@ -366,13 +366,15 @@ extension ServerConnection {
 
     /// Refresh both global lists. Each branch has its own single-flight task,
     /// so overlapping callers don't trigger duplicate network fan-out.
+    /// `forceCatalog` overrides `force` for the workspace catalog alone.
     func refreshWorkspaceAndSessionLists(
         force: Bool = false,
+        forceCatalog: Bool? = nil,
         retryAfterJoinedFailure: Bool = false,
         origin: ServerListRefreshOrigin = .external
     ) async {
         await refreshWorkspaceCatalog(
-            force: force,
+            force: forceCatalog ?? force,
             retryAfterJoinedFailure: retryAfterJoinedFailure,
             origin: origin
         )
@@ -381,6 +383,20 @@ extension ServerConnection {
             force: force,
             retryAfterJoinedFailure: retryAfterJoinedFailure,
             origin: origin
+        )
+    }
+
+    /// The stream drops events while it is down, and session rows ride on them, so the
+    /// session list is read again after every handshake. The catalog (workspaces, skills,
+    /// git summaries) costs the server a git summary per workspace and no catalog change
+    /// travels as an app event: it follows its freshness window (a longer absence reloads
+    /// it), and still reloads at once when it never loaded or last failed.
+    private func refreshAfterAppEventConnection() async {
+        await refreshWorkspaceAndSessionLists(
+            force: true,
+            forceCatalog: false,
+            retryAfterJoinedFailure: true,
+            origin: .appEventReconciliation
         )
     }
 
@@ -424,11 +440,7 @@ extension ServerConnection {
             // clearing a newer repair installed after stream teardown.
             defer { self.appEventListRepair.ownerFinished(epoch: repairEpoch) }
 
-            await self.refreshWorkspaceAndSessionLists(
-                force: true,
-                retryAfterJoinedFailure: true,
-                origin: .appEventReconciliation
-            )
+            await self.refreshAfterAppEventConnection()
             guard !Task.isCancelled,
                   self.appEventStreamTransportState == .connected,
                   self.appEventStreamConnectedAt == connectedAt else {
@@ -438,11 +450,7 @@ extension ServerConnection {
             // Consume the one-follow-up budget before awaiting. Failures
             // from this pass are repair-owned and cannot reschedule.
             if self.appEventListRepair.takeFollowUp() {
-                await self.refreshWorkspaceAndSessionLists(
-                    force: true,
-                    retryAfterJoinedFailure: true,
-                    origin: .appEventReconciliation
-                )
+                await self.refreshAfterAppEventConnection()
             }
         } }
         await appEventListRepair.task?.value
@@ -511,10 +519,14 @@ extension ServerConnection {
         }
 
         // 2. Reopen the global app event stream when foreground recovery finds it stopped.
-        resumeAppEventStreamIfStopped()
+        let streamReopened = resumeAppEventStreamIfStopped()
 
-        // 3. Refresh global lists as needed (single-flight + freshness-gated).
-        await refreshWorkspaceAndSessionLists(force: false)
+        // 3. Refresh global lists as needed (single-flight + freshness-gated). A stream just
+        // reopened reads them itself once its handshake lands; reading them here as well
+        // fetches the same lists twice per return.
+        if !streamReopened {
+            await refreshWorkspaceAndSessionLists(force: false)
+        }
         await refreshPairingApprovals()
 
         // 4. Refresh active session metadata (not timeline — ChatSessionManager owns that)

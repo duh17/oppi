@@ -685,13 +685,16 @@ final class OppiApp {
                 // No active agents or playback — send graceful close so the
                 // server sees 1001 (going away) instead of discovering the
                 // dead connection via ping timeout (1006). This avoids a 30-60s
-                // server-side wait and produces cleaner telemetry.
+                // server-side wait and produces cleaner telemetry. A short absence
+                // keeps the sockets: the close waits out a grace window that a
+                // return cancels.
                 let gracefulCloseInterval = lifecycleSignposter.beginInterval("scene.background.graceful_close")
                 lifecycleSignposter.emitEvent("background.mode.graceful_close")
                 recordLifecycleStep(phase, "prepare_for_background_begin", flush: true)
-                coordinator.prepareAllForBackground()
+                backgroundKeepAlive.closeAfterGrace { [weak coordinator = coordinator] in
+                    coordinator?.prepareAllForBackground()
+                }
                 recordLifecycleStep(phase, "prepare_for_background_done", flush: true)
-                backgroundKeepAlive.end()
                 lifecycleSignposter.endInterval("scene.background.graceful_close", gracefulCloseInterval)
             }
 
