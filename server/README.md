@@ -345,7 +345,7 @@ The stack provisions this datasource and these dashboards automatically:
 
 - datasource: `Oppi Telemetry SQLite`
 - dashboards: `Oppi Release Preflight`, `Oppi Server Health`, and `Oppi Model Routing` (folder: `Oppi`)
-- Release Preflight: experience metrics, including workspace load, session switch, thread load by phase, client network handshake and ping RTT, server STT latency, dictation setup phases, voice playback, rendering cost against the 120 Hz frame budget (8.3 ms), device CPU and memory by screen and app state, memory warnings (footprint before and after) and main-thread stalls, and collapsed command, quick-session, and share-publish drill-down
+- Release Preflight: experience metrics, including workspace load, session switch, thread load by phase, client network handshake and ping RTT, server STT latency, dictation setup phases, voice playback, slow updates over the 120 Hz frame (8.3 ms) per foreground minute and per device, device CPU and memory by screen and app state, memory warnings (footprint before and after) and main-thread stalls, and collapsed command, quick-session, and share-publish drill-down
 - Server Health: event-loop p99 trend and max gate, per-route HTTP latency and response bytes, WebSocket panels split by `stream` (`session`, `dictation`, `app_events`), and collapsed session-create, push (by notification and relay result), event-ring, MCP connect, schedule-run, and server-dictation drill-down
 - Model Routing: provider, model, and runtime workload. Missing runtime is an explicit untagged bucket. The Runtime dropdown filters the panels.
 - Alert rules (`docker/grafana/provisioning/alerting/alert-rules.yml`) read the same `events` table.

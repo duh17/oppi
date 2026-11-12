@@ -4,6 +4,7 @@
     "appVersion" : "1.53.0",
     "bootId" : "boot-golden",
     "buildNumber" : "412",
+    "debugBuild" : true,
     "deviceModel" : "iPhone17,1",
     "gitCommit" : "0123456789ab",
     "kind" : "ios",

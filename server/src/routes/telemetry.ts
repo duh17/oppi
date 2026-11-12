@@ -185,7 +185,10 @@ function isClientKind(value: unknown): value is ClientKind {
 function parseTelemetryClient(value: unknown): TelemetryClient | null {
   if (!isRecord(value) || !isClientKind(value.kind)) return null;
   const client: TelemetryClient = { kind: value.kind };
-  const text = (key: keyof Omit<TelemetryClient, "kind" | "gitCommit">, max: number): void => {
+  const text = (
+    key: keyof Omit<TelemetryClient, "kind" | "gitCommit" | "debugBuild">,
+    max: number,
+  ): void => {
     const sanitized = sanitizeRedactedString(value[key], max);
     if (sanitized) client[key] = sanitized;
   };
@@ -197,11 +200,12 @@ function parseTelemetryClient(value: unknown): TelemetryClient | null {
   text("bootId", CLIENT_LOG_MAX_ID_CHARS);
   const gitCommit = sanitizeGitCommit(value.gitCommit);
   if (gitCommit) client.gitCommit = gitCommit;
+  if (value.debugBuild === true) client.debugBuild = true;
   return client;
 }
 
 /** Pre-v2 stored shape for MetricKit and client-log files: client fields at the top level. */
-function flattenedClient(client: TelemetryClient): Record<string, string | undefined> {
+function flattenedClient(client: TelemetryClient): Record<string, string | true | undefined> {
   return {
     appVersion: client.appVersion,
     buildNumber: client.buildNumber,
@@ -211,6 +215,7 @@ function flattenedClient(client: TelemetryClient): Record<string, string | undef
     clientKind: client.kind,
     appInstanceId: client.appInstanceId,
     bootId: client.bootId,
+    debugBuild: client.debugBuild,
   };
 }
 

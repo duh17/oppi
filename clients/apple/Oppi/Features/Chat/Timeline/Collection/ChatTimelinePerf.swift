@@ -55,11 +55,6 @@ enum ChatTimelinePerf {
     private static let guardrailLayoutThresholdMs = 250
     private static let guardrailCellThresholdMs = 80
 
-    /// Discard apply/layout measurements above this threshold. Wall-clock
-    /// timers include iOS process suspension time, so multi-second values
-    /// are nearly always background artifacts, not real rendering cost.
-    static let suspensionCeilingMs = 5_000
-
     private static let slowLogCooldownMs: UInt64 = 2_000
 
     private static var applyLastMs = 0
@@ -173,21 +168,6 @@ enum ChatTimelinePerf {
         rowMeasureCount &+= 1
     }
 
-    static func beginTimelineApplyCycle(itemCount: Int, changedCount: Int) {
-    }
-
-    static func updateTimelineApplyCycle(itemCount: Int, changedCount: Int) {
-    }
-
-    static func endTimelineApplyCycle(didScroll: Bool) {
-    }
-
-    static func beginSnapshotBuildPhase() {
-    }
-
-    static func endSnapshotBuildPhase() {
-    }
-
     static func beginCollectionApply(
         itemCount: Int,
         changedCount: Int,
@@ -218,12 +198,8 @@ enum ChatTimelinePerf {
             hardGuardrailBreachCount &+= 1
         }
 
-        // Discard suspension-inflated samples. Wall-clock timers include
-        // iOS process suspension time, producing multi-second values that
-        // are background artifacts, not real rendering cost.
-        guard durationMs < suspensionCeilingMs else { return }
-
-        // The catalog emit policy drops the noise floor and suspension artifacts.
+        // The catalog emit policy drops the noise floor; `Telemetry.record`
+        // drops an apply that overlapped a trip to the background.
         Telemetry.record(
             AppTimelineApply(
                 durationMs: Double(durationMs),
@@ -272,8 +248,6 @@ enum ChatTimelinePerf {
             hardGuardrailBreachCount &+= 1
         }
 
-        guard durationMs < suspensionCeilingMs else { return }
-
         Telemetry.record(
             AppTimelineLayout(durationMs: Double(durationMs), items: token.itemCount),
             sessionId: resolvedSessionId(token.sessionId)
@@ -316,9 +290,6 @@ enum ChatTimelinePerf {
         if durationMs >= guardrailCellThresholdMs {
             hardGuardrailBreachCount &+= 1
         }
-
-        // Discard suspension-inflated samples (same rationale as apply/layout).
-        guard durationMs < suspensionCeilingMs else { return }
 
         // Sub-millisecond configures are the common case; the catalog emit policy
         // drops them before any task is spawned.
@@ -366,9 +337,6 @@ enum ChatTimelinePerf {
         sessionId: String? = nil
     ) {
         signposter.emitEvent("render.strategy")
-
-        // Discard suspension-inflated samples.
-        guard durationMs < suspensionCeilingMs else { return }
 
         // Signposts fire for every render strategy; the catalog emit policy drops
         // zero-millisecond telemetry rows.

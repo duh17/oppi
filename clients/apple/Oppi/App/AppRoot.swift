@@ -119,9 +119,6 @@ final class AppScenePhase {
 
     private(set) var phase: AppPhase
     var isBackground: Bool { phase == .background }
-    /// How many times the app has entered the background. A measurement that
-    /// started in an earlier epoch spans suspension and is not a duration.
-    private(set) var backgroundEpoch = 0
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
     private init() {
@@ -144,7 +141,6 @@ final class AppScenePhase {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    if phase == .background { self.backgroundEpoch += 1 }
                     self.phase = phase
                 }
             })

@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   EVENT_DEFS,
+  FOREGROUND_CLOCK,
   TAG_DEFS,
   fieldSpec,
   type EventDef,
@@ -299,6 +300,7 @@ function eventStruct(eventName: string): string {
   let out = docComment(def.description, "");
   out += `struct ${structName}: TelemetryEvent {\n`;
   out += `    static let name = ${swiftString(eventName)}\n`;
+  if (def.spansBackground) out += `    static let spansBackground = true\n`;
   if (nested.length > 0) out += `\n${nested.join("\n")}`;
   if (members.length > 0) {
     out += "\n";
@@ -384,8 +386,22 @@ protocol TelemetryEvent: Sendable {
     /// False when the catalog emit policy drops this event. Generated per event
     /// from the struct's typed members, so a dropped event costs no allocation.
     var passesEmitPolicy: Bool { get }
+    /// True when the event's \`_ms\` time may rightly include time in the
+    /// background. Otherwise \`Telemetry.record\` drops an event whose longest
+    /// \`_ms\` value, as an interval ending now, overlapped a background period.
+    static var spansBackground: Bool { get }
     var fieldValues: [String: Double] { get }
     var tagValues: [String: String] { get }
+}
+
+extension TelemetryEvent {
+    static var spansBackground: Bool { false }
+}
+
+/// Foreground time for the review: \`${FOREGROUND_CLOCK.event}\` is sampled every
+/// \`sampleSeconds\` while the app is active, so its count is a clock.
+enum TelemetryForegroundClock {
+    static let sampleSeconds = ${FOREGROUND_CLOCK.seconds}
 }
 
 /// Open-but-bounded tag values (tool, model, screen, …) as the server stores
@@ -514,6 +530,8 @@ struct TelemetryClientInfo: Codable, Sendable, Equatable {
     let deviceModel: String?
     let appInstanceId: String?
     let bootId: String?
+    /// True only from a Debug-configuration build; absent otherwise.
+    let debugBuild: Bool?
 }
 
 /// Body of \`POST /telemetry/events\`.

@@ -65,6 +65,13 @@ protocol LiveVoiceTelephonyEvents: AnyObject {
 final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
     static let lockedDisplayName = "Live Voice"
 
+    /// Where `endLeftoverCalls` looked; the log line names it.
+    enum LeftoverCheck: String {
+        case callStart = "call_start"
+        case callEnd = "call_end"
+        case dictationStart = "dictation_start"
+    }
+
     private struct Active {
         let id: UUID
         let controller: LiveVoiceCallController
@@ -88,7 +95,7 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
     /// drops the ones iOS no longer lists.
     private var placedCallIds: Set<UUID> = []
     /// When each placed call's side here was over. iOS lists a call it is still hanging up,
-    /// so a call is logged and counted as left over only `leftoverCheckDelay` after this.
+    /// so a call is logged as left over only `leftoverCheckDelay` after this.
     private var releasedAt: [UUID: ContinuousClock.Instant] = [:]
     private let makeTelephony: @MainActor () -> LiveVoiceTelephony?
     private var madeTelephony = false
@@ -319,10 +326,10 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
     /// until the app is relaunched. `phase` says where it was found: `call_end` (shortly after
     /// the app hung up), `call_start`, or `dictation_start`. The call that is up is never ended.
     /// One hung up less than `leftoverCheckDelay` ago is ended too, so a take or call started
-    /// right after End cannot inherit it, but is not logged or counted: iOS still lists a call
+    /// right after End cannot inherit it, but is not logged: iOS still lists a call
     /// while it performs an ordinary hang-up. Returns how many it ended.
     @discardableResult
-    func endLeftoverCalls(phase: AppLiveVoiceLeftoverCall.Phase) -> Int {
+    func endLeftoverCalls(phase: LeftoverCheck) -> Int {
         // No provider yet means no call was ever placed: do not create one just to look.
         guard let telephonyInstance, !placedCallIds.isEmpty else { return 0 }
         let listed = telephonyInstance.unendedCallIds()
@@ -345,9 +352,6 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
             "phase": phase.rawValue,
             "count": String(stuck.count),
         ], flush: true)
-        Telemetry.record(
-            AppLiveVoiceLeftoverCall(calls: stuck.count, phase: phase)
-        )
         return leftovers.count
     }
 

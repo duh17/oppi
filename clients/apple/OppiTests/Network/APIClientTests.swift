@@ -337,7 +337,8 @@ struct APIClientTests {
                     generatedAt: 0,
                     client: TelemetryClientInfo(
                         kind: .ios, appVersion: nil, buildNumber: nil, gitCommit: nil,
-                        osVersion: nil, deviceModel: nil, appInstanceId: nil, bootId: nil
+                        osVersion: nil, deviceModel: nil, appInstanceId: nil, bootId: nil,
+                        debugBuild: nil
                     ),
                     events: []
                 )
@@ -2796,7 +2797,8 @@ struct APIClientTests {
                     deviceModel: "test-device",
                     gitCommit: nil,
                     appInstanceId: "app-1",
-                    bootId: "boot-1"
+                    bootId: "boot-1",
+                    debugBuild: nil
                 ),
                 droppedCount: nil,
                 entries: [

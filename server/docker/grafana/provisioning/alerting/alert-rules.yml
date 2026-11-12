@@ -4,6 +4,10 @@ apiVersion: 1
 deleteRules:
   - orgId: 1
     uid: oppi-jank-avg
+  - orgId: 1
+    uid: oppi-timeline-apply-p95
+  - orgId: 1
+    uid: oppi-markdown-streaming-p95
 
 groups:
   # -- P0: Perf regression detection (24h rolling window) -----------------
@@ -12,9 +16,9 @@ groups:
     folder: Oppi Alerts
     interval: 5m
     rules:
-      # 1. Timeline apply p95 > 40ms
-      - uid: oppi-timeline-apply-p95
-        title: "P0: Timeline apply p95 regression"
+      # 1. Slow timeline applies per foreground minute > 2 on any device
+      - uid: oppi-slow-timeline-applies
+        title: "P0: Slow timeline applies per foreground minute"
         condition: C
         for: 10m
         noDataState: OK
@@ -23,13 +27,13 @@ groups:
           severity: p0
           component: timeline
         annotations:
-          summary: "app.timeline_apply p95 exceeded 40ms (24h window)"
+          summary: "A device had more than 2 timeline applies over 8.3 ms per foreground minute (24h window)"
           description: >-
-            The 95th percentile of app.timeline_apply duration_ms over the last 24 hours
-            exceeds 40ms. This indicates a render pipeline regression — each apply
-            should complete within a 2-frame budget (33ms). Investigate recent
-            commits touching ChatTimelineCollectionView+DataSource.swift or
-            DeltaCoalescer.swift.
+            The rendering SLO: app.timeline_apply over 8.3 ms (a missed 120 Hz frame)
+            per foreground minute, worst device over the last 24 hours. Foreground
+            minutes count app.device_resources samples (one every 10 s while active).
+            Investigate recent commits touching the chat timeline apply path or the
+            delta coalescer.
         data:
           - refId: A
             relativeTimeRange:
@@ -40,17 +44,19 @@ groups:
               refId: A
               queryType: table
               rawQueryText: >-
-                SELECT COALESCE(
-                  (SELECT json_extract(fields_json, '$.duration_ms') AS value FROM events
-                   WHERE name = 'app.timeline_apply'
-                     AND ts_ms BETWEEN $__from AND $__to
-                   ORDER BY value
-                   LIMIT 1
-                   OFFSET (SELECT CAST(COUNT(*) * 0.95 AS INTEGER)
-                           FROM events
-                           WHERE name = 'app.timeline_apply'
-                             AND ts_ms BETWEEN $__from AND $__to)),
-                  0) AS value
+                WITH foreground AS (
+                  SELECT device, COUNT(*) * 10 / 60.0 AS minutes FROM events
+                  WHERE name = 'app.device_resources' AND ts_ms BETWEEN $__from AND $__to
+                  GROUP BY device
+                ), slow AS (
+                  SELECT device, COUNT(*) AS n FROM events
+                  WHERE name = 'app.timeline_apply'
+                    AND json_extract(fields_json, '$.duration_ms') > 8.3
+                    AND ts_ms BETWEEN $__from AND $__to
+                  GROUP BY device
+                )
+                SELECT COALESCE(MAX(COALESCE(slow.n, 0) / foreground.minutes), 0) AS value
+                FROM foreground LEFT JOIN slow ON slow.device = foreground.device
           - refId: B
             relativeTimeRange:
               from: 0
@@ -74,13 +80,13 @@ groups:
                 - evaluator:
                     type: gt
                     params:
-                      - 40
+                      - 2
                   operator:
                     type: and
 
-      # 2. Streaming markdown p95 > 16ms (single frame budget)
-      - uid: oppi-markdown-streaming-p95
-        title: "P0: Streaming markdown p95 regression"
+      # 2. Slow streaming markdown cycles per foreground minute > 0.5 on any device
+      - uid: oppi-slow-markdown-streaming
+        title: "P0: Slow streaming markdown per foreground minute"
         condition: C
         for: 10m
         noDataState: OK
@@ -89,12 +95,11 @@ groups:
           severity: p0
           component: markdown
         annotations:
-          summary: "app.markdown_streaming p95 exceeded 16ms (24h window)"
+          summary: "A device had more than 0.5 markdown cycles over 8.3 ms per foreground minute (24h window)"
           description: >-
-            The 95th percentile of app.markdown_streaming duration_ms over the last
-            24 hours exceeds 16ms (two frames at 120 Hz). This metric is actively
-            iterated — the Mar 26 streaming markdown commit pushed over-budget
-            applies from 25% to 41%. Check incremental markdown parser changes.
+            The rendering SLO: app.markdown_streaming cycles over 8.3 ms (a missed
+            120 Hz frame) per foreground minute, worst device over the last 24 hours.
+            Check incremental markdown parser changes.
         data:
           - refId: A
             relativeTimeRange:
@@ -105,17 +110,19 @@ groups:
               refId: A
               queryType: table
               rawQueryText: >-
-                SELECT COALESCE(
-                  (SELECT json_extract(fields_json, '$.duration_ms') AS value FROM events
-                   WHERE name = 'app.markdown_streaming'
-                     AND ts_ms BETWEEN $__from AND $__to
-                   ORDER BY value
-                   LIMIT 1
-                   OFFSET (SELECT CAST(COUNT(*) * 0.95 AS INTEGER)
-                           FROM events
-                           WHERE name = 'app.markdown_streaming'
-                             AND ts_ms BETWEEN $__from AND $__to)),
-                  0) AS value
+                WITH foreground AS (
+                  SELECT device, COUNT(*) * 10 / 60.0 AS minutes FROM events
+                  WHERE name = 'app.device_resources' AND ts_ms BETWEEN $__from AND $__to
+                  GROUP BY device
+                ), slow AS (
+                  SELECT device, COUNT(*) AS n FROM events
+                  WHERE name = 'app.markdown_streaming'
+                    AND json_extract(fields_json, '$.duration_ms') > 8.3
+                    AND ts_ms BETWEEN $__from AND $__to
+                  GROUP BY device
+                )
+                SELECT COALESCE(MAX(COALESCE(slow.n, 0) / foreground.minutes), 0) AS value
+                FROM foreground LEFT JOIN slow ON slow.device = foreground.device
           - refId: B
             relativeTimeRange:
               from: 0
@@ -139,7 +146,7 @@ groups:
                 - evaluator:
                     type: gt
                     params:
-                      - 16
+                      - 0.5
                   operator:
                     type: and
 

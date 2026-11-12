@@ -204,8 +204,7 @@ extension WorkspaceDetailViewController {
         state.workspaceLoad = WorkspaceLoadMeasurement(
             startedAtMs: Date.nowMs(),
             path: path,
-            hadImmediateContent: !workspaceSessions(connection).isEmpty || !state.localSessions.isEmpty,
-            backgroundEpoch: AppScenePhase.shared.backgroundEpoch
+            hadImmediateContent: !workspaceSessions(connection).isEmpty || !state.localSessions.isEmpty
         )
     }
 
@@ -222,7 +221,6 @@ extension WorkspaceDetailViewController {
             return
         }
         defer { state.workspaceLoad = nil }
-        guard workspaceLoad.backgroundEpoch == AppScenePhase.shared.backgroundEpoch else { return }
         Telemetry.record(
             AppWorkspaceLoad(
                 durationMs: Double(max(0, Date.nowMs() - workspaceLoad.startedAtMs)),

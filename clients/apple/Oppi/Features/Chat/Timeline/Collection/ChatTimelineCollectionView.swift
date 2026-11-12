@@ -1277,10 +1277,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                 }
             }
 
-            ChatTimelinePerf.beginTimelineApplyCycle(
-                itemCount: currentIDs.count,
-                changedCount: reconfigureIDs.count
-            )
             var snapshot = dataSource.snapshot()
             snapshot.reconfigureItems(reconfigureIDs)
             let applyToken = ChatTimelinePerf.beginCollectionApply(
@@ -1313,7 +1309,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                 collectionView: collectionView,
                 itemCount: currentIDs.count
             )
-            ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
             updateDetachedStreamingHintVisibility()
             return
         }
@@ -1343,10 +1338,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                 }
             }
             if !mutableChanged {
-                ChatTimelinePerf.beginTimelineApplyCycle(
-                    itemCount: currentIDs.count,
-                    changedCount: 0
-                )
                 previousStreamingAssistantID = configuration.streamingAssistantID
                 previousHiddenCount = configuration.hiddenCount
                 previousHasOlderServerPage = configuration.hasOlderServerPage
@@ -1367,7 +1358,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                     collectionView: collectionView,
                     itemCount: currentIDs.count
                 )
-                ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
                 updateDetachedStreamingHintVisibility()
                 return
             }
@@ -1388,10 +1378,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                 }
             }
             if !reconfigureIDs.isEmpty, let dataSource {
-                ChatTimelinePerf.beginTimelineApplyCycle(
-                    itemCount: currentIDs.count,
-                    changedCount: reconfigureIDs.count
-                )
                 var snapshot = dataSource.snapshot()
                 snapshot.reconfigureItems(reconfigureIDs)
                 let applyToken = ChatTimelinePerf.beginCollectionApply(
@@ -1424,7 +1410,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                 collectionView: collectionView,
                 itemCount: currentIDs.count
             )
-            ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
             updateDetachedStreamingHintVisibility()
             return
         }
@@ -1648,7 +1633,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         }
         updateDetachedStreamingHintVisibility()
         publishVisibleAudioStripItemIDs(in: collectionView)
-        ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
     }
 
     func publishVisibleAudioStripItemIDs(in collectionView: UICollectionView) {

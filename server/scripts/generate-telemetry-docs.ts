@@ -20,6 +20,7 @@ import {
   TAG_DEFS,
   fieldSpec,
   type EventDef,
+  type SloSpec,
   type TagDef,
 } from "../src/telemetry/catalog.ts";
 import { GROUPS, type GroupKey } from "../src/telemetry/groups.ts";
@@ -58,6 +59,13 @@ function where(filter: Readonly<Record<string, readonly string[]>> | undefined):
     .join(", ")}`;
 }
 
+function sloRule(slo: SloSpec): string {
+  if ("tm99" in slo) return `TM99 ≤ ${slo.tm99}`;
+  if ("p1" in slo) return `p1 ≥ ${slo.p1}`;
+  if ("perMinute" in slo) return `> ${slo.over} at most ${slo.perMinute} per foreground minute`;
+  return `> ${slo.over} in at most ${slo.share * 100}% of events`;
+}
+
 function policyCell(event: EventDef): string {
   const lines: string[] = [];
   for (const rule of event.emit ?? []) {
@@ -76,9 +84,9 @@ function policyCell(event: EventDef): string {
     lines.push(`aggregate per 60 s: ${ops}`);
   }
   for (const slo of event.slo ?? []) {
-    const direction = slo.lowerIsBad ? "≥" : "≤";
-    lines.push(`SLO \`${slo.field}\` TM99 ${direction} ${slo.tm99}${where(slo.where)}`);
+    lines.push(`SLO \`${slo.field}\` ${sloRule(slo)}${where(slo.where)}`);
   }
+  if (event.spansBackground) lines.push("kept across background");
   return lines.length > 0 ? lines.join("<br>") : "none";
 }
 

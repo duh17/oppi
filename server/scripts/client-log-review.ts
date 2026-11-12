@@ -45,6 +45,7 @@ interface ClientLogRecord {
   clientKind?: string;
   appInstanceId?: string;
   bootId?: string;
+  debugBuild?: boolean;
   droppedCount?: number;
   entryCount?: number;
   entries?: ClientLogEntry[];
@@ -265,7 +266,10 @@ function listFiles(dir: string): string[] {
 function parseJsonLine(line: string): ClientLogRecord | null {
   try {
     const parsed = JSON.parse(line) as ClientLogRecord;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray(parsed.entries)
+    return parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      Array.isArray(parsed.entries)
       ? parsed
       : null;
   } catch {
@@ -380,13 +384,14 @@ export function buildClientLogReview(options: {
     requestedSinceMs: cutoffMs,
     telemetryDir: dir,
     telemetryAvailable,
-    evidenceState: !telemetryAvailable || filesRead === 0
-      ? "unavailable"
-      : parsedRecords === 0
-        ? "invalid"
-        : uploads === 0
-          ? "stale"
-          : "available",
+    evidenceState:
+      !telemetryAvailable || filesRead === 0
+        ? "unavailable"
+        : parsedRecords === 0
+          ? "invalid"
+          : uploads === 0
+            ? "stale"
+            : "available",
     device: options.device ?? null,
     filesRead,
     parsedRecords,
@@ -512,7 +517,9 @@ function requiredArg(argv: string[], index: number, flag: string): string {
 function patternArg(argv: string[], index: number, flag: string): string {
   const value = argv[index];
   if (value === undefined || value.length === 0 || value.startsWith("--")) {
-    throw new Error(`${flag} requires a value; use ${flag}=<pattern> for patterns beginning with --`);
+    throw new Error(
+      `${flag} requires a value; use ${flag}=<pattern> for patterns beginning with --`,
+    );
   }
   return value;
 }

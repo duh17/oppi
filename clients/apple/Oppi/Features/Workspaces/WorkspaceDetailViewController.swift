@@ -657,9 +657,6 @@ extension WorkspaceDetailViewController {
         let startedAtMs: Int64
         let path: AppWorkspaceLoad.LoadPath
         let hadImmediateContent: Bool
-        /// `AppScenePhase.backgroundEpoch` at the start: a load that outlives a
-        /// backgrounding measures suspension, so it is dropped.
-        let backgroundEpoch: Int
     }
 
     /// What the hosted screen kept in `@State`, fresh for each mount.

@@ -1365,7 +1365,6 @@
 		9F48EC38BA4B07C99D1F796F /* MessageQueueComposerRestore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 508B2CA610F83F81F2908694 /* MessageQueueComposerRestore.swift */; };
 		9F5F6BD1A52DC6B2392E2EFD /* MermaidGitGraphRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1641221B2836B1AA655BF0E0 /* MermaidGitGraphRenderer.swift */; };
 		9F82F8C99D784ECB43181CAC /* QuickCommentsPageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E5C0F7263C0C928B87DD51E /* QuickCommentsPageTests.swift */; };
-		9F964CBF572CA00AE7E51A52 /* ChatTimelinerPerfSuspensionCeilingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F655C22AA973426CE380C7 /* ChatTimelinerPerfSuspensionCeilingTests.swift */; };
 		9FA06C83B51C624816681BC3 /* MermaidPieParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5EDBC6083F73C1F0E766584 /* MermaidPieParser.swift */; };
 		9FC4595239656A498A3E839B /* ChatSessionStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DA6C0629E074FD9019EF30A /* ChatSessionStateTests.swift */; };
 		9FEC05E756D44694CB0E6362 /* SSHTerminalRexListScreenshotPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4704D413E7377C53110F0D2F /* SSHTerminalRexListScreenshotPreview.swift */; };
@@ -4201,7 +4200,6 @@
 		E51F36ADDF60631121F8C7E3 /* FileViewerPolicies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileViewerPolicies.swift; sourceTree = "<group>"; };
 		E552CCBAAE9D0983625EA179 /* SSHConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHConnection.swift; sourceTree = "<group>"; };
 		E560FCFBC733EFB516ADDA9A /* LANFirstConnectionPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LANFirstConnectionPolicyTests.swift; sourceTree = "<group>"; };
-		E5F655C22AA973426CE380C7 /* ChatTimelinerPerfSuspensionCeilingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTimelinerPerfSuspensionCeilingTests.swift; sourceTree = "<group>"; };
 		E62AF354125201CDDB10EC8F /* StreamingTextAppendDifferentialTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingTextAppendDifferentialTests.swift; sourceTree = "<group>"; };
 		E62B91BF516910616377502B /* TreeNavigationComposerUpdateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreeNavigationComposerUpdateTests.swift; sourceTree = "<group>"; };
 		E64B26E7C32DB95BB68CC710 /* ChatViewLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewLifecycleTests.swift; sourceTree = "<group>"; };
@@ -6624,7 +6622,6 @@
 			children = (
 				45A93C53A3D07148629FED0C /* ANSIParserPerfTests.swift */,
 				B2443DB37C920905F39C37C6 /* BusyReentryMetricsBench.swift */,
-				E5F655C22AA973426CE380C7 /* ChatTimelinerPerfSuspensionCeilingTests.swift */,
 				9BA12C7B9191B7712C0D265A /* CollectionRenderPerfBench.swift */,
 				B3C5FC65015628827EA7E6A7 /* ComposerSuggestionPerfBench.swift */,
 				81E91D0BDC98D3154877886F /* DiffBuilderPerfBench.swift */,
@@ -8224,7 +8221,6 @@
 			files = (
 				C4F8E4D37784F40C8EA6D91F /* ANSIParserPerfTests.swift in Sources */,
 				C4AEA55C98FBAECA04D495FC /* BusyReentryMetricsBench.swift in Sources */,
-				9F964CBF572CA00AE7E51A52 /* ChatTimelinerPerfSuspensionCeilingTests.swift in Sources */,
 				FD63D44CD091D538C44CAA94 /* CollectionRenderPerfBench.swift in Sources */,
 				AF230547017DAE496920B61D /* ComposerSuggestionPerfBench.swift in Sources */,
 				A92DE8AA9718515FE1962614 /* DiffBuilderPerfBench.swift in Sources */,

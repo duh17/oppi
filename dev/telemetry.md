@@ -12,7 +12,7 @@ npm run telemetry:client-logs -- --days 1 --limit 30
 npm run telemetry:metrickit -- --days 14 --limit 50
 npm run telemetry:server-log -- --days 1 --limit 30
 npm run diagnostics:review -- --days 1 # client reviews take --device iphone|ipad|mac
-npm run telemetry:review:gate                 # release gate
+npm run telemetry:review:gate -- --commit <rc> # release gate, per device
 npm run telemetry:grafana:up                  # http://localhost:13001, admin/admin
 ```
 
@@ -35,7 +35,8 @@ Dashboards: Release Preflight, Server Health, Model Routing. Runbook: `server/RE
 | Server events | local writer | `server-events-YYYY-MM-DD.jsonl` |
 | Server log | local | `<OPPI_DATA_DIR>/server.log` |
 
-- All three uploads carry one `client` envelope (`kind: "ios" | "mac"`, versions, `gitCommit`, `deviceModel`, ids); an upload without a valid `client.kind` is 400. MetricKit and client-log files keep their pre-envelope stored shape.
+- All three uploads carry one `client` envelope (`kind: "ios" | "mac"`, versions, `gitCommit`, `deviceModel`, ids, `debugBuild` on Debug builds); an upload without a valid `client.kind` is 400. MetricKit and client-log files keep their pre-envelope stored shape.
+- `appInstanceId` is a this-device-only keychain item.
 - Daily files are named by the server's UTC write date; readers filter by each record's `ts`.
 - Retention: MetricKit and app events/client logs 14 days, server events 30 (`OPPI_METRICKIT_RETENTION_DAYS`, `OPPI_CHAT_METRICS_RETENTION_DAYS`, `OPPI_SERVER_METRICS_RETENTION_DAYS`). Daily caps: `OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES`, `OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES`; the server cap excludes `server.resources`, so ops events and samples cannot starve each other.
 - `server.log` is the launchd agent's stdout and stderr (`launchd.ts`). `server-log-rotation.ts` moves each finished UTC day out of it into `<OPPI_DATA_DIR>/server-YYYY-MM-DD.log`, at start and every 5 minutes, and keeps those 14 days (`OPPI_SERVER_LOG_RETENTION_DAYS`). It rewrites the live file in place and never renames it: launchd holds the file open with O_APPEND, and a rename would redirect its writes to the renamed file. Text ahead of the first timestamped record belongs to that record's day. A day that logs far more than usual is not capped. `server-log-review.ts` reads the daily files in its window first. `oppi-mirror-*.log` is pruned at 14 days by the extension; `serve.log` (the `install.sh` background start without systemd) is unbounded.
@@ -61,7 +62,8 @@ The catalog is pure data and types; everything else derives from it or is checke
 - Event names are `<origin>.<snake_case>` (`app.*`, `server.*`); values measured together are fields of one event.
 - Units: `ms`, `count`, `bytes`, `mb`, `pct` (0–100), `ratio` (0–1), `usd_micros`, `bool`; field names end with the unit suffix (`count` and `bool` have none). An absent optional field is never written as 0.
 - Numbers and ids are never tags.
-- `emit` rules drop out-of-range events, in the generated Swift before building anything and again at ingest. `slo` sets a TM99 threshold on one field (optionally where tags match); rendering SLOs use the 120 Hz budget (8.3 ms).
+- `emit` rules drop out-of-range events, in the generated Swift before building anything and again at ingest.
+- `slo` is a field's release limit, judged per device (server events once); `SloSpec` defines its statistics (`tm99`, `p1`, `perMinute` over `FOREGROUND_CLOCK`, `share`).
 - Removed events are deleted from the catalog, not retired.
 
 ### Tag vocabulary
@@ -81,6 +83,7 @@ Each tag key has exactly one meaning and one kind (`TAGS`): `enum` (closed, narr
 ### Apple client recording
 
 - One path: `Telemetry.record(<generated struct>, sessionId:, workspaceId:)` (`clients/apple/Oppi/Core/Telemetry/Telemetry.swift`). It applies `emit` rules first (the catalog is the only place a threshold lives), drops non-finite fields (one NaN fails JSON encoding for the whole batch), and hands off to `TelemetryEventUploader`. A 2xx never requeues; dropped events are logged and never resent (the server logs `telemetry_events.dropped` once per reason and build).
+- `Telemetry.record` drops durations that overlapped a background period (`TelemetryBackgroundSpans`); catalog `spansBackground` opts an event out.
 - `TelemetryContext` is the one provider of ambient `screen`, `stream_state`, `agents`, `voice`; unknown is `unknown`, never absent.
 - `TelemetryErrorKind.classify` is the one mapping from errors to `error_kind`. `OppiCore` vocabularies are enums whose raw values are catalog values; a test fails on any case without a catalog counterpart.
 - Numbers belong in events, not log lines.
@@ -94,7 +97,7 @@ The tables between the markers are generated from the catalog; `npm run check` f
 
 Generated from `server/src/telemetry/catalog.ts`. A `*` marks a required tag; a field without "(optional)" is always present.
 
-#### UX Responsiveness
+#### UX Wait Time
 
 User-visible wait time. Do not put full agent work duration in this group.
 
@@ -109,7 +112,6 @@ User-visible wait time. Do not put full agent work duration in this group.
 | `app.session_switch` | How long from tapping a session row until chat content was visible? | `duration_ms` ms<br>`cached` bool | none | emit `duration_ms` < 60000<br>SLO `duration_ms` TM99 ≤ 600 |
 | `app.trace_fetch` | How long did fetching and decoding a trace page take? | `duration_ms` ms<br>`trace_events` count (optional) | `status`*: `ok`, `error`<br>`error_kind` | SLO `duration_ms` TM99 ≤ 1500 when status=ok |
 | `app.workspace_load` | How long until the workspace screen was usable? | `duration_ms` ms | `load_path`*: `open`, `return_from_chat` | emit `duration_ms` < 60000<br>SLO `duration_ms` TM99 ≤ 1000 |
-| `app.model_providers_load` | How long until Model Providers was connected, listed, and showed usage? | `ready_ms` ms<br>`providers_ms` ms<br>`usage_ms` ms | `status`*: `ok`, `error` | emit `providers_ms` < 60000 |
 
 #### Connection Reliability
 
@@ -135,21 +137,21 @@ Command/session readiness and stream health. These are user-blocking when they f
 
 #### Rendering Smoothness
 
-Frame-budget work on the 120 Hz budget (8.3 ms).
+Main-thread work against the 120 Hz frame (8.3 ms). SLOs count slow updates per foreground minute.
 
 | Event | Answers | Fields | Tags | Emit, storage, SLO |
 | --- | --- | --- | --- | --- |
-| `app.timeline_apply` | How long did a timeline snapshot apply take during streaming? | `duration_ms` ms<br>`items` count<br>`changed` count | none | emit `duration_ms` ≥ 4, < 5000<br>SLO `duration_ms` TM99 ≤ 8.3 |
-| `app.timeline_layout` | How long did timeline layout take during streaming? | `duration_ms` ms<br>`items` count | none | emit `duration_ms` ≥ 2, < 5000<br>SLO `duration_ms` TM99 ≤ 8.3 |
-| `app.cell_configure` | How long did configuring a timeline row take, especially large tool output? | `duration_ms` ms<br>`expanded` bool (optional) | `row_type`*<br>`tool`<br>`content_type`<br>`output_size` (bucket) | emit `duration_ms` ≥ 1, < 5000<br>SLO `duration_ms` TM99 ≤ 8.3 |
-| `app.render_strategy` | How long did highlighting, ANSI parsing, or diff building take for a tool row? | `duration_ms` ms | `render_mode`*<br>`input_size`* (bucket)<br>`language` | emit `duration_ms` ≥ 1, < 5000 |
+| `app.timeline_apply` | How long did a timeline snapshot apply take during streaming? | `duration_ms` ms<br>`items` count<br>`changed` count | none | emit `duration_ms` ≥ 4<br>SLO `duration_ms` > 8.3 at most 2 per foreground minute |
+| `app.timeline_layout` | How long did timeline layout take during streaming? | `duration_ms` ms<br>`items` count | none | emit `duration_ms` ≥ 2<br>SLO `duration_ms` > 8.3 at most 2 per foreground minute |
+| `app.cell_configure` | How long did configuring a timeline row take, especially large tool output? | `duration_ms` ms<br>`expanded` bool (optional) | `row_type`*<br>`tool`<br>`content_type`<br>`output_size` (bucket) | emit `duration_ms` ≥ 1<br>SLO `duration_ms` > 8.3 at most 2 per foreground minute |
+| `app.render_strategy` | How long did highlighting, ANSI parsing, or diff building take for a tool row? | `duration_ms` ms | `render_mode`*<br>`input_size`* (bucket)<br>`language` | emit `duration_ms` ≥ 1 |
 | `app.tool_row_measure` | How long did measuring a tool row's width or viewport take? | `duration_ms` ms | `measure`*<br>`input_size`* (bucket) | emit `duration_ms` ≥ 1 |
-| `app.markdown_streaming` | How long did one streaming markdown parse, build, and apply cycle take? | `duration_ms` ms<br>`segments` count | `surface`* | emit `duration_ms` ≥ 1<br>SLO `duration_ms` TM99 ≤ 8.3 |
-| `app.chat_frame_visit` | How smoothly did the chat timeline draw in one visit while the user scrolled it or an agent turn updated it? Hitch time per second is SUM(hitch_ms) / SUM(duration_ms) × 1000 and hitches per minute SUM(hitches) / SUM(duration_ms) × 60000, pooled over visits, never averaged per visit. | `duration_ms` ms<br>`frames` count<br>`hitches` count<br>`hitch_ms` ms<br>`worst_frame_ms` ms<br>`items` count | `timeline_activity`* | emit `frames` ≥ 2 |
+| `app.markdown_streaming` | How long did one streaming markdown parse, build, and apply cycle take? | `duration_ms` ms<br>`segments` count | `surface`* | emit `duration_ms` ≥ 1<br>SLO `duration_ms` > 8.3 at most 0.5 per foreground minute |
+| `app.chat_frame_visit` | How smoothly did the chat timeline draw in one visit while the user scrolled it or an agent turn updated it? Hitch time per second is SUM(hitch_ms) / SUM(duration_ms) × 1000 and hitches per minute SUM(hitches) / SUM(duration_ms) × 60000, pooled over visits, never averaged per visit. | `duration_ms` ms<br>`frames` count<br>`hitches` count<br>`hitch_ms` ms<br>`worst_frame_ms` ms<br>`items` count | `timeline_activity`* | emit `frames` ≥ 2<br>kept across background |
 | `app.coalescer_window` | How much stream traffic did the delta coalescer flush per window of 200 flushes (or a non-trivial partial drain)? | `flushes` count<br>`events` count<br>`payload_bytes` bytes | none | none |
-| `app.diff_reader_session` | How fast did a review diff open and how smoothly did it scroll? | `open_ms` ms<br>`lines` count<br>`chunks` count<br>`content_width_points` count<br>`scroll_frames` count<br>`hitches` count<br>`hitch_ratio` ratio<br>`worst_frame_ms` ms | none | none |
-| `app.terminal_scroll_visit` | How smoothly did scrolling run in one SSH terminal visit (every gesture, finger down through coasting, summed)? | `gestures` count<br>`duration_ms` ms<br>`frames` count<br>`hitches` count<br>`hitch_ratio` ratio<br>`worst_frame_ms` ms<br>`deferred_bytes` bytes | `terminal_mode`*<br>`scroll_path`* | emit `frames` ≥ 2 |
-| `app.pane_resize_visit` | How smoothly did dividers move and settle in a visit? Pool hitch_ms/duration_ms. | `duration_ms` ms<br>`hitch_ms` ms<br>`worst_frame_ms` ms<br>`reflow_ms` ms | none | none |
+| `app.diff_reader_session` | How fast did a review diff open and how smoothly did it scroll? | `open_ms` ms<br>`lines` count<br>`chunks` count<br>`content_width_points` count<br>`scroll_frames` count<br>`hitches` count<br>`hitch_ratio` ratio<br>`worst_frame_ms` ms | none | kept across background |
+| `app.terminal_scroll_visit` | How smoothly did scrolling run in one SSH terminal visit (every gesture, finger down through coasting, summed)? | `gestures` count<br>`duration_ms` ms<br>`frames` count<br>`hitches` count<br>`hitch_ratio` ratio<br>`worst_frame_ms` ms<br>`deferred_bytes` bytes | `terminal_mode`*<br>`scroll_path`* | emit `frames` ≥ 2<br>kept across background |
+| `app.pane_resize_visit` | How smoothly did dividers move and settle in a visit? Pool hitch_ms/duration_ms. | `duration_ms` ms<br>`hitch_ms` ms<br>`worst_frame_ms` ms<br>`reflow_ms` ms | none | kept across background |
 
 #### Attention and Media UX
 
@@ -157,13 +159,12 @@ Human-in-the-loop, sharing, and media playback. Ask response is user dwell time,
 
 | Event | Answers | Fields | Tags | Emit, storage, SLO |
 | --- | --- | --- | --- | --- |
-| `app.live_voice_leftover_call` | Did iOS keep CallKit calls listed after their Live Voice call was over? | `calls` count | `phase`*: `call_start`, `call_end`, `dictation_start` | emit `calls` ≥ 1 |
-| `app.live_voice_call_playback` | How smoothly did Live Voice call audio play? | `chunks` count<br>`received_ms` ms<br>`max_gap_ms` ms<br>`underruns` count<br>`flushes` count<br>`min_prime_ms` ms<br>`final_prime_ms` ms<br>`max_lag_ms` ms<br>`audio_restarts` count<br>`echo_cancellation` bool | none | none |
+| `app.live_voice_call_playback` | How smoothly did Live Voice call audio play? | `chunks` count<br>`received_ms` ms<br>`max_gap_ms` ms<br>`underruns` count<br>`flushes` count<br>`min_prime_ms` ms<br>`final_prime_ms` ms<br>`max_lag_ms` ms<br>`audio_restarts` count<br>`echo_cancellation` bool | none | kept across background |
 | `app.voice_playback_start` | How long did voice replies and replayable voice media take to start playing? | `duration_ms` ms | `playback_source`*<br>`playback_mode` | none |
 | `app.voice_playback_error` | Where did voice playback fail? | none | `playback_source`*<br>`phase`*: `start`, `load`, `stream`, `activate`, `chunk`<br>`error_kind`* | none |
 | `app.media_playback_start` | How long from player setup to playable video or audio? | `duration_ms` ms | `media_kind`*<br>`playback_source`<br>`playback_mode` | SLO `duration_ms` TM99 ≤ 2000 |
 | `app.media_playback_error` | Where did a media preview or player fail? | none | `media_kind`*<br>`playback_source`<br>`phase`*: `source`, `player_item`, `player_state`, `stall`<br>`error_kind`* | none |
-| `app.ask_response` | How long did a visible ask card block the agent before answer or ignore? | `duration_ms` ms<br>`questions` count<br>`answered` count<br>`ignored` count<br>`multi_select_questions` count<br>`selected` count<br>`custom` bool<br>`allow_custom` bool | `result`*: `answered`, `empty`, `ignored`<br>`surface`<br>`response_encoding` | none |
+| `app.ask_response` | How long did a visible ask card block the agent before answer or ignore? | `duration_ms` ms<br>`questions` count<br>`answered` count<br>`ignored` count<br>`multi_select_questions` count<br>`selected` count<br>`custom` bool<br>`allow_custom` bool | `result`*: `answered`, `empty`, `ignored`<br>`surface`<br>`response_encoding` | kept across background |
 | `app.share_export` | How long did rendering share-sheet content take? | `duration_ms` ms | `export_format`*<br>`content_type` | emit `duration_ms` ≥ 1 |
 | `app.share_prepare` | How long did the shared-session redaction preflight take, and what did it find? | `duration_ms` ms<br>`findings` count (optional)<br>`replacements` count (optional)<br>`blocked` bool (optional)<br>`can_publish` bool (optional)<br>`redact_emails` bool<br>`redact_phones` bool<br>`redact_user_paths` bool<br>`redact_ip_addresses` bool<br>`redact_jwt_bearer` bool<br>`redact_names` bool<br>`redact_skills` bool | `status`*: `ok`, `error`<br>`error_kind` | none |
 | `app.share_publish` | How long did publishing a shared session take? | `duration_ms` ms<br>`findings` count (optional)<br>`replacements` count (optional)<br>`redact_emails` bool<br>`redact_phones` bool<br>`redact_user_paths` bool<br>`redact_ip_addresses` bool<br>`redact_jwt_bearer` bool<br>`redact_names` bool<br>`redact_skills` bool | `status`*: `ok`, `error`<br>`error_kind` | none |
@@ -196,13 +197,13 @@ Server speech-to-text and finalize work.
 
 #### Session List
 
-Session list compute and SwiftUI body churn.
+Session list compute time and recompute churn.
 
 | Event | Answers | Fields | Tags | Emit, storage, SLO |
 | --- | --- | --- | --- | --- |
 | `app.session_list_compute` | How long did computing the session list view data take? | `duration_ms` ms<br>`active_sessions` count<br>`stopped_sessions` count | none | emit `duration_ms` ≥ 1<br>SLO `duration_ms` TM99 ≤ 10 |
 | `app.session_list_row_compute` | How long did computing the visible session rows take? | `duration_ms` ms<br>`rows` count | none | emit `duration_ms` ≥ 1 |
-| `app.session_list_body_rate` | How often did the session list body re-evaluate in a 5 s window (store churn)? | `evaluations` count | none | SLO `evaluations` TM99 ≤ 12 |
+| `app.session_list_body_rate` | How many times did the session list recompute its rows in one fixed 5 s window, opened by a recompute and closed by a timer (store churn)? | `evaluations` count | none | SLO `evaluations` TM99 ≤ 12 |
 
 #### Device
 
@@ -210,11 +211,11 @@ Client CPU, memory, thermal pressure, and main-thread stalls.
 
 | Event | Answers | Fields | Tags | Emit, storage, SLO |
 | --- | --- | --- | --- | --- |
-| `app.device_resources` | What did the app cost in CPU and memory, and how much headroom was left, on each screen and state? Sampled every 10 s. | `cpu_pct` pct (optional)<br>`memory_mb` mb (optional)<br>`memory_available_mb` mb<br>`thermal_state` count | `screen`<br>`stream_state`<br>`agents`<br>`voice` | SLO `cpu_pct` TM99 ≤ 20<br>SLO `memory_mb` TM99 ≤ 250<br>SLO `memory_available_mb` TM99 ≥ 100<br>SLO `thermal_state` TM99 ≤ 1 |
+| `app.device_resources` | What did the app cost in CPU and memory, and how much headroom was left, on each screen and state? Sampled every 10 s while active. | `cpu_pct` pct (optional)<br>`memory_mb` mb (optional)<br>`memory_available_mb` mb<br>`thermal_state` count | `screen`<br>`stream_state`<br>`agents`<br>`voice` | SLO `cpu_pct` TM99 ≤ 20<br>SLO `memory_mb` TM99 ≤ 250<br>SLO `memory_available_mb` p1 ≥ 100<br>SLO `thermal_state` > 1 in at most 1% of events |
 | `app.memory_warning` | How large was the app when iOS sent a memory warning, and what did it free? | `footprint_before_mb` mb (optional)<br>`footprint_after_mb` mb (optional)<br>`cache_entries` count<br>`cache_bytes` bytes | `screen` | none |
 | `app.foreground` | How large was the app when it returned to the foreground? | `footprint_mb` mb (optional)<br>`reconnect` bool | `screen` | none |
-| `app.main_thread_stall_detected` | Did the main thread miss the watchdog probe, and how large was the app? | `threshold_ms` ms<br>`footprint_mb` mb (optional)<br>`sequence` count | `screen` | none |
-| `app.main_thread_stall_recovered` | How long did a detected main-thread stall last? | `duration_ms` ms<br>`sequence` count | `screen` | none |
+| `app.main_thread_stall_detected` | Did the main thread miss the watchdog probe, and how large was the app? | `threshold_ms` ms<br>`footprint_mb` mb (optional)<br>`sequence` count | `screen` | kept across background |
+| `app.main_thread_stall_recovered` | How long did a detected main-thread stall last? | `duration_ms` ms<br>`sequence` count | `screen` | kept across background |
 
 #### Server
 
@@ -280,7 +281,7 @@ HTTP routes, WebSocket plumbing, push, MCP, schedules, and session lifecycle dri
 
 - `server/scripts/manual/telemetry-import-sqlite.mjs` imports `app-events-*` and `server-events-*` into one `events` table plus `metrickit_payloads`; non-v2 lines and pre-catalog files are skipped, so dashboard history starts at the catalog cutover. Bumping its parser version reimports files.
 - Grafana opens the SQLite volume read-write so WAL-mode reads can create shared-memory sidecars.
-- `device` (`iPhone`, `iPad`, `Mac`, `Other`) is a generated column on both client tables, from client kind and model; `scripts/device-family.ts` is its CLI twin. Release Preflight's Device variable filters every client panel, and client series pivot to one column per device in SQL: a string label column fails the datasource on an empty window. MetricKit daily panels keep one delivery per device and day.
+- `device` (`iPhone`, `iPad`, `Mac`, `Other`) is a generated column on both client tables, from client kind and model; `scripts/device-family.ts` is its CLI twin. `events.debug_build` marks Debug builds; "latest build" stats use each device's newest `git_commit`. Release Preflight's Device variable filters every client panel, and client series pivot to one column per device in SQL: a string label column fails the datasource on an empty window. MetricKit daily panels keep one delivery per device and day.
 - Dashboards and alert rules (`server/docker/grafana/provisioning/alerting/alert-rules.yml`) may use only catalog events, fields, tags, and tag values, and every query must run against the importer schema (`npm run check`); `npm run telemetry:grafana:check` runs every panel against a live Grafana.
 
 ## Adding or changing an event

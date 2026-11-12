@@ -20,14 +20,6 @@ enum TimelineSnapshotApplier {
         // Fast path: when no previous items exist (cold start), skip change
         // detection entirely — everything is new.
         guard !previousItemByID.isEmpty else {
-            ChatTimelinePerf.beginTimelineApplyCycle(itemCount: nextIDs.count, changedCount: 0)
-            ChatTimelinePerf.beginSnapshotBuildPhase()
-            ChatTimelinePerf.endSnapshotBuildPhase()
-            ChatTimelinePerf.updateTimelineApplyCycle(
-                itemCount: nextIDs.count,
-                changedCount: 0
-            )
-
             var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
             snapshot.appendSections([0])
             snapshot.appendItems(nextIDs)
@@ -62,10 +54,6 @@ enum TimelineSnapshotApplier {
                 nextIDs: nextIDs,
                 forceReconfigureIDs: forceReconfigureIDs
             )
-            ChatTimelinePerf.beginTimelineApplyCycle(
-                itemCount: nextIDs.count,
-                changedCount: changedIDs.count
-            )
             if let dataSource, !changedIDs.isEmpty {
                 // changedItemIDsForReconfigure validates streaming IDs
                 // against nextItemByID before including them.
@@ -81,9 +69,6 @@ enum TimelineSnapshotApplier {
             }
             return
         }
-
-        ChatTimelinePerf.beginTimelineApplyCycle(itemCount: nextIDs.count, changedCount: 0)
-        ChatTimelinePerf.beginSnapshotBuildPhase()
 
         let dedupedChangedIDs: [String]
         do {
@@ -102,12 +87,6 @@ enum TimelineSnapshotApplier {
                 forceReconfigureIDs: forceReconfigureIDs
             )
         }
-
-        ChatTimelinePerf.endSnapshotBuildPhase()
-        ChatTimelinePerf.updateTimelineApplyCycle(
-            itemCount: nextIDs.count,
-            changedCount: dedupedChangedIDs.count
-        )
 
         // Structural change: IDs changed (new rows inserted or removed).
         // Never animate structural diffs — instant transitions are calmer

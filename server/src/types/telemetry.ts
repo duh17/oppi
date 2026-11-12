@@ -49,6 +49,8 @@ export interface TelemetryClient {
   deviceModel?: string;
   appInstanceId?: string;
   bootId?: string;
+  /** Set only by a Debug-configuration build. */
+  debugBuild?: true;
 }
 
 /**

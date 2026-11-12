@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 final class ClientLogUploadDispatcher: @unchecked Sendable {
     private let queue: ClientLogUploadQueue
@@ -72,8 +73,6 @@ final class ClientLogUploadDispatcher: @unchecked Sendable {
 /// The queue and wire models live in `Shared` so the future Mac client can use
 /// the same server contract with a Mac-specific uploader.
 enum ClientLogUploadService {
-    private static let appInstanceDefaultsKey = "oppi.clientLog.appInstanceId"
-
     static let appInstanceId = loadAppInstanceId()
     static let bootId = UUID().uuidString
 
@@ -159,14 +158,30 @@ enum ClientLogUploadService {
         }
     }
 
+    /// One id per device install. It is a this-device-only keychain item, so a backup
+    /// restored onto another device starts a new id; in UserDefaults a restore copied
+    /// it, and two devices reported as one.
     private static func loadAppInstanceId() -> String {
-        let defaults = UserDefaults.standard
-        if let existing = defaults.string(forKey: appInstanceDefaultsKey), !existing.isEmpty {
+        let item: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "\(AppIdentifiers.subsystem).telemetry",
+            kSecAttrAccount as String: "appInstanceId",
+        ]
+        var lookup = item
+        lookup[kSecReturnData as String] = true
+        lookup[kSecMatchLimit as String] = kSecMatchLimitOne
+        var found: CFTypeRef?
+        if SecItemCopyMatching(lookup as CFDictionary, &found) == errSecSuccess,
+           let data = found as? Data, let existing = String(data: data, encoding: .utf8), !existing.isEmpty {
             return existing
         }
 
         let value = UUID().uuidString
-        defaults.set(value, forKey: appInstanceDefaultsKey)
+        var add = item
+        add[kSecValueData as String] = Data(value.utf8)
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        // A failed add (before first unlock) leaves this launch's id unsaved; the next launch stores one.
+        SecItemAdd(add as CFDictionary, nil)
         return value
     }
 
@@ -177,7 +192,8 @@ enum ClientLogUploadService {
             buildNumber: client.buildNumber ?? "unknown",
             osVersion: client.osVersion ?? "unknown",
             deviceModel: client.deviceModel ?? "unknown",
-            gitCommit: client.gitCommit
+            gitCommit: client.gitCommit,
+            debugBuild: client.debugBuild
         )
     }
 }

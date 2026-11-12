@@ -309,6 +309,7 @@ describe("telemetry SQLite importer", () => {
           ts: 1_793_000_000_000,
           fields: { duration_ms: 412, items: 87 },
           tags: { load_path: "cache_hit" },
+          client: { ...(appEvent().client as object), debugBuild: true },
         }),
       ) + "\n",
     );
@@ -324,7 +325,7 @@ describe("telemetry SQLite importer", () => {
       const rows = db
         .prepare(
           `SELECT ts_ms, origin, name, session_id, workspace_id, client_kind, app_version,
-                  build_number, git_commit, device_model,
+                  build_number, git_commit, device_model, debug_build,
                   json_extract(fields_json, '$.duration_ms') AS duration_ms,
                   json_extract(tags_json, '$.load_path') AS load_path,
                   fields_json, tags_json
@@ -343,6 +344,7 @@ describe("telemetry SQLite importer", () => {
           build_number: "412",
           git_commit: "abc123def456",
           device_model: "iPhone17,1",
+          debug_build: 1,
           duration_ms: 412,
           load_path: "cache_hit",
           fields_json: '{"duration_ms":412,"items":87}',
@@ -359,6 +361,7 @@ describe("telemetry SQLite importer", () => {
           build_number: null,
           git_commit: null,
           device_model: null,
+          debug_build: null,
           duration_ms: null,
           load_path: null,
           fields_json: '{"rss_mb":300}',

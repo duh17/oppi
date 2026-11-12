@@ -5,7 +5,7 @@
 
 export const GROUPS = {
   ux: {
-    label: "UX Responsiveness",
+    label: "UX Wait Time",
     note: "User-visible wait time. Do not put full agent work duration in this group.",
   },
   connection: {
@@ -14,7 +14,7 @@ export const GROUPS = {
   },
   rendering: {
     label: "Rendering Smoothness",
-    note: "Frame-budget work on the 120 Hz budget (8.3 ms).",
+    note: "Main-thread work against the 120 Hz frame (8.3 ms). SLOs count slow updates per foreground minute.",
   },
   media: {
     label: "Attention and Media UX",
@@ -30,7 +30,7 @@ export const GROUPS = {
   },
   session_list: {
     label: "Session List",
-    note: "Session list compute and SwiftUI body churn.",
+    note: "Session list compute time and recompute churn.",
   },
   device: {
     label: "Device",

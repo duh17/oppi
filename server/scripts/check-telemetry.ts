@@ -37,6 +37,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   EVENT_DEFS,
+  FOREGROUND_CLOCK,
   TAG_DEFS,
   eventOrigin,
   fieldSpec,
@@ -237,6 +238,10 @@ function checkEvent(
     problems.push(...checkWhere(tags, name, event, "emit rule", rule.where));
   }
 
+  if (event.spansBackground && eventOrigin(name) !== "app") {
+    problems.push(`${name}: only app events drop samples that span the background`);
+  }
+
   if (event.storage) {
     if (eventOrigin(name) !== "server") problems.push(`${name}: only server events aggregate`);
     const fields = Object.keys(event.fields);
@@ -259,7 +264,21 @@ function checkEvent(
     }
     if (fieldSpec(field).unit === "bool")
       problems.push(`${name}: SLO on bool field "${slo.field}"`);
-    if (!(slo.tm99 > 0)) problems.push(`${name}: SLO on "${slo.field}" needs a positive tm99`);
+    const threshold =
+      "tm99" in slo ? slo.tm99 : "p1" in slo ? slo.p1 : "share" in slo ? slo.share : slo.perMinute;
+    if (!(threshold > 0)) problems.push(`${name}: SLO on "${slo.field}" needs a positive limit`);
+    if ("share" in slo && slo.share >= 1) {
+      problems.push(`${name}: SLO on "${slo.field}" needs a share below 1`);
+    }
+    if ("over" in slo) {
+      // A counting SLO needs every value above `over` stored.
+      for (const rule of event.emit ?? []) {
+        if (rule.field !== slo.field) continue;
+        if ((rule.min ?? -Infinity) > slo.over || rule.max !== undefined) {
+          problems.push(`${name}: emit rule on "${slo.field}" drops values its SLO counts`);
+        }
+      }
+    }
     if (!slo.label.trim()) problems.push(`${name}: SLO on "${slo.field}" has no label`);
     problems.push(...checkWhere(tags, name, event, `SLO on "${slo.field}"`, slo.where));
   }
@@ -317,6 +336,17 @@ export function catalogViolations(
   rules: readonly NameLocationRule[] = NAME_LOCATION_RULES,
 ): string[] {
   const problems = [...checkTagVocabulary(tags), ...nameRuleViolations(rules)];
+  const perMinute = Object.values(events).some((event) =>
+    event.slo?.some((slo) => "perMinute" in slo),
+  );
+  if (
+    perMinute &&
+    (!events[FOREGROUND_CLOCK.event] || eventOrigin(FOREGROUND_CLOCK.event) !== "app")
+  ) {
+    problems.push(
+      `per-minute SLOs need the app foreground clock event "${FOREGROUND_CLOCK.event}"`,
+    );
+  }
   const sloLabels = new Map<string, string>();
   for (const [name, event] of Object.entries(events)) {
     problems.push(...checkEvent(tags, name, event));

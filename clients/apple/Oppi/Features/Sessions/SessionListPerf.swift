@@ -5,7 +5,7 @@ import os
 ///
 /// Tracks:
 /// - viewData computation latency (the O(n^2) tree-walk hotpath)
-/// - body evaluation rate (store churn indicator)
+/// - recompute rate in fixed 5 s windows (store churn indicator)
 /// - aggregate per-row computation latency
 ///
 /// Lightweight: all telemetry is fire-and-forget via `Telemetry.record`.
@@ -18,13 +18,14 @@ enum SessionListPerf {
         category: "SessionListPerf"
     )
 
-    // MARK: - Body rate tracking
+    // MARK: - Recompute rate tracking
 
-    /// Window size for body evaluation rate measurement.
-    private static let bodyRateWindowNs: UInt64 = 5_000_000_000 // 5 seconds
+    /// A window opens at a recompute and a timer closes it this much later, so
+    /// every reported count covers the same length of time.
+    private static let recomputeWindow: Duration = .seconds(5)
 
-    private static var bodyWindowStartNs: UInt64 = 0
-    private static var bodyWindowCount = 0
+    private static var recomputeWindowCount = 0
+    private static var recomputeWindowTask: Task<Void, Never>?
 
     /// Minimum emission cooldown for compute metrics to avoid flooding.
     private static let emitCooldownNs: UInt64 = 2_000_000_000 // 2 seconds
@@ -52,8 +53,7 @@ enum SessionListPerf {
 
         signposter.emitEvent("viewData.compute")
 
-        // Always count the body evaluation
-        recordBodyEvaluation(nowNs: nowNs, workspaceId: workspaceId)
+        recordRecompute(workspaceId: workspaceId)
 
         guard durationMs >= computeNoiseFloorMs else { return }
         guard nowNs &- lastComputeEmitNs >= emitCooldownNs else { return }
@@ -91,31 +91,27 @@ enum SessionListPerf {
         )
     }
 
-    // MARK: - Body evaluation rate
+    // MARK: - Recompute rate
 
-    private static func recordBodyEvaluation(nowNs: UInt64, workspaceId: String?) {
-        if bodyWindowStartNs == 0 {
-            bodyWindowStartNs = nowNs
-            bodyWindowCount = 0
+    private static func recordRecompute(workspaceId: String?) {
+        recomputeWindowCount += 1
+        guard recomputeWindowTask == nil else { return }
+        recomputeWindowTask = Task { @MainActor in
+            try? await Task.sleep(for: recomputeWindow)
+            guard !Task.isCancelled else { return }
+            let count = recomputeWindowCount
+            recomputeWindowCount = 0
+            recomputeWindowTask = nil
+            Telemetry.record(AppSessionListBodyRate(evaluations: count), workspaceId: workspaceId)
         }
-
-        bodyWindowCount += 1
-
-        guard nowNs &- bodyWindowStartNs >= bodyRateWindowNs else { return }
-
-        // Window complete — emit rate and reset
-        let count = bodyWindowCount
-        bodyWindowStartNs = nowNs
-        bodyWindowCount = 0
-
-        Telemetry.record(AppSessionListBodyRate(evaluations: count), workspaceId: workspaceId)
     }
 
     // MARK: - Reset
 
     static func reset() {
-        bodyWindowStartNs = 0
-        bodyWindowCount = 0
+        recomputeWindowTask?.cancel()
+        recomputeWindowTask = nil
+        recomputeWindowCount = 0
         lastComputeEmitNs = 0
         lastRowEmitNs = 0
     }

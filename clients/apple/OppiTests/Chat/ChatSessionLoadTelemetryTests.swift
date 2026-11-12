@@ -79,10 +79,13 @@ struct ChatSessionLoadTelemetryTests {
 
     @Test func sessionSwitchPastTheCatalogCeilingIsDropped() {
         let capture = TelemetryCapture()
+        // A record that never saw the background: the test host launched under a minute
+        // ago, so the app's own record would drop these long samples as spanning it.
+        let foreground = TelemetryBackgroundSpans()
         capture.runSync {
-            Telemetry.record(AppSessionSwitch(durationMs: 3_888_000, cached: false))
-            Telemetry.record(AppWorkspaceLoad(durationMs: 60_000, loadPath: .open))
-            Telemetry.record(AppSessionSwitch(durationMs: 59_999, cached: true))
+            Telemetry.record(AppSessionSwitch(durationMs: 3_888_000, cached: false), background: foreground)
+            Telemetry.record(AppWorkspaceLoad(durationMs: 60_000, loadPath: .open), background: foreground)
+            Telemetry.record(AppSessionSwitch(durationMs: 59_999, cached: true), background: foreground)
         }
 
         #expect(capture.events.map(\.name) == ["app.session_switch"])

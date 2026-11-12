@@ -206,13 +206,10 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
     /// with the failure and kept for the retry.
     override func load() async throws {
         guard let serverId = server?.id else { return }
-        let openedAtMs = Date.nowMs()
-        let backgroundEpoch = AppScenePhase.shared.backgroundEpoch
         quotaTask?.cancel()
         guard let client = await coordinator.apiClientReady(for: serverId) else {
             throw noConnectionFailure()
         }
-        let readyMs = Date.nowMs() - openedAtMs
         // Usage is provider round-trips on the server, often seconds: it loads
         // beside the providers and fills in when it lands, so the load (and a
         // pull to refresh) ends with the providers. A read that fails keeps the
@@ -229,7 +226,6 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
             usage.cancel()
             return
         }
-        let providersMs = Date.nowMs() - openedAtMs
         statuses = loaded
         setupState = ProviderSetupState(providerStatuses: loaded)
         errorMessage = nil
@@ -241,13 +237,6 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
             }
             guard !Task.isCancelled, let self, self.server?.id == serverId else { return }
             if let fetched { quotas = fetched }
-            guard backgroundEpoch == AppScenePhase.shared.backgroundEpoch else { return }
-            Telemetry.record(AppModelProvidersLoad(
-                readyMs: Double(readyMs),
-                providersMs: Double(providersMs),
-                usageMs: Double(Date.nowMs() - openedAtMs),
-                status: fetched == nil ? .error : .ok
-            ))
         }
     }
 

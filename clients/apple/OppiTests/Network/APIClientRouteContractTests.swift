@@ -896,6 +896,7 @@ extension APIClientEndpoint {
         osVersion: nil,
         deviceModel: nil,
         appInstanceId: nil,
-        bootId: nil
+        bootId: nil,
+        debugBuild: nil
     )
 }

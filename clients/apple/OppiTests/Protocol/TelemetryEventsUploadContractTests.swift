@@ -102,7 +102,8 @@ struct TelemetryEventsUploadContractTests {
                 osVersion: "26.1",
                 deviceModel: "iPhone17,1",
                 appInstanceId: "app-instance-golden",
-                bootId: "boot-golden"
+                bootId: "boot-golden",
+                debugBuild: true
             ),
             events: events
         )

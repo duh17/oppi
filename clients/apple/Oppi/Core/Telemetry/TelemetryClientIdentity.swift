@@ -11,8 +11,15 @@ enum TelemetryClientIdentity {
         osVersion: osVersion(ProcessInfo.processInfo.operatingSystemVersion),
         deviceModel: hardwareIdentifier(),
         appInstanceId: ClientLogUploadService.appInstanceId,
-        bootId: ClientLogUploadService.bootId
+        bootId: ClientLogUploadService.bootId,
+        debugBuild: isDebugBuild ? true : nil
     )
+
+    #if DEBUG
+    private static let isDebugBuild = true
+    #else
+    private static let isDebugBuild = false
+    #endif
 
     /// `26.1` or `26.1.2`; the patch level appears only when it is not zero.
     static func osVersion(_ version: OperatingSystemVersion) -> String {

@@ -35,6 +35,8 @@ struct ClientLogUploadClient: Codable, Sendable, Equatable {
     let gitCommit: String?
     let appInstanceId: String
     let bootId: String
+    /// True only from a Debug-configuration build; absent otherwise.
+    let debugBuild: Bool?
 }
 
 struct ClientLogUploadRequest: Codable, Sendable, Equatable {
@@ -50,19 +52,22 @@ struct ClientLogUploadMetadata: Sendable, Equatable {
     let osVersion: String
     let deviceModel: String
     let gitCommit: String?
+    let debugBuild: Bool?
 
     init(
         appVersion: String,
         buildNumber: String,
         osVersion: String,
         deviceModel: String,
-        gitCommit: String? = nil
+        gitCommit: String? = nil,
+        debugBuild: Bool? = nil
     ) {
         self.appVersion = appVersion
         self.buildNumber = buildNumber
         self.osVersion = osVersion
         self.deviceModel = deviceModel
         self.gitCommit = gitCommit
+        self.debugBuild = debugBuild
     }
 }
 

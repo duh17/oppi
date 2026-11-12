@@ -69,24 +69,34 @@ describe("telemetry catalog invariants", () => {
           group: "server",
           fields: { duration_ms: "ms", hit: "bool", bytes_sent_bytes: "bytes" },
           tags: { status: {} },
-          emit: [{ field: "missing_ms", min: 1 }],
+          emit: [
+            { field: "missing_ms", min: 1 },
+            { field: "duration_ms", min: 20 },
+          ],
           storage: { aggregate: { duration_ms: "sum" } },
           slo: [
             { field: "latency_ms", tm99: 10, label: "A" },
             { field: "hit", tm99: 1, label: "B" },
             { field: "duration_ms", tm99: 10, label: "C", where: { status: ["cached"] } },
+            // The emit floor (20) drops values this SLO counts (> 8.3).
+            { field: "duration_ms", over: 8.3, perMinute: 2, label: "D" },
           ],
+          // Only the app can tell a duration spanned the background.
+          spansBackground: true,
         },
       },
       { status: TAGS.status! },
     );
     expect(problems).toEqual([
+      'per-minute SLOs need the app foreground clock event "app.device_resources"',
       'server.thing: emit rule on unknown field "missing_ms"',
+      "server.thing: only app events drop samples that span the background",
       'server.thing: aggregate storage drops field "hit"; give it sum or max',
       'server.thing: aggregate storage drops field "bytes_sent_bytes"; give it sum or max',
       'server.thing: SLO on unknown field "latency_ms"',
       'server.thing: SLO on bool field "hit"',
       'server.thing: SLO on "duration_ms" filters "status" on "cached", which it never has',
+      'server.thing: emit rule on "duration_ms" drops values its SLO counts',
     ]);
   });
 

@@ -21,7 +21,8 @@ import { DatabaseSync } from "node:sqlite";
 // 7: one `events` table for v2 telemetry records (`app-events-*`, `server-events-*`).
 // Pre-v2 files and the tables built from them are no longer read.
 // 8: `metrickit_payloads.client_kind`, read from the upload envelope.
-const INGEST_PARSER_VERSION = 8;
+// 9: `events.debug_build`, 1 for a Debug-configuration build (`client.debugBuild`).
+const INGEST_PARSER_VERSION = 9;
 
 /**
  * The family of the device that sent a client record: `iPhone`, `iPad`, `Mac`,
@@ -116,6 +117,7 @@ function ensureSchema(db) {
       build_number TEXT,
       git_commit TEXT,
       device_model TEXT,
+      debug_build INTEGER,
       fields_json TEXT NOT NULL,
       tags_json TEXT NOT NULL,
       ${DEVICE_COLUMN}
@@ -170,6 +172,9 @@ function ensureSchema(db) {
     );
   if (!columnsOf("metrickit_payloads").has("client_kind")) {
     db.exec("ALTER TABLE metrickit_payloads ADD COLUMN client_kind TEXT");
+  }
+  if (!columnsOf("events").has("debug_build")) {
+    db.exec("ALTER TABLE events ADD COLUMN debug_build INTEGER");
   }
   for (const table of ["events", "metrickit_payloads"]) {
     if (!columnsOf(table).has("device")) {
@@ -352,8 +357,9 @@ function ingestEventsFile(db, sourceFile, lines, options) {
   const ins = db.prepare(`
     INSERT OR REPLACE INTO events (
       id, source_file, line_number, ts_ms, origin, name, session_id, workspace_id,
-      client_kind, app_version, build_number, git_commit, device_model, fields_json, tags_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      client_kind, app_version, build_number, git_commit, device_model, debug_build,
+      fields_json, tags_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let count = 0;
@@ -386,6 +392,7 @@ function ingestEventsFile(db, sourceFile, lines, options) {
       stringOrNull(client.buildNumber),
       stringOrNull(client.gitCommit),
       stringOrNull(client.deviceModel),
+      client.debugBuild === true ? 1 : null,
       JSON.stringify(record.fields ?? {}),
       JSON.stringify(record.tags ?? {}),
     );

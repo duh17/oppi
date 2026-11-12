@@ -17,7 +17,8 @@ final class DeviceResourceSampler {
 
     // MARK: - Configuration
 
-    private static let sampleInterval: Duration = .seconds(10)
+    /// The catalog's foreground clock: the review counts these samples as active time.
+    private static let sampleInterval: Duration = .seconds(TelemetryForegroundClock.sampleSeconds)
 
     // MARK: - State
 

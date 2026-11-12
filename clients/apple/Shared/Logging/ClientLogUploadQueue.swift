@@ -199,7 +199,8 @@ actor ClientLogUploadQueue {
                     deviceModel: metadata.deviceModel,
                     gitCommit: metadata.gitCommit,
                     appInstanceId: appInstanceId,
-                    bootId: bootId
+                    bootId: bootId,
+                    debugBuild: metadata.debugBuild
                 ),
                 droppedCount: batchDroppedCount > 0 ? batchDroppedCount : nil,
                 entries: batch

@@ -1,4 +1,6 @@
 import Foundation
+import os
+import UIKit
 
 /// The one way the app records a telemetry event.
 ///
@@ -15,11 +17,13 @@ enum Telemetry {
     /// task while other suites run in parallel. Nil in production.
     @TaskLocal static var _observerForTesting: (@Sendable (TelemetryEventPayload) -> Void)?
 
+    /// `background` is the app's background record; tests pass their own.
     static func record(
         _ event: some TelemetryEvent,
         sessionId: String? = nil,
         workspaceId: String? = nil,
-        timestampMs: Int64 = Date.nowMs()
+        timestampMs: Int64 = Date.nowMs(),
+        background: TelemetryBackgroundSpans = .shared
     ) {
         // The generated policy reads the struct's typed members, so a dropped
         // event (most cell configures and applies) costs no dictionary,
@@ -28,6 +32,13 @@ enum Telemetry {
         let fields = event.fieldValues
         // One non-finite field fails JSON encoding for the whole upload batch.
         guard fields.values.allSatisfy(\.isFinite) else { return }
+        // Wall-clock durations keep running while iOS suspends the app: one
+        // that overlapped a trip to the background measured the suspension.
+        if !type(of: event).spansBackground,
+           let longestMs = fields.lazy.filter({ $0.key.hasSuffix("_ms") }).map(\.value).max(),
+           background.overlaps(intervalMs: longestMs) {
+            return
+        }
 
         let payload = TelemetryEventPayload(
             event,
@@ -47,5 +58,55 @@ enum Telemetry {
     private static func cleanID(_ value: String?) -> String? {
         guard let value, !value.isEmpty else { return nil }
         return String(value.prefix(96))
+    }
+}
+
+/// When the app was last in the background, readable from any thread.
+/// `Telemetry.record` asks whether a duration that ends now overlapped a
+/// background period. App-level, not per scene: suspension follows the app.
+final class TelemetryBackgroundSpans: Sendable {
+    static let shared = TelemetryBackgroundSpans()
+
+    /// Follows the app's background transitions from launch on. Call once, on
+    /// the main thread, before any scene connects.
+    @MainActor
+    func observeApplication() {
+        if UIApplication.shared.applicationState == .background { enteredBackground() }
+        let center = NotificationCenter.default
+        _ = center.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil
+        ) { [self] _ in enteredBackground() }
+        _ = center.addObserver(
+            forName: UIApplication.willEnterForegroundNotification, object: nil, queue: nil
+        ) { [self] _ in leftBackground() }
+    }
+
+    private struct State {
+        var inBackground = false
+        var leftBackgroundAt: ContinuousClock.Instant?
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    func enteredBackground() {
+        state.withLock { $0.inBackground = true }
+    }
+
+    func leftBackground(at now: ContinuousClock.Instant = .now) {
+        state.withLock { state in
+            guard state.inBackground else { return }
+            state.inBackground = false
+            state.leftBackgroundAt = now
+        }
+    }
+
+    /// Whether an interval of `intervalMs` ending at `now` overlapped a
+    /// background period. While in the background, every interval does.
+    func overlaps(intervalMs: Double, endingAt now: ContinuousClock.Instant = .now) -> Bool {
+        state.withLock { state in
+            if state.inBackground { return true }
+            guard let leftAt = state.leftBackgroundAt else { return false }
+            return leftAt > now - .milliseconds(intervalMs)
+        }
     }
 }

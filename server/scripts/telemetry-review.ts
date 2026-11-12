@@ -8,7 +8,9 @@
  * Units, groups, and SLOs come from the telemetry catalog
  * (`server/src/telemetry/catalog.ts`). Each event field is one series named
  * `<event>.<field>` (`app.session_load.duration_ms`). An SLO with a `where`
- * filter keeps only matching events in that field's series.
+ * filter keeps only matching events in that field's series. SLO status is per
+ * device family (server series once): devices are never pooled into one verdict.
+ * Foreground minutes for per-minute SLOs come from the catalog's foreground clock.
  *
  * `--models` is read-only operational telemetry: success is not accepted-task
  * correctness. `--http` breaks `server.http_request` down by method and path
@@ -20,18 +22,30 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { isRecord } from "../src/json-shape.ts";
-import { EVENT_DEFS, fieldSpec, type EventDef } from "../src/telemetry/catalog.ts";
+import {
+  EVENT_DEFS,
+  FOREGROUND_CLOCK,
+  fieldSpec,
+  type EventDef,
+  type SloSpec,
+} from "../src/telemetry/catalog.ts";
 import { GROUPS } from "../src/telemetry/groups.ts";
 import { tagsMatch } from "../src/telemetry/validate.ts";
 import { buildLabel } from "./build-label.ts";
 import { deviceFamily, parseDeviceFamily, type DeviceFamily } from "./device-family.ts";
 
+type SloKind = "tm99" | "p1" | "per_minute" | "share";
+
 interface SloThreshold {
-  tm99: number;
+  kind: SloKind;
+  /** Pass at or below it; `p1` passes at or above it. */
+  limit: number;
+  /** `per_minute` and `share` count values above this. */
+  over?: number;
   label: string;
   group: string;
   short: string;
-  lowerIsBad?: boolean;
+  /** Unit of the SLO value: the field's unit, `per_min`, or `share`. */
   displayUnit: string;
 }
 
@@ -46,6 +60,8 @@ export interface LoadedRecord {
   appVersion?: string;
   /** Git commit of the app build (`client.gitCommit`). */
   gitCommit?: string;
+  /** A Debug-configuration build (`client.debugBuild`). */
+  debugBuild?: boolean;
   /** One app launch (`client.bootId`); a new value on every process start. */
   bootId?: string;
   /** iPhone, iPad, Mac, or Other for client events; absent on server events. */
@@ -77,11 +93,20 @@ interface MetricStats {
   max: number;
 }
 
+/** One device's verdict on one SLO; `device` is `server` for server series. */
+interface SloDeviceResult extends MetricStats {
+  device: string;
+  value: number;
+  status: "pass" | "over";
+}
+
 interface MetricResult extends MetricStats {
   unit: string;
-  slo_tm99: number | null;
+  slo: { kind: SloKind; limit: number; over?: number; unit: string } | null;
   group: string;
-  status: "pass" | "over" | "no_slo";
+  /** Worst device verdict; `no_data` when an SLO could not be judged on any device. */
+  status: "pass" | "over" | "no_slo" | "no_data";
+  devices: SloDeviceResult[];
 }
 
 interface BuildInfo {
@@ -97,6 +122,8 @@ interface LoadResult {
   buildSummary: Record<string, BuildInfo>;
   samples: LoadedSample[];
   records: LoadedRecord[];
+  /** Foreground minutes per device family, from the catalog's foreground clock. */
+  foregroundMinutes: Record<string, number>;
   /** Events read inside the window. */
   totalSamples: number;
   filesRead: number;
@@ -127,10 +154,15 @@ interface ReviewSummary {
   filesRead: number;
   violations: number;
   sloMetricCount: number;
+  /** Counts per (SLO, device); `missing` is an SLO no device could be judged on. */
   groups: Record<string, { pass: number; over: number; missing: number }>;
-  statusBasis: "tm99_vs_slo";
+  statusBasis: "slo_per_device";
   /** Client events per device family (`--device` narrows them to one). */
   devices: Record<string, number>;
+  /** The builds (`build@commit`) each device's verdicts were judged on. */
+  deviceBuilds: Record<string, string[]>;
+  /** The release candidate commit when `--commit` narrowed client events to it. */
+  commit?: string;
 }
 
 interface DictationConfigSummary {
@@ -256,22 +288,64 @@ function seriesSource(series: string): { event: string; def: EventDef; field: st
   return def ? { event, def, field: series.slice(dot + 1) } : undefined;
 }
 
-/** Release SLOs from the catalog, keyed by series. They gate on TM99, not raw p95. */
+function sloRule(
+  slo: SloSpec,
+  fieldUnit: string,
+): Pick<SloThreshold, "kind" | "limit" | "over" | "displayUnit"> {
+  if ("tm99" in slo) return { kind: "tm99", limit: slo.tm99, displayUnit: fieldUnit };
+  if ("p1" in slo) return { kind: "p1", limit: slo.p1, displayUnit: fieldUnit };
+  if ("perMinute" in slo) {
+    return { kind: "per_minute", limit: slo.perMinute, over: slo.over, displayUnit: "per_min" };
+  }
+  return { kind: "share", limit: slo.share, over: slo.over, displayUnit: "share" };
+}
+
+/** Release SLOs from the catalog, keyed by series, judged per device. */
 export const SLO_THRESHOLDS: Record<string, SloThreshold> = Object.fromEntries(
   Object.entries(EVENT_DEFS).flatMap(([event, def]) =>
     (def.slo ?? []).map((slo) => [
       seriesName(event, slo.field),
       {
-        tm99: slo.tm99,
+        ...sloRule(slo, fieldSpec(def.fields[slo.field]!).unit),
         label: slo.label,
         group: GROUPS[def.group].label,
         short: slo.label,
-        ...(slo.lowerIsBad ? { lowerIsBad: true } : {}),
-        displayUnit: fieldSpec(def.fields[slo.field]!).unit,
       } satisfies SloThreshold,
     ]),
   ),
 );
+
+function foregroundMinutesOf(samples: Record<string, number>): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(samples).map(([scope, count]) => [
+      scope,
+      (count * FOREGROUND_CLOCK.seconds) / 60,
+    ]),
+  );
+}
+
+/** The scope a sample's SLO verdict belongs to: its device family, or `server`. */
+function sloScope(metric: string, device: DeviceFamily | undefined): string {
+  if (metric.startsWith("server.")) return "server";
+  return device ?? "unknown";
+}
+
+/** The SLO's statistic over sorted values; undefined when it cannot be judged. */
+export function sloValue(
+  slo: SloThreshold,
+  sorted: number[],
+  foregroundMinutes: number | undefined,
+): number | undefined {
+  if (slo.kind === "tm99") return sorted.length > 0 ? trimmedMean99(sorted) : undefined;
+  if (slo.kind === "p1") return sorted.length > 0 ? percentile(sorted, 1) : undefined;
+  const above = sorted.length - sorted.filter((value) => value <= slo.over!).length;
+  if (slo.kind === "share") return sorted.length > 0 ? above / sorted.length : undefined;
+  return foregroundMinutes ? above / foregroundMinutes : undefined;
+}
+
+function sloPasses(slo: SloThreshold, value: number): boolean {
+  return slo.kind === "p1" ? value >= slo.limit : value <= slo.limit;
+}
 
 const DICTATION_COMPARE_METRICS = [
   "app.dictation_setup.total_ms",
@@ -336,20 +410,33 @@ function parseRecord(line: string): LoadedRecord | undefined {
     ...(typeof client?.buildNumber === "string" ? { buildNumber: client.buildNumber } : {}),
     ...(typeof client?.appVersion === "string" ? { appVersion: client.appVersion } : {}),
     ...(typeof client?.gitCommit === "string" ? { gitCommit: client.gitCommit } : {}),
+    ...(client?.debugBuild === true ? { debugBuild: true } : {}),
     ...(typeof client?.bootId === "string" ? { bootId: client.bootId } : {}),
     ...(device ? { device } : {}),
   };
 }
 
 /**
+ * Whether a client build is the release candidate `commit` (7 to 40 hex digits): one
+ * names a prefix of the other. A `-dirty` build is never the candidate.
+ */
+export function isCommit(gitCommit: string | undefined, commit: string): boolean {
+  if (!gitCommit || gitCommit.endsWith("-dirty")) return false;
+  const [a, b] = [gitCommit.toLowerCase(), commit.toLowerCase()];
+  return a.startsWith(b) || b.startsWith(a);
+}
+
+/**
  * Load every catalog event of the last `daysBack` days and split it into field
  * series. With `device`, client events from other device families are skipped;
- * server events stay.
+ * with `commit`, client events from other builds are (a device still on an older
+ * build cannot fail a release it is not running). Server events stay.
  */
 export function loadSamples(
   telemetryDir: string,
   daysBack: number,
   device?: DeviceFamily,
+  commit?: string,
 ): LoadResult {
   const cutoffMs = Date.now() - daysBack * 24 * 60 * 60 * 1_000;
   const values: Record<string, MetricBucket> = {};
@@ -357,6 +444,7 @@ export function loadSamples(
   const buildSummary: Record<string, BuildInfo> = {};
   const samples: LoadedSample[] = [];
   const records: LoadedRecord[] = [];
+  const foregroundSamples: Record<string, number> = {};
   let filesRead = 0;
 
   let files: string[] = [];
@@ -368,7 +456,16 @@ export function loadSamples(
       )
       .sort();
   } catch {
-    return { values, byBuild, buildSummary, samples, records, totalSamples: 0, filesRead: 0 };
+    return {
+      values,
+      byBuild,
+      buildSummary,
+      samples,
+      records,
+      foregroundMinutes: {},
+      totalSamples: 0,
+      filesRead: 0,
+    };
   }
 
   for (const file of files) {
@@ -379,9 +476,14 @@ export function loadSamples(
       const record = parseRecord(line);
       if (!record || record.ts < cutoffMs) continue;
       if (device && record.device && record.device !== device) continue;
+      if (commit && record.name.startsWith("app.") && !isCommit(record.gitCommit, commit)) continue;
       records.push(record);
+      if (record.name === FOREGROUND_CLOCK.event) {
+        const scope = sloScope(record.name, record.device);
+        foregroundSamples[scope] = (foregroundSamples[scope] ?? 0) + 1;
+      }
       const def = eventDef(record.name)!;
-      // Every local install shares one build number, so builds are keyed build@commit.
+      // Every local install shares one build number, so builds are keyed build@commit (+ debug).
       const build = record.buildNumber ? buildLabel(record) : undefined;
       if (build) {
         if (!buildSummary[build]) {
@@ -428,6 +530,7 @@ export function loadSamples(
     buildSummary,
     samples,
     records,
+    foregroundMinutes: foregroundMinutesOf(foregroundSamples),
     totalSamples: records.length,
     filesRead,
   };
@@ -1062,15 +1165,6 @@ export function formatHttpReview(
   return lines.join("\n");
 }
 
-function statusValue(stats: MetricStats): number {
-  return stats.tm99;
-}
-
-function metricPassesSlo(stats: MetricStats, slo: SloThreshold): boolean {
-  const value = statusValue(stats);
-  return slo.lowerIsBad ? value >= slo.tm99 : value <= slo.tm99;
-}
-
 /** Catalog group of a series, labeled "(no SLO)" when the series is not gated. */
 function seriesGroup(metric: string, gated: boolean): string {
   const source = seriesSource(metric);
@@ -1078,16 +1172,70 @@ function seriesGroup(metric: string, gated: boolean): string {
   return gated ? label : `${label} (no SLO)`;
 }
 
-function buildMetricResult(metric: string, vals: number[], unit: string): MetricResult {
+/**
+ * Pooled stats of one series and, for an SLO series, one verdict per scope in
+ * `byScope` (device family or `server`). `foregroundMinutes` holds every scope a
+ * per-minute SLO is judged on, so a device with no slow updates passes at zero.
+ */
+function buildMetricResult(
+  metric: string,
+  vals: number[],
+  unit: string,
+  byScope: Record<string, number[]>,
+  foregroundMinutes: Record<string, number>,
+): MetricResult {
   const stats = computeStats(vals);
   const slo = SLO_THRESHOLDS[metric];
+  const devices: SloDeviceResult[] = [];
+  if (slo) {
+    const scopes = new Set(Object.keys(byScope));
+    if (slo.kind === "per_minute") {
+      for (const scope of Object.keys(foregroundMinutes)) scopes.add(scope);
+    }
+    for (const scope of [...scopes].sort()) {
+      const sorted = [...(byScope[scope] ?? [])].sort((a, b) => a - b);
+      const value = sloValue(slo, sorted, foregroundMinutes[scope]);
+      if (value === undefined) continue;
+      devices.push({
+        ...computeStats(sorted),
+        device: scope,
+        value,
+        status: sloPasses(slo, value) ? "pass" : "over",
+      });
+    }
+  }
   return {
     ...stats,
-    unit: slo?.displayUnit ?? unit,
-    slo_tm99: slo?.tm99 ?? null,
+    unit,
+    slo: slo
+      ? {
+          kind: slo.kind,
+          limit: slo.limit,
+          ...(slo.over === undefined ? {} : { over: slo.over }),
+          unit: slo.displayUnit,
+        }
+      : null,
     group: seriesGroup(metric, slo !== undefined),
-    status: slo ? (metricPassesSlo(stats, slo) ? "pass" : "over") : "no_slo",
+    status: !slo
+      ? "no_slo"
+      : devices.length === 0
+        ? "no_data"
+        : devices.some((row) => row.status === "over")
+          ? "over"
+          : "pass",
+    devices,
   };
+}
+
+/** Each series' values split by SLO scope (device family, or `server`). */
+function valuesByScope(samples: LoadedSample[]): Record<string, Record<string, number[]>> {
+  const out: Record<string, Record<string, number[]>> = {};
+  for (const sample of samples) {
+    if (!SLO_THRESHOLDS[sample.metric]) continue;
+    const scope = sloScope(sample.metric, sample.device);
+    ((out[sample.metric] ??= {})[scope] ??= []).push(sample.value);
+  }
+  return out;
 }
 
 /**
@@ -1113,6 +1261,7 @@ function buildBreakdowns(
 
   for (const tag of byTags) {
     const buckets: Record<string, Record<string, MetricBucket>> = {};
+    const bucketSamples: Record<string, LoadedSample[]> = {};
     const dictationErrorsByValue: Record<string, Omit<DictationErrorSummary, "errorRate">> = {};
     const errorSummaryFor = (tagValue: string): Omit<DictationErrorSummary, "errorRate"> => {
       dictationErrorsByValue[tagValue] ??= {
@@ -1133,6 +1282,7 @@ function buildBreakdowns(
       sawAny = true;
       if (!buckets[tagValue]) buckets[tagValue] = {};
       pushValue(buckets[tagValue], sample.metric, sample.value, sample.unit);
+      (bucketSamples[tagValue] ??= []).push(sample);
     }
 
     // An attempt is a setup that finished (ok or error); cancelled setups are not attempts.
@@ -1162,9 +1312,17 @@ function buildBreakdowns(
     for (const tagValue of Object.keys(dictationErrorsByValue)) buckets[tagValue] ??= {};
     for (const [tagValue, metrics] of Object.entries(buckets)) {
       const metricResults: Record<string, MetricResult> = {};
+      const scoped = valuesByScope(bucketSamples[tagValue] ?? []);
       let sampleCount = 0;
       for (const [metric, bucket] of Object.entries(metrics)) {
-        metricResults[metric] = buildMetricResult(metric, bucket.vals, bucket.unit);
+        // A tag bucket has no foreground clock of its own: per-minute SLOs read no_data.
+        metricResults[metric] = buildMetricResult(
+          metric,
+          bucket.vals,
+          bucket.unit,
+          scoped[metric] ?? {},
+          {},
+        );
         sampleCount += bucket.vals.length;
       }
       const errorSummary = dictationErrorsByValue[tagValue];
@@ -1199,13 +1357,31 @@ function buildBreakdowns(
 
 export function review(
   data: LoadResult,
-  options: { days: number; dataDir: string; dictationOnly: boolean; byTags: string[] },
+  options: {
+    days: number;
+    dataDir: string;
+    dictationOnly: boolean;
+    byTags: string[];
+    commit?: string;
+  },
 ): ReviewOutput {
   const metrics: Record<string, MetricResult> = {};
+  const scoped = valuesByScope(data.samples);
+  const sloMetrics = Object.keys(SLO_THRESHOLDS);
 
-  for (const [metric, bucket] of Object.entries(data.values)) {
+  for (const metric of new Set([...Object.keys(data.values), ...sloMetrics])) {
     if (!shouldIncludeMetric(metric, options.dictationOnly)) continue;
-    metrics[metric] = buildMetricResult(metric, bucket.vals, bucket.unit);
+    const bucket = data.values[metric];
+    const unit = bucket?.unit ?? SLO_THRESHOLDS[metric]?.displayUnit ?? "count";
+    const result = buildMetricResult(
+      metric,
+      bucket?.vals ?? [],
+      unit,
+      scoped[metric] ?? {},
+      data.foregroundMinutes,
+    );
+    // An SLO series with no events and no verdict is simply absent from the window.
+    if (bucket || result.devices.length > 0) metrics[metric] = result;
   }
 
   const builds: ReviewOutput["builds"] = {};
@@ -1218,21 +1394,29 @@ export function review(
   }
 
   const devices: Record<string, number> = {};
+  const labelsByDevice: Record<string, Set<string>> = {};
   for (const record of data.records) {
-    if (record.device) devices[record.device] = (devices[record.device] ?? 0) + 1;
+    if (!record.device) continue;
+    devices[record.device] = (devices[record.device] ?? 0) + 1;
+    (labelsByDevice[record.device] ??= new Set()).add(buildLabel(record));
   }
+  const deviceBuilds = Object.fromEntries(
+    Object.entries(labelsByDevice).map(([device, labels]) => [device, [...labels].sort()]),
+  );
 
   let violations = 0;
   const groups: Record<string, { pass: number; over: number; missing: number }> = {};
   for (const [metric, slo] of Object.entries(SLO_THRESHOLDS)) {
     if (!shouldIncludeMetric(metric, options.dictationOnly)) continue;
-    if (!groups[slo.group]) groups[slo.group] = { pass: 0, over: 0, missing: 0 };
-    const result = metrics[metric];
-    if (!result || result.count === 0) groups[slo.group].missing += 1;
-    else if (result.status === "over") {
-      groups[slo.group].over += 1;
-      violations += 1;
-    } else groups[slo.group].pass += 1;
+    const counts = (groups[slo.group] ??= { pass: 0, over: 0, missing: 0 });
+    const rows = metrics[metric]?.devices ?? [];
+    if (rows.length === 0) counts.missing += 1;
+    for (const row of rows) {
+      if (row.status === "over") {
+        counts.over += 1;
+        violations += 1;
+      } else counts.pass += 1;
+    }
   }
 
   return {
@@ -1245,8 +1429,10 @@ export function review(
         shouldIncludeMetric(metric, options.dictationOnly),
       ).length,
       groups,
-      statusBasis: "tm99_vs_slo",
+      statusBasis: "slo_per_device",
       devices,
+      deviceBuilds,
+      ...(options.commit ? { commit: options.commit } : {}),
     },
     metrics,
     builds,
@@ -1263,7 +1449,8 @@ export interface TrendBucket {
   startTs: number;
   endTs: number;
   label: string;
-  metrics: Record<string, MetricStats & { unit: string }>;
+  /** `slo` is the SLO statistic over the bucket, devices pooled (the trend line only). */
+  metrics: Record<string, MetricStats & { unit: string; slo?: number }>;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -1299,16 +1486,21 @@ export function buildTrendBuckets(
     startTs: startTs + index * spanMs,
     endTs: index === bucketCount - 1 ? endTs : startTs + (index + 1) * spanMs,
     values: {} as Record<string, MetricBucket>,
+    foregroundSamples: 0,
   }));
+  const bucketIndexOf = (ts: number): number =>
+    Math.min(bucketCount - 1, Math.max(0, Math.floor((ts - startTs) / spanMs)));
+
+  for (const record of data.records) {
+    if (record.name !== FOREGROUND_CLOCK.event || record.ts < startTs || record.ts > endTs)
+      continue;
+    buckets[bucketIndexOf(record.ts)]!.foregroundSamples += 1;
+  }
 
   for (const sample of data.samples) {
     if (sample.ts < startTs || sample.ts > endTs) continue;
     if (!metricSet.has(sample.metric)) continue;
-    const bucketIndex = Math.min(
-      bucketCount - 1,
-      Math.max(0, Math.floor((sample.ts - startTs) / spanMs)),
-    );
-    const bucket = buckets[bucketIndex];
+    const bucket = buckets[bucketIndexOf(sample.ts)]!;
     pushValue(bucket.values, sample.metric, sample.value, sample.unit);
   }
 
@@ -1317,13 +1509,20 @@ export function buildTrendBuckets(
     endTs: bucket.endTs,
     label: formatTrendLabel(bucket.startTs, spanMs),
     metrics: Object.fromEntries(
-      Object.entries(bucket.values).map(([metric, metricBucket]) => [
-        metric,
-        {
-          ...computeStats(metricBucket.vals),
-          unit: metricBucket.unit,
-        },
-      ]),
+      Object.entries(bucket.values).map(([metric, metricBucket]) => {
+        const slo = SLO_THRESHOLDS[metric];
+        const sorted = [...metricBucket.vals].sort((a, b) => a - b);
+        const minutes = (bucket.foregroundSamples * FOREGROUND_CLOCK.seconds) / 60;
+        const value = slo ? sloValue(slo, sorted, minutes) : undefined;
+        return [
+          metric,
+          {
+            ...computeStats(metricBucket.vals),
+            unit: metricBucket.unit,
+            ...(value === undefined ? {} : { slo: value }),
+          },
+        ];
+      }),
     ),
   }));
 }
@@ -1425,7 +1624,7 @@ export function buildTelemetryTrendSvg(
   const metricsByGroup: Record<string, string[]> = {};
   for (const [metric, slo] of visibleSloEntries(options.dictationOnly)) {
     const metricResult = result.metrics[metric];
-    if (!metricResult || metricResult.count === 0) continue;
+    if (!metricResult || metricResult.devices.length === 0) continue;
     if (!metricsByGroup[slo.group]) {
       metricsByGroup[slo.group] = [];
       groupNames.push(slo.group);
@@ -1488,7 +1687,7 @@ export function buildTelemetryTrendSvg(
     `<text class="subtitle" x="${margin}" y="${margin + 34}">${escapeXml(subtitle)}</text>`,
   );
   pieces.push(
-    `<text class="subtitle" x="${margin}" y="${margin + 56}">Status uses overall TM99 vs SLO. Each card sparkline shows bucketed TM99 so release regressions are visible without one-off spikes dominating.</text>`,
+    `<text class="subtitle" x="${margin}" y="${margin + 56}">Status is the worst device's SLO verdict. Each sparkline shows the SLO statistic per bucket, devices pooled.</text>`,
   );
 
   let chipX = margin;
@@ -1536,17 +1735,19 @@ export function buildTelemetryTrendSvg(
       const chartY = cardY + 60;
       const chartWidth = cardWidth - 32;
       const chartHeight = 34;
-      const series = trendBuckets.map((bucket) => bucket.metrics[metric]?.tm99 ?? null);
+      const series = trendBuckets.map((bucket) => bucket.metrics[metric]?.slo ?? null);
       const latestValue = lastDefinedValue(series);
       const maxSeriesValue = series.reduce((max, value) => {
         if (value == null || !Number.isFinite(value)) return max;
         return Math.max(max, value);
       }, 0);
-      const chartMax = Math.max(1, maxSeriesValue, metricResult.tm99, metricResult.slo_tm99 ?? 0);
-      const thresholdY =
-        metricResult.slo_tm99 == null
-          ? null
-          : chartY + chartHeight - ((metricResult.slo_tm99 ?? 0) / chartMax) * chartHeight;
+      const unit = slo.displayUnit;
+      const deviceValues = metricResult.devices.map((row) => row.value);
+      const chartMax = Math.max(1e-9, maxSeriesValue, ...deviceValues, slo.limit);
+      const thresholdY = chartY + chartHeight - (slo.limit / chartMax) * chartHeight;
+      const verdicts = metricResult.devices
+        .map((row) => `${row.device} ${fmtValue(row.value, unit)}`)
+        .join(" · ");
       const sparkPathData = seriesPath(series, chartX, chartY, chartWidth, chartHeight, chartMax);
 
       pieces.push(
@@ -1556,7 +1757,7 @@ export function buildTelemetryTrendSvg(
         `<text class="metric-title" x="${cardX + 16}" y="${cardY + 22}">${escapeXml(titleText)}</text>`,
       );
       pieces.push(
-        `<text class="metric-meta" x="${cardX + 16}" y="${cardY + 40}">overall tm99 ${escapeXml(fmtValue(metricResult.tm99, metricResult.unit))} / slo ${escapeXml(fmtValue(metricResult.slo_tm99 ?? 0, metricResult.unit))}${slo.lowerIsBad ? " · low bad" : ""}</text>`,
+        `<text class="metric-meta" x="${cardX + 16}" y="${cardY + 40}">${escapeXml(verdicts)} / slo ${escapeXml(fmtLimit(slo))}</text>`,
       );
       pieces.push(
         `<text class="status" x="${cardX + cardWidth - 16}" y="${cardY + 22}" text-anchor="end" fill="${palette.text}">${metricResult.status === "over" ? "OVER" : "OK"}</text>`,
@@ -1567,14 +1768,12 @@ export function buildTelemetryTrendSvg(
       pieces.push(
         `<line class="grid" x1="${chartX}" y1="${chartY + chartHeight}" x2="${chartX + chartWidth}" y2="${chartY + chartHeight}" />`,
       );
-      if (thresholdY != null) {
-        pieces.push(
-          `<line class="threshold" x1="${chartX}" y1="${thresholdY.toFixed(1)}" x2="${chartX + chartWidth}" y2="${thresholdY.toFixed(1)}" />`,
-        );
-        pieces.push(
-          `<text class="axis" x="${chartX + chartWidth}" y="${(thresholdY - 4).toFixed(1)}" text-anchor="end">SLO ${escapeXml(fmtValue(metricResult.slo_tm99 ?? 0, metricResult.unit))}</text>`,
-        );
-      }
+      pieces.push(
+        `<line class="threshold" x1="${chartX}" y1="${thresholdY.toFixed(1)}" x2="${chartX + chartWidth}" y2="${thresholdY.toFixed(1)}" />`,
+      );
+      pieces.push(
+        `<text class="axis" x="${chartX + chartWidth}" y="${(thresholdY - 4).toFixed(1)}" text-anchor="end">SLO ${escapeXml(fmtLimit(slo))}</text>`,
+      );
       if (sparkPathData) {
         pieces.push(`<path class="spark" d="${sparkPathData}" stroke="${palette.line}" />`);
       }
@@ -1597,7 +1796,7 @@ export function buildTelemetryTrendSvg(
         `<text class="axis" x="${chartX + chartWidth}" y="${cardY + 112}" text-anchor="end">${escapeXml(endLabel)}</text>`,
       );
       pieces.push(
-        `<text class="axis" x="${cardX + cardWidth - 16}" y="${cardY + 58}" text-anchor="end">latest ${escapeXml(latestValue == null ? "—" : fmtValue(latestValue, metricResult.unit))}</text>`,
+        `<text class="axis" x="${cardX + cardWidth - 16}" y="${cardY + 58}" text-anchor="end">latest ${escapeXml(latestValue == null ? "—" : fmtValue(latestValue, unit))}</text>`,
       );
     }
 
@@ -1621,6 +1820,8 @@ function fmtOptional(value: number | null, unit: string): string {
 }
 
 export function fmtValue(n: number, unit: string = "ms"): string {
+  if (unit === "per_min") return `${n.toFixed(2)}/min`;
+  if (unit === "share") return `${(n * 100).toFixed(2)}%`;
   if (unit === "ms") {
     if (n >= 10_000) return `${(n / 1_000).toFixed(1)}s`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(2)}s`;
@@ -1643,6 +1844,12 @@ export function fmtValue(n: number, unit: string = "ms"): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return Number.isInteger(n) ? `${n}` : n.toFixed(1);
+}
+
+/** An SLO's limit as people read it: `≤ 2.00/min (> 8.3 ms)`, `≥ 100MB`. */
+function fmtLimit(slo: SloThreshold): string {
+  const limit = `${slo.kind === "p1" ? "≥" : "≤"} ${fmtValue(slo.limit, slo.displayUnit)}`;
+  return slo.over === undefined ? limit : `${limit} (> ${slo.over})`;
 }
 
 function fmtStorage(n: number): string {
@@ -1768,6 +1975,15 @@ function printBreakdowns(result: ReviewOutput, c: ReturnType<typeof makeColors>)
   }
 }
 
+/** `judged builds: iPhone 57@abc…, iPad 57@abc…`, and the release candidate when narrowed. */
+function formatJudgedBuilds(summary: ReviewSummary): string {
+  const builds = Object.entries(summary.deviceBuilds)
+    .map(([device, labels]) => `${device} ${labels.join(" ")}`)
+    .join(", ");
+  const scope = summary.commit ? ` (release candidate ${summary.commit} only)` : "";
+  return `judged builds${scope}: ${builds || "none"}`;
+}
+
 function formatDevices(devices: Record<string, number>): string {
   const entries = Object.entries(devices).sort((a, b) => b[1] - a[1]);
   if (entries.length === 0) return "none";
@@ -1792,6 +2008,7 @@ function printNarrow(result: ReviewOutput, args: ParsedArgs): void {
     `${c.bold}${title}${c.reset} ${c.dim}${summary.days}d ${samplesStr} samples  status:${summary.statusBasis}${c.reset}  ${violStr}`,
   );
   console.log(`${c.dim}devices: ${formatDevices(summary.devices)}${c.reset}`);
+  console.log(`${c.dim}${formatJudgedBuilds(summary)}${c.reset}`);
   console.log();
 
   if (args.dictation && result.dictationConfig) printConfigSummary(result.dictationConfig, c);
@@ -1803,26 +2020,28 @@ function printNarrow(result: ReviewOutput, args: ParsedArgs): void {
   }
 
   const NAME_W = 26;
-  const VAL_W = 7;
-  const SLO_W = 6;
+  const DEVICE_W = 6;
+  const VAL_W = 9;
 
   for (const [groupName, metrics] of Object.entries(groups)) {
     console.log(`${c.bold}${c.cyan}${groupName}${c.reset}`);
     printGroupNote(groupName, c);
     for (const metric of metrics) {
       const slo = SLO_THRESHOLDS[metric];
-      const r = result.metrics[metric];
+      const rows = result.metrics[metric]?.devices ?? [];
       const name = slo.short.slice(0, NAME_W);
-      if (!r || r.count === 0) {
+      if (rows.length === 0) {
         console.log(`  ${name.padEnd(NAME_W)} ${c.dim}no data${c.reset}`);
         continue;
       }
-      const over = r.status === "over";
-      const statusStr = fmtValue(statusValue(r), r.unit).padStart(VAL_W);
-      const sloStr = fmtValue(r.slo_tm99 ?? 0, r.unit).padStart(SLO_W);
-      console.log(
-        `  ${name.padEnd(NAME_W)} ${over ? c.red : ""}${statusStr}${c.reset} /${sloStr}  ${over ? `${c.red}OVER${c.reset}` : `${c.green}ok${c.reset}`}`,
-      );
+      rows.forEach((row, index) => {
+        const over = row.status === "over";
+        const label = (index === 0 ? name : "").padEnd(NAME_W);
+        const value = fmtValue(row.value, slo.displayUnit).padStart(VAL_W);
+        console.log(
+          `  ${label} ${row.device.slice(0, DEVICE_W).padEnd(DEVICE_W)} ${over ? c.red : ""}${value}${c.reset} ${fmtLimit(slo)}  ${over ? `${c.red}OVER${c.reset}` : `${c.green}ok${c.reset}`}`,
+        );
+      });
     }
     console.log();
   }
@@ -1841,7 +2060,9 @@ function printWide(result: ReviewOutput, args: ParsedArgs): void {
   console.error(
     `${c.bold}${title}${c.reset}  ${c.dim}(last ${result.summary.days}d, ${result.summary.totalSamples.toLocaleString()} samples, ${result.summary.filesRead} files, status uses ${result.summary.statusBasis})${c.reset}`,
   );
-  console.error(`${c.dim}  client events by device: ${formatDevices(result.summary.devices)}${c.reset}`);
+  console.error(
+    `${c.dim}  client events by device: ${formatDevices(result.summary.devices)}\n  ${formatJudgedBuilds(result.summary)}${c.reset}`,
+  );
   console.error();
 
   if (args.dictation && result.dictationConfig) printConfigSummary(result.dictationConfig, c);
@@ -1855,36 +2076,43 @@ function printWide(result: ReviewOutput, args: ParsedArgs): void {
   for (const [groupName, metrics] of Object.entries(groups)) {
     console.log(`${c.bold}${c.cyan}${groupName}${c.reset}`);
     printGroupNote(groupName, c);
-    const cols: string[] = [`  ${"Metric".padEnd(48)}`];
+    const cols: string[] = [`  ${"Metric".padEnd(48)}`, "Device".padEnd(6)];
     if (fields.has("count")) cols.push("Count".padStart(8));
     if (fields.has("tm99")) cols.push("tm99".padStart(8));
     if (fields.has("p50")) cols.push("p50".padStart(8));
     if (fields.has("p95")) cols.push("p95".padStart(8));
     if (fields.has("p99")) cols.push("p99".padStart(8));
     if (fields.has("max")) cols.push("max".padStart(8));
-    if (fields.has("slo")) cols.push("SLO".padStart(8));
+    if (fields.has("slo")) cols.push("Value".padStart(10), "SLO");
     if (fields.has("status")) cols.push("Status");
     console.log(`${c.dim}${cols.join(" ")}${c.reset}`);
 
     for (const metric of metrics) {
+      const slo = SLO_THRESHOLDS[metric];
       const r = result.metrics[metric];
-      if (!r || r.count === 0) {
+      if (!r || r.devices.length === 0) {
         console.log(`  ${metric.padEnd(48)} ${c.dim}no data${c.reset}`);
         continue;
       }
-      const over = r.status === "over";
-      const vals: string[] = [`  ${metric.padEnd(48)}`];
-      if (fields.has("count")) vals.push(r.count.toLocaleString().padStart(8));
-      if (fields.has("tm99")) vals.push(fmtValue(r.tm99, r.unit).padStart(8));
-      if (fields.has("p50")) vals.push(fmtValue(r.p50, r.unit).padStart(8));
-      if (fields.has("p95"))
-        vals.push((over ? c.red : "") + fmtValue(r.p95, r.unit).padStart(8) + c.reset);
-      if (fields.has("p99")) vals.push(fmtValue(r.p99, r.unit).padStart(8));
-      if (fields.has("max")) vals.push(fmtValue(r.max, r.unit).padStart(8));
-      if (fields.has("slo")) vals.push(fmtValue(r.slo_tm99 ?? 0, r.unit).padStart(8));
-      if (fields.has("status"))
-        vals.push(over ? `${c.red}- OVER${c.reset}` : `${c.green}+ ok${c.reset}`);
-      console.log(vals.join(" "));
+      for (const row of r.devices) {
+        const over = row.status === "over";
+        const vals: string[] = [`  ${metric.padEnd(48)}`, row.device.slice(0, 6).padEnd(6)];
+        if (fields.has("count")) vals.push(row.count.toLocaleString().padStart(8));
+        if (fields.has("tm99")) vals.push(fmtValue(row.tm99, r.unit).padStart(8));
+        if (fields.has("p50")) vals.push(fmtValue(row.p50, r.unit).padStart(8));
+        if (fields.has("p95")) vals.push(fmtValue(row.p95, r.unit).padStart(8));
+        if (fields.has("p99")) vals.push(fmtValue(row.p99, r.unit).padStart(8));
+        if (fields.has("max")) vals.push(fmtValue(row.max, r.unit).padStart(8));
+        if (fields.has("slo")) {
+          vals.push(
+            (over ? c.red : "") + fmtValue(row.value, slo.displayUnit).padStart(10) + c.reset,
+            fmtLimit(slo),
+          );
+        }
+        if (fields.has("status"))
+          vals.push(over ? `${c.red}- OVER${c.reset}` : `${c.green}+ ok${c.reset}`);
+        console.log(vals.join(" "));
+      }
     }
     console.log();
   }
@@ -1917,7 +2145,9 @@ function printWide(result: ReviewOutput, args: ParsedArgs): void {
   if (args.dictation && result.dictationAssets) printDictationAssets(result.dictationAssets, c);
 
   if (result.summary.violations > 0)
-    console.error(`${c.yellow}${result.summary.violations} metric(s) over SLO threshold${c.reset}`);
+    console.error(
+      `${c.yellow}${result.summary.violations} SLO verdict(s) over threshold (per device)${c.reset}`,
+    );
   else console.error(`${c.green}All metrics within SLO thresholds${c.reset}`);
 }
 
@@ -1933,8 +2163,9 @@ function printCompact(result: ReviewOutput, args: ParsedArgs): void {
     if (fields.has("p95")) entry.p95 = r.p95;
     if (fields.has("p99")) entry.p99 = r.p99;
     if (fields.has("max")) entry.max = r.max;
-    if (fields.has("slo")) entry.slo = r.slo_tm99;
+    if (fields.has("slo")) entry.slo = r.slo?.limit ?? null;
     if (fields.has("status")) entry.s = r.status;
+    for (const row of r.devices) entry[`v.${row.device}`] = row.value;
     metrics[metric] = entry;
   }
   console.log(
@@ -1973,6 +2204,7 @@ interface ParsedArgs {
   byTags: string[];
   svgOut: string | undefined;
   device: DeviceFamily | undefined;
+  commit: string | undefined;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -1992,6 +2224,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     byTags: [],
     svgOut: undefined,
     device: undefined,
+    commit: undefined,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -2053,6 +2286,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--device":
         result.device = parseDeviceFamily(argv[++i] ?? "", arg);
         break;
+      case "--commit": {
+        const commit = (argv[++i] ?? "").trim().toLowerCase();
+        if (!/^[0-9a-f]{7,40}$/.test(commit))
+          throw new Error("--commit takes a git commit (7-40 hex)");
+        result.commit = commit;
+        break;
+      }
       case "--help":
       case "-h":
         result.help = true;
@@ -2060,6 +2300,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
+  // A release gate judges the build being released: a device still on an older
+  // build must not fail it.
+  if (result.gate && !result.commit) {
+    throw new Error("--gate needs --commit <release candidate commit>");
+  }
   result.byTags = [...new Set(result.byTags)];
   if (result.dictation && result.byTags.length === 0) {
     result.byTags = ["voice_engine", "trigger", "stt_provider", "stt_model"];
@@ -2103,14 +2348,22 @@ Options:
   --compact             Minimal JSON for agents
   --svg-out <path>      Write an app-viewable SVG trend dashboard to a file
   --fields <list>       Columns: p50,p95,p99,max,count,slo,status,tm99
-  --gate                Exit non-zero on SLO violations
+  --commit <sha>        Judge only client events from this build (the release candidate);
+                        server events stay
+  --gate                Exit non-zero when any device misses an SLO; needs --commit
   --no-color            Disable ANSI colors
   --help                Show this help
 `);
 }
 
 function main(): void {
-  const args = parseArgs(process.argv.slice(2));
+  let args: ParsedArgs;
+  try {
+    args = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(2);
+  }
   if (args.help) {
     printHelp();
     process.exit(0);
@@ -2120,7 +2373,7 @@ function main(): void {
     args.dataDir ?? process.env.OPPI_DATA_DIR ?? join(homedir(), ".config", "oppi"),
   );
   const telemetryDir = join(dataDir, "diagnostics", "telemetry");
-  const data = loadSamples(telemetryDir, args.days, args.device);
+  const data = loadSamples(telemetryDir, args.days, args.device, args.commit);
 
   if (data.totalSamples === 0) {
     const err = {
@@ -2162,13 +2415,14 @@ function main(): void {
     dataDir,
     dictationOnly: args.dictation,
     byTags: args.byTags,
+    ...(args.commit ? { commit: args.commit } : {}),
   });
 
   let writtenSvgPath: string | null = null;
   if (args.svgOut) {
     const svgMetrics = visibleSloEntries(args.dictation)
       .map(([metric]) => metric)
-      .filter((metric) => (result.metrics[metric]?.count ?? 0) > 0);
+      .filter((metric) => (result.metrics[metric]?.devices.length ?? 0) > 0);
     const trendBuckets = buildTrendBuckets(data, svgMetrics, {
       days: args.days,
       dictationOnly: args.dictation,

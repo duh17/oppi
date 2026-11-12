@@ -14,8 +14,22 @@ protocol TelemetryEvent: Sendable {
     /// False when the catalog emit policy drops this event. Generated per event
     /// from the struct's typed members, so a dropped event costs no allocation.
     var passesEmitPolicy: Bool { get }
+    /// True when the event's `_ms` time may rightly include time in the
+    /// background. Otherwise `Telemetry.record` drops an event whose longest
+    /// `_ms` value, as an interval ending now, overlapped a background period.
+    static var spansBackground: Bool { get }
     var fieldValues: [String: Double] { get }
     var tagValues: [String: String] { get }
+}
+
+extension TelemetryEvent {
+    static var spansBackground: Bool { false }
+}
+
+/// Foreground time for the review: `app.device_resources` is sampled every
+/// `sampleSeconds` while the app is active, so its count is a clock.
+enum TelemetryForegroundClock {
+    static let sampleSeconds = 10
 }
 
 /// Open-but-bounded tag values (tool, model, screen, …) as the server stores
@@ -161,6 +175,8 @@ struct TelemetryClientInfo: Codable, Sendable, Equatable {
     let deviceModel: String?
     let appInstanceId: String?
     let bootId: String?
+    /// True only from a Debug-configuration build; absent otherwise.
+    let debugBuild: Bool?
 }
 
 /// Body of `POST /telemetry/events`.
@@ -320,9 +336,6 @@ enum TelemetryTag {
         case playerItem = "player_item"
         case playerState = "player_state"
         case stall
-        case callStart = "call_start"
-        case callEnd = "call_end"
-        case dictationStart = "dictation_start"
     }
 
     /// Client connection transport path. `local` is on-device work with no server connection.
@@ -966,52 +979,6 @@ struct AppWorkspaceLoad: TelemetryEvent {
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["load_path"] = loadPath.rawValue
-        return values
-    }
-}
-
-/// How long until Model Providers was connected, listed, and showed usage?
-struct AppModelProvidersLoad: TelemetryEvent {
-    static let name = "app.model_providers_load"
-
-    enum Status: String, Sendable, CaseIterable {
-        case ok
-        case error
-    }
-
-    let readyMs: Double
-    let providersMs: Double
-    let usageMs: Double
-    let status: Status
-
-    init(
-        readyMs: Double,
-        providersMs: Double,
-        usageMs: Double,
-        status: Status
-    ) {
-        self.readyMs = readyMs
-        self.providersMs = providersMs
-        self.usageMs = usageMs
-        self.status = status
-    }
-
-    var fieldValues: [String: Double] {
-        var values: [String: Double] = [:]
-        values["ready_ms"] = readyMs
-        values["providers_ms"] = providersMs
-        values["usage_ms"] = usageMs
-        return values
-    }
-
-    var passesEmitPolicy: Bool {
-        if providersMs >= 60000 { return false }
-        return true
-    }
-
-    var tagValues: [String: String] {
-        var values: [String: String] = [:]
-        values["status"] = status.rawValue
         return values
     }
 }
@@ -1670,7 +1637,7 @@ struct AppTimelineApply: TelemetryEvent {
     }
 
     var passesEmitPolicy: Bool {
-        if durationMs < 4 || durationMs >= 5000 { return false }
+        if durationMs < 4 { return false }
         return true
     }
 
@@ -1702,7 +1669,7 @@ struct AppTimelineLayout: TelemetryEvent {
     }
 
     var passesEmitPolicy: Bool {
-        if durationMs < 2 || durationMs >= 5000 { return false }
+        if durationMs < 2 { return false }
         return true
     }
 
@@ -1746,7 +1713,7 @@ struct AppCellConfigure: TelemetryEvent {
     }
 
     var passesEmitPolicy: Bool {
-        if durationMs < 1 || durationMs >= 5000 { return false }
+        if durationMs < 1 { return false }
         return true
     }
 
@@ -1788,7 +1755,7 @@ struct AppRenderStrategy: TelemetryEvent {
     }
 
     var passesEmitPolicy: Bool {
-        if durationMs < 1 || durationMs >= 5000 { return false }
+        if durationMs < 1 { return false }
         return true
     }
 
@@ -1878,6 +1845,7 @@ struct AppMarkdownStreaming: TelemetryEvent {
 /// How smoothly did the chat timeline draw in one visit while the user scrolled it or an agent turn updated it? Hitch time per second is SUM(hitch_ms) / SUM(duration_ms) × 1000 and hitches per minute SUM(hitches) / SUM(duration_ms) × 60000, pooled over visits, never averaged per visit.
 struct AppChatFrameVisit: TelemetryEvent {
     static let name = "app.chat_frame_visit"
+    static let spansBackground = true
 
     let durationMs: Double
     let frames: Int
@@ -1966,6 +1934,7 @@ struct AppCoalescerWindow: TelemetryEvent {
 /// How fast did a review diff open and how smoothly did it scroll?
 struct AppDiffReaderSession: TelemetryEvent {
     static let name = "app.diff_reader_session"
+    static let spansBackground = true
 
     let openMs: Double
     let lines: Int
@@ -2021,6 +1990,7 @@ struct AppDiffReaderSession: TelemetryEvent {
 /// How smoothly did scrolling run in one SSH terminal visit (every gesture, finger down through coasting, summed)?
 struct AppTerminalScrollVisit: TelemetryEvent {
     static let name = "app.terminal_scroll_visit"
+    static let spansBackground = true
 
     let gestures: Int
     let durationMs: Double
@@ -2082,6 +2052,7 @@ struct AppTerminalScrollVisit: TelemetryEvent {
 /// How smoothly did dividers move and settle in a visit? Pool hitch_ms/duration_ms.
 struct AppPaneResizeVisit: TelemetryEvent {
     static let name = "app.pane_resize_visit"
+    static let spansBackground = true
 
     let durationMs: Double
     let hitchMs: Double
@@ -2186,7 +2157,7 @@ struct AppSessionListRowCompute: TelemetryEvent {
     }
 }
 
-/// How often did the session list body re-evaluate in a 5 s window (store churn)?
+/// How many times did the session list recompute its rows in one fixed 5 s window, opened by a recompute and closed by a timer (store churn)?
 struct AppSessionListBodyRate: TelemetryEvent {
     static let name = "app.session_list_body_rate"
 
@@ -2791,48 +2762,10 @@ struct AppDictationCancel: TelemetryEvent {
     }
 }
 
-/// Did iOS keep CallKit calls listed after their Live Voice call was over?
-struct AppLiveVoiceLeftoverCall: TelemetryEvent {
-    static let name = "app.live_voice_leftover_call"
-
-    enum Phase: String, Sendable, CaseIterable {
-        case callStart = "call_start"
-        case callEnd = "call_end"
-        case dictationStart = "dictation_start"
-    }
-
-    let calls: Int
-    let phase: Phase
-
-    init(
-        calls: Int,
-        phase: Phase
-    ) {
-        self.calls = calls
-        self.phase = phase
-    }
-
-    var fieldValues: [String: Double] {
-        var values: [String: Double] = [:]
-        values["calls"] = Double(calls)
-        return values
-    }
-
-    var passesEmitPolicy: Bool {
-        if Double(calls) < 1 { return false }
-        return true
-    }
-
-    var tagValues: [String: String] {
-        var values: [String: String] = [:]
-        values["phase"] = phase.rawValue
-        return values
-    }
-}
-
 /// How smoothly did Live Voice call audio play?
 struct AppLiveVoiceCallPlayback: TelemetryEvent {
     static let name = "app.live_voice_call_playback"
+    static let spansBackground = true
 
     let chunks: Int
     let receivedMs: Double
@@ -3061,6 +2994,7 @@ struct AppMediaPlaybackError: TelemetryEvent {
 /// How long did a visible ask card block the agent before answer or ignore?
 struct AppAskResponse: TelemetryEvent {
     static let name = "app.ask_response"
+    static let spansBackground = true
 
     enum Result: String, Sendable, CaseIterable {
         case answered
@@ -3412,7 +3346,7 @@ struct AppQuickSessionCreate: TelemetryEvent {
     }
 }
 
-/// What did the app cost in CPU and memory, and how much headroom was left, on each screen and state? Sampled every 10 s.
+/// What did the app cost in CPU and memory, and how much headroom was left, on each screen and state? Sampled every 10 s while active.
 struct AppDeviceResources: TelemetryEvent {
     static let name = "app.device_resources"
 
@@ -3551,6 +3485,7 @@ struct AppForeground: TelemetryEvent {
 /// Did the main thread miss the watchdog probe, and how large was the app?
 struct AppMainThreadStallDetected: TelemetryEvent {
     static let name = "app.main_thread_stall_detected"
+    static let spansBackground = true
 
     let thresholdMs: Double
     let footprintMb: Double?
@@ -3591,6 +3526,7 @@ struct AppMainThreadStallDetected: TelemetryEvent {
 /// How long did a detected main-thread stall last?
 struct AppMainThreadStallRecovered: TelemetryEvent {
     static let name = "app.main_thread_stall_recovered"
+    static let spansBackground = true
 
     let durationMs: Double
     let sequence: Int

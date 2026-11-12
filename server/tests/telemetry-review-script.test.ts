@@ -31,6 +31,7 @@ function dataOf(records: LoadedRecord[]): ReviewData {
     buildSummary: {},
     samples: [],
     records,
+    foregroundMinutes: {},
     totalSamples: records.length,
     filesRead: 1,
   };
@@ -38,16 +39,17 @@ function dataOf(records: LoadedRecord[]): ReviewData {
 
 function makeReviewData(endTs: number): ReviewData {
   const startTs = endTs - 24 * HOUR_MS;
+  const device = "iPhone" as const;
   const samples = [
-    { ts: startTs + 1 * HOUR_MS, metric: APPLY, value: 10, unit: "ms" },
-    { ts: startTs + 7 * HOUR_MS, metric: APPLY, value: 20, unit: "ms" },
-    { ts: startTs + 13 * HOUR_MS, metric: APPLY, value: 30, unit: "ms" },
-    { ts: startTs + 13.5 * HOUR_MS, metric: APPLY, value: 50, unit: "ms" },
-    { ts: startTs + 21 * HOUR_MS, metric: APPLY, value: 40, unit: "ms" },
-    { ts: startTs + 2 * HOUR_MS, metric: TTFT, value: 800, unit: "ms" },
-    { ts: startTs + 8 * HOUR_MS, metric: TTFT, value: 900, unit: "ms" },
-    { ts: startTs + 14 * HOUR_MS, metric: TTFT, value: 1000, unit: "ms" },
-    { ts: startTs + 20 * HOUR_MS, metric: TTFT, value: 1200, unit: "ms" },
+    { ts: startTs + 1 * HOUR_MS, metric: APPLY, value: 10, unit: "ms", device },
+    { ts: startTs + 7 * HOUR_MS, metric: APPLY, value: 20, unit: "ms", device },
+    { ts: startTs + 13 * HOUR_MS, metric: APPLY, value: 30, unit: "ms", device },
+    { ts: startTs + 13.5 * HOUR_MS, metric: APPLY, value: 50, unit: "ms", device },
+    { ts: startTs + 21 * HOUR_MS, metric: APPLY, value: 40, unit: "ms", device },
+    { ts: startTs + 2 * HOUR_MS, metric: TTFT, value: 800, unit: "ms", device },
+    { ts: startTs + 8 * HOUR_MS, metric: TTFT, value: 900, unit: "ms", device },
+    { ts: startTs + 14 * HOUR_MS, metric: TTFT, value: 1000, unit: "ms", device },
+    { ts: startTs + 20 * HOUR_MS, metric: TTFT, value: 1200, unit: "ms", device },
   ];
 
   return {
@@ -59,6 +61,8 @@ function makeReviewData(endTs: number): ReviewData {
     buildSummary: {},
     samples,
     records: [],
+    // Five slow applies in one foreground minute.
+    foregroundMinutes: { iPhone: 1 },
     totalSamples: samples.length,
     filesRead: 1,
   };
@@ -246,40 +250,161 @@ describe("telemetry-review on v2 events", () => {
     );
   });
 
-  it("gates on catalog SLOs, including lower-is-bad and the event-loop stall max", () => {
-    expect(SLO_THRESHOLDS["server.resources.event_loop_max_ms"]?.tm99).toBe(100);
+  it("judges every SLO per device and gates when any device is over", () => {
     expect(SLO_THRESHOLDS).not.toHaveProperty("server.resources.event_loop_p99_ms");
-
-    const reviewOf = (values: ReviewData["values"]) =>
-      review(
-        { ...dataOf([]), values },
-        { days: 1, dataDir: "/tmp/oppi-test-data", dictationOnly: false, byTags: [] },
+    const now = Date.now();
+    const app = (name: string, fields: Record<string, number>, deviceModel: string) => ({
+      v: 2,
+      ts: now,
+      origin: "app",
+      name,
+      fields,
+      tags: {},
+      client: { kind: "ios", deviceModel },
+    });
+    // One foreground sample every 10 s: the iPhone was active 1 minute, the iPad 2.
+    const resources = (deviceModel: string, count: number, availableMb: number, thermal: number) =>
+      Array.from({ length: count }, () =>
+        app(
+          "app.device_resources",
+          { memory_available_mb: availableMb, thermal_state: thermal },
+          deviceModel,
+        ),
       );
-
-    const calm = reviewOf({
-      "server.resources.event_loop_max_ms": {
-        vals: Array.from({ length: 100 }, () => 40),
-        unit: "ms",
+    const apply = (ms: number, deviceModel: string) =>
+      app("app.timeline_apply", { duration_ms: ms, items: 10, changed: 1 }, deviceModel);
+    withTelemetryDir(
+      {
+        "app-events-2026-10-27.jsonl": [
+          // iPhone: little headroom and hot the whole minute.
+          ...resources("iPhone17,1", 6, 40, 2),
+          ...resources("iPad19,1", 12, 4_000, 0),
+          // Three slow applies in the iPhone's one minute, against a limit of 2.
+          apply(12, "iPhone17,1"),
+          apply(9, "iPhone17,1"),
+          apply(30, "iPhone17,1"),
+          apply(5, "iPhone17,1"),
+          // Cheap applies on the iPad count for nothing; it was never slow.
+          apply(5, "iPad19,1"),
+        ],
+        "server-events-2026-10-27.jsonl": Array.from({ length: 100 }, () => ({
+          v: 2,
+          ts: now,
+          origin: "server",
+          name: "server.resources",
+          fields: { event_loop_max_ms: 120, event_loop_p99_ms: 5_000 },
+          tags: {},
+        })),
       },
-      "server.resources.event_loop_p99_ms": { vals: [5_000], unit: "ms" },
-      "app.device_resources.memory_available_mb": { vals: [400], unit: "mb" },
-    });
-    expect(calm.metrics["server.resources.event_loop_max_ms"]?.status).toBe("pass");
-    expect(calm.metrics["server.resources.event_loop_p99_ms"]?.status).toBe("no_slo");
-    expect(calm.metrics["server.resources.event_loop_p99_ms"]?.group).toBe("Server (no SLO)");
-    expect(calm.metrics["app.device_resources.memory_available_mb"]?.status).toBe("pass");
-    expect(calm.summary.violations).toBe(0);
+      (dir) => {
+        const options = {
+          days: 1,
+          dataDir: "/tmp/oppi-test-data",
+          dictationOnly: false,
+          byTags: [],
+        };
+        const result = review(loadSamples(dir, 1), options);
+        const verdicts = (metric: string) =>
+          Object.fromEntries(
+            (result.metrics[metric]?.devices ?? []).map((row) => [
+              row.device,
+              [row.value, row.status],
+            ]),
+          );
 
-    const pressured = reviewOf({
-      "server.resources.event_loop_max_ms": {
-        vals: Array.from({ length: 100 }, () => 120),
-        unit: "ms",
+        expect(verdicts("app.timeline_apply.duration_ms")).toEqual({
+          iPhone: [3, "over"],
+          iPad: [0, "pass"],
+        });
+        expect(verdicts("app.device_resources.memory_available_mb")).toEqual({
+          iPhone: [40, "over"],
+          iPad: [4_000, "pass"],
+        });
+        expect(verdicts("app.device_resources.thermal_state")).toEqual({
+          iPhone: [1, "over"],
+          iPad: [0, "pass"],
+        });
+        expect(verdicts("server.resources.event_loop_max_ms")).toEqual({ server: [120, "over"] });
+        expect(result.metrics["server.resources.event_loop_p99_ms"]?.status).toBe("no_slo");
+        expect(result.metrics["app.timeline_apply.duration_ms"]?.status).toBe("over");
+        // Three iPhone misses and the server's; the iPad's passes do not hide them.
+        expect(result.summary.violations).toBe(4);
+
+        // Narrowed to the iPad, the same window passes on the client side.
+        const ipad = review(loadSamples(dir, 1, "iPad"), options);
+        expect(ipad.metrics["app.timeline_apply.duration_ms"]?.status).toBe("pass");
+        expect(ipad.summary.violations).toBe(1);
       },
-      "app.device_resources.memory_available_mb": { vals: [40], unit: "mb" },
+    );
+  });
+
+  it("judges a release only on the candidate build, so a device on an older build cannot fail it", () => {
+    const now = Date.now();
+    const RC = "aaaaaaaaaaaa";
+    const app = (
+      name: string,
+      fields: Record<string, number>,
+      deviceModel: string,
+      gitCommit: string,
+    ) => ({
+      v: 2,
+      ts: now,
+      origin: "app",
+      name,
+      fields,
+      tags: {},
+      client: { kind: "ios", buildNumber: "58", deviceModel, gitCommit },
     });
-    expect(pressured.metrics["server.resources.event_loop_max_ms"]?.status).toBe("over");
-    expect(pressured.metrics["app.device_resources.memory_available_mb"]?.status).toBe("over");
-    expect(pressured.summary.violations).toBe(2);
+    const minute = (deviceModel: string, gitCommit: string) =>
+      Array.from({ length: 6 }, () =>
+        app(
+          "app.device_resources",
+          { memory_available_mb: 2_000, thermal_state: 0 },
+          deviceModel,
+          gitCommit,
+        ),
+      );
+    const slowApplies = (deviceModel: string, gitCommit: string) =>
+      Array.from({ length: 5 }, () =>
+        app(
+          "app.timeline_apply",
+          { duration_ms: 40, items: 10, changed: 1 },
+          deviceModel,
+          gitCommit,
+        ),
+      );
+    withTelemetryDir(
+      {
+        "app-events-2026-10-27.jsonl": [
+          // The iPhone runs the candidate and is smooth.
+          ...minute("iPhone17,1", RC),
+          // The iPad is still on an older build, and a local dirty build of the
+          // candidate is not the candidate either: both are slow.
+          ...minute("iPad19,1", "bbbbbbbbbbbb"),
+          ...slowApplies("iPad19,1", "bbbbbbbbbbbb"),
+          ...slowApplies("iPhone17,1", `${RC}-dirty`),
+        ],
+      },
+      (dir) => {
+        const options = {
+          days: 1,
+          dataDir: "/tmp/oppi-test-data",
+          dictationOnly: false,
+          byTags: [],
+        };
+        expect(review(loadSamples(dir, 1), options).summary.violations).toBeGreaterThan(0);
+
+        // The full 40-character commit matches the stored 12-character one.
+        const commit = `${RC}${"0".repeat(28)}`;
+        const candidate = review(loadSamples(dir, 1, undefined, commit), { ...options, commit });
+        expect(candidate.summary.violations).toBe(0);
+        expect(candidate.summary.deviceBuilds).toEqual({ iPhone: [`58@${RC}`] });
+        expect(candidate.summary.commit).toBe(commit);
+      },
+    );
+
+    expect(() => parseArgs(["--gate"])).toThrow("--commit");
+    expect(parseArgs(["--gate", "--commit", "AAAAAAA"]).commit).toBe("aaaaaaa");
   });
 
   it("breaks dictation down by tag with setup and capture error rates", () => {
@@ -334,7 +459,7 @@ describe("telemetry-review on v2 events", () => {
     expect(buckets.map((bucket) => bucket.metrics[APPLY]?.p95)).toEqual([10, 20, 50, 40]);
   });
 
-  it("renders an svg dashboard with escaped labels and the 120 Hz render target", () => {
+  it("renders an svg dashboard with escaped labels and per-device SLO verdicts", () => {
     const endTs = Date.UTC(2026, 4, 13, 12, 0, 0);
     const data = makeReviewData(endTs);
     const result = review(data, {
@@ -358,10 +483,11 @@ describe("telemetry-review on v2 events", () => {
 
     expect(svg).toContain("Release &lt;31&gt;");
     expect(svg).toContain("A &amp; B");
-    expect(svg).toContain("Timeline apply (120 Hz)");
+    expect(svg).toContain("Slow timeline applies");
+    expect(svg).toContain("iPhone 5.00/min");
     expect(svg).toContain("Time to first token");
     expect(svg).toContain(">OVER<");
-    expect(svg).toContain("SLO 8ms");
+    expect(svg).toContain("SLO ≤ 2.00/min (&gt; 8.3)");
   });
 });
 

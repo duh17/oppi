@@ -94,16 +94,26 @@ export interface StorageSpec {
   readonly aggregate: Readonly<Record<string, AggregateOp>>;
 }
 
-export interface SloSpec {
+/**
+ * A release SLO on one field, judged per device (once for server events) by one statistic:
+ * `tm99` caps the trimmed mean of the lowest 99%; `p1` floors the 1st percentile (a
+ * headroom's low tail); `over` + `perMinute` caps values above `over` per foreground minute
+ * (`FOREGROUND_CLOCK`); `over` + `share` caps the share of values above `over`.
+ */
+export type SloSpec = {
   readonly field: string;
-  /** Threshold for the trimmed mean of the lowest 99% of values. */
-  readonly tm99: number;
   readonly label: string;
-  /** Pass when the value is at or above the threshold. */
-  readonly lowerIsBad?: true;
   /** Only events whose tags match count toward the SLO series. */
   readonly where?: Readonly<Record<string, readonly string[]>>;
-}
+} & (
+  | { readonly tm99: number }
+  | { readonly p1: number }
+  | { readonly over: number; readonly perMinute: number }
+  | { readonly over: number; readonly share: number }
+);
+
+/** Foreground time: one sample of `event` every `seconds` while the app is active. */
+export const FOREGROUND_CLOCK = { event: "app.device_resources", seconds: 10 } as const;
 
 export interface EventDef {
   /** The question this event answers. */
@@ -114,6 +124,9 @@ export interface EventDef {
   readonly emit?: readonly EmitRule[];
   readonly storage?: StorageSpec;
   readonly slo?: readonly SloSpec[];
+  /** App only. Otherwise the app drops an event whose longest `_ms` value, as an interval ending
+   * when recorded, overlapped a background period; set when that time may rightly run there. */
+  readonly spansBackground?: true;
 }
 
 // ── Tag vocabulary ──
@@ -285,9 +298,6 @@ const TAGS = {
       "player_item",
       "player_state",
       "stall",
-      "call_start",
-      "call_end",
-      "dictation_start",
     ],
     description: "Step of the operation in which the event happened; each event narrows it.",
   },
@@ -633,10 +643,7 @@ const OPT_MS = { unit: "ms", optional: true } as const;
 const OPT_MB = { unit: "mb", optional: true } as const;
 const OPT_BOOL = { unit: "bool", optional: true } as const;
 
-/** The longest plausible foreground operation; longer samples spanned an app suspension. */
-const SUSPENSION_CEILING_MS = 5_000;
-
-/** The longest plausible screen load; a longer sample waited out a backgrounding or an abandoned visit. */
+/** The longest plausible screen load; a longer sample is an abandoned visit. */
 const LOAD_CEILING_MS = 60_000;
 
 // ── Events ──
@@ -756,13 +763,6 @@ const EVENTS = {
     tags: { load_path: { required: true, values: ["open", "return_from_chat"] } },
     emit: [{ field: "duration_ms", max: LOAD_CEILING_MS }],
     slo: [{ field: "duration_ms", tm99: 1_000, label: "Workspace load" }],
-  },
-  "app.model_providers_load": {
-    description: "How long until Model Providers was connected, listed, and showed usage?",
-    group: "ux",
-    fields: { ready_ms: "ms", providers_ms: "ms", usage_ms: "ms" },
-    tags: { status: { required: true, values: ["ok", "error"] } },
-    emit: [{ field: "providers_ms", max: LOAD_CEILING_MS }],
   },
 
   // ─── App: connection, commands, and queue ───
@@ -902,30 +902,30 @@ const EVENTS = {
     description: "How long did a timeline snapshot apply take during streaming?",
     group: "rendering",
     fields: { duration_ms: "ms", items: "count", changed: "count" },
-    emit: [{ field: "duration_ms", min: 4, max: SUSPENSION_CEILING_MS }],
-    slo: [{ field: "duration_ms", tm99: 8.3, label: "Timeline apply (120 Hz)" }],
+    emit: [{ field: "duration_ms", min: 4 }],
+    slo: [{ field: "duration_ms", over: 8.3, perMinute: 2, label: "Slow timeline applies" }],
   },
   "app.timeline_layout": {
     description: "How long did timeline layout take during streaming?",
     group: "rendering",
     fields: { duration_ms: "ms", items: "count" },
-    emit: [{ field: "duration_ms", min: 2, max: SUSPENSION_CEILING_MS }],
-    slo: [{ field: "duration_ms", tm99: 8.3, label: "Timeline layout (120 Hz)" }],
+    emit: [{ field: "duration_ms", min: 2 }],
+    slo: [{ field: "duration_ms", over: 8.3, perMinute: 2, label: "Slow timeline layouts" }],
   },
   "app.cell_configure": {
     description: "How long did configuring a timeline row take, especially large tool output?",
     group: "rendering",
     fields: { duration_ms: "ms", expanded: OPT_BOOL },
     tags: { row_type: { required: true }, tool: {}, content_type: {}, output_size: {} },
-    emit: [{ field: "duration_ms", min: 1, max: SUSPENSION_CEILING_MS }],
-    slo: [{ field: "duration_ms", tm99: 8.3, label: "Cell configure (120 Hz)" }],
+    emit: [{ field: "duration_ms", min: 1 }],
+    slo: [{ field: "duration_ms", over: 8.3, perMinute: 2, label: "Slow row setups" }],
   },
   "app.render_strategy": {
     description: "How long did highlighting, ANSI parsing, or diff building take for a tool row?",
     group: "rendering",
     fields: { duration_ms: "ms" },
     tags: { render_mode: { required: true }, input_size: { required: true }, language: {} },
-    emit: [{ field: "duration_ms", min: 1, max: SUSPENSION_CEILING_MS }],
+    emit: [{ field: "duration_ms", min: 1 }],
   },
   "app.tool_row_measure": {
     description: "How long did measuring a tool row's width or viewport take?",
@@ -940,7 +940,7 @@ const EVENTS = {
     fields: { duration_ms: "ms", segments: "count" },
     tags: { surface: { required: true } },
     emit: [{ field: "duration_ms", min: 1 }],
-    slo: [{ field: "duration_ms", tm99: 8.3, label: "Markdown stream (120 Hz)" }],
+    slo: [{ field: "duration_ms", over: 8.3, perMinute: 0.5, label: "Slow markdown cycles" }],
   },
   "app.chat_frame_visit": {
     description:
@@ -956,6 +956,7 @@ const EVENTS = {
     },
     tags: { timeline_activity: { required: true } },
     emit: [{ field: "frames", min: 2 }],
+    spansBackground: true,
   },
   "app.coalescer_window": {
     description:
@@ -976,6 +977,7 @@ const EVENTS = {
       hitch_ratio: "ratio",
       worst_frame_ms: "ms",
     },
+    spansBackground: true,
   },
   "app.terminal_scroll_visit": {
     description:
@@ -992,11 +994,13 @@ const EVENTS = {
     },
     tags: { terminal_mode: { required: true }, scroll_path: { required: true } },
     emit: [{ field: "frames", min: 2 }],
+    spansBackground: true,
   },
   "app.pane_resize_visit": {
     description: "How smoothly did dividers move and settle in a visit? Pool hitch_ms/duration_ms.",
     group: "rendering",
     fields: { duration_ms: "ms", hitch_ms: "ms", worst_frame_ms: "ms", reflow_ms: "ms" },
+    spansBackground: true,
   },
 
   // ─── App: session list ───
@@ -1014,10 +1018,11 @@ const EVENTS = {
     emit: [{ field: "duration_ms", min: 1 }],
   },
   "app.session_list_body_rate": {
-    description: "How often did the session list body re-evaluate in a 5 s window (store churn)?",
+    description:
+      "How many times did the session list recompute its rows in one fixed 5 s window, opened by a recompute and closed by a timer (store churn)?",
     group: "session_list",
     fields: { evaluations: "count" },
-    slo: [{ field: "evaluations", tm99: 12, label: "List body evals/5s" }],
+    slo: [{ field: "evaluations", tm99: 12, label: "List recomputes/5s" }],
   },
 
   // ─── App: workload snapshot ───
@@ -1120,13 +1125,6 @@ const EVENTS = {
     fields: {},
     tags: { ...DICTATION_TAGS, ...DICTATION_PROVIDER_TAGS },
   },
-  "app.live_voice_leftover_call": {
-    description: "Did iOS keep CallKit calls listed after their Live Voice call was over?",
-    group: "media",
-    fields: { calls: "count" },
-    tags: { phase: { required: true, values: ["call_start", "call_end", "dictation_start"] } },
-    emit: [{ field: "calls", min: 1 }],
-  },
   "app.live_voice_call_playback": {
     description: "How smoothly did Live Voice call audio play?",
     group: "media",
@@ -1142,6 +1140,7 @@ const EVENTS = {
       audio_restarts: "count",
       echo_cancellation: "bool",
     },
+    spansBackground: true,
   },
 
   // ─── App: attention, media, share, quick session ───
@@ -1197,6 +1196,7 @@ const EVENTS = {
       surface: {},
       response_encoding: {},
     },
+    spansBackground: true,
   },
   "app.share_export": {
     description: "How long did rendering share-sheet content take?",
@@ -1254,8 +1254,7 @@ const EVENTS = {
 
   // ─── App: device ───
   "app.device_resources": {
-    description:
-      "What did the app cost in CPU and memory, and how much headroom was left, on each screen and state? Sampled every 10 s.",
+    description: `What did the app cost in CPU and memory, and how much headroom was left, on each screen and state? Sampled every ${FOREGROUND_CLOCK.seconds} s while active.`,
     group: "device",
     fields: {
       cpu_pct: { unit: "pct", optional: true },
@@ -1267,13 +1266,8 @@ const EVENTS = {
     slo: [
       { field: "cpu_pct", tm99: 20, label: "CPU usage %" },
       { field: "memory_mb", tm99: 250, label: "Memory footprint" },
-      {
-        field: "memory_available_mb",
-        tm99: 100,
-        label: "Memory avail (low=bad)",
-        lowerIsBad: true,
-      },
-      { field: "thermal_state", tm99: 1, label: "Thermal (0-3)" },
+      { field: "memory_available_mb", p1: 100, label: "Memory headroom (p1)" },
+      { field: "thermal_state", over: 1, share: 0.01, label: "Thermal serious+ share" },
     ],
   },
   "app.memory_warning": {
@@ -1298,12 +1292,14 @@ const EVENTS = {
     group: "device",
     fields: { threshold_ms: "ms", footprint_mb: OPT_MB, sequence: "count" },
     tags: { screen: {} },
+    spansBackground: true,
   },
   "app.main_thread_stall_recovered": {
     description: "How long did a detected main-thread stall last?",
     group: "device",
     fields: { duration_ms: "ms", sequence: "count" },
     tags: { screen: {} },
+    spansBackground: true,
   },
 
   // ─── Server: connection ───

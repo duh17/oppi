@@ -13,8 +13,6 @@ struct TelemetryTests {
             // Below the 4 ms floor: dropped. At the floor: recorded.
             Telemetry.record(AppTimelineApply(durationMs: 3, items: 10, changed: 1))
             Telemetry.record(AppTimelineApply(durationMs: 4, items: 10, changed: 1))
-            // At or above the 5 s suspension ceiling: dropped.
-            Telemetry.record(AppTimelineApply(durationMs: 5_000, items: 10, changed: 1))
             // A sub-millisecond cell configure is the common case and is dropped.
             Telemetry.record(AppCellConfigure(durationMs: 0, rowType: "assistant"))
             // A negative ping is a clock artifact.
@@ -23,6 +21,48 @@ struct TelemetryTests {
 
         #expect(capture.events.map(\.name) == ["app.timeline_apply"])
         #expect(capture.events.first?.fields["duration_ms"] == 4)
+    }
+
+    // MARK: - Background
+
+    /// Wall-clock durations keep running while iOS suspends the app, which once
+    /// stored hours-long queue syncs. A sample whose interval overlapped a trip
+    /// to the background is dropped; time that may rightly run there is kept.
+    @Test func durationsThatOverlappedTheBackgroundAreDropped() {
+        let background = TelemetryBackgroundSpans()
+        let capture = TelemetryCapture()
+        capture.runSync {
+            Telemetry.record(AppTtft(durationMs: 60_000), background: background)
+
+            background.enteredBackground()
+            Telemetry.record(
+                AppQueueSync(durationMs: 20, transport: .lan, phase: .initial, status: .ok),
+                background: background
+            )
+
+            background.leftBackground(at: .now - .seconds(10))
+            // Started 60 s ago, before the return: it spans the background.
+            Telemetry.record(AppTtft(durationMs: 60_000), background: background)
+            // The longest `_ms` field is the interval: a quick send, a long round trip.
+            Telemetry.record(
+                AppCommand(sendMs: 2, roundtripMs: 60_000, command: "prompt", transport: .lan, status: .ok),
+                background: background
+            )
+            // Started 1 s ago, after the return: foreground only.
+            Telemetry.record(AppTtft(durationMs: 1_000), background: background)
+            // An ask card's dwell may rightly run while the app is away.
+            Telemetry.record(
+                AppAskResponse(
+                    durationMs: 60_000, questions: 1, answered: 1, ignored: 0,
+                    multiSelectQuestions: 0, selected: 1, custom: false, allowCustom: false,
+                    result: .answered
+                ),
+                background: background
+            )
+        }
+
+        #expect(capture.events.map(\.name) == ["app.ttft", "app.ttft", "app.ask_response"])
+        #expect(capture.events.map { $0.fields["duration_ms"] } == [60_000, 1_000, 60_000])
     }
 
     @Test func fastSuccessfulQueuePollsAreDroppedButFailuresAreKept() {
