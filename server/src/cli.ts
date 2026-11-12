@@ -1332,9 +1332,6 @@ async function cmdSelfUpdate(flags: Record<string, string>): Promise<void> {
     console.log(c.yellow("  This Oppi CLI does not look like a global npm install."));
     console.log(c.dim(`  npm global:   ${install.manualCommand}`));
     console.log(c.dim("  git checkout: git pull && npm install && npm run build"));
-    console.log(
-      c.dim("  Mac app:      install the shared CLI with npm install -g oppi-server@latest"),
-    );
     console.log("");
     process.exit(1);
   }

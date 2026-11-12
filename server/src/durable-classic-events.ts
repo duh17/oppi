@@ -1,11 +1,11 @@
 /**
  * Classic Pi session events for one durable conversation, derived from its state.
  *
- * The session socket's classic consumers (the Mac app, which does not attach the conversation
- * stream; `SessionEventProcessor`; Live Voice; the trace and telemetry) still read Pi
- * `AgentSessionEvent`s. Durable has no event API: everything they carried is state in the
- * conversation view (`pi.live`, `pi.inbox`, entries), so each view value is diffed against the
- * previous one and the difference is told as events, in the order the coding agent tells them.
+ * The session socket's classic consumers (`SessionEventProcessor`, Live Voice, the trace and
+ * telemetry) still read Pi `AgentSessionEvent`s. Durable has no event API: everything they
+ * carried is state in the conversation view (`pi.live`, `pi.inbox`, entries), so each view
+ * value is diffed against the previous one and the difference is told as events, in the order
+ * the coding agent tells them.
  *
  * The view watch is the one ordered source for entries and `pi.live`, so an entry and the
  * live state its commit cleared always arrive together; it sees deferred progress commits at
