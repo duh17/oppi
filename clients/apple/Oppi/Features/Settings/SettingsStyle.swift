@@ -45,8 +45,8 @@ struct SettingsStyle {
     }
 
     @MainActor
-    static var current: SettingsStyle {
-        SettingsStyle(
+    static var current: Self {
+        Self(
             palette: ThemeRuntimeState.currentPalette(),
             isDark: ThemeRuntimeState.currentThemeID().preferredColorScheme != .light
         )

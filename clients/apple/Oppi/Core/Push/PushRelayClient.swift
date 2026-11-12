@@ -235,7 +235,7 @@ struct PendingAppAttestKey: Sendable {
 
     private static let defaultsKey = "\(AppIdentifiers.subsystem).push.pendingAppAttestKey"
 
-    static let standard = PendingAppAttestKey(
+    static let standard = Self(
         load: { UserDefaults.standard.string(forKey: defaultsKey) },
         save: { UserDefaults.standard.set($0, forKey: defaultsKey) }
     )

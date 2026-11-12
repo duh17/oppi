@@ -43,7 +43,7 @@ struct PushDiscoveryProgress: Equatable {
     let status: PushDiscoveryCardConfiguration.Status
 
     static func status(
-        of progress: PushDiscoveryProgress?,
+        of progress: Self?,
         for serverId: String
     ) -> PushDiscoveryCardConfiguration.Status {
         guard let progress, progress.serverId == serverId else { return .idle }

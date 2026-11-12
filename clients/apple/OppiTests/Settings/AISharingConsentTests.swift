@@ -596,8 +596,8 @@ struct ConsentSheet {
 
     let controller: AISharingConsentSheetViewController
 
-    static func find(in window: UIWindow) async -> ConsentSheet? {
-        await presented(AISharingConsentSheetViewController.self, in: window).map(ConsentSheet.init)
+    static func find(in window: UIWindow) async -> Self? {
+        await presented(AISharingConsentSheetViewController.self, in: window).map(Self.init)
     }
 
     static func closes(in window: UIWindow) async -> Bool {

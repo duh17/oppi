@@ -33,17 +33,17 @@ enum CodeEditorBarKey: Hashable, Sendable {
     case lineEnd
     case symbol(String)
 
-    static let actions: [CodeEditorBarKey] = [
+    static let actions: [Self] = [
         .escape, .tab, .outdent, .left, .down, .up, .right, .undo, .redo, .comment, .find, .lineStart, .lineEnd,
     ]
 
-    static let symbols: [CodeEditorBarKey] = "{ } ( ) [ ] < > = \" ' ` ; : / \\ | - _ + * & ! ? # $ % ^ ~ @ , ."
+    static let symbols: [Self] = "{ } ( ) [ ] < > = \" ' ` ; : / \\ | - _ + * & ! ? # $ % ^ ~ @ , ."
         .split(separator: " ")
         .map { .symbol(String($0)) }
 
     static let catalog = actions + symbols
 
-    static let defaults: [CodeEditorBarKey] = [.escape, .tab, .left, .down, .up, .right, .undo, .redo]
+    static let defaults: [Self] = [.escape, .tab, .left, .down, .up, .right, .undo, .redo]
         + "{ } ( ) [ ] < > = \" ' ` ; : / | - _ * & ! # $".split(separator: " ").map { .symbol(String($0)) }
 
     var id: String {

@@ -30,7 +30,7 @@ enum SSHTerminalPageMode: String, Sendable {
     /// What the page shows for the stored choice: the choice itself while its
     /// experiment is on, else Rex when that is on, else Shell. A mode that is not
     /// available is never shown, and the stored choice is kept for when it is.
-    static func resolved(_ stored: SSHTerminalPageMode?, in access: SSHTerminalExperimentAccess) -> Self {
+    static func resolved(_ stored: Self?, in access: SSHTerminalExperimentAccess) -> Self {
         if let stored, available(in: access).contains(stored) { return stored }
         return access.rex ? .rex : .shell
     }

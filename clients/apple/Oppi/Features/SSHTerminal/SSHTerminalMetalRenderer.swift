@@ -20,8 +20,8 @@ struct SSHTerminalCellMetrics {
         )
     }
 
-    static func codeFont() -> SSHTerminalCellMetrics {
-        SSHTerminalCellMetrics(font: AppFont.monoMedium, boldFont: AppFont.monoMediumBold)
+    static func codeFont() -> Self {
+        Self(font: AppFont.monoMedium, boldFont: AppFont.monoMediumBold)
     }
 }
 

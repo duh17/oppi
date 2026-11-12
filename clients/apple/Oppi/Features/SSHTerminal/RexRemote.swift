@@ -618,7 +618,7 @@ final class RexMonitor: SSHTerminalOverviewSource {
         /// 15 s, doubling to 60 s, for a Rex that is not running; 1 s,
         /// doubling to 30 s, otherwise. `failures` counts the consecutive
         /// subscriptions that ended without reading Rex.
-        static func delay(_ retry: Retry, failures: Int) -> Duration {
+        static func delay(_ retry: Self, failures: Int) -> Duration {
             let (first, cap) = retry == .notRunning ? (15, 60) : (1, 30)
             return .seconds(min(cap, first << min(max(failures - 1, 0), 6)))
         }

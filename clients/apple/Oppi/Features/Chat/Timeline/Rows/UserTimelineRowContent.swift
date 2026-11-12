@@ -83,7 +83,7 @@ struct UserTimelineBubbleContent {
     }
 
     @MainActor
-    static func resolve(text: String, images: [ImageAttachment]) -> UserTimelineBubbleContent {
+    static func resolve(text: String, images: [ImageAttachment]) -> Self {
         let parsed = UserMessageAttachmentPresentation.parse(rawText: text)
         let display = UserTimelineRowContentView.displayText(for: parsed.visibleText)
         let inlineImagePathPills = parsed.pathPills.filter { pill in
@@ -104,7 +104,7 @@ struct UserTimelineBubbleContent {
             inlineImagePathPills: inlineImagePathPills,
             pathPills: parsed.pathPills
         )
-        return UserTimelineBubbleContent(
+        return Self(
             displayText: display.text,
             displayWasTruncated: display.wasTruncated,
             visibleBadges: visibleBadges,

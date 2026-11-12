@@ -26,8 +26,8 @@ struct RexEndpoint: Equatable, Sendable {
     let path: String
     let subprotocol: String
 
-    static let control = RexEndpoint(path: "/api/control", subprotocol: "rex.control.v1")
-    static let data = RexEndpoint(path: "/api/data", subprotocol: "rex.data.terminal.v1")
+    static let control = Self(path: "/api/control", subprotocol: "rex.control.v1")
+    static let data = Self(path: "/api/data", subprotocol: "rex.data.terminal.v1")
 }
 
 /// One open Rex WebSocket, at the message level: the upgrade is done, pings

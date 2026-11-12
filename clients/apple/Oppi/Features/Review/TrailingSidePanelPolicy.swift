@@ -41,17 +41,17 @@ struct TrailingColumnWidthPolicy: Equatable {
         idealWidth: CGFloat,
         maxWidth: CGFloat?,
         window: CGFloat
-    ) -> TrailingColumnWidthPolicy {
+    ) -> Self {
         let softMaximum = maxWidth ?? min(idealWidth * 1.75, 640)
         guard window > 0 else {
-            return TrailingColumnWidthPolicy(
+            return Self(
                 minimum: min(minWidth, softMaximum), ideal: min(idealWidth, softMaximum),
                 maximum: softMaximum, full: softMaximum, window: 0
             )
         }
         let full = max(0, window - TrailingColumnOverlayView.fullWindowGrabEdge)
         let maximum = max(0, min(softMaximum, window - screenMinimumWidth, full))
-        return TrailingColumnWidthPolicy(
+        return Self(
             minimum: min(minWidth, maximum),
             ideal: min(idealWidth, maximum),
             maximum: maximum,

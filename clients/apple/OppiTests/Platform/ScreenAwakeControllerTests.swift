@@ -5,7 +5,7 @@ import Testing
 @Suite("ScreenAwakeController", .serialized)
 @MainActor
 struct ScreenAwakeControllerTests {
-    private let owner = ObjectIdentifier(ScreenAwakeControllerTests.self)
+    private let owner = ObjectIdentifier(Self.self)
 
     @Test("active session immediately prevents sleep")
     func activeSessionDisablesIdleTimer() {

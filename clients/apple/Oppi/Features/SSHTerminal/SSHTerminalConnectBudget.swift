@@ -12,7 +12,7 @@ struct SSHTerminalConnectBudget {
 
     private var remaining: Int
 
-    init(_ capacity: Int = SSHTerminalConnectBudget.inFlight) {
+    init(_ capacity: Int = Self.inFlight) {
         remaining = capacity
     }
 

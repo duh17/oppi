@@ -68,8 +68,8 @@ struct ComposerActionPopover {
         colors: ComposerThemeColors,
         onSelect: @escaping (ThinkingLevel) -> Void,
         onSaveDefault: (() -> Void)?
-    ) -> ComposerActionPopover {
-        ComposerActionPopover(
+    ) -> Self {
+        Self(
             preferredWidth: 220,
             make: {
                 ComposerThinkingPickerController.make(

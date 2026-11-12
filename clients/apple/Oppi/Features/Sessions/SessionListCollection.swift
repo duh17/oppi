@@ -152,9 +152,9 @@ final class SessionListCollection<
             case row(Row)
 
             /// The cell of a list entry: its fold row, or the session row `content` makes.
-            static func entry(_ entry: SessionListEntry, content: (SessionListEntry) -> SessionListRowContent?) -> Cell? {
+            static func entry(_ entry: SessionListEntry, content: (SessionListEntry) -> SessionListRowContent?) -> Self? {
                 if let fold = entry.stoppedFold { return .stoppedFold(fold, depth: entry.depth) }
-                return content(entry).map(Cell.session)
+                return content(entry).map(Self.session)
             }
         }
 

@@ -631,7 +631,7 @@ final class SessionRowView: UIView {
         ])
         arrangeDetailRows(joined: false)
         // Glyphs and spacing are drawn at the text size they were applied with.
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (row: SessionRowView, _) in
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (row: Self, _) in
             guard let content = row.content, let applied = row.lastApplied else { return }
             row.apply(content, display: applied.display, themeID: applied.themeID, iconAssetCache: applied.iconAssetCache)
         }

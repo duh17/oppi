@@ -1212,8 +1212,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         // synthetic work lines, so ChatItem count alone is not the structure
         // — a new live strip can appear while items.count stays put.
         let previousDisplayIDs = currentIDs.filter {
-            $0 != ChatTimelineController.loadMoreID
-                && $0 != ChatTimelineController.workingIndicatorID
+            $0 != Self.loadMoreID
+                && $0 != Self.workingIndicatorID
         }
         let nextDisplayIDs = configuration.displayRows.map(\.id)
         if nextDisplayIDs != previousDisplayIDs {
@@ -1753,7 +1753,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             return false
         }
         // A child tail row owns its tap (it opens the child), like a full-row button.
-        return itemID != ChatTimelineController.loadMoreID
+        return itemID != Self.loadMoreID
             && currentWorkLineByID[itemID] == nil
             && currentChildTailByID[itemID] == nil
     }
@@ -1799,12 +1799,12 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         guard indexPath.section == 0, indexPath.item < currentIDs.count else { return }
         let itemID = currentIDs[indexPath.item]
-        if itemID == ChatTimelineController.loadMoreID
+        if itemID == Self.loadMoreID
             || currentWorkLineByID[itemID] != nil {
             collectionView.deselectItem(at: indexPath, animated: false)
             return
         }
-        if itemID == ChatTimelineController.workingIndicatorID {
+        if itemID == Self.workingIndicatorID {
             return
         }
 

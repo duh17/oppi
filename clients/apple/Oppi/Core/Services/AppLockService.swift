@@ -125,7 +125,7 @@ struct AppLockMachine: Equatable {
     /// value an earlier scoped unlock could still match.
     mutating func restart(timeout: AppLockTimeout) {
         let generation = scopedUnlockGeneration
-        self = AppLockMachine(timeout: timeout, isAvailable: isAvailable)
+        self = Self(timeout: timeout, isAvailable: isAvailable)
         scopedUnlockGeneration = generation &+ 1
     }
 

@@ -21,9 +21,9 @@ struct FrontScreens {
     /// Class names of the front screens, comma separated.
     let names: String
 
-    static func current() -> FrontScreens {
+    static func current() -> Self {
         let fronts = screens()
-        return FrontScreens(
+        return Self(
             chatOnTop: fronts.contains { $0 is ChatRouteViewController },
             names: fronts.map { String(describing: type(of: $0)) }.joined(separator: ",")
         )

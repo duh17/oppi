@@ -46,7 +46,7 @@ enum SSHConnectionError: Error, Equatable, Sendable {
     case connectionClosed
 
     init(mapping error: any Error) {
-        if let failure = error as? SSHConnectionError {
+        if let failure = error as? Self {
             self = failure
         } else if SSHIdentityKeyStoreError.securityStatus(error) == errSecInteractionNotAllowed {
             self = .keyExchangeFailed(SSHIdentityKeyStoreError.authenticationExpired.localizedDescription)
@@ -126,8 +126,8 @@ struct SSHConnection: Sendable {
         authentication: SSHAuthentication,
         savedHostKey: SSHHostKey?,
         socket: Int32,
-        signInTimeout: TimeAmount = SSHConnection.signInTimeout
-    ) async throws -> SSHConnection {
+        signInTimeout: TimeAmount = Self.signInTimeout
+    ) async throws -> Self {
         let loop = MultiThreadedEventLoopGroup.singleton.next()
         let authenticated = loop.makePromise(of: Void.self)
         let channel: Channel
@@ -173,7 +173,7 @@ struct SSHConnection: Sendable {
             if Task.isCancelled { throw CancellationError() }
             throw SSHConnectionError(mapping: error)
         }
-        return SSHConnection(channel: channel)
+        return Self(channel: channel)
     }
 
     /// Signs in with the credential `prepareAuthentication` returns, over the
@@ -184,7 +184,7 @@ struct SSHConnection: Sendable {
         savedHostKey: SSHHostKey?,
         prepareAuthentication: @Sendable () async throws -> SSHAuthentication,
         dial: @Sendable () async throws -> Int32
-    ) async throws -> SSHConnection {
+    ) async throws -> Self {
         try Task.checkCancellation()
         let authentication = try await prepareAuthentication()
         try Task.checkCancellation()

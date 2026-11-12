@@ -146,7 +146,7 @@ final class ChildTailLinesView: UIStackView {
 
 private extension UIFont {
     func withWeight(_ weight: UIFont.Weight) -> UIFont {
-        UIFont.systemFont(ofSize: pointSize, weight: weight)
+        Self.systemFont(ofSize: pointSize, weight: weight)
     }
 
     var italicized: UIFont {

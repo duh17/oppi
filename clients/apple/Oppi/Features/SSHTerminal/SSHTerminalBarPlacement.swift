@@ -21,8 +21,8 @@ enum SSHTerminalBarItem: BarLayoutAction, Identifiable {
     /// The default order: the built-in buttons as they were, Program Shortcuts
     /// after the keys and before Paste. Custom keys are not cases; a layout
     /// appends each as it is made.
-    static var allCases: [SSHTerminalBarItem] {
-        var items = SSHTerminalBarAction.allCases.map(SSHTerminalBarItem.action)
+    static var allCases: [Self] {
+        var items = SSHTerminalBarAction.allCases.map(Self.action)
         items.insert(.programShortcuts, at: items.firstIndex(of: .action(.paste)) ?? items.endIndex)
         return items
     }

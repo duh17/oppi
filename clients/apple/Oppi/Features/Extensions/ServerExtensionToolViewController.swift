@@ -18,7 +18,7 @@ struct ServerToolParameter: Sendable, Equatable {
     /// The properties of `schema`, required ones first in the schema's own order
     /// (its `required` list keeps it), then the rest by name: the decoded object
     /// does not keep the order of its keys.
-    static func list(in schema: JSONValue?) -> [ServerToolParameter] {
+    static func list(in schema: JSONValue?) -> [Self] {
         guard let properties = schema?.objectValue?["properties"]?.objectValue else { return [] }
         let required = (schema?.objectValue?["required"]?.arrayValue ?? []).compactMap(\.stringValue)
         let requiredSet = Set(required)
@@ -26,7 +26,7 @@ struct ServerToolParameter: Sendable, Equatable {
             + properties.keys.filter { !requiredSet.contains($0) }.sorted()
         return order.map { name in
             let property = properties[name]?.objectValue ?? [:]
-            return ServerToolParameter(
+            return Self(
                 name: name,
                 type: typeLabel(property),
                 isRequired: requiredSet.contains(name),

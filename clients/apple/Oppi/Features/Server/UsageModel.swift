@@ -259,7 +259,7 @@ struct UsageTrend: Equatable {
 
     /// Nothing when there are fewer than two days, nothing to compare against, or the
     /// change is under 5%.
-    static func make(values: [Double]) -> UsageTrend? {
+    static func make(values: [Double]) -> Self? {
         guard values.count >= 2 else { return nil }
         let mid = values.count / 2
         let firstHalf = values.prefix(mid).reduce(0, +)
@@ -267,6 +267,6 @@ struct UsageTrend: Equatable {
         guard firstHalf > 0 else { return nil }
         let delta = (secondHalf - firstHalf) / firstHalf
         guard abs(delta) >= 0.05 else { return nil }
-        return UsageTrend(isRising: delta > 0, label: String(format: "%.0f%%", abs(delta) * 100))
+        return Self(isRising: delta > 0, label: String(format: "%.0f%%", abs(delta) * 100))
     }
 }

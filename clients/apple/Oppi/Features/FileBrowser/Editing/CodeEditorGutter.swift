@@ -42,7 +42,7 @@ struct CodeEditorGutterSnapshot {
     var paragraphs: [Paragraph] = []
     var trailingLine: TrailingLine?
 
-    static var empty: CodeEditorGutterSnapshot { CodeEditorGutterSnapshot() }
+    static var empty: Self { Self() }
 
     private init() {}
 

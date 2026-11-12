@@ -31,14 +31,14 @@ extension UIFont {
         }
         let key = "\(style.rawValue)|\(weight.rawValue)|\(design.rawValue)"
         if let font = ScaledFontCache.fonts[key] { return font }
-        let size = UIFont.preferredFont(
+        let size = Self.preferredFont(
             forTextStyle: style,
             compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
         ).pointSize
         let base = switch design {
-        case .proportional: UIFont.systemFont(ofSize: size, weight: weight)
-        case .monospacedDigits: UIFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
-        case .monospaced: UIFont.monospacedSystemFont(ofSize: size, weight: weight)
+        case .proportional: Self.systemFont(ofSize: size, weight: weight)
+        case .monospacedDigits: Self.monospacedDigitSystemFont(ofSize: size, weight: weight)
+        case .monospaced: Self.monospacedSystemFont(ofSize: size, weight: weight)
         }
         let font = UIFontMetrics(forTextStyle: style).scaledFont(for: base)
         ScaledFontCache.fonts[key] = font
@@ -56,7 +56,7 @@ extension UIImage {
         weight: UIFont.Weight = .regular,
         color: UIColor? = nil
     ) -> UIImage? {
-        let image = UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(font: .scaled(style, weight)))
+        let image = UIImage(systemName: name, withConfiguration: Self.SymbolConfiguration(font: .scaled(style, weight)))
         guard let color else { return image }
         return image?.withTintColor(color, renderingMode: .alwaysOriginal)
     }

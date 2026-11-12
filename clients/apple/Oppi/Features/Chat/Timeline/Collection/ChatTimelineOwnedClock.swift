@@ -165,7 +165,7 @@ extension ChatTimelineController {
         var visibleRows = projection.rows(forRenderedItemIDs: renderedItemIDs)
         let bottomItemID: String? = {
             if config.showsWorkingIndicator {
-                return ChatTimelineController.workingIndicatorID
+                return Self.workingIndicatorID
             }
             return visibleRows.last?.id
         }()

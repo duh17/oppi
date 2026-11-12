@@ -35,7 +35,7 @@ struct FrameHitchCounter {
 
     /// Zeroes the counts, keeping the last frame's time.
     mutating func resetCounts() {
-        self = FrameHitchCounter(lastTimestamp: lastTimestamp)
+        self = Self(lastTimestamp: lastTimestamp)
     }
 
     /// The next tick starts the clock again (a link that was off).

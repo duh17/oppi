@@ -436,7 +436,7 @@ private struct SavedDraftFixture {
     let photoBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x00])
     let videoBytes = Data(repeating: 0x5A, count: 2048)
 
-    static func make() async throws -> SavedDraftFixture {
+    static func make() async throws -> Self {
         let rootURL = FileManager.default.temporaryDirectory
             .appending(path: "QuickSessionSavedDraft-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
@@ -445,7 +445,7 @@ private struct SavedDraftFixture {
             saveDelay: .seconds(60)
         )
         await store.load()
-        let fixture = SavedDraftFixture(rootURL: rootURL, store: store)
+        let fixture = Self(rootURL: rootURL, store: store)
         let clip = rootURL.appending(path: "clip.mp4", directoryHint: .notDirectory)
         try fixture.videoBytes.write(to: clip)
         let importedClip = try store.importAttachmentFile(from: clip)

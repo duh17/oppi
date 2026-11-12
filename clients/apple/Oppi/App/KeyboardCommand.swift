@@ -25,7 +25,7 @@ enum KeyboardCommand: Hashable, Sendable {
     case previousSession
 
     /// Every command, in menu order.
-    static let all: [KeyboardCommand] = [
+    static let all: [Self] = [
         .newSession, .settings, .close, .toggleSidebar, .toggleFileTree,
         .pane(.files), .pane(.git), .pane(.outline), .pane(.context),
         .stop, .focusComposer, .nextSession, .previousSession,

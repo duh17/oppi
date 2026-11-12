@@ -85,8 +85,8 @@ final class LiveActivityManager {
 
         private static let key = "\(AppIdentifiers.subsystem).liveActivity.dismissals"
 
-        static func load(from defaults: UserDefaults) -> Dismissals {
-            defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(Dismissals.self, from: $0) } ?? Dismissals()
+        static func load(from defaults: UserDefaults) -> Self {
+            defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(Self.self, from: $0) } ?? Self()
         }
 
         func save(to defaults: UserDefaults) {

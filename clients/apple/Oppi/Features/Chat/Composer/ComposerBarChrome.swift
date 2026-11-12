@@ -180,7 +180,7 @@ final class ComposerCircleActionButton: UIButton {
 enum ComposerHitTarget {
     static let minimumSide: CGFloat = 44
 
-    static func contains(_ point: CGPoint, in bounds: CGRect, minimumSide: CGFloat = ComposerHitTarget.minimumSide) -> Bool {
+    static func contains(_ point: CGPoint, in bounds: CGRect, minimumSide: CGFloat = Self.minimumSide) -> Bool {
         bounds.insetBy(
             dx: min(0, (bounds.width - minimumSide) / 2),
             dy: min(0, (bounds.height - minimumSide) / 2)
@@ -1044,7 +1044,7 @@ extension UIView {
     /// as hidden while visible. Callers animate the resulting layout instead.
     func setHiddenIfChanged(_ hidden: Bool) {
         guard isHidden != hidden else { return }
-        UIView.performWithoutAnimation { isHidden = hidden }
+        Self.performWithoutAnimation { isHidden = hidden }
     }
 }
 

@@ -276,8 +276,8 @@ private struct SRGB {
 
     var color: ThemeColor { ThemeColor.themeSRGB(r, g, b, alpha: alpha) }
 
-    func composited(over base: SRGB) -> SRGB {
-        SRGB(
+    func composited(over base: Self) -> Self {
+        Self(
             r: r * alpha + base.r * (1 - alpha),
             g: g * alpha + base.g * (1 - alpha),
             b: b * alpha + base.b * (1 - alpha)
@@ -288,13 +288,13 @@ private struct SRGB {
         0.2126 * Self.decode(r) + 0.7152 * Self.decode(g) + 0.0722 * Self.decode(b)
     }
 
-    func contrast(with other: SRGB) -> Double {
+    func contrast(with other: Self) -> Double {
         let a = luminance
         let b = other.luminance
         return (max(a, b) + 0.05) / (min(a, b) + 0.05)
     }
 
-    func passes(on surfaces: [SRGB], level: Double) -> Bool {
+    func passes(on surfaces: [Self], level: Double) -> Bool {
         surfaces.allSatisfy { contrast(with: $0) >= level }
     }
 

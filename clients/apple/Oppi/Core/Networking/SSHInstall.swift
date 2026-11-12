@@ -48,7 +48,7 @@ enum SSHInstallEvent: Equatable, Sendable {
     ///
     /// Fields are `key=value` separated by spaces. `detail=` is always last
     /// and runs to the end of the line, so it may contain spaces and `=`.
-    static func parse(_ line: Substring) -> SSHInstallEvent? {
+    static func parse(_ line: Substring) -> Self? {
         var text = line
         while text.last == "\r" { text.removeLast() }
         guard text.hasPrefix(prefix) else { return nil }

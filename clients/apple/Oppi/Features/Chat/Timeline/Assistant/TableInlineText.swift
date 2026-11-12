@@ -28,8 +28,8 @@ enum TableInlineText {
             self.code = code
         }
 
-        static var current: Fonts {
-            Fonts(body: AppFont.messageBody, code: AppFont.messageInlineCode)
+        static var current: Self {
+            Self(body: AppFont.messageBody, code: AppFont.messageInlineCode)
         }
 
         private static func face(_ font: UIFont, _ traits: UIFontDescriptor.SymbolicTraits) -> UIFont? {
@@ -42,9 +42,9 @@ enum TableInlineText {
     /// How enclosing inline markup restyles a cell run.
     struct Traits: OptionSet {
         let rawValue: Int
-        static let bold = Traits(rawValue: 1 << 0)
-        static let italic = Traits(rawValue: 1 << 1)
-        static let strikethrough = Traits(rawValue: 1 << 2)
+        static let bold = Self(rawValue: 1 << 0)
+        static let italic = Self(rawValue: 1 << 1)
+        static let strikethrough = Self(rawValue: 1 << 2)
     }
 
     /// The colors a cell is drawn in.
@@ -55,7 +55,7 @@ enum TableInlineText {
         let codeBackground: UIColor
 
         /// For measuring only: colors do not change a width.
-        static let measuring = Colors(text: .label, link: .label, code: .label, codeBackground: .clear)
+        static let measuring = Self(text: .label, link: .label, code: .label, codeBackground: .clear)
     }
 
     /// Append a cell's inline content to the result, rendering links with `.link` attribute.

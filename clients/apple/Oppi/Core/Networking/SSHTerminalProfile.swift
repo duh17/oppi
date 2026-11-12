@@ -415,7 +415,7 @@ struct SSHTerminalProfileStore {
     func passwordToFill(
         for expected: SSHTerminalProfile,
         reason: String,
-        evaluate: @escaping @Sendable (LAContext, String) async throws -> Void = SSHTerminalProfileStore.askDeviceOwner
+        evaluate: @escaping @Sendable (LAContext, String) async throws -> Void = Self.askDeviceOwner
     ) async throws -> Data {
         let saved = profile(id: expected.id)
         let account: String

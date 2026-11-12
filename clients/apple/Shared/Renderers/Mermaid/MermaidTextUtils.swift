@@ -751,7 +751,7 @@ struct MermaidPreparedText: @unchecked Sendable {
     /// The same text with every line wider than `width` cut at the end with
     /// an ellipsis, so the block is at most `width` wide. Nil when not even
     /// the ellipsis fits.
-    func truncated(toWidth width: CGFloat) -> MermaidPreparedText? {
+    func truncated(toWidth width: CGFloat) -> Self? {
         guard lines.contains(where: { $0.metrics.paddedSize.width > width }) else { return self }
         let token = CTLineCreateWithAttributedString(NSAttributedString(
             string: "…",
@@ -779,7 +779,7 @@ struct MermaidPreparedText: @unchecked Sendable {
             widest = max(widest, metrics.paddedSize.width)
             cut.append(Line(metrics: metrics, top: line.top))
         }
-        return MermaidPreparedText(
+        return Self(
             lines: cut,
             font: font,
             fontSize: fontSize,

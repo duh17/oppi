@@ -341,7 +341,7 @@ extension UIAction {
         UIAction(
             title: title,
             image: EntityIcon.image(entity, size: 22, assets: assets),
-            identifier: id.map { UIAction.Identifier($0) },
+            identifier: id.map { Self.Identifier($0) },
             state: selected ? .on : .off
         ) { _ in handler() }
     }

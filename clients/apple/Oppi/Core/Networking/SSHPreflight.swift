@@ -370,8 +370,8 @@ struct SSHPreflightCheck: Equatable, Identifiable, Sendable {
 
     var id: String { title }
 
-    func with(status: Status) -> SSHPreflightCheck {
-        SSHPreflightCheck(title: title, detail: detail, status: status)
+    func with(status: Status) -> Self {
+        Self(title: title, detail: detail, status: status)
     }
 }
 

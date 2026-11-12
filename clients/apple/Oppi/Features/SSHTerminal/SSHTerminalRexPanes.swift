@@ -479,7 +479,7 @@ struct SSHTerminalRexPillStatus: Equatable {
     var progress: SSHTerminalProgressReport?
     var needsYou = 0
 
-    static let none = SSHTerminalRexPillStatus()
+    static let none = Self()
 
     /// The status dot's kind: a program that is working, blocked, or in
     /// trouble. Resting (idle or stopped) draws nothing, so a quiet pane's

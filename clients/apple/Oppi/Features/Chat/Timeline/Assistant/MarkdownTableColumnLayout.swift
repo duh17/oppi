@@ -87,7 +87,7 @@ enum MarkdownTableColumnLayout {
         /// Width of the clip-mode text.
         let totalWidth: CGFloat
 
-        static let empty = NaturalColumns(columnWidths: [], longestWordWidths: [], totalWidth: 0)
+        static let empty = Self(columnWidths: [], longestWordWidths: [], totalWidth: 0)
     }
 
     /// How a table is drawn at one viewport width.

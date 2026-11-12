@@ -139,7 +139,7 @@ struct SessionTouchedList: Equatable {
     /// The paths to count for `stats`: the loaded list while it is the one
     /// for this count, else the session's capped list.
     static func paths(
-        _ list: SessionTouchedList?,
+        _ list: Self?,
         workspaceId: String?,
         sessionId: String,
         stats: SessionChangeStats?

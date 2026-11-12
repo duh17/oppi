@@ -62,7 +62,7 @@ struct SSHTerminalCustomKey: Codable, Hashable, Identifiable, Sendable {
         }
 
         /// The Show for picker's choices, in order.
-        static var choices: [ShowFor] {
+        static var choices: [Self] {
             [.all, .shell] + SSHTerminalAgentDetection.agents.map { .agent($0.id) }
         }
     }
@@ -73,7 +73,7 @@ struct SSHTerminalCustomKey: Codable, Hashable, Identifiable, Sendable {
         let key: String
         let title: String
 
-        static let all: [NamedKey] = [
+        static let all: [Self] = [
             .init(key: "escape", title: String(localized: "Esc")),
             .init(key: "tab", title: String(localized: "Tab")),
             .init(key: "enter", title: String(localized: "Return")),
@@ -87,9 +87,9 @@ struct SSHTerminalCustomKey: Codable, Hashable, Identifiable, Sendable {
             .init(key: "end", title: String(localized: "End")),
             .init(key: "pageup", title: String(localized: "Page Up")),
             .init(key: "pagedown", title: String(localized: "Page Down")),
-        ] + (1...12).map { NamedKey(key: "f\($0)", title: "F\($0)") }
+        ] + (1...12).map { Self(key: "f\($0)", title: "F\($0)") }
 
-        static func named(_ key: String) -> NamedKey? { all.first { $0.key == key } }
+        static func named(_ key: String) -> Self? { all.first { $0.key == key } }
     }
 
     var id: UUID

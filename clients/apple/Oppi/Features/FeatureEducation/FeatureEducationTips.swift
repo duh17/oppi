@@ -239,7 +239,7 @@ private struct FeatureEducationTipHandle {
 /// read TipKit's shared datastore.
 @MainActor
 struct FeatureEducationTipPresenter {
-    static let live = FeatureEducationTipPresenter(
+    static let live = Self(
         shouldDisplay: { FeatureEducationTips.tip(for: $0)?.shouldDisplay() ?? false },
         displayUpdates: {
             FeatureEducationTips.tip(for: $0)?.displayUpdates() ?? AsyncStream<Bool> { $0.finish() }

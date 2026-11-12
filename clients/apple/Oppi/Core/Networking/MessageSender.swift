@@ -962,10 +962,10 @@ struct CommandMetricClassification: Equatable, Sendable {
     var outcome: Outcome
     var errorKind: TelemetryTag.ErrorKind?
 
-    static let success = CommandMetricClassification(outcome: .ok, errorKind: nil)
+    static let success = Self(outcome: .ok, errorKind: nil)
 
-    static func recorded(for error: Error) -> CommandMetricClassification {
+    static func recorded(for error: Error) -> Self {
         let kind = TelemetryErrorKind.classify(error)
-        return CommandMetricClassification(outcome: kind == .cancelled ? .cancelled : .error, errorKind: kind)
+        return Self(outcome: kind == .cancelled ? .cancelled : .error, errorKind: kind)
     }
 }

@@ -151,7 +151,7 @@ extension ChatTimelineController {
     /// the edge. The detached identity anchor keeps the reader's row in place
     /// while rows are inserted above it.
     func requestEarlierRowsIfNearTop(_ scrollView: UIScrollView) {
-        guard currentIDs.first == ChatTimelineController.loadMoreID,
+        guard currentIDs.first == Self.loadMoreID,
               onShowEarlier != nil else {
             return
         }

@@ -85,7 +85,7 @@ final class WorkspaceSidebarViewController: UIViewController {
         var workspacesExpanded = WorkspaceSidebarDisclosurePolicy.defaultExpanded
         var server: PairedServer?
 
-        func contentDiffers(_ item: Item, from previous: Model) -> Bool {
+        func contentDiffers(_ item: Item, from previous: Self) -> Bool {
             switch item {
             case .utility(let target): utilities[target] != previous.utilities[target]
             case .workspace(let id): workspaces[id] != previous.workspaces[id]

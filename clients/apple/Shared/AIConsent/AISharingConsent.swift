@@ -40,9 +40,9 @@ struct AISharingConsent {
 
         /// The model provider `providerKey` names (`anthropic`, `openrouter`), or nil for none.
         /// `isOnServerComputer` marks one whose models run on the server's own machine.
-        static func modelProvider(_ providerKey: String?, isOnServerComputer: Bool = false) -> Recipient? {
+        static func modelProvider(_ providerKey: String?, isOnServerComputer: Bool = false) -> Self? {
             guard let key = normalizedProviderKey(providerKey) else { return nil }
-            return Recipient(
+            return Self(
                 kind: .modelProvider,
                 id: key,
                 name: providerDisplayLabel(key),
@@ -60,7 +60,7 @@ struct AISharingConsent {
         /// Nil when that names no single provider. A short id that several providers serve
         /// (`claude-sonnet-5` from Anthropic and GitHub Copilot) could go to either, so it is
         /// unknown rather than the first match: the sheet must name who really gets the content.
-        static func modelProvider(modelId: String?, catalog: [CatalogModel]) -> Recipient? {
+        static func modelProvider(modelId: String?, catalog: [CatalogModel]) -> Self? {
             let requested = modelId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !requested.isEmpty else {
                 let defaults = catalog.filter(\.isDefault)
@@ -77,7 +77,7 @@ struct AISharingConsent {
 
         /// The provider every model in `matches` belongs to: nil for no match (try another
         /// way), `.some(nil)` when they belong to more than one (ambiguous, so unknown).
-        private static func servingProvider(_ matches: [CatalogModel]) -> Recipient?? {
+        private static func servingProvider(_ matches: [CatalogModel]) -> Self?? {
             guard let first = matches.first else { return nil }
             guard matches.allSatisfy({ $0.provider == first.provider }) else { return .some(nil) }
             return .some(modelProvider(first.provider, isOnServerComputer: matches.allSatisfy(\.isLocal)))
@@ -86,28 +86,28 @@ struct AISharingConsent {
         /// A voice feature's backend from `/server/info` `voiceBackends[].target`: `xAI` for
         /// the cloud backend, an endpoint origin for an HTTP one, nil when the server does not
         /// report it.
-        static func voice(_ kind: Kind, target: String?) -> Recipient {
+        static func voice(_ kind: Kind, target: String?) -> Self {
             let trimmed = target?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !trimmed.isEmpty else {
-                return Recipient(kind: kind, id: "server", name: String(localized: "your server's voice service"))
+                return Self(kind: kind, id: "server", name: String(localized: "your server's voice service"))
             }
             guard let host = URL(string: trimmed)?.host(percentEncoded: false)?.lowercased() else {
                 // A provider name, such as `xAI`.
-                return Recipient(kind: kind, id: trimmed, name: trimmed)
+                return Self(kind: kind, id: trimmed, name: trimmed)
             }
             if ["localhost", "127.0.0.1", "::1"].contains(host) || host.hasPrefix("127.") {
-                return Recipient(
+                return Self(
                     kind: kind,
                     id: trimmed,
                     name: String(localized: "a speech service on your server's computer"),
                     isOnServerComputer: true
                 )
             }
-            return Recipient(kind: kind, id: trimmed, name: host)
+            return Self(kind: kind, id: trimmed, name: host)
         }
 
         /// The same recipient, whatever it is called now: a name is display only.
-        func matches(_ other: Recipient) -> Bool {
+        func matches(_ other: Self) -> Bool {
             kind == other.kind && id == other.id
         }
     }
@@ -171,7 +171,7 @@ struct AISharingConsent {
     let defaults: UserDefaults
 
     /// This device's grants, shared with the app's extensions.
-    static var device: AISharingConsent { AISharingConsent(defaults: SharedConstants.sharedDefaults) }
+    static var device: Self { Self(defaults: SharedConstants.sharedDefaults) }
 
     // MARK: - Grants
 

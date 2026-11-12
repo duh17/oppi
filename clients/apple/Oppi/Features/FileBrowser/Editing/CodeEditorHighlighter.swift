@@ -38,7 +38,7 @@ final class CodeEditorHighlighter {
         }
 
         @MainActor
-        static func make(themeID: ThemeID, font: UIFont, tabWidth: Int) -> Style {
+        static func make(themeID: ThemeID, font: UIFont, tabWidth: Int) -> Self {
             let palette = themeID.palette
             func traits(_ traits: UIFontDescriptor.SymbolicTraits) -> UIFont {
                 font.fontDescriptor.withSymbolicTraits(traits).map { UIFont(descriptor: $0, size: font.pointSize) } ?? font
@@ -47,7 +47,7 @@ final class CodeEditorHighlighter {
             for kind in [SyntaxTokenKind.comment, .keyword, .string, .number, .type, .punctuation, .function, .operator] {
                 tokens[kind] = SyntaxHighlighter.color(for: kind, themeID: themeID)
             }
-            return Style(
+            return Self(
                 font: font,
                 boldFont: traits(.traitBold),
                 italicFont: traits(.traitItalic),

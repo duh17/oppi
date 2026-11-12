@@ -22,8 +22,8 @@ enum AppEventStreamFrame: Decodable {
         }
     }
 
-    static func decode(from text: String) throws -> AppEventStreamFrame {
-        try JSONDecoder().decode(AppEventStreamFrame.self, from: Data(text.utf8))
+    static func decode(from text: String) throws -> Self {
+        try JSONDecoder().decode(Self.self, from: Data(text.utf8))
     }
 }
 

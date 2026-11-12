@@ -69,8 +69,8 @@ enum LocalDataProtection {
         /// `PlatformCapabilities.sharesUserLibrary`.
         var sharesUserLibrary: Bool
 
-        static func current(fileManager: FileManager) -> StorageLayout {
-            StorageLayout(
+        static func current(fileManager: FileManager) -> Self {
+            Self(
                 applicationSupport: fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0],
                 caches: fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0],
                 temporary: fileManager.temporaryDirectory,

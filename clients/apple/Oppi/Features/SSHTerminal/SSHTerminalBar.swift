@@ -29,7 +29,7 @@ enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     /// The multiplexers whose overview sheet a button opens.
-    static let overviews: [SSHTerminalBarAction] = [.herdr, .rex]
+    static let overviews: [Self] = [.herdr, .rex]
 
     /// Sends keys to the program instead of opening something. A key turned off
     /// is not offered in the … menu (the keyboard bars have every key), but a

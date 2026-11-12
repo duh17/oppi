@@ -527,7 +527,7 @@ extension FullScreenCodeContent {
             sourceContext: context.sourceContext(surface: .fullScreenSource, filePath: filePath)
         )
         view.backgroundColor = context.themeID.palette.ui.bgDark
-        view.applyReaderPreferences(FullScreenCodeContent.html(content: text, filePath: filePath).readerPreferences)
+        view.applyReaderPreferences(Self.html(content: text, filePath: filePath).readerPreferences)
         return view
     }
 
@@ -590,7 +590,7 @@ extension FullScreenCodeContent {
                 isStreaming: true,
                 palette: context.themeID.palette,
                 // HTML's Source reads as code; the family Viewing Options edits.
-                readerPreferences: FullScreenCodeContent.liveSource(trace, showsSource: showsSource).readerPreferences,
+                readerPreferences: Self.liveSource(trace, showsSource: showsSource).readerPreferences,
                 reviewCommentSelectionRouter: router,
                 reviewCommentSourceContext: context.sourceContext(surface: .fullScreenSource, filePath: snapshot.filePath)
             )

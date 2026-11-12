@@ -30,8 +30,8 @@ final class DocumentEditOwner {
         var capability: (WorkspaceFileEditIdentity.Owner) async -> ServerInfo.WorkspaceFileEditingCapability?
         var transport: WorkspaceFileEditTransport
 
-        static func api(_ api: APIClient) -> Backend {
-            Backend(
+        static func api(_ api: APIClient) -> Self {
+            Self(
                 // The API client is an actor: the capability is its answer, not ours.
                 capability: { await api.fileEditingCapability(for: $0) },
                 transport: .api(api)
@@ -41,13 +41,13 @@ final class DocumentEditOwner {
         /// A record's prompt: its own route and version tag, and no file-editing
         /// capability to check (the server has none), so its limit is this
         /// client's.
-        static func record(transport: WorkspaceFileEditTransport) -> Backend {
-            Backend(capability: { _ in recordPromptCapability }, transport: transport)
+        static func record(transport: WorkspaceFileEditTransport) -> Self {
+            Self(capability: { _ in recordPromptCapability }, transport: transport)
         }
 
         /// What serves this subject on `api`: a record's own route for a prompt,
         /// `/files/current` for a file. One rule, so a reader never picks.
-        static func make(for subject: DocumentEditSubject, api: APIClient) -> Backend {
+        static func make(for subject: DocumentEditSubject, api: APIClient) -> Self {
             switch subject {
             case .agentInstructions(let agentId):
                 return .record(transport: .agentInstructions(api: api, agentId: agentId))

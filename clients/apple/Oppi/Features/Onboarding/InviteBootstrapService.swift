@@ -220,7 +220,7 @@ enum InviteBootstrapService {
         codeProblem: .unsigned
     )
 
-    static let invalidResponseFailure = InviteBootstrapService.failure(PairingEnrollment.Failure.invalidResponse)
+    static let invalidResponseFailure = Self.failure(PairingEnrollment.Failure.invalidResponse)
 
     static let unexplainedFailure = InviteBootstrapError(
         message: "Pairing failed. Request a fresh invite and try again.",
