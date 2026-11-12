@@ -50,6 +50,11 @@ enum ClientLog {
     /// contain private hostnames, LAN IPs, paths, or query strings. Domain and
     /// numeric code are enough to distinguish TLS, DNS, handoff, and timeout
     /// failures without leaking server identity.
+    ///
+    /// An `APIError` also names its case, HTTP status, and (for coded errors)
+    /// the server's error code, because the bridged `errorCode` is only the
+    /// case index. Its message stays out: server and client-synthesized
+    /// messages can carry paths or hostnames.
     static func networkErrorMetadata(_ error: Error) -> [String: String] {
         let nsError = error as NSError
         var metadata: [String: String] = [
@@ -61,7 +66,38 @@ enum ClientLog {
             metadata["urlErrorCode"] = String(nsError.code)
         }
 
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .invalidResponse:
+                metadata["apiError"] = "invalidResponse"
+            case .server(let status, _):
+                metadata["apiError"] = "server"
+                metadata["httpStatusCode"] = String(status)
+            case .codedServer(let status, _, let code):
+                metadata["apiError"] = "codedServer"
+                metadata["httpStatusCode"] = String(status)
+                if isFixedServerErrorCode(code) {
+                    metadata["apiErrorCode"] = code
+                }
+            }
+        }
+
         return metadata
+    }
+
+    /// Server error codes are fixed identifiers (`revision_conflict`,
+    /// `AGENT_IDEMPOTENCY_CONFLICT`). The client decodes `code` from any
+    /// response body, including a proxy's, so anything else (dots, slashes,
+    /// colons, spaces, or overlong) is dropped rather than uploaded.
+    private static func isFixedServerErrorCode(_ code: String) -> Bool {
+        guard let first = code.unicodeScalars.first,
+              code.unicodeScalars.count <= 64,
+              first.isASCII, CharacterSet.letters.contains(first) else {
+            return false
+        }
+        return code.unicodeScalars.allSatisfy { scalar in
+            scalar.isASCII && (CharacterSet.alphanumerics.contains(scalar) || scalar == "_")
+        }
     }
 
     /// Privacy-preserving endpoint metadata for remote diagnostics.

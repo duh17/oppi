@@ -96,3 +96,84 @@ struct ClientLogUploadQueueTests {
         #expect(await uploader.waitForUploadedEntries(150, timeout: .milliseconds(1_500)) == 150)
     }
 }
+
+@Suite("ClientLog.networkErrorMetadata")
+struct ClientLogNetworkErrorMetadataTests {
+    private static let privateMessage =
+        "Failed to read /Users/alex/private/secret.png from mac-studio.tail00000.ts.net:7749"
+
+    private func expectNoMessageLeak(_ metadata: [String: String]) {
+        for value in metadata.values {
+            #expect(!value.contains("/"))
+            #expect(!value.contains("alex"))
+            #expect(!value.contains("ts.net"))
+            #expect(!value.contains("7749"))
+        }
+    }
+
+    @Test func serverErrorNamesStatusAndCaseAndKeepsBridgedKeys() {
+        let error = APIError.server(status: 503, message: Self.privateMessage)
+        let metadata = ClientLog.networkErrorMetadata(error)
+
+        #expect(metadata == [
+            "errorDomain": "Oppi.APIError",
+            "errorCode": String((error as NSError).code),
+            "apiError": "server",
+            "httpStatusCode": "503",
+        ])
+        expectNoMessageLeak(metadata)
+    }
+
+    @Test func codedServerErrorNamesItsFixedServerCode() {
+        let error = APIError.codedServer(status: 409, message: Self.privateMessage, code: "revision_conflict")
+        let metadata = ClientLog.networkErrorMetadata(error)
+
+        #expect(metadata["errorDomain"] == "Oppi.APIError")
+        #expect(metadata["errorCode"] == String((error as NSError).code))
+        #expect(metadata["apiError"] == "codedServer")
+        #expect(metadata["httpStatusCode"] == "409")
+        #expect(metadata["apiErrorCode"] == "revision_conflict")
+        #expect(metadata["urlErrorCode"] == nil)
+        expectNoMessageLeak(metadata)
+    }
+
+    @Test(arguments: [
+        "/Users/alex/private",
+        "mac-studio.tail00000.ts.net",
+        "https://example.com/x",
+        "bad code",
+        "",
+        String(repeating: "a", count: 65),
+    ])
+    func codedServerErrorDropsCodeThatIsNotAFixedIdentifier(_ code: String) {
+        let metadata = ClientLog.networkErrorMetadata(
+            APIError.codedServer(status: 502, message: Self.privateMessage, code: code)
+        )
+
+        #expect(metadata["apiErrorCode"] == nil)
+        #expect(metadata["apiError"] == "codedServer")
+        #expect(metadata["httpStatusCode"] == "502")
+        expectNoMessageLeak(metadata)
+    }
+
+    @Test func invalidResponseNamesItsCaseWithoutStatus() {
+        let metadata = ClientLog.networkErrorMetadata(APIError.invalidResponse)
+
+        #expect(metadata["errorCode"] == String((APIError.invalidResponse as NSError).code))
+        #expect(metadata["apiError"] == "invalidResponse")
+        #expect(metadata["httpStatusCode"] == nil)
+    }
+
+    @Test func urlErrorKeepsExactlyItsExistingKeys() {
+        let error = URLError(
+            .cannotConnectToHost,
+            userInfo: [NSURLErrorFailingURLErrorKey: URL(string: "https://mac-studio.tail00000.ts.net:7749/Users/alex")!]
+        )
+
+        #expect(ClientLog.networkErrorMetadata(error) == [
+            "errorDomain": NSURLErrorDomain,
+            "errorCode": String(URLError.Code.cannotConnectToHost.rawValue),
+            "urlErrorCode": String(URLError.Code.cannotConnectToHost.rawValue),
+        ])
+    }
+}
