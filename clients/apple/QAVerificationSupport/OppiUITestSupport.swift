@@ -186,8 +186,10 @@ extension XCUIApplication {
     /// is the element the caller can name, which may be only part of the popover (a
     /// navigation bar, not its whole body), so the tap goes to the window corner
     /// farthest from that element: the corner least likely to land on the rest of
-    /// the popover or on the control that opened it. The caller still asserts that
-    /// the content went away.
+    /// the popover or on the control that opened it. A software keyboard that is up
+    /// sits in its own window above the popover's dismiss region and takes a tap
+    /// on it, so corners under the keyboard are never chosen. The caller still
+    /// asserts that the content went away.
     func tapOutsidePopover(_ content: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertTrue(
             otherElements["PopoverDismissRegion"].exists,
@@ -198,22 +200,27 @@ extension XCUIApplication {
         let window = windows.firstMatch
         let bounds = window.frame
         let frame = content.frame
+        let keyboard = keyboards.firstMatch
+        let keyboardFrame = keyboard.exists ? keyboard.frame : .null
+        func point(at corner: CGVector) -> CGPoint {
+            CGPoint(x: bounds.minX + bounds.width * corner.dx, y: bounds.minY + bounds.height * corner.dy)
+        }
         func distance(from corner: CGVector) -> CGFloat {
-            let point = CGPoint(x: bounds.minX + bounds.width * corner.dx, y: bounds.minY + bounds.height * corner.dy)
+            let point = point(at: corner)
             return hypot(max(frame.minX - point.x, 0, point.x - frame.maxX), max(frame.minY - point.y, 0, point.y - frame.maxY))
         }
         let corners = [
             CGVector(dx: 0.05, dy: 0.95), CGVector(dx: 0.95, dy: 0.95),
             CGVector(dx: 0.05, dy: 0.05), CGVector(dx: 0.95, dy: 0.05),
-        ]
-        let farthest = corners.max { distance(from: $0) < distance(from: $1) } ?? corners[0]
-        XCTAssertGreaterThan(
-            distance(from: farthest),
-            0,
-            "No window corner lies outside the popover content (\(frame))",
-            file: file,
-            line: line
-        )
+        ].filter { !keyboardFrame.contains(point(at: $0)) }
+        guard let farthest = corners.max(by: { distance(from: $0) < distance(from: $1) }), distance(from: farthest) > 0 else {
+            XCTFail(
+                "No window corner lies outside the popover content (\(frame)) and the keyboard (\(keyboardFrame))",
+                file: file,
+                line: line
+            )
+            return
+        }
         window.coordinate(withNormalizedOffset: farthest).tap()
     }
 
