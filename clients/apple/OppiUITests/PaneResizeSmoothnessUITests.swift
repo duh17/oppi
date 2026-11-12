@@ -31,6 +31,7 @@ final class PaneResizeSmoothnessUITests: XCTestCase {
         app.launchEnvironment["CHAT_ROUTES_PANE_RESIZE"] = "1"
         app.launch()
         XCTAssertEqual(app.wait(for: .runningForeground, timeout: 10), true)
+        app.requireNonCompactWindowOnPad()
         guard app.windows.firstMatch.horizontalSizeClass == .regular else {
             throw XCTSkip("The trailing column needs a regular-width window")
         }

@@ -71,6 +71,14 @@ import {
   type Supervised,
 } from "./sim-pool-supervise";
 import { unmatchedSelectors, xcresultTestIds } from "./unit-shards";
+import {
+  forgetPersistedWindow,
+  frontBoardStorePath,
+  isCompactWindow,
+  isPadDeviceType,
+  type PersistedWindow,
+  readPersistedWindow,
+} from "./sim-pool-window";
 
 export class PoolError extends Error {
   constructor(message: string) {
@@ -1052,6 +1060,25 @@ async function runSimctl(session: CommandSession, args: string[], action: string
   die(`${action} failed: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`}`);
 }
 
+/** The compact window an iPad slot remembers for the app, if it does (see sim-pool-window.ts). */
+function compactRememberedWindow(config: PoolConfig, udid: string): PersistedWindow | undefined {
+  if (!isPadDeviceType(config.deviceType)) {
+    return undefined;
+  }
+  const window = readPersistedWindow(frontBoardStorePath(config.homeDir, udid), APP_BUNDLE_ID);
+  return window && isCompactWindow(window) ? window : undefined;
+}
+
+/** Run on a shut-down iPad slot just before its boot, so the app opens at full size whatever the last run left. */
+function forgetRememberedWindow(config: PoolConfig, udid: string): void {
+  if (!isPadDeviceType(config.deviceType)) {
+    return;
+  }
+  if (forgetPersistedWindow(frontBoardStorePath(config.homeDir, udid), APP_BUNDLE_ID)) {
+    log(`[sim-pool] Forgot the app's remembered window on ${udid}; it opens full size`);
+  }
+}
+
 /**
  * `beforeBoot(wait)` runs right before a non-recovery `simctl boot` (recovery reboots
  * a device that was already booted). The lifecycle uses it to stay under the
@@ -1098,16 +1125,23 @@ export async function prepareSimulator(
       log(`[sim-pool] Reusing already-booted simulator ${udid}`);
       if (await waitForBootReadyWithRetries(session, config, udid)) {
         const leaked = await leakedDeviceE2EEnv(session, udid);
-        if (leaked.length === 0) {
+        const compact = compactRememberedWindow(config, udid);
+        if (leaked.length === 0 && !compact) {
           const slim = await slimSimulator(session, config, udid);
           if (!slim.quiescent) {
             die(slim.note ?? "slim did not reach quiescence");
           }
           return;
         }
-        log(
-          `[sim-pool] Simulator ${udid} carries leaked E2E device environment (${leaked.join(", ")}); recycling it so this run does not start the app in E2E mode`,
-        );
+        if (compact) {
+          log(
+            `[sim-pool] Simulator ${udid} remembers a ${compact.width}x${compact.height} floating window for the app (display ${compact.displayWidth}x${compact.displayHeight}); recycling it so this run opens full size`,
+          );
+        } else {
+          log(
+            `[sim-pool] Simulator ${udid} carries leaked E2E device environment (${leaked.join(", ")}); recycling it so this run does not start the app in E2E mode`,
+          );
+        }
       } else {
         log(`[sim-pool] Booted simulator was not ready; recycling ${udid}`);
       }
@@ -1134,6 +1168,7 @@ export async function prepareSimulator(
       gate.release();
       gate = undefined;
     }
+    forgetRememberedWindow(config, udid);
     await runSimctl(session, ["boot", udid], "simctl boot");
     if (!(await waitForBootReadyWithRetries(session, config, udid))) {
       die(
@@ -2860,7 +2895,10 @@ device profile reuses one build and a rebuild cannot change running tests.
 A caller's own test-without-building runs in a slot against .build/dd (or its
 -xctestrun). run injects -destination and -derivedDataPath and releases the
 slot on exit. An already-booted pool
-simulator is reused unless OPPI_SIM_POOL_FORCE_CLEAN_BOOT=1. Pool simulators
+simulator is reused unless OPPI_SIM_POOL_FORCE_CLEAN_BOOT=1 or, on an iPad
+profile, it remembers a floating (compact) window for the app: SpringBoard keeps
+that window across uninstalls, so the pool shuts such a slot down, forgets the
+window, and boots it again. Pool simulators
 stay booted after a run unless OPPI_SIM_POOL_KEEP_BOOTED=0; at the end of each
 run, claim, and release the reaper shuts down pool simulators idle for
 OPPI_SIM_POOL_IDLE_MINUTES (15) except the OPPI_SIM_POOL_KEEP_WARM (2) most

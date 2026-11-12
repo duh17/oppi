@@ -77,6 +77,7 @@ extension PreviewUITestCase where Self: XCTestCase {
             app.descendants(matching: .any)[ready].waitUntilExists(timeout: readyTimeout),
             "Preview \(screen) did not publish \(ready)"
         )
+        app.requireNonCompactWindowOnPad()
     }
 
     /// Launches the settings sweep (`SCREENSHOT_SCREEN=settings-sweep`) on `page`
@@ -172,6 +173,24 @@ extension XCTestCase {
 /// the label read only where the label is the state under test
 /// (`dev/testing/ios-accessibility-testability.md`, "Identifier naming").
 extension XCUIApplication {
+    /// Fails the run when an iPad shows the app in a compact window. The iPad lane exists to prove
+    /// regular-width layout, and a simulator slot can remember a small floating window from an
+    /// earlier run: the tests that need regular width then skip, and the ones that branch on the
+    /// size class take the phone path and pass without checking the iPad layout. `sim-pool.sh`
+    /// forgets that window before it boots an iPad slot, so this firing means the run bypassed the
+    /// pool or the window shrank during the run. The iPhone's window is compact by design.
+    func requireNonCompactWindowOnPad(file: StaticString = #filePath, line: UInt = #line) {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+        let window = windows.firstMatch
+        XCTAssertNotEqual(
+            window.horizontalSizeClass, .compact,
+            "The iPad run opened the app in a compact window (\(window.frame.size)); its width-gated tests would skip or take the phone path. " +
+                "Run through sim-pool.sh, which resets the slot's remembered window before booting it",
+            file: file,
+            line: line
+        )
+    }
+
     /// The server switcher whose label names `name` (`Current server: <name>`).
     /// Every switcher shares `server.switcher`; the label says which server is current.
     func serverSwitcher(named name: String) -> XCUIElement {

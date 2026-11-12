@@ -77,6 +77,8 @@ clients/apple/scripts/*
 !clients/apple/scripts/sim-pool-unit-runs.test.ts
 !clients/apple/scripts/sim-pool-supervise.ts
 !clients/apple/scripts/sim-pool-supervise.test.ts
+!clients/apple/scripts/sim-pool-window.ts
+!clients/apple/scripts/sim-pool-window.test.ts
 !clients/apple/scripts/sim-pool-simctl.ts
 !clients/apple/scripts/sim-pool-simctl.test.ts
 !clients/apple/scripts/sim-pool-ops.ts

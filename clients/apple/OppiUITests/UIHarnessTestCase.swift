@@ -76,6 +76,7 @@ class UIHarnessTestCase: XCTestCase {
             app.descendants(matching: .any)["harness.ready"].waitUntilExists(timeout: 10),
             "Harness did not become ready"
         )
+        app.requireNonCompactWindowOnPad()
     }
 
     func assertHarnessStillRunning(context: String) -> Bool {
