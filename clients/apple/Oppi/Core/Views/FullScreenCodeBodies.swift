@@ -2198,6 +2198,7 @@ extension NativeFullScreenMarkdownBody: ReaderBody {
         hasSettledMarkdownViewportRestore ? currentViewportIntent() : nil
     }
 
+    @discardableResult
     func restoreViewport(_ intent: FullScreenMarkdownViewportIntent) -> Bool {
         restoreViewportAfterMutableTransition(intent)
         return true

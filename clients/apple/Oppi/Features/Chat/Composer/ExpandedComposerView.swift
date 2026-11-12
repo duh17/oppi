@@ -713,7 +713,9 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
                     setSuppressKeyboard: { [weak self] value in self?.suppressKeyboard = value }
                 )
             case .start:
-                try? await ComposerShared.startVoiceInput(
+                // A failed start has already rolled the composer back, and the
+                // manager's state carries the error the mic button shows.
+                _ = try? await ComposerShared.startVoiceInput(
                     manager: manager,
                     keyboardLanguage: keyboardLanguage,
                     owner: .expandedComposer,

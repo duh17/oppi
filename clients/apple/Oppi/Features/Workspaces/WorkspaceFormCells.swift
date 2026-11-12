@@ -207,7 +207,6 @@ final class WorkspaceIconRowCell: UICollectionViewListCell {
         hint: String,
         action: @escaping () -> Void
     ) {
-        let palette = ThemeRuntimeState.currentPalette()
         titleLabel.text = title
         titleLabel.textColor = SettingsStyle.current.title
         icon.apply(

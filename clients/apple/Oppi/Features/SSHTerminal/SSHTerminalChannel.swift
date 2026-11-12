@@ -802,7 +802,8 @@ final class SSHTerminalChannel {
         let engine: SSHTerminalEngine? = if let block { engines[block] } else { own }
         guard let engine else { return }
         do {
-            try SSHTerminalScrollPerf.interval("restoreHistory") { try engine.continueRestore(records) }
+            // Whether the snapshot is complete changes nothing here: later records just keep arriving.
+            _ = try SSHTerminalScrollPerf.interval("restoreHistory") { try engine.continueRestore(records) }
         } catch {
             // The screen drew; a damaged history record still ends the pane,
             // and says the history was the part that failed.

@@ -46,7 +46,7 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
     }
 
     func prepareSession(context: VoiceProviderContext) async throws -> VoiceProviderPreparation {
-        guard let credentials = context.serverCredentials else {
+        guard context.serverCredentials != nil else {
             throw VoiceInputError.serverNotConnected
         }
         guard let connection = context.serverConnection else {

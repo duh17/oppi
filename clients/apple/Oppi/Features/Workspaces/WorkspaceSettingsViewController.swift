@@ -611,8 +611,6 @@ final class WorkspaceSettingsViewController: ListScreenController<
         guard let connection else { return }
         let model = model
         let workspaceId = workspace.id
-        let apiClient = connection.apiClient
-        let navigation = root.navigation
         switch item {
         case .summary:
             Router.push(WorkspaceDetailsViewController(settings: model, connection: connection, root: root), from: self)

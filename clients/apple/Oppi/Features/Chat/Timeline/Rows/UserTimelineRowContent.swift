@@ -656,7 +656,6 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     /// global avatar an assistant row shows for that session. Precedence is
     /// `AssistantIdentityPresentation`'s, not a rule invented here.
     private func applySenderIdentity(_ card: AgentMessageCard, palette: ThemePalette) {
-        let colors = ComposerThemeColors(palette: palette)
         let icon = card.sender?.agentIcon
         switch card.senderIdentity {
         case .globalAvatar:

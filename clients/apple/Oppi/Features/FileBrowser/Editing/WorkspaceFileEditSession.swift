@@ -543,6 +543,8 @@ final class WorkspaceFileEditSession {
         }
     }
 
+    /// False when a write cannot start now; only a confirmed save (Done) acts on it.
+    @discardableResult
     private func startSaveIfPossible(origin: WriteOrigin = .automatic) -> Bool {
         guard !writes.isWriting, !status.stopsAutosave else { return false }
         guard hasUnsavedChanges else {

@@ -163,7 +163,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             isLoading: isLoading,
             failure: failureReport(reason: model.loadError)
         )
-        var summary: [Item] = [.summary]
+        let summary: [Item] = [.summary]
 
         var notificationItems: [Item] = []
         if relayHost != nil {

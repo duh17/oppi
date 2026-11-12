@@ -385,9 +385,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
                 didReload: { [weak self] in self?.startLoad(force: true) },
                 makePreview: { [weak self] text in
                     guard let self else { return UIViewController() }
-                    let path = editOwner.session?.identity.path ?? currentFilePath
                     return FullScreenCodeViewController(
-                        content: fullScreenContent(text: text) ?? .fromText(text, filePath: path),
+                        content: fullScreenContent(text: text),
                         presentationMode: .contentOnly()
                     )
                 }

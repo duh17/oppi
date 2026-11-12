@@ -90,7 +90,7 @@ final class InlineVideoStillFrameStore {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.removeAll() }
+            MainActor.assumeIsolated { () -> Void in self?.removeAll() }
         }
     }
 
