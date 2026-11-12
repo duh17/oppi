@@ -20,6 +20,7 @@ import { createServerUpdateRoutes } from "../src/routes/server-update.js";
 import type { RouteContext } from "../src/routes/types.js";
 import {
   ServerUpdateService,
+  reexecEntry,
   restartUpdatedProcess,
   serveUpdatedProcess,
 } from "../src/server-update.js";
@@ -689,6 +690,47 @@ describe("POST /server/update and GET /server/info", () => {
       expect(body.error).toMatch(/9\.9\.9/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("reexecEntry", () => {
+  // The layout server-dist.sh builds: dist/src -> current/src -> .builds/<id>/src.
+  function versionedInstall(root: string): { argvA: string; entry: string } {
+    for (const id of ["A", "B"]) {
+      mkdirSync(join(root, "dist", ".builds", id, "src"), { recursive: true });
+      writeFileSync(join(root, "dist", ".builds", id, "src", "cli.js"), "");
+    }
+    symlinkSync(".builds/B", join(root, "dist", "current"));
+    symlinkSync("current/src", join(root, "dist", "src"));
+    return {
+      argvA: join(root, "dist", ".builds", "A", "src", "cli.js"),
+      entry: join(root, "dist", "src", "cli.js"),
+    };
+  }
+
+  it("sends a build path Bun reported back through dist/src, so the re-exec reaches dist/current", () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-reexec-entry-"));
+    try {
+      const { argvA, entry } = versionedInstall(root);
+      expect(reexecEntry(argvA, root)).toBe(entry);
+      expect(realpathSync(reexecEntry(argvA, root))).toBe(
+        realpathSync(join(root, "dist", ".builds", "B", "src", "cli.js")),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a script outside the package's dist as given", () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-reexec-entry-"));
+    try {
+      versionedInstall(root);
+      expect(reexecEntry("/opt/homebrew/bin/oppi", root)).toBe("/opt/homebrew/bin/oppi");
+      expect(reexecEntry(join(root, "src", "cli.ts"), root)).toBe(join(root, "src", "cli.ts"));
+      expect(reexecEntry("/opt/homebrew/bin/oppi", undefined)).toBe("/opt/homebrew/bin/oppi");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

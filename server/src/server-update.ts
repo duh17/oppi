@@ -8,8 +8,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, sep } from "node:path";
 
 import { isNpmVersionNewer, isValidNpmVersion } from "./cli/npm-version.js";
 import {
@@ -147,6 +147,23 @@ export function isCurrentLaunchdJob(): boolean {
 }
 
 /**
+ * The script a re-exec should run. Bun reports argv[1] with symlinks resolved (Node keeps the
+ * path as typed), so a server started through `dist/src/cli.js`, which reaches the newest build
+ * through `dist/current`, would re-exec the build it already runs and never pick up an update.
+ * A script inside this package's `dist` is therefore replaced by the package's own entry, which
+ * is that same path. Anything else (a bin link, a source run) is kept as given.
+ */
+export function reexecEntry(
+  argv1: string,
+  packageDir: string | undefined = packageRootDir(),
+): string {
+  if (!packageDir) return argv1;
+  const dist = join(packageDir, "dist");
+  const entry = join(dist, "src", "cli.js");
+  return argv1.startsWith(dist + sep) && existsSync(entry) ? entry : argv1;
+}
+
+/**
  * Replace this process with the updated `oppi` after listeners are closed.
  *
  * LaunchAgent KeepAlive uses SuccessfulExit=false, so a clean exit(0) would
@@ -172,7 +189,12 @@ export function restartUpdatedProcess(
       // Keep node flags (loaders, heap size): process.argv omits them.
       execve(
         process.execPath,
-        [process.argv[0] ?? process.execPath, ...process.execArgv, ...process.argv.slice(1)],
+        [
+          process.argv[0] ?? process.execPath,
+          ...process.execArgv,
+          reexecEntry(process.argv[1] ?? ""),
+          ...process.argv.slice(2),
+        ],
         env,
       );
     } catch (err: unknown) {

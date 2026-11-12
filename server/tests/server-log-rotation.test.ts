@@ -81,6 +81,43 @@ describe("rotateServerLog", () => {
     expect(await rotateServerLog(dir, { now: NOW })).toBe(false);
   });
 
+  it("finds the first record behind far more than 8 KB of leading text, and files that text under its day", async () => {
+    // The real file opens with start markers and plain text from an older writer.
+    const leading = "--- server start 2026-11-01T01:00:00Z ---\nhello from an old app\n".repeat(
+      600,
+    );
+    expect(leading.length).toBeGreaterThan(8192 * 4);
+    writeFileSync(livePath, leading + record(9, 1) + record(10, 1) + record(12, 1));
+
+    expect(await rotateServerLog(dir, { now: NOW })).toBe(true);
+
+    expect(read("server-2026-11-09.log")).toBe(leading + record(9, 1));
+    expect(read("server-2026-11-10.log")).toBe(record(10, 1));
+    expect(read("server.log")).toBe(record(12, 1));
+  });
+
+  it("leaves leading text alone when the first record is already today", async () => {
+    const content = "plain text\n".repeat(2000) + record(12, 1);
+    writeFileSync(livePath, content);
+
+    expect(await rotateServerLog(dir, { now: NOW })).toBe(false);
+    expect(read("server.log")).toBe(content);
+  });
+
+  it("splits a log many times larger than one read without cutting or losing a line", async () => {
+    const wide = (n: number): string =>
+      `${JSON.stringify({ ts: "2026-11-10T12:00:00.000Z", level: "info", component: "t", event: `w${n}`, pad: "x".repeat(997 + (n % 7)) })}\n`;
+    const day10 = Array.from({ length: 2600 }, (_, n) => wide(n)).join("");
+    expect(day10.length).toBeGreaterThan(2 * 1024 * 1024);
+    writeFileSync(livePath, record(9, 1) + day10 + record(12, 1));
+
+    expect(await rotateServerLog(dir, { now: NOW })).toBe(true);
+
+    expect(read("server-2026-11-09.log")).toBe(record(9, 1));
+    expect(read("server-2026-11-10.log")).toBe(day10);
+    expect(read("server.log")).toBe(record(12, 1));
+  });
+
   it("drops days past retention and prunes daily files that aged out", async () => {
     writeFileSync(livePath, record(1, 1) + record(10, 1) + record(12, 1));
     writeFileSync(join(dir, "server-2026-10-01.log"), "aged out\n");

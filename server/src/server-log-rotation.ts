@@ -14,10 +14,10 @@
  * milliseconds, once a day.
  *
  * The live file holds one UTC day, so its size is the day's log volume; nothing caps a day
- * that logs far more than usual.
+ * that logs far more than usual, and today's lines are held in memory while the file is rewritten.
  */
 
-import { appendFile, open, readFile } from "node:fs/promises";
+import { appendFile, open, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createLogger } from "./logger.js";
@@ -33,23 +33,40 @@ const RETENTION_ENV = "OPPI_SERVER_LOG_RETENTION_DAYS";
 const DEFAULT_RETENTION_DAYS = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** How often to look for a new UTC day: reading the first line of the file is cheap. */
+/** How often to look for a new UTC day: the check reads only up to the first record. */
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
-/** Enough to reach the first record that carries a timestamp. */
-const HEAD_BYTES = 8192;
+/** The live file is read this much at a time, so memory stays flat however long it is. */
+const CHUNK_BYTES = 1024 * 1024;
 
 const TS_DAY = /^\{"ts":"(\d{4}-\d{2}-\d{2})T/;
-const FIRST_TS_DAY = new RegExp(TS_DAY.source, "m");
 
 interface ServerLogRotationOptions {
   now?: number;
   retentionDays?: number;
 }
 
-/** UTC day of the first timestamped record in `text`, if any. */
-function firstDay(text: string): string | undefined {
-  return FIRST_TS_DAY.exec(text)?.[1];
+/**
+ * The file's whole lines (newline kept, latin1 so offsets are byte offsets), one chunk's worth
+ * at a time. The last line is yielded even when it has no newline yet.
+ */
+async function* lineChunks(file: FileHandle): AsyncGenerator<string[]> {
+  const buf = Buffer.allocUnsafe(CHUNK_BYTES);
+  let position = 0;
+  let carry = "";
+  for (;;) {
+    const { bytesRead } = await file.read(buf, 0, CHUNK_BYTES, position);
+    if (bytesRead === 0) break;
+    position += bytesRead;
+    const lines = (carry + buf.toString("latin1", 0, bytesRead)).split(/(?<=\n)/);
+    carry = lines.pop() ?? "";
+    if (carry.endsWith("\n")) {
+      lines.push(carry);
+      carry = "";
+    }
+    if (lines.length > 0) yield lines;
+  }
+  if (carry) yield [carry];
 }
 
 /**
@@ -57,7 +74,9 @@ function firstDay(text: string): string | undefined {
  * remove daily files past retention. Returns whether any line moved.
  *
  * A line without a timestamp (a stack trace, a runtime warning) belongs to the day of the
- * line before it.
+ * line before it. Text ahead of the first timestamped record, however long (the file may open
+ * with start markers or plain text from an older writer), belongs to that first record's day.
+ * A file with no timestamped record, or one that starts today, is left alone.
  */
 export async function rotateServerLog(
   dataDir: string,
@@ -79,33 +98,45 @@ export async function rotateServerLog(
     throw err;
   }
   try {
-    const head = Buffer.alloc(HEAD_BYTES);
-    const { bytesRead } = await file.read(head, 0, HEAD_BYTES, 0);
-    const headDay = firstDay(head.toString("latin1", 0, bytesRead));
+    let headDay: string | undefined;
+    find: for await (const lines of lineChunks(file)) {
+      for (const line of lines) {
+        headDay = TS_DAY.exec(line)?.[1];
+        if (headDay) break find;
+      }
+    }
     if (headDay === undefined || headDay >= today) return false;
 
-    // latin1 keeps a one-to-one byte/character mapping, so offsets are byte offsets.
-    const text = (await readFile(livePath)).toString("latin1");
-    const byDay = new Map<string, string[]>();
+    const oldestKept = now - retentionDays * DAY_MS;
+    const writeDays = async (byDay: Map<string, string[]>): Promise<void> => {
+      for (const [d, lines] of byDay) {
+        if (Date.parse(`${d}T00:00:00.000Z`) < oldestKept) continue;
+        await appendFile(join(dataDir, `${DAILY_PREFIX}${d}${DAILY_SUFFIX}`), lines.join(""), {
+          encoding: "latin1",
+          mode: 0o600,
+        });
+      }
+    };
+
     let day = headDay;
     // Bytes before the first line of today: the part that moves.
     let offset = 0;
-    for (const line of text.split(/(?<=\n)/)) {
-      day = TS_DAY.exec(line)?.[1] ?? day;
-      if (day >= today) break;
-      const lines = byDay.get(day);
-      if (lines) lines.push(line);
-      else byDay.set(day, [line]);
-      offset += line.length;
-    }
-
-    const oldestKept = now - retentionDays * DAY_MS;
-    for (const [d, lines] of byDay) {
-      if (Date.parse(`${d}T00:00:00.000Z`) < oldestKept) continue;
-      await appendFile(join(dataDir, `${DAILY_PREFIX}${d}${DAILY_SUFFIX}`), lines.join(""), {
-        encoding: "latin1",
-        mode: 0o600,
-      });
+    let reachedToday = false;
+    for await (const lines of lineChunks(file)) {
+      const byDay = new Map<string, string[]>();
+      for (const line of lines) {
+        day = TS_DAY.exec(line)?.[1] ?? day;
+        if (day >= today) {
+          reachedToday = true;
+          break;
+        }
+        const dayLines = byDay.get(day);
+        if (dayLines) dayLines.push(line);
+        else byDay.set(day, [line]);
+        offset += line.length;
+      }
+      await writeDays(byDay);
+      if (reachedToday) break;
     }
 
     // Re-read everything past the cut: the server kept writing while the days were written.
