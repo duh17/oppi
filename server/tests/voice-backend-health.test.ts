@@ -1,7 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ReadAloudLiveVoiceTts } from "../src/continuous-voice-media.js";
@@ -28,6 +27,8 @@ type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 
 const servers = new Set<Server>();
 const tempDirs: string[] = [];
+// A refused connect names ECONNREFUSED; Node and Bun word the rest of the reason differently.
+const REFUSED = expect.stringContaining("ECONNREFUSED");
 
 beforeEach(() => vi.stubEnv("XAI_API_KEY", ""));
 afterEach(async () => {
@@ -171,10 +172,7 @@ describe("voice backend health in GET /server/info", () => {
       checkedAt: expect.any(Number),
     });
     expect(feature(warm, "dictation").detail).toBeUndefined();
-    expect(feature(warm, "speech")).toMatchObject({
-      state: "unreachable",
-      detail: `connect ECONNREFUSED 127.0.0.1:${tts.port}`,
-    });
+    expect(feature(warm, "speech")).toMatchObject({ state: "unreachable", detail: REFUSED });
     expect(warm.capabilities).toEqual({ dictationStream: { version: 1 } });
   });
 
@@ -415,7 +413,8 @@ describe("voice backend health in GET /server/info", () => {
 
     const down = feature(await serverInfo(owner), "liveVoice");
     expect(down).toMatchObject({ state: "unreachable", target: asr.url });
-    expect(down.detail).toBe(`Voice at ${voice.url}: connect ECONNREFUSED 127.0.0.1:${voice.port}`);
+    expect(down.detail?.startsWith(`Voice at ${voice.url}: `)).toBe(true);
+    expect(down.detail).toEqual(REFUSED);
 
     // Without `tts` a local call runs silent, so listening alone is enough.
     delete voiceConfig.tts;
@@ -506,7 +505,7 @@ describe("voice backend health from real read-aloud requests", () => {
     const down = await serverInfo(owner);
     expect(feature(down, "speech")).toMatchObject({
       state: "unreachable",
-      detail: `connect ECONNREFUSED 127.0.0.1:${tts.port}`,
+      detail: REFUSED,
       checkedAt: 1,
     });
     expect(down.capabilities.speech).toBeUndefined();
