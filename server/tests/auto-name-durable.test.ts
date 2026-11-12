@@ -13,6 +13,7 @@ import {
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { ServerMessage } from "../src/types.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const AUTO_NAME = join(import.meta.dirname, "../plugins/auto-name");
 
@@ -41,7 +42,8 @@ function textOf(message: Message | undefined): string {
 
 /** A durable server over the faux model: it titles a request that asks for a title, else says DONE. */
 async function fixture(options: { sessionName?: string }) {
-  const dir = mkdtempSync(join(tmpdir(), "auto-name-durable-"));
+  // Removed after afterEach closes the managers: a durable store closes before its directory goes.
+  const dir = makeTempDir("auto-name-durable-");
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
     modelsPath: null,
@@ -94,7 +96,6 @@ async function fixture(options: { sessionName?: string }) {
     manager,
     session,
     titleRequests,
-    rm: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
 
@@ -124,7 +125,6 @@ describe("auto-name in durable sessions", () => {
 
     await prompt(f.manager, f.session.id, "and now the heartbeat timer, please");
     expect(f.titleRequests).toHaveLength(1);
-    f.rm();
   });
 
   it("never renames a session that has a name", async () => {
@@ -133,7 +133,6 @@ describe("auto-name in durable sessions", () => {
     await prompt(f.manager, f.session.id, "fix the websocket reconnect state drift");
     expect(f.titleRequests).toHaveLength(0);
     expect(f.storage.getSession(f.session.id)?.name).toBe("Chosen by me");
-    f.rm();
   });
 
   it("does nothing while the package is not installed", async () => {
@@ -141,6 +140,5 @@ describe("auto-name in durable sessions", () => {
     await prompt(f.manager, f.session.id, "fix the websocket reconnect state drift");
     expect(f.titleRequests).toHaveLength(0);
     expect(f.storage.getSession(f.session.id)?.name).toBeUndefined();
-    f.rm();
   });
 });

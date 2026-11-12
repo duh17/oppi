@@ -83,9 +83,10 @@ async function durableFixture() {
     refreshOnCreate: false,
   });
   const harness = await Harness.open(storage, { models, registry: createRegistry() }, context);
+  // Cleanups run in reverse: close the store before its directory goes.
   cleanups.push(
-    () => harness.close(context),
     () => rmSync(dir, { recursive: true, force: true }),
+    () => harness.close(context),
   );
 
   async function turn(user: string, reply: string, tool?: string) {

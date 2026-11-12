@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { lstatSync, rmSync, symlinkSync } from "node:fs";
+import { lstatSync, symlinkSync } from "node:fs";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -513,7 +513,6 @@ describe("control conversation lifecycle on the durable harness", () => {
         expect(nested.every((m) => m.parentToolCallId === script?.toolCallId)).toBe(true);
         // The envelope is the call's value, an answer either way; a No is its error envelope.
         expect(nested[1]?.isError).not.toBe(true);
-        rmSync(dir, { recursive: true, force: true });
       },
     );
 
