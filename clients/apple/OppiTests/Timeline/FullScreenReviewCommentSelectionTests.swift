@@ -369,7 +369,7 @@ struct FullScreenReviewCommentSelectionTests {
             lineAnchor: anchor
         )
         let hostController = UIViewController()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = hostController
         window.makeKeyAndVisible()
         defer { closeInlineComposer(in: window); hideTestWindow(window) }
@@ -514,7 +514,7 @@ struct FullScreenReviewCommentSelectionTests {
                 languageHint: "swift"
             )
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         defer { closeInlineComposer(in: window); hideTestWindow(window) }
@@ -569,7 +569,7 @@ struct FullScreenReviewCommentSelectionTests {
             )
         )
         let hostController = UIViewController()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = hostController
         window.makeKeyAndVisible()
         defer { closeInlineComposer(in: window); hideTestWindow(window) }
@@ -632,7 +632,7 @@ struct FullScreenReviewCommentSelectionTests {
             )
         )
         let hostController = UIViewController()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = hostController
         window.makeKeyAndVisible()
         defer { closeInlineComposer(in: window); hideTestWindow(window) }
@@ -2630,7 +2630,7 @@ struct FullScreenReviewCommentSelectionTests {
             content: .html(content: "<button id='save'>Save</button>", filePath: "note.html"),
             stagedCount: 0
         )
-        let window = UIWindow(frame: UIScreen.main.bounds)
+        let window = makeTestWindow(frame: UIScreen.main.bounds)
         window.rootViewController = fixture.controller
         window.makeKeyAndVisible()
         defer { closeInlineComposer(in: window); hideTestWindow(window) }
@@ -2662,7 +2662,7 @@ struct FullScreenReviewCommentSelectionTests {
             content: .html(content: "<style>body{margin:0}</style><main style='height:100vh;width:100vw'><button style='position:fixed;left:150px;top:300px;width:100px;height:50px'>Save</button></main>", filePath: "note.html"),
             stagedCount: 1
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = fixture.controller
         window.makeKeyAndVisible()
         defer { closeInlineComposer(in: window); hideTestWindow(window) }
@@ -2764,7 +2764,7 @@ struct FullScreenReviewCommentSelectionTests {
             content: .mermaid(content: "flowchart TD\nA[Start] --> B[End]", filePath: "flow.mmd"),
             stagedCount: 0
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = fixture.controller
         window.makeKeyAndVisible()
         defer { closeInlineComposer(in: window); hideTestWindow(window) }
@@ -2934,7 +2934,7 @@ struct FullScreenReviewCommentSelectionTests {
         let fixture = try makeStashFixture(stagedCount: 1)
         // The viewer sits under the app root; the router finds it through the trait bridge.
         fixture.controller.traitOverrides.appRootEnvironment = makeTestAppRoot()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = fixture.controller
         window.makeKeyAndVisible()
         defer { closeInlineComposer(in: window); hideTestWindow(window) }
@@ -2960,7 +2960,7 @@ struct FullScreenReviewCommentSelectionTests {
         let fixture = try makeStashFixture(stagedCount: 1)
         let container = UIViewController()
         container.traitOverrides.appRootEnvironment = makeTestAppRoot()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = container
         window.makeKeyAndVisible()
         defer {

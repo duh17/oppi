@@ -164,7 +164,7 @@ struct ReaderTaskControlTests {
 
     @MainActor
     private func textView(_ source: String, handler: Handler?, width: CGFloat = 340) throws -> (BaselineSafeTextView, UIWindow) {
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 700))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: width, height: 700))
         let view = BaselineSafeTextView(usingTextLayoutManager: true)
         view.isEditable = false
         view.isScrollEnabled = false

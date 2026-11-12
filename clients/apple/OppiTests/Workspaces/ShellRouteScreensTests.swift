@@ -20,7 +20,7 @@ struct ShellRouteScreensTests {
             placement: .compactRoot,
             root: root
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = UINavigationController(rootViewController: route)
         window.makeKeyAndVisible()
         defer { window.isHidden = true }

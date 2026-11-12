@@ -187,7 +187,7 @@ extension E2ETestCase {
     }
 
     /// Returns a session snapshot from the E2E server.
-    func e2eSession(sessionId: String) throws -> [String: Any] {
+    nonisolated func e2eSession(sessionId: String) throws -> [String: Any] {
         let response = try e2eLabAPIJSON(method: "GET", path: "/sessions/\(sessionId)")
         return try XCTUnwrap(response["session"] as? [String: Any], "Session response missing session")
     }
@@ -458,7 +458,7 @@ extension E2ETestCase {
     }
 
     /// Calls the paired E2E server API using the harness token.
-    func e2eLabAPIJSON(method: String, path: String, body: [String: Any] = [:]) throws -> [String: Any] {
+    nonisolated func e2eLabAPIJSON(method: String, path: String, body: [String: Any] = [:]) throws -> [String: Any] {
         let response = try e2eLabAPIData(method: method, path: path, body: body)
         guard (200..<300).contains(response.statusCode) else {
             throw E2ELabAPIError.httpStatus(response.statusCode, response.bodyText)
@@ -471,7 +471,7 @@ extension E2ETestCase {
 
     /// Calls the paired E2E server API for binary endpoints using the harness token.
     /// Pass `bearerToken` to call as another device instead of the harness lab device.
-    func e2eLabAPIBytes(
+    nonisolated func e2eLabAPIBytes(
         method: String,
         path: String,
         body: [String: Any] = [:],
@@ -498,7 +498,7 @@ extension E2ETestCase {
         return outputURL
     }
 
-    private func e2eLabAPIData(
+    nonisolated private func e2eLabAPIData(
         method: String,
         path: String,
         body: [String: Any] = [:],
@@ -515,7 +515,7 @@ extension E2ETestCase {
         throw lastError ?? E2ELabAPIError.missingHTTPResponse
     }
 
-    private func e2eLabAPIData(
+    nonisolated private func e2eLabAPIData(
         method: String,
         path: String,
         body: [String: Any],
@@ -563,7 +563,7 @@ extension E2ETestCase {
         return try XCTUnwrap(resultBox.result, "API request did not complete").get()
     }
 
-    private func e2eLabSchemes() -> [String] {
+    nonisolated private func e2eLabSchemes() -> [String] {
         if let baseURL = try? E2ELabServerContext.baseURL(),
            let scheme = baseURL.scheme?.lowercased() {
             return scheme == "https" ? ["https", "http"] : ["http", "https"]
@@ -575,7 +575,7 @@ extension E2ETestCase {
         return ["http", "https"]
     }
 
-    private func e2eLabURL(path: String, scheme: String) throws -> URL {
+    nonisolated private func e2eLabURL(path: String, scheme: String) throws -> URL {
         let baseURL = try? E2ELabServerContext.baseURL()
         let port = baseURL?.port
             ?? Int(E2ELabServerContext.environmentValue(for: ["E2E_PORT", "SIMCTL_CHILD_E2E_PORT"]) ?? "17760")
@@ -594,7 +594,7 @@ extension E2ETestCase {
         return try XCTUnwrap(components.url, "Invalid E2E URL for \(path)")
     }
 
-    private func e2eLabDeviceToken() throws -> String {
+    nonisolated private func e2eLabDeviceToken() throws -> String {
         if let token = E2ELabServerContext.runDirectoryFile("device-token.txt") {
             return token
         }

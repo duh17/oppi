@@ -28,7 +28,7 @@ struct ImagePreviewSecurityTests {
             mimeType: "image/svg+xml",
             title: "Preview"
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -94,7 +94,7 @@ struct ImagePreviewSecurityTests {
             mimeType: "image/svg+xml",
             title: "Preview"
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         defer { window.isHidden = true }

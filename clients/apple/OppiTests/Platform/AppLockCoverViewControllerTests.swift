@@ -46,7 +46,7 @@ struct AppLockCoverViewControllerTests {
             isProtectedDataAvailable: { true }
         )
         let cover = AppLockCoverViewController(service: service)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = cover
         window.isHidden = false
         cover.view.layoutIfNeeded()

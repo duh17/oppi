@@ -426,7 +426,7 @@ func makeWindowedTimelineHarness(
     for descriptor in [FeatureEducationTips.openToolDetails, FeatureEducationTips.toolOutputShortcuts] {
         FeatureEducationTipPresentationStore.standard.markShown(id: descriptor.id)
     }
-    let window = UIWindow(frame: frame)
+    let window = makeTestWindow(frame: frame)
     let layout = ChatTimelineController.makeTestLayout()
     let collectionView: UICollectionView
 

@@ -112,7 +112,7 @@ final class SessionInboxMessageCapsuleTests {
             onDictate: { taps.dictations += 1 }
         )
         // The size class reaches a view through its window, as a bar's would.
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 100))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 100))
         window.traitOverrides.horizontalSizeClass = sizeClass
         window.addSubview(capsule)
         retainedWindows.append(window)

@@ -166,7 +166,7 @@ struct ReadySessionScrollToBottomTests {
         controller.loadViewIfNeeded()
         controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
 
-        let window = UIWindow(frame: controller.view.frame)
+        let window = makeTestWindow(frame: controller.view.frame)
         window.rootViewController = controller
         window.makeKeyAndVisible()
 

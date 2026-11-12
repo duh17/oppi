@@ -118,7 +118,7 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
 private struct ContextBarFixture {
     let screen = UIViewController()
     let bar: WorkspaceContextBarView
-    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
 
     init(context: WorkspaceContextBarView.Context = .init(gitStatus: makeReviewGitStatus(), workspaceId: "w1")) {
         let connection = ServerConnection()

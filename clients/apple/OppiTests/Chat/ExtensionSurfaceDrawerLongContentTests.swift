@@ -137,7 +137,7 @@ struct ExtensionSurfaceDrawerLongContentTests {
     private func show(_ view: UIView, inset: CGFloat = 28) {
         for window in Self.windows { window.isHidden = true }
         Self.windows.removeAll()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 2400))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 2400))
         let host = UIViewController()
         window.rootViewController = host
         window.makeKeyAndVisible()

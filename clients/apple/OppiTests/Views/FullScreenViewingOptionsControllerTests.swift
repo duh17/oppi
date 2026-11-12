@@ -149,7 +149,7 @@ struct FullScreenViewingOptionsControllerTests {
 
     @Test func accessibilityTextSizesStackThePercentUnderTheTitleInsteadOfBreakingWords() throws {
         let (controller, _) = make(family: .code)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 340, height: 900))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 340, height: 900))
         window.rootViewController = controller
         window.isHidden = false
         defer { hideTestWindow(window) }
@@ -174,7 +174,7 @@ struct FullScreenViewingOptionsControllerTests {
 
     @Test func aLargerTextSizeMakesThePanelTaller() {
         let (controller, _) = make(family: .markdown)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = controller
         window.isHidden = false
         defer { hideTestWindow(window) }

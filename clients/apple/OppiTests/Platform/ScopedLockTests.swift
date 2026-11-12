@@ -609,7 +609,7 @@ struct ScopedLockCoverTests {
         #expect(!harness.appLock.isAvailable)
 
         let cover = ScopedLockCoverViewController(target: target, title: "Session", locks: harness.locks)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = cover
         window.isHidden = false
         cover.view.layoutIfNeeded()

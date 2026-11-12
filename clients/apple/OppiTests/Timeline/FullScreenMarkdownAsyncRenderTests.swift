@@ -32,7 +32,7 @@ struct FullScreenMarkdownAsyncRenderTests {
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -131,7 +131,7 @@ struct FullScreenMarkdownAsyncRenderTests {
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -435,7 +435,7 @@ struct FullScreenMarkdownAsyncRenderTests {
             filePath: "generated/animation"
         ))
         let host = UIViewController()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -920,7 +920,7 @@ struct FullScreenMarkdownCodeBlockWrapHeightTests {
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()

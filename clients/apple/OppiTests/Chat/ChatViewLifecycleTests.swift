@@ -867,7 +867,7 @@ struct ChatViewLifecycleTests {
             contentTypeHint: "video/mp4",
             sourceFileExtension: "mp4"
         )
-        _ = try await store.image(for: video, maxPixelSize: size)
+        _ = await store.image(for: video, maxPixelSize: size)
         return FilledChatMedia(
             imageURL: imageURL,
             video: video,

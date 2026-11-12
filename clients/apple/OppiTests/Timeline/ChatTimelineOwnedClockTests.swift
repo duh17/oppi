@@ -1009,7 +1009,7 @@ private func makeHostedOwnedTimeline(
         onOpenChatReader: onOpenChatReader
     ))
     host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-    let window = UIWindow(frame: host.view.frame)
+    let window = makeTestWindow(frame: host.view.frame)
     window.rootViewController = host
     window.makeKeyAndVisible()
     host.view.layoutIfNeeded()

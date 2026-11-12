@@ -499,7 +499,7 @@ struct MarkdownInlineVideoTests {
                 makeMarkdownVideoSource: { _ in throw CocoaError(.fileNoSuchFile) }
             )
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -524,7 +524,7 @@ struct MarkdownInlineVideoTests {
     @Test("revealed video keeps 16:9 after a streaming re-apply")
     func revealedVideoKeepsSixteenByNineOnReapply() throws {
         let embed = try makeEmbed("![[movie.mp4]]")
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         let host = UIViewController()
         let video = NativeMarkdownVideoView()
         host.view.addSubview(video)
@@ -636,7 +636,7 @@ struct MarkdownInlineVideoTests {
     @Test("revealed video keeps 16:9 when the display width changes")
     func revealedVideoKeepsSixteenByNineOnWidthChange() throws {
         let embed = try makeEmbed("![[movie.mp4]]")
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         let host = UIViewController()
         let video = NativeMarkdownVideoView()
         host.view.addSubview(video)
@@ -881,7 +881,7 @@ struct MarkdownInlineVideoTests {
             video.trailingAnchor.constraint(equalTo: parent.view.trailingAnchor),
             video.topAnchor.constraint(equalTo: parent.view.topAnchor),
         ])
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = parent
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -931,7 +931,7 @@ struct MarkdownInlineVideoTests {
         let parent = UIViewController()
         let video = NativeMarkdownVideoView()
         parent.view.addSubview(video)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = parent
         window.makeKeyAndVisible()
         defer { video.prepareForRemoval(); window.isHidden = true }
@@ -1091,7 +1091,7 @@ struct MarkdownInlineVideoTests {
             video.trailingAnchor.constraint(equalTo: parent.view.trailingAnchor),
             video.topAnchor.constraint(equalTo: parent.view.topAnchor),
         ])
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = parent
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1158,7 +1158,7 @@ struct MarkdownInlineVideoTests {
         let source = dummyMediaSource()
         let parent = UIViewController()
         let video = NativeMarkdownVideoView()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = parent
         window.makeKeyAndVisible()
         defer { video.prepareForRemoval(); window.isHidden = true }
@@ -1208,7 +1208,7 @@ struct MarkdownInlineVideoTests {
         let parent = UIViewController()
         let video = NativeMarkdownVideoView()
         parent.view.addSubview(video)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = parent
         window.makeKeyAndVisible()
         defer { video.prepareForRemoval(); window.isHidden = true }
@@ -1334,7 +1334,7 @@ struct MarkdownInlineVideoTests {
         let parent = UIViewController()
         let video = NativeMarkdownVideoView()
         parent.view.addSubview(video)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = parent
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1370,7 +1370,7 @@ struct MarkdownInlineVideoTests {
         let parent = UIViewController()
         let video = NativeMarkdownVideoView()
         parent.view.addSubview(video)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = parent
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1518,7 +1518,7 @@ struct MarkdownInlineVideoTests {
         let parent = UIViewController()
         let video = NativeMarkdownVideoView()
         parent.view.addSubview(video)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = parent
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1608,7 +1608,7 @@ struct MarkdownInlineVideoTests {
         let markdown = AssistantMarkdownContentView()
         parent.view.addSubview(markdown)
         markdown.frame = CGRect(x: 0, y: 0, width: 360, height: 700)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = parent
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1682,7 +1682,7 @@ struct MarkdownInlineVideoTests {
         let parent = UIViewController()
         let video = NativeMarkdownVideoView()
         parent.view.addSubview(video)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = parent
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1780,7 +1780,7 @@ struct MarkdownInlineVideoTests {
             view.topAnchor.constraint(equalTo: parent.view.topAnchor),
             view.bottomAnchor.constraint(equalTo: parent.view.bottomAnchor),
         ])
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = parent
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1829,7 +1829,7 @@ struct MarkdownInlineVideoTests {
         let view = AssistantMarkdownContentView()
         parent.view.addSubview(view)
         view.frame = CGRect(x: 0, y: 0, width: 360, height: 900)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 900))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 900))
         window.rootViewController = parent
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1915,7 +1915,7 @@ struct MarkdownInlineVideoTests {
         let view = AssistantMarkdownContentView()
         parent.view.addSubview(view)
         view.frame = CGRect(x: 0, y: 0, width: 360, height: 400)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = parent
         window.makeKeyAndVisible()
         defer { window.isHidden = true }

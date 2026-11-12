@@ -32,7 +32,7 @@ struct CodeEditorLineWrapTests {
             idleDelay: .seconds(60)
         ))
         let controller = WorkspaceFileEditorViewController(session: session, themeID: .dark, preferences: preferences) { _ in UIViewController() }
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.loadViewIfNeeded()

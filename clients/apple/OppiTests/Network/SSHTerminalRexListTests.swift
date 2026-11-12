@@ -1227,7 +1227,7 @@ struct SSHTerminalRexSectionTests {
         #expect(alert.actions.map(\.style) == [.destructive, .cancel])
         #expect(world.requests("session.destroy").isEmpty, "asking is not closing")
         try press("Cancel", in: alert)
-        await rig.list.dismiss(animated: false)
+        rig.list.dismiss(animated: false)
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.list.presentedViewController == nil })
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) { world.requests("session.destroy").isEmpty })
 
@@ -1238,7 +1238,7 @@ struct SSHTerminalRexSectionTests {
         #expect(alert.title == "Rename Session" && alert.textFields?.first?.text == "dotfiles")
         alert.textFields?.first?.text = "config"
         try press("Rename", in: alert)
-        await rig.list.dismiss(animated: false)
+        rig.list.dismiss(animated: false)
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.list.presentedViewController == nil })
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { world.requests("session.set_label").count == 1 })
         #expect(try json(world.requests("session.set_label")[0]) == ["session_id": dotfilesSession, "label": "config"] as NSDictionary)
@@ -1254,7 +1254,7 @@ struct SSHTerminalRexSectionTests {
         alert = try #require(rig.list.presentedViewController as? UIAlertController)
         #expect(alert.title == "Close session \u{201C}config\u{201D}?")
         try press("Close Session", in: alert)
-        await rig.list.dismiss(animated: false)
+        rig.list.dismiss(animated: false)
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.list.presentedViewController == nil })
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { world.requests("session.destroy").count == 1 })
         #expect(try json(world.requests("session.destroy")[0]) == ["session_id": dotfilesSession] as NSDictionary)

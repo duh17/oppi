@@ -40,7 +40,7 @@ struct ChatReaderViewControllerTests {
         )
         let navigation = UINavigationController(rootViewController: UIViewController())
         navigation.pushViewController(reader, animated: false)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         // A window with no scene never draws, and the pencil capture below is a
         // picture of this window.
         window.windowScene = UIApplication.shared.connectedScenes
@@ -450,7 +450,7 @@ struct ChatReaderViewControllerTests {
         serverStore.replaceServersForPreview([first])
         let root = makeTestAppRoot(coordinator: ConnectionCoordinator(serverStore: serverStore))
         let cover = ShellRouteScreens.serverLockCover(serverId: first.id, root: root)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = cover
         window.makeKeyAndVisible()
         defer { window.isHidden = true }

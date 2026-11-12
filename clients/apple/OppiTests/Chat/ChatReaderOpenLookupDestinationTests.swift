@@ -247,7 +247,7 @@ struct ChatReaderOpenLookupDestinationTests {
         let presenter = UIViewController()
         let sourceView = UIView(frame: CGRect(x: 0, y: 0, width: 80, height: 80))
         presenter.view.addSubview(sourceView)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = presenter
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -351,7 +351,7 @@ struct ChatReaderOpenLookupDestinationTests {
         let presenter = UIViewController()
         let sourceView = UIView(frame: CGRect(x: 0, y: 0, width: 80, height: 80))
         presenter.view.addSubview(sourceView)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = presenter
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -412,7 +412,7 @@ struct ChatReaderOpenLookupDestinationTests {
         let sourceView = UIView(frame: CGRect(x: 0, y: 0, width: 80, height: 80))
         presenter.view.addSubview(sourceView)
 
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = presenter
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -543,7 +543,7 @@ struct ChatReaderOpenLookupDestinationTests {
         if let scene {
             window = UIWindow(windowScene: scene)
         } else {
-            window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+            window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         }
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         let host = UIViewController()

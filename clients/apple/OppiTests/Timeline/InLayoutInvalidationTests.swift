@@ -29,7 +29,7 @@ struct InLayoutInvalidationTests {
         host.view.addSubview(collectionView)
         collectionView.addSubview(source)
 
-        let window = UIWindow(frame: collectionView.frame)
+        let window = makeTestWindow(frame: collectionView.frame)
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -156,7 +156,7 @@ struct InLayoutInvalidationTests {
 
         let host = UIViewController()
         host.view.addSubview(collectionView)
-        let window = UIWindow(frame: collectionView.frame)
+        let window = makeTestWindow(frame: collectionView.frame)
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }

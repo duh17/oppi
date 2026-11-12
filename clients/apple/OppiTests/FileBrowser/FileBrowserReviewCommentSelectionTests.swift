@@ -285,7 +285,7 @@ struct FileBrowserReviewCommentSelectionTests {
         )
         host.loadViewIfNeeded()
         host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        let window = UIWindow(frame: host.view.frame)
+        let window = makeTestWindow(frame: host.view.frame)
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -321,7 +321,7 @@ struct FileBrowserReviewCommentSelectionTests {
         )
         host.loadViewIfNeeded()
         host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        let window = UIWindow(frame: host.view.frame)
+        let window = makeTestWindow(frame: host.view.frame)
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -362,7 +362,7 @@ struct FileBrowserReviewCommentSelectionTests {
         defer { ScopedLockService.shared.forgetServer(serverId) }
         let route = linkedFileRoute(serverId: serverId, workspaceId: workspaceId, root: root)
         let navigation = UINavigationController(rootViewController: route)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = navigation
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -391,7 +391,7 @@ struct FileBrowserReviewCommentSelectionTests {
         defer { ScopedLockService.shared.forgetServer(serverId) }
         let route = linkedFileRoute(serverId: serverId, workspaceId: workspaceId, root: root)
         let navigation = UINavigationController(rootViewController: route)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = navigation
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -446,7 +446,7 @@ struct FileBrowserReviewCommentSelectionTests {
         )
         host.loadViewIfNeeded()
         host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        let window = UIWindow(frame: host.view.frame)
+        let window = makeTestWindow(frame: host.view.frame)
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -496,7 +496,7 @@ struct FileBrowserReviewCommentSelectionTests {
         )
         host.loadViewIfNeeded()
         host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        let window = UIWindow(frame: host.view.frame)
+        let window = makeTestWindow(frame: host.view.frame)
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -563,7 +563,7 @@ struct FileBrowserReviewCommentSelectionTests {
         )
         host.loadViewIfNeeded()
         host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        let window = UIWindow(frame: host.view.frame)
+        let window = makeTestWindow(frame: host.view.frame)
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -947,7 +947,7 @@ struct FileBrowserReviewCommentSelectionTests {
             ComposerCanvasActiveDestination.resetForTesting()
         }
 
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         let host = UIViewController()
         window.rootViewController = host
         window.makeKeyAndVisible()
@@ -1086,7 +1086,7 @@ struct FileBrowserReviewCommentSelectionTests {
         )
 
         let presenter = UIViewController()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = presenter
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1140,7 +1140,7 @@ struct FileBrowserReviewCommentSelectionTests {
         )
 
         let presenter = UIViewController()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = presenter
         window.makeKeyAndVisible()
         defer { window.isHidden = true }

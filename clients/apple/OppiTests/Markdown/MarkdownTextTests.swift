@@ -3978,7 +3978,7 @@ struct NativeMarkdownImageViewTests {
 
     @Test func loadedRasterIsAnAltLabeledImageButtonAndAccessibilityActivationOpensPreview() async throws {
         let host = UIViewController()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -4131,7 +4131,7 @@ struct NativeMarkdownImageViewTests {
     @Test func svgLoadedStateInstallsTapOverlayForFullscreen() async throws {
         let view = NativeMarkdownImageView()
         view.frame = CGRect(x: 0, y: 0, width: 300, height: 200)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         window.addSubview(view)
         window.makeKeyAndVisible()
         window.layoutIfNeeded()
@@ -4339,7 +4339,7 @@ struct NativeLatexBlockViewTests {
     }
 
     @Test func nestedTimelineGestureRecognizerHandsVerticalDragToOuterTimeline() throws {
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
         let outer = UICollectionView(
             frame: window.bounds,
             collectionViewLayout: UICollectionViewFlowLayout()
@@ -4662,7 +4662,7 @@ struct NativeLatexBlockViewTests {
 
     @Test func formulaRerendersWhenContentSizeCategoryChanges() async throws {
         let controller = UIViewController()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 500))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 500))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -4998,7 +4998,7 @@ struct NativeMermaidBlockViewTests {
     /// Tap on diagram image view must work inside a real collection view
     /// hierarchy with a dismiss-keyboard gesture — same setup as on device.
     @Test func tapWorksInCollectionViewHierarchy() async throws {
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
 
         let layout = UICollectionViewFlowLayout()
         layout.estimatedItemSize = UICollectionViewFlowLayout.automaticSize
@@ -5062,7 +5062,7 @@ struct NativeMermaidBlockViewTests {
 
     @Test func renderedDiagramIsAnImageButtonAndAccessibilityActivationOpensPreview() async throws {
         let host = UIViewController()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }

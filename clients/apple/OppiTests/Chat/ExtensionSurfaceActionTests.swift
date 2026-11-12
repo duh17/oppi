@@ -57,7 +57,7 @@ struct ExtensionSurfaceActionTests {
             intent(surfaceId: "deploy", compositeId: "status", actionId: "retry", revision: 7),
             sessionId: sessionId
         )
-        let message = try testUnwrap(await waitFor(1, in: frames).first)
+        let message = testUnwrap(await waitFor(1, in: frames).first)
 
         guard case .extensionUIAction(
             let surfaceId,
@@ -79,10 +79,10 @@ struct ExtensionSurfaceActionTests {
         #expect(nodeId == nil)
         #expect(revision == 7)
         #expect(values == nil)
-        let mintedRequestId = try testUnwrap(requestId)
+        let mintedRequestId = testUnwrap(requestId)
 
         // The pressed action shows its declared words and disables the ids it names.
-        let pending = try testUnwrap(connection.extensionSurfaces.surface(for: sessionId).pendingAction)
+        let pending = testUnwrap(connection.extensionSurfaces.surface(for: sessionId).pendingAction)
         #expect(pending.requestId == mintedRequestId)
         #expect(pending.actionId == "retry")
         #expect(pending.title == "Retrying…")

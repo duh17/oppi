@@ -2093,7 +2093,7 @@ private func expectSelectableNonScrollableTableCellsRejectVerticalPan(
     // Attach so UITextView's pan recognizer is live. Without that, the default
     // `gestureRecognizerShouldBegin` path may not return true for selectable
     // non-scrollable cells, and the oracle would not go red.
-    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
     window.addSubview(tableView)
     window.makeKeyAndVisible()
     defer { window.isHidden = true }

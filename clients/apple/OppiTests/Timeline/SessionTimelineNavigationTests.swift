@@ -51,7 +51,7 @@ struct SessionTimelineNavigationTests {
         ))
         timeline.navigationItem.title = "Chat"
         let host = UINavigationController(rootViewController: timeline)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil }
@@ -160,7 +160,7 @@ struct SessionTimelineNavigationTests {
         ))
         timeline.navigationItem.title = "Chat"
         let host = UINavigationController(rootViewController: timeline)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil }

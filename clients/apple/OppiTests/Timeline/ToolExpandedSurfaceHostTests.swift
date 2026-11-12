@@ -478,7 +478,7 @@ struct ToolExpandedSurfaceHostTests {
         collectionView.frame = hostController.view.bounds
         collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
 
-        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: hostSize))
         window.rootViewController = hostController
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -638,7 +638,7 @@ struct ToolExpandedSurfaceHostTests {
         hostController.view.frame = CGRect(origin: .zero, size: hostSize)
         hostController.view.addSubview(collectionView)
         collectionView.frame = hostController.view.bounds
-        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: hostSize))
         window.rootViewController = hostController
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -813,7 +813,7 @@ struct ToolExpandedSurfaceHostTests {
         collectionView.frame = hostController.view.bounds
         collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
 
-        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: hostSize))
         window.rootViewController = hostController
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -997,7 +997,7 @@ struct ToolExpandedSurfaceHostTests {
         let hostController = UIViewController()
         hostController.view.frame = CGRect(origin: .zero, size: hostSize)
         hostController.view.addSubview(collectionView)
-        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: hostSize))
         window.rootViewController = hostController
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1225,7 +1225,7 @@ struct ToolExpandedSurfaceHostTests {
         collectionView.frame = hostController.view.bounds
         collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
 
-        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: hostSize))
         window.rootViewController = hostController
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1366,7 +1366,7 @@ struct ToolExpandedSurfaceHostTests {
         let hostController = UIViewController()
         hostController.view.frame = container.bounds
         hostController.view.addSubview(container)
-        let window = UIWindow(frame: hostController.view.bounds)
+        let window = makeTestWindow(frame: hostController.view.bounds)
         window.rootViewController = hostController
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1423,7 +1423,7 @@ struct ToolExpandedSurfaceHostTests {
         let hostController = UIViewController()
         hostController.view.frame = CGRect(origin: .zero, size: hostSize)
         hostController.view.addSubview(collectionView)
-        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: hostSize))
         window.rootViewController = hostController
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1849,7 +1849,7 @@ struct ToolExpandedSurfaceHostTests {
             view.topAnchor.constraint(equalTo: hostController.view.topAnchor),
         ])
 
-        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: hostSize))
         window.rootViewController = hostController
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1911,7 +1911,7 @@ struct ToolExpandedSurfaceHostTests {
             preview.bottomAnchor.constraint(equalTo: hostController.view.bottomAnchor),
         ])
 
-        let window = UIWindow(frame: CGRect(origin: .zero, size: previewSize))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: previewSize))
         window.rootViewController = hostController
         window.makeKeyAndVisible()
         defer { window.isHidden = true }

@@ -295,7 +295,7 @@ struct ToolHeaderAccessibilityTests {
         let fitted = fittedTimelineSize(for: view, width: 370)
         view.translatesAutoresizingMaskIntoConstraints = true
         view.removeFromSuperview()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
         window.addSubview(view)
@@ -1875,7 +1875,7 @@ struct ToolTimelineRowContentViewTests {
         let fitted = fittedTimelineSize(for: view, width: 370)
         view.translatesAutoresizingMaskIntoConstraints = true
         view.removeFromSuperview()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
         window.addSubview(view)

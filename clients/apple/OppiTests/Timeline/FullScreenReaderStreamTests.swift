@@ -379,7 +379,7 @@ private final class ReaderTimelineFixture {
 
     init(sessionId: String) {
         self.sessionId = sessionId
-        window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         navigation = UINavigationController(rootViewController: chatHost)
         window.rootViewController = navigation
         window.makeKeyAndVisible()

@@ -313,7 +313,7 @@ struct BookReaderAppearanceReaderTests {
         container.overrideUserInterfaceStyle = .light
         menu.view.overrideUserInterfaceStyle = .light
         container.addSubview(menu.view)
-        let host = UIWindow(frame: CGRect(origin: .zero, size: size))
+        let host = makeTestWindow(frame: CGRect(origin: .zero, size: size))
         host.overrideUserInterfaceStyle = .light
         host.addSubview(container)
         host.isHidden = false
@@ -411,7 +411,7 @@ private final class ReaderFixture {
         let window: UIWindow = if let scene {
             UIWindow(windowScene: scene)
         } else {
-            UIWindow(frame: CGRect(origin: .zero, size: size))
+            makeTestWindow(frame: CGRect(origin: .zero, size: size))
         }
         window.frame = CGRect(origin: .zero, size: size)
         return window

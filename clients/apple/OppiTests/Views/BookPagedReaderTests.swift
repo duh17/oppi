@@ -695,7 +695,7 @@ private final class PagedBookFixture {
             content: .book(document),
             reviewCommentSelectionContext: nil
         )
-        window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window = makeTestWindow(frame: CGRect(origin: .zero, size: size))
         window.rootViewController = reader
         window.traitOverrides.preferredContentSizeCategory = contentSizeCategory
         window.makeKeyAndVisible()

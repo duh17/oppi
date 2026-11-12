@@ -208,7 +208,7 @@ struct NavigationSwipeGesturePolicyTests {
             content: .plainText(content: longLog, filePath: "log.txt"),
             presentationMode: .sheet
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = UINavigationController(rootViewController: controller)
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -365,7 +365,7 @@ struct NavigationSwipeGesturePolicyTests {
     }
 
     @Test func downDismissIgnoresCoveredScrolledSiblingUnderHitTestScope() {
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         let host = UIView(frame: window.bounds)
         window.addSubview(host)
         window.makeKeyAndVisible()

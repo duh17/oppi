@@ -289,7 +289,7 @@ struct ReaderHeadingAnchorTests {
                 orgFolds: memory,
                 headingNotice: { log.messages.append($0) }
             )
-            window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+            window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
             window.addSubview(body)
             body.frame = window.bounds
             window.makeKeyAndVisible()

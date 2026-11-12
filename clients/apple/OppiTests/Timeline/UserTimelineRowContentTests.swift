@@ -712,7 +712,7 @@ struct UserTimelineRowContentTests {
         let host = UIViewController()
         // Chat sits under the app root; the router finds it through the trait bridge.
         host.traitOverrides.appRootEnvironment = makeTestAppRoot()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer {
@@ -799,7 +799,7 @@ struct UserTimelineRowContentTests {
         let connection = ServerConnection()
         let destination = QuickActionSessionNavDestination.empty(sessionId: "session-from-commit")
         let host = makeTimelineCommitHostController(connection: connection)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
         try openCommitDestination(destination, in: host)
@@ -829,7 +829,7 @@ struct UserTimelineRowContentTests {
         let root = makeTestAppRoot()
         root.navigation.pendingQuickSessionMessage = "meant for the session Quick Session opens"
         let host = makeTimelineCommitHostController(connection: connection, root: root)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
         try openCommitDestination(.empty(sessionId: "session-from-commit"), in: host)
@@ -878,7 +878,7 @@ struct UserTimelineRowContentTests {
 
         let destination = QuickActionSessionNavDestination.empty(sessionId: "session-from-commit")
         let host = makeTimelineCommitHostController(connection: connection, composerDraftStore: store)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
         try openCommitDestination(destination, in: host)
@@ -904,7 +904,7 @@ struct UserTimelineRowContentTests {
         store.updateSystemColorScheme(.dark)
         let darkColor = store.activeThemeID.palette.bgDark
 
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         defer {
             window.isHidden = true
             window.rootViewController = nil
@@ -1081,7 +1081,7 @@ struct UserTimelineRowContentTests {
     func userRowLayoutIgnoresSafeAreaOverlap() throws {
         let host = UIViewController()
         host.additionalSafeAreaInsets = UIEdgeInsets(top: 100, left: 0, bottom: 0, right: 0)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer {
@@ -1403,7 +1403,7 @@ struct UserTimelineRowContentTests {
 
         let host = UIViewController()
         host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 200)
-        let window = UIWindow(frame: host.view.frame)
+        let window = makeTestWindow(frame: host.view.frame)
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }

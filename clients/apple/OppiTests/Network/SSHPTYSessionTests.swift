@@ -636,7 +636,7 @@ struct SSHInstallTransportTests {
             execReply: Self.machine(installer: FixtureExecReply(chunks: Self.splitProgress, exitStatus: 0))
         )
         defer { fixture.close() }
-        let log = await ProgressLog()
+        let log = ProgressLog()
         let outcome = try await SSHPreflightClient.install(
             Self.request(fixture), script: Self.data("#!/bin/sh\n"), socket: fixture.clientSocket
         ) { log.states.append($0) }

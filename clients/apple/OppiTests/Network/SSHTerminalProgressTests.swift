@@ -149,7 +149,7 @@ struct SSHTerminalProgressTests {
     }
 
     @Test func aSpinKeepsItsPhaseAcrossRepeatedReportsAndRestartsOnlyWhenItBegins() {
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
         let ring = SSHTerminalProgressRingView(frame: CGRect(x: 0, y: 0, width: 28, height: 28))
         window.addSubview(ring)
         let spinning = Report(state: .indeterminate, percent: nil)
@@ -163,7 +163,7 @@ struct SSHTerminalProgressTests {
 
     @Test func resettingTheGlyphForAnotherTerminalDropsItsRingAndHeldState() {
         let glyph = SSHTerminalStatusGlyphButton()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
         window.addSubview(glyph)
         glyph.apply(
             status: .working, summary: "", themeID: .dark, reduceMotion: false, root: nil,
@@ -176,7 +176,7 @@ struct SSHTerminalProgressTests {
     }
 
     @Test func theRingFillsToThePercentSpinsWhenIndeterminateAndStaysStillUnderReducedMotion() {
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
         let ring = SSHTerminalProgressRingView(frame: CGRect(x: 0, y: 0, width: 28, height: 28))
         window.addSubview(ring)
         #expect(ring.isHidden)

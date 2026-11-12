@@ -170,7 +170,7 @@ struct ExtensionNativeBlockViewsTests {
             liveSurface: { box.surface },
             onLeave: {}
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -242,7 +242,7 @@ struct ExtensionNativeBlockViewsTests {
     @Test func tableAndChartDrawerAndReaderScreenshots() throws {
         let surface = fixtureSurface()
         let reports = try reportsDirectory()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         let host = UIViewController()
         window.rootViewController = host
         window.makeKeyAndVisible()

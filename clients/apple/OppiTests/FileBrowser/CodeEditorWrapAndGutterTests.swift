@@ -38,7 +38,7 @@ struct CodeEditorWrapAndGutterTests {
             idleDelay: .seconds(600)
         ))
         let controller = WorkspaceFileEditorViewController(session: session, themeID: .dark, preferences: preferences) { _ in UIViewController() }
-        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: size))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.loadViewIfNeeded()
@@ -185,7 +185,7 @@ struct CodeEditorWrapAndGutterTests {
             let controller = WorkspaceFileEditorViewController(
                 session: session, themeID: .dark, preferences: CodeEditorPreferences(defaults: defaults)
             ) { _ in UIViewController() }
-            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+            let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
             window.rootViewController = controller
             window.makeKeyAndVisible()
             controller.loadViewIfNeeded()

@@ -206,7 +206,7 @@ struct TableBodyLeakRegressionTests {
 
     private func makeHostedMarkdown() -> (AssistantMarkdownContentView, UIWindow) {
         let markdown = AssistantMarkdownContentView()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 2400))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 2400))
         markdown.translatesAutoresizingMaskIntoConstraints = false
         window.addSubview(markdown)
         NSLayoutConstraint.activate([

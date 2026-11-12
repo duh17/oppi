@@ -387,11 +387,23 @@ func makeRecordingAppRoot() -> (root: AppRootEnvironment, recorder: TestOpenRequ
     return (root, recorder)
 }
 
+/// A window of `frame` with no scene, hidden until the test shows it: the one place tests build
+/// one, so the deprecated `UIWindow(frame:)` is called once.
+///
+/// It is not `UIWindow(windowScene:)` on purpose. A scene window takes the simulator screen's safe
+/// area (62 pt at the top), which shifts every offset, inset and visible-height the layout tests
+/// assert on (18 timeline, reader and panel tests failed on it). A test that needs a scene's
+/// services builds `makeSceneWindow()` instead.
+@MainActor
+func makeTestWindow(frame: CGRect) -> UIWindow {
+    UIWindow(frame: frame)
+}
+
 /// A window that publishes `root`, the same trait `AppRootEnvironment.near()`
 /// reads in the app, so a producer's tap can find the opener.
 @MainActor
 func makeAppRootWindow(_ root: AppRootEnvironment) -> UIWindow {
-    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
     window.traitOverrides.appRootEnvironment = root
     window.isHidden = false
     return window

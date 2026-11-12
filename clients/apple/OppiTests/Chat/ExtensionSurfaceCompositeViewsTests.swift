@@ -21,7 +21,7 @@ struct ExtensionSurfaceCompositeViewsTests {
     /// A fixture in another strip group.
     private func surface(_ name: String, composablePlacement: String) throws -> ExtensionUISurface {
         let object = try JSONSerialization.jsonObject(with: try ProtocolFixtures.data("surfaces/\(name)"))
-        var json = try testUnwrap(object as? [String: Any])
+        var json = testUnwrap(object as? [String: Any])
         json["placement"] = ["kind": "strip", "preferred": composablePlacement]
         return try JSONDecoder().decode(
             ExtensionUISurface.self,
@@ -32,9 +32,9 @@ struct ExtensionSurfaceCompositeViewsTests {
     /// A table fixture with only its first row.
     private func surface(_ name: String, keepingFirstRowOnly: Bool) throws -> ExtensionUISurface {
         let object = try JSONSerialization.jsonObject(with: try ProtocolFixtures.data("surfaces/\(name)"))
-        var json = try testUnwrap(object as? [String: Any])
-        var sections = try testUnwrap(json["sections"] as? [[String: Any]])
-        var rows = try testUnwrap(sections[0]["rows"] as? [[String: Any]])
+        var json = testUnwrap(object as? [String: Any])
+        var sections = testUnwrap(json["sections"] as? [[String: Any]])
+        var rows = testUnwrap(sections[0]["rows"] as? [[String: Any]])
         rows = Array(rows.prefix(1))
         sections[0]["rows"] = rows
         json["sections"] = sections
@@ -54,9 +54,9 @@ struct ExtensionSurfaceCompositeViewsTests {
     ) throws -> ExtensionUISurface {
         let data = try ProtocolFixtures.data("surfaces/\(name)")
         let object = try JSONSerialization.jsonObject(with: data)
-        var json = try testUnwrap(object as? [String: Any])
+        var json = testUnwrap(object as? [String: Any])
         json["revision"] = revision
-        var sections = try testUnwrap(json["sections"] as? [[String: Any]])
+        var sections = testUnwrap(json["sections"] as? [[String: Any]])
         var state: [String: Any] = ["kind": kind]
         if let title { state["title"] = title }
         if let message { state["message"] = message }
@@ -95,15 +95,15 @@ struct ExtensionSurfaceCompositeViewsTests {
         let surface = try surface("status-card.json")
         let view = composites(surface)
 
-        let header = try testUnwrap(control("extension.surface.deploy.status", in: view))
+        let header = testUnwrap(control("extension.surface.deploy.status", in: view))
         #expect(header.accessibilityValue == "running")
         #expect(header.accessibilityLabel?.contains("Deploying 4f2c1ab") == true)
         #expect(allLabelTexts(in: view).contains("Running"))
 
         // Steps are the activity rows, named under the card they belong to.
-        let build = try testUnwrap(control("extension.surface.deploy.status.build", in: view))
+        let build = testUnwrap(control("extension.surface.deploy.status.build", in: view))
         #expect(build.accessibilityValue?.contains("Done") == true)
-        let test = try testUnwrap(control("extension.surface.deploy.status.test", in: view) as? UIControl)
+        let test = testUnwrap(control("extension.surface.deploy.status.test", in: view) as? UIControl)
         #expect(test.accessibilityValue?.contains("Working") == true)
         #expect(allLabelTexts(in: view).contains("Ship"))
 
@@ -121,21 +121,21 @@ struct ExtensionSurfaceCompositeViewsTests {
         let surface = try surface("checklist.json")
         let view = composites(surface)
 
-        let header = try testUnwrap(control("extension.surface.release.gates", in: view))
+        let header = testUnwrap(control("extension.surface.release.gates", in: view))
         #expect(header.accessibilityLabel?.contains("2 of 4 done") == true)
 
-        let tests = try testUnwrap(control("extension.surface.release.gates.tests", in: view))
+        let tests = testUnwrap(control("extension.surface.release.gates.tests", in: view))
         #expect(tests.accessibilityValue?.contains("Done") == true)
 
         // An item with a detail discloses it; an item without one has nothing to disclose.
-        let notes = try testUnwrap(control("extension.surface.release.gates.notes", in: view) as? UIControl)
+        let notes = testUnwrap(control("extension.surface.release.gates.notes", in: view) as? UIControl)
         #expect(notes.accessibilityTraits.contains(.button))
         #expect(!allTexts(in: view).contains { $0.contains("Drafting") })
         notes.sendActions(for: .touchUpInside)
         view.layoutIfNeeded()
         #expect(allTexts(in: view).contains { $0.contains("Drafting") })
 
-        let signoff = try testUnwrap(control("extension.surface.release.gates.signoff", in: view))
+        let signoff = testUnwrap(control("extension.surface.release.gates.signoff", in: view))
         #expect(!signoff.accessibilityTraits.contains(.button))
     }
 
@@ -164,19 +164,19 @@ struct ExtensionSurfaceCompositeViewsTests {
         var intents: [ExtensionSurfaceActionIntent] = []
         let view = composites(surface, onAction: { intents.append($0) })
 
-        let header = try testUnwrap(control("extension.surface.query.rows", in: view))
+        let header = testUnwrap(control("extension.surface.query.rows", in: view))
         #expect(header.accessibilityValue == "2 rows")
         // The sorted column is marked in the grid.
         #expect(allLabelTexts(in: view).contains { $0.hasPrefix("Name ▴") })
 
-        let sessions = try testUnwrap(control("extension.surface.query.rows.table_3asessions", in: view))
+        let sessions = testUnwrap(control("extension.surface.query.rows.table_3asessions", in: view))
         #expect(sessions.accessibilityLabel?.contains("Name, sessions") == true)
         #expect(sessions.accessibilityLabel?.contains("Rows, 12") == true)
         #expect(sessions.accessibilityValue == "Selected")
         #expect(sessions.accessibilityTraits.contains(.button))
 
         // Row actions are on the row's menu, and activation runs the row's first action.
-        let menu = try testUnwrap(control("extension.surface.query.rows.table_3asessions.menu", in: view) as? UIButton)
+        let menu = testUnwrap(control("extension.surface.query.rows.table_3asessions.menu", in: view) as? UIButton)
         #expect((menu.menu?.children ?? []).compactMap { ($0 as? UIAction)?.title } == ["Copy"])
         #expect(sessions.accessibilityActivate())
         #expect(intents.count == 1)
@@ -190,8 +190,8 @@ struct ExtensionSurfaceCompositeViewsTests {
     func tableHeaderAndRowShareOneColumnPlan(sizeCategory: UIContentSizeCategory) throws {
         let view = composites(try surface("data-table.json"), sizeCategory: sizeCategory)
         // The sorted column's title, and the same column's cell in the first row.
-        let headerCell = try testUnwrap(allLabels(in: view).first { $0.text?.hasPrefix("Name") == true })
-        let rowCell = try testUnwrap(allLabels(in: view).first { $0.text == "sessions" })
+        let headerCell = testUnwrap(allLabels(in: view).first { $0.text?.hasPrefix("Name") == true })
+        let rowCell = testUnwrap(allLabels(in: view).first { $0.text == "sessions" })
         let headerFrame = headerCell.convert(headerCell.bounds, to: view)
         let rowFrame = rowCell.convert(rowCell.bounds, to: view)
         #expect(
@@ -207,10 +207,10 @@ struct ExtensionSurfaceCompositeViewsTests {
     @Test func aOneRowTableSaysOneRow() throws {
         let oneRow = try surface("data-table.json", keepingFirstRowOnly: true)
         let view = composites(oneRow)
-        let header = try testUnwrap(control("extension.surface.query.rows", in: view))
+        let header = testUnwrap(control("extension.surface.query.rows", in: view))
         #expect(header.accessibilityValue == "1 row")
 
-        let twoRows = try testUnwrap(control("extension.surface.query.rows", in: composites(try surface("data-table.json"))))
+        let twoRows = testUnwrap(control("extension.surface.query.rows", in: composites(try surface("data-table.json"))))
         #expect(twoRows.accessibilityValue == "2 rows")
     }
 
@@ -226,11 +226,11 @@ struct ExtensionSurfaceCompositeViewsTests {
                 disabled: ["copy"]
             )
         )
-        let menu = try testUnwrap(control("extension.surface.query.rows.table_3asessions.menu", in: waiting) as? UIButton)
+        let menu = testUnwrap(control("extension.surface.query.rows.table_3asessions.menu", in: waiting) as? UIButton)
         #expect(menu.isEnabled, "one waiting action does not take the row's menu away")
-        let copy = try testUnwrap(menu.menu?.children.compactMap { $0 as? UIAction }.first)
+        let copy = testUnwrap(menu.menu?.children.compactMap { $0 as? UIAction }.first)
         #expect(copy.attributes.contains(.disabled), "the waiting action's own item is disabled")
-        let row = try testUnwrap(control("extension.surface.query.rows.table_3asessions", in: waiting))
+        let row = testUnwrap(control("extension.surface.query.rows.table_3asessions", in: waiting))
         #expect(!row.accessibilityActivate(), "a row whose first action is waiting does not run it again")
 
         // The same wait, from another card, leaves this table interactive.
@@ -244,8 +244,8 @@ struct ExtensionSurfaceCompositeViewsTests {
                 disabled: ["copy"]
             )
         )
-        let idleMenu = try testUnwrap(control("extension.surface.query.rows.table_3asessions.menu", in: elsewhere) as? UIButton)
-        let idleCopy = try testUnwrap(idleMenu.menu?.children.compactMap { $0 as? UIAction }.first)
+        let idleMenu = testUnwrap(control("extension.surface.query.rows.table_3asessions.menu", in: elsewhere) as? UIButton)
+        let idleCopy = testUnwrap(idleMenu.menu?.children.compactMap { $0 as? UIAction }.first)
         #expect(!idleCopy.attributes.contains(.disabled))
         #expect(idleMenu.isEnabled)
     }
@@ -257,10 +257,10 @@ struct ExtensionSurfaceCompositeViewsTests {
         var intents: [ExtensionSurfaceActionIntent] = []
         let view = composites(surface, onAction: { intents.append($0) })
 
-        let header = try testUnwrap(control("extension.surface.approval.decide", in: view))
+        let header = testUnwrap(control("extension.surface.approval.decide", in: view))
         #expect(header.accessibilityLabel?.contains("Approve shipping 4f2c1ab?") == true)
 
-        let approve = try testUnwrap(control("extension.surface.approval.decide.approve", in: view) as? UIButton)
+        let approve = testUnwrap(control("extension.surface.approval.decide.approve", in: view) as? UIButton)
         #expect(approve.configuration?.title == "Approve")
         #expect(approve.isEnabled)
         approve.sendActions(for: .touchUpInside)
@@ -268,7 +268,7 @@ struct ExtensionSurfaceCompositeViewsTests {
         #expect(intents.first?.compositeId == "decide")
         #expect(intents.first?.revision == 1)
 
-        let reject = try testUnwrap(control("extension.surface.approval.decide.reject", in: view) as? UIButton)
+        let reject = testUnwrap(control("extension.surface.approval.decide.reject", in: view) as? UIButton)
         #expect(reject.configuration?.title == "Reject")
     }
 
@@ -280,7 +280,7 @@ struct ExtensionSurfaceCompositeViewsTests {
 
         // The card this build knows is drawn; the one it does not keeps its words.
         #expect(control("extension.surface.mixed.status", in: view) != nil)
-        let placeholder = try testUnwrap(control("extension.surface.mixed.log", in: view))
+        let placeholder = testUnwrap(control("extension.surface.mixed.log", in: view))
         #expect(placeholder.accessibilityLabel?.contains("logStream") == true)
         #expect(placeholder.accessibilityValue == "Build log: 42 lines")
     }
@@ -324,11 +324,11 @@ struct ExtensionSurfaceCompositeViewsTests {
                 message: expected.message
             )
             let view = composites(surface)
-            let header = try testUnwrap(control("extension.surface.\(surface.id).\(composite)", in: view))
+            let header = testUnwrap(control("extension.surface.\(surface.id).\(composite)", in: view))
             #expect(header.accessibilityValue == expected.word)
             // The state is drawn by the platform's own unavailable view, in the extension's words.
             #expect(allLabelTexts(in: view).contains { $0.contains(expected.title) })
-            let state = try testUnwrap(showingState(in: view))
+            let state = testUnwrap(showingState(in: view))
             #expect(state.text == expected.title)
             #expect(state.secondaryText == expected.secondary)
             // Content is not drawn under a state.
@@ -342,13 +342,13 @@ struct ExtensionSurfaceCompositeViewsTests {
         let surface = try surface("status-card.json")
         let waiting = composites(surface, pending: pending())
 
-        let retry = try testUnwrap(control("extension.surface.deploy.status.retry", in: waiting) as? UIButton)
+        let retry = testUnwrap(control("extension.surface.deploy.status.retry", in: waiting) as? UIButton)
         #expect(retry.configuration?.title == "Retrying…")
         #expect(!retry.isEnabled)
 
         // The same card with no pending action is back to the extension's words.
         let settled = composites(surface)
-        let idle = try testUnwrap(control("extension.surface.deploy.status.retry", in: settled) as? UIButton)
+        let idle = testUnwrap(control("extension.surface.deploy.status.retry", in: settled) as? UIButton)
         #expect(idle.configuration?.title == "Retry")
         #expect(idle.isEnabled)
     }
@@ -383,7 +383,7 @@ struct ExtensionSurfaceCompositeViewsTests {
         let surface = try surface("status-card.json")
         let panel = makePanel(surface)
 
-        let pill = try testUnwrap(control("extension-strip-aboveEditor-pill-surface-deploy", in: panel) as? UIControl)
+        let pill = testUnwrap(control("extension-strip-aboveEditor-pill-surface-deploy", in: panel) as? UIControl)
         #expect(pill.accessibilityLabel?.contains("web → prod") == true)
         #expect(pill.accessibilityValue?.contains("Deploying 4f2c1ab") == true)
         // Collapsed: the drawer's cards are not built yet.
@@ -392,7 +392,7 @@ struct ExtensionSurfaceCompositeViewsTests {
         pill.sendActions(for: .touchUpInside)
         panel.layoutIfNeeded()
 
-        let header = try testUnwrap(control("extension.surface.deploy.status", in: panel))
+        let header = testUnwrap(control("extension.surface.deploy.status", in: panel))
         #expect(header.accessibilityValue == "running")
         #expect(control("extension.surface.deploy.status.build", in: panel) != nil)
         #expect(control("extension.surface.deploy.status.retry", in: panel) != nil)
@@ -410,14 +410,14 @@ struct ExtensionSurfaceCompositeViewsTests {
 
         // The pill carries the reason in the danger tone, whatever tone the cards declared; the
         // drawer is where the card's own state is drawn.
-        let pill = try testUnwrap(control("extension-strip-aboveEditor-pill-surface-deploy", in: panel) as? UIControl)
+        let pill = testUnwrap(control("extension-strip-aboveEditor-pill-surface-deploy", in: panel) as? UIControl)
         #expect(pill.accessibilityValue?.contains("The gates did not pass.") == true)
-        let dot = try testUnwrap(toneDot(in: pill))
+        let dot = testUnwrap(toneDot(in: pill))
         #expect(dot.backgroundColor == themeID.palette.ui.red, "a failed surface wears the danger tone")
 
         pill.sendActions(for: .touchUpInside)
         panel.layoutIfNeeded()
-        let header = try testUnwrap(control("extension.surface.deploy.status", in: panel))
+        let header = testUnwrap(control("extension.surface.deploy.status", in: panel))
         #expect(header.accessibilityValue == "Failed")
     }
 
@@ -441,14 +441,14 @@ struct ExtensionSurfaceCompositeViewsTests {
         show(footer, inset: 0)
         footer.updateProperties()
 
-        let pill = try testUnwrap(
+        let pill = testUnwrap(
             control("extension-strip-aboveEditor-pill-surface-deploy", in: footer) as? UIControl
         )
         #expect(isShown(pill, in: footer), "a composable surface alone must show the strip")
 
         pill.sendActions(for: .touchUpInside)
         footer.layoutIfNeeded()
-        let card = try testUnwrap(control("extension.surface.deploy.status", in: footer))
+        let card = testUnwrap(control("extension.surface.deploy.status", in: footer))
         #expect(isShown(card, in: footer), "the pill opens the surface's cards")
     }
 
@@ -474,7 +474,7 @@ struct ExtensionSurfaceCompositeViewsTests {
             chat.view.layoutIfNeeded()
             return control(id, in: chat.view).map { isShown($0, in: chat.view) } ?? false
         }
-        let pill = try testUnwrap(control(id, in: chat.view) as? UIControl)
+        let pill = testUnwrap(control(id, in: chat.view) as? UIControl)
         return (chat, window, pill, teardown)
     }
 
@@ -482,7 +482,7 @@ struct ExtensionSurfaceCompositeViewsTests {
         let (_, window, pill, teardown) = try await chatWithStripPill("strip-hit-band")
         defer { teardown() }
         let frame = pill.convert(pill.bounds, to: window)
-        let row = try testUnwrap(pill.superview)
+        let row = testUnwrap(pill.superview)
         #expect(row.bounds.height < ExtensionStripPillMetrics.hitHeight, "the strip row grew to the band: \(row.bounds.height)")
         let band = (ExtensionStripPillMetrics.hitHeight - frame.height) / 2 - 1
         #expect(band >= 7, "the pill draws close to its band: \(frame.height)")
@@ -524,7 +524,7 @@ struct ExtensionSurfaceCompositeViewsTests {
         show(footer, inset: 0)
         footer.updateProperties()
 
-        let pill = try testUnwrap(
+        let pill = testUnwrap(
             control("extension-strip-belowEditor-pill-surface-deploy", in: footer) as? UIControl
         )
         #expect(isShown(pill, in: footer), "belowComposer draws under the composer, not above it")
@@ -573,7 +573,7 @@ struct ExtensionSurfaceCompositeViewsTests {
     private func show(_ view: UIView, inset: CGFloat = 28) {
         for window in Self.windows { window.isHidden = true }
         Self.windows.removeAll()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 1400))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 1400))
         let host = UIViewController()
         window.rootViewController = host
         window.makeKeyAndVisible()

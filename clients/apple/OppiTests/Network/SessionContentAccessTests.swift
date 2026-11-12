@@ -184,11 +184,11 @@ struct SessionContentAccessTests {
             readinessPoll: .milliseconds(1)
         )
 
-        try await expectServerError(status: 503, message: "Server client is not ready") {
+        await expectServerError(status: 503, message: "Server client is not ready") {
             _ = try await content.fetchSessionAttachment(sessionId: "s1", attachmentId: "a1")
         }
         #expect(polls.count == 50)
-        try await expectServerError(status: 503, message: "Session file client is not ready") {
+        await expectServerError(status: 503, message: "Session file client is not ready") {
             _ = try await content.fetchSessionFileData(
                 workspaceId: "w1",
                 sessionId: "s1",
@@ -247,7 +247,7 @@ struct SessionContentAccessTests {
         let connection = ServerConnection()
         connection.setAPIClientForTesting(try makeClient(host: "server-a.test"))
 
-        try await expectServerError(status: 404, message: "Host image is unavailable") {
+        await expectServerError(status: 404, message: "Host image is unavailable") {
             _ = try await connection.sessionContent.fetchHostFile(
                 path: "/tmp/a.png",
                 workspaceId: nil,

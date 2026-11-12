@@ -88,7 +88,7 @@ private final class GitPanelPushFixture {
     let screen = UIViewController()
     let navigationController: UINavigationController
     let bar: WorkspaceContextBarView
-    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 420, height: 900))
+    let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 420, height: 900))
     let routes: TestURLProtocol.RouteScope
 
     init() {

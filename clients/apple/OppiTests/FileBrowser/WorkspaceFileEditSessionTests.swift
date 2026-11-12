@@ -1517,7 +1517,7 @@ struct WorkspaceFileEditorSurfaceTests {
             preview.view.addSubview(label)
             return preview
         }
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.loadViewIfNeeded()
@@ -1719,7 +1719,7 @@ struct WorkspaceFileEditorListContinuationTests {
             idleDelay: .seconds(60)
         )!
         let controller = WorkspaceFileEditorViewController(session: session, themeID: .dark) { _ in UIViewController() }
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.loadViewIfNeeded()
@@ -1852,7 +1852,7 @@ struct WorkspaceFileEditEntryTests {
             services: .init(apiClient: client)
         )
         let host = UINavigationController(rootViewController: content)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { hideTestWindow(window) }
@@ -1894,7 +1894,7 @@ struct WorkspaceFileEditEntryTests {
             services: .init(apiClient: client)
         )
         let host = UINavigationController(rootViewController: content)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { hideTestWindow(window) }
@@ -1981,7 +1981,7 @@ struct WorkspaceFileEditEntryTests {
             showsSidebarToggle: false
         )
         let navigation = UINavigationController(rootViewController: files)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
         window.rootViewController = navigation
         window.makeKeyAndVisible()
         defer { hideTestWindow(window) }

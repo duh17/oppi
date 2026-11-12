@@ -26,7 +26,7 @@ struct AuthenticatedMediaLoaderBoundaryTests {
         defer { server.stop() }
 
         let session = AuthenticatedMediaPlaybackSession(
-            source: try mediaSource(url: server.url, authorizationProvider: auth.provider)
+            source: mediaSource(url: server.url, authorizationProvider: auth.provider)
         )
         defer { session.teardown() }
         let player = session.player
@@ -89,7 +89,7 @@ struct AuthenticatedMediaLoaderBoundaryTests {
         )
         defer { server.stop() }
 
-        let session = AuthenticatedMediaPlaybackSession(source: try mediaSource(url: server.url))
+        let session = AuthenticatedMediaPlaybackSession(source: mediaSource(url: server.url))
         defer { session.teardown() }
         let player = session.player
         let ready = await waitForMainActorCondition(timeout: .seconds(12)) {
@@ -136,7 +136,7 @@ struct AuthenticatedMediaLoaderBoundaryTests {
         defer { server.stop() }
 
         let session = AuthenticatedMediaPlaybackSession(
-            source: try mediaSource(url: server.url, token: "Bearer native-play")
+            source: mediaSource(url: server.url, token: "Bearer native-play")
         )
         defer { session.teardown() }
         let player = session.player
@@ -184,7 +184,7 @@ struct AuthenticatedMediaLoaderBoundaryTests {
 
         let gate = AuthorizationGate(token: "Bearer cancel-auth")
         let session = AuthenticatedMediaPlaybackSession(
-            source: try mediaSource(url: server.url, authorizationProvider: gate.provider)
+            source: mediaSource(url: server.url, authorizationProvider: gate.provider)
         )
 
         let started = await waitForMainActorCondition(timeout: .seconds(5)) {
@@ -215,7 +215,7 @@ struct AuthenticatedMediaLoaderBoundaryTests {
         defer { server.stop() }
 
         let session = AuthenticatedMediaPlaybackSession(
-            source: try mediaSource(url: server.url, authorizationProvider: gate.provider)
+            source: mediaSource(url: server.url, authorizationProvider: gate.provider)
         )
 
         let firstGet = await waitForMainActorCondition(timeout: .seconds(8)) {
@@ -249,7 +249,7 @@ struct AuthenticatedMediaLoaderBoundaryTests {
 
         let gate = AuthorizationGate(token: "Bearer race-first")
         let session = AuthenticatedMediaPlaybackSession(
-            source: try mediaSource(url: server.url, authorizationProvider: gate.provider)
+            source: mediaSource(url: server.url, authorizationProvider: gate.provider)
         )
         defer { session.teardown() }
 
@@ -285,7 +285,7 @@ struct AuthenticatedMediaLoaderBoundaryTests {
 
         let auth = AuthorizationProbe(token: "Bearer race-chunk")
         let session = AuthenticatedMediaPlaybackSession(
-            source: try mediaSource(url: server.url, authorizationProvider: auth.provider)
+            source: mediaSource(url: server.url, authorizationProvider: auth.provider)
         )
         defer { session.teardown() }
 
@@ -332,7 +332,7 @@ struct AuthenticatedMediaLoaderBoundaryTests {
         // continuations get the suspended provider; the rest authorize normally.
         let gate = ContinuationAuthorizationGate(token: "Bearer await-chunk", throwsAfterRelease: authorizationThrows)
         let session = AuthenticatedMediaPlaybackSession(
-            source: try mediaSource(url: server.url, authorizationProvider: AuthorizationProbe(token: "Bearer await-chunk").provider)
+            source: mediaSource(url: server.url, authorizationProvider: AuthorizationProbe(token: "Bearer await-chunk").provider)
         )
         defer { session.teardown() }
         session.debugSetContinuationAuthorizationProvider(gate.provider)

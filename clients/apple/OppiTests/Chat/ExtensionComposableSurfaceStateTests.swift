@@ -25,10 +25,10 @@ struct ExtensionComposableSurfaceStateTests {
     private func surface(_ name: String, revision: Int, headerTitle: String? = nil) throws -> ExtensionUISurface {
         let data = try ProtocolFixtures.data("surfaces/\(name)")
         let object = try JSONSerialization.jsonObject(with: data)
-        var json = try testUnwrap(object as? [String: Any])
+        var json = testUnwrap(object as? [String: Any])
         json["revision"] = revision
         if let headerTitle {
-            var header = try testUnwrap(json["header"] as? [String: Any])
+            var header = testUnwrap(json["header"] as? [String: Any])
             header["title"] = headerTitle
             json["header"] = header
         }
@@ -42,9 +42,9 @@ struct ExtensionComposableSurfaceStateTests {
     private func surface(_ name: String, revision: Int, state kind: String, title: String?, message: String?) throws -> ExtensionUISurface {
         let data = try ProtocolFixtures.data("surfaces/\(name)")
         let object = try JSONSerialization.jsonObject(with: data)
-        var json = try testUnwrap(object as? [String: Any])
+        var json = testUnwrap(object as? [String: Any])
         json["revision"] = revision
-        var sections = try testUnwrap(json["sections"] as? [[String: Any]])
+        var sections = testUnwrap(json["sections"] as? [[String: Any]])
         sections[0]["state"] = ["kind": kind, "title": title ?? "", "message": message ?? ""]
         json["sections"] = sections
         return try JSONDecoder().decode(
@@ -88,7 +88,7 @@ struct ExtensionComposableSurfaceStateTests {
         var state = ExtensionSurfaceState()
         ExtensionSurfaceReducer.apply(try surface("status-card.json"), to: &state)
 
-        let stored = try testUnwrap(state.composableSurfaces["deploy"])
+        let stored = testUnwrap(state.composableSurfaces["deploy"])
         #expect(stored.surface.revision == 7)
         #expect(stored.surface.placement.kind == "strip")
         #expect(state.hasVisibleContent)
@@ -104,7 +104,7 @@ struct ExtensionComposableSurfaceStateTests {
 
         #expect(state.composableSurfaces.count == 2)
         #expect(state.composableSurfaceEntries(in: .aboveEditor).map(\.id) == ["deploy", "release"])
-        let stored = try testUnwrap(state.composableSurfaces["deploy"])
+        let stored = testUnwrap(state.composableSurfaces["deploy"])
         #expect(stored.surface.revision == 9)
         #expect(stored.surface.header.title == "web → staging")
     }
@@ -114,7 +114,7 @@ struct ExtensionComposableSurfaceStateTests {
         ExtensionSurfaceReducer.apply(try surface("status-card.json"), to: &state)
         ExtensionSurfaceReducer.apply(try surface("status-card.json", revision: 7, headerTitle: "stale"), to: &state)
 
-        let stored = try testUnwrap(state.composableSurfaces["deploy"])
+        let stored = testUnwrap(state.composableSurfaces["deploy"])
         #expect(stored.surface.header.title == "web → prod")
         #expect(stored.surface.revision == 7)
     }
@@ -122,7 +122,7 @@ struct ExtensionComposableSurfaceStateTests {
     @Test func keepsASurfaceForAPresentationThisBuildDoesNotDrawOutOfTheStrip() throws {
         let data = try ProtocolFixtures.data("surfaces/status-card.json")
         let object = try JSONSerialization.jsonObject(with: data)
-        var json = try testUnwrap(object as? [String: Any])
+        var json = testUnwrap(object as? [String: Any])
         json["placement"] = ["kind": "sheet"]
         let sheet = try JSONDecoder().decode(
             ExtensionUISurface.self,
@@ -143,9 +143,9 @@ struct ExtensionComposableSurfaceStateTests {
         ExtensionSurfaceReducer.apply(try surface("status-card.json"), to: &state)
         ExtensionSurfaceReducer.apply(try patch("patch.json"), to: &state)
 
-        let stored = try testUnwrap(state.composableSurfaces["deploy"])
+        let stored = testUnwrap(state.composableSurfaces["deploy"])
         #expect(stored.surface.revision == 8)
-        guard case .statusCard(let card) = try testUnwrap(stored.surface.sections.first) else {
+        guard case .statusCard(let card) = testUnwrap(stored.surface.sections.first) else {
             Issue.record("Expected the status card to survive the patch")
             return
         }
@@ -163,7 +163,7 @@ struct ExtensionComposableSurfaceStateTests {
             to: &state
         )
 
-        let stored = try testUnwrap(state.composableSurfaces["deploy"])
+        let stored = testUnwrap(state.composableSurfaces["deploy"])
         #expect(stored.surface.header.subtitle == nil)
         #expect(stored.surface.header.title == "web → prod")
     }
@@ -182,7 +182,7 @@ struct ExtensionComposableSurfaceStateTests {
             to: &state
         )
 
-        let stored = try testUnwrap(state.composableSurfaces["deploy"])
+        let stored = testUnwrap(state.composableSurfaces["deploy"])
         #expect(stored.surface.id == "deploy")
         #expect(stored.surface.revision == 7)
     }
@@ -198,9 +198,9 @@ struct ExtensionComposableSurfaceStateTests {
         ExtensionSurfaceReducer.apply(try surface("status-card.json", revision: 8), to: &state)
         ExtensionSurfaceReducer.apply(try patch("patch.json"), to: &state)
 
-        let stored = try testUnwrap(state.composableSurfaces["deploy"])
+        let stored = testUnwrap(state.composableSurfaces["deploy"])
         #expect(stored.surface.revision == 8)
-        guard case .statusCard(let card) = try testUnwrap(stored.surface.sections.first) else {
+        guard case .statusCard(let card) = testUnwrap(stored.surface.sections.first) else {
             Issue.record("Expected the status card")
             return
         }
@@ -216,8 +216,8 @@ struct ExtensionComposableSurfaceStateTests {
             to: &state
         )
 
-        let stored = try testUnwrap(state.composableSurfaces["deploy"])
-        guard case .statusCard(let card) = try testUnwrap(stored.surface.sections.first) else {
+        let stored = testUnwrap(state.composableSurfaces["deploy"])
+        guard case .statusCard(let card) = testUnwrap(stored.surface.sections.first) else {
             Issue.record("Expected the status card to survive the patch")
             return
         }
@@ -233,8 +233,8 @@ struct ExtensionComposableSurfaceStateTests {
             to: &state
         )
 
-        let stored = try testUnwrap(state.composableSurfaces["deploy"])
-        guard case .statusCard(let card) = try testUnwrap(stored.surface.sections.first) else {
+        let stored = testUnwrap(state.composableSurfaces["deploy"])
+        guard case .statusCard(let card) = testUnwrap(stored.surface.sections.first) else {
             Issue.record("Expected the status card")
             return
         }
@@ -251,7 +251,7 @@ struct ExtensionComposableSurfaceStateTests {
             to: &state
         )
 
-        let stored = try testUnwrap(state.composableSurfaces["deploy"])
+        let stored = testUnwrap(state.composableSurfaces["deploy"])
         #expect(stored.surface.revision == 7)
         #expect(stored.surface.header.title == "web → prod")
     }
@@ -269,8 +269,8 @@ struct ExtensionComposableSurfaceStateTests {
             to: &state
         )
 
-        let stored = try testUnwrap(state.composableSurfaces["deploy"])
-        guard case .statusCard(let card) = try testUnwrap(stored.surface.sections.first) else {
+        let stored = testUnwrap(state.composableSurfaces["deploy"])
+        guard case .statusCard(let card) = testUnwrap(stored.surface.sections.first) else {
             Issue.record("Expected the status card")
             return
         }

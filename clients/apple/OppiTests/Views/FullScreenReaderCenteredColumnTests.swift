@@ -110,7 +110,7 @@ struct FullScreenReaderCenteredColumnTests {
     /// converts off the main actor first, so the wait is on that condition.
     private func makeWindow(content: FullScreenCodeContent, width: CGFloat) async throws -> UIWindow {
         let controller = FullScreenCodeViewController(content: content, presentationMode: .embedded(onDismiss: {}))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 1032))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: width, height: 1032))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.view.frame = window.bounds

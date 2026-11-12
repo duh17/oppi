@@ -172,7 +172,7 @@ struct MarkdownReaderRenderAheadContractTests {
                 reviewCommentSelectionRouter: nil,
                 reviewCommentSourceContext: nil
             )
-            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 844))
+            let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: width, height: 844))
             window.addSubview(body)
             body.frame = window.bounds
             window.makeKeyAndVisible()
@@ -206,7 +206,7 @@ struct MarkdownReaderRenderAheadContractTests {
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -258,7 +258,7 @@ struct MarkdownReaderRenderAheadContractTests {
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -316,7 +316,7 @@ struct MarkdownReaderRenderAheadContractTests {
             reviewCommentSourceContext: nil,
             readerPreferences: .init(textScale: FullScreenReaderPreferences.standardTextScale)
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -358,7 +358,7 @@ struct MarkdownReaderRenderAheadContractTests {
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -409,7 +409,7 @@ struct MarkdownReaderRenderAheadContractTests {
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -496,7 +496,7 @@ struct MarkdownReaderRenderAheadContractTests {
                 ),
                 sourceFilePath: "docs/cold.md"
             )
-            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+            let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
             window.addSubview(body)
             body.frame = window.bounds
             window.makeKeyAndVisible()
@@ -578,7 +578,7 @@ struct MarkdownReaderRenderAheadContractTests {
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -612,7 +612,7 @@ struct MarkdownReaderRenderAheadContractTests {
             if let intent { body.restoreViewportAfterMutableTransition(intent) }
             // The tool row sizes its viewport after the reader's first layout, so
             // the reader first lays out far shorter than the ceiling.
-            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 84))
+            let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 84))
             window.addSubview(body)
             body.frame = window.bounds
             window.makeKeyAndVisible()
@@ -652,7 +652,7 @@ struct MarkdownReaderRenderAheadContractTests {
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -689,7 +689,7 @@ struct MarkdownReaderRenderAheadContractTests {
                 ),
                 sourceFilePath: "docs/matrix.md"
             )
-            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 844))
+            let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: width, height: 844))
             window.addSubview(body)
             body.frame = window.bounds
             window.makeKeyAndVisible()
@@ -757,7 +757,7 @@ struct MarkdownReaderRenderAheadContractTests {
             lineAnchor: anchor,
             focusLineAnchor: false
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: width, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -840,7 +840,7 @@ struct MarkdownReaderRenderAheadContractTests {
             sourceFilePath: "docs/deep.md",
             lineAnchor: anchor
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -882,7 +882,7 @@ struct MarkdownReaderRenderAheadContractTests {
         let data = try #require(Self.pngData(size: CGSize(width: 80, height: 240)))
         let markdown = AssistantMarkdownContentView()
         markdown.frame = CGRect(x: 0, y: 0, width: 320, height: 500)
-        let window = UIWindow(frame: markdown.frame)
+        let window = makeTestWindow(frame: markdown.frame)
         window.addSubview(markdown)
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -949,7 +949,7 @@ struct MarkdownReaderRenderAheadContractTests {
             ),
             sourceFilePath: "docs/svg.md"
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -1028,7 +1028,7 @@ struct MarkdownReaderRenderAheadContractTests {
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()

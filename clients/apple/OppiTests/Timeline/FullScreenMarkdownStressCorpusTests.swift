@@ -127,7 +127,7 @@ struct FullScreenMarkdownStressCorpusTests {
             ),
             sourceFilePath: "docs/mixed-markdown-stress-corpus.md"
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -189,7 +189,7 @@ struct FullScreenMarkdownStressCorpusTests {
             ),
             sourceFilePath: "docs/mixed-markdown-stress-corpus.md"
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -241,7 +241,7 @@ struct FullScreenMarkdownStressCorpusTests {
             ),
             sourceFilePath: "docs/mixed-markdown-stress-corpus.md"
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -383,7 +383,7 @@ struct FullScreenMarkdownStressCorpusTests {
             ),
             sourceFilePath: "docs/mixed-markdown-stress-corpus.md"
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -493,7 +493,7 @@ struct FullScreenMarkdownStressCorpusTests {
             reviewCommentSourceContext: nil,
             sourceFilePath: ".internal/diagrams/mermaid-rendering-gallery.md"
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -667,7 +667,7 @@ struct FullScreenMarkdownStressCorpusTests {
             ),
             sourceFilePath: "docs/deferred-interaction.md"
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -756,7 +756,7 @@ struct FullScreenMarkdownStressCorpusTests {
             ),
             sourceFilePath: "docs/mixed-markdown-stress-corpus.md"
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -931,7 +931,7 @@ struct FullScreenMarkdownStressCorpusTests {
             reviewCommentSourceContext: nil,
             sourceFilePath: "report.md"
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()

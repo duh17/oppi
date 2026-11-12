@@ -514,7 +514,7 @@ struct FollowTailExpandedToolApplyTests {
             window = UIWindow(windowScene: scene)
             window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         } else {
-            window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+            window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         }
         view.translatesAutoresizingMaskIntoConstraints = false
         window.addSubview(view)

@@ -670,7 +670,7 @@ struct MutableFullScreenMarkdownBodyTests {
             finalContent: .markdown(content: initial, filePath: "docs/Draft.md")
         ), isNews: SourceSnapshot.isNews)
         let controller = makeController(content: .liveSource(trace))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1268,7 +1268,7 @@ struct MutableFullScreenMarkdownBodyTests {
             markdownViewportIntent: intent,
             onMarkdownViewportIntentChange: onIntentChange
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.view.frame = window.bounds
@@ -1288,7 +1288,7 @@ struct MutableFullScreenMarkdownBodyTests {
     }
 
     private func attach(_ body: UIView) -> (window: UIWindow, host: UIViewController) {
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         let host = UIViewController()
         window.rootViewController = host
         window.makeKeyAndVisible()

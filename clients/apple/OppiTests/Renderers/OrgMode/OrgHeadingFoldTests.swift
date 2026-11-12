@@ -182,7 +182,7 @@ struct OrgHeadingFoldTests {
             text.append(NSAttributedString(attributed))
             text.append(NSAttributedString(string: "\n"))
         }
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 340, height: 700))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 340, height: 700))
         let view = BaselineSafeTextView(usingTextLayoutManager: true)
         view.isEditable = false
         view.isScrollEnabled = false

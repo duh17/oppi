@@ -44,7 +44,7 @@ struct MarkdownTableGridTests {
         }
         table.configureResourceReferenceScope(serverID: "server-1", workspaceID: "workspace-1")
         table.apply(headers: headers, rows: rows, palette: palette)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 370, height: 900))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 370, height: 900))
         window.addSubview(table)
         window.makeKeyAndVisible()
         table.frame = CGRect(x: 0, y: 0, width: 370, height: table.debugMeasuredHeightForTesting)
@@ -439,7 +439,7 @@ struct MarkdownTableGridTests {
         #expect(table.debugMeasuredHeightForTesting == settled.debugMeasuredHeightForTesting)
 
         for view in [table, settled] {
-            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 370, height: 900))
+            let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 370, height: 900))
             window.addSubview(view)
             view.frame = CGRect(x: 0, y: 0, width: 370, height: view.debugMeasuredHeightForTesting)
             view.layoutIfNeeded()

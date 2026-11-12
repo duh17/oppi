@@ -20,7 +20,7 @@ struct NonChatCollectionInvalidationTests {
 
         let host = UIViewController()
         host.view.addSubview(collectionView)
-        let window = UIWindow(frame: collectionView.frame)
+        let window = makeTestWindow(frame: collectionView.frame)
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -95,7 +95,7 @@ struct NonChatCollectionInvalidationTests {
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: width, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()

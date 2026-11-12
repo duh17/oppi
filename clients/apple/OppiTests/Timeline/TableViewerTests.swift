@@ -13,7 +13,7 @@ struct TableViewerTests {
         let csv = "alpha,beta,gamma\n" + (1 ... rows).map { "r\($0),v\($0),w\($0)" }.joined(separator: "\n")
         let plan = try #require(DelimitedTableViewerPlan.opening(path: "t.csv", text: csv))
         let view = DelimitedTableRenderView(plan: plan, palette: palette)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
         view.frame = window.bounds
         window.addSubview(view)
         window.makeKeyAndVisible()

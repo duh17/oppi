@@ -142,7 +142,7 @@ struct PaperMarkupCanvasSessionTests {
     func imageAnnotateOpensSharedMarkupHostWithCopiedImage() throws {
         let original = try makePNG().0
         let viewController = FullScreenImageViewController(image: original)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = viewController
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -326,7 +326,7 @@ struct PaperMarkupCanvasSessionTests {
             image: original,
             addToChatDestination: destination
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = viewController
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -546,7 +546,7 @@ struct PaperMarkupCanvasSessionTests {
         let presenter = UIViewController()
         presenter.composerCanvasDestination = destination
 
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = presenter
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -583,7 +583,7 @@ struct PaperMarkupCanvasSessionTests {
         ComposerCanvasActiveDestination.resetForTesting()
         defer { ComposerCanvasActiveDestination.resetForTesting() }
         let presenter = UIViewController()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = presenter
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -627,7 +627,7 @@ struct PaperMarkupCanvasSessionTests {
         let presenter = UIViewController()
         presenter.composerCanvasDestination = destination
 
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = presenter
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -666,7 +666,7 @@ struct PaperMarkupCanvasSessionTests {
         ComposerCanvasActiveDestination.resetForTesting()
         defer { ComposerCanvasActiveDestination.resetForTesting() }
         let presenter = UIViewController()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = presenter
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -714,7 +714,7 @@ struct PaperMarkupCanvasSessionTests {
         let sourceView = UIView(frame: CGRect(x: 0, y: 0, width: 80, height: 80))
         presenter.view.addSubview(sourceView)
 
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = presenter
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -825,7 +825,7 @@ struct PaperMarkupCanvasSessionTests {
         ComposerCanvasActiveDestination.resetForTesting()
         defer { ComposerCanvasActiveDestination.resetForTesting() }
 
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         let host = UIViewController()
         window.rootViewController = host
         window.makeKeyAndVisible()
@@ -855,7 +855,7 @@ struct PaperMarkupCanvasSessionTests {
         ComposerCanvasActiveDestination.resetForTesting()
         defer { ComposerCanvasActiveDestination.resetForTesting() }
 
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         let host = UIViewController()
         window.rootViewController = host
         window.makeKeyAndVisible()
@@ -883,7 +883,7 @@ struct PaperMarkupCanvasSessionTests {
         ComposerCanvasActiveDestination.resetForTesting()
         defer { ComposerCanvasActiveDestination.resetForTesting() }
 
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         let host = UIViewController()
         window.rootViewController = host
         window.makeKeyAndVisible()
@@ -908,7 +908,7 @@ struct PaperMarkupCanvasSessionTests {
         ComposerCanvasActiveDestination.resetForTesting()
         defer { ComposerCanvasActiveDestination.resetForTesting() }
 
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         let host = UIViewController()
         window.rootViewController = host
         window.makeKeyAndVisible()
@@ -968,7 +968,7 @@ struct PaperMarkupCanvasSessionTests {
         let presenter = UIViewController()
         let sourceView = UIView(frame: CGRect(x: 0, y: 0, width: 80, height: 80))
         presenter.view.addSubview(sourceView)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = presenter
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1009,7 +1009,7 @@ struct PaperMarkupCanvasSessionTests {
         let presenter = UIViewController()
         let sourceView = UIView(frame: CGRect(x: 0, y: 0, width: 80, height: 80))
         presenter.view.addSubview(sourceView)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = presenter
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -1068,7 +1068,7 @@ struct PaperMarkupCanvasSessionTests {
         #expect(PaperMarkupCanvasViewport.contentVisibleFrame(for: markupBounds) == markupBounds)
 
         let host = PaperMarkupCanvasHostController(background: .image(image))
-        let window = UIWindow(frame: viewBounds)
+        let window = makeTestWindow(frame: viewBounds)
         let navigation = UINavigationController(rootViewController: host)
         window.rootViewController = navigation
         window.makeKeyAndVisible()
@@ -1108,7 +1108,7 @@ struct PaperMarkupCanvasSessionTests {
     @Test("insert is tray accessory not nav +")
     func insertIsTrayAccessoryNotNavPlus() throws {
         let host = PaperMarkupCanvasHostController(background: .image(makeImage(width: 80, height: 60)))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         let navigation = UINavigationController(rootViewController: host)
         window.rootViewController = navigation
         window.makeKeyAndVisible()
@@ -1262,7 +1262,7 @@ struct PaperMarkupCanvasSessionTests {
 
     private func presentedCanvasHost() -> PaperMarkupCanvasHostController {
         let host = PaperMarkupCanvasHostController(background: .blank)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = UINavigationController(rootViewController: host)
         window.makeKeyAndVisible()
         host.loadViewIfNeeded()

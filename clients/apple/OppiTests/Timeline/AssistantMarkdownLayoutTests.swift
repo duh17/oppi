@@ -103,7 +103,7 @@ struct AssistantMarkdownLayoutTests {
             frame: CGRect(origin: .zero, size: hostSize),
             collectionViewLayout: layout
         )
-        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: hostSize))
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -225,7 +225,7 @@ struct AssistantMarkdownLayoutTests {
             frame: CGRect(x: 0, y: 0, width: 393, height: 852),
             collectionViewLayout: layout
         )
-        let window = UIWindow(frame: collectionView.frame)
+        let window = makeTestWindow(frame: collectionView.frame)
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
 
@@ -755,7 +755,7 @@ struct AssistantMarkdownLayoutTests {
             measure = { viewport.viewportHeight(for: width) }
         }
 
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 1_000))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: width, height: 1_000))
         defer { window.isHidden = true }
         let firstHeight = measure()
         window.frame.size.height = max(firstHeight, 1)

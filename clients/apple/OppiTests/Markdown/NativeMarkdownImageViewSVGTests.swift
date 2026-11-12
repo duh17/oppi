@@ -42,7 +42,7 @@ struct NativeMarkdownImageViewSVGTests {
         let renderer = try #require(timelineFirstView(ofType: ReviewCommentWKWebView.self, in: view))
         #expect(renderer.isHidden, "SVG WKWebView should not show a blank renderer before it has a window")
 
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         window.addSubview(view)
         window.makeKeyAndVisible()
 
@@ -58,7 +58,7 @@ struct NativeMarkdownImageViewSVGTests {
     @Test func contentProcessTerminationShowsLoadingStateBeforeReload() async throws {
         let view = NativeMarkdownImageView()
         view.frame = CGRect(x: 0, y: 0, width: 300, height: 180)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         window.addSubview(view)
         window.makeKeyAndVisible()
         window.layoutIfNeeded()
@@ -111,7 +111,7 @@ struct NativeMarkdownImageViewSVGTests {
         let host = UIViewController()
         let view = NativeMarkdownImageView()
         view.frame = CGRect(x: 0, y: 0, width: 300, height: 180)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         window.rootViewController = host
         host.view.addSubview(view)
         window.makeKeyAndVisible()
@@ -185,7 +185,7 @@ struct NativeMarkdownImageViewSVGTests {
         imageView.frame = imageFrame
         scrollView.addSubview(imageView)
 
-        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: hostSize))
         window.backgroundColor = hostBackground
         window.rootViewController = host
         window.makeKeyAndVisible()

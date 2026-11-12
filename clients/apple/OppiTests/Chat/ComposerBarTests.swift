@@ -57,7 +57,7 @@ struct ComposerBarTests {
     func placeholderFollowsTheTextSize() async throws {
         let controller = ComposerBarController()
         controller.host = ComposerBarTestHost()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         defer {
@@ -1370,7 +1370,7 @@ struct ComposerBarTests {
         #expect(host.consumedFocus == 0)
         #expect(host.content.focusRequestID == 7)
 
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.apply()
@@ -1439,7 +1439,7 @@ struct ComposerBarTests {
         host.content.actionRow = ComposerActionRow(trailing: [picker(selected: "off")])
         let controller = ComposerBarController()
         controller.host = host
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.apply()
@@ -1723,7 +1723,7 @@ struct ComposerBarTests {
     private static func mountComposer(_ host: ComposerBarTestHost) -> (ComposerBarController, UIWindow) {
         let controller = ComposerBarController()
         controller.host = host
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.apply()
@@ -1783,7 +1783,7 @@ struct ComposerBarTests {
         let host = ComposerBarTestHost()
         let controller = ComposerBarController()
         controller.host = host
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.view.layoutIfNeeded()
@@ -1851,7 +1851,7 @@ struct ComposerBarTests {
         )
         let controller = ComposerBarController()
         controller.host = host
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.apply()
@@ -1887,7 +1887,7 @@ struct ComposerBarTests {
         )
         let controller = ComposerBarController()
         controller.host = host
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.apply()
@@ -2066,7 +2066,7 @@ struct AskCardCollapseTests {
         host.content.isBusy = true
         let bar = ComposerBarController()
         bar.host = host
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
         window.rootViewController = bar
         window.makeKeyAndVisible()
         bar.apply()
@@ -2326,7 +2326,7 @@ struct ComposerDictatedCommentRowTests {
         )
         content.actionRow = toolbar
         let screen = ComposerOwnerTestScreen(content: content)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
         window.rootViewController = screen
         window.makeKeyAndVisible()
         defer { hideTestWindow(window); window.rootViewController = nil }

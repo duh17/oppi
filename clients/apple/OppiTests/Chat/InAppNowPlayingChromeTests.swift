@@ -633,7 +633,7 @@ struct InAppNowPlayingChromeTests {
         player._setPlaybackStateForTesting(playing: "audio-1", loading: nil)
         var leaves = 0
         let page = InAppNowPlayingPlayerViewController(audioPlayer: player, onLeave: { leaves += 1 })
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = page
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -660,7 +660,7 @@ struct InAppNowPlayingChromeTests {
         let player = AudioPlayerService()
         player._setPlaybackStateForTesting(playing: "audio-1", loading: nil)
         let presenter = UIViewController()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = presenter
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -686,7 +686,7 @@ struct InAppNowPlayingChromeTests {
         player._setPlaybackStateForTesting(playing: "audio-1", loading: nil)
         var leaves = 0
         let page = InAppNowPlayingPlayerViewController(audioPlayer: player, onLeave: { leaves += 1 })
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = page
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -726,7 +726,7 @@ struct InAppNowPlayingChromeTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { player.chapters.count == 11 })
         player.seek(to: 5)
         let page = InAppNowPlayingPlayerViewController(audioPlayer: player)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = page
         window.makeKeyAndVisible()
         defer { window.isHidden = true }

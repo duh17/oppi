@@ -242,7 +242,7 @@ private final class BookReaderFixture {
             content: .book(document),
             reviewCommentSelectionContext: nil
         )
-        window = UIWindow(frame: CGRect(origin: .zero, size: Self.size))
+        window = makeTestWindow(frame: CGRect(origin: .zero, size: Self.size))
         window.rootViewController = reader
         // A phone's home-indicator band: the chrome that floats over the page
         // sits 34pt higher than a window with no safe-area insets would put it,

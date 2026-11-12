@@ -243,7 +243,7 @@ struct WorkspaceCreateTests {
             #expect(await findButton("workspace.create.createWithOppi", in: screen.view) != nil)
         }
 
-        let offline = try PairedServer(from: makeTestCredentials(host: "offline.test", fingerprint: "sha256:offline"), sortOrder: 9)
+        let offline = PairedServer(from: makeTestCredentials(host: "offline.test", fingerprint: "sha256:offline"), sortOrder: 9)
         let screen = WorkspaceCreateViewController(root: fixture.root, server: try #require(offline))
         let window = try showInWindow(screen)
         defer { hide(window) }

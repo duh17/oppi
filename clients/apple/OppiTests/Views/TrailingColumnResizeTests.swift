@@ -345,7 +345,7 @@ struct TrailingColumnControllerTests {
     }
 
     @Test func draggingPastTheCloseThresholdDismissesLikeItsOwnDoneControl() throws {
-        try withCleanWidthPreference {
+        withCleanWidthPreference {
             let host = makeHost(width: 1000)
             defer { host.hide() }
             host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 500)
@@ -375,7 +375,7 @@ struct TrailingColumnControllerTests {
     }
 
     @Test func aSettledWidthIsRememberedProportionallyByTheNextColumn() throws {
-        try withCleanWidthPreference {
+        withCleanWidthPreference {
             let firstHost = makeHost(width: 1000)
             firstHost.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 900)
             firstHost.drag(by: -100) // settles at 400 of 1000: a 0.4 fraction

@@ -1028,7 +1028,7 @@ struct HTMLDOMElementAnnotationTests {
             controller.beforeLookupResumeForTesting = nil
             controller.parentButtonForTesting.sendActions(for: .touchUpInside)
             _ = await self.waitForElement(id: "inner", controller: controller)
-            _ = try? try await self.pageString(
+            _ = try? await self.pageString(
                 "document.getElementById('leaf').textContent = 'changed-after-parent'",
                 in: fixture.view
             )
@@ -1473,7 +1473,7 @@ struct HTMLDOMElementAnnotationTests {
             window = UIWindow(windowScene: scene)
             window.frame = frame
         } else {
-            window = UIWindow(frame: frame)
+            window = makeTestWindow(frame: frame)
         }
         let host = UIViewController()
         window.rootViewController = host

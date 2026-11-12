@@ -28,19 +28,19 @@ struct E2ELifecycleDiagnosticSnapshot: Equatable {
 /// Pairing invite tokens are single-use. The app performs normal P-256 pairing
 /// on first launch and relaunches reuse the persisted DeviceAuthSession for
 /// this invite identity instead of injecting a static harness `at_`.
+/// Main-actor isolated: `XCUIApplication` and `XCUIElement` are, and every case drives them.
+@MainActor
 class E2ETestCase: XCTestCase {
 
     /// Shared app instance — persists across E2E test classes.
-    /// nonisolated(unsafe) is required for Swift 6 strict concurrency — XCTest
-    /// runs these UI tests serially in the harness.
-    nonisolated(unsafe) private static var _app: XCUIApplication?
+    private static var _app: XCUIApplication?
 
     /// The chat style the shared app was launched with (`e2eChatStyle`). Only
     /// meaningful while `_app` is set.
-    nonisolated(unsafe) private static var launchedChatStyle: String?
+    private static var launchedChatStyle: String?
 
     /// Launch configurations that never reached their first surface.
-    nonisolated(unsafe) private static var launchLedger = E2ELaunchFailureLedger()
+    private static var launchLedger = E2ELaunchFailureLedger()
 
     /// This test's launch configuration, set while it launches.
     private var launchKey = ""
@@ -949,7 +949,6 @@ class E2ETestCase: XCTestCase {
     /// Scrolls to a session row by its id and places it where a tap lands on it. Use for rows a
     /// case taps or swipes; `scrollToElement` alone leaves a row at the list's edge, where the
     /// bottom bar can take the touch.
-    @MainActor
     @discardableResult
     func revealSessionRow(_ row: XCUIElement, in list: XCUIElement, timeout: TimeInterval = 90) -> Bool {
         guard scrollToElement(row, in: list, timeout: timeout) else { return false }
@@ -960,7 +959,6 @@ class E2ETestCase: XCTestCase {
     // MARK: - Session Helpers
 
     /// Creates a new session by tapping the + button and waits for the app to open it.
-    @MainActor
     func createSession() {
         if chatSessionSurfaceExists(in: app) {
             return
@@ -1013,7 +1011,6 @@ class E2ETestCase: XCTestCase {
     }
 
     /// Taps a specific session row by stable session id and waits for chat input.
-    @MainActor
     func enterSession(id sessionId: String) {
         let sessionList = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(
@@ -1059,7 +1056,6 @@ class E2ETestCase: XCTestCase {
     /// The toolbar element itself spans the whole screen. Its bounds are the
     /// bar's content: the first element of it that sits in the lower half of the
     /// list and is smaller than the list is the bar's top edge.
-    @MainActor
     private func sessionRowTapBand(in list: XCUIElement) -> ClosedRange<CGFloat> {
         let listFrame = list.frame
         var top = listFrame.minY
@@ -1102,7 +1098,6 @@ class E2ETestCase: XCTestCase {
     /// row by its frame against the tap band, and drags the list without
     /// momentum by the distance that is missing.
     /// Returns false when the row could not be placed (the list cannot scroll further).
-    @MainActor
     @discardableResult
     private func scrollSessionRowIntoView(_ row: XCUIElement, in list: XCUIElement) -> Bool {
         var lastMinY: CGFloat?
@@ -1139,7 +1134,6 @@ class E2ETestCase: XCTestCase {
     }
 
     /// Creates a new session and enters it.
-    @MainActor
     func createAndEnterSession() {
         createSession()
     }
@@ -1310,7 +1304,6 @@ class E2ETestCase: XCTestCase {
     /// frame lands on the bar control the composer is about to sit under.
     /// Hittable alone can hold for one read mid-relayout, so require the same
     /// non-empty frame on two reads a poll apart.
-    @MainActor
     func waitForSettledHittable(
         _ element: XCUIElement,
         timeout: TimeInterval = 10,
@@ -1331,7 +1324,6 @@ class E2ETestCase: XCTestCase {
 
     // MARK: - E2E Diagnostics
 
-    @MainActor
     func e2eDiagnosticMatches(
         _ identifier: String,
         timeout: TimeInterval = 15,
@@ -1415,7 +1407,6 @@ class E2ETestCase: XCTestCase {
         return connectionID
     }
 
-    @MainActor
     func e2eLifecycleSnapshot(timeout: TimeInterval = 10) -> E2ELifecycleDiagnosticSnapshot {
         let value = waitForE2EDiagnostic("e2e.lifecycle", timeout: timeout) {
             Self.e2eLifecycleSnapshot(from: $0) != nil
@@ -1437,7 +1428,6 @@ class E2ETestCase: XCTestCase {
 
     /// Executes one real scene cycle and proves precisely one completed
     /// background handler followed by one completed active handler.
-    @MainActor
     func backgroundAndActivate(
         after previous: E2ELifecycleDiagnosticSnapshot,
         scenario: String,
@@ -1527,7 +1517,6 @@ class E2ETestCase: XCTestCase {
         return snapshot
     }
 
-    @MainActor
     func recordLifecycleCycleFailure(scenario: String, cycle: Int, message: String) {
         XCTContext.runActivity(named: "\(scenario) lifecycle cycle \(cycle) failure") { activity in
             let screenshot = XCTAttachment(screenshot: app.screenshot())
@@ -1543,7 +1532,6 @@ class E2ETestCase: XCTestCase {
         }
     }
 
-    @MainActor
     func waitForAppToLeaveForeground(timeout: TimeInterval) {
         let deadline = Date().addingTimeInterval(timeout)
         while app.state == .runningForeground && Date() < deadline {

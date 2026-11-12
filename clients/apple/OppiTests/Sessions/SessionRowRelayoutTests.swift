@@ -79,7 +79,7 @@ struct SessionRowRelayoutTests {
         )
         let controller = UIViewController()
         controller.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: sideSafeArea, bottom: 0, right: sideSafeArea)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: height))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: width, height: height))
         list.collectionView.translatesAutoresizingMaskIntoConstraints = false
         controller.view.addSubview(list.collectionView)
         NSLayoutConstraint.activate([
@@ -181,7 +181,7 @@ struct SessionRowRelayoutTests {
     /// the row kept its one-line height and drew the details squeezed.
     @Test func rowConfiguredInsideAnimationsStillGrowsItsDetails() {
         let row = SessionRowView(combinesAccessibility: true)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 300))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 300))
         window.addSubview(row)
         row.frame = CGRect(x: 0, y: 0, width: 370, height: 60)
         window.makeKeyAndVisible()

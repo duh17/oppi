@@ -114,7 +114,7 @@ struct ExtensionSurfaceBlocksViewsTests {
         let view = composites(surface)
 
         // The card's own header, then each kind in draw order.
-        let header = try testUnwrap(control(node("blocks-panel", "panel", "body"), in: view))
+        let header = testUnwrap(control(node("blocks-panel", "panel", "body"), in: view))
         #expect(header.accessibilityIdentifier == "extension.surface.blocks_2dpanel.panel.body")
         #expect(control("extension.surface.blocks_2dpanel.panel.phase", in: view) != nil)
 
@@ -136,11 +136,11 @@ struct ExtensionSurfaceBlocksViewsTests {
 
         // The table keeps the dataTable's row element and row menu, under the node that draws it.
         let gates = node("blocks-panel", "panel", "gates")
-        let build = try testUnwrap(control("\(gates).build", in: view))
+        let build = testUnwrap(control("\(gates).build", in: view))
         #expect(build.accessibilityLabel?.contains("Build") == true)
         #expect(build.accessibilityLabel?.contains("passed") == true)
         #expect(build.accessibilityTraits.contains(.button))
-        let menu = try testUnwrap(control("\(gates).build.menu", in: view) as? UIButton)
+        let menu = testUnwrap(control("\(gates).build.menu", in: view) as? UIButton)
         #expect(menu.menu?.children.compactMap { ($0 as? UIAction)?.title } == ["Copy", "Open"])
     }
 
@@ -149,7 +149,7 @@ struct ExtensionSurfaceBlocksViewsTests {
         let view = composites(surface)
 
         #expect(allLabelTexts(in: view).contains { $0.contains("This part is known") })
-        let placeholder = try testUnwrap(control(node("blocks-future", "future", "canvas"), in: view))
+        let placeholder = testUnwrap(control(node("blocks-future", "future", "canvas"), in: view))
         #expect(placeholder.accessibilityLabel?.contains("webview") == true)
     }
 
@@ -157,7 +157,7 @@ struct ExtensionSurfaceBlocksViewsTests {
 
     @Test func aDividerDrawsAHairlineAcrossTheBody() throws {
         let view = composites(try surface("blocks-panel.json"))
-        let rule = try testUnwrap(control(node("blocks-panel", "panel", "rule"), in: view))
+        let rule = testUnwrap(control(node("blocks-panel", "panel", "rule"), in: view))
         // A column lays its children out leading-aligned: a divider that does not fill the column
         // keeps its own width of zero and draws nothing at all.
         #expect(rule.bounds.width > 0.5, "the divider draws no width: \(rule.bounds)")
@@ -167,8 +167,8 @@ struct ExtensionSurfaceBlocksViewsTests {
         // And it paints: a line of the card's own ink, which a person can see. The host's separator
         // follows the device's appearance instead, so over a dark theme it drew within a couple of
         // levels of the card beneath it — a rule nobody could find.
-        let card = try testUnwrap(subviews(of: ExtensionSurfaceCompositeCardView.self, in: view).first)
-        let ink = try testUnwrap(rule.backgroundColor)
+        let card = testUnwrap(subviews(of: ExtensionSurfaceCompositeCardView.self, in: view).first)
+        let ink = testUnwrap(rule.backgroundColor)
         let fill = (card.backgroundColor ?? .clear).over(themeID.palette.ui.bg)
         let drawn = ink.over(fill)
         let contrast = (max(drawn.relativeLuminance, fill.relativeLuminance) + 0.05)
@@ -178,7 +178,7 @@ struct ExtensionSurfaceBlocksViewsTests {
 
     @Test func aRingPaintsItsLabelBesideIt() throws {
         let view = composites(try surface("blocks-panel.json"))
-        let ring = try testUnwrap(control(node("blocks-panel", "panel", "waiting"), in: view))
+        let ring = testUnwrap(control(node("blocks-panel", "panel", "waiting"), in: view))
         let words = try #require(allLabels(in: ring).first { $0.text == "Retrying" }, "the ring painted no label")
         let glyph = try #require(
             subviews(of: UIView.self, in: ring).first { abs($0.bounds.width - 16) < 1 && !$0.isHidden },
@@ -196,7 +196,7 @@ struct ExtensionSurfaceBlocksViewsTests {
     @Test func keyValueRowsAreReusedAndValuesShareOneColumn() throws {
         let surface = try surface("blocks-panel.json")
         let view = composites(surface)
-        let facts = try testUnwrap(control(node("blocks-panel", "panel", "facts"), in: view))
+        let facts = testUnwrap(control(node("blocks-panel", "panel", "facts"), in: view))
         let before = allLabels(in: facts)
         #expect(before.count == 4, "two pairs, two labels each: \(before.count)")
 
@@ -223,7 +223,7 @@ struct ExtensionSurfaceBlocksViewsTests {
         var intents: [ExtensionSurfaceActionIntent] = []
         let view = composites(surface, onAction: { intents.append($0) })
 
-        let retry = try testUnwrap(control(node("blocks-panel", "panel", "retry"), in: view) as? UIButton)
+        let retry = testUnwrap(control(node("blocks-panel", "panel", "retry"), in: view) as? UIButton)
         #expect(retry.configuration?.title == "Retry")
         retry.sendActions(for: .touchUpInside)
         #expect(intents.count == 1)
@@ -238,7 +238,7 @@ struct ExtensionSurfaceBlocksViewsTests {
             surface,
             pending: pending(actionId: "retry", nodeId: "retry", title: "Retrying…", disabled: ["retry"])
         )
-        let busy = try testUnwrap(control(node("blocks-panel", "panel", "retry"), in: waiting) as? UIButton)
+        let busy = testUnwrap(control(node("blocks-panel", "panel", "retry"), in: waiting) as? UIButton)
         #expect(busy.configuration?.title == "Retrying…")
         #expect(!busy.isEnabled)
         #expect(
@@ -248,7 +248,7 @@ struct ExtensionSurfaceBlocksViewsTests {
 
         // Settled: the extension's own words are back and the control works again.
         let settled = composites(surface)
-        let idle = try testUnwrap(control(node("blocks-panel", "panel", "retry"), in: settled) as? UIButton)
+        let idle = testUnwrap(control(node("blocks-panel", "panel", "retry"), in: settled) as? UIButton)
         #expect(idle.configuration?.title == "Retry")
         #expect(idle.isEnabled)
     }
@@ -258,8 +258,8 @@ struct ExtensionSurfaceBlocksViewsTests {
             try panelWithTwinRetry(),
             pending: pending(actionId: "retry", nodeId: "retry", title: "Retrying…", disabled: ["retry"])
         )
-        let sender = try testUnwrap(control(node("blocks-panel", "panel", "retry"), in: waiting) as? UIButton)
-        let twin = try testUnwrap(control(node("blocks-panel", "panel", "retry-again"), in: waiting) as? UIButton)
+        let sender = testUnwrap(control(node("blocks-panel", "panel", "retry"), in: waiting) as? UIButton)
+        let twin = testUnwrap(control(node("blocks-panel", "panel", "retry-again"), in: waiting) as? UIButton)
         #expect(sender.configuration?.title == "Retrying…")
         #expect(!sender.isEnabled)
         #expect(twin.configuration?.title == "Retry again", "a node that did not send the action keeps its words")
@@ -275,7 +275,7 @@ struct ExtensionSurfaceBlocksViewsTests {
         var intents: [ExtensionSurfaceActionIntent] = []
         let view = composites(surface, onAction: { intents.append($0) })
 
-        let toggle = try testUnwrap(control(node("blocks-panel", "panel", "notify"), in: view) as? UISwitch)
+        let toggle = testUnwrap(control(node("blocks-panel", "panel", "notify"), in: view) as? UISwitch)
         #expect(!toggle.isOn, "the switch starts at the value the server published")
         #expect(toggle.accessibilityLabel == "Notify on failure")
         toggle.setOn(true, animated: false)
@@ -288,7 +288,7 @@ struct ExtensionSurfaceBlocksViewsTests {
         // The round trip failed: no frame arrived, so the surface still says false and the switch
         // goes back to it rather than keeping a value the server never accepted.
         let reverted = composites(surface)
-        let afterFailure = try testUnwrap(control(node("blocks-panel", "panel", "notify"), in: reverted) as? UISwitch)
+        let afterFailure = testUnwrap(control(node("blocks-panel", "panel", "notify"), in: reverted) as? UISwitch)
         #expect(!afterFailure.isOn)
     }
 
@@ -296,14 +296,14 @@ struct ExtensionSurfaceBlocksViewsTests {
         let surface = try surface("blocks-panel.json")
         let inFlight = pending(actionId: "notify", nodeId: "notify", title: nil, disabled: [])
         let view = composites(surface, pending: inFlight)
-        let toggle = try testUnwrap(control(node("blocks-panel", "panel", "notify"), in: view) as? UISwitch)
+        let toggle = testUnwrap(control(node("blocks-panel", "panel", "notify"), in: view) as? UISwitch)
 
         // The person moved it. The repaint that the sent action causes still reads the published
         // value, so this frame must leave the switch where the person put it.
         toggle.setOn(true, animated: false)
         view.apply(surface: surface, pending: inFlight, themeID: themeID, onAction: nil)
         view.layoutIfNeeded()
-        let waiting = try testUnwrap(control(node("blocks-panel", "panel", "notify"), in: view) as? UISwitch)
+        let waiting = testUnwrap(control(node("blocks-panel", "panel", "notify"), in: view) as? UISwitch)
         #expect(waiting === toggle, "the switch was rebuilt instead of repainted")
         #expect(toggle.isOn, "the switch snapped back to the published value while its action waited")
         #expect(!toggle.isEnabled, "a waiting switch does not offer the same action twice")
@@ -317,10 +317,10 @@ struct ExtensionSurfaceBlocksViewsTests {
 
     @Test func aToggleSpeaksItsTitleOnce() throws {
         let view = composites(try surface("blocks-panel.json"))
-        let toggle = try testUnwrap(control(node("blocks-panel", "panel", "notify"), in: view) as? UISwitch)
+        let toggle = testUnwrap(control(node("blocks-panel", "panel", "notify"), in: view) as? UISwitch)
         #expect(toggle.accessibilityLabel == "Notify on failure")
-        let holder = try testUnwrap(toggle.superview?.superview)
-        let painted = try testUnwrap(allLabels(in: holder).first { $0.text == "Notify on failure" })
+        let holder = testUnwrap(toggle.superview?.superview)
+        let painted = testUnwrap(allLabels(in: holder).first { $0.text == "Notify on failure" })
         #expect(!painted.isAccessibilityElement, "the title is a second VoiceOver stop beside the switch")
     }
 
@@ -331,8 +331,8 @@ struct ExtensionSurfaceBlocksViewsTests {
         var intents: [ExtensionSurfaceActionIntent] = []
         let view = composites(surface, onAction: { intents.append($0) })
 
-        let overflow = try testUnwrap(control(node("blocks-panel", "panel", "overflow"), in: view) as? UIButton)
-        let items = try testUnwrap(overflow.menu?.children.compactMap { $0 as? UIAction })
+        let overflow = testUnwrap(control(node("blocks-panel", "panel", "overflow"), in: view) as? UIButton)
+        let items = testUnwrap(overflow.menu?.children.compactMap { $0 as? UIAction })
         #expect(items.map(\.title) == ["Logs", "Cancel", "Filters"])
         #expect(items[1].attributes.contains(.destructive), "a destructive item wears the role")
         items[0].performWithSender(nil, target: nil)
@@ -347,7 +347,7 @@ struct ExtensionSurfaceBlocksViewsTests {
         var intents: [ExtensionSurfaceActionIntent] = []
         let view = composites(surface, onAction: { intents.append($0) })
 
-        let link = try testUnwrap(control(node("blocks-panel", "panel", "logs-link"), in: view) as? UIControl)
+        let link = testUnwrap(control(node("blocks-panel", "panel", "logs-link"), in: view) as? UIControl)
         #expect(link.accessibilityTraits.contains(.button))
         #expect(link.accessibilityLabel == "Open logs")
         #expect(link.accessibilityActivate())
@@ -374,7 +374,7 @@ struct ExtensionSurfaceBlocksViewsTests {
         )
         let view = composites(tappable, onAction: { intents.append($0) })
 
-        let row = try testUnwrap(control(node("blocks-panel", "panel", "headline"), in: view) as? UIControl)
+        let row = testUnwrap(control(node("blocks-panel", "panel", "headline"), in: view) as? UIControl)
         #expect(row.accessibilityTraits.contains(.button))
         #expect(row.accessibilityLabel?.contains("Deploying 4f2c1ab") == true)
         #expect(row.accessibilityActivate())
@@ -389,7 +389,7 @@ struct ExtensionSurfaceBlocksViewsTests {
             pending: pending(actionId: "retry", nodeId: "retry", title: "Retrying…", disabled: ["openLog"]),
             onAction: { intents.append($0) }
         )
-        let link = try testUnwrap(control(node("blocks-panel", "panel", "logs-link"), in: waiting) as? UIControl)
+        let link = testUnwrap(control(node("blocks-panel", "panel", "logs-link"), in: waiting) as? UIControl)
         #expect(!link.isEnabled, "the region does not say it is disabled")
         #expect(link.accessibilityTraits.contains(.notEnabled))
         #expect(!link.accessibilityActivate(), "an assistive activation sent a disabled action")
@@ -444,8 +444,8 @@ struct ExtensionSurfaceBlocksViewsTests {
             object["sections"] = sections
         })
         let view = composites(surface, sizeCategory: .accessibilityExtraExtraExtraLarge)
-        let card = try testUnwrap(subviews(of: ExtensionSurfaceCompositeCardView.self, in: view).first)
-        let badge = try testUnwrap(control(node("blocks-panel", "panel", "state"), in: view))
+        let card = testUnwrap(subviews(of: ExtensionSurfaceCompositeCardView.self, in: view).first)
+        let badge = testUnwrap(control(node("blocks-panel", "panel", "state"), in: view))
         let badgeFrame = badge.convert(badge.bounds, to: card)
         #expect(badgeFrame.maxX <= card.bounds.width + 0.5, "the badge ends \(badgeFrame.maxX) pt into a \(card.bounds.width) pt card")
         #expect(clippedText(in: card).isEmpty, "the long badge clips: \(clippedText(in: card))")
@@ -470,8 +470,8 @@ struct ExtensionSurfaceBlocksViewsTests {
             object["sections"] = sections
         })
         let view = composites(surface)
-        let card = try testUnwrap(subviews(of: ExtensionSurfaceCompositeCardView.self, in: view).first)
-        let facts = try testUnwrap(control(node("blocks-panel", "panel", "facts"), in: view))
+        let card = testUnwrap(subviews(of: ExtensionSurfaceCompositeCardView.self, in: view).first)
+        let facts = testUnwrap(control(node("blocks-panel", "panel", "facts"), in: view))
         let furthest = subtreeMaxX(in: card)
         #expect(furthest <= card.bounds.width + 0.5, "the long key draws \(furthest) pt into a \(card.bounds.width) pt card")
 
@@ -510,16 +510,16 @@ struct ExtensionSurfaceBlocksViewsTests {
 
     @Test func onlyAPrimaryButtonTakesTheColumnWidth() throws {
         let view = composites(try surface("blocks-panel.json"))
-        let controls = try testUnwrap(control(node("blocks-panel", "panel", "controls"), in: view))
-        let retry = try testUnwrap(control(node("blocks-panel", "panel", "retry"), in: view) as? UIButton)
-        let more = try testUnwrap(control(node("blocks-panel", "panel", "overflow"), in: view) as? UIButton)
+        let controls = testUnwrap(control(node("blocks-panel", "panel", "controls"), in: view))
+        let retry = testUnwrap(control(node("blocks-panel", "panel", "retry"), in: view) as? UIButton)
+        let more = testUnwrap(control(node("blocks-panel", "panel", "overflow"), in: view) as? UIButton)
         #expect(abs(retry.bounds.width - controls.bounds.width) <= 0.5, "the primary does not span its column")
         #expect(more.bounds.width < controls.bounds.width - 20, "a menu stretches across the column: \(more.bounds.width)")
 
         // The body already offers a primary, so the card's own action row is secondary: not filled
         // with the accent, and no wider than its own words.
-        let card = try testUnwrap(subviews(of: ExtensionSurfaceCompositeCardView.self, in: view).first)
-        let refresh = try testUnwrap(cardAction("refresh", in: view) as? UIButton)
+        let card = testUnwrap(subviews(of: ExtensionSurfaceCompositeCardView.self, in: view).first)
+        let refresh = testUnwrap(cardAction("refresh", in: view) as? UIButton)
         #expect(refresh.configuration?.baseBackgroundColor == nil, "the demoted action still fills with the accent")
         #expect(refresh.bounds.width < card.bounds.width - 20, "the demoted action still spans the card")
         #expect(retry.configuration?.baseBackgroundColor != nil, "the body's primary lost its emphasis")
@@ -527,23 +527,23 @@ struct ExtensionSurfaceBlocksViewsTests {
 
     @Test func theCardBodyGivesItsTopLevelChildrenTwelvePoints() throws {
         let view = composites(try surface("blocks-panel.json"))
-        let headline = try testUnwrap(control(node("blocks-panel", "panel", "headline"), in: view))
-        let progress = try testUnwrap(control(node("blocks-panel", "panel", "progress"), in: view))
+        let headline = testUnwrap(control(node("blocks-panel", "panel", "headline"), in: view))
+        let progress = testUnwrap(control(node("blocks-panel", "panel", "progress"), in: view))
         let gap = progress.convert(progress.bounds, to: view).minY - headline.convert(headline.bounds, to: view).maxY
         #expect(abs(gap - 12) <= 0.5, "the body's top level is \(gap) pt apart")
 
         // The action row stands off the body a little further than the body's own children. The
         // group is the body's last child, so the card's own row follows it.
-        let last = try testUnwrap(control(node("blocks-panel", "panel", "filters"), in: view))
-        let refresh = try testUnwrap(cardAction("refresh", in: view))
+        let last = testUnwrap(control(node("blocks-panel", "panel", "filters"), in: view))
+        let refresh = testUnwrap(cardAction("refresh", in: view))
         let actionGap = refresh.convert(refresh.bounds, to: view).minY - last.convert(last.bounds, to: view).maxY
         #expect(actionGap >= 12 && actionGap <= 16, "the action row is \(actionGap) pt under the body")
     }
 
     @Test func anIconAndTheControlsShareOneLine() throws {
         let view = composites(try surface("blocks-panel.json"))
-        let icon = try testUnwrap(control(node("blocks-panel", "panel", "hammer"), in: view))
-        let retry = try testUnwrap(control(node("blocks-panel", "panel", "retry"), in: view))
+        let icon = testUnwrap(control(node("blocks-panel", "panel", "hammer"), in: view))
+        let retry = testUnwrap(control(node("blocks-panel", "panel", "retry"), in: view))
         let iconFrame = icon.convert(icon.bounds, to: view)
         let retryFrame = retry.convert(retry.bounds, to: view)
         #expect(abs(iconFrame.midY - retryFrame.midY) < iconFrame.height, "the icon sits on a line of its own")
@@ -554,9 +554,9 @@ struct ExtensionSurfaceBlocksViewsTests {
         let surface = try surface("blocks-panel.json")
         for category in [UIContentSizeCategory.large, .accessibilityExtraExtraExtraLarge] {
             let view = composites(surface, sizeCategory: category)
-            let headline = try testUnwrap(control(node("blocks-panel", "panel", "headline"), in: view))
-            let phase = try testUnwrap(control(node("blocks-panel", "panel", "phase"), in: view))
-            let badge = try testUnwrap(control(node("blocks-panel", "panel", "state"), in: view))
+            let headline = testUnwrap(control(node("blocks-panel", "panel", "headline"), in: view))
+            let phase = testUnwrap(control(node("blocks-panel", "panel", "phase"), in: view))
+            let badge = testUnwrap(control(node("blocks-panel", "panel", "state"), in: view))
             let phaseFrame = phase.convert(phase.bounds, to: view)
             let badgeFrame = badge.convert(badge.bounds, to: view)
             if category.isAccessibilityCategory {
@@ -579,26 +579,26 @@ struct ExtensionSurfaceBlocksViewsTests {
 
         // A selected row: the fill and hairline the host gives the item a person picked, and the
         // trait VoiceOver reads instead of "button".
-        let row = try testUnwrap(control(node("blocks-filters", "filters", "active-row"), in: view))
+        let row = testUnwrap(control(node("blocks-filters", "filters", "active-row"), in: view))
         #expect(row.accessibilityTraits.contains(.selected), "the row is not marked selected")
         #expect(row.backgroundColor == palette.ui.cyan.withAlphaComponent(0.16), "the row is not filled")
         #expect(row.layer.borderWidth == 1, "the row has no hairline")
 
         // A button keeps its own role and takes the same mark.
-        let button = try testUnwrap(
+        let button = testUnwrap(
             control(node("blocks-filters", "filters", "seg-all"), in: view) as? UIButton
         )
         #expect(button.accessibilityTraits.contains(.selected))
         #expect(button.configuration?.background.backgroundColor == palette.ui.cyan.withAlphaComponent(0.16))
 
         // A badge is already a capsule; a selection paints over the tone it arrived with.
-        let badge = try testUnwrap(control(node("blocks-filters", "filters", "badge-selected"), in: view))
+        let badge = testUnwrap(control(node("blocks-filters", "filters", "badge-selected"), in: view))
         #expect(badge.accessibilityTraits.contains(.selected), "the badge is not marked selected")
         #expect(badge.backgroundColor == palette.ui.cyan.withAlphaComponent(0.16))
         #expect(badge.layer.borderWidth == 1)
 
         // The item that is not the one picked says nothing of the sort.
-        let other = try testUnwrap(control(node("blocks-filters", "filters", "seg-running"), in: view))
+        let other = testUnwrap(control(node("blocks-filters", "filters", "seg-running"), in: view))
         #expect(!other.accessibilityTraits.contains(.selected))
         #expect(other.backgroundColor == nil || other.backgroundColor == .clear)
     }
@@ -607,15 +607,15 @@ struct ExtensionSurfaceBlocksViewsTests {
         // The panel's filters group: a chip row of one selected and one plain item.
         let view = composites(try surface("blocks-panel.json"))
         let palette = themeID.palette
-        let chip = try testUnwrap(control(node("blocks-panel", "panel", "filter-all"), in: view))
-        let plain = try testUnwrap(control(node("blocks-panel", "panel", "filter-running"), in: view))
+        let chip = testUnwrap(control(node("blocks-panel", "panel", "filter-all"), in: view))
+        let plain = testUnwrap(control(node("blocks-panel", "panel", "filter-running"), in: view))
 
         #expect(chip.accessibilityTraits.contains(.selected), "the chip is not marked selected")
         #expect(chip.backgroundColor == palette.ui.cyan.withAlphaComponent(0.16))
         #expect(chip.layer.borderWidth == 1)
         #expect(chip.layer.cornerRadius > 0, "the selected words are not a capsule")
         // The words keep their own air inside the capsule, so the fill reads as one chip.
-        let chipLabel = try testUnwrap(allLabels(in: chip).first)
+        let chipLabel = testUnwrap(allLabels(in: chip).first)
         #expect(chipLabel.frame.minX >= 4, "the words sit on the capsule's edge")
         // The capsule is the words plus their air each side, not a width the words overflow.
         #expect(abs(chip.bounds.width - (chipLabel.intrinsicContentSize.width + 24)) <= 1,
@@ -625,7 +625,7 @@ struct ExtensionSurfaceBlocksViewsTests {
                 "the selected chip is drawn over its sibling")
 
         // A chip hugs its words: it sits beside its siblings rather than stretching over them.
-        let row = try testUnwrap(control(node("blocks-panel", "panel", "filter-set"), in: view))
+        let row = testUnwrap(control(node("blocks-panel", "panel", "filter-set"), in: view))
         #expect(chip.bounds.width < row.bounds.width - 40,
                 "the chip stretched across the row: \(chip.bounds.width) of \(row.bounds.width)")
 
@@ -638,39 +638,39 @@ struct ExtensionSurfaceBlocksViewsTests {
         let view = composites(try surface("blocks-filters.json"), onAction: { intents.append($0) })
 
         // Every kind that can be published disabled: a control, and a region a tap would reach.
-        let row = try testUnwrap(control(node("blocks-filters", "filters", "archived-row"), in: view) as? UIControl)
+        let row = testUnwrap(control(node("blocks-filters", "filters", "archived-row"), in: view) as? UIControl)
         #expect(!row.isEnabled)
         #expect(row.accessibilityTraits.contains(.notEnabled))
         #expect(!row.accessibilityActivate(), "assistive activation sent the action")
         row.sendActions(for: .touchUpInside)
 
-        let stack = try testUnwrap(control(node("blocks-filters", "filters", "locked"), in: view) as? UIControl)
+        let stack = testUnwrap(control(node("blocks-filters", "filters", "locked"), in: view) as? UIControl)
         #expect(!stack.isEnabled)
         stack.sendActions(for: .touchUpInside)
 
-        let text = try testUnwrap(control(node("blocks-filters", "filters", "locked-text"), in: view))
+        let text = testUnwrap(control(node("blocks-filters", "filters", "locked-text"), in: view))
         #expect(text.accessibilityTraits.contains(.notEnabled))
         #expect(!text.accessibilityActivate())
 
-        let badge = try testUnwrap(control(node("blocks-filters", "filters", "badge-disabled"), in: view))
+        let badge = testUnwrap(control(node("blocks-filters", "filters", "badge-disabled"), in: view))
         #expect(badge.accessibilityTraits.contains(.notEnabled))
         #expect(badge.alpha < 1, "a disabled region does not look like a usable one")
 
-        let button = try testUnwrap(control(node("blocks-filters", "filters", "seg-failed"), in: view) as? UIButton)
+        let button = testUnwrap(control(node("blocks-filters", "filters", "seg-failed"), in: view) as? UIButton)
         #expect(!button.isEnabled)
         #expect(button.accessibilityTraits.contains(.notEnabled))
         button.sendActions(for: .touchUpInside)
 
-        let toggle = try testUnwrap(control(node("blocks-filters", "filters", "notify-toggle"), in: view) as? UISwitch)
+        let toggle = testUnwrap(control(node("blocks-filters", "filters", "notify-toggle"), in: view) as? UISwitch)
         #expect(!toggle.isEnabled)
 
-        let menu = try testUnwrap(control(node("blocks-filters", "filters", "groupby"), in: view) as? UIButton)
+        let menu = testUnwrap(control(node("blocks-filters", "filters", "groupby"), in: view) as? UIButton)
         #expect(!menu.isEnabled)
 
         #expect(intents.isEmpty, "a disabled node sent \(intents.map(\.actionId))")
 
         // The sibling nobody disabled still answers: one node's state is not the whole tree's.
-        let running = try testUnwrap(control(node("blocks-filters", "filters", "seg-running"), in: view) as? UIButton)
+        let running = testUnwrap(control(node("blocks-filters", "filters", "seg-running"), in: view) as? UIButton)
         #expect(running.isEnabled)
         running.sendActions(for: .touchUpInside)
         #expect(intents.map(\.actionId) == ["apply"])
@@ -683,12 +683,12 @@ struct ExtensionSurfaceBlocksViewsTests {
         let palette = themeID.palette
 
         // A ring's arc carries the node's tone; its track is the same colour, paler.
-        let ring = try testUnwrap(control(node("blocks-panel", "panel", "waiting"), in: view))
+        let ring = testUnwrap(control(node("blocks-panel", "panel", "waiting"), in: view))
         let strokes = ringStrokes(in: ring)
         #expect(strokes.contains(palette.ui.orange), "the ring's arc is not its warning tone: \(strokes)")
 
         // The bar's fill carries its own tone instead of the host's default foreground.
-        let bar = try testUnwrap(control(node("blocks-panel", "panel", "progress"), in: view))
+        let bar = testUnwrap(control(node("blocks-panel", "panel", "progress"), in: view))
         let fills = subviews(of: UIView.self, in: bar).compactMap(\.backgroundColor)
         #expect(fills.contains(palette.ui.green.withAlphaComponent(0.82)),
                 "the bar's fill is not its success tone: \(fills)")
@@ -696,7 +696,7 @@ struct ExtensionSurfaceBlocksViewsTests {
 
     @Test func aBadgeDrawsItsIconBeforeItsWords() throws {
         let view = composites(try surface("blocks-panel.json"))
-        let badge = try testUnwrap(control(node("blocks-panel", "panel", "state"), in: view))
+        let badge = testUnwrap(control(node("blocks-panel", "panel", "state"), in: view))
         let icon = try #require(
             subviews(of: UIImageView.self, in: badge).first { !$0.isHidden && $0.image != nil },
             "the badge drew no icon"
@@ -717,9 +717,9 @@ struct ExtensionSurfaceBlocksViewsTests {
         let surface = try surface("blocks-panel.json")
         let view = composites(surface, onAction: { intents.append($0) })
 
-        let group = try testUnwrap(control(node("blocks-panel", "panel", "filters"), in: view))
+        let group = testUnwrap(control(node("blocks-panel", "panel", "filters"), in: view))
         #expect(!group.isAccessibilityElement, "the region is a container, not a control")
-        let disclosure = try testUnwrap(
+        let disclosure = testUnwrap(
             control(node("blocks-panel", "panel", "filters") + ".disclosure", in: view) as? UIControl
         )
         #expect(disclosure.accessibilityTraits.contains(.button))
@@ -727,7 +727,7 @@ struct ExtensionSurfaceBlocksViewsTests {
 
         // Published open: the children are on screen and the control says so.
         #expect(disclosure.accessibilityValue == "Expanded")
-        let chip = try testUnwrap(control(node("blocks-panel", "panel", "filter-all"), in: view))
+        let chip = testUnwrap(control(node("blocks-panel", "panel", "filter-all"), in: view))
         #expect(!isHiddenFromReader(chip, in: view), "the open group hid its children")
 
         // Folding is the reader's own business: it changes what is on screen and sends nothing.
@@ -739,12 +739,12 @@ struct ExtensionSurfaceBlocksViewsTests {
         // A repaint that publishes the same state leaves the reader where they left themselves.
         view.apply(surface: surface, pending: nil, themeID: themeID, onAction: nil)
         view.layoutIfNeeded()
-        let repainted = try testUnwrap(
+        let repainted = testUnwrap(
             control(node("blocks-panel", "panel", "filters") + ".disclosure", in: view) as? UIControl
         )
         #expect(repainted.accessibilityValue == "Collapsed", "a repaint opened the region again")
         // The children are the same renderer's: they keep their own identifiers and state.
-        let repaintedChip = try testUnwrap(control(node("blocks-panel", "panel", "filter-all"), in: view))
+        let repaintedChip = testUnwrap(control(node("blocks-panel", "panel", "filter-all"), in: view))
         #expect(repaintedChip.accessibilityTraits.contains(.selected))
         #expect(isHiddenFromReader(repaintedChip, in: view))
     }
@@ -900,10 +900,10 @@ struct ExtensionSurfaceBlocksViewsTests {
 
     @Test func aGroupPublishedFoldedStartsFoldedAndOpensOnTap() throws {
         let view = composites(try panelWithFoldedGroup())
-        let disclosure = try testUnwrap(
+        let disclosure = testUnwrap(
             control(node("blocks-panel", "panel", "filters") + ".disclosure", in: view) as? UIControl
         )
-        let chip = try testUnwrap(control(node("blocks-panel", "panel", "filter-all"), in: view))
+        let chip = testUnwrap(control(node("blocks-panel", "panel", "filter-all"), in: view))
         #expect(disclosure.accessibilityValue == "Collapsed")
         #expect(isHiddenFromReader(chip, in: view))
 
@@ -914,7 +914,7 @@ struct ExtensionSurfaceBlocksViewsTests {
 
     @Test func aFoldsRowTakesTouchesAcrossA44PointTargetThoughItIsDrawnShorter() throws {
         let view = composites(try panelWithFoldedGroup())
-        let disclosure = try testUnwrap(
+        let disclosure = testUnwrap(
             control(node("blocks-panel", "panel", "filters") + ".disclosure", in: view) as? UIControl
         )
         let frame = disclosure.convert(disclosure.bounds, to: view)
@@ -935,15 +935,15 @@ struct ExtensionSurfaceBlocksViewsTests {
     @Test func aPillDropsItsCaptionTextWhileNarrowAndReturnsWhenTheWidthGrows() throws {
         let panel = makePanel(try surface("blocks-panel.json"), sizeClass: .compact)
         let id = "extension-strip-aboveEditor-pill-surface-blocks_2dpanel"
-        let compact = shownLabelTexts(in: try testUnwrap(control(id, in: panel)))
+        let compact = shownLabelTexts(in: testUnwrap(control(id, in: panel)))
         #expect(!compact.contains("web → prod"), "the caption line is left out while narrow: \(compact)")
         #expect(compact.contains("running"), "the summary's badge stays: \(compact)")
 
-        let window = try testUnwrap(panel.window)
+        let window = testUnwrap(panel.window)
         window.traitOverrides.horizontalSizeClass = .regular
         window.layoutIfNeeded()
         panel.layoutIfNeeded()
-        let wide = shownLabelTexts(in: try testUnwrap(control(id, in: panel)))
+        let wide = shownLabelTexts(in: testUnwrap(control(id, in: panel)))
         #expect(wide.contains("web → prod"), "the caption line returns when the width grows: \(wide)")
     }
 
@@ -951,7 +951,7 @@ struct ExtensionSurfaceBlocksViewsTests {
         let surface = try surface("blocks-panel.json")
         let panel = makePanel(surface, sizeClass: .regular)
 
-        let pill = try testUnwrap(
+        let pill = testUnwrap(
             control("extension-strip-aboveEditor-pill-surface-blocks_2dpanel", in: panel) as? UIControl
         )
         let texts = shownLabelTexts(in: pill)
@@ -976,8 +976,8 @@ struct ExtensionSurfaceBlocksViewsTests {
         #expect(dot.isHidden, "the pill shows a tone dot beside its own icon")
 
         // One inline step: the content row's own spacing is 6 pt in a pill.
-        let icon = try testUnwrap(subviews(of: UIImageView.self, in: pill).first { $0.image != nil })
-        let words = try testUnwrap(subviews(of: UILabel.self, in: pill).first { $0.text == "web → prod" && !$0.isHidden })
+        let icon = testUnwrap(subviews(of: UIImageView.self, in: pill).first { $0.image != nil })
+        let words = testUnwrap(subviews(of: UILabel.self, in: pill).first { $0.text == "web → prod" && !$0.isHidden })
         let step = words.convert(words.bounds, to: pill).minX - icon.convert(icon.bounds, to: pill).maxX
         #expect(abs(step - 6) <= 0.5, "the pill's inline step is \(step) pt")
 
@@ -991,7 +991,7 @@ struct ExtensionSurfaceBlocksViewsTests {
         // A badge's own glyph and a ring say what the strip's tone dot would, exactly as a bare icon
         // does: the dot stays in the hierarchy, hidden, instead of drawing a second indicator.
         let badgePanel = makePanel(try surface("blocks-filters.json"))
-        let badgePill = try testUnwrap(
+        let badgePill = testUnwrap(
             control("extension-strip-aboveEditor-pill-surface-blocks_2dfilters", in: badgePanel)
         )
         #expect(
@@ -1013,7 +1013,7 @@ struct ExtensionSurfaceBlocksViewsTests {
             object["pill"] = pill
         })
         let ringPanel = makePanel(ringSurface)
-        let ringPill = try testUnwrap(
+        let ringPill = testUnwrap(
             control("extension-strip-aboveEditor-pill-surface-blocks_2dfilters", in: ringPanel)
         )
         #expect(
@@ -1030,7 +1030,7 @@ struct ExtensionSurfaceBlocksViewsTests {
         let panel = makePanel(surface, onAction: { intents.append($0) })
 
         let pillId = "extension-strip-aboveEditor-pill-surface-blocks_2dstatus"
-        let pill = try testUnwrap(control(pillId, in: panel) as? UIControl)
+        let pill = testUnwrap(control(pillId, in: panel) as? UIControl)
         // The body and the drawer are two controls, named by their scoped ids rather than by their
         // words, and only the drawer says "Expand".
         #expect(!pill.isAccessibilityElement, "the pill is still one element doing two things")
@@ -1087,7 +1087,7 @@ struct ExtensionSurfaceBlocksViewsTests {
         // A composed pill, at its own size: the strip draws these facts instead of a title. This
         // one names a badge with its icon and a caption, the two things a pill can hold.
         let panel = makePanel(try surface("blocks-filters.json"))
-        let pill = try testUnwrap(
+        let pill = testUnwrap(
             control("extension-strip-aboveEditor-pill-surface-blocks_2dfilters", in: panel) as? UIControl
         )
         try write(png: pill, named: "blocks-pill.png")
@@ -1133,11 +1133,11 @@ struct ExtensionSurfaceBlocksViewsTests {
 
     @Test func anElapsedLabelAdvancesWhileItIsOnScreenAndSpeaksTheCountAsItStands() throws {
         let panel = makePanel(try elapsedSurface(startedSecondsAgo: 58))
-        let pill = try testUnwrap(
+        let pill = testUnwrap(
             control("extension-strip-aboveEditor-pill-surface-blocks_2delapsed", in: panel) as? UIControl
         )
-        let timer = try testUnwrap(subviews(of: BlocksElapsedView.self, in: pill).first)
-        let label = try testUnwrap(subviews(of: UILabel.self, in: timer).first)
+        let timer = testUnwrap(subviews(of: BlocksElapsedView.self, in: pill).first)
+        let label = testUnwrap(subviews(of: UILabel.self, in: timer).first)
         let first = try #require(label.text)
         #expect(first == "0:58" || first == "0:59", "the timer starts from its since: \(first)")
         // Digits keep their width: every digit measures the same, so the line does not shift.
@@ -1224,7 +1224,7 @@ struct ExtensionSurfaceBlocksViewsTests {
     private func show(_ view: UIView, inset: CGFloat = 28, sizeClass: UIUserInterfaceSizeClass? = nil) {
         for window in Self.windows { window.isHidden = true }
         Self.windows.removeAll()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 2400))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 2400))
         let host = UIViewController()
         window.rootViewController = host
         if let sizeClass { window.traitOverrides.horizontalSizeClass = sizeClass }

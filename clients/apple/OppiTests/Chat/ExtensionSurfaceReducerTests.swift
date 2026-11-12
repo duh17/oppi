@@ -456,7 +456,7 @@ private func composableSurface(_ name: String, composablePlacement: String? = ni
         return try JSONDecoder().decode(ExtensionUISurface.self, from: data)
     }
     let object = try JSONSerialization.jsonObject(with: data)
-    var json = try testUnwrap(object as? [String: Any])
+    var json = testUnwrap(object as? [String: Any])
     json["placement"] = ["kind": "strip", "preferred": composablePlacement]
     return try JSONDecoder().decode(
         ExtensionUISurface.self,

@@ -530,7 +530,7 @@ struct MarkdownInlineAudioTests {
                 return defaultTimedText
             }
         ))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -709,7 +709,7 @@ struct MarkdownInlineAudioTests {
                 audioPlayer: AudioPlayerService()
             )
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
         window.makeKeyAndVisible()
@@ -748,7 +748,7 @@ struct MarkdownInlineAudioTests {
                     audioPlayer: AudioPlayerService()
                 )
             )
-            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+            let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
             window.addSubview(body)
             body.frame = window.bounds
             window.makeKeyAndVisible()
@@ -811,7 +811,7 @@ struct MarkdownInlineAudioTests {
             timedTextLoader: { timedText }
         )
         defer { host.dispose() }
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
