@@ -143,7 +143,7 @@ final class SettingsChatViewController: ListScreenController<SettingsChatViewCon
             title: String(localized: "Busy Animation"),
             identifier: "settings.spinnerStyle",
             value: AppPreferences.Appearance.spinnerStyle.displayName,
-            menu: {
+            menu: { [weak self] in
                 SpinnerStyle.allCases.map { style in
                     SettingsMenuOption(
                         title: style.displayName,

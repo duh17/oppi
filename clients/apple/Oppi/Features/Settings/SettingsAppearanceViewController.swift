@@ -77,7 +77,7 @@ final class SettingsAppearanceViewController: ListScreenController<SettingsAppea
             title: String(localized: "Theme Source"),
             identifier: "settings.appearance.themeSource",
             value: shown.displayName,
-            menu: {
+            menu: { [weak self] in
                 ThemeMode.allCases.map { mode in
                     SettingsMenuOption(title: mode.displayName, selected: mode == shown) { [weak self] in
                         self?.themeStore.mode = mode

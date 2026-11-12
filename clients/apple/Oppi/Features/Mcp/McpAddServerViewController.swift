@@ -212,7 +212,7 @@ final class McpAddServerViewController: ListScreenController<McpAddServerViewCon
             title: "Exposure",
             identifier: "mcp.add.exposure",
             value: shown.title,
-            menu: {
+            menu: { [weak self] in
                 McpExposure.allCases.map { option in
                     SettingsMenuOption(title: option.title, selected: option == shown) { [weak self] in
                         guard let self, !saving else { return }

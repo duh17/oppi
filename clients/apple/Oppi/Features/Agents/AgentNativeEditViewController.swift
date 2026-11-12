@@ -375,7 +375,7 @@ final class AgentNativeEditViewController: ListScreenController<
                 title: "Prompt Mode",
                 identifier: "agent.nativeEdit.promptMode",
                 value: Self.instructionModeTitle(currentMode),
-                menu: {
+                menu: { [weak self] in
                     AgentInstructionMode.allCases.map { mode in
                         SettingsMenuOption(
                             title: Self.instructionModeTitle(mode),
@@ -393,7 +393,7 @@ final class AgentNativeEditViewController: ListScreenController<
                 title: "Thinking",
                 identifier: "agent.nativeEdit.thinking",
                 value: currentLevel?.displayTitle ?? "Default",
-                menu: {
+                menu: { [weak self] in
                     levels.map { option in
                         SettingsMenuOption(
                             title: option?.displayTitle ?? "Default",
@@ -412,7 +412,7 @@ final class AgentNativeEditViewController: ListScreenController<
                 title: "Chat Style",
                 identifier: "agent.nativeEdit.chatStyle",
                 value: currentStyle?.label ?? settingsLabel,
-                menu: {
+                menu: { [weak self] in
                     styles.map { option in
                         SettingsMenuOption(
                             title: option?.label ?? settingsLabel,
@@ -448,7 +448,7 @@ final class AgentNativeEditViewController: ListScreenController<
                 title: "Runtime",
                 identifier: "agent.nativeEdit.requiredRuntime",
                 value: Self.runtimeTitle(runtime),
-                menu: {
+                menu: { [weak self] in
                     options.map { option in
                         SettingsMenuOption(title: Self.runtimeTitle(option), selected: runtime == option) { [weak self] in
                             self?.draft.requiredRuntime = option
@@ -462,7 +462,7 @@ final class AgentNativeEditViewController: ListScreenController<
                 title: "Workspaces",
                 identifier: "agent.nativeEdit.workspaceMode",
                 value: mode == .exact ? "Allowed list" : "Any workspace",
-                menu: {
+                menu: { [weak self] in
                     [
                         SettingsMenuOption(title: "Any workspace", selected: mode == .inherit) { [weak self] in
                             self?.draft.workspaceConstraintMode = .inherit

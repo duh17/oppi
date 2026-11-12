@@ -168,7 +168,7 @@ final class SSHTerminalCustomKeyViewController: ListScreenController<
                 title: String(localized: "Named Key"),
                 identifier: "settings.sshTerminal.bar.key.named",
                 value: current.title,
-                menu: {
+                menu: { [weak self] in
                     choices.map { choice in
                         SettingsMenuOption(title: choice.title, selected: choice == current) { [weak self] in
                             self?.change { $0.key = choice.key }
@@ -182,7 +182,7 @@ final class SSHTerminalCustomKeyViewController: ListScreenController<
                 title: String(localized: "Show for"),
                 identifier: "settings.sshTerminal.bar.key.showFor",
                 value: shown.title,
-                menu: {
+                menu: { [weak self] in
                     SSHTerminalCustomKey.ShowFor.choices.map { choice in
                         SettingsMenuOption(title: choice.title, selected: choice == shown) { [weak self] in
                             self?.change { $0.showFor = choice }

@@ -422,7 +422,7 @@ final class SSHTerminalSetupViewController: ListScreenController<
             identifier: "sshTerminal.multiplexer",
             isEnabled: !isConnecting,
             value: current.label,
-            menu: {
+            menu: { [weak self] in
                 SSHTerminalMultiplexerChoice.offered(in: access).map { choice in
                     SettingsMenuOption(title: choice.label, selected: choice == current) { [weak self] in
                         guard choice != current else { return }
@@ -441,7 +441,7 @@ final class SSHTerminalSetupViewController: ListScreenController<
             identifier: "sshTerminal.authentication",
             isEnabled: !isConnecting,
             value: authentication == .deviceKey ? "This Device’s Key" : "Password",
-            menu: {
+            menu: { [weak self] in
                 [
                     SettingsMenuOption(
                         title: "Password",

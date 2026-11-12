@@ -549,7 +549,8 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         textBeforeRecording = nil
         suppressKeyboard = false
         inputTextView.setKeyboardSuppressed(false)
-        Task { @MainActor in
+        // The cancel runs even if the composer closes first; only its callbacks need the composer.
+        Task { @MainActor [weak self] in
             await ComposerShared.cancelOwnedVoiceInput(
                 manager: manager,
                 owner: .reviewCommentInline,

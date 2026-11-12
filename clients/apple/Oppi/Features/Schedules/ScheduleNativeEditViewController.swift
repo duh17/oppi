@@ -286,7 +286,7 @@ final class ScheduleNativeEditViewController: ListScreenController<
                 title: "Cadence",
                 identifier: "schedule.nativeEdit.cadence",
                 value: trigger.cadence.title,
-                menu: {
+                menu: { [weak self] in
                     ScheduleTriggerDraft.Cadence.allCases.map { cadence in
                         SettingsMenuOption(title: cadence.title, selected: trigger.cadence == cadence) { [weak self] in
                             self?.draft.triggerDraft.cadence = cadence
@@ -300,7 +300,7 @@ final class ScheduleNativeEditViewController: ListScreenController<
                 title: "Repeat",
                 identifier: "schedule.nativeEdit.interval",
                 value: "Every \(AgentScheduleTrigger.intervalSummary(trigger.intervalMs))",
-                menu: {
+                menu: { [weak self] in
                     intervals.map { interval in
                         SettingsMenuOption(
                             title: "Every \(AgentScheduleTrigger.intervalSummary(interval))",
@@ -316,7 +316,7 @@ final class ScheduleNativeEditViewController: ListScreenController<
                 title: "Day",
                 identifier: "schedule.nativeEdit.weekday",
                 value: ScheduleTriggerDraft.weekdayTitle(trigger.weekday),
-                menu: {
+                menu: { [weak self] in
                     (0..<7).map { weekday in
                         SettingsMenuOption(
                             title: ScheduleTriggerDraft.weekdayTitle(weekday),
@@ -390,7 +390,7 @@ final class ScheduleNativeEditViewController: ListScreenController<
                 title: "Thinking",
                 identifier: "schedule.nativeEdit.thinking",
                 value: currentLevel?.displayTitle ?? "Agent or server default",
-                menu: {
+                menu: { [weak self] in
                     levels.map { option in
                         SettingsMenuOption(
                             title: option?.displayTitle ?? "Agent or server default",
@@ -426,7 +426,7 @@ final class ScheduleNativeEditViewController: ListScreenController<
                 title: "Delivery",
                 identifier: "schedule.nativeEdit.delivery",
                 value: currentBehavior?.displayName ?? "Automatic",
-                menu: {
+                menu: { [weak self] in
                     behaviors.map { option in
                         SettingsMenuOption(
                             title: option?.displayName ?? "Automatic",

@@ -99,6 +99,22 @@ struct AgentEditorScreensTests {
         #expect(screen.button("agent.nativeEdit.promptMode")?.accessibilityValue == "Replace")
     }
 
+    /// A menu row keeps the closure that lists its choices for as long as the
+    /// row lives. When that closure held the editor, the editor's own list kept
+    /// it alive after it closed.
+    @Test("the editor deallocates once it closes")
+    func editorDeallocatesAfterClosing() async throws {
+        weak var closedEditor: AgentNativeEditViewController?
+        do {
+            let editor = makeEditor()
+            closedEditor = editor
+            let screen = try Screen(editor)
+            #expect(await screen.waitForButton("agent.nativeEdit.thinking") != nil, "a menu row is on screen")
+            screen.hide()
+        }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { closedEditor == nil })
+    }
+
     @Test("a choice made on the Tools page shows on the editor's Tools row")
     func toolsPageEditsTheDraft() async throws {
         let screen = try Screen(makeEditor())

@@ -127,7 +127,8 @@ enum FileSharePresenter {
             progress: FileDownloadProgress(received: 0, expected: expectedBytes),
             palette: ThemeRuntimeState.currentPalette()
         )
-        let download = Task {
+        // This function holds the overlay until the download ends anyway.
+        let download = Task { [overlay] in
             try await file.download(destination) { progress in
                 Task { @MainActor [weak overlay] in
                     overlay?.update(

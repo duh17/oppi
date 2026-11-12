@@ -107,7 +107,7 @@ final class WorkspaceCreationIntake {
             clear: { [weak self] in self?.createSheetContext = nil },
             screen: {
                 guard let context else { return .controller({ UIViewController() }) }
-                return .controller {
+                return .controller { [weak self] in
                     context.makeScreen(root: root) { [weak self] workspace in
                         guard context.openWorkspaceAfterCreate else { return }
                         self?.pendingCreatedWorkspaceTarget = WorkspaceNavTarget(

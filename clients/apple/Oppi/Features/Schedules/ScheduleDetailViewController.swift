@@ -500,7 +500,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
             root: root,
             clear: { [weak self] in self?.showNativeEdit = false },
             screen: {
-                .controller {
+                .controller { [weak self] in
                     // Opened only from the loaded schedule's Edit.
                     guard let schedule else { preconditionFailure("The editor presents only with its schedule") }
                     return ScheduleNativeEditViewController(

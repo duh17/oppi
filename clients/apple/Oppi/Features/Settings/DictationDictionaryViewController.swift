@@ -266,7 +266,7 @@ final class DictationDictionaryViewController: ListScreenController<DictationDic
             title: String(localized: "Add To"),
             identifier: "settings.dictionary.scope",
             value: addsToWorkspace ? String(localized: "This Workspace") : String(localized: "All Workspaces"),
-            menu: {
+            menu: { [weak self] in
                 [
                     SettingsMenuOption(
                         title: String(localized: "All Workspaces"),

@@ -273,7 +273,7 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
                             seedText: prompt?.source == .default ? prompt?.content : nil
                         ),
                         connection: connection,
-                        refreshDocument: { [weak self] in
+                        refreshDocument: {
                             guard let api = connection.apiClient else { return nil }
                             return (try? await api.getPiSystemPrompt())?.content
                         },

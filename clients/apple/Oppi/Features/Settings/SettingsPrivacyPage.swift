@@ -121,7 +121,7 @@ final class SettingsPrivacyViewController: ListScreenController<SettingsPrivacyV
             // without a passcode cannot give: the value shows but cannot open.
             isEnabled: appLock.isAvailable && !appLock.isAuthenticating,
             value: shown.title,
-            menu: {
+            menu: { [weak self] in
                 AppLockTimeout.allCases.map { timeout in
                     SettingsMenuOption(title: timeout.title, selected: timeout == shown) { [weak self] in
                         self?.changeAppLock(to: timeout)

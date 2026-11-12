@@ -221,7 +221,7 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
             title: "Exposure",
             identifier: "mcp.exposure",
             value: shownExposure.title,
-            menu: {
+            menu: { [weak self] in
                 McpExposure.allCases.map { option in
                     SettingsMenuOption(title: option.title, selected: option == shownExposure) { [weak self] in
                         // The row is a menu button at every text size, so a change

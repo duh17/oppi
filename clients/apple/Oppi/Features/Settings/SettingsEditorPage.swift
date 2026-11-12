@@ -100,7 +100,7 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
                 title: String(localized: "Keybindings"),
                 identifier: "settings.editor.keybindings.menu",
                 value: shownKeybindings.label,
-                menu: {
+                menu: { [weak self] in
                     CodeEditorKeybindings.allCases.map { keybindings in
                         SettingsMenuOption(
                             title: keybindings.label,
@@ -117,7 +117,7 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
                 title: String(localized: "Indent With"),
                 identifier: "settings.editor.indentWith.menu",
                 value: indentsWithTabs ? String(localized: "Tabs") : String(localized: "Spaces"),
-                menu: {
+                menu: { [weak self] in
                     [
                         SettingsMenuOption(title: String(localized: "Spaces"), selected: !indentsWithTabs) { [weak self] in
                             self?.preferences.indentsWithTabs = false
@@ -134,7 +134,7 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
                 title: String(localized: "Tab Width"),
                 identifier: "settings.editor.tabWidth.menu",
                 value: String(shownWidth),
-                menu: {
+                menu: { [weak self] in
                     CodeEditorPreferences.tabWidths.map { width in
                         SettingsMenuOption(title: String(width), selected: width == shownWidth) { [weak self] in
                             self?.preferences.tabWidth = width

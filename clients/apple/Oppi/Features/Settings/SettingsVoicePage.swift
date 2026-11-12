@@ -89,7 +89,7 @@ final class SettingsVoiceViewController: ListScreenController<SettingsVoiceViewC
                 title: String(localized: "Voice Replies"),
                 identifier: "settings.voice.replies",
                 value: AppPreferences.Voice.replyMode.label,
-                menu: {
+                menu: { [weak self] in
                     AppPreferences.Voice.ReplyMode.allCases.map { mode in
                         SettingsMenuOption(
                             title: mode.label,
@@ -106,7 +106,7 @@ final class SettingsVoiceViewController: ListScreenController<SettingsVoiceViewC
                 title: String(localized: "Dictation Engine"),
                 identifier: "settings.voice.engine",
                 value: AppPreferences.Voice.engineMode.label,
-                menu: {
+                menu: { [weak self] in
                     AppPreferences.Voice.supportedModes.map { mode in
                         SettingsMenuOption(
                             title: mode.label,
@@ -123,7 +123,7 @@ final class SettingsVoiceViewController: ListScreenController<SettingsVoiceViewC
                 title: String(localized: "Dictation Animation"),
                 identifier: "settings.dictationIndicatorStyle",
                 value: AppPreferences.Appearance.dictationIndicatorStyle.displayName,
-                menu: {
+                menu: { [weak self] in
                     DictationIndicatorStyle.allCases.map { style in
                         SettingsMenuOption(
                             title: style.displayName,

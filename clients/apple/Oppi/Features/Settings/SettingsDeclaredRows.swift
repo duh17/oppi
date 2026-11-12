@@ -97,7 +97,7 @@ extension ListScreenController {
             identifier: declaration.id,
             isEnabled: state.canBeginSaving,
             value: shown,
-            menu: {
+            menu: { [weak self] in
                 choices.map { choice in
                     SettingsMenuOption(title: choice.title, image: choice.image, selected: choice.value == current) { [weak self] in
                         self?.settings?.set(declaration, choice.value)

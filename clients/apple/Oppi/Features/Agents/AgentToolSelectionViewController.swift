@@ -245,7 +245,7 @@ final class AgentToolSelectionViewController: ListScreenController<
             title: "Selection",
             identifier: "agent.nativeEdit.toolMode",
             value: state.mode.title,
-            menu: {
+            menu: { [weak self] in
                 modes.map { mode in
                     SettingsMenuOption(title: mode.title, selected: mode == state.mode) { [weak self] in
                         self?.choose(mode)

@@ -14,7 +14,7 @@ final class LockedServerSwitchButton: UIButton {
         accessibilityIdentifier = "scopedLock.switchServer"
         showsMenuAsPrimaryAction = true
         // Read when it opens: a choice activates here, and the rows are current.
-        menu = ServerSwitchMenu.menu { [root] in
+        menu = ServerSwitchMenu.menu { [root, weak self] in
             ServerSwitchMenu(
                 coordinator: root.coordinator,
                 currentServerId: nil,

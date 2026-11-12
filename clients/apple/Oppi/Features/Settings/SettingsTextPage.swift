@@ -73,7 +73,7 @@ final class SettingsTextViewController: ListScreenController<SettingsTextViewCon
             title: String(localized: "Code Font"),
             identifier: "settings.text.codeFont",
             value: FontPreferences.codeFont.displayName,
-            menu: {
+            menu: { [weak self] in
                 FontPreferences.CodeFontFamily.allCases.map { family in
                     SettingsMenuOption(title: family.displayName, selected: family == FontPreferences.codeFont) { [weak self] in
                         self?.setCodeFont(family)
