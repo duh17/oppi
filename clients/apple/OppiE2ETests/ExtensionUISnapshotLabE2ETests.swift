@@ -230,22 +230,22 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         )
     }
 
-    func testDoubleTappingNativeSurfaceViewportOpensFullScreenDetail() throws {
+    func testFullScreenButtonOpensExpandedNativeSurfaceDetail() throws {
         createAndEnterSession()
         _ = waitForWebSocketConnected(timeout: 20)
         let sessionId = waitForFocusedSessionId(timeout: 20)
-        let widgetKey = "viewport-double-tap"
-        let headerTitle = "Viewport double-tap native surface"
-        let bodyText = "Double-tap this expanded viewport body to open the full-screen surface."
+        let widgetKey = "viewport-full-screen"
+        let headerTitle = "Viewport full-screen native surface"
+        let bodyText = "Tap Full Screen to open this expanded viewport body in the reader."
         let identifierSuffix = "widget-\(widgetKey)"
         let viewportIdentifier = "extension-native-surface-\(identifierSuffix)-viewport"
 
-        // Given a native extension widget whose detail view is available from the header.
+        // Given a native extension widget whose detail view opens from the drawer's Full Screen button.
         try sendHarnessMessage(sessionId: sessionId, [
             "type": "extension_ui_notification",
             "method": "setStatus",
             "statusKey": widgetKey,
-            "statusText": "Viewport gesture ready",
+            "statusText": "Viewport full screen ready",
         ])
         try sendHarnessMessage(sessionId: sessionId, [
             "type": "extension_ui_notification",
@@ -263,7 +263,7 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
                 "blocks": [
                     [
                         "type": "markdown",
-                        "id": "viewport-double-tap-body",
+                        "id": "viewport-full-screen-body",
                         "markdown": bodyText,
                     ],
                 ],
@@ -281,11 +281,11 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         XCTAssertGreaterThan(
             viewport.frame.midY,
             header.frame.maxY,
-            "Test must double tap inside the expanded scroll viewport, not the header row"
+            "The expanded scroll viewport should sit below the header row"
         )
         XCTAssertTrue(
             viewport.frame.insetBy(dx: -1, dy: -1).contains(CGPoint(x: body.frame.midX, y: body.frame.midY)),
-            "Body text should be inside the expanded scroll viewport before the double tap. viewport=\(viewport.frame), body=\(body.frame)"
+            "Body text should be inside the expanded scroll viewport before opening full screen. viewport=\(viewport.frame), body=\(body.frame)"
         )
         XCTAssertLessThanOrEqual(
             body.frame.minY - viewport.frame.minY,
@@ -298,17 +298,18 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
             "Short native surface content should not leave a large blank area inside the expanded viewport. viewport=\(viewport.frame), body=\(body.frame)"
         )
 
-        // When the person double taps inside the expanded scroll viewport.
-        viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.50)).doubleTap()
+        // When the person taps the expanded drawer's Full Screen button.
+        let fullScreenButton = app.buttons["extension.strip.fullScreen.aboveEditor"]
+        tap(fullScreenButton, named: "native surface full-screen button", timeout: 5)
 
         // Then the native surface opens in the chat reader, which pushes the detail with Back chrome.
         let detailBackButton = app.buttons["extension-native-surface-\(identifierSuffix)-detail-back"]
         XCTAssertTrue(
             detailBackButton.waitForExistence(timeout: 5),
-            "Double tapping an expanded native surface viewport should open full-screen detail"
+            "Tapping Full Screen on an expanded native surface should open full-screen detail"
         )
         waitForText(bodyText, timeout: 5)
-        try saveLabScreenshot(name: "extension-ui-native-surface-viewport-double-tap-e2e")
+        try saveLabScreenshot(name: "extension-ui-native-surface-viewport-full-screen-e2e")
         tap(detailBackButton, named: "native surface detail back button", timeout: 5)
 
         try sendHarnessMessage(sessionId: sessionId, [
