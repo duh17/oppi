@@ -199,6 +199,18 @@ final class SafeSizingCell: UICollectionViewCell {
         ensureNavigationHighlightOverlayFrontmost()
     }
 
+    /// The timeline layout this cell is laid out by.
+    private var timelineLayout: ChatTimelineCachedHeightLayout? {
+        var view = superview
+        while let current = view {
+            if let collection = current as? UICollectionView {
+                return collection.collectionViewLayout as? ChatTimelineCachedHeightLayout
+            }
+            view = current.superview
+        }
+        return nil
+    }
+
     func invalidateStreamingHeightCache() {
         cachedStreamingHeight = nil
         cachedStreamingWidth = nil
@@ -214,6 +226,15 @@ final class SafeSizingCell: UICollectionViewCell {
 
         if let cachedWidth = cachedStreamingWidth, cachedWidth != attributes.size.width {
             invalidateStreamingHeightCache()
+        }
+
+        // Held for a moving divider, or back at a width this row was measured
+        // at before (a divider toggled back, a second rotation): take that
+        // height, measuring nothing (`ChatTimelineCachedHeightLayout`).
+        if !isStreamingAssistant, let layout = timelineLayout,
+           let restored = layout.unmeasuredHeight(at: attributes.indexPath, width: attributes.size.width) {
+            attributes.size = CGSize(width: attributes.size.width, height: restored)
+            return attributes
         }
 
         // Streaming throttle: avoid full self-sizing on every tick. Text-only
@@ -235,6 +256,7 @@ final class SafeSizingCell: UICollectionViewCell {
         // Size the cell's contentView directly. This triggers auto layout on
         // all subviews (including the UIContentView) without going through
         // UICollectionViewCell's assertion-guarded systemLayoutSizeFitting.
+        ChatTimelinePerf.recordRowMeasure()
         let fitted = contentView.systemLayoutSizeFitting(
             targetSize,
             withHorizontalFittingPriority: .required,

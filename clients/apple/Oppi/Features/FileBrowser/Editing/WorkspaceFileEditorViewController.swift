@@ -887,3 +887,19 @@ struct WorkspaceFileEditorReplacement: Equatable {
     let id = UUID()
     let text: String
 }
+
+/// The editor holds its wrap width while a divider beside it moves; the key
+/// bar and the status line follow every frame. Where the divider pauses or
+/// rests, the text wraps once at the new width and the caret stays in view.
+extension WorkspaceFileEditorViewController: PaneLiveResizing {
+    func paneWillBeginLiveResize() {
+        textView.holdsWrapWidth = true
+    }
+
+    func paneSettleLiveResize(to size: CGSize, final: Bool) {
+        guard textView.holdsWrapWidth else { return }
+        textView.holdsWrapWidth = false
+        view.layoutIfNeeded()
+        if textView.isFirstResponder { textView.scrollRangeToVisible(textView.selectedRange) }
+    }
+}

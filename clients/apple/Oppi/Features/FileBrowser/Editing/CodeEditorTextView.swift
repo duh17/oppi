@@ -61,6 +61,20 @@ final class CodeEditorTextView: UITextView {
         }
     }
 
+    /// Holds wrapped lines at their current width while a divider beside the
+    /// editor moves: TextKit re-wraps the viewport on every width, which cost
+    /// more than a frame. False lays the text out at the view's width again.
+    /// Unwrapped text never re-wraps, so it needs no hold.
+    var holdsWrapWidth = false {
+        didSet {
+            guard oldValue != holdsWrapWidth, wrapsLines else { return }
+            heldContainerWidth = holdsWrapWidth ? textContainer.size.width : nil
+            textContainer.widthTracksTextView = !holdsWrapWidth
+            if !holdsWrapWidth { applyWrap() }
+        }
+    }
+    private var heldContainerWidth: CGFloat?
+
     /// A character-wide translucent block over the character under the caret
     /// (Vim Normal mode). The owner hides the system caret meanwhile, since
     /// iOS draws its own caret without asking `caretRect(for:)` for the width.
@@ -331,7 +345,14 @@ final class CodeEditorTextView: UITextView {
     /// UITextView fits its container to the view on frame and inset changes
     /// even with `widthTracksTextView` off, which rewrapped unwrapped text on
     /// the next layout (opening the editor, a caret move that relaid it out).
+    /// Held wrapped text (`holdsWrapWidth`) keeps its container the same way.
     private func keepContainerUnwrapped() {
+        if wrapsLines, holdsWrapWidth, let held = heldContainerWidth {
+            if textContainer.size.width != held {
+                textContainer.size = CGSize(width: held, height: .greatestFiniteMagnitude)
+            }
+            return
+        }
         guard !wrapsLines, textContainer.size.width != Self.unwrappedContainerWidth else { return }
         textContainer.size = CGSize(width: Self.unwrappedContainerWidth, height: .greatestFiniteMagnitude)
     }

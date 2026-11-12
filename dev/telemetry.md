@@ -149,6 +149,7 @@ Frame-budget work on the 120 Hz budget (8.3 ms).
 | `app.coalescer_window` | How much stream traffic did the delta coalescer flush per window of 200 flushes (or a non-trivial partial drain)? | `flushes` count<br>`events` count<br>`payload_bytes` bytes | none | none |
 | `app.diff_reader_session` | How fast did a review diff open and how smoothly did it scroll? | `open_ms` ms<br>`lines` count<br>`chunks` count<br>`content_width_points` count<br>`scroll_frames` count<br>`hitches` count<br>`hitch_ratio` ratio<br>`worst_frame_ms` ms | none | none |
 | `app.terminal_scroll_visit` | How smoothly did scrolling run in one SSH terminal visit (every gesture, finger down through coasting, summed)? | `gestures` count<br>`duration_ms` ms<br>`frames` count<br>`hitches` count<br>`hitch_ratio` ratio<br>`worst_frame_ms` ms<br>`deferred_bytes` bytes | `terminal_mode`*<br>`scroll_path`* | emit `frames` ≥ 2 |
+| `app.pane_resize_visit` | How smoothly did dividers move and settle in a visit? Pool hitch_ms/duration_ms. | `duration_ms` ms<br>`hitch_ms` ms<br>`worst_frame_ms` ms<br>`reflow_ms` ms | none | none |
 
 #### Attention and Media UX
 

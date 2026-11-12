@@ -2079,6 +2079,45 @@ struct AppTerminalScrollVisit: TelemetryEvent {
     }
 }
 
+/// How smoothly did dividers move and settle in a visit? Pool hitch_ms/duration_ms.
+struct AppPaneResizeVisit: TelemetryEvent {
+    static let name = "app.pane_resize_visit"
+
+    let durationMs: Double
+    let hitchMs: Double
+    let worstFrameMs: Double
+    let reflowMs: Double
+
+    init(
+        durationMs: Double,
+        hitchMs: Double,
+        worstFrameMs: Double,
+        reflowMs: Double
+    ) {
+        self.durationMs = durationMs
+        self.hitchMs = hitchMs
+        self.worstFrameMs = worstFrameMs
+        self.reflowMs = reflowMs
+    }
+
+    var fieldValues: [String: Double] {
+        var values: [String: Double] = [:]
+        values["duration_ms"] = durationMs
+        values["hitch_ms"] = hitchMs
+        values["worst_frame_ms"] = worstFrameMs
+        values["reflow_ms"] = reflowMs
+        return values
+    }
+
+    var passesEmitPolicy: Bool {
+        true
+    }
+
+    var tagValues: [String: String] {
+        [:]
+    }
+}
+
 /// How long did computing the session list view data take?
 struct AppSessionListCompute: TelemetryEvent {
     static let name = "app.session_list_compute"

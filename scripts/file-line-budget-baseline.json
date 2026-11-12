@@ -76,7 +76,7 @@
       "reason": "Image view plus remote image policy; a move-only split, not urgent."
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Collection/ChatTimelineCollectionView.swift": {
-      "budget": 3000,
+      "budget": 2700,
       "owner": "CT1-CT2 chat timeline split",
       "reason": "Controller, diffing, and a 530-line apply(); the decision type and the scroll owner come out first."
     },

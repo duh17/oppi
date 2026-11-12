@@ -26,7 +26,10 @@ import UIKit
 /// the strip to the surfaces. `CHAT_ROUTES_WARNINGS=N` adds N warning rows
 /// above the composer.
 /// `SCREENSHOT_COLOR_SCHEME=light` shows the chat in the light theme.
-/// `CHAT_ROUTES_LONG_FILE=1` serves a long file with wide lines. The
+/// `CHAT_ROUTES_LONG_FILE=1` serves a long file with wide lines;
+/// `CHAT_ROUTES_LONG_FILE=<n>` serves n lines of wrapping code.
+/// `CHAT_ROUTES_PANE_RESIZE=1` adds the live divider resize readout
+/// (`PaneResizeReadout`). The
 /// `chatRoutes.narrowWindow` control makes the window compact, as Split View does.
 /// `chatRoutes.createdSessions` counts the new sessions the stub received.
 /// Leading controls open the timeline's commit and file viewers through the
@@ -50,6 +53,8 @@ final class ChatRoutesPreviewController: PreviewRootController {
     private var loops: [Task<Void, Never>] = []
     /// The reader last pushed for app navigation, so each new one pushes once.
     private var pushedReader: ChatReaderNavTarget?
+    private let paneResizeReadout = ProcessInfo.processInfo.environment["CHAT_ROUTES_PANE_RESIZE"] == "1"
+        ? PaneResizeReadout() : nil
 
     init(root: AppRootEnvironment, topBar: ChatTopBarLayout) {
         if ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" {
@@ -121,6 +126,7 @@ final class ChatRoutesPreviewController: PreviewRootController {
         ])
         controls.axis = .vertical
         controls.spacing = 2
+        paneResizeReadout?.install(in: view)
         for subview in [controls, landingProbe, createdSessionsProbe, surfaceActionsProbe] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(subview)
@@ -265,6 +271,13 @@ enum ChatRoutesFixture {
     /// What `/files/current` serves. `CHAT_ROUTES_LONG_FILE=1`: 60 lines, some
     /// far wider than a 369 pt pane, to see how a document wraps beside the chat.
     static let fileText: String = {
+        if let lines = environment["CHAT_ROUTES_LONG_FILE"].flatMap(Int.init), lines > 1 {
+            // Lines of varied length, many wider than a pane, so the reader wraps.
+            return (1...lines).map { line in
+                "let route\(line) = Route(name: \"route-\(line)\", path: \"/workspaces/\(line)/files\")"
+                    + String(repeating: " .with(\"segment\")", count: line % 7)
+            }.joined(separator: "\n") + "\n"
+        }
         guard environment["CHAT_ROUTES_LONG_FILE"] == "1" else { return "let route = \"chat\"\n" }
         let wide = "let routeTable = [\"chat\": ChatRoute.chat, \"files\": ChatRoute.files, \"git\": ChatRoute.git, \"outline\": ChatRoute.outline]"
         return (1...60).map { $0 % 5 == 0 ? "    \(wide) // \($0)" : "func route\($0)() -> Int { \($0) }" }

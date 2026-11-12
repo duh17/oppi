@@ -38,6 +38,8 @@ extension ChatViewController {
             constant: 8
         )
         footerTopLimit.priority = .defaultHigh - 1
+        let timelineTrailing = collectionView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
+        self.timelineTrailing = timelineTrailing
 
         NSLayoutConstraint.activate([
             footerTopLimit,
@@ -49,7 +51,7 @@ extension ChatViewController {
             // under its glass; `topOverlap` keeps the first row below the bar.
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            collectionView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            timelineTrailing,
             collectionView.bottomAnchor.constraint(equalTo: contentBottomGuide.bottomAnchor),
             footerStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             footerStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),

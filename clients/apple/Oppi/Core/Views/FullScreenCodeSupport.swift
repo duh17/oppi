@@ -1030,6 +1030,24 @@ final class FullScreenReviewCommentTextView: UITextView, ReviewCommentSourceLine
     private var selectionGeneration = 0
     private var nativeTextViewEditMenuGeneration: Int?
 
+    /// Scrolling is on only so the view has no intrinsic size: its owner sizes
+    /// it. A text view that does not scroll has one, and UIKit asks for it and
+    /// for its baselines in every constraint pass of the window, which in
+    /// TextKit 1 lays all of the text out again. It never scrolls: its own pan
+    /// is off, so the list around it takes the drag, and its text stays at the
+    /// top.
+    var isScrollingOnlyForSizing = false {
+        didSet {
+            guard isScrollingOnlyForSizing != oldValue else { return }
+            isScrollEnabled = isScrollingOnlyForSizing
+            panGestureRecognizer.isEnabled = !isScrollingOnlyForSizing
+            showsVerticalScrollIndicator = !isScrollingOnlyForSizing
+            showsHorizontalScrollIndicator = !isScrollingOnlyForSizing
+            scrollsToTop = !isScrollingOnlyForSizing
+            contentInsetAdjustmentBehavior = isScrollingOnlyForSizing ? .never : .automatic
+        }
+    }
+
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
         addInteraction(reviewCommentEditMenuInteraction)
@@ -1052,6 +1070,9 @@ final class FullScreenReviewCommentTextView: UITextView, ReviewCommentSourceLine
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        if isScrollingOnlyForSizing, contentOffset != .zero {
+            contentOffset = .zero
+        }
         lineAnchorHighlightOverlay.frame = bounds
         updateSelectionHighlightOverlay()
     }

@@ -336,6 +336,20 @@ final class TrailingColumnController: UIViewController {
     private var dragZone: ColumnSnapZone?
     private var settleAnimator: UIViewPropertyAnimator?
 
+    // MARK: Live resize
+
+    /// The screens on either side that hold their heavy views while the
+    /// divider moves (`PaneLiveResizing`); empty when nothing is held.
+    private var heldScreens: [any PaneLiveResizing] = []
+    /// The drawn width and time of the divider's last move of more than
+    /// `pauseDistance`; a finger that stays within it for `pauseDelay`
+    /// has paused (under 30 pt/s for 100 ms).
+    private var lastMove: (width: CGFloat, time: CFTimeInterval)?
+    private var pauseTimer: Timer?
+    private static let pauseDistance: CGFloat = 3
+    private static let pauseDelay: TimeInterval = 0.1
+    private let resizeMeter = PaneResizeMeter()
+
     init(screen: UIViewController) {
         owningScreen = screen
         super.init(nibName: nil, bundle: nil)
@@ -579,6 +593,8 @@ final class TrailingColumnController: UIViewController {
                 self.overlay?.removeFromSuperview()
                 container.endAppearanceTransition()
             }
+            self.finishLiveResize()
+            self.resizeMeter.takeVisit().map { Telemetry.record($0) }
             self.makeRoom(for: 0)
             self.screenFollowsKeyboard(true)
             self.screen = nil
@@ -704,6 +720,9 @@ final class TrailingColumnController: UIViewController {
         dragStartWidth = raw
         // Ticks only on crossing into another zone, not on the first move.
         dragZone = ColumnSnapResolver.zone(for: raw, policy: policy)
+        lastMove = (overlay.width, CACurrentMediaTime())
+        resizeMeter.beginDrag()
+        holdScreens()
     }
 
     /// The remembered width in points: the last settled fraction against the
@@ -719,7 +738,20 @@ final class TrailingColumnController: UIViewController {
         // Dragging the handle toward the host (leading, negative x) widens
         // the column: width grows as `translationX` falls.
         let raw = dragStartWidth - translationX
-        overlay.width = ColumnRubberBand.liveWidth(forRawTarget: raw, policy: policy)
+        let width = ColumnRubberBand.liveWidth(forRawTarget: raw, policy: policy)
+        if let lastMove, abs(width - lastMove.width) <= Self.pauseDistance {
+            // Creeping, or still: the pause timer runs on from the last real move.
+        } else {
+            lastMove = (width, CACurrentMediaTime())
+            holdScreens()
+            schedulePauseSettle()
+        }
+        // Laid out here rather than at the frame's commit, so the meter sees
+        // the main thread's whole cost of the new width.
+        resizeMeter.measureFrame {
+            overlay.width = width
+            host?.view.layoutIfNeeded()
+        }
         let zone = ColumnSnapResolver.zone(for: raw, policy: policy)
         if zone != dragZone {
             dragZone = zone
@@ -739,7 +771,56 @@ final class TrailingColumnController: UIViewController {
             rememberedWidth: rememberedWidth(policy: policy),
             wasFull: isFull
         )
+        pauseTimer?.invalidate()
+        pauseTimer = nil
+        lastMove = nil
         settle(outcome, initialVelocityPointsPerSecond: widthVelocity)
+        // Held through the spring and settled where it lands (`animateWidth`),
+        // or where a close leaves the screen (`detach`); a release that moves
+        // nothing settles now.
+        if settleAnimator == nil, !isRemoving {
+            finishLiveResize()
+        }
+    }
+
+    /// Holds the screens on both sides, unless they are held already.
+    private func holdScreens() {
+        guard heldScreens.isEmpty else { return }
+        heldScreens = PaneLiveResizingTree.adopters(in: screen) + PaneLiveResizingTree.adopters(in: container)
+        for held in heldScreens { held.paneWillBeginLiveResize() }
+    }
+
+    private func schedulePauseSettle() {
+        pauseTimer?.invalidate()
+        pauseTimer = Timer.scheduledTimer(withTimeInterval: Self.pauseDelay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.dragStartWidth != nil else { return }
+                self.settleHeldScreens(final: false)
+            }
+        }
+    }
+
+    /// Lays the held screens out at their sizes now, as one reflow.
+    private func settleHeldScreens(final: Bool) {
+        pauseTimer?.invalidate()
+        pauseTimer = nil
+        let held = heldScreens
+        heldScreens = []
+        guard !held.isEmpty else { return }
+        host?.view.layoutIfNeeded()
+        resizeMeter.measureReflow {
+            for screen in held where screen.viewIfLoaded?.window != nil {
+                screen.paneSettleLiveResize(to: screen.view.bounds.size, final: final)
+            }
+        }
+    }
+
+    /// The divider is at rest: the held screens settle and the drag's
+    /// measurement ends. Safe to call when no drag ran.
+    private func finishLiveResize() {
+        lastMove = nil
+        settleHeldScreens(final: true)
+        resizeMeter.endDrag()
     }
 
     private func step(by delta: CGFloat) {
@@ -825,6 +906,8 @@ final class TrailingColumnController: UIViewController {
         animator.addCompletion { [weak self] _ in
             if self?.settleAnimator === animator {
                 self?.settleAnimator = nil
+                // At rest, unless a grab took over (it stops this animator).
+                if self?.dragStartWidth == nil { self?.finishLiveResize() }
             }
             completion?()
         }

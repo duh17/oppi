@@ -97,6 +97,8 @@ final class FullScreenCodeViewController: UIViewController {
     private var stashBarItem: UIBarButtonItem?
     private var backSwipeDismissHandler: HorizontalBackSwipeGestureInstaller?
     private(set) var installedBodyView: (any ReaderBody)?
+    /// The body's trailing edge, and the width it is held at during a live resize (`+LiveResize`).
+    var bodyWidthEdges: (trailing: NSLayoutConstraint, held: NSLayoutConstraint?)?
     /// The installed body's one observation of its live trace.
     private var traceObservation: ReaderTraceToken?
     /// Where the rendered body was read before Source; a streaming source
@@ -466,9 +468,11 @@ final class FullScreenCodeViewController: UIViewController {
         // that body says otherwise.
         // Top pinned to view edge (not safe area) so content scrolls behind
         // the navigation bar's Liquid Glass pills. See FullScreenViewerChrome.
+        let bodyTrailing = bodyView.trailingAnchor.constraint(equalTo: viewController.view.safeAreaLayoutGuide.trailingAnchor)
+        bodyWidthEdges = (bodyTrailing, nil)
         NSLayoutConstraint.activate([
             bodyView.leadingAnchor.constraint(equalTo: viewController.view.safeAreaLayoutGuide.leadingAnchor),
-            bodyView.trailingAnchor.constraint(equalTo: viewController.view.safeAreaLayoutGuide.trailingAnchor),
+            bodyTrailing,
             bodyView.topAnchor.constraint(equalTo: viewController.view.topAnchor),
             bodyView.bottomAnchor.constraint(equalTo: viewController.view.bottomAnchor),
         ])

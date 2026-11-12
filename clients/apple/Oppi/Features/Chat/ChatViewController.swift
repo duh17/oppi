@@ -140,6 +140,10 @@ final class ChatViewController: UIViewController {
 
     let timeline = ChatTimelineController()
     var timelineView: UICollectionView?
+    /// The timeline's trailing edge on the safe area; a live resize swaps it
+    /// for `timelineHeldWidth` while a divider moves (`PaneLiveResizing`).
+    var timelineTrailing: NSLayoutConstraint?
+    var timelineHeldWidth: NSLayoutConstraint?
     let composer = ChatComposerOwner()
     /// The strip's pill bands reach past the footer's edges, over the timeline (see
     /// `ExtensionStripPillHitBand`); the composer still wins inside its own bounds.

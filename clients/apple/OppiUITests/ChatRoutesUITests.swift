@@ -1607,10 +1607,20 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// Drags `element` horizontally by `dx` points: negative widens the
-    /// trailing column (toward the chat), positive narrows or closes it.
+    /// trailing column (toward the chat), positive narrows or closes it. The
+    /// finger starts and stops 30 pt inside the window (a full-window pane's
+    /// handle reaches its leading edge): a touch at or past the window's edge
+    /// can start an iPadOS window gesture instead, which shrank the app into
+    /// a compact floating window, where the panel is a sheet with no divider.
     private func drag(_ element: XCUIElement, by dx: CGFloat) {
-        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: dx, dy: 0)))
+        let window = app.windows.firstMatch.frame
+        let inside = { (x: CGFloat) in min(max(x, window.minX + 30), window.maxX - 30) }
+        let frame = element.frame
+        let startX = min(max(frame.midX, inside(frame.minX)), frame.maxX - 2)
+        let endX = inside(startX + dx)
+        let start = element.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: startX - frame.minX, dy: frame.height / 2))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: endX - startX, dy: 0)))
     }
 
     /// Scrolls the Context list until all of `element` shows above the list's

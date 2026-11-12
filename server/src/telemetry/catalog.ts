@@ -993,6 +993,11 @@ const EVENTS = {
     tags: { terminal_mode: { required: true }, scroll_path: { required: true } },
     emit: [{ field: "frames", min: 2 }],
   },
+  "app.pane_resize_visit": {
+    description: "How smoothly did dividers move and settle in a visit? Pool hitch_ms/duration_ms.",
+    group: "rendering",
+    fields: { duration_ms: "ms", hitch_ms: "ms", worst_frame_ms: "ms", reflow_ms: "ms" },
+  },
 
   // ─── App: session list ───
   "app.session_list_compute": {

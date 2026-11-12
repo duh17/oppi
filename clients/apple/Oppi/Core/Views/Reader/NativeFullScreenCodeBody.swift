@@ -195,7 +195,11 @@ private final class FullScreenCodeChunkCell: UICollectionViewCell {
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.isEditable = false
         textView.isSelectable = true
-        textView.isScrollEnabled = false
+        // The list sizes the chunk (`sizeForItemAt`) and the text view fills
+        // it. Asking a 160-line TextKit 1 text view for an intrinsic size it
+        // never uses cost about 40 ms each time a divider beside the reader
+        // moved.
+        textView.isScrollingOnlyForSizing = true
         textView.backgroundColor = .clear
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 4, bottom: 8, right: 8)
         textView.textContainer.lineFragmentPadding = 0

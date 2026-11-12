@@ -148,6 +148,31 @@ enum ChatTimelinePerf {
         controllerOwnedApplyCount &+= 1
     }
 
+    // MARK: - Live resize counters
+
+    /// Times a timeline layout rebuilt its row frames (`prepare`). A timeline
+    /// held for a live resize (`PaneLiveResizing`) rebuilds none for the
+    /// divider while it moves. Read as deltas; never reset.
+    private(set) static var layoutRebuildCount = 0
+    /// The rebuilds among `layoutRebuildCount` that a data change asked for
+    /// (a snapshot apply or a reload: the rows themselves changed). Every
+    /// other rebuild followed geometry: a width, an inset, a row that resized.
+    /// A held timeline still takes data changes, so a live resize's own cost
+    /// is the rest.
+    private(set) static var contentRebuildCount = 0
+    /// Rows a timeline cell sized through Auto Layout and TextKit
+    /// (`SafeSizingCell`); a cached height costs none. Read as deltas.
+    private(set) static var rowMeasureCount = 0
+
+    static func recordLayoutRebuild(forDataChange: Bool) {
+        layoutRebuildCount &+= 1
+        if forDataChange { contentRebuildCount &+= 1 }
+    }
+
+    static func recordRowMeasure() {
+        rowMeasureCount &+= 1
+    }
+
     static func beginTimelineApplyCycle(itemCount: Int, changedCount: Int) {
     }
 
