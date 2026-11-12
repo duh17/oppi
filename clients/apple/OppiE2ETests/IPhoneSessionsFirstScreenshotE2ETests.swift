@@ -576,8 +576,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
 
     func testNativeScheduleEditorSavesThinkingAndPrompt() throws {
         let scheduleId = try XCTUnwrap(nativeEditorScheduleId, "Native editor schedule was not seeded")
-        openWorkspaceSidebar()
-        tap(app.buttons["workspace.schedules.open"], named: "Schedules sidebar destination")
+        openSchedulesList()
         tap(app.buttons["schedules.row.\(scheduleId)"], named: "native editor schedule", timeout: 10)
         tap(app.buttons["schedule.detail.nativeEdit"], named: "native Schedule Edit", timeout: 10)
 
@@ -603,8 +602,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
 
     func testNativeCustomScheduleEditorScreenshot() throws {
         let scheduleId = try XCTUnwrap(customCronScheduleId, "Custom cron schedule was not seeded")
-        openWorkspaceSidebar()
-        tap(app.buttons["workspace.schedules.open"], named: "Schedules sidebar destination")
+        openSchedulesList()
         tap(app.buttons["schedules.row.\(scheduleId)"], named: "custom cron schedule", timeout: 10)
         tap(app.buttons["schedule.detail.nativeEdit"], named: "native Schedule Edit", timeout: 10)
 
@@ -620,8 +618,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     func testScheduleScreenCreatesAndRestoresWithSimpleControls() throws {
         let activeId = try XCTUnwrap(activeScheduleId, "Active schedule was not seeded")
         let archivedId = try XCTUnwrap(archivedScheduleId, "Archived schedule was not seeded")
-        openWorkspaceSidebar()
-        tap(app.buttons["workspace.schedules.open"], named: "Schedules sidebar destination")
+        openSchedulesList()
         XCTAssertTrue(app.navigationBars["Schedules"].waitForExistence(timeout: 10))
         XCTAssertTrue(
             app.buttons["schedules.row.\(activeId)"].waitForExistence(timeout: 10),
@@ -696,7 +693,17 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         let selectedModel = "opencode-go/deepseek-v4.1-flash"
         let modelRow = app.buttons["model.picker.row.\(selectedModel)"]
         XCTAssertTrue(modelRow.waitForExistence(timeout: 20), "Schedule model picker had no DeepSeek model")
-        XCTAssertEqual(modelRow.label, "DeepSeek V4.1 Flash")
+        // The row shows the server catalog's display name, which the live catalog may revise.
+        let catalog = try XCTUnwrap(e2eLabAPIJSON(method: "GET", path: "/models")["models"] as? [[String: Any]])
+        let catalogName = try XCTUnwrap(
+            catalog.first { $0["id"] as? String == selectedModel }?["name"] as? String,
+            "Server catalog has no \(selectedModel)"
+        )
+        XCTAssertEqual(modelRow.label, catalogName)
+        XCTAssertFalse(
+            selectedModel.hasSuffix(modelRow.label),
+            "Model picker row shows the model id, not its display name: \(modelRow.label)"
+        )
         tap(modelRow, named: "schedule model")
         tap(app.buttons["session.toolbar.thinking"], named: "schedule thinking picker")
         tap(app.buttons["session.toolbar.thinking.option.high"], named: "High schedule thinking")
@@ -1041,6 +1048,15 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             }
         }
         return pixelCount > 0 ? Double(matchingPixels) / Double(pixelCount) : 0
+    }
+
+    /// Schedules opens on the Calendar; schedule rows live in the List view.
+    private func openSchedulesList() {
+        openWorkspaceSidebar()
+        tap(app.buttons["workspace.schedules.open"], named: "Schedules sidebar destination")
+        let list = app.segmentedControls["schedules.mode"].buttons["List"]
+        XCTAssertTrue(waitForHittable(list, timeout: 10), "The List | Calendar switch can take a tap")
+        list.tap()
     }
 
     private func waitForHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
