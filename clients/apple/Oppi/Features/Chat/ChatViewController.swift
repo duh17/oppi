@@ -43,24 +43,15 @@ final class ChatScreenModel {
     var attachmentPreparationText: String?
     var messageQueueError: String?
 
-    var showOutline = false
-    var showGit = false
+    /// The chat's one open panel (`showPanel`): beside the chat in its
+    /// attached leaf on a wide window, a sheet on a compact one. A reader, a
+    /// timeline destination, and an extension panel open beside only; a
+    /// narrowing window moves them to their compact routes.
+    var panel: ChatPanel?
     /// The session's full touched list, read by the Git button and the Git
     /// panel alike (`loadSessionTouchedListIfNeeded`).
     var sessionTouchedList: SessionTouchedList?
     @ObservationIgnored var sessionTouchedListTask: Task<Void, Never>?
-    var isFilePanelVisible = false
-    var showContextInspector = false
-    /// A timeline-opened reader (a document, image, or an extension drawer's
-    /// full screen) shown in the chat's attached leaf at regular width, instead of
-    /// the narrow width's pushed `.chatReader` route.
-    var sidePanelReaderTarget: ChatReaderNavTarget?
-    /// A timeline file or commit pill shown in the attached leaf at regular
-    /// width, where narrow width presents it as a modal.
-    var sidePanelTimelineTarget: ChatTimelineSidePanelTarget?
-    /// An extension surface shown in its panel pane, the attached leaf, at
-    /// regular width; narrow width pushes it full screen instead.
-    var sidePanelSurfaceId: String?
     var showModelPicker = false
     /// The control that opened the picker, which its popover points at.
     @ObservationIgnored private(set) weak var modelPickerSource: UIView?
@@ -70,7 +61,6 @@ final class ChatScreenModel {
         showModelPicker = true
     }
     var showComposer = false
-    var showShareRedactionSheet = false
 
     var visibleAudioStripItemIDs: Set<String> = []
     var nowPlayingDrawerExpanded = false

@@ -99,9 +99,9 @@ struct ChatTimelineRowColumnTests {
     /// narrowed column after, nothing between.
     @Test(
         "a panel opening beside the timeline lays its rows out only at the old or the narrowed column",
-        arguments: [ChatSidePanel.outline, .share]
+        arguments: [ChatPanel.outline, .share]
     )
-    func openingAPanelNeverLaysRowsOutInAStaleColumn(panel: ChatSidePanel) async throws {
+    func openingAPanelNeverLaysRowsOutInAStaleColumn(panel: ChatPanel) async throws {
         let host = try await makeSeededHost()
         defer { host.hide() }
         let timeline = host.timeline
@@ -112,7 +112,7 @@ struct ChatTimelineRowColumnTests {
             for cell in timeline?.visibleCells ?? [] { rowWidths.insert(cell.bounds.width) }
         }
         defer { timeline.didCaptureAnchorForTesting = nil }
-        host.chat.showSidePanel(panel)
+        host.chat.showPanel(panel)
         let opened = await waitForMainActorCondition(timeout: .seconds(3)) {
             host.chat.attachedLeaf.mountedScreenForTesting != nil
         }

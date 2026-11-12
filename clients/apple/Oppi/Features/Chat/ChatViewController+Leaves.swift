@@ -20,14 +20,14 @@ extension ChatViewController {
 
     /// The Git panel (UIKit), as a sheet in compact width. Regular width
     /// builds it through `gitPanelController(hostedInPanel: true)` instead
-    /// (`sidePanelController`), so a commit or a review pushes inside the
+    /// (`attachedLeafScreen`), so a commit or a review pushes inside the
     /// column's own navigation rather than a second sheet over it.
     func gitPanelScreen() -> RouterScreen {
         .controller(gitPanelController(hostedInPanel: false))
     }
 
     /// `hostedInPanel` matches how this screen itself is about to be shown:
-    /// true only from the attached leaf's panel root (`sidePanelController`),
+    /// true only from the attached leaf's panel root (`attachedLeafScreen`),
     /// so a commit, a review, or a touched file's session copy pushes inside
     /// that column's own navigation, with a back button to this panel,
     /// instead of presenting as a sheet. A review staged for this session, or
@@ -37,7 +37,7 @@ extension ChatViewController {
     func gitPanelController(hostedInPanel: Bool) -> () -> UIViewController {
         { [weak self] in
             guard let self else { preconditionFailure("The Git panel presents only while its chat is alive") }
-            let closePanel: () -> Void = { [weak self] in self?.model.showGit = false }
+            let closePanel: () -> Void = { [weak self] in self?.closePanel(.git) }
             return GitPanelViewController(
                 context: { [weak self] in self?.gitPanelContext },
                 options: .init(
@@ -53,7 +53,7 @@ extension ChatViewController {
                     // review pushed in its column, opens on this chat's
                     // stack, not inside the sheet or column.
                     pushChat: { [weak self] chat in
-                        self?.closeSidePanelThenPush(chat)
+                        self?.closePanelThenPush(chat)
                     },
                     hostedInPanel: hostedInPanel
                 ),
@@ -71,9 +71,9 @@ extension ChatViewController {
     /// the window after Back, so the bar's buttons changed the model with no
     /// update pass to show a panel again. A sheet (compact width) has no
     /// leaf to wait for.
-    func closeSidePanelThenPush(_ chat: ChatViewController) {
-        showSidePanel(nil)
-        updateSidePanels()
+    func closePanelThenPush(_ chat: ChatViewController) {
+        showPanel(nil)
+        updateAttachedLeaf()
         attachedLeaf.whenClosed { [weak self] in
             guard let self else { return }
             Router.push(chat, from: self)
@@ -119,7 +119,7 @@ extension ChatViewController {
         guard let session, let workspaceId = session.workspaceId, let api = apiClient else { return }
         // No Git button or panel to count for: not a repository, or Git status off.
         guard mayHaveGit else { return }
-        let needed = !ContextBarScoping.isOwnWorktree(session.worktreeId) || model.showGit
+        let needed = !ContextBarScoping.isOwnWorktree(session.worktreeId) || model.panel == .git
         guard needed, (session.changeStats?.filesChanged ?? 0) > 0 else { return }
         let filesChanged = session.changeStats?.filesChanged ?? 0
         if let current = model.sessionTouchedList, current.workspaceId == workspaceId,
@@ -240,7 +240,7 @@ extension ChatViewController {
             return ChatFilePanelViewController(
                 root: root,
                 inputs: { [weak self] in self?.filePanelInputs },
-                onClose: { [weak self] in self?.closeChatFilePanel() }
+                onClose: { [weak self] in self?.closePanel(.files) }
             )
         }
     }
@@ -274,7 +274,7 @@ extension ChatViewController {
     }
 
     /// Share with redaction review, as a sheet in compact width or the
-    /// attached leaf in regular width (`sidePanelController`). The sheet
+    /// attached leaf in regular width (`attachedLeafScreen`). The sheet
     /// reads `shareReview` itself, so the preview updates while it is up.
     func shareRedactionScreen() -> RouterScreen {
         .controller(shareRedactionController())
@@ -290,7 +290,7 @@ extension ChatViewController {
                 onShare: { [weak self] in self?.publishSessionWithCurrentRedactionPolicy() },
                 onCancel: { [weak self] in
                     self?.cancelSharePreflight()
-                    self?.model.showShareRedactionSheet = false
+                    self?.closePanel(.share)
                 }
             )
         }

@@ -211,7 +211,7 @@ struct PaneLiveResizeTimelineTests {
         if !seeded { host.hide() }
         try #require(seeded, "the timeline never showed its rows")
 
-        chat.showSidePanel(.outline)
+        chat.showPanel(.outline)
         let opened = await waitForMainActorCondition(timeout: .seconds(3)) {
             chat.attachedLeaf.mountedScreenForTesting != nil
         }

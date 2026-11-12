@@ -1,8 +1,9 @@
 import Foundation
 
-// The pane tree as values: what a window shows, independent of UIKit. The
-// host (Stage 1b on) draws it through `PanePresentation.resolve`; links,
-// restoration and layout files name leaf content through `PaneRoute`.
+// The pane tree as values: what a window shows, independent of UIKit. Today
+// it is what restoration saves; Stage 3's host draws it through
+// `PanePresentation.resolve`. Links, restoration and layout files name leaf
+// content through `PaneRoute`.
 
 /// A leaf's id within one tree: `[a-z0-9-]{1,24}`, so it can appear in a
 /// layout file and an accessibility identifier unchanged.

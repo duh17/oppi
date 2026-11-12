@@ -651,14 +651,11 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
     private var spokenLabel: (() -> String?)?
     private var spokenValue: (() -> String?)?
     var onTap: (() -> Void)?
-    /// Opens the surface in its pane: the pill's menu and its accessibility action. Nil where there
-    /// is no pane to open (a narrow window, an entry that is not a surface, or one already shown).
+    /// Open in Pane (`ExtensionPanelPillRole.openInPane`): the pill's menu and its accessibility action.
     var openInPane: (() -> Void)? {
         didSet {
             isContextMenuInteractionEnabled = openInPane != nil
-            accessibilityCustomActions = openInPane.map { open in
-                [UIAccessibilityCustomAction(name: String(localized: "Open in Pane")) { _ in open(); return true }]
-            }
+            accessibilityCustomActions = ExtensionPanelPillRole.accessibilityActions(openInPane)
         }
     }
 
@@ -716,11 +713,7 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
         _ interaction: UIContextMenuInteraction,
         configurationForMenuAtLocation location: CGPoint
     ) -> UIContextMenuConfiguration? {
-        guard let openInPane else { return nil }
-        let image = UIImage(systemName: "rectangle.righthalf.inset.filled")
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
-            UIMenu(children: [UIAction(title: String(localized: "Open in Pane"), image: image) { _ in openInPane() }])
-        }
+        openInPane.map(ExtensionPanelPillRole.menu)
     }
 
     func apply(
@@ -1340,31 +1333,24 @@ final class ExtensionSurfacePanelView: UIView {
         let summaryOnly = !AdaptiveWidth.isWide(traitCollection)
         for entry in entries {
             let pill = pills[entry.id] ?? ExtensionSurfaceStripPill()
-            let surfaceId = entry.panelSurfaceId
-            let inPane = surfaceId != nil && surfaceId == content.paneSurfaceId
+            let pane = ExtensionPanelPillRole(
+                surfaceId: entry.panelSurfaceId,
+                opensPanel: entry.opensPanel,
+                shownSurfaceId: content.paneSurfaceId,
+                actions: actions
+            )
             pill.apply(
                 entry,
-                isActive: entry.id == expandedEntryID || inPane,
-                inPane: inPane,
+                isActive: entry.id == expandedEntryID || pane.inPane,
+                inPane: pane.inPane,
                 placement: placement,
                 palette: palette,
                 pill: pillContent(for: entry, content: content),
                 summaryOnly: summaryOnly
             )
             let id = entry.id
-            let actions = actions
-            if inPane {
-                // The pane already shows it: the drawer would show it twice.
-                pill.onTap = { actions.focusPanel?() }
-            } else if entry.opensPanel, let surfaceId, let openPanel = actions.openPanel {
-                pill.onTap = { openPanel(surfaceId) }
-            } else {
-                pill.onTap = { [weak self] in self?.toggle(id) }
-            }
-            // Open in Pane, beside the chat only: a narrow window has no pane to open.
-            pill.openInPane = actions.readerOpensBeside && !inPane
-                ? surfaceId.flatMap { surfaceId in actions.openPanel.map { open in { open(surfaceId) } } }
-                : nil
+            pill.onTap = pane.tapAction { [weak self] in self?.toggle(id) }
+            pill.openInPane = pane.openInPane
             keptPills[entry.id] = pill
             arranged.append(pill)
         }

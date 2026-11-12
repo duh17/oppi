@@ -18,11 +18,7 @@ extension ChatViewController {
 
     /// A panel shows beside the chat (a compact width presents it as a
     /// sheet, which closes as any sheet does).
-    var hasOpenSidePanel: Bool { activeSidePanel != nil }
-
-    func closeSidePanel() {
-        showSidePanel(nil)
-    }
+    var hasPanelBeside: Bool { panelBeside != nil }
 
     func canRunTopBarAction(_ action: ChatTopBarAction) -> Bool {
         barItems.isAvailable(action)
@@ -31,10 +27,10 @@ extension ChatViewController {
     /// Whether the panel `action` opens is open now.
     func isPaneOpen(_ action: ChatTopBarAction) -> Bool {
         switch action {
-        case .files: model.isFilePanelVisible
-        case .git: model.showGit
-        case .outline: model.showOutline
-        case .context: model.showContextInspector
+        case .files: model.panel == .files
+        case .git: model.panel == .git
+        case .outline: model.panel == .outline
+        case .context: model.panel == .context
         case .terminal: false
         }
     }

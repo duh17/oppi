@@ -32,6 +32,12 @@ enum AppLaunchPairingPolicy {
         guard loadState == .loaded else { return .keepResolving }
         return pairedServerCount == 0 ? .onboarding : .pairedShell
     }
+
+    /// The server launch opens: the last active one (`LastActiveServer`)
+    /// while it is still paired, else the first paired server.
+    static func launchServer(lastActiveId: String?, servers: [PairedServer]) -> PairedServer? {
+        servers.first { $0.id == lastActiveId } ?? servers.first
+    }
 }
 
 enum AppLaunchPhase: Sendable, Equatable {

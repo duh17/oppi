@@ -41,12 +41,10 @@ final class ScenePanes {
     @ObservationIgnored private var sceneIdentifier: String?
     @ObservationIgnored private var store = PaneTreeStore()
     @ObservationIgnored private var pending: PaneLayoutArchive?
-    /// The panel a chat opens beside itself once it shows: the restored
-    /// companion, or a panel link. Observed, so a chat already on screen
-    /// opens it too, and a save while it waits keeps it in the tree.
-    private var pendingPanel: PendingPanel?
-    @ObservationIgnored private var restoredScroll: PaneChatScroll?
-    @ObservationIgnored private var restoredCompanionFocus = false
+    /// What a chat picks up as it shows. Observed, so a chat already on
+    /// screen opens its panel too, and a save while it waits keeps it in the
+    /// tree.
+    private var handoff = ChatHandoff()
     @ObservationIgnored private let chats = NSHashTable<AnyObject>.weakObjects()
     @ObservationIgnored private var saving: Task<Void, Never>?
     @ObservationIgnored private var lastWritten: Saved?
@@ -55,7 +53,7 @@ final class ScenePanes {
     /// Debounce before a settled change is written.
     private static let settleDelay: Duration = .milliseconds(500)
     /// How long restored screens must hold before the restore counts as
-    /// survived (`PaneTreeStore.restoringKey`).
+    /// survived (`PaneTreeStore.restoringKey(forScene:)`).
     private static let restoreSurvivalDelay: Duration = .seconds(5)
 
     /// What a settle writes: the tree, and the companion's share whether or
@@ -65,9 +63,15 @@ final class ScenePanes {
         var companionFraction: Double?
     }
 
-    private struct PendingPanel: Equatable {
-        var sessionId: String
-        var route: PaneRoute
+    /// The handoff to chats that are not on screen yet: the panel a session's
+    /// chat opens beside itself (the restored companion, or a panel link),
+    /// and after a relaunch the restored chat's reading position and whether
+    /// its panel had focus. Each part is taken once, by the screen that
+    /// applies it.
+    private struct ChatHandoff {
+        var panel: (sessionId: String, route: PaneRoute)?
+        var scroll: PaneChatScroll?
+        var panelFocused = false
     }
 
     // MARK: Scene
@@ -79,7 +83,7 @@ final class ScenePanes {
     func connect(scene id: String, store: PaneTreeStore = PaneTreeStore()) {
         sceneIdentifier = id
         self.store = store
-        if store.lastRestoreWasInterrupted {
+        if store.lastRestoreWasInterrupted(scene: id) {
             store.dropAfterInterruptedRestore(scene: id)
         }
         pending = store.load(scene: id)
@@ -104,41 +108,39 @@ final class ScenePanes {
     /// A panel link: the session's chat opens `route` beside itself when it
     /// shows (`pendingPanel(for:)`), replacing one still waiting.
     func openPanel(_ route: PaneRoute, beside sessionId: String) {
-        pendingPanel = PendingPanel(sessionId: sessionId, route: route)
+        handoff.panel = (sessionId, route)
     }
 
     /// The panel waiting for this session's chat; reading it observes it.
     func pendingPanel(for sessionId: String) -> PaneRoute? {
-        guard let pendingPanel, pendingPanel.sessionId == sessionId else { return nil }
-        return pendingPanel.route
+        guard let panel = handoff.panel, panel.sessionId == sessionId else { return nil }
+        return panel.route
     }
 
     /// The panel waiting for this session's chat, once.
     func takePendingPanel(for sessionId: String) -> PaneRoute? {
         guard let route = pendingPanel(for: sessionId) else { return nil }
-        pendingPanel = nil
+        handoff.panel = nil
         return route
     }
 
     /// The reading position a restored chat starts at, once.
     func takeRestoredScroll(for sessionId: String) -> PaneChatScroll? {
-        guard let scroll = restoredScroll, scroll.sessionId == sessionId else { return nil }
-        restoredScroll = nil
+        guard let scroll = handoff.scroll, scroll.sessionId == sessionId else { return nil }
+        handoff.scroll = nil
         return scroll
     }
 
     /// A restored entry was closed before its chat showed: the chat's panel
     /// and position must not open when the person opens it later by hand.
     func dropRestoredHandoffs() {
-        pendingPanel = nil
-        restoredScroll = nil
-        restoredCompanionFocus = false
+        handoff = ChatHandoff()
     }
 
     /// Whether a restored companion takes focus as it mounts, once.
     func takeRestoredCompanionFocus() -> Bool {
-        defer { restoredCompanionFocus = false }
-        return restoredCompanionFocus
+        defer { handoff.panelFocused = false }
+        return handoff.panelFocused
     }
 
     // MARK: Snapshot
@@ -166,7 +168,7 @@ final class ScenePanes {
             origin: .attached
         )
         let share = Double(min(max(companionFraction ?? 0.4, 0.05), 0.95))
-        let focus = companionIsFocused || (!companionIsShown && restoredCompanionFocus)
+        let focus = companionIsFocused || (!companionIsShown && handoff.panelFocused)
             ? Self.companionLeafID : Self.primaryLeafID
         return PaneLayout(
             root: .split(axis: .row, children: [.leaf(main), .leaf(side)], weights: [1 - share, share]),
@@ -184,7 +186,12 @@ final class ScenePanes {
     /// chat takes as it appears. With App Lock on, this waits for unlock so
     /// nothing mounts behind the cover. Then the window's changes are saved.
     /// `applying: false` drops the saved tree (nothing paired to show it on).
-    func restore(navigation: AppNavigation, coordinator: ConnectionCoordinator, applying: Bool = true) {
+    func restore(
+        navigation: AppNavigation,
+        coordinator: ConnectionCoordinator,
+        applying: Bool = true,
+        appLock: AppLockService = .shared
+    ) {
         guard saving == nil else { return }
         self.navigation = navigation
         self.coordinator = coordinator
@@ -194,13 +201,13 @@ final class ScenePanes {
             return
         }
         pending = nil
-        guard AppLockService.shared.isLocked else {
+        guard appLock.isLocked else {
             apply(archive, navigation: navigation, coordinator: coordinator)
             startSaving()
             return
         }
         Task { [weak self] in
-            for await locked in Observations({ AppLockService.shared.isLocked }) where !locked { break }
+            for await locked in Observations({ appLock.isLocked }) where !locked { break }
             guard let self else { return }
             // An open that waited for the same unlock (a notification, a
             // link) already chose the screen; it wins over the saved tree.
@@ -215,6 +222,14 @@ final class ScenePanes {
         markRestoringUntilSurvived()
         if let fraction = archive.companionFraction { companionFraction = CGFloat(fraction) }
         let layout = archive.layout
+        if layout.leaves.count > 2 {
+            // Until the per-window tree (Stage 3), a window shows one primary
+            // leaf and its one companion; this build never writes more.
+            ClientLog.warning("Panes", "Restored tree has more leaves than the window shows", metadata: [
+                "leaves": String(layout.leaves.count),
+            ])
+            assertionFailure("A restored pane tree has \(layout.leaves.count) leaves; only two are restored")
+        }
         guard let primary = layout.leaves.first(where: { $0.attachedTo == nil }) else { return }
         var elements: [WorkspaceStackRouteElement] = []
         for (index, entry) in primary.stack.enumerated() {
@@ -236,20 +251,21 @@ final class ScenePanes {
         navigation.restorePrimaryStack(elements)
 
         guard case .session(let sessionId)? = primary.stack.last?.route else { return }
-        restoredScroll = archive.chatScroll[primary.id].flatMap { $0.sessionId == sessionId ? $0 : nil }
+        handoff.scroll = archive.chatScroll[primary.id].flatMap { $0.sessionId == sessionId ? $0 : nil }
         guard let companion = layout.leaves.first(where: { $0.attachedTo == primary.id }),
               let route = companion.stack.last?.route else { return }
-        pendingPanel = PendingPanel(sessionId: sessionId, route: route)
-        restoredCompanionFocus = layout.focus == companion.id
+        handoff.panel = (sessionId, route)
+        handoff.panelFocused = layout.focus == companion.id
     }
 
     /// Marks the restore under way, and clears the mark once the screens
     /// have held a while; `flush` clears it too.
     private func markRestoringUntilSurvived() {
-        store.markRestoring(true)
+        guard let sceneIdentifier else { return }
+        store.markRestoring(true, scene: sceneIdentifier)
         Task { [weak self] in
             try? await Task.sleep(for: Self.restoreSurvivalDelay)
-            self?.store.markRestoring(false)
+            self?.store.markRestoring(false, scene: sceneIdentifier)
         }
     }
 
@@ -282,7 +298,7 @@ final class ScenePanes {
     /// Writes the tree now (the scene is going to the background), and
     /// counts a restore still under way as survived.
     func flush() {
-        store.markRestoring(false)
+        if let sceneIdentifier { store.markRestoring(false, scene: sceneIdentifier) }
         guard saving != nil, let saved = currentSaved() else { return }
         write(saved, force: true)
     }
@@ -318,7 +334,7 @@ final class ScenePanes {
             // A restored position the chat has not taken yet is still the
             // reader's place.
             scroll[Self.primaryLeafID] = reports.first { $0.sessionId == sessionId }
-                ?? restoredScroll.flatMap { $0.sessionId == sessionId ? $0 : nil }
+                ?? handoff.scroll.flatMap { $0.sessionId == sessionId ? $0 : nil }
         }
         return PaneLayoutArchive(restorable: layout, chatScroll: scroll, companionFraction: saved.companionFraction)
     }

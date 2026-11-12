@@ -23,8 +23,8 @@ struct ChatTimelineDestinationRequest {
 extension ChatTimelineDestinationRequest {
     /// The request without its views, for a screen that outlives the tap:
     /// the attached leaf's panel.
-    var sidePanelTarget: ChatTimelineSidePanelTarget {
-        ChatTimelineSidePanelTarget(
+    var panelTarget: ChatTimelinePanelTarget {
+        ChatTimelinePanelTarget(
             destination: destination,
             serverId: serverId,
             workspaceId: workspaceId,
@@ -36,7 +36,7 @@ extension ChatTimelineDestinationRequest {
 
 /// A timeline destination shown in the chat's attached leaf at regular
 /// width. Two opens of the same file are two panels, so identity is the id.
-struct ChatTimelineSidePanelTarget: Hashable {
+struct ChatTimelinePanelTarget: Hashable {
     let id = UUID()
     let destination: ChatTimelineDestination
     let serverId: String?

@@ -254,14 +254,72 @@ struct PaneRestorationTests {
         let root = try await makeRoot(sessions: [session("s-1")])
         root.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
         save(root.navigation.panes, root.navigation, scene: "scene-d", store: store)
-        store.markRestoring(true)
+        store.markRestoring(true, scene: "scene-d")
 
         let after = try await makeRoot(sessions: [session("s-1")])
         after.navigation.panes.connect(scene: "scene-d", store: store)
         after.navigation.panes.restore(navigation: after.navigation, coordinator: after.coordinator)
         #expect(after.navigation.primaryStackElements.isEmpty)
         #expect(store.load(scene: "scene-d") == nil)
-        #expect(!store.lastRestoreWasInterrupted)
+        #expect(!store.lastRestoreWasInterrupted(scene: "scene-d"))
+    }
+
+    /// The crash mark is one window's: a restore that did not survive in one
+    /// scene costs another scene nothing, and a discarded scene leaves no mark.
+    @Test func aRestoreTheAppDidNotSurviveCostsOnlyItsOwnScene() async throws {
+        let store = try makeStore()
+        let root = try await makeRoot(sessions: [session("s-1"), session("s-2")])
+        root.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
+        save(root.navigation.panes, root.navigation, scene: "scene-crashed", store: store)
+        root.navigation.restorePrimaryStack(chatInWorkspace("s-2"))
+        save(root.navigation.panes, root.navigation, scene: "scene-other", store: store)
+        store.markRestoring(true, scene: "scene-crashed")
+
+        let after = try await makeRoot(sessions: [session("s-1"), session("s-2")])
+        after.navigation.panes.connect(scene: "scene-other", store: store)
+        after.navigation.panes.restore(navigation: after.navigation, coordinator: after.coordinator)
+        #expect(after.navigation.primaryStackElements == chatInWorkspace("s-2"))
+        #expect(store.lastRestoreWasInterrupted(scene: "scene-crashed"))
+
+        store.discard(scenes: ["scene-crashed"])
+        #expect(!store.lastRestoreWasInterrupted(scene: "scene-crashed"))
+    }
+
+    /// B2: under App Lock a restore mounts nothing behind the cover; the saved
+    /// screens open once the app unlocks.
+    @Test func aRestoreUnderAppLockWaitsForUnlock() async throws {
+        let store = try makeStore()
+        let before = try await makeRoot(sessions: [session("s-1")])
+        before.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
+        save(before.navigation.panes, before.navigation, scene: "scene-locked", store: store)
+
+        let lockSuite = "PaneRestorationTests.lock.\(UUID().uuidString)"
+        let lockDefaults = try #require(UserDefaults(suiteName: lockSuite))
+        defer { lockDefaults.removePersistentDomain(forName: lockSuite) }
+        AppLockSettings.setTimeout(.immediately, in: lockDefaults)
+        let appLock = AppLockService(
+            defaults: lockDefaults,
+            availability: { .available },
+            method: { .faceID },
+            authenticator: { _ in .success },
+            didTurnOn: {},
+            isProtectedDataAvailable: { true }
+        )
+        #expect(appLock.isLocked, "App Lock on starts locked, as a cold launch does")
+
+        let after = try await makeRoot(sessions: [session("s-1")])
+        after.navigation.panes.connect(scene: "scene-locked", store: store)
+        after.navigation.panes.restore(navigation: after.navigation, coordinator: after.coordinator, appLock: appLock)
+        let mountedWhileLocked = await waitForMainActorCondition(timeout: .milliseconds(300)) {
+            !after.navigation.primaryStackElements.isEmpty
+        }
+        #expect(!mountedWhileLocked, "nothing mounts behind the cover")
+
+        #expect(await appLock.unlock())
+        let restored = await waitForMainActorCondition(timeout: .seconds(3)) {
+            after.navigation.primaryStackElements == chatInWorkspace("s-1")
+        }
+        #expect(restored, "the saved chat opens once unlocked")
     }
 
     /// X1 against X4: a session on a second, non-active server is asked of
@@ -302,5 +360,24 @@ struct PaneRestorationTests {
         #expect(root.coordinator.restoreActiveServer("sha256:other"))
         #expect(root.coordinator.restoreActiveServer("sha256:other"))
         #expect(recorded == ["sha256:other"])
+    }
+
+    /// X8: launch opens the server last made active, as the preference holds
+    /// it; once that server is removed, the first paired one.
+    @Test func launchPicksTheLastActiveServer() async throws {
+        let suite = "PaneRestorationTests.lastActive.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let root = try await makeTestTwoServerRoot(firstId: "sha256:first", otherId: "sha256:other")
+        root.coordinator.onActiveServerChanged = { AppPreferences.LastActiveServer.set($0, in: defaults) }
+        #expect(root.coordinator.restoreActiveServer("sha256:other"))
+
+        let servers = root.coordinator.serverStore.servers
+        let lastActive = AppPreferences.LastActiveServer.id(in: defaults)
+        #expect(AppLaunchPairingPolicy.launchServer(lastActiveId: lastActive, servers: servers)?.id == "sha256:other")
+
+        let remaining = servers.filter { $0.id != "sha256:other" }
+        #expect(AppLaunchPairingPolicy.launchServer(lastActiveId: lastActive, servers: remaining)?.id == "sha256:first")
+        #expect(AppLaunchPairingPolicy.launchServer(lastActiveId: lastActive, servers: []) == nil)
     }
 }

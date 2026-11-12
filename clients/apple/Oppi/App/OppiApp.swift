@@ -874,8 +874,10 @@ final class OppiApp {
             loadState: serverStore.loadState,
             pairedServerCount: serverStore.servers.count
         )
-        let targetServer = AppPreferences.LastActiveServer.id().flatMap { serverStore.server(for: $0) }
-            ?? serverStore.servers.first
+        let targetServer = AppLaunchPairingPolicy.launchServer(
+            lastActiveId: AppPreferences.LastActiveServer.id(),
+            servers: serverStore.servers
+        )
 
         guard route == .pairedShell, let server = targetServer else {
             // Nothing paired to show a saved tree on: start fresh, and save from here.

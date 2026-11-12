@@ -53,7 +53,7 @@ extension ChatViewController {
         // width keeps the modal.
         return { [weak self] request in
             if let self, opensPanelsBeside {
-                showSidePanel(.timeline(request.sidePanelTarget))
+                showPanel(.timeline(request.panelTarget))
             } else {
                 presenter.open(request)
             }
@@ -164,7 +164,7 @@ extension ChatViewController {
         // reader holds its payload once it resolves it.
         let target = store.store(readerPayload, retaining: appNavigation.containsChatReader)
         if opensPanelsBeside {
-            showSidePanel(.reader(target))
+            showPanel(.reader(target))
         } else {
             appNavigation.openChatReader(target)
         }

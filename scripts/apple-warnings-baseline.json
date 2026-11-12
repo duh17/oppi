@@ -48,7 +48,7 @@
       "OppiTests/Chat/AskCardExpandedTests.swift": 1,
       "OppiTests/Chat/AudioPlayerServiceLifecycleTests.swift": 3,
       "OppiTests/Chat/ChatFileAccessReviewCommentStashTests.swift": 2,
-      "OppiTests/Chat/ChatReaderSidePanelRoutingTests.swift": 2,
+      "OppiTests/Chat/ChatReaderPaneRoutingTests.swift": 2,
       "OppiTests/Chat/ChatReaderViewControllerTests.swift": 1,
       "OppiTests/Chat/ChatSessionManagerTests.swift": 2,
       "OppiTests/Chat/ChatTopBarLayoutTests.swift": 1,

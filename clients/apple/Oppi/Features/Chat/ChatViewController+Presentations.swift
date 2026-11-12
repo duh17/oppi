@@ -43,7 +43,7 @@ extension ChatViewController {
 
     /// Outline, Files, Git, Context, and Share all sit in this one sheet style
     /// at compact width; regular width mounts every one of them in the
-    /// attached leaf instead (`updateSidePanels`), Share included, so none
+    /// attached leaf instead (`updateAttachedLeaf`), Share included, so none
     /// of them needs a second, full-screen presentation of its own.
     private var auxiliaryPresentation: ModalPresentation {
         .sheet.detents([.medium(), .large()], grabber: true, selected: .large).inNavigation()
@@ -52,43 +52,45 @@ extension ChatViewController {
     /// Every chat modal is a router modal.
     func updateModals() {
         guard let root else { return }
-        let sidePanel = opensPanelsBeside
         let auxiliary = auxiliaryPresentation
+        // The panel's slot presents it where panels are sheets.
+        let sheet = opensPanelsBeside ? nil : model.panel
+        let id = { (panel: ChatPanel) in sheet == panel ? self.chatAuxiliaryModalID : nil }
 
         modals.outline.update(
-            id: !sidePanel && model.showOutline ? chatAuxiliaryModalID : nil,
+            id: id(.outline),
             presentation: auxiliary,
             root: root,
-            clear: { [weak self] in self?.model.showOutline = false },
+            clear: { [weak self] in self?.closePanel(.outline) },
             screen: outlineScreen
         )
         modals.files.update(
-            id: !sidePanel && model.isFilePanelVisible ? chatAuxiliaryModalID : nil,
+            id: id(.files),
             presentation: auxiliary,
             root: root,
-            clear: { [weak self] in self?.model.isFilePanelVisible = false },
+            clear: { [weak self] in self?.closePanel(.files) },
             screen: filePanelScreen
         )
         modals.git.update(
-            id: !sidePanel && model.showGit ? chatAuxiliaryModalID : nil,
+            id: id(.git),
             presentation: auxiliary,
             root: root,
-            clear: { [weak self] in self?.model.showGit = false },
+            clear: { [weak self] in self?.closePanel(.git) },
             screen: gitPanelScreen
         )
         modals.context.update(
-            id: !sidePanel && model.showContextInspector ? chatAuxiliaryModalID : nil,
+            id: id(.context),
             presentation: auxiliary,
             root: root,
-            clear: { [weak self] in self?.model.showContextInspector = false },
+            clear: { [weak self] in self?.closePanel(.context) },
             screen: contextScreen
         )
         modals.share.update(
-            id: !sidePanel && model.showShareRedactionSheet ? chatAuxiliaryModalID : nil,
+            id: id(.share),
             presentation: auxiliary,
             root: root,
             onDismiss: { [weak self] in self?.cancelSharePreflight() },
-            clear: { [weak self] in self?.model.showShareRedactionSheet = false },
+            clear: { [weak self] in self?.closePanel(.share) },
             screen: shareRedactionScreen
         )
         modals.modelPicker.update(
@@ -140,49 +142,39 @@ extension ChatViewController {
         }, update: { $0.currentModel = current })
     }
 
-    /// The panel the attached leaf shows, or nil where they present as
+    /// The panel the attached leaf shows, or nil where panels present as
     /// sheets or when none is open.
-    var activeSidePanel: ChatSidePanel? {
-        guard opensPanelsBeside else { return nil }
-        // Share wins: it is a deliberate action from the title menu, not
-        // a toggle, and used to draw over every other panel full screen.
-        if model.showShareRedactionSheet { return .share }
-        if let target = model.sidePanelReaderTarget { return .reader(target) }
-        if let target = model.sidePanelTimelineTarget { return .timeline(target) }
-        if let surfaceId = model.sidePanelSurfaceId { return .panel(surfaceId) }
-        if model.isFilePanelVisible { return .files }
-        if model.showOutline { return .outline }
-        if model.showGit { return .git }
-        if model.showContextInspector { return .context }
-        return nil
+    var panelBeside: ChatPanel? {
+        opensPanelsBeside ? model.panel : nil
     }
 
-    /// Side panels slide in as the chat's attached leaf, beside it in its
-    /// pane host, in regular width (iPad, the Duo's inner display) and are
-    /// sheets in compact width. A size-class change while a panel is open
-    /// moves it between the leaf and the sheet; its pushed pages close. A
-    /// reader moves to the pushed reader route, and a timeline file or commit
-    /// to the modal it opens as there.
-    func updateSidePanels() {
+    /// Panels slide in as the chat's attached leaf, beside it in its pane
+    /// host, in regular width (iPad, the Duo's inner display) and are sheets
+    /// in compact width. A size-class change while a panel is open moves it
+    /// between the leaf and the sheet; its pushed pages close. A reader moves
+    /// to the pushed reader route, a timeline file or commit to the modal it
+    /// opens as there, and an extension panel to its full-screen page.
+    func updateAttachedLeaf() {
         guard let root else { return }
-        if !AdaptiveWidth.isWide(traitCollection), let target = model.sidePanelReaderTarget {
-            // Narrow width reads the reader as the pushed route it opens as
-            // there. Pushed first, so the panel reader leaving keeps the
-            // payload the route still names.
-            model.sidePanelReaderTarget = nil
-            appNavigation.openChatReader(target)
+        if !AdaptiveWidth.isWide(traitCollection) {
+            // Cleared on the model, not through `showPanel`: the route the
+            // reader moves to still names its payload.
+            switch model.panel {
+            case .reader(let target)?:
+                model.panel = nil
+                appNavigation.openChatReader(target)
+            case .timeline(let target)?:
+                model.panel = nil
+                ChatTimelineDestinationPresenter(connection: connection)
+                    .open(target.request(sourceView: view, presenter: self))
+            case .panel(let surfaceId)?:
+                model.panel = nil
+                Router.push(makeExtensionPanel(surfaceId, closes: false), from: self)
+            default:
+                break
+            }
         }
-        if !AdaptiveWidth.isWide(traitCollection), let target = model.sidePanelTimelineTarget {
-            model.sidePanelTimelineTarget = nil
-            ChatTimelineDestinationPresenter(connection: connection)
-                .open(target.request(sourceView: view, presenter: self))
-        }
-        if !AdaptiveWidth.isWide(traitCollection), let surfaceId = model.sidePanelSurfaceId {
-            // Narrow width shows the panel full screen, as it opens there.
-            model.sidePanelSurfaceId = nil
-            Router.push(makeExtensionPanel(surfaceId, closes: false), from: self)
-        }
-        let panel = activeSidePanel
+        let panel = panelBeside
         attachedLeaf.show(
             panel.map { panel in
                 let width = panelWidth(panel)
@@ -192,7 +184,7 @@ extension ChatViewController {
                     idealWidth: width.ideal,
                     maxWidth: width.maximum,
                     route: paneEntry(for: panel),
-                    makeScreen: sidePanelController(panel)
+                    makeScreen: attachedLeafScreen(panel)
                 )
             },
             root: panel == nil ? nil : root
@@ -202,7 +194,7 @@ extension ChatViewController {
     /// A panel's link, so the window restores it beside this chat: Files and
     /// Git name the chat's workspace, an extension panel its session and
     /// surface; Outline, Context, Share and readers have none.
-    private func paneEntry(for panel: ChatSidePanel) -> PaneStackEntry? {
+    private func paneEntry(for panel: ChatPanel) -> PaneStackEntry? {
         guard let serverId = connection.currentServerId ?? serverIdHint else { return nil }
         if case .panel(let surfaceId) = panel {
             return PaneStackEntry(serverId: serverId, route: .panel(session: sessionId, id: surfaceId))
@@ -241,8 +233,8 @@ extension ChatViewController {
             guard let self, viewIfLoaded?.window != nil,
                   let route = appNavigation.panes.takePendingPanel(for: sessionId) else { return }
             switch route {
-            case .files where opensPanelsBeside: showSidePanel(.files)
-            case .git where opensPanelsBeside: showSidePanel(.git)
+            case .files where opensPanelsBeside: showPanel(.files)
+            case .git where opensPanelsBeside: showPanel(.git)
             case .panel(_, let surfaceId): openExtensionPanel(surfaceId)
             default: break
             }
@@ -260,7 +252,7 @@ extension ChatViewController {
     /// panels do not open beside.
     func openExtensionPanel(_ surfaceId: String) {
         if opensPanelsBeside {
-            showSidePanel(.panel(surfaceId))
+            showPanel(.panel(surfaceId))
         } else {
             Router.push(makeExtensionPanel(surfaceId, closes: false), from: self)
         }
@@ -290,13 +282,13 @@ extension ChatViewController {
                 },
                 chatTitle: { sessionStore.session(id: sessionId)?.displayTitle }
             ),
-            onClose: closes ? { [weak self] in self?.showSidePanel(nil) } : nil
+            onClose: closes ? { [weak self] in self?.showPanel(nil) } : nil
         )
     }
 
     /// The surface this chat's panel pane shows beside it, for its pill.
     var shownPanelSurfaceId: String? {
-        if case .panel(let surfaceId)? = activeSidePanel { return surfaceId }
+        if case .panel(let surfaceId)? = panelBeside { return surfaceId }
         return nil
     }
 
@@ -308,7 +300,7 @@ extension ChatViewController {
     /// Outline, Git, Context, and Files are UIKit screens; the reader is a
     /// `ChatReaderViewController` hosted as the panel's root instead of
     /// pushed onto the shell's stack.
-    private func sidePanelController(_ panel: ChatSidePanel) -> () -> UIViewController {
+    private func attachedLeafScreen(_ panel: ChatPanel) -> () -> UIViewController {
         switch panel {
         case .files: filePanelController()
         case .outline: outlineController()
@@ -326,7 +318,7 @@ extension ChatViewController {
 
     /// A document, image, or the share redaction review reads comfortably
     /// wider than Files, Git, Outline, and Context, which are mostly lists.
-    private func panelWidth(_ panel: ChatSidePanel) -> (minimum: CGFloat, ideal: CGFloat, maximum: CGFloat) {
+    private func panelWidth(_ panel: ChatPanel) -> (minimum: CGFloat, ideal: CGFloat, maximum: CGFloat) {
         switch panel {
         case .files, .outline, .git, .context: (320, 400, 640)
         case .reader, .share, .timeline: (360, 520, 820)
@@ -340,12 +332,12 @@ extension ChatViewController {
 
     /// A file or commit pill's destination as the column's root, built by
     /// the same presenter the narrow-width modal uses.
-    private func timelinePanelController(_ target: ChatTimelineSidePanelTarget) -> () -> UIViewController {
+    private func timelinePanelController(_ target: ChatTimelinePanelTarget) -> () -> UIViewController {
         { [weak self] in
             guard let self else {
                 preconditionFailure("The timeline panel presents only while its chat is alive")
             }
-            let closePanel: () -> Void = { [weak self] in self?.showSidePanel(nil) }
+            let closePanel: () -> Void = { [weak self] in self?.showPanel(nil) }
             // A comment started in the pane closes it first, as in Git's.
             var target = target
             target.reviewCommentSelectionScope = SessionFilePages.closingPanelScope(
@@ -355,7 +347,7 @@ extension ChatViewController {
             return ChatTimelineDestinationPresenter(connection: connection).panelScreen(
                 for: target,
                 navigation: appNavigation,
-                pushChat: { [weak self] chat in self?.closeSidePanelThenPush(chat) },
+                pushChat: { [weak self] chat in self?.closePanelThenPush(chat) },
                 onClose: closePanel
             )
         }
@@ -370,7 +362,7 @@ extension ChatViewController {
                 target: target,
                 store: root.chatReaderPayloadStore,
                 navigation: self.appNavigation,
-                onClose: { [weak self] in self?.closeSidePanelReader() }
+                onClose: { [weak self] in self?.closePanel(.reader(target)) }
             )
         }
     }
@@ -400,10 +392,6 @@ extension ChatViewController {
 
     private func contextScreen() -> RouterScreen {
         .controller(contextController())
-    }
-
-    func closeChatFilePanel() {
-        model.isFilePanelVisible = false
     }
 
     func presentReviewCommentStashSheet(editing comment: ReviewComment? = nil) {
@@ -477,10 +465,10 @@ extension ChatViewController {
     /// waits until the leaf is gone. A sheet's close already holds it
     /// (the timeline waits while a presentation covers the chat).
     private func closeOutline() {
-        model.showOutline = false
+        closePanel(.outline)
         guard opensPanelsBeside else { return }
         timeline.holdsNavigationArrival = true
-        updateSidePanels()
+        updateAttachedLeaf()
         attachedLeaf.whenClosed { [weak self] in
             self?.timeline.holdsNavigationArrival = false
         }
@@ -515,7 +503,7 @@ extension ChatViewController {
                     announcesSuccess: false
                 )
             },
-            onClose: { [weak self] in self?.model.showContextInspector = false }
+            onClose: { [weak self] in self?.closePanel(.context) }
         )
     }
 }

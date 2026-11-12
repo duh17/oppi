@@ -73,19 +73,12 @@ final class PaneHostController: UIViewController {
     private var dragZone: PaneSnapZone?
     private var settleAnimator: UIViewPropertyAnimator?
 
-    // MARK: Live resize
-
     /// The screens on either side that hold their heavy views while the
-    /// divider moves (`PaneLiveResizing`); empty when nothing is held.
-    private var heldScreens: [any PaneLiveResizing] = []
-    /// The drawn width and time of the divider's last move of more than
-    /// `pauseDistance`; a finger that stays within it for `pauseDelay` has
-    /// paused (under 30 pt/s for 100 ms).
-    private var lastMove: (width: CGFloat, time: CFTimeInterval)?
-    private var pauseTimer: Timer?
-    private static let pauseDistance: CGFloat = 3
-    private static let pauseDelay: TimeInterval = 0.1
-    private let resizeMeter = PaneResizeMeter()
+    /// divider moves or the window resizes, and settle once.
+    private lazy var resizeHold = PaneResizeHold(
+        leaves: { [weak self] in [self?.primary, self?.companion?.controller] },
+        layout: { [weak self] in self?.view.layoutIfNeeded() }
+    )
 
     /// What each leaf's screens were last told, by leaf controller: the
     /// visibility and the screens that heard it, so a screen pushed inside
@@ -217,20 +210,16 @@ final class PaneHostController: UIViewController {
     /// A window resize (rotation, Split View, Stage Manager, a Mac window
     /// edge) is held and settled like a divider: the leaves hold at their
     /// widths from the first change, and reflow once, keeping their reading
-    /// position, when the width has rested `pauseDelay`. A rotation is one
+    /// position, when the width has rested (`PaneResizeHold`). A rotation is one
     /// change and one settle; a live resize reflows nothing while it moves.
     /// Without it a chat on its tail kept its old offset over a new content
     /// height and landed mid-history. A settle spring in flight (an open or
     /// a close) owns the hold and settles at its end.
     private func windowWidthChanged() {
         guard settleAnimator == nil, dragStartWidth == nil else { return }
-        holdScreens()
-        pauseTimer?.invalidate()
-        pauseTimer = Timer.scheduledTimer(withTimeInterval: Self.pauseDelay, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.dragStartWidth == nil, self.settleAnimator == nil else { return }
-                self.settleHeldScreens(final: true)
-            }
+        resizeHold.windowWidthChanged { [weak self] in
+            guard let self else { return false }
+            return self.dragStartWidth == nil && self.settleAnimator == nil
         }
     }
 
@@ -401,8 +390,8 @@ final class PaneHostController: UIViewController {
         stopSettle()
         dragStartWidth = nil
         dragZone = nil
-        finishLiveResize()
-        resizeMeter.takeVisit().map { Telemetry.record($0) }
+        resizeHold.finish()
+        resizeHold.takeVisit().map { Telemetry.record($0) }
     }
 
     // MARK: Layout
@@ -444,10 +433,8 @@ final class PaneHostController: UIViewController {
         if dragStartWidth != nil {
             dragStartWidth = nil
             dragZone = nil
-            pauseTimer?.invalidate()
-            pauseTimer = nil
             divider.cancelDrag()
-            finishLiveResize()
+            resizeHold.finish()
         }
         guard settleAnimator == nil, companion != nil else { return }
         width = restingWidth
@@ -580,9 +567,7 @@ final class PaneHostController: UIViewController {
         dragStartWidth = raw
         // Ticks only on crossing into another zone, not on the first move.
         dragZone = PaneSnapResolver.zone(for: raw, policy: policy)
-        lastMove = (width, CACurrentMediaTime())
-        resizeMeter.beginDrag()
-        holdScreens()
+        resizeHold.dragBegan(at: width)
     }
 
     private func dragChanged(translationX: CGFloat) {
@@ -591,16 +576,10 @@ final class PaneHostController: UIViewController {
         // companion: width grows as `translationX` falls.
         let raw = dragStartWidth - translationX
         let live = PaneRubberBand.liveWidth(forRawTarget: raw, policy: policy)
-        if let lastMove, abs(live - lastMove.width) <= Self.pauseDistance {
-            // Creeping, or still: the pause timer runs on from the last real move.
-        } else {
-            lastMove = (live, CACurrentMediaTime())
-            holdScreens()
-            schedulePauseSettle()
-        }
+        resizeHold.dividerMoved(to: live) { [weak self] in self?.dragStartWidth != nil }
         // Laid out here rather than at the frame's commit, so the meter sees
         // the main thread's whole cost of the new width.
-        resizeMeter.measureFrame {
+        resizeHold.measureFrame {
             width = live
             view.setNeedsLayout()
             view.layoutIfNeeded()
@@ -624,57 +603,14 @@ final class PaneHostController: UIViewController {
             rememberedWidth: rememberedWidth(policy: policy),
             wasFull: isFull
         )
-        pauseTimer?.invalidate()
-        pauseTimer = nil
-        lastMove = nil
+        resizeHold.dragEnded()
         settle(outcome, initialVelocityPointsPerSecond: widthVelocity)
         // Held through the spring and settled where it lands
         // (`animateWidth`), or where a close leaves the primary; a release
         // that moves nothing settles now.
         if settleAnimator == nil, !isClosing {
-            finishLiveResize()
+            resizeHold.finish()
         }
-    }
-
-    /// Holds the screens on both sides, unless they are held already.
-    private func holdScreens() {
-        guard heldScreens.isEmpty else { return }
-        heldScreens = PaneLeafScreens.adopters(in: primary, as: (any PaneLiveResizing).self)
-            + PaneLeafScreens.adopters(in: companion?.controller, as: (any PaneLiveResizing).self)
-        for held in heldScreens { held.paneWillBeginLiveResize() }
-    }
-
-    private func schedulePauseSettle() {
-        pauseTimer?.invalidate()
-        pauseTimer = Timer.scheduledTimer(withTimeInterval: Self.pauseDelay, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.dragStartWidth != nil else { return }
-                self.settleHeldScreens(final: false)
-            }
-        }
-    }
-
-    /// Lays the held screens out at their sizes now, as one reflow.
-    private func settleHeldScreens(final: Bool) {
-        pauseTimer?.invalidate()
-        pauseTimer = nil
-        let held = heldScreens
-        heldScreens = []
-        guard !held.isEmpty else { return }
-        view.layoutIfNeeded()
-        resizeMeter.measureReflow {
-            for screen in held where screen.viewIfLoaded?.window != nil {
-                screen.paneSettleLiveResize(to: screen.view.bounds.size, final: final)
-            }
-        }
-    }
-
-    /// The divider is at rest: the held screens settle and the drag's
-    /// measurement ends. Safe to call when no drag ran.
-    private func finishLiveResize() {
-        lastMove = nil
-        settleHeldScreens(final: true)
-        resizeMeter.endDrag()
     }
 
     private func step(by delta: CGFloat) {
@@ -729,7 +665,7 @@ final class PaneHostController: UIViewController {
             if let self, self.settleAnimator === animator {
                 self.settleAnimator = nil
                 // At rest, unless a grab took over (it stops this animator).
-                if self.dragStartWidth == nil { self.finishLiveResize() }
+                if self.dragStartWidth == nil { self.resizeHold.finish() }
             }
             completion?()
         }

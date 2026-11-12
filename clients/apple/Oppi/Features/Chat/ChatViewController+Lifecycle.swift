@@ -74,7 +74,7 @@ extension ChatViewController {
         attachedLeaf.didMove(toParent: self)
         // Dragging or flinging the divider past the close threshold closes
         // the open panel the same way its own Close or Done control does.
-        attachedLeaf.onDismissRequested = { [weak self] in self?.showSidePanel(nil) }
+        attachedLeaf.onDismissRequested = { [weak self] in self?.showPanel(nil) }
         appNavigation.panes.register(chat: self)
 
         modals.anchor = self
@@ -256,7 +256,7 @@ extension ChatViewController {
         loadSessionTouchedListIfNeeded()
         barItems.update()
         updateTopBarTip()
-        updateSidePanels()
+        updateAttachedLeaf()
         openPendingPanel()
         updateModals()
         canvasAnchor.destination = canvasDestination

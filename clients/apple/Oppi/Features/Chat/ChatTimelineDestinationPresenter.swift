@@ -66,7 +66,7 @@ struct ChatTimelineDestinationPresenter {
     /// Back closes the modal.
     private func presentWorkspaceFile(for pill: UserMessagePathPill, request: ChatTimelineDestinationRequest) {
         guard connection.apiClient != nil else { return }
-        var configuration = fileContent(for: pill, source: request.sidePanelTarget)
+        var configuration = fileContent(for: pill, source: request.panelTarget)
         configuration.reviewCommentSelectionScope = request.reviewCommentSelectionScope
         let viewer = FileViewerViewController(configuration: configuration, services: .init(connection: connection))
         Router.present(
@@ -80,7 +80,7 @@ struct ChatTimelineDestinationPresenter {
     /// chat instead of over it (regular width). `onClose` closes the panel;
     /// `pushChat` is where a session started from a commit opens.
     func panelScreen(
-        for target: ChatTimelineSidePanelTarget,
+        for target: ChatTimelinePanelTarget,
         navigation: AppNavigation,
         pushChat: @escaping (ChatViewController) -> Void,
         onClose: @escaping () -> Void
@@ -117,7 +117,7 @@ struct ChatTimelineDestinationPresenter {
     /// the session's checkout, so Edit writes where the agent works.
     func fileContent(
         for pill: UserMessagePathPill,
-        source target: ChatTimelineSidePanelTarget
+        source target: ChatTimelinePanelTarget
     ) -> FileViewerViewController.Configuration {
         let source: FileBrowserContentSource
         if MarkdownWikiLinkRewriter.resolvedHostPath(pill.path) != nil {

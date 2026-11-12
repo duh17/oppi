@@ -11,7 +11,7 @@ import UIKit
 /// `WorkspaceContextBarReviewCommentRoutingTests`.
 @MainActor
 @Suite("Git panel destinations push inside the attached leaf")
-struct GitPanelSidePanelRoutingTests {
+struct GitPanelPaneRoutingTests {
     @Test func commitTapPushesIntoThePanelsOwnNavigation() async throws {
         let fixture = GitPanelPushFixture()
         defer { fixture.tearDown() }

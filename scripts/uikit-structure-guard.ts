@@ -125,6 +125,17 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    with its reason. A new file has baseline 0. Assigning the trailing column's
  *    trait override, or passing a size class along, is not a read.
  *
+ *  - Active-connection reads are a ratchet of the same kind: in
+ *    `clients/apple/Oppi/Features/` and `clients/apple/Oppi/App/`, the
+ *    app-wide active server's connection (`.activeConnection`) and the
+ *    coordinator's lookups (`coordinator.connection`,
+ *    `connectionCoordinator.connection`) are counted per file. Stage 3 of the
+ *    pane plan resolves each leaf's connection from its own stack entry's
+ *    server and makes the active server per window, so a screen that reads
+ *    the app-wide one is what it unwinds. Baseline 111 on 2026-11-12; a new
+ *    file has baseline 0 and the count only goes down. A read held in
+ *    another variable, or passed down from the caller, is not seen.
+ *
  *  - Platform checks are disallowed outside `platformCheckOwners`:
  *    `PlatformCapabilities` answers what the Mac Catalyst build can do, so
  *    `targetEnvironment(macCatalyst)` and `isMacCatalystApp` appear only there
@@ -399,6 +410,13 @@ const constructs: Construct[] = [
     pattern: /\bhorizontalSizeClass\s*[=!]=/g,
     disallowed: false,
     exemptFiles: adaptiveWidthExempt,
+  },
+  // The app-wide active connection read from a screen: see the header.
+  {
+    name: "active connection read",
+    pattern: /\.activeConnection\b|\b(?:connectionCoordinator|coordinator)\.connection\b/g,
+    disallowed: false,
+    pathMustMatch: /^clients\/apple\/Oppi\/(?:Features|App)\//,
   },
   // Platform checks outside `PlatformCapabilities`: see `platformCheckOwners`.
   {
@@ -698,6 +716,12 @@ for itself whether the layout is wide. Ask AdaptiveWidth.isWide(traitCollection)
 (or AdaptiveWidth.windowIsWide(view) for system chrome that follows the window,
 such as the search bar's Cancel). The idiom is for copy and keybindings only; see
 adaptiveWidthExceptions.
+
+.activeConnection, coordinator.connection, or connectionCoordinator.connection in
+Oppi/Features or Oppi/App reads the app-wide active server's connection, which the
+pane plan's Stage 3 replaces with each leaf's own server. Take the connection the
+screen was built with (its route's server), not the active one. The count only
+goes down.
 
 targetEnvironment(macCatalyst) or isMacCatalystApp outside platformCheckOwners means
 a screen decides for itself what the Mac build can do. Ask PlatformCapabilities

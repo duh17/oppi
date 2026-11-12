@@ -86,11 +86,7 @@ extension ChatViewController {
         }
 
         shareReview.reset()
-        if opensPanelsBeside {
-            showSidePanel(.share)
-        } else {
-            model.showShareRedactionSheet = true
-        }
+        showPanel(.share)
     }
 
     func sendShareSlashCommand(
@@ -134,7 +130,7 @@ extension ChatViewController {
 
         AppPreferences.Share.setRedactionPolicy(policy)
         cancelSharePreflight()
-        model.showShareRedactionSheet = false
+        closePanel(.share)
 
         shareSession(redactionPolicy: policy, submission: nil)
     }

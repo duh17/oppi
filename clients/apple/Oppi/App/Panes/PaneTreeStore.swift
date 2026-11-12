@@ -13,10 +13,12 @@ import Foundation
 struct PaneTreeStore {
     static let keyPrefix = "pane.layout."
     static let latestKey = "pane.layout.latest"
-    /// Set while a restore mounts its screens, cleared once they have held a
-    /// few seconds or the scene goes to the background. Still set at launch,
-    /// the last restore may have crashed the app: the saved trees go.
-    static let restoringKey = "pane.layout.restoring"
+    /// Set for a scene while a restore mounts its screens, cleared once they
+    /// have held a few seconds or the scene goes to the background. Still set
+    /// when that scene connects again, the last restore may have crashed the
+    /// app: its tree goes. One mark per scene, so one window's crash does not
+    /// cost another window its panes.
+    static let restoringKeyPrefix = "pane.layout.restoring."
 
     let defaults: UserDefaults
 
@@ -25,6 +27,8 @@ struct PaneTreeStore {
     }
 
     static func key(forScene id: String) -> String { keyPrefix + id }
+
+    static func restoringKey(forScene id: String) -> String { restoringKeyPrefix + id }
 
     /// The scene's own tree, else the newest one; nil when neither decodes.
     func load(scene id: String) -> PaneLayoutArchive? {
@@ -43,10 +47,16 @@ struct PaneTreeStore {
         defaults.set(data, forKey: Self.latestKey)
     }
 
-    var lastRestoreWasInterrupted: Bool { defaults.bool(forKey: Self.restoringKey) }
+    func lastRestoreWasInterrupted(scene id: String) -> Bool {
+        defaults.bool(forKey: Self.restoringKey(forScene: id))
+    }
 
-    func markRestoring(_ restoring: Bool) {
-        if restoring { defaults.set(true, forKey: Self.restoringKey) } else { defaults.removeObject(forKey: Self.restoringKey) }
+    func markRestoring(_ restoring: Bool, scene id: String) {
+        if restoring {
+            defaults.set(true, forKey: Self.restoringKey(forScene: id))
+        } else {
+            defaults.removeObject(forKey: Self.restoringKey(forScene: id))
+        }
     }
 
     /// Drops the scene's tree and the newest copy, after a restore that did
@@ -54,13 +64,14 @@ struct PaneTreeStore {
     func dropAfterInterruptedRestore(scene id: String) {
         defaults.removeObject(forKey: Self.key(forScene: id))
         defaults.removeObject(forKey: Self.latestKey)
-        markRestoring(false)
+        markRestoring(false, scene: id)
     }
 
-    /// The system discarded these scenes: their trees go.
+    /// The system discarded these scenes: their trees and crash marks go.
     func discard(scenes ids: some Sequence<String>) {
         for id in ids {
             defaults.removeObject(forKey: Self.key(forScene: id))
+            defaults.removeObject(forKey: Self.restoringKey(forScene: id))
         }
     }
 }

@@ -173,8 +173,8 @@ final class LiveKeyboardCommandSurface {
             else { return nil }
             return { delegate.presentationControllerDidAttemptToDismiss?(controller) }
         }
-        guard let chat = frontChat, chat.hasOpenSidePanel else { return nil }
-        return { [weak chat] in chat?.closeSidePanel() }
+        guard let chat = frontChat, chat.hasPanelBeside else { return nil }
+        return { [weak chat] in chat?.showPanel(nil) }
     }
 
     /// Whether the sidebar shows now, with the action that toggles it.

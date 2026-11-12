@@ -32,10 +32,10 @@ struct PaneWidthPolicy: Equatable {
     let full: CGFloat
     /// The host's own width, which a remembered width is a fraction of.
     var window: CGFloat = 0
-    /// Whether the companion's own minimum fits beside the leaf's minimum
-    /// (the fit rule of `PanePresentation.resolve` for two leaves). When it
-    /// does not, the companion shows full, over the leaf, until the host
-    /// widens.
+    /// Whether the companion's own minimum fits beside the leaf's minimum.
+    /// When it does not, the companion shows full, over the leaf, with only
+    /// Close, until the host widens: the fit rule (build plan §1.3), which
+    /// Stage 3's tree draws as a zoom of the attached leaf.
     var fitsBeside = true
 
     /// The live policy for a companion's own range in a host `window` wide:

@@ -10,6 +10,10 @@ struct PanePresentation: Equatable, Sendable {
     /// by the keyboard zoom, has no frame and is not in `overflow`.
     var frames: [PaneID: CGRect]
     /// Leaves that did not fit or were over the live cap, most recent first.
+    /// No host reads this yet: Stage 3's tree host shows it for layouts and
+    /// explicit splits. A pane opened beside another that cannot fit never
+    /// lands here: the fit rule (build plan §1.3) opens it full, as
+    /// `PaneWidthPolicy.fitsBeside` does today and the tree's `zoomed` will.
     var overflow: [PaneID]
     /// The first responder's leaf, drawn over its whole column because the
     /// keyboard left it below its minimum height.

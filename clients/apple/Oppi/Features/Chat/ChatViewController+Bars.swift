@@ -114,7 +114,7 @@ final class ChatBarItems {
         // A shown action draws its own control; a hidden one is only in the …
         // menu. Nothing refills a place another action could not fill.
         let drawnSet = Set(drawn)
-        let filesOpen = chat.model.isFilePanelVisible
+        let filesOpen = chat.model.panel == .files
         let open: Set<ChatTopBarAction> = filesOpen ? [.files] : []
         for (action, controls) in [
             (ChatTopBarAction.files, files), (.git, git), (.terminal, terminal), (.outline, outline),
@@ -162,19 +162,12 @@ final class ChatBarItems {
         // platter behind the icon (which glass keeps), the selected trait,
         // and on the rail the bar item's own selected state. Files keeps its
         // filled folder while its panel is open, sheet or column.
-        let openInColumn: ChatTopBarAction?
-        if !usesColumn {
-            openInColumn = nil
-        } else if filesOpen {
-            openInColumn = .files
-        } else if chat.model.showOutline {
-            openInColumn = .outline
-        } else if chat.model.showGit {
-            openInColumn = .git
-        } else if chat.model.showContextInspector {
-            openInColumn = .context
-        } else {
-            openInColumn = nil
+        let openInColumn: ChatTopBarAction? = switch chat.model.panel {
+        case .files? where usesColumn: .files
+        case .outline? where usesColumn: .outline
+        case .git? where usesColumn: .git
+        case .context? where usesColumn: .context
+        default: nil
         }
         for (action, controls) in [(ChatTopBarAction.files, files), (.outline, outline), (.git, git)] {
             Self.showOpen(openInColumn == action, controls: controls, colors: colors)
@@ -379,7 +372,7 @@ final class ChatBarItems {
     private func hiddenTopBarItems() -> [UIMenuElement] {
         guard let chat else { return [] }
         let available = currentAvailability(of: chat)
-        let filesOpen = chat.model.isFilePanelVisible
+        let filesOpen = chat.model.panel == .files
         let items = AppPreferences.ChatTopBar.layout.menu(available: available).map { action in
             let item = UIAction(
                 title: Self.menuTitle(action.menuTitle(filesOpen: filesOpen), detail: menuDetail(for: action, chat: chat)),
@@ -759,95 +752,52 @@ extension ChatViewController {
 
     func toggleChatFilePanel(source: String) {
         AppHaptics.toolbarExpansion()
-        let willShow = !model.isFilePanelVisible
-        model.isFilePanelVisible = willShow
+        showPanel(model.panel == .files ? nil : .files)
         ClientLog.info("FileBrowser", "Chat files toggle tapped", metadata: [
             "sessionId": sessionId,
             "workspaceId": session?.workspaceId ?? "none",
-            "isFilePanelVisible": String(model.isFilePanelVisible),
+            "isFilePanelVisible": String(model.panel == .files),
             "source": source,
         ])
-        if model.isFilePanelVisible {
-            model.showOutline = false
-            model.showGit = false
-            model.showContextInspector = false
-            closeSidePanelReader()
-            model.sidePanelTimelineTarget = nil
-            model.sidePanelSurfaceId = nil
-            closeShareRedactionSheet()
-        }
     }
 
     /// Rail and bar buttons stay visible beside an open panel in the column,
     /// so there they switch panels; a sheet covers the chat.
     func toggleOutlinePanel() {
-        if opensPanelsBeside {
-            showSidePanel(model.showOutline ? nil : .outline)
-        } else {
-            model.showOutline = true
-        }
+        showPanel(opensPanelsBeside && model.panel == .outline ? nil : .outline)
     }
 
     func toggleContextPanel() {
-        if opensPanelsBeside {
-            showSidePanel(model.showContextInspector ? nil : .context)
-        } else {
-            model.showContextInspector = true
-        }
+        showPanel(opensPanelsBeside && model.panel == .context ? nil : .context)
     }
 
     func toggleGitPanel() {
-        if opensPanelsBeside {
-            showSidePanel(model.showGit ? nil : .git)
-        } else {
-            model.showGit = true
+        showPanel(opensPanelsBeside && model.panel == .git ? nil : .git)
+    }
+
+    /// At most one panel at a time; the newest request wins. Share's
+    /// preflight stops once Share is not the panel, so another panel opening
+    /// never leaves it running, and a reader's stored payload goes with it
+    /// unless another reader replaces it.
+    func showPanel(_ panel: ChatPanel?) {
+        let previous = model.panel
+        guard previous != panel else { return }
+        model.panel = panel
+        switch previous {
+        case .share?:
+            cancelSharePreflight()
+        case .reader(let target)?:
+            if case .reader = panel { break }
+            root?.chatReaderPayloadStore.remove(target)
+        default:
+            break
         }
     }
 
-    /// At most one side panel at a time; the newest request wins.
-    func showSidePanel(_ panel: ChatSidePanel?) {
-        model.isFilePanelVisible = panel == .files
-        model.showOutline = panel == .outline
-        model.showGit = panel == .git
-        model.showContextInspector = panel == .context
-        if case .reader(let target) = panel {
-            model.sidePanelReaderTarget = target
-        } else {
-            closeSidePanelReader()
-        }
-        if case .timeline(let target) = panel {
-            model.sidePanelTimelineTarget = target
-        } else {
-            model.sidePanelTimelineTarget = nil
-        }
-        if case .panel(let surfaceId) = panel {
-            model.sidePanelSurfaceId = surfaceId
-        } else {
-            model.sidePanelSurfaceId = nil
-        }
-        if panel == .share {
-            model.showShareRedactionSheet = true
-        } else {
-            closeShareRedactionSheet()
-        }
-    }
-
-    /// Cancels any running preflight and drops the flag, the same outcome the
-    /// redaction screen's own Cancel reaches, so a drag-to-close or another
-    /// panel opening never leaves a stale preflight running behind it.
-    func closeShareRedactionSheet() {
-        guard model.showShareRedactionSheet else { return }
-        cancelSharePreflight()
-        model.showShareRedactionSheet = false
-    }
-
-    /// Drops the side-panel reader's target and its stored payload. Closing
-    /// through the model, not the column directly, so the next update pass
-    /// never reopens it from a flag the column itself cannot see.
-    func closeSidePanelReader() {
-        guard let target = model.sidePanelReaderTarget else { return }
-        model.sidePanelReaderTarget = nil
-        root?.chatReaderPayloadStore.remove(target)
+    /// Closes `panel` if it is still the one open: a sheet's swipe-down, or
+    /// the panel's own Close, never closes a newer panel.
+    func closePanel(_ panel: ChatPanel) {
+        if model.panel == panel { showPanel(nil) }
     }
 
     func presentRenameAlert() {
@@ -882,16 +832,17 @@ extension ChatViewController {
     }
 }
 
-/// The chat's side panels. A new panel replaces the column's screen. The
-/// reader carries its own target, so two different reader opens are two
-/// different panels even while both are "the reader". Share is reached from
-/// the title's menu, not a top-bar button, but it is the same container: a
+/// The chat's panels (`ChatScreenModel.panel`), shown in its attached leaf
+/// on a wide window. A new panel replaces the leaf's screen. The reader
+/// carries its own target, so two different reader opens are two different
+/// panels even while both are "the reader". Share is reached from the
+/// title's menu, not a top-bar button, but it is the same container: a
 /// regular-width window used to show it full screen over everything else,
-/// which the column's own full-window drag now covers instead.
-enum ChatSidePanel: Hashable {
+/// which the divider's full-window drag now covers instead.
+enum ChatPanel: Hashable {
     case files, outline, git, context, share
     case reader(ChatReaderNavTarget)
-    case timeline(ChatTimelineSidePanelTarget)
+    case timeline(ChatTimelinePanelTarget)
     /// An extension surface's panel pane, by surface id (`PaneRoute.panel`).
     case panel(String)
 }

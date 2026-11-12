@@ -9,8 +9,8 @@ import UIKit
 /// there instead of a pushed route or a second, full-screen presentation,
 /// and narrow width keeps today's behavior untouched.
 @MainActor
-@Suite("Chat reader and share side-panel routing")
-struct ChatReaderSidePanelRoutingTests {
+@Suite("Chat reader and share pane routing")
+struct ChatReaderPaneRoutingTests {
     @Test("regular width mounts the reader in the attached leaf, not a pushed route")
     func regularWidthUsesTheAttachedLeaf() async throws {
         let host = try await makeHost(horizontalSizeClass: .regular)
@@ -22,7 +22,7 @@ struct ChatReaderSidePanelRoutingTests {
             host.chat.attachedLeaf.mountedScreenForTesting is ChatReaderViewController
         }
         #expect(mounted, "the reader never mounted in the attached leaf")
-        #expect(host.chat.model.sidePanelReaderTarget != nil)
+        #expect(host.chat.model.readerTarget != nil)
         #expect(host.appNavigation.workspaceStackRouteElements.isEmpty, "no second, pushed presentation path")
     }
 
@@ -42,12 +42,12 @@ struct ChatReaderSidePanelRoutingTests {
         } else {
             Issue.record("Expected a pushed .chatReader route element")
         }
-        #expect(host.chat.model.sidePanelReaderTarget == nil)
+        #expect(host.chat.model.readerTarget == nil)
         #expect(host.chat.attachedLeaf.mountedScreenForTesting == nil)
     }
 
-    @Test("closing the side-panel reader drops its stored payload")
-    func closingTheSidePanelReaderDropsItsPayload() async throws {
+    @Test("closing the reader beside the chat drops its stored payload")
+    func closingTheReaderBesideTheChatDropsItsPayload() async throws {
         let host = try await makeHost(horizontalSizeClass: .regular)
         defer { host.hide() }
 
@@ -55,11 +55,11 @@ struct ChatReaderSidePanelRoutingTests {
         _ = await waitForMainActorCondition(timeout: .seconds(3)) {
             host.chat.attachedLeaf.mountedScreenForTesting is ChatReaderViewController
         }
-        let target = try #require(host.chat.model.sidePanelReaderTarget)
+        let target = try #require(host.chat.model.readerTarget)
         #expect(host.appRoot.chatReaderPayloadStore.payload(for: target.id) != nil)
 
-        host.chat.closeSidePanelReader()
-        #expect(host.chat.model.sidePanelReaderTarget == nil)
+        host.chat.closePanel(.reader(target))
+        #expect(host.chat.model.readerTarget == nil)
         #expect(host.appRoot.chatReaderPayloadStore.payload(for: target.id) == nil)
 
         let detached = await waitForMainActorCondition(timeout: .seconds(3)) {
@@ -77,7 +77,7 @@ struct ChatReaderSidePanelRoutingTests {
         _ = await waitForMainActorCondition(timeout: .seconds(3)) {
             host.chat.attachedLeaf.mountedScreenForTesting is ChatReaderViewController
         }
-        let target = try #require(host.chat.model.sidePanelReaderTarget)
+        let target = try #require(host.chat.model.readerTarget)
 
         host.window.traitOverrides.horizontalSizeClass = .compact
         let pushed = await waitForMainActorCondition(timeout: .seconds(3)) {
@@ -85,7 +85,7 @@ struct ChatReaderSidePanelRoutingTests {
                 && host.chat.attachedLeaf.mountedScreenForTesting == nil
         }
         #expect(pushed, "the reader neither left the attached leaf nor joined the shell's stack")
-        #expect(host.chat.model.sidePanelReaderTarget == nil)
+        #expect(host.chat.model.readerTarget == nil)
         #expect(host.appRoot.chatReaderPayloadStore.payload(for: target.id) != nil, "the pushed reader can still resolve it")
     }
 
@@ -94,23 +94,23 @@ struct ChatReaderSidePanelRoutingTests {
         let host = try await makeHost(horizontalSizeClass: .regular)
         defer { host.hide() }
 
-        host.chat.showSidePanel(.share)
+        host.chat.showPanel(.share)
 
         let mounted = await waitForMainActorCondition(timeout: .seconds(3)) {
             host.chat.attachedLeaf.mountedScreenForTesting is ShareSessionRedactionViewController
         }
         #expect(mounted, "Share never mounted in the attached leaf")
-        #expect(host.chat.model.showShareRedactionSheet)
+        #expect(host.chat.model.panel == .share)
 
         // Opening another panel closes Share the same way its own Cancel
         // does (the preflight it started is cancelled), so the column never
         // ends up with two panels fighting over who owns it.
-        host.chat.showSidePanel(.files)
+        host.chat.showPanel(.files)
         let swapped = await waitForMainActorCondition(timeout: .seconds(3)) {
             !(host.chat.attachedLeaf.mountedScreenForTesting is ShareSessionRedactionViewController)
         }
         #expect(swapped)
-        #expect(host.chat.model.showShareRedactionSheet == false)
+        #expect(host.chat.model.panel == .files)
     }
 
     // MARK: - Extension panels
@@ -248,12 +248,12 @@ struct ChatReaderSidePanelRoutingTests {
         let host = try await makeHost(horizontalSizeClass: .regular)
         defer { host.hide() }
 
-        host.chat.showSidePanel(.timeline(commitRequest(host, sha: "aaa1111").sidePanelTarget))
+        host.chat.showPanel(.timeline(commitRequest(host, sha: "aaa1111").panelTarget))
         let first = await waitForMainActorCondition(timeout: .seconds(3)) { openedSha(host) == "aaa1111" }
         #expect(first, "the commit never mounted in the attached leaf")
         #expect(host.chat.presentedViewController == nil, "no modal over the chat")
 
-        host.chat.showSidePanel(.timeline(commitRequest(host, sha: "bbb2222").sidePanelTarget))
+        host.chat.showPanel(.timeline(commitRequest(host, sha: "bbb2222").panelTarget))
         let replaced = await waitForMainActorCondition(timeout: .seconds(3)) { openedSha(host) == "bbb2222" }
         #expect(replaced, "a second link must replace the open pane, not stack on it or be ignored")
     }
@@ -263,7 +263,7 @@ struct ChatReaderSidePanelRoutingTests {
         let host = try await makeHost(horizontalSizeClass: .regular)
         defer { host.hide() }
 
-        host.chat.showSidePanel(.timeline(commitRequest(host, sha: "aaa1111").sidePanelTarget))
+        host.chat.showPanel(.timeline(commitRequest(host, sha: "aaa1111").panelTarget))
         _ = await waitForMainActorCondition(timeout: .seconds(3)) { openedSha(host) == "aaa1111" }
 
         host.window.traitOverrides.horizontalSizeClass = .compact
@@ -273,7 +273,7 @@ struct ChatReaderSidePanelRoutingTests {
                 && host.chat.attachedLeaf.mountedScreenForTesting == nil
         }
         #expect(sheet, "the open commit pane was dropped instead of presented as the sheet")
-        #expect(host.chat.model.sidePanelTimelineTarget == nil)
+        #expect(host.chat.model.panel == nil)
     }
 
     private func makeHost(horizontalSizeClass: UIUserInterfaceSizeClass) async throws -> Host {
@@ -310,6 +310,14 @@ private extension UIView {
         for subview in subviews {
             if let found = subview.firstSubview(identifiedAs: identifier) { return found }
         }
+        return nil
+    }
+}
+
+private extension ChatScreenModel {
+    /// The reader the chat's panel shows, if it shows one.
+    var readerTarget: ChatReaderNavTarget? {
+        if case .reader(let target)? = panel { return target }
         return nil
     }
 }
