@@ -62,7 +62,8 @@
 //                                   (QAVerificationSupport is in both UI and E2E), is an error that
 //                                   lists the prefixed forms to choose from. Other bare names are unknown.
 //   e2e-group:<name>                an E2E group (clients/apple/scripts/e2e.sh --group <name>)
-//   server/tests/<file>.test.ts     a server Vitest file (the `server/` prefix is optional)
+//   server/tests/<file>.test.ts     a server Vitest file (the `server/` prefix is optional); the server-bun
+//                                   lane runs it under the Bun pinned in server/.bun-version
 // Any --test value may end in @<profile>[,<profile>]: the profiles its UI tests run on, so a batch of
 // commits does not run one commit's iPhone-only suite on another's iPad lane. Only UI tests are
 // profile-specific; the scope is ignored for every other kind. The same selector named twice, or
@@ -336,7 +337,16 @@ export function planGate(
   const pinned = { OPPI_ROOT: worktree };
   const lanes: Lane[] = [];
   if (server.size > 0) {
-    lanes.push({ name: "server", profile: null, steps: [{ cwd: join(worktree, "server"), command: "npm", args: ["exec", "--offline", "--", "vitest", "run", ...server] }] });
+    // Under the pinned Bun, as the pre-push server lane runs the suite; the pin check fails first on any other.
+    const cwd = join(worktree, "server");
+    lanes.push({
+      name: "server-bun",
+      profile: null,
+      steps: [
+        { cwd, command: "node", args: ["scripts/check-bun-version.mjs"] },
+        { cwd, command: "bun", args: ["--bun", "node_modules/vitest/vitest.mjs", "run", ...server] },
+      ],
+    });
   }
   const unitHeld = holdQuarantined([...unit], options.quarantined ?? [], "OppiTests");
   // The pre-push unit shards run the whole OppiUnitTests scheme, whose only test target is OppiTests,

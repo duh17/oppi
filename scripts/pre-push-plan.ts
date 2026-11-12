@@ -67,6 +67,8 @@ function serverMode(path: string): ServerGateMode {
   if (
     path === "server/package.json"
     || path === "server/package-lock.json"
+    // The Bun the server's Bun lane (pre-push `server-bun`) expects.
+    || path === "server/.bun-version"
     || path.startsWith("server/scripts/")
     || path.startsWith("server/e2e/")
     // The plugin host evaluates server/plugins at runtime (jiti), outside Vitest's import graph,

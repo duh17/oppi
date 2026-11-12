@@ -7,6 +7,7 @@ describe("pre-push gate planning", () => {
     ["server source", ["server/src/server.ts"], ["changed", "none", false]],
     ["server tests", ["server/tests/server.test.ts"], ["changed", "none", false]],
     ["server config", ["server/vitest.config.ts"], ["full", "none", false]],
+    ["Bun lane pin", ["server/.bun-version"], ["full", "none", false]],
     // The plugin host evaluates plugins at runtime, out of Vitest's import graph.
     ["server plugin", ["server/plugins/x/server.ts"], ["full", "none", false]],
     ["iOS app", ["clients/apple/Oppi/App/OppiApp.swift"], ["none", "unit", false]],

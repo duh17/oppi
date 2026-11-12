@@ -147,12 +147,12 @@ describe("red lanes", () => {
     const dir = checkout();
     const log = join(dir, "server.log");
     writeFileSync(log, " FAIL  tests/search-index.test.ts > search > ranks\n");
-    const run = Bun.spawnSync(["bun", join(import.meta.dir, "gate-report.ts"), "red-lane", "--lane", "server", "--exit", "1", "--seconds", "140", "--log", log], {
+    const run = Bun.spawnSync(["bun", join(import.meta.dir, "gate-report.ts"), "red-lane", "--lane", "server-bun", "--exit", "1", "--seconds", "140", "--log", log], {
       cwd: dir, env: { ...process.env, LAND_QUEUE_BATCH: "b1" },
     });
     expect(run.exitCode).toBe(0);
     expect(rows(join(dir, ".git", "oppi", "land-queue", "red-lanes.jsonl"))[0]).toMatchObject({
-      batch: "b1", lane: "server", exit: 1, seconds: 140, tests: ["server/tests/search-index.test.ts > search > ranks"], cause_guess: "test-failure",
+      batch: "b1", lane: "server-bun", exit: 1, seconds: 140, tests: ["server/tests/search-index.test.ts > search > ranks"], cause_guess: "test-failure",
     });
   });
 });
@@ -161,7 +161,7 @@ describe("lane budgets", () => {
   const budgets = {
     "unit-full": { measure: "longest-shard" as const, seconds: 240 },
     "ui-ipad": { measure: "median-test" as const, seconds: 45 },
-    server: { measure: "wall" as const, seconds: 180 },
+    "server-bun": { measure: "wall" as const, seconds: 240 },
   };
 
   test("each lane is measured by its own budget; over budget is a warning that names the config", () => {
@@ -171,7 +171,7 @@ describe("lane budgets", () => {
     expect(budgetVerdict("ui-ipad", { wall: 640, medianTest: 52.25, tests: 14 }, budgets).warning).toBe(
       "WARNING ui-ipad over budget: median test 52.3s > 45s over 14 tests; budgets live in dev/testing/lane-budgets.json",
     );
-    expect(budgetVerdict("server", { wall: 180 }, budgets)).toEqual({ line: "budget server: wall 180s of 180s" });
+    expect(budgetVerdict("server-bun", { wall: 240 }, budgets)).toEqual({ line: "budget server-bun: wall 240s of 240s" });
     expect(budgetVerdict("e2e", { wall: 300 }, budgets)).toEqual({ line: "budget e2e: wall 300s, no budget" });
     expect(budgetVerdict("ui-ipad", { wall: 20, tests: 0 }, budgets)).toEqual({ line: "budget ui-ipad: wall 20s; median test not measured (budget 45s)" });
   });

@@ -44,8 +44,9 @@ describe("batch gate plan", () => {
     ], ["iphone", "ipad"], types);
     expect(plan.errors).toEqual([]);
     const byName = Object.fromEntries(plan.lanes.map((lane) => [lane.name, lane.steps.map((step) => step.args)]));
-    expect(Object.keys(byName)).toEqual(["server", "ios-unit", "ui-iphone", "ui-ipad", "e2e"]);
-    expect(byName.server[0].slice(-2)).toEqual(["tests/cli-a.test.ts", "tests/mcp-service.test.ts"]);
+    expect(Object.keys(byName)).toEqual(["server-bun", "ios-unit", "ui-iphone", "ui-ipad", "e2e"]);
+    expect(byName["server-bun"][0]).toEqual(["scripts/check-bun-version.mjs"]);
+    expect(byName["server-bun"][1]).toEqual(["--bun", "node_modules/vitest/vitest.mjs", "run", "tests/cli-a.test.ts", "tests/mcp-service.test.ts"]);
     expect(byName["ios-unit"][0].slice(-2)).toEqual(["-only-testing:OppiTests/FooTests", "-only-testing:OppiTests/BarTests/baz()"]);
     // Each profile's lane hands its UI filters to the shard runner, which builds once and splits them over the profile's slots.
     const uiLane = (profile: string) => plan.lanes.find((lane) => lane.name === `ui-${profile}`)!.steps;
@@ -90,12 +91,12 @@ describe("batch gate plan", () => {
     ], ["iphone", "ipad"], types);
     expect(lanes.errors).toEqual([]);
     const only = (name: string) => onlyTesting(lanes.lanes.find((lane) => lane.name === name)!.steps[0]);
-    expect(lanes.lanes.map((lane) => lane.name)).toEqual(["server", "ios-unit", "ui-iphone", "ui-ipad", "ui-duo", "e2e"]);
+    expect(lanes.lanes.map((lane) => lane.name)).toEqual(["server-bun", "ios-unit", "ui-iphone", "ui-ipad", "ui-duo", "e2e"]);
     expect(only("ui-iphone")).toEqual(["-only-testing:OppiUITests/ChatRoutesUITests"]);
     expect(only("ui-ipad")).toEqual(["-only-testing:OppiUITests/ChatRoutesUITests"]);
     expect(only("ui-duo")).toEqual(["-only-testing:OppiUITests/SharedSupportTests"]);
     expect(only("ios-unit")).toEqual(["-only-testing:OppiTests/FooTests"]);
-    expect(lanes.lanes.find((lane) => lane.name === "server")!.steps[0].args.slice(-1)).toEqual(["tests/mcp-service.test.ts"]);
+    expect(lanes.lanes.find((lane) => lane.name === "server-bun")!.steps[1].args.slice(-1)).toEqual(["tests/mcp-service.test.ts"]);
   });
 
   test("an unknown profile in a scope is an error", () => {

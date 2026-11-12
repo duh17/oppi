@@ -4,7 +4,7 @@
 
 | You changed | Run first | Details |
 | --- | --- | --- |
-| Server code | `cd server && npm run check && npm test` | [Server](#server) |
+| Server code | `cd server && npm run check && npm run test:bun` | [Server](#server) |
 | Wire protocol | Both sides' protocol tests and `protocol/*.json` snapshots | [Protocol checks](#protocol-checks) |
 | iOS code, unit-level | `clients/apple/scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests` (add `--root <worktree>` for a worktree) | [iOS unit tests](apple.md#ios-unit-tests), [Swift Testing filters](apple.md#swift-testing-filters) |
 | iOS build only | `sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build` | [Simulator build](apple.md#simulator-build) |
@@ -19,24 +19,26 @@
 ## Policy as code
 
 - Local gate: `.githooks/pre-push` (install with `install -m 755 .githooks/pre-push "$(git rev-parse --git-path hooks)/pre-push"`; `--self-test`, lane fixtures only `--self-test --lanes-only`).
-- Full non-coverage server gate: `cd server && npm run check && npm test`. Coverage thresholds (no CI runs them): `cd server && npm run test:gate:ci-coverage` (`check` plus `test:coverage`; thresholds in `server/vitest.config.ts`) and `clients/apple/scripts/check-coverage.sh`. Release cuts: [`scripts/release/README.md`](../../scripts/release/README.md).
+- Full non-coverage server gate: `cd server && npm run check && npm run test:bun`. Coverage thresholds (no CI runs them): `cd server && npm run test:gate:ci-coverage` (`check` plus `test:coverage`; thresholds in `server/vitest.config.ts`) and `clients/apple/scripts/check-coverage.sh`. Release cuts: [`scripts/release/README.md`](../../scripts/release/README.md).
 - Weekly dependency check: `bun scripts/deps-check.ts [--out report.md]` prints one Markdown report (npm audit and OSV for every lockfile and Swift pin, outdated npm/Swift/Actions/toolchain pins, a ranked "Do this week" list, and a Gaps section). Read-only, needs network and a signed-in `gh`, exits 0 even with findings. It reads pin reasons from the comments next to `project.yml` packages; keep them there.
 - `.github/workflows/hygiene.yml` runs secret, file-size, and tracked-private-path checks on every push; `.gitignore` does not protect a path after `git add -f`.
 
 ## The pre-push gate
 
-- The hook classifies changed paths (`scripts/pre-push-plan.ts`) and runs lanes concurrently: `server` (static checks, the `bun test` suites of `server/plugins/{background-jobs,subagents}`, plus affected Vitest; configuration, protocol, and `server/plugins/` changes run the full suite, because the plugin host loads plugins outside Vitest's import graph), `apple` (build-for-testing and its [warnings ratchet](apple.md#warnings-ratchet), the whole OppiUnitTests suite in 3 slots via `unit-shards.ts`, `ios-release`, `catalyst`), `harness` (the hook's self-test), and a docs check for `dev/**/*.md`. Each lane requires its relevant worktree paths to match the pushed commit; passes are cached by commit, range, lane mode, path set, and toolchain.
+- The hook classifies changed paths (`scripts/pre-push-plan.ts`) and runs lanes concurrently: `server-bun` (below), `apple` (build-for-testing and its [warnings ratchet](apple.md#warnings-ratchet), the whole OppiUnitTests suite in 3 slots via `unit-shards.ts`, `ios-release`, `catalyst`), `harness` (the hook's self-test), and a docs check for `dev/**/*.md`. Each lane requires its relevant worktree paths to match the pushed commit; passes are cached by commit, range, lane mode, path set, and toolchain.
 - A planned server or harness lane first runs `server/scripts/ensure-installed-deps.mjs` (`npm ci` when `server/node_modules` is missing or differs from the lockfile). Never symlink or copy main's `node_modules` (a symlink counts as not installed).
 - That install refuses while `dist/current`, or a build a live PID is pinned to, has no `node_modules` of its own: its server imports from `server/node_modules`. Restart the server onto a new build, which gets its own copy, then rerun.
-- `ios-release` compiles Release for the device SDK, because Debug never sees `#if DEBUG` code and a Release-only break would otherwise fail the first archive: `xcodebuild -project Oppi.xcodeproj -scheme Oppi -configuration Release -sdk iphoneos -destination generic/platform=iOS -derivedDataPath .build/pre-push-release CODE_SIGNING_ALLOWED=NO build` under the pinned Xcode. It takes its slot only after the Debug build holds one. A red run prints compiler errors and `.git/oppi/pre-push-logs/ios-release-*.log`.
-- `catalyst` compiles the Mac app (the Mac Catalyst build, Debug, arm64) once the iOS Debug build passed: `xcodebuild -project Oppi.xcodeproj -scheme Oppi -configuration Debug -destination 'generic/platform=macOS,variant=Mac Catalyst' -derivedDataPath .build/pre-push-catalyst CODE_SIGNING_ALLOWED=NO build`. Compile only: a Mac UI test would take over the host's screen. A red run prints compiler errors and `.git/oppi/pre-push-logs/catalyst-*.log`.
+- `ios-release` compiles Release for the device SDK under the pinned Xcode (Debug never sees `#if DEBUG` code, so a Release-only break would fail the first archive), into `.build/pre-push-release`. It takes its slot only after the Debug build holds one. A red run prints compiler errors and `.git/oppi/pre-push-logs/ios-release-*.log`.
+- `catalyst` compiles the Mac app (Mac Catalyst, Debug, arm64) once the iOS Debug build passed, into `.build/pre-push-catalyst`. Compile only: a Mac UI test would take over the host's screen. A red run prints compiler errors and `.git/oppi/pre-push-logs/catalyst-*.log`.
+- `server-bun` is the only server lane on push: static checks, the `bun test` suites of `server/plugins/{background-jobs,subagents}`, then Vitest under the Bun in `server/.bun-version`, the one the Mac app bundles. It runs affected tests, or the whole suite in the `server-full` slot when configuration, protocol, `server/scripts/`, the Bun pin, or `server/plugins/` changed (the plugin host loads plugins outside Vitest's import graph). `server/scripts/check-bun-version.mjs` fails it first when Bun is missing or differs; the cache key carries `bun --version`. A red run keeps `.git/oppi/pre-push-logs/server-bun-*`.
+- The Node suite (`npm test`) is not a push lane: the night shift's test-rot run (`server-node` lane) and the release gates (`server-coverage`, `server-tests`) run it in full.
 - The Apple lane builds `-scheme Oppi` when UI or E2E code changed (or `OPPI_PRE_PUSH_UI_LANES=1`), else `OppiUnitTests`; the unit shards reuse that build.
 - Gates export `OPPI_SIM_POOL_GATE=1`: a sim-pool call that finds every slot busy queues up to 30 minutes instead of failing after 60 s (an explicit `OPPI_SIM_POOL_WAIT` wins).
 - A run whose Swift Testing summary says it failed never passes, even when xcodebuild exits 0 (sim-pool exits 65; see `«unknown»` below).
 
 ## Heavy-job slots
 
-`scripts/heavy.sh <class> -- <command...>` is a machine-wide counting semaphore (BSD `lockf`): `xcode-build` 2, `server-full` 1, `ui-suite` 4 (sim-pool's test phases), `sim-first-boot` 1 (overrides `OPPI_HEAVY_XCODE_BUILD` and the like; `OPPI_HEAVY_DIR`, `OPPI_HEAVY_POLL`). Run a hand-started full server suite as `scripts/heavy.sh server-full -- npm test` from `server/`.
+`scripts/heavy.sh <class> -- <command...>` is a machine-wide counting semaphore (BSD `lockf`): `xcode-build` 2, `server-full` 1, `ui-suite` 4 (sim-pool's test phases), `sim-first-boot` 1 (overrides `OPPI_HEAVY_XCODE_BUILD` and the like; `OPPI_HEAVY_DIR`, `OPPI_HEAVY_POLL`). Run a hand-started full server suite as `scripts/heavy.sh server-full -- npm run test:bun` (or `npm test`) from `server/`.
 
 - Ordinary jobs get no queue or fairness. A waiting land-gate job (`LAND_QUEUE_BATCH` set) leaves a `<class>.<pid>` marker under `$OPPI_HEAVY_DIR/gate-waiting`, and no non-gate newcomer for that class takes a slot while a live marker exists; gate jobs never defer to each other.
 - A waiter exits 143 once `OPPI_HEAVY_PARENT_PID` dies or it is orphaned; nested use of a held class runs directly.
@@ -55,7 +57,7 @@ Exit codes: `0` pass or nothing named; `1` a lane failed (every lane runs) or a 
 
 ## Gate reports
 
-`scripts/gate-report.ts` writes these for the unit shards, UI shards, `batch-gate.ts`, and the pre-push server lane.
+`scripts/gate-report.ts` writes these for the unit shards, UI shards, `batch-gate.ts`, and the pre-push `server-bun` lane.
 
 - **Rerun once.** Unit shards (≤20 failed tests), UI shards and E2E (≤5, only when the run reached its XCTest summary) rerun failures once in the same lane. A pass on rerun is `FLAKY` and the lane passes. Failed UI/E2E runs hold their slot 15–35 s longer collecting diagnostics.
 - **Rerun ledger:** `$(git rev-parse --git-common-dir)/oppi/test-flakes.jsonl`, one line per rerun; a test that flaked in 2 distinct heads gets quarantined. Every passing lane prints `N flakes hidden by rerun: ...` or `no flakes hidden by rerun`.
@@ -86,11 +88,11 @@ Reading the summary lines (each sim-pool run also writes a log and `*.summary.js
 
 ## Server
 
-From `server/`: `npm run check` and `npm test`.
+From `server/`: `npm run check`, `npm run test:bun` (the push gate's runtime), and `npm test` (Node).
 
 - Vitest caps file workers at 8 because CLI tests spawn children. Lower with `OPPI_VITEST_MAX_WORKERS` (1–8); never use `VITEST_MAX_WORKERS`, which bypasses the bound.
 - Each test file gets its own `TMPDIR` under `/tmp/ovt<pid>` (`vitest.global-setup.ts`, `vitest.temp-guard.ts`), short so `<dataDir>/run/oppi.sock` stays under the 100-byte socket limit. A file that leaves an entry in its `TMPDIR` fails; use `makeTempDir(prefix)` from `server/tests/harness/temp-dir.ts`.
-- Clean Linux check without a host bind mount: `./scripts/apple-container-copy-run.sh --source . --workdir /work/server --exclude .git --exclude .pi --exclude .internal --exclude clients --exclude server/node_modules --exclude server/dist --exclude server/coverage -- bash -lc 'set -euo pipefail; apt-get update && apt-get install -y --no-install-recommends ca-certificates git openssl && npm install -g bun@1.3.11 && npm ci --no-audit --no-fund && npm run check && npm test'` (after `container system start`). Writable host bind mounts are rejected by `server/scripts/check-compose-mounts.ts` (in `npm run check`).
+- Clean Linux check without a host bind mount: `./scripts/apple-container-copy-run.sh --source . --workdir /work/server --exclude .git --exclude .pi --exclude .internal --exclude clients --exclude server/node_modules --exclude server/dist --exclude server/coverage -- bash -lc 'set -euo pipefail; apt-get update && apt-get install -y --no-install-recommends ca-certificates git openssl && npm install -g bun@$(cat .bun-version) && npm ci --no-audit --no-fund && npm run check && npm test'` (after `container system start`). Writable host bind mounts are rejected by `server/scripts/check-compose-mounts.ts` (in `npm run check`).
 - Reverse-proxy proof: `npm run test:proxy-review`. Server E2E: `server/e2e/README.md`; prefer `E2E_NATIVE=1 npm run test:e2e`.
 
 ## Protocol checks

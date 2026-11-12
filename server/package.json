@@ -52,6 +52,7 @@
     "check:pack-contents": "node scripts/check-pack-contents.mjs",
     "check:home-paths": "bun scripts/check-home-paths.ts",
     "test": "node scripts/ensure-installed-deps.mjs && vitest run",
+    "test:bun": "node scripts/ensure-installed-deps.mjs && node scripts/check-bun-version.mjs && bun --bun node_modules/vitest/vitest.mjs run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "bench": "npm run bench:correctness && npm run bench:perf:gate",

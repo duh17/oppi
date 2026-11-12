@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fast pre-push gate. Local work proves compilation/static correctness and runs
-# change-related server tests. No CI runs full coverage: run
+# change-related server tests under Bun (the Node suite runs nightly and in the release gate).
+# No CI runs full coverage: run
 # `cd server && npm run test:gate:ci-coverage` and
 # `clients/apple/scripts/check-coverage.sh`.
 #
@@ -609,7 +610,7 @@ lane_has_dirty_paths() {
 
   local overlaps=1
   case "$lane" in
-    server) [[ "$dirty_server" != "none" ]] && overlaps=0 ;;
+    server-bun) [[ "$dirty_server" != "none" ]] && overlaps=0 ;;
     apple) [[ "$dirty_apple" != "none" ]] && overlaps=0 ;;
     harness) [[ "$dirty_harness" -eq 1 ]] && overlaps=0 ;;
     ios-unit|ios-release|catalyst) [[ "$dirty_apple" != "none" ]] && overlaps=0 ;;
@@ -637,7 +638,7 @@ cache_path() {
   local lane="$1"
   local lane_mode key
   case "$lane" in
-    server) lane_mode="$SERVER_MODE" ;;
+    server-bun) lane_mode="$SERVER_MODE" ;;
     apple|ios-unit) lane_mode="$APPLE_MODE $(apple_scheme)" ;;
     # It compiles under the pinned Xcode, not the default `xcodebuild` that TOOLCHAIN_KEY names.
     ios-release|catalyst) lane_mode="$APPLE_MODE $(pinned_xcode_version)" ;;
@@ -702,7 +703,13 @@ run_harness_gate() {
   run_self_test
 }
 
+# The server's only push lane: static checks, the plugins' `bun test` suites, and the Vitest suite
+# under the Bun pinned in server/.bun-version, the runtime the Mac app bundles. The Node suite runs
+# nightly and in the release gate instead (dev/testing/README.md). The pin check comes first so a
+# missing or different Bun fails at once, before the lane waits for the full-suite slot.
 run_server_gate() {
+  local lane=server-bun
+  (cd "$REPO_ROOT/server" && node scripts/check-bun-version.mjs)
   (cd "$REPO_ROOT/server" && npm run check:server)
   # The classic entries of these built-in plugins keep `bun test` suites, which Vitest excludes
   # (server/vitest.config.ts); together they take a few seconds.
@@ -710,6 +717,8 @@ run_server_gate() {
   for plugin in background-jobs subagents; do
     (cd "$REPO_ROOT/server/plugins/$plugin" && run_without_git_local_env bun test --silent)
   done
+  # A full run takes the one machine-wide server-full slot; an affected-tests run takes none.
+  # A red run leaves its log under the lane's name.
   local log_dir test_log
   # Absolute: the suites below run from server/, and the log redirect resolves there.
   # Common dir, not the per-worktree git dir: the land queue deletes a batch worktree (and
@@ -718,8 +727,8 @@ run_server_gate() {
   mkdir -p "$log_dir"
   # mktemp, not the bare timestamp: the folder is shared by every worktree, and two lanes started
   # in the same second would open (and truncate) one file. BSD mktemp wants the X's last.
-  test_log="$(mktemp "$log_dir/server-$(date +%Y%m%d-%H%M%S)-XXXXXX")"
-  echo "[server] test log: $test_log"
+  test_log="$(mktemp "$log_dir/$lane-$(date +%Y%m%d-%H%M%S)-XXXXXX")"
+  echo "[$lane] test log: $test_log"
 
   local started="$SECONDS"
   set +e
@@ -728,26 +737,26 @@ run_server_gate() {
     # "slots busy; waiting" notice reaches the hook's stderr, not the log.
     (cd "$REPO_ROOT/server" && run_without_git_local_env \
       "$HEAVY" server-full -- bash -c 'exec "$@" >"$0" 2>&1' "$test_log" \
-      npm test -- --reporter=dot --silent=passed-only)
+      npm run test:bun -- --reporter=dot --silent=passed-only)
   else
     (cd "$REPO_ROOT/server" && run_without_git_local_env \
-      npm exec --offline -- vitest run --changed "$BASE_SHA" --passWithNoTests \
+      bun --bun node_modules/vitest/vitest.mjs run --changed "$BASE_SHA" --passWithNoTests \
       --reporter=dot --silent=passed-only) >"$test_log" 2>&1
   fi
   local status=$?
   set -e
   local seconds=$((SECONDS - started))
   # Wall time against dev/testing/lane-budgets.json; over budget is a warning, never a failure.
-  (cd "$REPO_ROOT" && run_without_git_local_env bun scripts/gate-report.ts budget server "$seconds") || true
+  (cd "$REPO_ROOT" && run_without_git_local_env bun scripts/gate-report.ts budget "$lane" "$seconds") || true
 
   if [[ "$status" -ne 0 ]]; then
     # In a land-queue batch, one row in the red-lane ledger with a cause guessed from the log.
     (cd "$REPO_ROOT" && run_without_git_local_env bun scripts/gate-report.ts red-lane \
-      --lane server --exit "$status" --seconds "$seconds" --log "$test_log") || true
+      --lane "$lane" --exit "$status" --seconds "$seconds" --log "$test_log") || true
     # Name the failures in the gate output itself: the log path may not be readable by whoever
     # reads the gate log. Capped so a flood of failures cannot bury it; the full log has the rest.
     local fail_lines="" max_fail_lines=40
-    echo "[server] tests failed (exit $status)" >&2
+    echo "[$lane] tests failed (exit $status)" >&2
     if [[ -s "$test_log" ]]; then
       fail_lines="$(sed -E $'s/\x1b\\[[0-9;]*m//g' "$test_log" | grep -E '^ FAIL ' || true)"
       if [[ -n "$fail_lines" ]]; then
@@ -756,7 +765,7 @@ run_server_gate() {
         local fail_count
         fail_count="$(wc -l <<< "$fail_lines" | tr -d ' ')"
         if [[ "$fail_count" -gt "$max_fail_lines" ]]; then
-          echo "[server] ... $((fail_count - max_fail_lines)) more FAIL lines in the log" >&2
+          echo "[$lane] ... $((fail_count - max_fail_lines)) more FAIL lines in the log" >&2
         fi
       else
         # No test FAIL line (crash, unhandled error, runner failure): show the log tail instead.
@@ -766,9 +775,9 @@ run_server_gate() {
         | grep -E '^ Test Files|^      Tests|^     Errors|^   Duration' >&2 || true
     else
       # The runner never wrote the log (e.g. the heavy.sh wrapper failed before its redirect).
-      echo "[server] no test output was captured" >&2
+      echo "[$lane] no test output was captured" >&2
     fi
-    echo "[server] full log: $test_log" >&2
+    echo "[$lane] full log: $test_log" >&2
     return "$status"
   fi
   grep -E '^ Test Files|^      Tests|^   Duration' "$test_log" || true
@@ -921,7 +930,7 @@ if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 || "$APPLE_MODE" != "
   # Install server deps from this worktree's lockfile before any lane starts, so
   # lanes never race on node_modules. Fails the hook if deps cannot be synced.
   if ! run_without_git_local_env ensure_server_deps; then
-    echo "[server] FAILED: server dependencies are not in sync with package-lock.json." >&2
+    echo "[server-bun] FAILED: server dependencies are not in sync with package-lock.json." >&2
     exit 1
   fi
 fi
@@ -989,7 +998,7 @@ if [[ "$HARNESS_CHANGED" -eq 1 ]]; then
   run_cached harness run_harness_gate & PIDS+=("$!"); LANES+=("harness")
 fi
 if [[ "$SERVER_MODE" != "none" ]]; then
-  run_cached server run_server_gate & PIDS+=("$!"); LANES+=("server")
+  run_cached server-bun run_server_gate & PIDS+=("$!"); LANES+=("server-bun")
 fi
 if [[ "$APPLE_MODE" != "none" ]]; then
   apple_lane & PIDS+=("$!"); LANES+=("apple")
