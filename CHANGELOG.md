@@ -105,6 +105,7 @@ The file reader gets Org folding and badges, heading links, Outline and Find, ta
 - **Client:** With App Lock on and no device passcode, Oppi opened unlocked. It now stays locked and says to set a passcode.
 - **Client:** List pages opened during a server restart no longer stay on "Server is offline"; they load again when the connection returns.
 - **Client:** Photos and other media of a closed chat no longer stay in memory until the app restarts.
+- **Client:** A plain text file that is one very long line opens faster and no longer holds hundreds of megabytes of memory while it is open.
 - **Client:** The slash command list no longer shows only `/compact` after you return to a chat from a reader.
 - **Client:** A Quick Session sent without a model chosen is no longer refused on a server with no default model when all its models come from one provider.
 - **Client:** A GeoJSON map with an empty feature draws its other features instead of a black panel.

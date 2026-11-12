@@ -1,7 +1,16 @@
 import UIKit
 
 final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
-    private let textView = FullScreenReviewCommentTextView()
+    /// TextKit 1, which lays a paragraph out in line fragments and draws only
+    /// the tiles on screen. TextKit 2 renders each paragraph as one fragment
+    /// view: a 180 KB file on one line drew a single 60,000 pt view and held
+    /// over 200 MB while open. The line-anchor and selection highlights read
+    /// the layout manager, which already dropped the view to TextKit 1 when
+    /// they ran. The storage owns its layout manager, which owns the container.
+    /// (`init(usingTextLayoutManager:)` skips the subclass's Swift property
+    /// initializers, so it cannot build this view.)
+    private let textStorage = NSTextStorage()
+    private let textView: FullScreenReviewCommentTextView
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private let palette: ThemePalette
@@ -38,6 +47,11 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         self.readerPreferences = readerPreferences
         self.isStreaming = isStreaming
         self.lineAnchorFocusPending = lineAnchor != nil && focusLineAnchor
+        let layoutManager = NSLayoutManager()
+        textStorage.addLayoutManager(layoutManager)
+        let textContainer = NSTextContainer()
+        layoutManager.addTextContainer(textContainer)
+        textView = FullScreenReviewCommentTextView(frame: .zero, textContainer: textContainer)
         super.init(frame: .zero)
 
         backgroundColor = palette.ui.bgDark
