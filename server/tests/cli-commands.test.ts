@@ -334,13 +334,23 @@ describe("oppi token", () => {
 // ── Pair ──
 
 describe("oppi pair", () => {
-  it("generates QR code output", () => {
-    const { stdout, exitCode } = run(["pair"]);
-    // Pair should succeed or at least output something
-    // Host auto-detection may vary by environment but should still output
-    expect(exitCode).toBe(0);
-    // Should contain QR blocks or URL
-    expect(stdout.length).toBeGreaterThan(50);
+  it("invites a local-network host only after host opts the LAN in", () => {
+    const lanDataDir = makeTempDir("oppi-cli-pair-lan-");
+    const env = { OPPI_DATA_DIR: lanDataDir };
+    try {
+      // No Tailscale (the harness's stopped fake), default listeners: nothing serves the LAN.
+      const refused = run(["pair"], env);
+      expect(refused.exitCode).toBe(1);
+      expect(refused.stdout).toContain("oppi config set host 0.0.0.0");
+
+      expect(run(["config", "set", "host", "0.0.0.0"], env).exitCode).toBe(0);
+      const { stdout, exitCode } = run(["pair"], env);
+      expect(exitCode).toBe(0);
+      // QR blocks or the invite URL.
+      expect(stdout.length).toBeGreaterThan(50);
+    } finally {
+      rmSync(lanDataDir, { recursive: true, force: true });
+    }
   });
 
   it("honors --ttl for the enforced deadline and keeps the outstanding invite on a rejected --ttl", () => {

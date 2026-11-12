@@ -159,6 +159,12 @@ export function inviteHostForTlsMode(
   return null;
 }
 
+/** This node's Tailscale IPs, or none when Tailscale is missing, stopped, or not answering. */
+export async function tailscaleSelfAddresses(): Promise<string[]> {
+  const status = await runTailscale(["status", "--json"]);
+  return status.ok ? parseStatusSelf(status.stdout).tailscaleIPs : [];
+}
+
 export async function proveSameTailscaleUser(peerIp: string): Promise<TailscaleWhoisProof> {
   const status = await runTailscale(["status", "--json"]);
   if (!status.ok) {

@@ -551,8 +551,8 @@ async function vendorScan(): Promise<void> {
 
 async function toolchainScan(): Promise<void> {
   const notes: string[] = [];
-  const nodeSrc = readFileSync(join(root, "clients/apple/scripts/bundle-mac-server-node.ts"), "utf8");
-  const pinnedNode = /PINNED_NODE_VERSION = "([\d.]+)"/.exec(nodeSrc)?.[1];
+  const bunSrc = readFileSync(join(root, "clients/apple/scripts/bundle-mac-server-bun.ts"), "utf8");
+  const pinnedBun = /PINNED_BUN_VERSION = "([\d.]+)"/.exec(bunSrc)?.[1];
   const goVer = /go(\d+\.\d+\.\d+)\.darwin/.exec(readFileSync(join(root, "clients/apple/ci_scripts/ci_post_clone.sh"), "utf8"))?.[1];
   const xcode = readFileSync(join(root, "clients/apple/scripts/xcode-toolchain.txt"), "utf8").trim();
   const ymlXcode = /xcodeVersion:\s*"([\d.]+)"/.exec(readFileSync(join(root, "clients/apple/project.yml"), "utf8"))?.[1];
@@ -563,7 +563,7 @@ async function toolchainScan(): Promise<void> {
   const installNode = /OPPI_NODE_DIST=\S*latest-(v\d+)\.x/.exec(readFileSync(join(root, "install.sh"), "utf8"))?.[1];
 
   inventory.push(
-    ["`clients/apple/scripts/bundle-mac-server-node.ts`", "Node (bundled in Mac app, tarball SHA-256 pinned)", `v${pinnedNode}`, "downloaded from nodejs.org at build time"],
+    ["`clients/apple/scripts/bundle-mac-server-bun.ts` + `server/.bun-version`", "Bun (bundled in Mac app, zip SHA-256 pinned)", `v${pinnedBun}`, "downloaded from GitHub releases at build time"],
     ["`clients/apple/ci_scripts/ci_post_clone.sh`", "Go toolchain (Xcode Cloud, downloads go.dev tarball)", `go${goVer}`, ""],
     ["`clients/apple/scripts/build-ghostty-vt.sh`", "Zig (downloaded from ziglang.org, SHA-256 checked)", zig ?? "", ""],
     ["`clients/apple/scripts/xcode-toolchain.txt` + `project.yml`", "Xcode", `${xcode.split("/").pop()}; project.yml xcodeVersion ${ymlXcode}`, "SWIFT_VERSION 6.0"],
@@ -573,19 +573,16 @@ async function toolchainScan(): Promise<void> {
     ["`server/package.json`, `relay/package.json`", "Node engines", ">=22.19.0", "CI Node/Bun versions: none pinned in workflows"],
   );
 
-  await guarded("nodejs.org index", async () => {
-    const idx: { version: string; security: boolean; date: string }[] = await http("https://nodejs.org/dist/index.json");
-    const major = pinnedNode?.split(".")[0];
-    const newer = idx.filter((r) => r.version.startsWith(`v${major}.`) && cmpVer(parseVer(r.version)!, parseVer(pinnedNode!)!) > 0);
-    const latest = idx.find((r) => r.version.startsWith(`v${major}.`));
-    if (latest && newer.length) {
-      const sec = newer.filter((r) => r.security).length;
-      outdated.push({ source: "toolchain", name: "Node (bundled in Mac app)", current: pinnedNode!, latest: latest.version.slice(1), bump: bump(pinnedNode!, latest.version), scope: "runtime (Mac app)", note: `${newer.length} releases newer${sec ? `, ${sec} flagged as security releases` : ""}; update PINNED_NODE_VERSION + both SHA-256 values together`, stale: "" });
+  await guarded("bun releases", async () => {
+    const release: { tag_name: string } = await http("https://api.github.com/repos/oven-sh/bun/releases/latest");
+    const latest = release.tag_name.replace(/^bun-v/, "");
+    if (pinnedBun && bump(pinnedBun, latest) !== "current" && bump(pinnedBun, latest) !== "ahead") {
+      outdated.push({ source: "toolchain", name: "Bun (bundled in Mac app)", current: pinnedBun, latest, bump: bump(pinnedBun, latest), scope: "runtime (Mac app)", note: "update server/.bun-version, PINNED_BUN_VERSION, and PINNED_BUN_SHA256 together", stale: "" });
     }
   });
   await guarded("endoflife node", async () => {
     const cycles: { cycle: string; eol: string | boolean; lts: string | boolean }[] = await http("https://endoflife.date/api/nodejs.json");
-    for (const [label, major] of [["bundled Node", pinnedNode?.split(".")[0]], ["server Docker base", dockerNode?.split("-")[0]], ["installer Node", installNode?.slice(1)], ["engines floor", "22"]] as const) {
+    for (const [label, major] of [["server Docker base", dockerNode?.split("-")[0]], ["installer Node", installNode?.slice(1)], ["engines floor", "22"]] as const) {
       const c = cycles.find((x) => x.cycle === major);
       if (c && c.eol !== false && Date.parse(String(c.eol)) < Date.now() + 90 * 86400_000) {
         notes.push(`Node ${major} (${label}) end-of-life ${c.eol}`);

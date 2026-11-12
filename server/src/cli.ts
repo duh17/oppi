@@ -11,6 +11,7 @@ import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { renderTerminal as renderQR } from "./qr.js";
 import { isLoopbackHostname } from "./request-trust.js";
+import { listenerHostLabel } from "./network-listeners.js";
 import { existsSync, rmdirSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { basename, dirname, join, resolve } from "node:path";
@@ -19,7 +20,7 @@ import {
   getLocalIp,
   getTailscaleHostname,
   getTailscaleIp,
-  lookUpHostNames,
+  printServeListeners,
 } from "./cli/status.js";
 import type { Storage } from "./storage.js";
 import { MAX_PAIRING_TOKEN_TTL_MS } from "./storage/auth-store.js";
@@ -104,8 +105,10 @@ function resolveInviteHost(config: ServerConfig, hostOverride?: string): string 
     return getTailscaleHostname();
   }
 
-  // Prefer local network; fall back to the Tailscale IP. Outside tailscale TLS
-  // mode a *.ts.net name cannot carry the leaf pin (see generateInvite).
+  // Outside tailscale TLS mode a *.ts.net name cannot carry the leaf pin (see
+  // generateInvite), so phones get the Tailscale IP. The default listeners never
+  // serve the local network; only an explicit host does, and then it comes first.
+  if (config.host === undefined) return getTailscaleIp();
   return getLocalHostname() || getLocalIp() || getTailscaleIp();
 }
 
@@ -164,7 +167,7 @@ function removeEmptyTailscaleTlsDirs(dataDir: string): void {
 function probeTailscaleTls(
   dataDir: string,
   requestedHost: string | undefined,
-  bindHost: string,
+  bindHost: string | undefined,
   log: (line: string) => void,
 ): boolean {
   const certPath = resolveTlsConfig({ tls: { mode: "tailscale" } }, dataDir).certPath;
@@ -175,7 +178,7 @@ function probeTailscaleTls(
   log(c.dim("  Checking Tailscale HTTPS certificate (can take up to a minute)..."));
   try {
     prepareTlsForServer({ tls: { mode: "tailscale" } }, dataDir, {
-      additionalHosts: requestedHost ? [requestedHost, bindHost] : [bindHost],
+      additionalHosts: [requestedHost, bindHost].filter((host): host is string => !!host),
     });
     return true;
   } catch (error: unknown) {
@@ -340,43 +343,7 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   startServerLogRotation(storage.getDataDir());
   await server.start();
 
-  // Only the banner reads these. The `tailscale` and `scutil` lookups run after the listener is
-  // up (so /health answers meanwhile) and the banner prints once they have resolved.
-  const { tailscaleHostname, tailscaleIp, localHostname } = await lookUpHostNames();
-  const localIp = getLocalIp();
-  if (tailscaleHostname || tailscaleIp) {
-    console.log(c.dim("  Tailscale detected — remote access available"));
-  }
-
-  console.log("");
-  const scheme = server.scheme;
-  const displayPort = server.port;
-  const publicOrigin = config.publicUrl ? parsePublicUrl(config.publicUrl) : undefined;
-  if (publicOrigin?.ok) {
-    console.log(`  Public:    ${c.cyan(publicOrigin.value.href)}`);
-    console.log(
-      c.dim(
-        `  Listener:  ${scheme}://${config.host}:${displayPort} (tls.mode=${config.tls?.mode ?? "disabled"})`,
-      ),
-    );
-    const peers = config.proxy?.trustedPeers ?? [];
-    if (peers.length > 0) {
-      console.log(c.dim(`  Proxy:     trustedPeers ${peers.join(", ")}`));
-    }
-  } else if (server.hasPublicHttpListener) {
-    if (localHostname) {
-      console.log(`  Local:     ${c.cyan(`${scheme}://${localHostname}:${displayPort}`)}`);
-    }
-    if (localIp) {
-      console.log(`  LAN IP:    ${c.dim(`${scheme}://${localIp}:${displayPort}`)}`);
-    }
-    if (tailscaleHostname) {
-      console.log(`  Tailscale: ${c.dim(`${scheme}://${tailscaleHostname}:${displayPort}`)}`);
-    }
-    if (tailscaleIp) {
-      console.log(`  Tail IP:   ${c.dim(`${scheme}://${tailscaleIp}:${displayPort}`)}`);
-    }
-  }
+  await printServeListeners(server, config);
   console.log(`  Data:      ${c.dim(storage.getDataDir())}`);
   console.log("");
 
@@ -564,8 +531,8 @@ async function cmdDoctor(storage: CliConnectionConfig): Promise<void> {
   const checks: Check[] = [];
 
   const config = storage.getConfig();
-  const host = config.host;
-  const loopback = isLoopbackHostname(host);
+  const host = listenerHostLabel(config);
+  const loopback = config.host !== undefined && isLoopbackHostname(config.host);
 
   if (!loopback && !config.token) {
     checks.push({
@@ -663,7 +630,7 @@ async function cmdDoctor(storage: CliConnectionConfig): Promise<void> {
     } else {
       checks.push({
         level: "pass",
-        message: `public origin ${parsed.value.href} (phone); listener ${config.host}:${config.port}`,
+        message: `public origin ${parsed.value.href} (phone); listener ${host}:${config.port}`,
       });
       if (config.tls?.mode === "disabled" && !(config.proxy?.trustedPeers?.length ?? 0)) {
         checks.push({
@@ -694,7 +661,7 @@ async function cmdDoctor(storage: CliConnectionConfig): Promise<void> {
         ? "TLS disabled (loopback-only bind)"
         : undecided
           ? "TLS not chosen yet (the first `oppi serve`, `oppi pair`, or `oppi init` picks Tailscale or self-signed)"
-          : `TLS disabled while binding to ${config.host}`,
+          : `TLS disabled while binding to ${host}`,
     });
   } else {
     checks.push({ level: "pass", message: `TLS mode configured (${tls.mode})` });
@@ -1194,6 +1161,7 @@ async function cmdServer(action: string | undefined, flags: Record<string, strin
       data: {
         service: {
           manager: linux ? "systemd" : "launchd",
+          ...("label" in status ? { label: status.label } : {}),
           installed: status.installed,
           running: status.running,
           pid: status.pid,
@@ -1238,13 +1206,19 @@ async function cmdServer(action: string | undefined, flags: Record<string, strin
     console.log("");
 
     console.log(`  Label:     ${c.dim(status.label)}`);
-    console.log(`  Plist:     ${c.dim(status.plistPath)}`);
+    console.log(`  Plist:     ${c.dim(status.plistPath || "unknown")}`);
     console.log(`  Installed: ${status.installed ? c.green("yes") : c.dim("no")}`);
     console.log(
       `  Running:   ${status.running ? c.green(`yes (PID ${status.pid})`) : c.dim("no")}`,
     );
 
-    if (status.installed) {
+    if (status.owner === "app") {
+      console.log("");
+      console.log(
+        c.dim("  The Oppi app manages this server (System Settings → General → Login Items)."),
+      );
+      console.log(c.dim("  'oppi server restart' restarts it."));
+    } else if (status.installed) {
       const paths = readInstalledPlist();
       if (paths) {
         console.log("");

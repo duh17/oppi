@@ -13,15 +13,12 @@ export interface DoctorServiceManager {
   installedPaths(): { runtimePath: string; cliPath: string } | null;
   /** Why the manager cannot run a service here at all (null when it can). */
   unavailable?(): string | null;
-  /** A reason the installed service should be reinstalled, if any. */
-  migrationWarning?(paths: { runtimePath: string; cliPath: string }): string | null;
 }
 
 const launchAgent: DoctorServiceManager = {
   label: "LaunchAgent",
   status: () => launchd.getServiceStatus(),
   installedPaths: () => launchd.readInstalledPlist(),
-  migrationWarning: (paths) => launchd.launchAgentRuntimeMigrationWarning(paths),
 };
 
 const systemdUserService: DoctorServiceManager = {
@@ -104,8 +101,6 @@ export function inspectService(
         message: `${label} CLI missing: ${paths.cliPath} (oppi server install to fix)`,
       });
     }
-    const migration = manager.migrationWarning?.(paths);
-    if (migration) checks.push({ level: "warn", message: migration });
   }
 
   return { installed: true, checks };

@@ -93,7 +93,7 @@ export interface SessionCoordinatorBundleDeps {
   /** Called when a session's firstMessage is first captured. */
   /** Server telemetry for session lifecycle timing. */
   metrics?: ServerTelemetry;
-  durableHarness: Promise<DurableHarness>;
+  durableHarness: () => Promise<DurableHarness>;
   /** Whether ordinary durable sessions are on now (`SessionManager.durableSessionsAvailable`). */
   durableSessionsAvailable: () => boolean;
   onUIBridgeReady?: (key: string, bridge: SdkUiBridge | undefined) => void;

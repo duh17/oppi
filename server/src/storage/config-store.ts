@@ -202,7 +202,6 @@ function createDefaultConfig(dataDir: string): ServerConfig {
   return {
     configVersion: CONFIG_VERSION,
     port: 7749,
-    host: "0.0.0.0",
     dataDir,
     sessionIdleTimeoutMs: 10 * 60 * 1000,
     maxSessionsPerWorkspace: 100,
@@ -438,7 +437,8 @@ function normalizeConfig(
     changed = true;
   }
 
-  const host = readString("host");
+  // Absent is the default (loopback plus Tailscale addresses), not a key to backfill.
+  const host = "host" in obj ? readString("host") : undefined;
   if (host !== undefined) {
     config.host = host;
   }

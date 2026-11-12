@@ -19,10 +19,12 @@ Settings appear in config-file order. Auth state is documented separately: it li
 | --------------- | ------ | ------------------ | --------------------------------------------------------------------------------------------------------------- |
 | `configVersion` | number | `2`                | Schema version. Managed automatically — do not edit.                                                            |
 | `port`          | number | `7749`             | Remote HTTP(S) + WebSocket listen port. Range: 0-65535.                                                         |
-| `host`          | string | `"0.0.0.0"`        | Remote bind address. Use `"127.0.0.1"` to restrict network clients to localhost.                                |
+| `host`          | string | unset              | Remote bind address. Unset: `127.0.0.1`, `::1`, and this machine's Tailscale addresses, never the local network. Set it to listen on exactly that address instead: `"0.0.0.0"` serves every interface, the local network included; `"127.0.0.1"` keeps network clients on this machine. |
 | `dataDir`       | string | `"~/.config/oppi"` | Root state directory. Contains sessions, workspaces, config, TLS material, and the local CLI runtime directory. |
 
 Remote clients use authenticated HTTPS/WSS, including HTTPS through Tailscale.
+
+With `host` unset, every listener shares `port` and the TLS mode. A Tailscale address that does not exist yet at startup (Tailscale not connected) is looked up again every 30 seconds until it is bound, so phones can connect once Tailscale is up without a restart. Bonjour discovery needs a local-network listener, so it runs only with an explicit `host`. Configs written before this default keep the `host` they have on disk, usually `"0.0.0.0"`; delete the `host` line from `config.json` and restart to use the default.
 
 ### Model
 
@@ -186,7 +188,6 @@ Extensions own approval behavior. When a session needs approval before an action
 {
   "configVersion": 2,
   "port": 7749,
-  "host": "0.0.0.0",
   "dataDir": "/Users/you/.config/oppi",
   "sessionIdleTimeoutMs": 600000,
   "maxSessionsPerWorkspace": 100,

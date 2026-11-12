@@ -112,7 +112,9 @@ export function generateInvite(
     const hint =
       config.tls?.mode === "tailscale"
         ? "Start Tailscale to obtain a certificate or pass --host <machine>.<tailnet>.ts.net"
-        : "Pass --host <hostname-or-ip>, e.g. --host my-mac.local";
+        : config.host === undefined
+          ? "Phones reach this server over Tailscale: start Tailscale, or set host to serve the local network (oppi config set host 0.0.0.0)"
+          : "Pass --host <hostname-or-ip>, e.g. --host my-mac.local";
     throw new Error(`Could not determine pairing host. ${hint}`);
   }
 
@@ -150,7 +152,7 @@ export function generateInvite(
   }
 
   const tls = prepareTlsForServer(config, dataDir, {
-    additionalHosts: [inviteHost, config.host],
+    additionalHosts: config.host ? [inviteHost, config.host] : [inviteHost],
     ensureSelfSigned: true,
   });
   const scheme = tls.enabled ? "https" : "http";

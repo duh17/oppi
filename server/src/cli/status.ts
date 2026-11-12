@@ -3,7 +3,10 @@ import { hostname as osHostname, networkInterfaces } from "node:os";
 import { promisify } from "node:util";
 
 import * as c from "../ansi.js";
+import { listenerHostLabel } from "../network-listeners.js";
+import { parsePublicUrl } from "../proxy-config.js";
 import { tailscaleBinary, tlsSchemeForConfig } from "../tls.js";
+import type { ServerConfig } from "../types.js";
 import type { CliConnectionConfig } from "./connection-config.js";
 import { hasPendingPairingInvite } from "./pairing-invite.js";
 import { captureHumanCliOutput, writeHumanLine, writeJsonEnvelope } from "./output.js";
@@ -106,6 +109,61 @@ export async function lookUpHostNames(): Promise<{
   };
 }
 
+/** The `oppi serve` banner lines that say where phones and local clients reach the server. */
+export async function printServeListeners(
+  server: { scheme: string; port: number; remoteAvailable: boolean; listenerAddresses: string[] },
+  config: ServerConfig,
+): Promise<void> {
+  // The `tailscale` and `scutil` lookups run after the listener is up (so /health answers
+  // meanwhile) and the banner prints once they have resolved.
+  const { tailscaleHostname, tailscaleIp, localHostname } = await lookUpHostNames();
+  const localIp = getLocalIp();
+  if (tailscaleHostname || tailscaleIp) {
+    writeHumanLine(c.dim("  Tailscale detected — remote access available"));
+  }
+
+  writeHumanLine("");
+  const { scheme, port } = server;
+  const tailscaleLines = (): void => {
+    if (tailscaleHostname) {
+      writeHumanLine(`  Tailscale: ${c.dim(`${scheme}://${tailscaleHostname}:${port}`)}`);
+    }
+    if (tailscaleIp) writeHumanLine(`  Tail IP:   ${c.dim(`${scheme}://${tailscaleIp}:${port}`)}`);
+  };
+  const publicOrigin = config.publicUrl ? parsePublicUrl(config.publicUrl) : undefined;
+  if (publicOrigin?.ok) {
+    writeHumanLine(`  Public:    ${c.cyan(publicOrigin.value.href)}`);
+    writeHumanLine(
+      c.dim(
+        `  Listener:  ${scheme}://${listenerHostLabel(config)}:${port} (tls.mode=${config.tls?.mode ?? "disabled"})`,
+      ),
+    );
+    const peers = config.proxy?.trustedPeers ?? [];
+    if (peers.length > 0) {
+      writeHumanLine(c.dim(`  Proxy:     trustedPeers ${peers.join(", ")}`));
+    }
+  } else if (server.remoteAvailable && config.host === undefined) {
+    // Default listeners: loopback plus Tailscale. The local network is not served.
+    writeHumanLine(`  Listening: ${c.dim(server.listenerAddresses.join(", "))}`);
+    if (tailscaleIp && server.listenerAddresses.includes(tailscaleIp)) {
+      tailscaleLines();
+    } else {
+      writeHumanLine(
+        c.yellow("  No Tailscale address yet: phones connect once Tailscale is running."),
+      );
+      writeHumanLine(
+        c.dim("  To serve your local network instead, run: oppi config set host 0.0.0.0"),
+      );
+    }
+  } else if (server.remoteAvailable) {
+    if (localHostname) {
+      writeHumanLine(`  Local:     ${c.cyan(`${scheme}://${localHostname}:${port}`)}`);
+    }
+    if (localIp) writeHumanLine(`  LAN IP:    ${c.dim(`${scheme}://${localIp}:${port}`)}`);
+    tailscaleLines();
+  }
+}
+
 export function getLocalIp(): string | null {
   for (const iface of Object.values(networkInterfaces())) {
     if (!iface) continue;
@@ -153,7 +211,7 @@ function renderStatus(
     pairingInvitePending: boolean;
     dataDir: string;
     server: {
-      host: string;
+      host?: string;
       port: number;
       transport: string;
       tlsMode: string;

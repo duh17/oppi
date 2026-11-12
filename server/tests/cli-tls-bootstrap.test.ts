@@ -235,6 +235,9 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
 
     try {
       const sharedDataDir = join(root, "data");
+      // The host without Tailscale pairs over the LAN, which needs an explicit host.
+      mkdirSync(sharedDataDir, { recursive: true });
+      writeFileSync(join(sharedDataDir, "config.json"), JSON.stringify({ host: "0.0.0.0" }));
       const markerPath = join(root, "cert-started");
       // Slow, certificate-capable Tailscale: would choose tailscale when it finishes.
       const slowEnv = connectedTailscaleEnv(root, tailnetHost, issueTailnetCert(root), {
@@ -435,7 +438,9 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
       expect(init.exitCode).toBe(0);
       expect(JSON.parse(readFileSync(join(initDir, "config.json"), "utf8")).tls).toEqual(tls);
       expect(stripAnsi(init.stdout)).not.toContain("TLS mode set to");
-      expect(stripAnsi(doctor.stdout)).toContain("TLS disabled while binding to 0.0.0.0");
+      expect(stripAnsi(doctor.stdout)).toContain(
+        "TLS disabled while binding to loopback and Tailscale addresses",
+      );
       expect(stripAnsi(doctor.stdout)).not.toContain("not chosen yet");
     } finally {
       rmSync(initDir, { recursive: true, force: true });

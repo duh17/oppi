@@ -105,7 +105,7 @@ After pairing, Oppi uses authenticated HTTPS and WSS. The local CLI stays on an 
 
 | Network | Works when | Pair with |
 |---|---|---|
-| Same Wi-Fi | The phone is on the server's local network. | `oppi pair` |
+| Same Wi-Fi | The phone is on the server's local network, and the server listens there. It does not by default: run `oppi config set host 0.0.0.0` and restart. | `oppi pair` |
 | Tailscale | The phone and the server are on the same tailnet (Oppi's in-app connection or the Tailscale app), from anywhere. | **Set Up a Computer**, or `oppi pair --host <name>.ts.net` with Tailscale TLS |
 | Public HTTPS URL | A reverse proxy you run serves Oppi at a public hostname. | `oppi pair` after setting `publicUrl` ([Reverse proxy](reverse-proxy.md)) |
 

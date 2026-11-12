@@ -16,7 +16,7 @@ Part of [Oppi server architecture](../architecture-server.md).
 
 | Concern                                     | Files                                                                                                                                                                                  |
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Server composition and listeners            | `server/src/server.ts`, `server/src/local-api-socket.ts`, `server/src/cli.ts`                                                                                                          |
+| Server composition and listeners            | `server/src/server.ts`, `server/src/network-listeners.ts`, `server/src/local-api-socket.ts`, `server/src/cli.ts`                                                                       |
 | Route dispatch                              | `server/src/routes/index.ts`, `server/src/routes/*`                                                                                                                                    |
 | Workspace catalog summaries                 | `server/src/routes/workspaces.ts`, `server/src/storage/session-sqlite-store.ts`                                                                                                        |
 | Workspace detail recent list                | `server/src/routes/sessions.ts`, `server/src/session-list-service.ts`, `server/src/local-sessions.ts`                                                                                  |

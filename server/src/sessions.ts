@@ -86,7 +86,7 @@ type ActiveSession = SessionStartActiveSession;
 
 import type { DurableExtensionReport, DurableHarness, SessionHost } from "./durable-harness.js";
 import type { PluginCatalog } from "./plugin-host.js";
-import { isControlConversation } from "./control-session.js";
+import { loadDurableHarness } from "./session-durable-harness.js";
 import { createDurableSearchSource } from "./durable-search-source.js";
 import {
   durableStoreId,
@@ -96,7 +96,16 @@ import {
 import type { ConversationId, EntryId, Harness } from "@earendil-works/pi-durable";
 
 export class SessionManager extends EventEmitter implements AgentRuntimeTransport {
-  private readonly durableHarness: Promise<DurableHarness>;
+  private readonly loadDurableHarness: () => Promise<DurableHarness>;
+  private durableHarnessLoad?: Promise<DurableHarness>;
+  /**
+   * The Harness loads on first use, not at construction: a manager that never needs it (a
+   * unit-test Server that is built and dropped) leaves no import running behind it.
+   */
+  private get durableHarness(): Promise<DurableHarness> {
+    this.durableHarnessLoad ??= this.loadDurableHarness();
+    return this.durableHarnessLoad;
+  }
   private storage: Storage;
   private active: Map<string, ActiveSession> = new Map();
   /** Sessions between `start_begun` and `start_registered`/`start_failed`; see `StartingRegistry`. */
@@ -167,69 +176,22 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     // Every server runs the Harness: Oppi Control sessions are durable whether or not
     // `experimental.serverDurable` is on. The flag gates only ordinary durable sessions
     // (`engine: "durable"` creates and `capabilities.durableSessions`).
-    this.durableHarness = Promise.all([
-      import("./durable-harness.js"),
-      import("./durable-threads.js"),
-      import("./durable-control-cli.js"),
-    ]).then(([{ DurableHarness }, { DurableThreads }, { DurableControlCli }]) => {
-      const runtime = new DurableHarness(storage.getDataDir());
-      runtime.onHostOpened = (host) => this.fenceStopped([host]);
-      runtime.onHostRecovered = (host, failure) => this.recoverDurableSessions(host, failure);
-      runtime.bindDisabledExtensions(
-        () => storage.getConfig().experimental?.durableExtensions?.disabled ?? [],
-      );
-      runtime.bindThreads(
-        new DurableThreads({
-          runtime,
-          storage,
+    this.loadDurableHarness = () =>
+      loadDurableHarness({
+        storage,
+        fenceStopped: (hosts) => this.fenceStopped(hosts),
+        recoverSessions: (host, failure) => this.recoverDurableSessions(host, failure),
+        threads: {
           withIncomingWork: (sessionId, workspace, submit) =>
             this.withIncomingWork(sessionId, workspace, submit),
           onCreated: (session) => this.emit("session_created", session),
           trace: (sessionId) => this.getServerDurableTrace(sessionId, "context"),
-        }),
-      );
-      runtime.bindSessions({
-        sessionIdOf: (storeId, conversationId) =>
-          storage.findSessionByDurableConversation(storeId, conversationId)?.id,
-        // What `oppiHost().surfaces(env)` hands a durable plugin: the surface loop of the Session
-        // bound to the conversation its tool call runs.
-        surfacesFor: (storeId, conversationId) => {
-          const sessionId = storage.findSessionByDurableConversation(storeId, conversationId)?.id;
-          return sessionId ? this.surfacePublisherFor(sessionId) : undefined;
         },
+        surfacePublisherFor: (sessionId) => this.surfacePublisherFor(sessionId),
+        sessionNaming: () => this.sessionNaming,
+        notifyPort: () => this.notifyPort,
+        liveVoiceSpeech: () => this.liveVoiceSpeech,
       });
-      // Read at each use: the server sets `sessionNaming` after constructing this manager.
-      runtime.bindSessionNaming({
-        name: (sessionId) => this.sessionNaming?.name(sessionId),
-        setName: async (sessionId, name) => {
-          if (this.sessionNaming) await this.sessionNaming.setName(sessionId, name);
-        },
-      });
-      runtime.bindNotify({
-        offersNotify: (sessionId) => this.notifyPort?.offersNotify(sessionId) ?? false,
-        notify: async (sessionId, input) =>
-          this.notifyPort ? this.notifyPort.notify(sessionId, input) : { status: "off" },
-      });
-      // Read at each use: the server sets `liveVoiceSpeech` after constructing this manager.
-      runtime.bindLiveVoice({
-        attachRuntime: (sessionId, activate) =>
-          this.liveVoiceSpeech?.attachRuntime(sessionId, activate) ?? (() => {}),
-        spoke: (sessionId, text) => {
-          if (!this.liveVoiceSpeech) throw new Error("Live Voice is not available");
-          this.liveVoiceSpeech.spoke(sessionId, text);
-        },
-      });
-      runtime.bindControl(
-        new DurableControlCli({
-          dataDir: storage.getDataDir(),
-          sessionIdOf: (storeId, conversationId) => {
-            const session = storage.findSessionByDurableConversation(storeId, conversationId);
-            return session && isControlConversation(session) ? session.id : undefined;
-          },
-        }),
-      );
-      return runtime;
-    });
     const runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(config));
     this.runtimeManager = runtimeManager;
     this.mobileRenderers = new MobileRendererRegistry();
@@ -237,7 +199,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const bundle = createSessionCoordinatorBundle({
       storage,
       config,
-      durableHarness: this.durableHarness,
+      durableHarness: () => this.durableHarness,
       durableSessionsAvailable: () => this.durableSessionsAvailable(),
       runtimeManager,
       active: this.active,
@@ -810,7 +772,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   }
 
   durableSearchSource(): DurableSearchSource {
-    return createDurableSearchSource(this.storage, this.durableHarness);
+    return createDurableSearchSource(this.storage, () => this.durableHarness);
   }
 
   async getServerDurableTrace(
@@ -1197,8 +1159,9 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
    */
   async close(): Promise<void> {
     this.closed = true;
-    const runtime = await this.durableHarness;
-    runtime.shuttingDown = true;
+    // A Harness that never loaded has nothing to close; do not load one to close it.
+    const runtime = await this.durableHarnessLoad;
+    if (runtime) runtime.shuttingDown = true;
     const pending = new Set(this.storage.listRestartResume().map((entry) => entry.sessionId));
     try {
       await Promise.all(
@@ -1210,7 +1173,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         }),
       );
     } finally {
-      await runtime.closeAll();
+      await runtime?.closeAll();
     }
   }
 

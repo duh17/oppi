@@ -28,7 +28,7 @@ Do not put these in config: owner tokens and pairing secrets (use `oppi pair` an
 
 | Key | Notes |
 | --- | --- |
-| `port` / `host` | Listen address (restart) |
+| `port` / `host` | Listen address (restart). With `host` unset, the server listens on `127.0.0.1`, `::1`, and this machine's Tailscale addresses, and not on the local network. Set `host` to `0.0.0.0` to serve the local network too ([Reach the server](onboarding.md#reach-the-server)) |
 | `tls.mode` | `disabled`, `self-signed`, `tailscale`, `manual` (restart). `cloudflare` is not supported: terminate TLS at the proxy ([Reverse proxy](reverse-proxy.md)) |
 | `publicUrl` | Phone-facing HTTPS origin, independent of the listener (restart) |
 | `proxy.trustedPeers` | Immediate proxy peer CIDRs as Oppi sees them; rate-limit identity, including TLS origins (restart) |

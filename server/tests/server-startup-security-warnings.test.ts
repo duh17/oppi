@@ -3,12 +3,18 @@ import { Storage } from "../src/storage.js";
 import { formatStartupSecurityWarnings } from "../src/server.js";
 
 describe("startup security warnings", () => {
-  it("warns when server binds to all interfaces", () => {
+  it("warns only when host is explicitly set to every interface", () => {
     const config = Storage.getDefaultConfig("/tmp/oppi-server-security-warnings-default");
+    config.tls = { mode: "tailscale" };
 
-    const warnings = formatStartupSecurityWarnings(config);
+    // The default listeners are loopback plus Tailscale, never the local network.
+    expect(config.host).toBeUndefined();
+    expect(formatStartupSecurityWarnings(config)).toEqual([]);
 
-    expect(warnings.some((warning) => warning.includes("host=0.0.0.0"))).toBe(true);
+    config.host = "0.0.0.0";
+    expect(formatStartupSecurityWarnings(config)).toEqual([
+      "host=0.0.0.0 listens on all interfaces; ensure access is constrained by firewall rules.",
+    ]);
   });
 
   it("warns when tls is disabled on non-loopback host", () => {

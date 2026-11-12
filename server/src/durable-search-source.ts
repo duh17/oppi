@@ -8,7 +8,7 @@ import type { Storage } from "./storage.js";
 /** Read-only Harness access for the search index. */
 export function createDurableSearchSource(
   storage: Storage,
-  runtime: Promise<DurableHarness>,
+  runtime: () => Promise<DurableHarness>,
 ): DurableSearchSource {
   const withConversation = async <T>(
     sessionId: string,
@@ -17,7 +17,7 @@ export function createDurableSearchSource(
     const session = storage.getSession(sessionId);
     const conversationId = session?.serverDurable?.conversationId;
     if (!session || conversationId === undefined) throw new Error(DURABLE_STORE_MISSING);
-    return (await runtime).withSession(session, (harness) =>
+    return (await runtime()).withSession(session, (harness) =>
       read(harness, conversationId as ConversationId),
     );
   };
@@ -41,7 +41,7 @@ export function createDurableSearchSource(
     holdStore: async (sessionId) => {
       const session = storage.getSession(sessionId);
       if (!session) throw new Error(DURABLE_STORE_MISSING);
-      const host = await (await runtime).openHost(requireDurableStoreId(session));
+      const host = await (await runtime()).openHost(requireDurableStoreId(session));
       return host.retain("search-index");
     },
     storeModifiedAtMs: async (storeId) => {

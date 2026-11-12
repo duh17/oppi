@@ -57,7 +57,7 @@ export interface SessionStartCoordinatorDeps {
   /** True once the owning SessionManager is closed for server shutdown. */
   isClosed?: () => boolean;
   metrics?: ServerTelemetry;
-  durableHarness: Promise<DurableHarness>;
+  durableHarness: () => Promise<DurableHarness>;
   /** Whether ordinary durable sessions are on now (`SessionManager.durableSessionsAvailable`). */
   durableSessionsAvailable: () => boolean;
   onUIBridgeReady?: (key: string, bridge: SdkUiBridge | undefined) => void;
@@ -138,7 +138,7 @@ export class SessionStartCoordinator {
         if (useDurable && durableStoreId(session) === undefined) {
           throw new Error(DURABLE_STORE_MISSING);
         }
-        const durableHarness = useDurable ? await this.deps.durableHarness : undefined;
+        const durableHarness = useDurable ? await this.deps.durableHarness() : undefined;
         const DurableBackend = useDurable
           ? (await import("./durable-backend.js")).DurableBackend
           : undefined;

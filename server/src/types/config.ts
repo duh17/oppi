@@ -87,7 +87,12 @@ export interface AccessTokenRecord {
 export interface ServerConfig {
   configVersion?: number;
   port: number;
-  host: string;
+  /**
+   * Network listener address. Unset (the default): `127.0.0.1`, `::1`, and this machine's
+   * Tailscale addresses, never the local network. Set: one listener at exactly this address;
+   * `0.0.0.0` serves every interface, the local network included.
+   */
+  host?: string;
   dataDir: string;
   sessionIdleTimeoutMs: number;
   maxSessionsPerWorkspace: number;

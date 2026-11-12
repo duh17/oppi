@@ -111,6 +111,8 @@ import {
   type ResolvedTlsConfig,
 } from "./tls.js";
 import { prepareTlsForServerOffMainThread } from "./tls-preparation.js";
+import { listenerHostLabel, NetworkListeners, type TransportServer } from "./network-listeners.js";
+import { tailscaleSelfAddresses } from "./tailscale-whois.js";
 import {
   listenOnLocalApiSocket,
   localApiSocketPath,
@@ -199,8 +201,6 @@ const MAX_UPLOAD_GC_INTERVAL_MS = 60 * 60 * 1000;
 type SocketPrincipal = RequestPrincipal;
 
 const log = createLogger({ base: { component: "server" } });
-
-type TransportServer = ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
 
 function closeListeningServer(server: TransportServer | undefined): Promise<void> {
   if (!server?.listening) return Promise.resolve();
@@ -314,12 +314,17 @@ function allowInsecureNetworkHttp(config: ServerConfig): boolean {
   return config.tls?.mode === "disabled" && config.tls.allowInsecureNetworkHttp === true;
 }
 
+/** An unset host adds the Tailscale addresses, so it is checked like any network bind. */
+function bindsLoopbackOnly(config: ServerConfig): boolean {
+  return config.host !== undefined && isLoopbackHostname(normalizeBindHost(config.host));
+}
+
 export function validateStartupSecurityConfig(config: ServerConfig): string | null {
-  const host = normalizeBindHost(config.host);
-  const loopbackOnly = isLoopbackHostname(host);
+  const loopbackOnly = bindsLoopbackOnly(config);
+  const bindLabel = listenerHostLabel(config);
 
   if (!loopbackOnly && !config.token) {
-    return `Cannot bind to ${config.host} without a token configured. Set token in config or use --host 127.0.0.1`;
+    return `Cannot bind to ${bindLabel} without a token configured. Set token in config or use --host 127.0.0.1`;
   }
 
   if (
@@ -328,7 +333,7 @@ export function validateStartupSecurityConfig(config: ServerConfig): string | nu
     !allowInsecureNetworkHttp(config) &&
     !allowsTrustedPrivateHttpBind(config)
   ) {
-    return `Cannot bind to ${config.host} with TLS disabled. Use tls.mode=self-signed|tailscale|manual, bind to 127.0.0.1, set publicUrl plus proxy.trustedPeers, or explicitly set tls.allowInsecureNetworkHttp=true.`;
+    return `Cannot bind to ${bindLabel} with TLS disabled. Use tls.mode=self-signed|tailscale|manual, bind to 127.0.0.1, set publicUrl plus proxy.trustedPeers, or explicitly set tls.allowInsecureNetworkHttp=true.`;
   }
 
   return null;
@@ -336,11 +341,10 @@ export function validateStartupSecurityConfig(config: ServerConfig): string | nu
 
 export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
   const warnings: string[] = [];
-  const host = normalizeBindHost(config.host);
-  const wildcardBind = isWildcardBindHost(host);
-  const loopbackOnly = isLoopbackHostname(host);
+  const loopbackOnly = bindsLoopbackOnly(config);
+  const bindLabel = listenerHostLabel(config);
 
-  if (wildcardBind) {
+  if (config.host !== undefined && isWildcardBindHost(normalizeBindHost(config.host))) {
     warnings.push(
       `host=${config.host} listens on all interfaces; ensure access is constrained by firewall rules.`,
     );
@@ -349,14 +353,14 @@ export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
   if (!loopbackOnly && tlsSchemeForConfig(config) === "http") {
     if (allowsTrustedPrivateHttpBind(config)) {
       warnings.push(
-        `TLS is disabled while binding to ${config.host}; trusted-proxy HTTP is in effect (publicUrl + proxy.trustedPeers). Traffic between Oppi and the proxy is unencrypted.`,
+        `TLS is disabled while binding to ${bindLabel}; trusted-proxy HTTP is in effect (publicUrl + proxy.trustedPeers). Traffic between Oppi and the proxy is unencrypted.`,
       );
     } else {
       const suffix = allowInsecureNetworkHttp(config)
         ? " tls.allowInsecureNetworkHttp=true permits this insecure network bind."
         : " Startup will refuse this unless tls.allowInsecureNetworkHttp=true is set.";
       warnings.push(
-        `TLS is disabled while binding to ${config.host}; traffic is unencrypted.${suffix}`,
+        `TLS is disabled while binding to ${bindLabel}; traffic is unencrypted.${suffix}`,
       );
     }
   }
@@ -457,7 +461,7 @@ export class Server {
   /** Owner `auth.module`; consulted on every network request before device-token auth. */
   private readonly authModule: AuthModule;
   private pairing!: DevicePairing;
-  private httpServer?: ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
+  private networkListeners?: NetworkListeners;
   private readonly localApiServer: ReturnType<typeof createServer>;
   private readonly localApiSocket: string;
   private localApiBinding?: LocalApiSocketBinding;
@@ -842,16 +846,15 @@ export class Server {
     this.transportScheme = tlsSchemeForConfig(config);
   }
 
-  private createTransportServer(tls: ResolvedTlsConfig): {
-    server: ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
+  /** One factory for every network listener: they share the handlers and the certificate. */
+  private createTransport(tls: ResolvedTlsConfig): {
+    createServer: () => TransportServer;
     scheme: "http" | "https";
     certPath?: string;
   } {
     if (!tls.enabled) {
       return {
-        server: createServer((req, res) => {
-          void this.handleHttp(req, res, "http");
-        }),
+        createServer: () => createServer((req, res) => void this.handleHttp(req, res, "http")),
         scheme: "http",
       };
     }
@@ -868,9 +871,8 @@ export class Server {
     // Passing `ca` here causes Bun's node:https compat layer to demand client
     // certs (oven-sh/bun#16254), breaking HTTPS for all clients.
     return {
-      server: createHttpsServer({ cert, key }, (req, res) => {
-        void this.handleHttp(req, res, "https");
-      }),
+      createServer: () =>
+        createHttpsServer({ cert, key }, (req, res) => void this.handleHttp(req, res, "https")),
       scheme: "https",
       certPath: tls.certPath,
     };
@@ -993,7 +995,7 @@ export class Server {
       appEvents: this.appEventStreamMux,
       serverStartedAt: Date.now(),
       serverVersion: Server.VERSION,
-      networkListener: () => ({ port: this.port, listening: this.httpServer?.listening === true }),
+      networkListener: () => ({ port: this.port, listening: this.remoteAvailable }),
       piVersion: Server.readEmbeddedPiAgentVersion(),
       piCliVersion: optionalPiCliVersion(Server.readPiCliVersion(this.piExecutable)),
       serverUpdate: this.serverUpdate,
@@ -1044,7 +1046,7 @@ export class Server {
     const config = this.storage.getConfig();
     const invalidTls = this.storage.describeInvalidTlsConfig();
     // An invalid on-disk TLS block cannot opt into plaintext, even via a proxy.
-    if (invalidTls && !isLoopbackHostname(normalizeBindHost(config.host))) {
+    if (invalidTls && !bindsLoopbackOnly(config)) {
       throw new Error(invalidTls);
     }
     const startupSecurityError = validateStartupSecurityConfig(config);
@@ -1072,7 +1074,7 @@ export class Server {
     this.serverUpdate.start();
 
     const finishStartup = async (): Promise<void> => {
-      if (this.httpServer?.listening) {
+      if (this.remoteAvailable) {
         try {
           this.startBonjourAdvertisement();
         } catch (err: unknown) {
@@ -1135,39 +1137,24 @@ export class Server {
         const tls = await prepareTlsForServerOffMainThread(
           { tls: config.tls },
           this.storage.getDataDir(),
-          { additionalHosts: [config.host] },
+          { additionalHosts: config.host ? [config.host] : [] },
         );
-        const transport = this.createTransportServer(tls);
-        this.httpServer = transport.server;
+        const transport = this.createTransport(tls);
         this.transportScheme = transport.scheme;
         this.transportCertPath = transport.certPath;
-        this.httpServer.on("upgrade", (req, socket, head) => {
-          this.handleUpgrade(req, socket, head);
+        this.networkListeners = new NetworkListeners({
+          scheme: transport.scheme,
+          createServer: transport.createServer,
+          onUpgrade: (req, socket, head) => this.handleUpgrade(req, socket, head),
+          tailscaleAddresses: tailscaleSelfAddresses,
         });
       } catch (error: unknown) {
         if (!(error instanceof TailscaleRemoteUnavailableError)) throw error;
         this.remoteTransportError = safeErrorMessage(error);
       }
 
-      if (this.httpServer) {
-        await new Promise<void>((resolve, reject) => {
-          const server = this.httpServer;
-          if (!server) {
-            resolve();
-            return;
-          }
-          const onError = (error: Error): void => reject(error);
-          server.once("error", onError);
-          server.listen(config.port, config.host, () => {
-            server.off("error", onError);
-            resolve();
-          });
-        });
-        log.info("server.listening", {
-          scheme: this.transportScheme,
-          host: config.host,
-          port: this.port,
-        });
+      if (this.networkListeners) {
+        await this.networkListeners.listen(config.host, config.port);
       } else {
         log.warn("server.remote_listener_unavailable", {
           mode: config.tls?.mode ?? "disabled",
@@ -1177,7 +1164,7 @@ export class Server {
 
       await finishStartup();
     } catch (error: unknown) {
-      await closeListeningServer(this.httpServer).catch(() => {});
+      await this.networkListeners?.close().catch(() => {});
       await closeListeningServer(this.localApiServer).catch(() => {});
       this.releaseLocalApiBinding();
       throw error;
@@ -1186,9 +1173,7 @@ export class Server {
 
   /** Actual listening port (may differ from config when config.port is 0). */
   get port(): number {
-    const addr = this.httpServer?.address();
-    if (addr && typeof addr === "object") return addr.port;
-    return this.storage.getConfig().port;
+    return this.networkListeners?.port ?? this.storage.getConfig().port;
   }
 
   get scheme(): "http" | "https" {
@@ -1199,12 +1184,14 @@ export class Server {
     return this.localApiSocket;
   }
 
+  /** Whether any network listener is up (loopback counts; the Unix socket does not). */
   get remoteAvailable(): boolean {
-    return this.httpServer?.listening === true;
+    return this.networkListeners?.listening === true;
   }
 
-  get hasPublicHttpListener(): boolean {
-    return this.httpServer?.listening === true;
+  /** Addresses with a network listener, for the startup banner. */
+  get listenerAddresses(): string[] {
+    return this.networkListeners?.addresses ?? [];
   }
 
   async stop(): Promise<void> {
@@ -1271,7 +1258,7 @@ export class Server {
     }
 
     const closeResults = await Promise.allSettled([
-      closeListeningServer(this.httpServer),
+      this.networkListeners?.close(),
       closeListeningServer(this.localApiServer),
     ]);
     this.releaseLocalApiBinding();
@@ -1352,6 +1339,11 @@ export class Server {
     }
 
     const config = this.storage.getConfig();
+    // Bonjour advertises a local-network address, which only an explicit host serves.
+    if (config.host === undefined) {
+      log.info("bonjour.skipped", { reason: "no_lan_listener" });
+      return;
+    }
     const normalizedBindHost = normalizeBindHost(config.host);
     if (isLoopbackHostname(normalizedBindHost)) {
       log.warn("bonjour.skipped", {

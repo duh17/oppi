@@ -106,11 +106,4 @@ describe("doctor service checks", () => {
       ]),
     );
   });
-
-  it("adds the manager's migration warning only when it has one", () => {
-    const withWarning = inspectService(manager({}, { migrationWarning: () => "migrate me" }));
-    expect(messages(withWarning!.checks)).toContain("warn: migrate me");
-    const without = inspectService(manager({}));
-    expect(without!.checks.some((check) => check.message === "migrate me")).toBe(false);
-  });
 });
