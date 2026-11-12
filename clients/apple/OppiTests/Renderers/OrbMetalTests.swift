@@ -173,6 +173,41 @@ struct OrbMetalViewLifecycleTests {
         #expect(harness.view.isDriving)
     }
 
+    @Test func opaqueFullScreenCoverStopsDrawingAndDismissResumes() async throws {
+        let harness = try makeOrbHarness(style: .working, side: 16)
+        defer { tearDown(harness) }
+        _ = try await waitForCompletions(on: harness.view, minimum: 1)
+
+        // A see-through cover leaves the orb in sight: it keeps drawing.
+        let glass = UIViewController()
+        glass.view.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        glass.modalPresentationStyle = .overFullScreen
+        harness.host.present(glass, animated: false)
+        let underGlass = harness.view.framesSubmitted
+        try await Task.sleep(for: .milliseconds(120))
+        #expect(harness.view.framesSubmitted > underGlass)
+        harness.host.dismiss(animated: false)
+
+        // An opaque page in a navigation container hides it: drawing stops.
+        let page = UIViewController()
+        page.view.backgroundColor = .black
+        let cover = UINavigationController(rootViewController: page)
+        cover.modalPresentationStyle = .overFullScreen
+        harness.host.present(cover, animated: false)
+        try await waitUntilStopped(harness.view)
+        let covered = harness.view.framesSubmitted
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(harness.view.framesSubmitted == covered)
+
+        harness.host.dismiss(animated: false)
+        let deadline = ContinuousClock.now + .seconds(1.2)
+        while harness.view.framesSubmitted == covered, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(16))
+        }
+        #expect(harness.view.framesSubmitted > covered)
+        #expect(harness.view.isDriving)
+    }
+
     @Test func nestedClippedAncestorsUseAccumulatedIntersection() throws {
         let harness = try makeOrbHarness(style: .working, side: 16)
         defer { tearDown(harness) }

@@ -7,6 +7,8 @@ import UIKit
 /// Owns display-link cadence, GPU submission, and lifecycle gating. Geometry is
 /// CPU-shared; rasterization is batched Metal. Hidden, inactive, offscreen, and
 /// Reduce Motion states stop the clock. Reduce Motion paints one still frame.
+/// Under an opaque full-screen presentation the clock slows to a poll that
+/// draws nothing until the cover leaves.
 @MainActor
 final class OrbMetalView: UIView {
     var style: OrbStyle {
@@ -59,6 +61,7 @@ final class OrbMetalView: UIView {
     private var clockOrigin: TimeInterval?
     private var sceneActive = true
     private var stillFramePresented = false
+    private var isCovered = false
 
     var framesSubmitted: Int { ledger.submitted }
     var framesCompleted: Int { ledger.completed }
@@ -299,6 +302,7 @@ final class OrbMetalView: UIView {
         cadenceLink?.invalidate()
         cadenceLink = nil
         isDriving = false
+        isCovered = false
         lastStepNow = nil
     }
 
@@ -308,7 +312,7 @@ final class OrbMetalView: UIView {
 
     private func applyFrameRate() {
         let lowPower = forceLowPowerMode || ProcessInfo.processInfo.isLowPowerModeEnabled
-        let fps = OrbDisplayPolicy.preferredFramesPerSecond(
+        let fps = isCovered ? OrbDisplayPolicy.coveredPollFramesPerSecond : OrbDisplayPolicy.preferredFramesPerSecond(
             isLowPowerModeEnabled: lowPower,
             thermalState: ProcessInfo.processInfo.thermalState
         )
@@ -328,8 +332,56 @@ final class OrbMetalView: UIView {
             }
             return
         }
-        isDriving = true
+        // No presentation callback reaches the presenter's subviews, so the
+        // link itself watches for an `.overFullScreen` cover arriving and leaving.
+        let covered = isCoveredByPresentation
+        if covered != isCovered {
+            isCovered = covered
+            applyFrameRate()
+        }
+        isDriving = !covered
+        if covered { return }
         presentFrame(now: link.targetTimestamp, frozen: false)
+    }
+
+    /// True when an opaque full-screen presentation sits above the orb's own
+    /// presentation level. `.overFullScreen` keeps the presenter in the window,
+    /// so `isEffectivelyVisible` stays true while the user sees none of it.
+    var isCoveredByPresentation: Bool {
+        guard let window, var presented = window.rootViewController?.presentedViewController else {
+            return false
+        }
+        var covered = false
+        while true {
+            if let view = presented.viewIfLoaded, isDescendant(of: view) {
+                covered = false
+            } else if Self.coversWindow(presented, window) {
+                covered = true
+            }
+            guard let next = presented.presentedViewController else { return covered }
+            presented = next
+        }
+    }
+
+    private static func coversWindow(_ controller: UIViewController, _ window: UIWindow) -> Bool {
+        let style = controller.modalPresentationStyle
+        guard style == .overFullScreen || style == .fullScreen,
+              !controller.isBeingPresented, !controller.isBeingDismissed,
+              let view = controller.viewIfLoaded, view.window === window
+        else { return false }
+        return hasOpaqueFill(controller, covering: window)
+    }
+
+    /// The controller's view, or a child controller's (a navigation
+    /// container's page), paints an opaque background over the whole window.
+    private static func hasOpaqueFill(_ controller: UIViewController, covering window: UIWindow) -> Bool {
+        if let view = controller.viewIfLoaded, !view.isHidden, view.alpha >= 1,
+           let fill = view.backgroundColor?.resolvedColor(with: view.traitCollection),
+           fill.cgColor.alpha >= 1,
+           view.convert(view.bounds, to: window).contains(window.bounds) {
+            return true
+        }
+        return controller.children.contains { hasOpaqueFill($0, covering: window) }
     }
 
     private func presentStillFrame() {
