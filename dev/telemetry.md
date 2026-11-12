@@ -11,7 +11,7 @@ npm run telemetry:review -- --days 1 --wide   # also --http, --models
 npm run telemetry:client-logs -- --days 1 --limit 30
 npm run telemetry:metrickit -- --days 14 --limit 50
 npm run telemetry:server-log -- --days 1 --limit 30
-npm run diagnostics:review -- --days 1
+npm run diagnostics:review -- --days 1 # client reviews take --device iphone|ipad|mac
 npm run telemetry:review:gate                 # release gate
 npm run telemetry:grafana:up                  # http://localhost:13001, admin/admin
 ```
@@ -84,6 +84,7 @@ Each tag key has exactly one meaning and one kind (`TAGS`): `enum` (closed, narr
 - `TelemetryContext` is the one provider of ambient `screen`, `stream_state`, `agents`, `voice`; unknown is `unknown`, never absent.
 - `TelemetryErrorKind.classify` is the one mapping from errors to `error_kind`. `OppiCore` vocabularies are enums whose raw values are catalog values; a test fails on any case without a catalog counterpart.
 - Numbers belong in events, not log lines.
+- `FrameHitchCounter` is the one hitch rule (a frame over 1.5× its interval). The chat timeline (`ChatTimelineFrameMeter`), SSH terminal, and diff reader feed it; hitch time pools as Σ`hitch_ms` / Σ`duration_ms`, never a mean of per-visit ratios.
 
 ### Event reference
 
@@ -144,7 +145,7 @@ Frame-budget work on the 120 Hz budget (8.3 ms).
 | `app.render_strategy` | How long did highlighting, ANSI parsing, or diff building take for a tool row? | `duration_ms` ms | `render_mode`*<br>`input_size`* (bucket)<br>`language` | emit `duration_ms` ≥ 1, < 5000 |
 | `app.tool_row_measure` | How long did measuring a tool row's width or viewport take? | `duration_ms` ms | `measure`*<br>`input_size`* (bucket) | emit `duration_ms` ≥ 1 |
 | `app.markdown_streaming` | How long did one streaming markdown parse, build, and apply cycle take? | `duration_ms` ms<br>`segments` count | `surface`* | emit `duration_ms` ≥ 1<br>SLO `duration_ms` TM99 ≤ 8.3 |
-| `app.timeline_jank` | What share of timeline apply cycles in a session missed the frame budget? | `jank_pct` pct<br>`cycles` count<br>`hitches` count | none | emit `cycles` ≥ 1<br>SLO `jank_pct` TM99 ≤ 25 |
+| `app.chat_frame_visit` | How smoothly did the chat timeline draw in one visit while the user scrolled it or an agent turn updated it? Hitch time per second is SUM(hitch_ms) / SUM(duration_ms) × 1000 and hitches per minute SUM(hitches) / SUM(duration_ms) × 60000, pooled over visits, never averaged per visit. | `duration_ms` ms<br>`frames` count<br>`hitches` count<br>`hitch_ms` ms<br>`worst_frame_ms` ms<br>`items` count | `timeline_activity`* | emit `frames` ≥ 2 |
 | `app.coalescer_window` | How much stream traffic did the delta coalescer flush per window of 200 flushes (or a non-trivial partial drain)? | `flushes` count<br>`events` count<br>`payload_bytes` bytes | none | none |
 | `app.diff_reader_session` | How fast did a review diff open and how smoothly did it scroll? | `open_ms` ms<br>`lines` count<br>`chunks` count<br>`content_width_points` count<br>`scroll_frames` count<br>`hitches` count<br>`hitch_ratio` ratio<br>`worst_frame_ms` ms | none | none |
 | `app.terminal_scroll_visit` | How smoothly did scrolling run in one SSH terminal visit (every gesture, finger down through coasting, summed)? | `gestures` count<br>`duration_ms` ms<br>`frames` count<br>`hitches` count<br>`hitch_ratio` ratio<br>`worst_frame_ms` ms<br>`deferred_bytes` bytes | `terminal_mode`*<br>`scroll_path`* | emit `frames` ≥ 2 |
@@ -278,6 +279,7 @@ HTTP routes, WebSocket plumbing, push, MCP, schedules, and session lifecycle dri
 
 - `server/scripts/manual/telemetry-import-sqlite.mjs` imports `app-events-*` and `server-events-*` into one `events` table plus `metrickit_payloads`; non-v2 lines and pre-catalog files are skipped, so dashboard history starts at the catalog cutover. Bumping its parser version reimports files.
 - Grafana opens the SQLite volume read-write so WAL-mode reads can create shared-memory sidecars.
+- `device` (`iPhone`, `iPad`, `Mac`, `Other`) is a generated column on both client tables, from client kind and model; `scripts/device-family.ts` is its CLI twin. Release Preflight's Device variable filters every client panel, and client series pivot to one column per device in SQL: a string label column fails the datasource on an empty window. MetricKit daily panels keep one delivery per device and day.
 - Dashboards and alert rules (`server/docker/grafana/provisioning/alerting/alert-rules.yml`) may use only catalog events, fields, tags, and tag values, and every query must run against the importer schema (`npm run check`); `npm run telemetry:grafana:check` runs every panel against a live Grafana.
 
 ## Adding or changing an event

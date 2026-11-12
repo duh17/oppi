@@ -11,11 +11,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
+import { parseDeviceFamily, type DeviceFamily } from "./device-family.ts";
+
 interface ParsedArgs {
   dataDir?: string;
   days: number;
   out?: string;
   limit: number;
+  device?: DeviceFamily;
   json: boolean;
   help: boolean;
 }
@@ -54,6 +57,9 @@ function parseArgs(argv: string[]): ParsedArgs {
         break;
       case "--out":
         args.out = argv[++i];
+        break;
+      case "--device":
+        args.device = parseDeviceFamily(argv[++i] ?? "", arg);
         break;
       case "--json":
         args.json = true;
@@ -114,6 +120,7 @@ function buildMarkdown(args: ParsedArgs, dataDir: string, results: CommandResult
     "",
     `- Generated: ${generatedAt}`,
     `- Window: last ${args.days} day(s)`,
+    `- Device: ${args.device ?? "all"}`,
     `- Data dir: \`${dataDir}\``,
     "",
   ];
@@ -148,6 +155,7 @@ Options:
   --days <n>              Days to include (default: 1)
   --limit <n>             Top/recent rows for subreports (default: 20)
   --out <path>            Markdown report path (default: .internal/reports/diagnostics-*.md)
+  --device <family>       Client sections only from iphone, ipad, or mac (the server log has no device)
   --json                  Print command result metadata as JSON
   --help                  Show this help
 `);
@@ -163,6 +171,7 @@ function main(): void {
   const dataDir = resolve(
     args.dataDir ?? process.env.OPPI_DATA_DIR ?? join(homedir(), ".config", "oppi"),
   );
+  const deviceArgs = args.device ? ["--device", args.device] : [];
   const commonArgs = [
     "--data-dir",
     dataDir,
@@ -183,17 +192,18 @@ function main(): void {
         String(args.days),
         "--wide",
         "--no-color",
+        ...deviceArgs,
       ],
     },
     {
       title: "Client log review",
       command: bunExecutable,
-      args: [join(scriptDir, "client-log-review.ts"), ...commonArgs],
+      args: [join(scriptDir, "client-log-review.ts"), ...commonArgs, ...deviceArgs],
     },
     {
       title: "MetricKit diagnostics review",
       command: bunExecutable,
-      args: [join(scriptDir, "metrickit-review.ts"), ...commonArgs],
+      args: [join(scriptDir, "metrickit-review.ts"), ...commonArgs, ...deviceArgs],
     },
     {
       title: "Server log review",

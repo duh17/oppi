@@ -503,6 +503,12 @@ enum TelemetryTag {
         case rex
     }
 
+    /// What the visible chat timeline was doing while frames were counted: the user scrolling it (finger down through coasting), or an agent turn putting new content on it with nothing scrolling (only frames near each change count; a turn that changes nothing counts no frames).
+    enum TimelineActivity: String, Sendable, CaseIterable {
+        case scroll
+        case stream
+    }
+
     /// Where a terminal scroll went: local history, mouse-wheel reports, or arrow keys.
     enum ScrollPath: String, Sendable, CaseIterable {
         case history
@@ -1869,39 +1875,56 @@ struct AppMarkdownStreaming: TelemetryEvent {
     }
 }
 
-/// What share of timeline apply cycles in a session missed the frame budget?
-struct AppTimelineJank: TelemetryEvent {
-    static let name = "app.timeline_jank"
+/// How smoothly did the chat timeline draw in one visit while the user scrolled it or an agent turn updated it? Hitch time per second is SUM(hitch_ms) / SUM(duration_ms) × 1000 and hitches per minute SUM(hitches) / SUM(duration_ms) × 60000, pooled over visits, never averaged per visit.
+struct AppChatFrameVisit: TelemetryEvent {
+    static let name = "app.chat_frame_visit"
 
-    let jankPct: Double
-    let cycles: Int
+    let durationMs: Double
+    let frames: Int
     let hitches: Int
+    let hitchMs: Double
+    let worstFrameMs: Double
+    let items: Int
+    let timelineActivity: TelemetryTag.TimelineActivity
 
     init(
-        jankPct: Double,
-        cycles: Int,
-        hitches: Int
+        durationMs: Double,
+        frames: Int,
+        hitches: Int,
+        hitchMs: Double,
+        worstFrameMs: Double,
+        items: Int,
+        timelineActivity: TelemetryTag.TimelineActivity
     ) {
-        self.jankPct = jankPct
-        self.cycles = cycles
+        self.durationMs = durationMs
+        self.frames = frames
         self.hitches = hitches
+        self.hitchMs = hitchMs
+        self.worstFrameMs = worstFrameMs
+        self.items = items
+        self.timelineActivity = timelineActivity
     }
 
     var fieldValues: [String: Double] {
         var values: [String: Double] = [:]
-        values["jank_pct"] = jankPct
-        values["cycles"] = Double(cycles)
+        values["duration_ms"] = durationMs
+        values["frames"] = Double(frames)
         values["hitches"] = Double(hitches)
+        values["hitch_ms"] = hitchMs
+        values["worst_frame_ms"] = worstFrameMs
+        values["items"] = Double(items)
         return values
     }
 
     var passesEmitPolicy: Bool {
-        if Double(cycles) < 1 { return false }
+        if Double(frames) < 2 { return false }
         return true
     }
 
     var tagValues: [String: String] {
-        [:]
+        var values: [String: String] = [:]
+        values["timeline_activity"] = timelineActivity.rawValue
+        return values
     }
 }
 

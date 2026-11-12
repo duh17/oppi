@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { deviceFamily } from "../scripts/device-family.ts";
+
 const scriptPath = join(process.cwd(), "scripts/manual/telemetry-import-sqlite.mjs");
 
 function runImport(telemetryDir: string, dbPath: string): void {
@@ -176,11 +178,6 @@ describe("telemetry SQLite importer", () => {
       });
       expect(rows[0]?.raw_payload).toContain("peakMemoryUsage");
       expect(rows[1]).toMatchObject({ kind: "diagnostic" });
-
-      const meta = db.prepare("SELECT parser_version FROM ingested_files").get() as {
-        parser_version: number;
-      };
-      expect(meta.parser_version).toBe(7);
     } finally {
       db.close();
     }
@@ -213,13 +210,6 @@ describe("telemetry SQLite importer", () => {
       expect(
         (db.prepare("SELECT kind FROM metrickit_payloads").get() as { kind: string }).kind,
       ).toBe("metric");
-      expect(
-        (
-          db.prepare("SELECT parser_version FROM ingested_files").get() as {
-            parser_version: number;
-          }
-        ).parser_version,
-      ).toBe(7);
     } finally {
       db.close();
     }
@@ -406,6 +396,107 @@ describe("telemetry SQLite importer", () => {
       expect(
         (db.prepare("SELECT count(*) AS c FROM ingested_files").get() as { c: number }).c,
       ).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  // Dashboards filter and split on `device`; the review CLIs' `--device` uses
+  // deviceFamily(). Both must put a record in the same family.
+  it("files every client record under the device family the review CLIs use", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
+    const dbPath = join(tempDir, "telemetry.db");
+    const clients = [
+      { kind: "ios", deviceModel: "iPhone17,1" },
+      { kind: "ios", deviceModel: "iPad19,1" },
+      { kind: "mac", deviceModel: "Mac16,10" },
+      { kind: "mac", deviceModel: "arm64" },
+      { kind: "ios", deviceModel: "unknown" },
+      { kind: "ios" },
+    ];
+    writeFileSync(
+      join(tempDir, "app-events-2026-10-27.jsonl"),
+      clients.map((client, index) => JSON.stringify(appEvent({ ts: index, client }))).join("\n") +
+        "\n",
+    );
+    writeFileSync(
+      join(tempDir, "metrickit-2026-10-27.jsonl"),
+      clients
+        .map((client, index) =>
+          JSON.stringify({
+            receivedAt: index,
+            clientKind: client.kind,
+            deviceModel: client.deviceModel,
+            payloads: [{ kind: "metric", windowStartMs: index, windowEndMs: index, raw: {} }],
+          }),
+        )
+        .join("\n") + "\n",
+    );
+    writeFileSync(
+      join(tempDir, "server-events-2026-10-27.jsonl"),
+      JSON.stringify(serverResourcesEvent()) + "\n",
+    );
+
+    runImport(tempDir, dbPath);
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      const expected = clients.map((client) => deviceFamily(client) ?? null);
+      expect(expected).toEqual(["iPhone", "iPad", "Mac", "Mac", "Other", "Other"]);
+      const appDevices = db
+        .prepare("SELECT device FROM events WHERE origin = 'app' ORDER BY ts_ms")
+        .all()
+        .map((row) => (row as { device: string | null }).device);
+      const metricKitDevices = db
+        .prepare("SELECT device FROM metrickit_payloads ORDER BY received_at_ms")
+        .all()
+        .map((row) => (row as { device: string | null }).device);
+      expect(appDevices).toEqual(expected);
+      expect(metricKitDevices).toEqual(expected);
+      expect(db.prepare("SELECT device FROM events WHERE origin = 'server'").get()).toEqual({
+        device: null,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("gives a database built before the device column one, rows already imported included", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
+    const dbPath = join(tempDir, "telemetry.db");
+    const oldDb = new DatabaseSync(dbPath);
+    oldDb.exec(`
+      CREATE TABLE events (
+        id TEXT PRIMARY KEY, source_file TEXT NOT NULL, line_number INTEGER NOT NULL,
+        ts_ms INTEGER NOT NULL, origin TEXT NOT NULL, name TEXT NOT NULL, session_id TEXT,
+        workspace_id TEXT, client_kind TEXT, app_version TEXT, build_number TEXT,
+        git_commit TEXT, device_model TEXT, fields_json TEXT NOT NULL, tags_json TEXT NOT NULL
+      );
+      INSERT INTO events (id, source_file, line_number, ts_ms, origin, name, client_kind,
+                          device_model, fields_json, tags_json)
+      VALUES ('old', 'app-events-2026-10-01.jsonl', 1, 1, 'app', 'app.ttft', 'ios', 'iPad19,1', '{}', '{}');
+      CREATE TABLE metrickit_payloads (
+        id TEXT PRIMARY KEY, source_file TEXT NOT NULL, line_number INTEGER NOT NULL,
+        payload_index INTEGER NOT NULL, kind TEXT NOT NULL, window_start_ms INTEGER NOT NULL,
+        window_end_ms INTEGER NOT NULL, generated_at_ms INTEGER, received_at_ms INTEGER,
+        app_version TEXT, build_number TEXT, os_version TEXT, device_model TEXT,
+        summary_json TEXT, raw_json TEXT
+      );
+    `);
+    oldDb.close();
+    writeFileSync(
+      join(tempDir, "app-events-2026-10-27.jsonl"),
+      JSON.stringify(appEvent({ ts: 6 })) + "\n",
+    );
+
+    runImport(tempDir, dbPath);
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      expect(db.prepare("SELECT id, device FROM events ORDER BY ts_ms").all()).toEqual([
+        { id: "old", device: "iPad" },
+        { id: expect.any(String), device: "iPhone" },
+      ]);
     } finally {
       db.close();
     }

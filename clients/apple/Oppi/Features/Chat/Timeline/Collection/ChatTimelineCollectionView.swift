@@ -277,6 +277,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
 
     /// Stops observation, inline video, and preparation when the timeline goes away.
     func dismantle(_ collectionView: UICollectionView) {
+        endFrameVisit()
         stopOwnedTimelineObservation()
         stopMarkdownVideoPlayback(in: collectionView)
         cancelTimelinePreparation()
@@ -375,6 +376,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             name: UIAccessibility.differentiateWithoutColorDidChangeNotification,
             object: nil
         )
+        installFrameMeter()
         let traits = UITraitCollection.current
         speakerIncreasedContrast = TimelineSpeakerChrome.increasedContrast(traitCollection: traits)
         speakerDifferentiateWithoutColor = TimelineSpeakerChrome.differentiateWithoutColor()
@@ -602,6 +604,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     var lastObservedContentOffsetY: CGFloat?
     var lastObservedContentHeight: CGFloat?
     var isTimelineBusy = false
+    /// Frames and hitches while this timeline scrolls or streams (`app.chat_frame_visit`).
+    let frameMeter = ChatTimelineFrameMeter()
     /// Rendering/sizing must stop treating an assistant as streaming as soon
     /// as execution becomes idle, even if the reducer retains its final ID
     /// for one more render pass.
@@ -1094,6 +1098,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
 
     func apply(configuration: ChatTimelineConfiguration, to collectionView: UICollectionView) {
         let sessionScopeChanged = context.didChangeSessionScope(for: configuration)
+        if sessionScopeChanged { endFrameVisit() }
+        defer { frameMeter.contentChanged() }
         let assistantPresentationChanged = context.didChangeAssistantPresentation(for: configuration)
         let chromeStyleChanged = context.didChangeChromeStyle(for: configuration)
         workLineReplacementIDByPreviousID = Dictionary(uniqueKeysWithValues:

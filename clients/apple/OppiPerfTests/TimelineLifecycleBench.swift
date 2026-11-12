@@ -29,9 +29,6 @@ struct TimelineLifecycleBench {
         var allScrollDriftMaxPt: [Double] = []
         var allExpandShiftMaxPt: [Double] = []
         var allEndSettleUs: [Double] = []
-        var allJankPct: [Double] = []
-        var allJankHitches: [Int] = []
-        var allJankCycles: [Int] = []
 
         // Invariant tracking (across all runs)
         var inv_driftUnder2pt = true
@@ -50,9 +47,6 @@ struct TimelineLifecycleBench {
             allScrollDriftMaxPt.append(r.scrollDriftMaxPt)
             allExpandShiftMaxPt.append(r.expandShiftMaxPt)
             allEndSettleUs.append(r.endSettleUs)
-            allJankPct.append(r.streamingJankPct)
-            allJankHitches.append(r.jankHitches)
-            allJankCycles.append(r.jankCycles)
 
             if !r.inv_driftUnder2pt { inv_driftUnder2pt = false }
             if !r.inv_expandUnder2pt { inv_expandUnder2pt = false }
@@ -66,7 +60,6 @@ struct TimelineLifecycleBench {
         let scrollDriftMaxPt = median(allScrollDriftMaxPt)
         let expandShiftMaxPt = median(allExpandShiftMaxPt)
         let endSettleUs = median(allEndSettleUs)
-        let jankPct = median(allJankPct)
 
         // Weighted score (lower = better)
         let score = loadMs * 0.1
@@ -90,13 +83,6 @@ struct TimelineLifecycleBench {
 
         // Unified vital metrics (same names as production telemetry)
         print("METRIC app.session_load.duration_ms=\(fmt(loadMs))")
-        print("METRIC app.timeline_jank.jank_pct=\(fmt(jankPct))")
-
-        // Raw jank counters (median across runs)
-        let jankHitches = allJankHitches.sorted()[allJankHitches.count / 2]
-        let jankCycles = allJankCycles.sorted()[allJankCycles.count / 2]
-        print("METRIC jank_hitches=\(jankHitches)")
-        print("METRIC jank_cycles=\(jankCycles)")
 
         // Invariants (hard checks — failure blocks keep)
         print("INVARIANT drift_under_threshold=\(inv_driftUnder2pt ? "pass" : "FAIL")")
@@ -118,9 +104,6 @@ struct TimelineLifecycleBench {
         let scrollDriftMaxPt: Double
         let expandShiftMaxPt: Double
         let endSettleUs: Double
-        let streamingJankPct: Double
-        let jankHitches: Int
-        let jankCycles: Int
 
         let inv_driftUnder2pt: Bool
         let inv_expandUnder2pt: Bool
@@ -169,12 +152,6 @@ struct TimelineLifecycleBench {
         let deltasPerFlush = 3
         let flushCount = 17
 
-        // Reset production jank counters so we measure only the streaming phase.
-        // ChatTimelinePerf.endCollectionApply() increments hitchCount when
-        // dataSource.apply() alone exceeds the 120 Hz frame budget (8.3 ms) — same
-        // measurement as production.
-        ChatTimelinePerf.resetJankCounters()
-
         for flush in 0 ..< flushCount {
             let events = (0 ..< deltasPerFlush).map { i in
                 AgentEvent.textDelta(
@@ -199,13 +176,6 @@ struct TimelineLifecycleBench {
         streamingTimings.sort()
         let streamingMedianUs = Double(streamingTimings[streamingTimings.count / 2]) / 1000.0
         let streamingMaxUs = Double(streamingTimings.last ?? 0) / 1000.0
-
-        // Read jank from production counters (ChatTimelinePerf.endCollectionApply).
-        // This measures only dataSource.apply() duration > 8.3 ms — identical to
-        // what production reports via app.timeline_jank. Unlike the old wall-clock
-        // measurement which included reduce + layout + scroll overhead.
-        let jankSnap = ChatTimelinePerf.jankSnapshot()
-        let streamingJankPct = jankSnap.pct
 
         // === Phase 3: Structural Insert (new tool row mid-stream) ===
         // Simulate a fast tool that completes within a single 33ms coalescer
@@ -348,8 +318,7 @@ struct TimelineLifecycleBench {
         // Check all metrics finite
         let allMetrics = [loadMs, streamingMedianUs, streamingMaxUs,
                           insertTotalUs, Double(scrollDriftMaxPt),
-                          Double(expandShiftMaxPt), endSettleUs,
-                          streamingJankPct]
+                          Double(expandShiftMaxPt), endSettleUs]
         let allFinite = allMetrics.allSatisfy { $0.isFinite && $0 >= 0 }
 
         // Cleanup
@@ -363,9 +332,6 @@ struct TimelineLifecycleBench {
             scrollDriftMaxPt: Double(scrollDriftMaxPt),
             expandShiftMaxPt: Double(expandShiftMaxPt),
             endSettleUs: endSettleUs,
-            streamingJankPct: streamingJankPct,
-            jankHitches: jankSnap.hitchCount,
-            jankCycles: jankSnap.totalApplyCycles,
             inv_driftUnder2pt: scrollDriftMaxPt < 80.0,  // relaxed: cascade drift is the optimization target
             inv_expandUnder2pt: expandShiftMaxPt < 8.0,  // relaxed: expand/collapse settlement
             inv_allFinite: allFinite

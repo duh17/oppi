@@ -49,12 +49,12 @@ struct TelemetryTests {
     @Test func nonFiniteFieldsNeverReachTheUploader() {
         let capture = TelemetryCapture()
         capture.runSync {
-            Telemetry.record(AppTimelineJank(jankPct: .nan, cycles: 10, hitches: 1))
+            Telemetry.record(AppCatchup(durationMs: .nan, result: .applied))
             Telemetry.record(AppDeviceResources(cpuPct: .infinity, memoryAvailableMb: 100, thermalState: 0))
-            Telemetry.record(AppTimelineJank(jankPct: 10, cycles: 10, hitches: 1))
+            Telemetry.record(AppCatchup(durationMs: 10, result: .applied))
         }
 
-        #expect(capture.events.map(\.name) == ["app.timeline_jank"])
+        #expect(capture.events.map(\.name) == ["app.catchup"])
     }
 
     @Test func sessionAndWorkspaceIdsAreAttachedAndEmptyOnesOmitted() {

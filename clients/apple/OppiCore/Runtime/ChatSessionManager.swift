@@ -1340,7 +1340,6 @@ final class ChatSessionManager {
             cancelAutoReconnect()
         }
 
-        effectsStatePort.emitTimelineSessionEnded(sessionId: sessionId)
         conversationStream?.cancelPendingRequests()
         for child in childStreams.values { child.driver.cancelPendingRequests() }
 

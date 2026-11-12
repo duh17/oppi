@@ -398,10 +398,6 @@ final class IOSChatSessionRuntimeAdapter:
         ChatTimelinePerf.activeSessionId = sessionId
     }
 
-    func emitTimelineSessionEnded(sessionId: String) {
-        ChatTimelinePerf.emitJankRate(sessionId: sessionId)
-    }
-
     func currentMemoryFootprintMB() -> Int? {
         AppDiagnosticsService.currentFootprintMB()
     }

@@ -161,12 +161,18 @@
     },
     {
       "fields" : {
-        "cycles" : 240,
-        "hitches" : 30,
-        "jank_pct" : 12.5
+        "duration_ms" : 4200.5,
+        "frames" : 500,
+        "hitch_ms" : 37.5,
+        "hitches" : 3,
+        "items" : 812,
+        "worst_frame_ms" : 41.5
       },
-      "name" : "app.timeline_jank",
+      "name" : "app.chat_frame_visit",
       "sessionId" : "sess-golden-1",
+      "tags" : {
+        "timeline_activity" : "scroll"
+      },
       "ts" : 1793000000010
     }
   ],

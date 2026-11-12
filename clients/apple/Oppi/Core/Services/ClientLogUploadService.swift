@@ -78,7 +78,7 @@ enum ClientLogUploadService {
     static let bootId = UUID().uuidString
 
     static let shared = ClientLogUploadQueue(
-        clientKind: .ios,
+        clientKind: PlatformCapabilities.reportsAsMac ? .mac : .ios,
         appInstanceId: appInstanceId,
         bootId: bootId,
         isUploadAllowed: { TelemetrySettings.allowsRemoteDiagnosticsUpload }

@@ -73,16 +73,6 @@ enum ChatTimelinePerf {
     private static var hostUpdateUIViewCount = 0
     private static var controllerOwnedApplyCount = 0
 
-    // MARK: - Jank tracking (app.timeline_jank)
-
-    /// One 120 Hz frame. An apply cycle that takes longer misses a ProMotion frame.
-    private static let frameBudgetNs: UInt64 = 8_333_333
-
-    /// Number of collection apply cycles that exceeded the frame budget.
-    private static var hitchCount = 0
-    /// Total collection apply cycles counted since last jank rate emission.
-    private static var totalApplyCycles = 0
-
     /// Legacy fallback for metric attribution when a call site hasn't been
     /// updated to pass an explicit `sessionId`. New instrumentation should
     /// prefer explicit session IDs so offscreen work is attributed
@@ -107,8 +97,6 @@ enum ChatTimelinePerf {
         failsafeConfigureCount = 0
         hostUpdateUIViewCount = 0
         controllerOwnedApplyCount = 0
-        hitchCount = 0
-        totalApplyCycles = 0
 
         lastSlowMetricLogNs = 0
 
@@ -209,12 +197,6 @@ enum ChatTimelinePerf {
         // iOS process suspension time, producing multi-second values that
         // are background artifacts, not real rendering cost.
         guard durationMs < suspensionCeilingMs else { return }
-
-        // Jank tracking: count every valid apply cycle and flag hitches.
-        totalApplyCycles += 1
-        if elapsedNs > frameBudgetNs {
-            hitchCount += 1
-        }
 
         // The catalog emit policy drops the noise floor and suspension artifacts.
         Telemetry.record(
@@ -457,48 +439,6 @@ enum ChatTimelinePerf {
         }
 
         scrollWindowCount &+= 1
-    }
-
-    // MARK: - Jank Snapshot (bench / test access)
-
-    /// Current jank counters without resetting or emitting telemetry.
-    struct JankSnapshot {
-        let hitchCount: Int
-        let totalApplyCycles: Int
-        var pct: Double {
-            guard totalApplyCycles > 0 else { return 0 }
-            return Double(hitchCount) / Double(totalApplyCycles) * 100.0
-        }
-    }
-
-    /// Read current jank counters without resetting.
-    static func jankSnapshot() -> JankSnapshot {
-        JankSnapshot(hitchCount: hitchCount, totalApplyCycles: totalApplyCycles)
-    }
-
-    /// Reset jank counters without emitting. Use before a bench measurement window.
-    static func resetJankCounters() {
-        hitchCount = 0
-        totalApplyCycles = 0
-    }
-
-    // MARK: - Jank Rate Emission
-
-    /// Compute and emit `app.timeline_jank`: the share of collection-apply
-    /// cycles that exceeded the 120 Hz frame budget. Resets counters after
-    /// emission. Called when a session ends.
-    static func emitJankRate(sessionId: String?) {
-        guard totalApplyCycles > 0 else { return }
-        let pct = Double(hitchCount) / Double(totalApplyCycles) * 100.0
-        let cycles = totalApplyCycles
-        let hitches = hitchCount
-        hitchCount = 0
-        totalApplyCycles = 0
-
-        Telemetry.record(
-            AppTimelineJank(jankPct: pct, cycles: cycles, hitches: hitches),
-            sessionId: sessionId
-        )
     }
 
     private static func shouldEmitSlowLog(nowNs: UInt64 = DispatchTime.now().uptimeNanoseconds) -> Bool {

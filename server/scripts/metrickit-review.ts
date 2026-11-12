@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { asRecord } from "../src/json-shape.ts";
+import { deviceFamily, parseDeviceFamily, type DeviceFamily } from "./device-family.ts";
 
 const HOUR_MS = 60 * 60 * 1_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -82,6 +83,8 @@ interface DiagnosticSummary {
   osVersion: string;
   deviceModel: string;
   clientKind: string;
+  /** iPhone, iPad, Mac, or Other (`device-family.ts`). */
+  device: string;
   count: number;
   sessionId?: string;
   workspaceId?: string;
@@ -97,6 +100,8 @@ export interface MetricKitReviewResult {
   telemetryDir: string;
   telemetryAvailable: boolean;
   evidenceState: "available" | "unavailable" | "invalid" | "stale";
+  /** Only payloads from this device family were read (`--device`). */
+  device: DeviceFamily | null;
   filesRead: number;
   malformedRecords: number;
   records: number;
@@ -106,6 +111,7 @@ export interface MetricKitReviewResult {
   lastPayloadTs: number | null;
   countsByType: Record<string, number>;
   countsByBuild: Record<string, Record<string, number>>;
+  countsByDevice: Record<string, Record<string, number>>;
   recentDiagnostics: DiagnosticSummary[];
   symbolicationTarget?: SymbolicationTarget;
 }
@@ -120,6 +126,7 @@ interface ParsedArgs {
   limit: number;
   symbolicatePath?: string;
   match?: string;
+  device?: DeviceFamily;
 }
 
 function telemetryDir(dataDir: string): string {
@@ -436,6 +443,7 @@ function diagnosticsFromPayload(
       osVersion: record.osVersion ?? "unknown",
       deviceModel: record.deviceModel ?? "unknown",
       clientKind: record.clientKind ?? "unknown",
+      device: deviceFamily({ kind: record.clientKind, deviceModel: record.deviceModel }) ?? "unknown",
       count,
       sessionId: summary.lastSessionId,
       workspaceId: summary.lastWorkspaceId,
@@ -456,6 +464,7 @@ export function buildMetricKitReview(options: {
   limit?: number;
   symbolicatePath?: string;
   match?: RegExp;
+  device?: DeviceFamily;
 }): MetricKitReviewResult {
   const dir = telemetryDir(options.dataDir);
   const symbolicationTarget = resolveSymbolicationTarget(options.symbolicatePath);
@@ -472,6 +481,7 @@ export function buildMetricKitReview(options: {
         : `${days}d`;
   const countsByType: Record<string, number> = {};
   const countsByBuild: Record<string, Record<string, number>> = {};
+  const countsByDevice: Record<string, Record<string, number>> = {};
   const recentDiagnostics: DiagnosticSummary[] = [];
 
   const telemetryAvailable = existsSync(dir);
@@ -494,6 +504,12 @@ export function buildMetricKitReview(options: {
         continue;
       }
       records += 1;
+      if (
+        options.device &&
+        deviceFamily({ kind: record.clientKind, deviceModel: record.deviceModel }) !== options.device
+      ) {
+        continue;
+      }
       for (const payload of record.payloads ?? []) {
         const ts = safeNumber(payload.windowEndMs) ?? safeNumber(record.generatedAt) ?? 0;
         if (ts < cutoffMs) continue;
@@ -505,6 +521,7 @@ export function buildMetricKitReview(options: {
           diagnostics += diagnostic.count;
           inc(countsByType, diagnostic.type, diagnostic.count);
           incNested(countsByBuild, diagnostic.buildNumber, diagnostic.type, diagnostic.count);
+          incNested(countsByDevice, diagnostic.device, diagnostic.type, diagnostic.count);
           recentDiagnostics.push(diagnostic);
         }
       }
@@ -532,6 +549,7 @@ export function buildMetricKitReview(options: {
           : payloads === 0
             ? "stale"
             : "available",
+    device: options.device ?? null,
     filesRead,
     malformedRecords,
     records,
@@ -541,6 +559,7 @@ export function buildMetricKitReview(options: {
     lastPayloadTs,
     countsByType,
     countsByBuild,
+    countsByDevice,
     recentDiagnostics: recentDiagnostics.slice(0, limit),
     symbolicationTarget,
   };
@@ -565,7 +584,8 @@ function frameLabel(frame: StackFrame): string {
 }
 
 function printHuman(result: MetricKitReviewResult): void {
-  console.log(`Oppi MetricKit Review (${result.windowLabel})`);
+  const scope = result.device ? `, ${result.device} only` : "";
+  console.log(`Oppi MetricKit Review (${result.windowLabel}${scope})`);
   console.log(`  telemetry: ${result.telemetryDir}`);
   console.log(
     `  evidence=${result.evidenceState} files=${result.filesRead} malformed=${result.malformedRecords} records=${result.records} payloads=${result.payloads} diagnostics=${result.diagnostics}`,
@@ -587,6 +607,22 @@ function printHuman(result: MetricKitReviewResult): void {
   } else {
     for (const [type, count] of Object.entries(result.countsByType).sort((a, b) => b[1] - a[1])) {
       console.log(`  ${type.padEnd(24)} ${String(count).padStart(5)}`);
+    }
+  }
+  console.log();
+
+  console.log("Counts by device");
+  if (Object.keys(result.countsByDevice).length === 0) {
+    console.log("  (none)");
+  } else {
+    for (const [device, counts] of Object.entries(result.countsByDevice).sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    )) {
+      const pieces = Object.entries(counts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([type, count]) => `${type}:${count}`)
+        .join(" ");
+      console.log(`  ${device.padEnd(8)} ${pieces}`);
     }
   }
   console.log();
@@ -622,7 +658,7 @@ function printHuman(result: MetricKitReviewResult): void {
       .filter(Boolean)
       .join(" ");
     console.log(
-      `  ${formatTs(diagnostic.windowEndMs)} ${diagnostic.type} count=${diagnostic.count} build=${diagnostic.buildNumber} ${context}`.trimEnd(),
+      `  ${formatTs(diagnostic.windowEndMs)} ${diagnostic.device} ${diagnostic.type} count=${diagnostic.count} build=${diagnostic.buildNumber} ${context}`.trimEnd(),
     );
     if (diagnostic.appFrames.length > 0) {
       console.log("    app frames:");
@@ -706,6 +742,9 @@ function parseArgs(argv: string[]): ParsedArgs {
       case "--match":
         args.match = patternArg(argv, ++i, arg);
         break;
+      case "--device":
+        args.device = parseDeviceFamily(requiredArg(argv, ++i, arg), arg);
+        break;
       case "--json":
         args.json = true;
         break;
@@ -738,6 +777,7 @@ Options:
   --limit <n>             Number of recent diagnostics (default: 20)
   --symbolicate <path>    Best-effort atos symbolication for app frames; accepts .xcarchive, .dSYM, .app, or binary paths
   --match <regex>         Prioritize matching diagnostics before applying --limit
+  --device <family>       Only payloads from iphone, ipad, or mac
   --json                  Machine-readable JSON
   --help                  Show this help
 `);
@@ -771,6 +811,7 @@ function main(): void {
     limit: args.limit,
     symbolicatePath: args.symbolicatePath,
     match,
+    device: args.device,
   });
 
   if (args.json) {

@@ -10,7 +10,8 @@ struct FrameHitchCounter {
     private(set) var worstFrameMilliseconds = 0.0
     /// Time between the first and the last counted frame.
     private(set) var elapsedMilliseconds = 0.0
-    private var hitchMilliseconds = 0.0
+    /// Lateness summed over the hitches.
+    private(set) var hitchMilliseconds = 0.0
 
     /// Hitch time over scroll time, 0 before any frame.
     var hitchRatio: Double {
@@ -31,6 +32,12 @@ struct FrameHitchCounter {
             hitches += 1
             hitchMilliseconds += interval - expected
         }
+    }
+
+    /// A frame that lands at `timestamp` without being counted: the next counted
+    /// frame is measured from it.
+    mutating func skipFrame(at timestamp: CFTimeInterval) {
+        lastTimestamp = timestamp
     }
 
     /// Zeroes the counts, keeping the last frame's time.

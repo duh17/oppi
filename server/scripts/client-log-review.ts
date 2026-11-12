@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { buildLabel } from "./build-label.ts";
+import { deviceFamily, parseDeviceFamily, type DeviceFamily } from "./device-family.ts";
 
 const HOUR_MS = 60 * 60 * 1_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -61,6 +62,7 @@ interface IssueSummary {
   sessions: Set<string>;
   workspaces: Set<string>;
   builds: Set<string>;
+  devices: Set<string>;
   examples: Array<Record<string, string>>;
 }
 
@@ -73,6 +75,7 @@ interface RecentEntry {
   sessionId?: string;
   workspaceId?: string;
   buildNumber?: string;
+  device: string;
 }
 
 export interface ClientLogReviewResult {
@@ -82,6 +85,8 @@ export interface ClientLogReviewResult {
   telemetryDir: string;
   telemetryAvailable: boolean;
   evidenceState: "available" | "unavailable" | "invalid" | "stale";
+  /** Only uploads from this device family were read (`--device`). */
+  device: DeviceFamily | null;
   filesRead: number;
   parsedRecords: number;
   malformedRecords: number;
@@ -93,6 +98,7 @@ export interface ClientLogReviewResult {
   levelCounts: Record<string, number>;
   categoryCounts: Record<string, number>;
   buildCounts: Record<string, number>;
+  deviceCounts: Record<string, number>;
   issues: Array<{
     key: string;
     count: number;
@@ -105,6 +111,7 @@ export interface ClientLogReviewResult {
     sessions: string[];
     workspaces: string[];
     builds: string[];
+    devices: string[];
     examples: Array<Record<string, string>>;
   }>;
   recent: RecentEntry[];
@@ -120,6 +127,7 @@ interface ParsedArgs {
   limit: number;
   levels: Set<string> | null;
   match?: string;
+  device?: DeviceFamily;
 }
 
 function normalizeLevel(level: unknown): string {
@@ -208,6 +216,7 @@ function addIssue(
   entry: ClientLogEntry,
   ts: number,
   buildNumber: string,
+  device: string,
 ): void {
   const level = normalizeLevel(entry.level);
   const key = signatureParts(entry, level).join("\t");
@@ -225,6 +234,7 @@ function addIssue(
       sessions: new Set(),
       workspaces: new Set(),
       builds: new Set(),
+      devices: new Set(),
       examples: [],
     };
     issues.set(key, issue);
@@ -236,6 +246,7 @@ function addIssue(
   if (entry.sessionId) issue.sessions.add(entry.sessionId);
   if (entry.workspaceId) issue.workspaces.add(entry.workspaceId);
   if (buildNumber) issue.builds.add(buildNumber);
+  issue.devices.add(device);
   if (entry.metadata && issue.examples.length < 3) {
     const serialized = JSON.stringify(entry.metadata);
     if (!issue.examples.some((existing) => JSON.stringify(existing) === serialized)) {
@@ -270,6 +281,7 @@ export function buildClientLogReview(options: {
   limit?: number;
   levels?: Set<string> | null;
   match?: RegExp;
+  device?: DeviceFamily;
 }): ClientLogReviewResult {
   const dir = telemetryDir(options.dataDir);
   const days = Math.max(0, options.days ?? 7);
@@ -287,6 +299,7 @@ export function buildClientLogReview(options: {
   const levelCounts: Record<string, number> = {};
   const categoryCounts: Record<string, number> = {};
   const buildCounts: Record<string, number> = {};
+  const deviceCounts: Record<string, number> = {};
   const issues = new Map<string, IssueSummary>();
   const recent: RecentEntry[] = [];
 
@@ -311,6 +324,9 @@ export function buildClientLogReview(options: {
         continue;
       }
       parsedRecords += 1;
+      const device =
+        deviceFamily({ kind: record.clientKind, deviceModel: record.deviceModel }) ?? "unknown";
+      if (options.device && device !== options.device) continue;
       const build = buildLabel(record);
       const recordFallbackTs = safeNumber(record.generatedAt) ?? safeNumber(record.receivedAt) ?? 0;
       let recordInWindow = false;
@@ -328,7 +344,7 @@ export function buildClientLogReview(options: {
         inc(categoryCounts, entry.category || "General");
 
         if (level === "warn" || level === "error") {
-          addIssue(issues, entry, ts, build);
+          addIssue(issues, entry, ts, build, device);
           recent.push({
             ts,
             level,
@@ -338,6 +354,7 @@ export function buildClientLogReview(options: {
             sessionId: entry.sessionId,
             workspaceId: entry.workspaceId,
             buildNumber: build,
+            device,
           });
         }
       }
@@ -349,6 +366,7 @@ export function buildClientLogReview(options: {
         uploads += 1;
         dropped += Math.max(0, safeNumber(record.droppedCount) ?? 0);
         inc(buildCounts, build);
+        inc(deviceCounts, device);
       }
     }
   }
@@ -369,6 +387,7 @@ export function buildClientLogReview(options: {
         : uploads === 0
           ? "stale"
           : "available",
+    device: options.device ?? null,
     filesRead,
     parsedRecords,
     malformedRecords,
@@ -380,6 +399,7 @@ export function buildClientLogReview(options: {
     levelCounts,
     categoryCounts: Object.fromEntries(Object.entries(categoryCounts).sort((a, b) => b[1] - a[1])),
     buildCounts: Object.fromEntries(Object.entries(buildCounts).sort((a, b) => b[1] - a[1])),
+    deviceCounts: Object.fromEntries(Object.entries(deviceCounts).sort((a, b) => b[1] - a[1])),
     issues: [...issues.values()]
       .sort((a, b) => {
         const aMatch = options.match?.test(`${a.category} ${a.message} ${a.signature}`) ? 1 : 0;
@@ -399,6 +419,7 @@ export function buildClientLogReview(options: {
         sessions: [...issue.sessions].slice(0, 8),
         workspaces: [...issue.workspaces].slice(0, 8),
         builds: [...issue.builds].slice(0, 8),
+        devices: [...issue.devices].sort(),
         examples: issue.examples,
       })),
     recent: recent.slice(0, limit),
@@ -406,7 +427,8 @@ export function buildClientLogReview(options: {
 }
 
 function printHuman(result: ClientLogReviewResult): void {
-  console.log(`Oppi Client Log Review (${result.windowLabel})`);
+  const scope = result.device ? `, ${result.device} only` : "";
+  console.log(`Oppi Client Log Review (${result.windowLabel}${scope})`);
   console.log(`  telemetry: ${result.telemetryDir}`);
   console.log(
     `  evidence=${result.evidenceState} files=${result.filesRead} parsed=${result.parsedRecords} malformed=${result.malformedRecords} uploads=${result.uploads} entries=${result.entries} dropped=${result.dropped}`,
@@ -417,6 +439,17 @@ function printHuman(result: ClientLogReviewResult): void {
   console.log("Levels");
   for (const [level, count] of Object.entries(result.levelCounts).sort((a, b) => b[1] - a[1])) {
     console.log(`  ${level.padEnd(7)} ${String(count).padStart(7)}`);
+  }
+  console.log();
+
+  console.log("Devices (uploads)");
+  const devices = Object.entries(result.deviceCounts);
+  if (devices.length === 0) {
+    console.log("  (none)");
+  } else {
+    for (const [device, count] of devices) {
+      console.log(`  ${device.padEnd(24)} ${String(count).padStart(7)}`);
+    }
   }
   console.log();
 
@@ -438,6 +471,7 @@ function printHuman(result: ClientLogReviewResult): void {
     for (const issue of result.issues) {
       const signature = issue.signature ? ` ${issue.signature}` : "";
       const scope = [
+        `devices=${issue.devices.join(",")}`,
         issue.builds.length ? `builds=${issue.builds.join(",")}` : "",
         issue.sessions.length ? `sessions=${issue.sessions.length}` : "",
         issue.workspaces.length ? `workspaces=${issue.workspaces.length}` : "",
@@ -463,7 +497,7 @@ function printHuman(result: ClientLogReviewResult): void {
         ? ` ${JSON.stringify(entry.metadata)}`
         : "";
       console.log(
-        `  ${formatTs(entry.ts)} ${entry.level.padEnd(5)} ${entry.category.padEnd(18)} ${truncate(entry.message, 72)}${metadata}`,
+        `  ${formatTs(entry.ts)} ${entry.device.padEnd(6)} ${entry.level.padEnd(5)} ${entry.category.padEnd(18)} ${truncate(entry.message, 72)}${metadata}`,
       );
     }
   }
@@ -541,6 +575,9 @@ function parseArgs(argv: string[]): ParsedArgs {
         );
         break;
       }
+      case "--device":
+        args.device = parseDeviceFamily(requiredArg(argv, ++i, arg), arg);
+        break;
       case "--json":
         args.json = true;
         break;
@@ -564,6 +601,7 @@ function printHelp(): void {
   bun server/scripts/client-log-review.ts --hours 3 --limit 30
   bun server/scripts/client-log-review.ts --since 2026-07-22T20:00:00Z --limit 30
   bun server/scripts/client-log-review.ts --level warn,error --json
+  bun server/scripts/client-log-review.ts --device ipad --days 1
 
 Options:
   --data-dir <path>     Oppi data dir (default: ~/.config/oppi)
@@ -573,6 +611,7 @@ Options:
   --limit <n>           Number of top/recent entries (default: 20)
   --match <regex>       Prioritize matching signatures before applying --limit
   --level <levels>      Comma-separated levels: debug,info,warn,error
+  --device <family>     Only uploads from iphone, ipad, or mac
   --json                Machine-readable JSON
   --help                Show this help
 `);
@@ -606,6 +645,7 @@ function main(): void {
     limit: args.limit,
     levels: args.levels,
     match,
+    device: args.device,
   });
 
   if (args.json) {

@@ -160,4 +160,39 @@ describe("client-log-review", () => {
     expect(review.entries).toBe(1);
     expect(review.issues.map((issue) => issue.message)).toEqual(["boundary"]);
   });
+
+  it("tells devices apart and reads only the one --device names", () => {
+    const now = Date.now();
+    const telemetryDir = join(dataDir, "diagnostics", "telemetry");
+    const upload = (deviceModel: string, clientKind: string, message: string) =>
+      JSON.stringify({
+        generatedAt: now,
+        buildNumber: "57",
+        clientKind,
+        deviceModel,
+        entries: [{ ts: now, level: "warn", category: "Network", message }],
+      });
+    writeFileSync(
+      join(telemetryDir, "client-logs-2026-05-31.jsonl"),
+      [
+        upload("iPhone17,1", "ios", "shared"),
+        upload("iPad19,1", "ios", "shared"),
+        upload("iPad19,1", "ios", "ipad only"),
+        upload("Mac16,10", "mac", "mac only"),
+      ].join("\n") + "\n",
+    );
+
+    const all = buildClientLogReview({ dataDir, hours: 1, limit: 10 });
+    expect(all.deviceCounts).toEqual({ iPad: 2, iPhone: 1, Mac: 1 });
+    expect(all.issues.find((issue) => issue.message === "shared")?.devices).toEqual([
+      "iPad",
+      "iPhone",
+    ]);
+
+    const ipad = buildClientLogReview({ dataDir, hours: 1, limit: 10, device: "iPad" });
+    expect(ipad.device).toBe("iPad");
+    expect(ipad.uploads).toBe(2);
+    expect(ipad.recent.map((entry) => entry.device)).toEqual(["iPad", "iPad"]);
+    expect(ipad.issues.map((issue) => issue.message).sort()).toEqual(["ipad only", "shared"]);
+  });
 });

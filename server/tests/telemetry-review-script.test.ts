@@ -179,6 +179,52 @@ describe("telemetry-review on v2 events", () => {
     );
   });
 
+  it("narrows client events to one device and breaks a metric down by device", () => {
+    const now = Date.now();
+    const memory = (mb: number, deviceModel: string) => ({
+      v: 2,
+      ts: now,
+      origin: "app",
+      name: "app.device_resources",
+      fields: { memory_mb: mb },
+      tags: {},
+      client: { kind: "ios", buildNumber: "57", deviceModel },
+    });
+    withTelemetryDir(
+      {
+        "app-events-2026-10-27.jsonl": [
+          memory(200, "iPhone17,1"),
+          memory(400, "iPad19,1"),
+          memory(500, "iPad19,1"),
+        ],
+        "server-events-2026-10-27.jsonl": [
+          {
+            v: 2,
+            ts: now,
+            origin: "server",
+            name: "server.resources",
+            fields: { rss_mb: 300 },
+            tags: {},
+          },
+        ],
+      },
+      (dir) => {
+        const options = { days: 1, dataDir: "/tmp/oppi-test-data", dictationOnly: false };
+        const all = review(loadSamples(dir, 1), { ...options, byTags: ["device"] });
+        expect(all.summary.devices).toEqual({ iPhone: 1, iPad: 2 });
+        const byDevice = all.breakdowns.find((section) => section.tag === "device");
+        expect(byDevice?.values.iPad?.metrics["app.device_resources.memory_mb"]?.max).toBe(500);
+        expect(byDevice?.values.iPhone?.metrics["app.device_resources.memory_mb"]?.max).toBe(200);
+
+        const ipad = review(loadSamples(dir, 1, "iPad"), { ...options, byTags: [] });
+        expect(ipad.summary.devices).toEqual({ iPad: 2 });
+        expect(ipad.metrics["app.device_resources.memory_mb"]?.count).toBe(2);
+        // Server events have no device and stay in a device-narrowed review.
+        expect(ipad.metrics["server.resources.rss_mb"]?.count).toBe(1);
+      },
+    );
+  });
+
   it("keeps only events matching an SLO's where filter in that field's series", () => {
     const now = Date.now();
     const event = (status: string, durationMs: number) => ({

@@ -587,6 +587,8 @@ export function dashboardSql(file: string, dashboard: unknown): SqlSource[] {
   };
   visit(root.panels ?? []);
   for (const variable of root.templating?.list ?? []) {
+    // A custom variable's `query` is its option list, not SQL.
+    if (variable.type === "custom") continue;
     for (const key of ["query", "definition"]) {
       if (typeof variable[key] === "string") {
         found.push({

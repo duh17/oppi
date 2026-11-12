@@ -20,7 +20,22 @@ import { DatabaseSync } from "node:sqlite";
 
 // 7: one `events` table for v2 telemetry records (`app-events-*`, `server-events-*`).
 // Pre-v2 files and the tables built from them are no longer read.
-const INGEST_PARSER_VERSION = 7;
+// 8: `metrickit_payloads.client_kind`, read from the upload envelope.
+const INGEST_PARSER_VERSION = 8;
+
+/**
+ * The family of the device that sent a client record: `iPhone`, `iPad`, `Mac`,
+ * `Other`, or NULL for server records. One definition, a virtual generated
+ * column on both client tables, so every dashboard filters and splits on
+ * `device` and rows imported before the column existed have it too. The Mac
+ * is the Catalyst build: it sends `kind: "mac"` and a `Mac…` model.
+ */
+const DEVICE_COLUMN = `device TEXT GENERATED ALWAYS AS (CASE
+      WHEN client_kind = 'mac' OR device_model LIKE 'Mac%' THEN 'Mac'
+      WHEN device_model LIKE 'iPhone%' THEN 'iPhone'
+      WHEN device_model LIKE 'iPad%' THEN 'iPad'
+      WHEN device_model IS NOT NULL OR client_kind IS NOT NULL THEN 'Other'
+    END) VIRTUAL`;
 const DEFAULT_BROKEN_BACKUP_KEEP_COUNT = 1;
 const DEFAULT_LOCK_STALE_MS = 10 * 60 * 1000;
 
@@ -102,7 +117,8 @@ function ensureSchema(db) {
       git_commit TEXT,
       device_model TEXT,
       fields_json TEXT NOT NULL,
-      tags_json TEXT NOT NULL
+      tags_json TEXT NOT NULL,
+      ${DEVICE_COLUMN}
     );
     CREATE INDEX IF NOT EXISTS idx_events_name_ts ON events(name, ts_ms);
     CREATE INDEX IF NOT EXISTS idx_events_origin_ts ON events(origin, ts_ms);
@@ -122,7 +138,9 @@ function ensureSchema(db) {
       os_version TEXT,
       device_model TEXT,
       summary_json TEXT,
-      raw_json TEXT
+      raw_json TEXT,
+      client_kind TEXT,
+      ${DEVICE_COLUMN}
     );
     CREATE INDEX IF NOT EXISTS idx_metrickit_window ON metrickit_payloads(window_start_ms, window_end_ms);
   `);
@@ -140,6 +158,23 @@ function ensureSchema(db) {
     db.exec(
       "ALTER TABLE ingested_files ADD COLUMN processed_offset_bytes INTEGER NOT NULL DEFAULT 0",
     );
+  }
+
+  // Databases built before parser version 8. `table_xinfo` lists generated columns too.
+  const columnsOf = (table) =>
+    new Set(
+      db
+        .prepare(`PRAGMA table_xinfo(${table})`)
+        .all()
+        .map((column) => column.name),
+    );
+  if (!columnsOf("metrickit_payloads").has("client_kind")) {
+    db.exec("ALTER TABLE metrickit_payloads ADD COLUMN client_kind TEXT");
+  }
+  for (const table of ["events", "metrickit_payloads"]) {
+    if (!columnsOf(table).has("device")) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${DEVICE_COLUMN}`);
+    }
   }
 }
 
@@ -370,8 +405,8 @@ function ingestMetricKitFile(db, sourceFile, lines, options) {
     INSERT OR REPLACE INTO metrickit_payloads (
       id, source_file, line_number, payload_index, kind, window_start_ms, window_end_ms,
       generated_at_ms, received_at_ms, app_version, build_number, os_version, device_model,
-      summary_json, raw_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      summary_json, raw_json, client_kind
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let count = 0;
@@ -411,6 +446,7 @@ function ingestMetricKitFile(db, sourceFile, lines, options) {
         record.deviceModel ?? payload.deviceModel ?? null,
         toJson(normalizeSummary(payload)),
         payload.raw === undefined ? JSON.stringify(payload) : JSON.stringify(payload.raw),
+        stringOrNull(record.clientKind ?? record.client?.kind),
       );
       count += 1;
     }

@@ -29,11 +29,17 @@ final class AnchoredCollectionView: UICollectionView {
     required init?(coder: NSCoder) { nil }
 
     /// A timeline that updated out of the window skipped its forced layout;
-    /// settle it here, before the first frame back on screen.
+    /// settle it here, before the first frame back on screen. Leaving the
+    /// window ends the timeline's frame-meter visit.
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        guard window != nil else { return }
-        (delegate as? ChatTimelineController)?.settleOffscreenUpdates(in: self)
+        guard let controller = delegate as? ChatTimelineController else { return }
+        guard window != nil else {
+            controller.endFrameVisit()
+            return
+        }
+        controller.settleOffscreenUpdates(in: self)
+        controller.frameMeter.activityMayHaveStarted()
     }
 
     /// UIKit keeps a touch on `UIControl` unless this returns true, so a

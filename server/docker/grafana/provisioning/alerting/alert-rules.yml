@@ -1,5 +1,10 @@
 apiVersion: 1
 
+# Removing a rule from `groups` leaves the provisioned copy in Grafana; list it here.
+deleteRules:
+  - orgId: 1
+    uid: oppi-jank-avg
+
 groups:
   # -- P0: Perf regression detection (24h rolling window) -----------------
   - orgId: 1
@@ -73,65 +78,7 @@ groups:
                   operator:
                     type: and
 
-      # 2. Jank avg > 5%
-      - uid: oppi-jank-avg
-        title: "P0: Jank percentage regression"
-        condition: C
-        for: 10m
-        noDataState: OK
-        execErrState: Error
-        labels:
-          severity: p0
-          component: timeline
-        annotations:
-          summary: "Average jank_pct exceeded 5% (24h window)"
-          description: >-
-            The average app.timeline_jank jank_pct over the last 24 hours exceeds
-            5%. Current target is near 0%. Check the jank breakdown by build
-            on the Release Preflight dashboard. Common causes: main-thread
-            work in snapshot apply, heavy cell configuration, layout thrash.
-        data:
-          - refId: A
-            relativeTimeRange:
-              from: 86400
-              to: 0
-            datasourceUid: oppi-telemetry-sqlite
-            model:
-              refId: A
-              queryType: table
-              rawQueryText: >-
-                SELECT COALESCE(ROUND(AVG(json_extract(fields_json, '$.jank_pct')), 2), 0) AS value
-                FROM events
-                WHERE name = 'app.timeline_jank'
-                  AND ts_ms BETWEEN $__from AND $__to
-          - refId: B
-            relativeTimeRange:
-              from: 0
-              to: 0
-            datasourceUid: __expr__
-            model:
-              type: reduce
-              expression: A
-              reducer: last
-              settings:
-                mode: dropNN
-          - refId: C
-            relativeTimeRange:
-              from: 0
-              to: 0
-            datasourceUid: __expr__
-            model:
-              type: threshold
-              expression: B
-              conditions:
-                - evaluator:
-                    type: gt
-                    params:
-                      - 5
-                  operator:
-                    type: and
-
-      # 3. Streaming markdown p95 > 16ms (single frame budget)
+      # 2. Streaming markdown p95 > 16ms (single frame budget)
       - uid: oppi-markdown-streaming-p95
         title: "P0: Streaming markdown p95 regression"
         condition: C
@@ -202,7 +149,7 @@ groups:
     folder: Oppi Alerts
     interval: 1m
     rules:
-      # 4. Server turn errors > 3/h
+      # 3. Server turn errors > 3/h
       - uid: oppi-turn-errors
         title: "P1: Server turn error burst"
         condition: C
@@ -262,7 +209,7 @@ groups:
                   operator:
                     type: and
 
-      # 5. WS ping timeouts > 5/h
+      # 4. WS ping timeouts > 5/h
       - uid: oppi-ws-ping-timeouts
         title: "P1: WebSocket ping timeout burst"
         condition: C
@@ -326,7 +273,7 @@ groups:
     folder: Oppi Alerts
     interval: 15m
     rules:
-      # 6. Token cost > 3x 7-day daily average
+      # 5. Token cost > 3x 7-day daily average
       - uid: oppi-cost-spike
         title: "P2: Token cost spike (3x baseline)"
         condition: C

@@ -456,6 +456,12 @@ const TAGS = {
     values: ["shell", "herdr", "tmux", "rex"],
     description: "What the SSH terminal runs: a plain shell, Herdr, tmux, or a Rex session.",
   },
+  timeline_activity: {
+    kind: "enum",
+    values: ["scroll", "stream"],
+    description:
+      "What the visible chat timeline was doing while frames were counted: the user scrolling it (finger down through coasting), or an agent turn putting new content on it with nothing scrolling (only frames near each change count; a turn that changes nothing counts no frames).",
+  },
   scroll_path: {
     kind: "enum",
     values: ["history", "wheel", "keys"],
@@ -936,12 +942,20 @@ const EVENTS = {
     emit: [{ field: "duration_ms", min: 1 }],
     slo: [{ field: "duration_ms", tm99: 8.3, label: "Markdown stream (120 Hz)" }],
   },
-  "app.timeline_jank": {
-    description: "What share of timeline apply cycles in a session missed the frame budget?",
+  "app.chat_frame_visit": {
+    description:
+      "How smoothly did the chat timeline draw in one visit while the user scrolled it or an agent turn updated it? Hitch time per second is SUM(hitch_ms) / SUM(duration_ms) × 1000 and hitches per minute SUM(hitches) / SUM(duration_ms) × 60000, pooled over visits, never averaged per visit.",
     group: "rendering",
-    fields: { jank_pct: "pct", cycles: "count", hitches: "count" },
-    emit: [{ field: "cycles", min: 1 }],
-    slo: [{ field: "jank_pct", tm99: 25, label: "Scroll jank %" }],
+    fields: {
+      duration_ms: "ms",
+      frames: "count",
+      hitches: "count",
+      hitch_ms: "ms",
+      worst_frame_ms: "ms",
+      items: "count",
+    },
+    tags: { timeline_activity: { required: true } },
+    emit: [{ field: "frames", min: 2 }],
   },
   "app.coalescer_window": {
     description:

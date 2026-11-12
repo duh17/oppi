@@ -85,7 +85,10 @@ struct TelemetryEventsUploadContractTests {
                 ts: baseTs + 9
             ),
             TelemetryEventPayload(
-                AppTimelineJank(jankPct: 12.5, cycles: 240, hitches: 30),
+                AppChatFrameVisit(
+                    durationMs: 4_200.5, frames: 500, hitches: 3, hitchMs: 37.5, worstFrameMs: 41.5,
+                    items: 812, timelineActivity: .scroll
+                ),
                 ts: baseTs + 10, sessionId: session
             ),
         ]

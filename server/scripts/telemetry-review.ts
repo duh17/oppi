@@ -24,6 +24,7 @@ import { EVENT_DEFS, fieldSpec, type EventDef } from "../src/telemetry/catalog.t
 import { GROUPS } from "../src/telemetry/groups.ts";
 import { tagsMatch } from "../src/telemetry/validate.ts";
 import { buildLabel } from "./build-label.ts";
+import { deviceFamily, parseDeviceFamily, type DeviceFamily } from "./device-family.ts";
 
 interface SloThreshold {
   tm99: number;
@@ -47,6 +48,8 @@ export interface LoadedRecord {
   gitCommit?: string;
   /** One app launch (`client.bootId`); a new value on every process start. */
   bootId?: string;
+  /** iPhone, iPad, Mac, or Other for client events; absent on server events. */
+  device?: DeviceFamily;
 }
 
 /** One field value of one event: a point in the `<event>.<field>` series. */
@@ -57,6 +60,7 @@ interface LoadedSample {
   unit: string;
   tags?: Record<string, string>;
   bootId?: string;
+  device?: DeviceFamily;
 }
 
 interface MetricBucket {
@@ -125,6 +129,8 @@ interface ReviewSummary {
   sloMetricCount: number;
   groups: Record<string, { pass: number; over: number; missing: number }>;
   statusBasis: "tm99_vs_slo";
+  /** Client events per device family (`--device` narrows them to one). */
+  devices: Record<string, number>;
 }
 
 interface DictationConfigSummary {
@@ -320,6 +326,7 @@ function parseRecord(line: string): LoadedRecord | undefined {
     if (typeof value === "string") tags[key] = value;
   }
   const client = isRecord(raw.client) ? raw.client : undefined;
+  const device = client ? deviceFamily(client) : undefined;
   return {
     ts: raw.ts,
     name: raw.name,
@@ -330,11 +337,20 @@ function parseRecord(line: string): LoadedRecord | undefined {
     ...(typeof client?.appVersion === "string" ? { appVersion: client.appVersion } : {}),
     ...(typeof client?.gitCommit === "string" ? { gitCommit: client.gitCommit } : {}),
     ...(typeof client?.bootId === "string" ? { bootId: client.bootId } : {}),
+    ...(device ? { device } : {}),
   };
 }
 
-/** Load every catalog event of the last `daysBack` days and split it into field series. */
-export function loadSamples(telemetryDir: string, daysBack: number): LoadResult {
+/**
+ * Load every catalog event of the last `daysBack` days and split it into field
+ * series. With `device`, client events from other device families are skipped;
+ * server events stay.
+ */
+export function loadSamples(
+  telemetryDir: string,
+  daysBack: number,
+  device?: DeviceFamily,
+): LoadResult {
   const cutoffMs = Date.now() - daysBack * 24 * 60 * 60 * 1_000;
   const values: Record<string, MetricBucket> = {};
   const byBuild: Record<string, Record<string, MetricBucket>> = {};
@@ -362,6 +378,7 @@ export function loadSamples(telemetryDir: string, daysBack: number): LoadResult 
       if (!line.trim()) continue;
       const record = parseRecord(line);
       if (!record || record.ts < cutoffMs) continue;
+      if (device && record.device && record.device !== device) continue;
       records.push(record);
       const def = eventDef(record.name)!;
       // Every local install shares one build number, so builds are keyed build@commit.
@@ -395,6 +412,7 @@ export function loadSamples(telemetryDir: string, daysBack: number): LoadResult 
           unit,
           tags: record.tags,
           ...(record.bootId ? { bootId: record.bootId } : {}),
+          ...(record.device ? { device: record.device } : {}),
         });
         if (build) {
           if (!byBuild[build]) byBuild[build] = {};
@@ -1073,15 +1091,17 @@ function buildMetricResult(metric: string, vals: number[], unit: string): Metric
 }
 
 /**
- * The value of a `--by` key. `boot` is not an event tag: it is the app launch
- * (`client.bootId`) the event came from.
+ * The value of a `--by` key. `boot` and `device` are not event tags: they are
+ * the app launch (`client.bootId`) and the device family the event came from.
  */
 function breakdownValue(
   key: string,
   tags: Record<string, string> | undefined,
-  bootId: string | undefined,
+  source: { bootId?: string; device?: DeviceFamily },
 ): string | undefined {
-  return key === "boot" ? bootId : tags?.[key];
+  if (key === "boot") return source.bootId;
+  if (key === "device") return source.device;
+  return tags?.[key];
 }
 
 function buildBreakdowns(
@@ -1108,7 +1128,7 @@ function buildBreakdowns(
     for (const sample of data.samples) {
       if (!shouldIncludeMetric(sample.metric, dictationOnly)) continue;
       if (dictationOnly && !DICTATION_BREAKDOWN_METRICS.has(sample.metric)) continue;
-      const tagValue = breakdownValue(tag, sample.tags, sample.bootId);
+      const tagValue = breakdownValue(tag, sample.tags, sample);
       if (!tagValue) continue;
       sawAny = true;
       if (!buckets[tagValue]) buckets[tagValue] = {};
@@ -1117,7 +1137,7 @@ function buildBreakdowns(
 
     // An attempt is a setup that finished (ok or error); cancelled setups are not attempts.
     for (const record of data.records) {
-      const tagValue = breakdownValue(tag, record.tags, record.bootId);
+      const tagValue = breakdownValue(tag, record.tags, record);
       if (!tagValue) continue;
       if (record.name === "app.dictation_setup") {
         if (record.tags.status === "cancelled") continue;
@@ -1197,6 +1217,11 @@ export function review(
     }
   }
 
+  const devices: Record<string, number> = {};
+  for (const record of data.records) {
+    if (record.device) devices[record.device] = (devices[record.device] ?? 0) + 1;
+  }
+
   let violations = 0;
   const groups: Record<string, { pass: number; over: number; missing: number }> = {};
   for (const [metric, slo] of Object.entries(SLO_THRESHOLDS)) {
@@ -1221,6 +1246,7 @@ export function review(
       ).length,
       groups,
       statusBasis: "tm99_vs_slo",
+      devices,
     },
     metrics,
     builds,
@@ -1742,6 +1768,12 @@ function printBreakdowns(result: ReviewOutput, c: ReturnType<typeof makeColors>)
   }
 }
 
+function formatDevices(devices: Record<string, number>): string {
+  const entries = Object.entries(devices).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return "none";
+  return entries.map(([device, count]) => `${device} ${count.toLocaleString()}`).join(", ");
+}
+
 function printNarrow(result: ReviewOutput, args: ParsedArgs): void {
   const c = makeColors(!args.noColor);
   const { summary } = result;
@@ -1759,6 +1791,7 @@ function printNarrow(result: ReviewOutput, args: ParsedArgs): void {
   console.log(
     `${c.bold}${title}${c.reset} ${c.dim}${summary.days}d ${samplesStr} samples  status:${summary.statusBasis}${c.reset}  ${violStr}`,
   );
+  console.log(`${c.dim}devices: ${formatDevices(summary.devices)}${c.reset}`);
   console.log();
 
   if (args.dictation && result.dictationConfig) printConfigSummary(result.dictationConfig, c);
@@ -1808,6 +1841,7 @@ function printWide(result: ReviewOutput, args: ParsedArgs): void {
   console.error(
     `${c.bold}${title}${c.reset}  ${c.dim}(last ${result.summary.days}d, ${result.summary.totalSamples.toLocaleString()} samples, ${result.summary.filesRead} files, status uses ${result.summary.statusBasis})${c.reset}`,
   );
+  console.error(`${c.dim}  client events by device: ${formatDevices(result.summary.devices)}${c.reset}`);
   console.error();
 
   if (args.dictation && result.dictationConfig) printConfigSummary(result.dictationConfig, c);
@@ -1938,6 +1972,7 @@ interface ParsedArgs {
   fields: Set<string> | null;
   byTags: string[];
   svgOut: string | undefined;
+  device: DeviceFamily | undefined;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -1956,6 +1991,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     fields: null,
     byTags: [],
     svgOut: undefined,
+    device: undefined,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -2014,6 +2050,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
         );
         break;
       }
+      case "--device":
+        result.device = parseDeviceFamily(argv[++i] ?? "", arg);
+        break;
       case "--help":
       case "-h":
         result.help = true;
@@ -2057,8 +2096,9 @@ Options:
                         routes are omitted.
   --by <tags>           Breakdown tags (comma-separated). Example: voice_engine,stt_model
                         'boot' breaks down by app launch (client bootId), to tell a leak
-                        from workload. Breakdowns print only with --dictation; otherwise
+                        from workload; 'device' by device family (iPhone, iPad, Mac). Breakdowns print only with --dictation; otherwise
                         read them from --json or --compact. Build rows are keyed build@commit.
+  --device <family>     Only client events from iphone, ipad, or mac; server events stay
   --json                Machine-readable JSON
   --compact             Minimal JSON for agents
   --svg-out <path>      Write an app-viewable SVG trend dashboard to a file
@@ -2080,7 +2120,7 @@ function main(): void {
     args.dataDir ?? process.env.OPPI_DATA_DIR ?? join(homedir(), ".config", "oppi"),
   );
   const telemetryDir = join(dataDir, "diagnostics", "telemetry");
-  const data = loadSamples(telemetryDir, args.days);
+  const data = loadSamples(telemetryDir, args.days, args.device);
 
   if (data.totalSamples === 0) {
     const err = {

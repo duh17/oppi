@@ -4,6 +4,7 @@ import UIKit
 
 extension ChatTimelineController {
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        frameMeter.activityMayHaveStarted()
         scrollController?.setUserInteracting(true)
         lastObservedContentOffsetY = scrollView.contentOffset.y
         earlierRowsRequestMark = nil

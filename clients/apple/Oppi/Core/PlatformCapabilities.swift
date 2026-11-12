@@ -30,6 +30,11 @@ enum PlatformCapabilities {
     /// the server), so its Library is the user's own, not a container.
     static let sharesUserLibrary = isMacCatalyst
 
+    /// Telemetry names this build's client kind `mac` and reads the machine's
+    /// model from `hw.model`; on the Mac `hw.machine` names only the CPU
+    /// (`arm64`). Uploads from the Mac then never mix with the iPad's.
+    static let reportsAsMac = isMacCatalyst
+
     /// The smallest window: the sidebar's minimum (320 pt, `WorkspaceShellController`)
     /// beside a screen's minimum next to a trailing column (375 pt,
     /// `TrailingColumnWidthPolicy.screenMinimumWidth`). nil where the system
