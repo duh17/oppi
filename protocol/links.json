@@ -1,0 +1,297 @@
+{
+  "version": 1,
+  "description": "oppi:// pane links. Each vector gives an input link, then either the route and server it decodes to with its canonical re-encoding, the error that makes it invalid, or notPaneLink for links another owner parses. A server value is an identity fingerprint; whether this device has paired it is decided when the link opens, not here.",
+  "vectors": [
+    {
+      "name": "session link",
+      "input": "oppi://session/2f6c1a9e-session",
+      "server": null,
+      "route": { "kind": "session", "id": "2f6c1a9e-session" },
+      "canonical": "oppi://session/2f6c1a9e-session"
+    },
+    {
+      "name": "session link ignores workspaceId",
+      "input": "oppi://session/2f6c1a9e-session?workspaceId=ws-other",
+      "server": null,
+      "route": { "kind": "session", "id": "2f6c1a9e-session" },
+      "canonical": "oppi://session/2f6c1a9e-session"
+    },
+    {
+      "name": "session link names its server, still ignoring workspaceId",
+      "input": "oppi://session/2f6c1a9e-session?workspaceId=ws-other&server=sha256:9f86d081884c7d65",
+      "server": "sha256:9f86d081884c7d65",
+      "route": { "kind": "session", "id": "2f6c1a9e-session" },
+      "canonical": "oppi://session/2f6c1a9e-session?server=sha256:9f86d081884c7d65"
+    },
+    {
+      "name": "server for a server this device has not paired still decodes",
+      "input": "oppi://session/2f6c1a9e-session?server=sha256:0000unpaired",
+      "server": "sha256:0000unpaired",
+      "route": { "kind": "session", "id": "2f6c1a9e-session" },
+      "canonical": "oppi://session/2f6c1a9e-session?server=sha256:0000unpaired"
+    },
+    {
+      "name": "session link with the route as its first path part",
+      "input": "oppi:///session/2f6c1a9e-session",
+      "server": null,
+      "route": { "kind": "session", "id": "2f6c1a9e-session" },
+      "canonical": "oppi://session/2f6c1a9e-session"
+    },
+    {
+      "name": "session id is percent-decoded and trimmed",
+      "input": "oppi://session/%20run%3A42%20",
+      "server": null,
+      "route": { "kind": "session", "id": "run:42" },
+      "canonical": "oppi://session/run:42"
+    },
+    {
+      "name": "session link with two path parts",
+      "input": "oppi://session/2f6c1a9e-session/extra",
+      "error": { "code": "unexpectedPath" }
+    },
+    {
+      "name": "session link with no id",
+      "input": "oppi://session",
+      "error": { "code": "unexpectedPath" }
+    },
+    {
+      "name": "session link with server twice",
+      "input": "oppi://session/2f6c1a9e-session?server=sha256:aa&server=sha256:bb",
+      "error": { "code": "duplicateParameter", "detail": "server" }
+    },
+    {
+      "name": "thread link names its server",
+      "input": "oppi://thread/7d1e-root?server=sha256:9f86d081884c7d65",
+      "server": "sha256:9f86d081884c7d65",
+      "route": { "kind": "thread", "id": "7d1e-root" },
+      "canonical": "oppi://thread/7d1e-root?server=sha256:9f86d081884c7d65"
+    },
+    {
+      "name": "thread link ignores workspaceId",
+      "input": "oppi://thread/7d1e-root?workspaceId=ws-other",
+      "server": null,
+      "route": { "kind": "thread", "id": "7d1e-root" },
+      "canonical": "oppi://thread/7d1e-root"
+    },
+    {
+      "name": "session list",
+      "input": "oppi://sessions",
+      "server": null,
+      "route": { "kind": "sessions", "workspace": null },
+      "canonical": "oppi://sessions"
+    },
+    {
+      "name": "session list of one workspace on one server",
+      "input": "oppi://sessions?server=sha256:9f86d081884c7d65&workspace=ws-1",
+      "server": "sha256:9f86d081884c7d65",
+      "route": { "kind": "sessions", "workspace": "ws-1" },
+      "canonical": "oppi://sessions?workspace=ws-1&server=sha256:9f86d081884c7d65"
+    },
+    {
+      "name": "route and parameter names are case-insensitive",
+      "input": "oppi://Sessions?Workspace=ws-1",
+      "server": null,
+      "route": { "kind": "sessions", "workspace": "ws-1" },
+      "canonical": "oppi://sessions?workspace=ws-1"
+    },
+    {
+      "name": "an empty server counts as missing",
+      "input": "oppi://sessions?server=",
+      "server": null,
+      "route": { "kind": "sessions", "workspace": null },
+      "canonical": "oppi://sessions"
+    },
+    {
+      "name": "session list with an unknown parameter",
+      "input": "oppi://sessions?workspace=ws-1&filter=busy",
+      "error": { "code": "unknownParameter", "detail": "filter" }
+    },
+    {
+      "name": "workspaceId is an unknown parameter on a session list",
+      "input": "oppi://sessions?workspaceId=ws-1",
+      "error": { "code": "unknownParameter", "detail": "workspaceId" }
+    },
+    {
+      "name": "workspace file at a line in a worktree",
+      "input": "oppi://file?workspace=ws-1&path=src/app.ts&worktree=wt-feature#L12",
+      "server": null,
+      "route": { "kind": "file", "origin": "workspace", "workspace": "ws-1", "worktree": "wt-feature", "path": "src/app.ts", "line": 12 },
+      "canonical": "oppi://file?workspace=ws-1&path=src/app.ts&worktree=wt-feature#L12"
+    },
+    {
+      "name": "file parameters in any order",
+      "input": "oppi://file?server=sha256:9f86d081884c7d65&worktree=wt-feature&path=src/app.ts&workspace=ws-1",
+      "server": "sha256:9f86d081884c7d65",
+      "route": { "kind": "file", "origin": "workspace", "workspace": "ws-1", "worktree": "wt-feature", "path": "src/app.ts", "line": null },
+      "canonical": "oppi://file?workspace=ws-1&path=src/app.ts&worktree=wt-feature&server=sha256:9f86d081884c7d65"
+    },
+    {
+      "name": "file path with reserved characters stays encoded",
+      "input": "oppi://file?workspace=ws-1&path=docs/a%26b%20c%3Dd%23e.md",
+      "server": null,
+      "route": { "kind": "file", "origin": "workspace", "workspace": "ws-1", "worktree": null, "path": "docs/a&b c=d#e.md", "line": null },
+      "canonical": "oppi://file?workspace=ws-1&path=docs/a%26b%20c%3Dd%23e.md"
+    },
+    {
+      "name": "host file",
+      "input": "oppi://file?host=1&path=/srv/project/notes/todo.md",
+      "server": null,
+      "route": { "kind": "file", "origin": "host", "path": "/srv/project/notes/todo.md", "line": null },
+      "canonical": "oppi://file?host=1&path=/srv/project/notes/todo.md"
+    },
+    {
+      "name": "session file at a line",
+      "input": "oppi://file?session=2f6c1a9e-session&path=out/report.md#L3",
+      "server": null,
+      "route": { "kind": "file", "origin": "session", "session": "2f6c1a9e-session", "path": "out/report.md", "line": 3 },
+      "canonical": "oppi://file?session=2f6c1a9e-session&path=out/report.md#L3"
+    },
+    {
+      "name": "host must be 1",
+      "input": "oppi://file?host=yes&path=/tmp/a.txt",
+      "error": { "code": "invalidValue", "detail": "host" }
+    },
+    {
+      "name": "file naming two origins",
+      "input": "oppi://file?workspace=ws-1&host=1&path=a.txt",
+      "error": { "code": "conflictingOrigin" }
+    },
+    {
+      "name": "file with no origin",
+      "input": "oppi://file?path=a.txt",
+      "error": { "code": "missing", "detail": "workspace" }
+    },
+    {
+      "name": "file with no path",
+      "input": "oppi://file?workspace=ws-1",
+      "error": { "code": "missing", "detail": "path" }
+    },
+    {
+      "name": "worktree belongs to workspace files only",
+      "input": "oppi://file?host=1&path=/tmp/a.txt&worktree=wt-feature",
+      "error": { "code": "unknownParameter", "detail": "worktree" }
+    },
+    {
+      "name": "repeated path",
+      "input": "oppi://file?workspace=ws-1&path=a.txt&path=b.txt",
+      "error": { "code": "duplicateParameter", "detail": "path" }
+    },
+    {
+      "name": "line zero",
+      "input": "oppi://file?workspace=ws-1&path=a.txt#L0",
+      "error": { "code": "invalidValue", "detail": "line" }
+    },
+    {
+      "name": "a fragment that is not a line",
+      "input": "oppi://file?workspace=ws-1&path=README.md#install",
+      "error": { "code": "invalidValue", "detail": "line" }
+    },
+    {
+      "name": "port on a pane link",
+      "input": "oppi://file:8080?host=1&path=/tmp/a.txt",
+      "error": { "code": "unexpectedComponent", "detail": "port" }
+    },
+    {
+      "name": "user-info on a pane link",
+      "input": "oppi://alex@file?host=1&path=/tmp/a.txt",
+      "error": { "code": "unexpectedComponent", "detail": "user" }
+    },
+    {
+      "name": "file browser at the workspace root",
+      "input": "oppi://files?workspace=ws-1",
+      "server": null,
+      "route": { "kind": "files", "workspace": "ws-1", "path": null },
+      "canonical": "oppi://files?workspace=ws-1"
+    },
+    {
+      "name": "file browser in a folder",
+      "input": "oppi://files?path=src/components&workspace=ws-1&server=sha256:9f86d081884c7d65",
+      "server": "sha256:9f86d081884c7d65",
+      "route": { "kind": "files", "workspace": "ws-1", "path": "src/components" },
+      "canonical": "oppi://files?workspace=ws-1&path=src/components&server=sha256:9f86d081884c7d65"
+    },
+    {
+      "name": "file browser without a workspace",
+      "input": "oppi://files?path=src",
+      "error": { "code": "missing", "detail": "workspace" }
+    },
+    {
+      "name": "git status",
+      "input": "oppi://git?workspace=ws-1",
+      "server": null,
+      "route": { "kind": "git", "workspace": "ws-1", "worktree": null },
+      "canonical": "oppi://git?workspace=ws-1"
+    },
+    {
+      "name": "git status of a worktree",
+      "input": "oppi://git?worktree=wt-feature&workspace=ws-1",
+      "server": null,
+      "route": { "kind": "git", "workspace": "ws-1", "worktree": "wt-feature" },
+      "canonical": "oppi://git?workspace=ws-1&worktree=wt-feature"
+    },
+    {
+      "name": "one commit, sha lowercased",
+      "input": "oppi://git/commit/9F86D08?workspace=ws-1",
+      "server": null,
+      "route": { "kind": "commit", "workspace": "ws-1", "sha": "9f86d08" },
+      "canonical": "oppi://git/commit/9f86d08?workspace=ws-1"
+    },
+    {
+      "name": "a commit takes no worktree",
+      "input": "oppi://git/commit/9f86d08?workspace=ws-1&worktree=wt-feature",
+      "error": { "code": "unknownParameter", "detail": "worktree" }
+    },
+    {
+      "name": "a sha that is not hex",
+      "input": "oppi://git/commit/main?workspace=ws-1",
+      "error": { "code": "invalidValue", "detail": "sha" }
+    },
+    {
+      "name": "an unknown git path",
+      "input": "oppi://git/blame/9f86d08?workspace=ws-1",
+      "error": { "code": "unexpectedPath" }
+    },
+    {
+      "name": "a fragment on a non-file link",
+      "input": "oppi://git?workspace=ws-1#L4",
+      "error": { "code": "unexpectedComponent", "detail": "fragment" }
+    },
+    {
+      "name": "panel",
+      "input": "oppi://panel?session=2f6c1a9e-session&id=subagents&server=sha256:9f86d081884c7d65",
+      "server": "sha256:9f86d081884c7d65",
+      "route": { "kind": "panel", "session": "2f6c1a9e-session", "id": "subagents" },
+      "canonical": "oppi://panel?session=2f6c1a9e-session&id=subagents&server=sha256:9f86d081884c7d65"
+    },
+    {
+      "name": "panel without an id",
+      "input": "oppi://panel?session=2f6c1a9e-session",
+      "error": { "code": "missing", "detail": "id" }
+    },
+    {
+      "name": "panel with an unknown parameter",
+      "input": "oppi://panel?session=2f6c1a9e-session&id=subagents&size=large",
+      "error": { "code": "unknownParameter", "detail": "size" }
+    },
+    {
+      "name": "terminal links keep their own parser",
+      "input": "oppi://terminal/rex?session=session:1&block=block:2",
+      "notPaneLink": true
+    },
+    {
+      "name": "pairing invites are not pane links",
+      "input": "oppi://connect?v=3&invite=abc",
+      "notPaneLink": true
+    },
+    {
+      "name": "workspace links are not pane links",
+      "input": "oppi://workspace?path=/srv/project/code&name=Code",
+      "notPaneLink": true
+    },
+    {
+      "name": "web links are not pane links",
+      "input": "https://example.com/oppi://session/abc",
+      "notPaneLink": true
+    }
+  ]
+}
