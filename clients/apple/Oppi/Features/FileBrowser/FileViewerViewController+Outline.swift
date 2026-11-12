@@ -6,20 +6,45 @@ extension FileViewerViewController {
     func readerNavigationItems() -> [UIBarButtonItem] {
         var items: [UIBarButtonItem] = []
         if reader?.supportsFind == true {
-            let find = findItem ?? makeItem(symbol: "magnifyingglass", title: String(localized: "Find"), id: "fileViewer.find.button", action: #selector(showFind))
+            let find = findItem ?? makeFindItem()
             findItem = find
             items.append(find)
         } else {
             findItem = nil
         }
         if reader?.hasOutline == true {
-            let outline = outlineItem ?? makeItem(symbol: "list.bullet.indent", title: String(localized: "Outline"), id: "fileViewer.outline.button", action: #selector(showOutline(_:)))
+            let outline = outlineItem ?? makeOutlineItem()
             outlineItem = outline
             items.append(outline)
         } else {
             outlineItem = nil
         }
         return items
+    }
+
+    /// Find stays on a narrow bar beside the pencil.
+    private func makeFindItem() -> UIBarButtonItem {
+        let item = makeItem(symbol: "magnifyingglass", title: String(localized: "Find"), id: "fileViewer.find.button", action: #selector(showFind))
+        if #available(iOS 27.0, *) {
+            item.visibilityPriority = .high
+        }
+        return item
+    }
+
+    /// Outline is the first to fold into the system's "…" on a narrow bar,
+    /// and keeps its identifier and its action there.
+    private func makeOutlineItem() -> UIBarButtonItem {
+        let item = makeItem(symbol: "list.bullet.indent", title: String(localized: "Outline"), id: "fileViewer.outline.button", action: #selector(showOutline(_:)))
+        if #available(iOS 27.0, *) {
+            item.visibilityPriority = .low
+        }
+        let menuAction = UIAction(title: String(localized: "Outline"), image: item.image) { [weak self, weak item] _ in
+            guard let item else { return }
+            self?.showOutline(item)
+        }
+        menuAction.accessibilityIdentifier = "fileViewer.outline.button"
+        item.menuRepresentation = menuAction
+        return item
     }
 
     private func makeItem(symbol: String, title: String, id: String, action: Selector) -> UIBarButtonItem {

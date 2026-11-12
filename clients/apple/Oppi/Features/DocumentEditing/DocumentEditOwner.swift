@@ -366,6 +366,11 @@ final class DocumentEditOwner {
         var items: [UIBarButtonItem] = []
         if let more = moreItem() { items.append(more) }
         if offersEditor { items.append(pencilItem()) }
+        // Editing is the reader's main action: on a narrow bar the reader's
+        // other buttons fold into the system's "…" before these do.
+        if #available(iOS 27.0, *) {
+            for item in items { item.visibilityPriority = .high }
+        }
         return items
     }
 

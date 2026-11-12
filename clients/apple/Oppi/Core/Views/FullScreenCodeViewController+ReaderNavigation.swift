@@ -18,6 +18,17 @@ extension FullScreenCodeViewController {
             let outline = railItem(symbol: "list.bullet.indent", title: String(localized: "Outline"), action: #selector(showOutline))
             outline.accessibilityIdentifier = "fileViewer.outline.button"
             outline.tintColor = palette.ui.fgDim
+            // On a narrow bar Outline is the first to fold into the system's
+            // "…" (it still opens from there), so Find and the pencil stay one tap.
+            if #available(iOS 27.0, *) {
+                outline.visibilityPriority = .low
+            }
+            // Folded into the "…", Outline keeps its identifier and its action.
+            let menuAction = UIAction(title: String(localized: "Outline"), image: outline.image) { [weak self] _ in
+                self?.showOutline()
+            }
+            menuAction.accessibilityIdentifier = "fileViewer.outline.button"
+            outline.menuRepresentation = menuAction
             outlineBarItem = outline
             items.append(outline)
         }
