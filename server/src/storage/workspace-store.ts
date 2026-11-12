@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
+import { readdirSyncSorted } from "../dir-order.js";
 import { generateId } from "../id.js";
 import { isRecord } from "../json-shape.js";
 import { DEFAULT_ICON_CHOICE, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
@@ -325,7 +326,8 @@ export class WorkspaceStore {
       return [];
     }
     const records: Array<{ path: string; raw: Record<string, unknown> }> = [];
-    for (const file of readdirSync(dir)) {
+    // File order breaks `listWorkspaces` ties between records created in the same millisecond.
+    for (const file of readdirSyncSorted(dir)) {
       if (!file.endsWith(".json")) {
         continue;
       }

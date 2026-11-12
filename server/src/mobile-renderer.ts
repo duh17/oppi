@@ -13,10 +13,11 @@
  * so the pi CLI doesn't try to load them as extensions.
  */
 
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { readdirSyncSorted } from "./dir-order.js";
 import { createLogger } from "./logger.js";
 import type {
   StyledSegment,
@@ -175,14 +176,14 @@ export class MobileRendererRegistry {
    * Discover renderer files in the mobile-renderers directory.
    *
    * Every .ts/.js file in the directory is treated as a renderer module.
-   * Returns absolute paths to discovered files.
+   * Returns absolute paths to discovered files, in filename byte order: renderers load in this
+   * order and a later file replaces an earlier one's renderer for the same tool.
    */
   static discoverRenderers(renderersDir: string = MobileRendererRegistry.RENDERERS_DIR): string[] {
     if (!existsSync(renderersDir)) return [];
 
     const files: string[] = [];
-    // Sorted: Node's readdir returns names sorted, Bun's in directory order.
-    for (const entry of readdirSync(renderersDir).sort()) {
+    for (const entry of readdirSyncSorted(renderersDir)) {
       if (entry.startsWith(".")) continue;
       if (entry.endsWith(".ts") || entry.endsWith(".js")) {
         files.push(join(renderersDir, entry));

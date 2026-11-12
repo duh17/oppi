@@ -1,8 +1,9 @@
 import type { ServerResponse } from "node:http";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { readdirSyncSorted } from "../dir-order.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import { convertPiTheme } from "./theme-convert.js";
 
@@ -36,7 +37,7 @@ export function createThemeRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
   function scanThemeDir(dir: string, source: "bundled" | "user"): ThemeSummary[] {
     if (!existsSync(dir)) return [];
     const results: ThemeSummary[] = [];
-    for (const f of readdirSync(dir)) {
+    for (const f of readdirSyncSorted(dir)) {
       if (!f.endsWith(".json")) continue;
       try {
         const content = readFileSync(join(dir, f), "utf8");
@@ -60,7 +61,7 @@ export function createThemeRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     const dir = piThemesDir();
     if (!existsSync(dir)) return [];
     const results: ThemeSummary[] = [];
-    for (const f of readdirSync(dir)) {
+    for (const f of readdirSyncSorted(dir)) {
       if (!f.endsWith(".json")) continue;
       try {
         const content = readFileSync(join(dir, f), "utf8");

@@ -2,6 +2,7 @@ import type { Dirent, Stats } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
+import { compareDirEntryNames } from "./dir-order.js";
 import { isPathWithinRoot } from "./path-utils.js";
 import type { FileEntry } from "./types.js";
 
@@ -77,7 +78,11 @@ export async function listDirectoryEntries(
 
   let dirents: Dirent[];
   try {
-    dirents = await readdir(resolvedDir, { withFileTypes: true });
+    // Sorted before the entry cap, so which entries a truncated listing keeps does not depend on
+    // the runtime's readdir order.
+    dirents = (await readdir(resolvedDir, { withFileTypes: true })).sort((a, b) =>
+      compareDirEntryNames(a.name, b.name),
+    );
   } catch {
     return null;
   }

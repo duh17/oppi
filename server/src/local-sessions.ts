@@ -25,6 +25,7 @@ import {
   DEFAULT_SESSION_JSONL_META_READ_BYTES,
   readSessionJsonlMeta,
 } from "./session-jsonl-meta.js";
+import { compareDirEntryNames } from "./dir-order.js";
 import { expandHome, isPathWithinRoot } from "./path-utils.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import { runSessionStateDeadSchemaCleanup } from "./storage/session-state-cleanup-migration.js";
@@ -724,6 +725,7 @@ export async function discoverLocalSessions(
     results.push(session);
   }
 
-  results.sort((a, b) => b.lastModified - a.lastModified);
+  // Same tie-break as the catalog's `ORDER BY last_modified DESC, path ASC`.
+  results.sort((a, b) => b.lastModified - a.lastModified || compareDirEntryNames(a.path, b.path));
   return results;
 }
