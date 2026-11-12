@@ -16,6 +16,12 @@
  * a schedule that is not free. It manages no encryption declaration: the app's
  * Info.plist sets ITSAppUsesNonExemptEncryption to NO (see clients/apple/project.yml).
  *
+ * `<FILL: label>` placeholders in text fields are filled from an untracked JSON
+ * object keyed by label (ASC_LISTING_FILLS, default
+ * ~/.config/oppi-private/app-review.json), so review credentials never enter the
+ * public repository. `apply` refuses to write a field that still holds a
+ * placeholder, and every printed line masks fills whose label names a password.
+ *
  * Field names follow Apple's App Store Connect OpenAPI specification (4.6).
  * Auth is the same as asc.ts and testflight.ts:
  *   ASC_KEY_ID / ~/.appstoreconnect/key_id
@@ -56,7 +62,13 @@ const LIMITS: Record<string, { max: number; unit: "chars" | "bytes" }> = {
   "appStoreReviewDetail.notes": { max: 4000, unit: "bytes" },
 };
 
-const PLACEHOLDER = "<FILL";
+const PLACEHOLDER = /<FILL: ([^>]*)>/g;
+
+/** Fills whose label matches this are masked in all output. */
+const SECRET_LABEL = /password/i;
+
+const FILLS_PATH =
+  process.env.ASC_LISTING_FILLS || path.join(process.env.HOME ?? "", ".config/oppi-private/app-review.json");
 
 type Json = any;
 type Fields = Record<string, unknown>;
@@ -178,7 +190,21 @@ function normalize(fields: Fields): Fields {
   return out;
 }
 
-function loadDesired(file: string): Desired {
+/** Label → value from the untracked fills file; empty when it does not exist. */
+function loadFills(): Record<string, string> {
+  if (!fs.existsSync(FILLS_PATH)) return {};
+  const fills = JSON.parse(fs.readFileSync(FILLS_PATH, "utf-8"));
+  for (const [label, value] of Object.entries(fills)) {
+    if (typeof value !== "string") die(`Fill "${label}" in ${FILLS_PATH} is not a string.`);
+  }
+  return fills;
+}
+
+function fill(value: unknown, fills: Record<string, string>): unknown {
+  return typeof value === "string" ? value.replace(PLACEHOLDER, (marker, label) => fills[label] ?? marker) : value;
+}
+
+function loadDesired(file: string, fills: Record<string, string>): Desired {
   const raw = JSON.parse(fs.readFileSync(file, "utf-8"));
   for (const key of [
     "app",
@@ -188,9 +214,32 @@ function loadDesired(file: string): Desired {
     "appStoreVersionLocalization",
     "appStoreReviewDetail",
   ]) {
-    raw[key] = normalize(raw[key] ?? {});
+    const fields = normalize(raw[key] ?? {});
+    raw[key] = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, fill(v, fills)]));
   }
   return raw as Desired;
+}
+
+/**
+ * Routes every line this script prints, ASC error text included, through masking,
+ * so a secret fill cannot leak through an output path that forgot to mask it.
+ */
+function maskOutput(fills: Record<string, string>): void {
+  const secrets = Object.entries(fills)
+    .filter(([label, value]) => SECRET_LABEL.test(label) && value)
+    .map(([, value]) => value);
+  if (!secrets.length) return;
+  const mask = (arg: unknown) => {
+    let text = typeof arg === "string" ? arg : arg instanceof Error ? arg.message : String(arg);
+    for (const secret of secrets) text = text.split(secret).join("••••••");
+    return text;
+  };
+  const log = console.log.bind(console);
+  const error = console.error.bind(console);
+  const write = process.stdout.write.bind(process.stdout);
+  console.log = (...args: unknown[]) => log(...args.map(mask));
+  console.error = (...args: unknown[]) => error(...args.map(mask));
+  process.stdout.write = ((chunk: unknown) => write(mask(chunk))) as typeof process.stdout.write;
 }
 
 // MARK: - Current state
@@ -654,7 +703,7 @@ function checks(desired: Desired): string[] {
       const size = limit.unit === "bytes" ? Buffer.byteLength(value) : [...value].length;
       out.push(`${size > limit.max ? "FAIL" : "ok  "} ${key}: ${size}/${limit.max} ${limit.unit}`);
     }
-    const markers = value.match(/<FILL:[^>]*>/g);
+    const markers = value.match(PLACEHOLDER);
     if (markers) out.push(`TODO ${key}: ${markers.length} placeholder(s) to fill before Submit: ${markers.join(" ")}`);
   }
   return out;
@@ -709,6 +758,7 @@ function printChange(change: Change): void {
 function printPlan(desired: Desired, cur: Current, steps: Step[], file: string): void {
   console.log(`App Store listing plan — ${desired.bundleId} ${desired.platform} ${desired.versionString} (${desired.locale})`);
   console.log(`Desired state: ${path.relative(process.cwd(), file)}`);
+  console.log(`Fills: ${fs.existsSync(FILLS_PATH) ? FILLS_PATH : `none (${FILLS_PATH} does not exist)`}`);
   console.log(`Read at: ${new Date().toISOString()}`);
   console.log("");
   for (const step of steps) {
@@ -737,7 +787,9 @@ async function main(): Promise<void> {
     process.exit(mode === "--help" || mode === "-h" ? 0 : 1);
   }
 
-  const desired = loadDesired(file);
+  const fills = loadFills();
+  maskOutput(fills);
+  const desired = loadDesired(file, fills);
   const current = await readCurrent(desired);
   const steps = buildPlan(desired, current);
   printPlan(desired, current, steps, file);
@@ -746,6 +798,10 @@ async function main(): Promise<void> {
   if (checks(desired).some((line) => line.startsWith("FAIL"))) die("A field is over its limit; fix the desired state first.");
   const refused = steps.filter((s) => s.action?.startsWith("REFUSED"));
   if (refused.length) die(`Refused: ${refused.map((s) => s.title).join(", ")}.`);
+  const unfilled = steps.flatMap((s) =>
+    s.action ? s.changes.filter((c) => typeof c.to === "string" && c.to.match(PLACEHOLDER)).map((c) => `${s.title} ${c.field}`) : [],
+  );
+  if (unfilled.length) die(`Unfilled <FILL: …> placeholders in fields apply would write: ${unfilled.join("; ")}. Add them to ${FILLS_PATH}.`);
 
   console.log("");
   console.log("Applying");
