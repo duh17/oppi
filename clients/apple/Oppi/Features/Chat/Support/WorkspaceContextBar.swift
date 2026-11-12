@@ -178,7 +178,7 @@ enum ContextBarQuickActionRouting {
 /// pin its bottom to the panel's below the required height of an empty bar
 /// (0). A file opens its review and a commit its detail, each from
 /// `presenter`: a sheet while the panel itself is a sheet, or, while the
-/// panel is hosted in the chat's trailing column (`Options.hostedInPanel`),
+/// panel is hosted in the chat's attached leaf (`Options.hostedInPanel`),
 /// pushed inside that same column's navigation instead, with a back button
 /// to the panel (`presentReview`). The destination belongs to the presenter,
 /// not to this bar, so a transient loss of Git content (the bar empties)
@@ -215,7 +215,7 @@ final class WorkspaceContextBarView: UIView {
         /// A commit or review pushed in the column (`hostedInPanel`) hands
         /// its own started chats here too.
         var pushChat: ((ChatViewController) -> Void)?
-        /// `presenter` is itself the trailing column's panel root (regular
+        /// `presenter` is itself the attached leaf's panel root (regular
         /// width): a commit, a review, or a touched file's session copy
         /// pushes inside that column's own navigation, with a back button to
         /// the panel, instead of presenting as a sheet. False (the default)

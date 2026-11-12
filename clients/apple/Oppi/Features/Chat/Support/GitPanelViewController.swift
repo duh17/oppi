@@ -2,7 +2,7 @@ import UIKit
 
 /// The Git panel: the workspace context bar (`WorkspaceContextBarView`),
 /// under a Git title with Close.
-/// A chat's opens as a sheet in compact width and in the trailing column in
+/// A chat's opens as a sheet in compact width and in the attached leaf in
 /// regular width, like Outline and Context; a workspace's opens as a sheet
 /// from its top bar.
 ///

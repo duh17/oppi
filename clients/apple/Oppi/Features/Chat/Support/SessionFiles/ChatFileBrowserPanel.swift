@@ -30,7 +30,7 @@ struct ChatFilePanelInputs {
 /// (`FileBrowserViewController`, the same browser as the workspace Files
 /// screen). What the session changed is the Git panel's to show; here a
 /// changed file carries Git's mark as it is browsed. Chat shows the panel at
-/// the root of a router navigation controller: its trailing column in
+/// the root of a router navigation controller: its attached leaf in
 /// regular width, a sheet in compact width. Files push above it: the browser
 /// is its child, so `Router.push` lands on that stack.
 ///

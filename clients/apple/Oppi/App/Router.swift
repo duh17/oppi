@@ -163,18 +163,9 @@ final class RouterNavigationController: UINavigationController, RouterModalConta
     var interfaceStyle: (() -> UIUserInterfaceStyle)? {
         didSet { setNeedsUpdateProperties() }
     }
-    /// Runs after UIKit recomputes this controller's safe area. A trailing
-    /// column uses it to keep its own insets in step with its host.
-    var onSafeAreaInsetsChange: (() -> Void)?
-
     override func viewDidLoad() {
         super.viewDidLoad()
         delegate = self
-    }
-
-    override func viewSafeAreaInsetsDidChange() {
-        super.viewSafeAreaInsetsDidChange()
-        onSafeAreaInsetsChange?()
     }
 
     func navigationController(
@@ -517,7 +508,7 @@ final class ScreenSearchController: NSObject, UISearchResultsUpdating, UISearchC
 
     /// A panel keeps its title and Close while searching in a wide window,
     /// because the bar has room and no Cancel to end the search. The window's
-    /// width decides, not the screen's: a panel in a trailing column reads
+    /// width decides, not the screen's: a panel in an attached leaf reads
     /// compact but sits in a wide window (`AdaptiveWidth.windowIsWide`).
     /// A narrow window hides the bar, as UIKit does by default.
     func keepsNavigationBarInWideWindow() {

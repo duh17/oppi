@@ -30,7 +30,7 @@ final class ChatModalSlots {
     }
 }
 
-extension ChatViewController: TrailingColumnKeyboardScreen {}
+extension ChatViewController: PaneKeyboardFollowing {}
 
 extension ChatViewController {
     /// A chat panel modal, in a router navigation controller for its bar and
@@ -43,7 +43,7 @@ extension ChatViewController {
 
     /// Outline, Files, Git, Context, and Share all sit in this one sheet style
     /// at compact width; regular width mounts every one of them in the
-    /// trailing column instead (`updateSidePanels`), Share included, so none
+    /// attached leaf instead (`updateSidePanels`), Share included, so none
     /// of them needs a second, full-screen presentation of its own.
     private var auxiliaryPresentation: ModalPresentation {
         .sheet.detents([.medium(), .large()], grabber: true, selected: .large).inNavigation()
@@ -52,7 +52,7 @@ extension ChatViewController {
     /// Every chat modal is a router modal.
     func updateModals() {
         guard let root else { return }
-        let sidePanel = usesTrailingSidePanel
+        let sidePanel = opensPanelsBeside
         let auxiliary = auxiliaryPresentation
 
         modals.outline.update(
@@ -140,10 +140,10 @@ extension ChatViewController {
         }, update: { $0.currentModel = current })
     }
 
-    /// The panel the trailing column shows, or nil at a width that presents
-    /// them as sheets or when none is open.
+    /// The panel the attached leaf shows, or nil where they present as
+    /// sheets or when none is open.
     var activeSidePanel: ChatSidePanel? {
-        guard usesTrailingSidePanel else { return nil }
+        guard opensPanelsBeside else { return nil }
         // Share wins: it is a deliberate action from the title menu, not
         // a toggle, and used to draw over every other panel full screen.
         if model.showShareRedactionSheet { return .share }
@@ -156,12 +156,12 @@ extension ChatViewController {
         return nil
     }
 
-    /// Side panels slide in as a trailing column in regular width (iPad, the
-    /// Duo's inner display) and are sheets in compact width. A size-class
-    /// change while a panel is open moves it between the column and the
-    /// sheet; its pushed pages close. A reader moves to the pushed reader
-    /// route, and a timeline file or commit to the modal it opens as there.
-    /// The column sits beside the chat's bar, timeline, and composer.
+    /// Side panels slide in as the chat's attached leaf, beside it in its
+    /// pane host, in regular width (iPad, the Duo's inner display) and are
+    /// sheets in compact width. A size-class change while a panel is open
+    /// moves it between the leaf and the sheet; its pushed pages close. A
+    /// reader moves to the pushed reader route, and a timeline file or commit
+    /// to the modal it opens as there.
     func updateSidePanels() {
         guard let root else { return }
         if !AdaptiveWidth.isWide(traitCollection), let target = model.sidePanelReaderTarget {
@@ -177,10 +177,10 @@ extension ChatViewController {
                 .open(target.request(sourceView: view, presenter: self))
         }
         let panel = activeSidePanel
-        trailingColumn.show(
+        attachedLeaf.show(
             panel.map { panel in
                 let width = panelWidth(panel)
-                return TrailingColumnController.Panel(
+                return AttachedLeafController.Panel(
                     id: AnyHashable(panel),
                     minWidth: width.minimum,
                     idealWidth: width.ideal,
@@ -349,17 +349,17 @@ extension ChatViewController {
         )
     }
 
-    /// A row picked in the outline jumps first, then the outline closes. In
-    /// the trailing column that close ends the outline's search and slides the
-    /// column out, which replaces the landed row's cell, so the jump's arrival
-    /// waits until the column is gone. A sheet's close already holds it
+    /// A row picked in the outline jumps first, then the outline closes.
+    /// Beside the chat that close ends the outline's search and slides the
+    /// leaf out, which replaces the landed row's cell, so the jump's arrival
+    /// waits until the leaf is gone. A sheet's close already holds it
     /// (the timeline waits while a presentation covers the chat).
     private func closeOutline() {
         model.showOutline = false
-        guard usesTrailingSidePanel else { return }
+        guard opensPanelsBeside else { return }
         timeline.holdsNavigationArrival = true
         updateSidePanels()
-        trailingColumn.whenClosed { [weak self] in
+        attachedLeaf.whenClosed { [weak self] in
             self?.timeline.holdsNavigationArrival = false
         }
     }

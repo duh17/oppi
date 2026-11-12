@@ -114,10 +114,10 @@ struct ChatTimelineRowColumnTests {
         defer { timeline.didCaptureAnchorForTesting = nil }
         host.chat.showSidePanel(panel)
         let opened = await waitForMainActorCondition(timeout: .seconds(3)) {
-            host.chat.trailingColumn.mountedScreenForTesting != nil
+            host.chat.attachedLeaf.mountedScreenForTesting != nil
         }
         try #require(opened, "the panel never mounted")
-        host.chat.trailingColumn.finishSettleForTesting()
+        host.chat.attachedLeaf.hostForTesting?.finishSettleForTesting()
         host.window.layoutIfNeeded()
         for cell in timeline.visibleCells { rowWidths.insert(cell.bounds.width) }
 
@@ -193,7 +193,7 @@ struct ChatTimelineRowColumnTests {
         window.frame = CGRect(origin: .zero, size: Self.window)
         window.traitOverrides.appRootEnvironment = appRoot
         window.traitOverrides.horizontalSizeClass = .regular
-        window.rootViewController = navigation
+        window.rootViewController = PaneHostController(primary: navigation)
         window.makeKeyAndVisible()
         window.layoutIfNeeded()
         let host = Host(

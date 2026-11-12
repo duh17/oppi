@@ -17,15 +17,15 @@ struct CommitDetailActionMenuState: Equatable {
 
 /// A commit: its message, author, and line counts, and a tappable list of the
 /// files it changed. A file opens its diff beside the list in regular width
-/// (a trailing column) and in a sheet in compact width; a width change moves
-/// the open diff between the two. Hosted in a trailing column's own panel
+/// (an attached leaf) and in a sheet in compact width; a width change moves
+/// the open diff between the two. Hosted in an attached leaf's own panel
 /// navigation (`hostedInPanel`, the Git panel's commit row), a file instead
 /// pushes its diff there, with a back button to this screen, since the
-/// column's width is already spoken for and its own trait reads compact.
+/// leaf's width is already spoken for and its own trait reads compact.
 /// New Session and the prompt templates in the overflow menu start a session
 /// about the commit and push its chat onto this screen's stack, or, hosted in
-/// a panel, hand it to `pushChat`, which closes the column and pushes the
-/// chat beside it instead of squeezing a whole chat into the column.
+/// a panel, hand it to `pushChat`, which closes the leaf and pushes the
+/// chat beside it instead of squeezing a whole chat into the leaf.
 @MainActor
 final class CommitDetailViewController: UIViewController {
     struct Configuration {
@@ -47,10 +47,10 @@ final class CommitDetailViewController: UIViewController {
     var onClose: (() -> Void)? {
         didSet { setNeedsUpdateProperties() }
     }
-    /// This screen is in a trailing column's panel navigation, pushed above
+    /// This screen is in an attached leaf's panel navigation, pushed above
     /// the Git panel's commit row or as the pane's root (a timeline commit
     /// link at regular width): a selected file pushes its diff there too,
-    /// instead of this screen's own column or sheet.
+    /// instead of this screen's own leaf or sheet.
     private let hostedInPanel: Bool
     /// Where a started session's chat goes; nil pushes it onto this screen's
     /// own stack.
@@ -82,7 +82,7 @@ final class CommitDetailViewController: UIViewController {
     private var mountedPhase: MountedPhase?
     private var loadedContent: CommitDetailContentView?
     private let progressPanel = FloatingProgressPanel(borderWidth: 1)
-    private lazy var column = TrailingColumnController(screen: self)
+    private lazy var diffLeaf = AttachedLeafController(screen: self)
     private let diffSheet = RouterModalPresenter()
 
     private enum MountedPhase: Equatable {
@@ -147,10 +147,6 @@ final class CommitDetailViewController: UIViewController {
         )
     }
 
-    private var usesTrailingColumn: Bool {
-        AdaptiveWidth.isWide(traitCollection)
-    }
-
     // MARK: Lifecycle
 
     override func viewDidLoad() {
@@ -169,10 +165,10 @@ final class CommitDetailViewController: UIViewController {
             progressPanel.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor),
             progressPanel.widthAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.widthAnchor, constant: -32),
         ])
-        addChild(column)
-        view.addSubview(column.view)
-        column.view.frame = .zero
-        column.didMove(toParent: self)
+        addChild(diffLeaf)
+        view.addSubview(diffLeaf.view)
+        diffLeaf.view.frame = .zero
+        diffLeaf.didMove(toParent: self)
         diffSheet.anchor = self
         registerForTraitChanges([UITraitHorizontalSizeClass.self]) { (screen: Self, _) in
             screen.setNeedsUpdateProperties()
@@ -252,12 +248,14 @@ final class CommitDetailViewController: UIViewController {
         }
     }
 
-    /// Hosted in a panel, the diff joins this screen's own navigation stack
-    /// (a back button returns here); otherwise `updateDiffPanel` follows
-    /// `selectedFile` into the column or the sheet.
+    /// Hosted in a panel, or wide with no pane host to open beside (a
+    /// regular-width modal), the diff joins this screen's own navigation
+    /// stack (a back button returns here) rather than a sheet over a sheet;
+    /// otherwise `updateDiffPanel` follows `selectedFile` into the attached
+    /// leaf or the sheet.
     private func selectFile(_ file: GitCommitFileInfo) {
-        if hostedInPanel {
-            Router.push(diffController(file)(), from: self)
+        if pushesDiff {
+            Router.push(diffController(file, pushed: true)(), from: self)
         } else {
             selectedFile = file
         }
@@ -276,16 +274,16 @@ final class CommitDetailViewController: UIViewController {
 
     // MARK: Diff panel
 
-    /// The open diff follows the selection: the column in regular width, a
-    /// sheet in compact. A width change moves it between the two; the open
-    /// file survives. Swipe-down clears it like the close button.
+    /// The open diff follows the selection: the attached leaf in regular
+    /// width, a sheet in compact. A width change moves it between the two;
+    /// the open file survives. Swipe-down clears it like the close button.
     private func updateDiffPanel(root: AppRootEnvironment) {
         let file = selectedFile
-        let inColumn = usesTrailingColumn
-        column.onDismissRequested = { [weak self] in self?.selectedFile = nil }
-        column.show(
+        let inColumn = diffLeaf.opensBeside
+        diffLeaf.onDismissRequested = { [weak self] in self?.selectedFile = nil }
+        diffLeaf.show(
             inColumn ? file.map { file in
-                TrailingColumnController.Panel(
+                AttachedLeafController.Panel(
                     id: AnyHashable(file.id),
                     minWidth: 320,
                     idealWidth: 440,
@@ -308,7 +306,12 @@ final class CommitDetailViewController: UIViewController {
 
     /// The diff of `file` in this commit, with this viewer's server and
     /// review scope.
-    private func diffController(_ file: GitCommitFileInfo) -> () -> UIViewController {
+    private var pushesDiff: Bool {
+        hostedInPanel
+            || (!diffLeaf.opensBeside && AdaptiveWidth.isWide(traitCollection) && navigationController != nil)
+    }
+
+    private func diffController(_ file: GitCommitFileInfo, pushed: Bool = false) -> () -> UIViewController {
         let configuration = CommitFileDiffViewController.Configuration(
             workspaceId: configuration.workspaceId,
             sha: self.configuration.sha,
@@ -317,18 +320,17 @@ final class CommitDetailViewController: UIViewController {
         )
         let apiClient = apiClient
         let audioPlayer = connection.audioPlayer
-        let hostedInPanel = hostedInPanel
         return { [weak self] in
             let diff = CommitFileDiffViewController(
                 configuration: configuration,
                 apiClient: apiClient,
                 audioPlayer: audioPlayer,
-                hostedInPanel: hostedInPanel
+                hostedInPanel: pushed
             )
-            // Pushed in a panel, the navigation controller's own back button
-            // leads back to the commit; a column or sheet root needs this
-            // screen's own close control instead.
-            if !hostedInPanel {
+            // Pushed, the navigation controller's own back button leads back
+            // to the commit; a leaf or sheet root needs this screen's own
+            // close control instead.
+            if !pushed {
                 diff.onClose = { self?.selectedFile = nil }
             }
             return diff
@@ -612,10 +614,10 @@ final class CommitFileDiffViewController: UIViewController {
     }
 
     let configuration: Configuration
-    /// The sheet or column root's close control. Nil while `hostedInPanel`:
+    /// The sheet or leaf root's close control. Nil while `hostedInPanel`:
     /// the panel's navigation draws the back button instead.
     var onClose: (() -> Void)?
-    /// Pushed in a trailing column's panel navigation (the Git panel's
+    /// Pushed in an attached leaf's panel navigation (the Git panel's
     /// commit, at regular width): draws no close control of its own, since
     /// that navigation's native back button leads back to the commit.
     private let hostedInPanel: Bool

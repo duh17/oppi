@@ -490,13 +490,14 @@ enum AppPreferences {
         }
     }
 
-    // MARK: - Trailing Column
+    // MARK: - Companion width
 
-    /// The trailing column's user-resized width (`TrailingColumnController`), shared by
-    /// every destination that container presents: chat's side panels, a commit's
-    /// diff, a review's file list, and the chat reader. Stored as a fraction of the
-    /// overlay's own width, not points, so one remembered choice scales with size
-    /// class, rotation, and multitasking width instead of needing a value per shape.
+    /// The companion's user-resized width (`PaneHostController`), shared by every
+    /// attached leaf: chat's side panels, a commit's diff, a review's file list,
+    /// and the chat reader. Stored as a fraction of the host's width, not points,
+    /// so one remembered choice scales with rotation and window width instead of
+    /// needing a value per shape. The companion's default weight until the pane
+    /// tree restores its own.
     enum TrailingColumn {
         static let widthFractionKey = "\(AppIdentifiers.subsystem).trailingColumn.widthFraction"
 

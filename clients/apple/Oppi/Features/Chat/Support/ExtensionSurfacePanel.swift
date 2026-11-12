@@ -830,7 +830,7 @@ struct ExtensionSurfaceDrawerActions {
     var pendingAction: (@MainActor @Sendable () -> ExtensionSurfacePendingAction?)?
     /// The menu of a session an activity row links to (`ExtensionNativeBlockContext.sessionMenu`).
     var sessionMenu: (@MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?)?
-    /// The reader opens in the trailing column beside the chat rather than over it.
+    /// The reader opens in the attached leaf beside the chat rather than over it.
     var readerOpensBeside = false
 }
 
@@ -846,7 +846,7 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
     private let subtitleLabel = ExtensionChromeFont.label(.caption1, lines: 0)
     private let mediaLabel = ExtensionChromeFont.label(.caption1, .semibold)
     private let collapseButton = MinimumHitTargetButton(type: .custom)
-    /// The way to the whole surface: full screen on a narrow screen, the trailing column beside the
+    /// The way to the whole surface: full screen on a narrow screen, the attached leaf beside the
     /// chat on a wide one. Always shown for a native or widget body; a composable drawer shows it
     /// while its body is taller than the cap.
     private let fullScreenButton = MinimumHitTargetButton(type: .custom)

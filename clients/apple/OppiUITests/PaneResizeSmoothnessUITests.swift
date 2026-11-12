@@ -2,7 +2,7 @@ import XCTest
 
 /// How a live divider resize runs beside a long chat: a 2,000-event session
 /// (`CHAT_ROUTES_LONG_TURNS=400`) on the chat's side and a 5,000-line file in
-/// the reader in today's trailing column. The app measures each drag itself
+/// the reader in the chat's attached leaf. The app measures each drag itself
 /// (`PaneResizeMeter`) and the debug harness prints the latest one in the
 /// readout `paneResize.drag`, with the timeline's layout work while the divider
 /// moved apart from its settles.
@@ -33,7 +33,7 @@ final class PaneResizeSmoothnessUITests: XCTestCase {
         XCTAssertEqual(app.wait(for: .runningForeground, timeout: 10), true)
         app.requireNonCompactWindowOnPad()
         guard app.windows.firstMatch.horizontalSizeClass == .regular else {
-            throw XCTSkip("The trailing column needs a regular-width window")
+            throw XCTSkip("The attached leaf needs a regular-width window")
         }
         XCUIDevice.shared.orientation = .landscapeLeft
         // The simulator keeps its orientation for the next test.
@@ -42,13 +42,13 @@ final class PaneResizeSmoothnessUITests: XCTestCase {
         app.buttons["chatRoutes.openFileViewer"].tap()
         XCTAssertTrue(
             app.buttons["fullScreen.code.close"].waitUntilExists(timeout: 15),
-            "The file did not open in the trailing column"
+            "The file did not open beside the chat"
         )
         XCTAssertTrue(handle.waitUntilExists(timeout: 5), "The divider did not appear")
     }
 
     private var handle: XCUIElement {
-        app.descendants(matching: .any)["trailingColumn.resizeHandle"]
+        app.descendants(matching: .any)["pane.divider.0"]
     }
 
     private func element(_ identifier: String) -> XCUIElement {
@@ -159,7 +159,7 @@ final class PaneResizeSmoothnessUITests: XCTestCase {
         report("rotation", "portrait=\(deltas[0]) landscape_again=\(deltas[1]) portrait_again=\(deltas[2])")
         XCTAssertTrue(
             XCUIDevice.shared.orientation == .portrait && handle.exists,
-            "The trailing column must stay open in portrait"
+            "The attached leaf must stay open in portrait"
         )
         XCTAssertEqual(deltas[1], 0, "Back in landscape, the timeline measured rows it had heights for")
         XCTAssertEqual(deltas[2], 0, "In portrait again, the timeline measured rows it had heights for")

@@ -36,8 +36,9 @@ enum PlatformCapabilities {
     static let reportsAsMac = isMacCatalyst
 
     /// The smallest window: the sidebar's minimum (320 pt, `WorkspaceShellController`)
-    /// beside a screen's minimum next to a trailing column (375 pt,
-    /// `TrailingColumnWidthPolicy.screenMinimumWidth`). nil where the system
+    /// beside one chat pane at its minimum (375 pt, `PaneMinimumSize.chat`); a
+    /// companion beside it needs a wider window, else it opens over the chat
+    /// (`PaneWidthPolicy.fitsBeside`). nil where the system
     /// sizes the window: the iPhone, and iPad windowing keeps its own limits.
     static let minimumWindowSize: CGSize? = isMacCatalyst ? CGSize(width: 700, height: 500) : nil
 }

@@ -52,7 +52,7 @@ extension ChatViewController {
         // Regular width opens it beside the chat, like the reader; narrow
         // width keeps the modal.
         return { [weak self] request in
-            if let self, usesTrailingSidePanel {
+            if let self, opensPanelsBeside {
                 showSidePanel(.timeline(request.sidePanelTarget))
             } else {
                 presenter.open(request)
@@ -157,13 +157,13 @@ extension ChatViewController {
         if case .document(let content, _) = readerPayload.kind {
             readerPayload.editSubject = liveFileSubject(for: content)
         }
-        // Regular width shows every top-bar destination in the trailing
-        // column beside this chat, the reader included; narrow width keeps
+        // Regular width shows every top-bar destination in the attached
+        // leaf beside this chat, the reader included; narrow width keeps
         // the pushed `.chatReader` route.
         // The store keeps only what the shell's stack still names; a panel
         // reader holds its payload once it resolves it.
         let target = store.store(readerPayload, retaining: appNavigation.containsChatReader)
-        if usesTrailingSidePanel {
+        if opensPanelsBeside {
             showSidePanel(.reader(target))
         } else {
             appNavigation.openChatReader(target)

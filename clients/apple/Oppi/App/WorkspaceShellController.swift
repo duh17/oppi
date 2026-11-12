@@ -4,6 +4,10 @@ import UIKit
 // owns its structure. `WorkspaceShellController` measures the window and
 // mounts one of two layouts, the compact stack with its workspace drawer or
 // the split view; the stacks inside follow `AppNavigation` (`ShellRouter.swift`).
+// In both, the session stack is the primary leaf of a `PaneHostController`,
+// so a wide window shows a screen's attached leaf beside it; the sidebar is
+// never a pane (a tiled sidebar in landscape, a drawer over the panes in
+// portrait).
 
 /// Measures the window, mounts the stack or split layout `AppNavigation`
 /// converted its routes for, and covers everything while the active server
@@ -212,12 +216,14 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
     private var navigation: AppNavigation { root.navigation }
     private let sidebarStack: ShellNavigationController
     private let detailStack: ShellNavigationController
+    private let panes: PaneHostController
     private var appliedVisibility: SplitColumnVisibility?
 
     init(root: AppRootEnvironment) {
         self.root = root
         sidebarStack = ShellNavigationController(root: root, rootPlacement: .splitSidebar)
         detailStack = ShellNavigationController(root: root, rootPlacement: .splitDetailRoot)
+        panes = PaneHostController(primary: detailStack)
         super.init(style: .doubleColumn)
         delegate = self
         preferredSplitBehavior = .tile
@@ -235,7 +241,10 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
             navigation.showSessionInboxInSplit()
         }
         setViewController(sidebarStack, for: .primary)
-        setViewController(detailStack, for: .secondary)
+        // UIKit wraps a column's controller that is not a navigation
+        // controller in one; its bar stays hidden (`PaneHostController`
+        // hides the bar of a stack it is the root of).
+        setViewController(panes, for: .secondary)
     }
 
     @available(*, unavailable)
@@ -246,7 +255,7 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
     /// The detail column chooses the status bar only while it is the whole
     /// screen; with the sidebar showing, the bar sits over the app's own list.
     override var childForStatusBarStyle: UIViewController? {
-        shownDisplayMode == .secondaryOnly ? detailStack : nil
+        shownDisplayMode == .secondaryOnly ? panes : nil
     }
 
     /// The columns showing, as of the last change UIKit reported.
@@ -324,8 +333,11 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
     private let root: AppRootEnvironment
     private var navigation: AppNavigation { root.navigation }
     private let stack: ShellNavigationController
+    /// The stack's pane host: in a wide portrait window a screen's attached
+    /// leaf sits beside the stack, and the drawer slides over both.
+    private let panes: PaneHostController
     private let sidebar: UIViewController
-    /// Carries the shadow; `stack.view` inside it carries the rounded mask.
+    /// Carries the shadow; `panes.view` inside it carries the rounded mask.
     private let foreground = UIView()
     private let scrim = UIView()
     private let revealPan = UIPanGestureRecognizer()
@@ -340,6 +352,7 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
     init(root: AppRootEnvironment) {
         self.root = root
         stack = ShellNavigationController(root: root, rootPlacement: .compactRoot)
+        panes = PaneHostController(primary: stack)
         let closeSidebar = DrawerAction()
         sidebar = ShellRouteScreens.drawerSidebar(root: root) { closeSidebar.perform?() }
         super.init(nibName: nil, bundle: nil)
@@ -358,7 +371,7 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
 
     /// The session stack in front of the drawer; the sidebar owns the status
     /// bar while the drawer is open over it.
-    override var childForStatusBarStyle: UIViewController? { isOpen ? nil : stack }
+    override var childForStatusBarStyle: UIViewController? { isOpen ? nil : panes }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -375,11 +388,11 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
         ]
 
         view.addSubview(foreground)
-        addChild(stack)
-        foreground.addSubview(stack.view)
-        stack.view.layer.cornerCurve = .continuous
-        stack.view.clipsToBounds = true
-        stack.didMove(toParent: self)
+        addChild(panes)
+        foreground.addSubview(panes.view)
+        panes.view.layer.cornerCurve = .continuous
+        panes.view.clipsToBounds = true
+        panes.didMove(toParent: self)
         foreground.layer.shadowColor = UIColor.black.cgColor
         foreground.layer.shadowOpacity = 0
 
@@ -434,21 +447,21 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
         let progress = progress
         let offset = width * progress
         foreground.frame = bounds.offsetBy(dx: offset, dy: 0)
-        stack.view.frame = foreground.bounds
-        stack.view.layer.cornerRadius = Self.foregroundCornerRadius * progress
+        panes.view.frame = foreground.bounds
+        panes.view.layer.cornerRadius = Self.foregroundCornerRadius * progress
         foreground.layer.shadowOpacity = Self.foregroundShadowOpacity * Float(progress)
         foreground.layer.shadowRadius = Self.foregroundShadowRadius * progress
         foreground.layer.shadowOffset = CGSize(width: Self.foregroundShadowOffsetX * progress, height: 0)
         foreground.layer.shadowPath = UIBezierPath(
             roundedRect: foreground.bounds,
-            cornerRadius: stack.view.layer.cornerRadius
+            cornerRadius: panes.view.layer.cornerRadius
         ).cgPath
         scrim.frame = foreground.frame
         // Only while the sidebar intercepts (open or mid-drag), so it never
         // steals taps from the session surface.
         scrim.isHidden = !(isOpen || progress > 0)
         // No list scroll or indicator on the peeking sliver.
-        stack.view.isUserInteractionEnabled = progress == 0
+        panes.view.isUserInteractionEnabled = progress == 0
     }
 
     /// The drawer opens from the stack's root only (as the edge drag does) and

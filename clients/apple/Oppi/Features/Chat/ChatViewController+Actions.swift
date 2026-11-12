@@ -86,7 +86,7 @@ extension ChatViewController {
         }
 
         shareReview.reset()
-        if usesTrailingSidePanel {
+        if opensPanelsBeside {
             showSidePanel(.share)
         } else {
             model.showShareRedactionSheet = true

@@ -250,7 +250,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         // The chat screen folds the bar and context-bar chrome into
         // `topOverlap`. Automatic adjustment would add the window safe area
         // again and park the first row below the branch chip. Horizontal safe
-        // area (a vertical rail on one side, the iPad trailing column) is
+        // area (a vertical rail on one side, the iPad attached leaf) is
         // outside the timeline: the chat pins it to the safe-area guide.
         collectionView.contentInsetAdjustmentBehavior = .never
         collectionView.contentInset.top = configuration.topOverlap
@@ -2524,7 +2524,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         }
 
         // Covers a router sheet's dismissal, which can outlast the jump, and
-        // a trailing column closing (`holdsNavigationArrival`), whose release
+        // an attached leaf closing (`holdsNavigationArrival`), whose release
         // starts a fresh loop.
         guard attempt < 60 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak collectionView] in
@@ -2533,7 +2533,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         }
     }
 
-    /// Set by the chat while its trailing column closes beside the timeline.
+    /// Set by the chat while its attached leaf closes beside the timeline.
     /// Ending the column's search re-dequeues the landed row into a new cell,
     /// so an arrival started before then played on the orphaned cell and the
     /// row never lit. Releasing the hold arrives on the row's settled cell.
@@ -2557,7 +2557,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         }
 
         // The outline closes while the jump runs under it. Arrive once the
-        // chat is uncovered (a sheet) and the trailing column has finished
+        // chat is uncovered (a sheet) and the attached leaf has finished
         // closing (`holdsNavigationArrival`), or the lift plays behind the
         // sheet or on a cell the column's close replaces.
         guard !holdsNavigationArrival, !Self.isCoveredByPresentation(collectionView) else { return false }

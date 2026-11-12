@@ -103,7 +103,9 @@ class PreviewRootController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = themeStore.backgroundColor
-        PreviewHost.fill(self, with: content)
+        // The content is a pane host's primary leaf, as the shell's stacks
+        // are, so a screen's attached leaf opens beside it at regular width.
+        PreviewHost.fill(self, with: PaneHostController(primary: content))
         PreviewHost.publishScreenshotReady(in: self)
     }
 

@@ -8,22 +8,44 @@ import UIKit
 @MainActor
 @Suite("Status bar forwarding")
 struct StatusBarForwardingTests {
+    /// The session stack's front screen chooses the bar, through whatever
+    /// containers (the pane host) sit between it and the drawer.
     @Test func theCompactDrawerFollowsItsSessionStack() throws {
         let drawer = WorkspaceDrawerController(root: makeTestAppRoot())
         drawer.loadViewIfNeeded()
-        let stack = try #require(drawer.children.compactMap { $0 as? ShellNavigationController }.first)
-        #expect(drawer.childForStatusBarStyle === stack)
+        let stack = try #require(shellStack(in: drawer))
+        let front = StyledScreen()
+        stack.setViewControllers([front], animated: false)
+        #expect(statusBarScreen(of: drawer) === front)
+        #expect(statusBarScreen(of: drawer).preferredStatusBarStyle == .lightContent)
     }
 
     @Test func theSplitFollowsItsDetailOnlyWhileTheSidebarIsHidden() throws {
         let split = WorkspaceSplitController(root: makeTestAppRoot())
         split.loadViewIfNeeded()
-        let detail = try #require(split.viewController(for: .secondary) as? ShellNavigationController)
+        // The detail column's own containers mount their children with their views.
+        split.viewController(for: .secondary)?.loadViewIfNeeded()
+        let detail = try #require(split.viewController(for: .secondary).flatMap(shellStack(in:)))
+        let front = StyledScreen()
+        detail.setViewControllers([front], animated: false)
         #expect(split.childForStatusBarStyle == nil, "the sidebar is a list on the app's own surface")
         split.splitViewController(split, willChangeTo: .secondaryOnly)
-        #expect(split.childForStatusBarStyle === detail)
+        #expect(statusBarScreen(of: split) === front)
         split.splitViewController(split, willChangeTo: .oneBesideSecondary)
         #expect(split.childForStatusBarStyle == nil)
+    }
+
+    /// The controller UIKit asks for the style: `childForStatusBarStyle` followed to its end.
+    private func statusBarScreen(of controller: UIViewController) -> UIViewController {
+        var screen = controller
+        while let child = screen.childForStatusBarStyle { screen = child }
+        return screen
+    }
+
+    /// The first shell stack in `controller` or under it.
+    private func shellStack(in controller: UIViewController) -> ShellNavigationController? {
+        if let stack = controller as? ShellNavigationController { return stack }
+        return controller.children.lazy.compactMap { shellStack(in: $0) }.first
     }
 
     @Test func theShellFollowsTheLayoutItMounted() async throws {
@@ -45,6 +67,10 @@ struct StatusBarForwardingTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { mountedLayout() != nil })
         let layout = try #require(mountedLayout())
         #expect(shell.childForStatusBarStyle === layout)
+    }
+
+    private final class StyledScreen: UIViewController {
+        override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
     }
 
     @Test func aShellStackFollowsItsTopScreen() {

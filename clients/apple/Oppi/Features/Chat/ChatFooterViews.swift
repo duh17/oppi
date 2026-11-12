@@ -42,7 +42,7 @@ private extension ChatViewController {
             sessionMenu: { [weak self] linkedId, url, rowState in
                 self?.linkedSessionMenu(linkedId, url: url, rowState: rowState)
             },
-            readerOpensBeside: usesTrailingSidePanel
+            readerOpensBeside: opensPanelsBeside
         )
     }
 

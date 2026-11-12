@@ -4,7 +4,7 @@ import UIKit
 /// the server has one, its tree for `/tree`-style branch switching.
 ///
 /// Sits at the root of a router navigation controller, as a chat sheet or in
-/// the chat's trailing column. It owns its bar (title, Close) and its
+/// the chat's attached leaf. It owns its bar (title, Close) and its
 /// `UISearchController`, so search, selection, and close have one owner.
 /// Closing goes through the presenter (`onClose`), whose router dismissal or
 /// column removal ends an active search first.
@@ -36,7 +36,7 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
     private let initialOutlineSnapshot: SessionOutlineSnapshot?
     private let loadOutline: (() async throws -> SessionOutlineSnapshot)?
     /// Closes the outline through its presenter's state: at the root of a
-    /// router navigation controller (a modal or the trailing column) the
+    /// router navigation controller (a modal or the attached leaf) the
     /// presenter owns the dismissal.
     private let onClose: () -> Void
 

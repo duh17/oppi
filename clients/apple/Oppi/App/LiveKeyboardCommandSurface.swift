@@ -80,9 +80,12 @@ final class LiveKeyboardCommandSurface {
     /// The front screen's search: the one that is active, else the first.
     private var frontSearch: (search: UISearchController, screen: UIViewController)? {
         guard isInteractive else { return nil }
-        // A chat's open trailing panel is in front of the chat, and nested in it.
+        // Beside a companion, the focused leaf's search comes first.
         var screens = FrontScreens.screens()
-        if let panel = frontChat?.trailingColumn.frontScreen { screens.insert(panel, at: 0) }
+        if topPresented == nil,
+           let focused = descendant(of: rootController, as: PaneHostController.self)?.focusedScreen {
+            screens.insert(focused, at: 0)
+        }
         let searches = screens.compactMap { screen in
             ScreenSearchController.search(on: screen).map { (search: $0, screen: screen) }
         }
@@ -153,7 +156,7 @@ final class LiveKeyboardCommandSurface {
     }
 
     /// Cancels an active search first, then closes the topmost sheet or
-    /// popover, then the chat's trailing panel. A modal that refuses swipe-down
+    /// popover, then the chat's attached leaf. A modal that refuses swipe-down
     /// (`isModalInPresentation`: an unsaved form) gets the attempt swipe-down
     /// makes, so it asks as it does there; an alert is not closed from the keyboard.
     private func close() -> (@MainActor () -> Void)? {

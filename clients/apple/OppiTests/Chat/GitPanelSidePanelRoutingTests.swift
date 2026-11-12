@@ -3,14 +3,14 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// Hosted in the chat's trailing column at regular width
+/// Hosted in the chat's attached leaf at regular width
 /// (`WorkspaceContextBarView.Options.hostedInPanel`), a commit or a file
 /// review pushes inside the panel's own navigation, with a back button to
 /// the Git panel, instead of presenting a sheet over it. Compact width (the
 /// default `Options`) keeps the sheet, covered by
 /// `WorkspaceContextBarReviewCommentRoutingTests`.
 @MainActor
-@Suite("Git panel destinations push inside the trailing column")
+@Suite("Git panel destinations push inside the attached leaf")
 struct GitPanelSidePanelRoutingTests {
     @Test func commitTapPushesIntoThePanelsOwnNavigation() async throws {
         let fixture = GitPanelPushFixture()
@@ -80,7 +80,7 @@ struct GitPanelSidePanelRoutingTests {
     }
 }
 
-/// A Git panel hosted in a trailing column's panel navigation
+/// A Git panel hosted in an attached leaf's panel navigation
 /// (`Options.hostedInPanel`), with its own stubbed server for the graph, a
 /// commit's detail, and quick actions.
 @MainActor
@@ -167,10 +167,10 @@ private final class GitPanelPushFixture {
             bar.bottomAnchor.constraint(lessThanOrEqualTo: guide.bottomAnchor),
             bottomFill,
         ])
-        // Pushed in a real navigation controller, as the trailing column's
-        // panel root always is (`TrailingColumnController.installRequestedPanel`).
+        // Pushed in a real navigation controller, as the attached leaf's
+        // panel root always is (`AttachedLeafController.installRequestedPanel`).
         navigationController = UINavigationController(rootViewController: screen)
-        window.rootViewController = navigationController
+        window.rootViewController = PaneHostController(primary: navigationController)
         window.makeKeyAndVisible()
         bar.updatePropertiesIfNeeded()
         screen.view.layoutIfNeeded()

@@ -27,7 +27,7 @@ extension ChatViewController {
     }
 
     /// `hostedInPanel` matches how this screen itself is about to be shown:
-    /// true only from the trailing column's panel root (`sidePanelController`),
+    /// true only from the attached leaf's panel root (`sidePanelController`),
     /// so a commit, a review, or a touched file's session copy pushes inside
     /// that column's own navigation, with a back button to this panel,
     /// instead of presenting as a sheet. A review staged for this session, or
@@ -65,16 +65,16 @@ extension ChatViewController {
         }
     }
 
-    /// Closes the Git panel, then pushes `chat` once the trailing column has
-    /// slid out. The column's close animates this chat's navigation
-    /// controller's layout; run under a push, it left this chat's view out of
+    /// Closes the Git panel, then pushes `chat` once the attached leaf has
+    /// slid out. The leaf's close animates the pane host's layout; run
+    /// under a push, it left this chat's view out of
     /// the window after Back, so the bar's buttons changed the model with no
     /// update pass to show a panel again. A sheet (compact width) has no
-    /// column to wait for.
+    /// leaf to wait for.
     func closeSidePanelThenPush(_ chat: ChatViewController) {
         showSidePanel(nil)
         updateSidePanels()
-        trailingColumn.whenClosed { [weak self] in
+        attachedLeaf.whenClosed { [weak self] in
             guard let self else { return }
             Router.push(chat, from: self)
         }
@@ -225,7 +225,7 @@ extension ChatViewController {
         return (gitStatus, changes.fileCount, changes.addedLines, changes.removedLines)
     }
 
-    /// The Files panel (UIKit), as a sheet or in the trailing column. It
+    /// The Files panel (UIKit), as a sheet or in the attached leaf. It
     /// reads this chat's session, server stores, and tab live; once the chat
     /// is gone it shows what it last read.
     func filePanelScreen() -> RouterScreen {
@@ -274,7 +274,7 @@ extension ChatViewController {
     }
 
     /// Share with redaction review, as a sheet in compact width or the
-    /// trailing column in regular width (`sidePanelController`). The sheet
+    /// attached leaf in regular width (`sidePanelController`). The sheet
     /// reads `shareReview` itself, so the preview updates while it is up.
     func shareRedactionScreen() -> RouterScreen {
         .controller(shareRedactionController())

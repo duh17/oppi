@@ -81,6 +81,10 @@ enum TerminalLinkPresenter {
         if let navigation = controller as? UINavigationController {
             return navigation.topViewController.flatMap(front(of:)) ?? navigation.topViewController
         }
+        // A push lands in the primary leaf, never in a screen's companion.
+        if let host = controller as? PaneHostController {
+            return front(of: host.primary)
+        }
         if let split = controller as? UISplitViewController {
             let column = split.isCollapsed ? split.viewControllers.last : split.viewController(for: .secondary)
             return column.flatMap(front(of:))

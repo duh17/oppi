@@ -241,7 +241,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
 
     // MARK: - Side panels
 
-    /// Regular width puts these in the trailing column beside the chat;
+    /// Regular width puts these beside the chat;
     /// compact width presents them as sheets.
     func testOutlineSearchesAndClosesBothWays() {
         launch()
@@ -419,61 +419,6 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             dragToBottom(files)
             XCTAssertTrue(files.waitUntilGone(timeout: 5), "Swipe-down must close the files sheet")
         }
-        assertRunning()
-    }
-
-    /// The trailing column's divider: a moderate drag resizes within the
-    /// panel's own range, a decisive drag the rest of the way to the chat's
-    /// edge commits to the full window, the chat covered but a grab edge, dragging the
-    /// grab edge back returns to the remembered width, and a decisive drag
-    /// the other way closes the panel like its own Done control.
-    func testTrailingColumnDividerDragsResizesExpandsAndCloses() {
-        launch()
-        // The divider exists only in the trailing column (regular width).
-        // Decided before rotating: a landscape phone is wide but compact.
-        guard !usesSheets else { return }
-        // The column's own width is largest, and most natural to drag, in
-        // landscape, where an iPad shows it beside the chat.
-        XCUIDevice.shared.orientation = .landscapeLeft
-        app.buttons["chat.toolbar.files"].tap()
-        let files = app.navigationBars["Files"]
-        XCTAssertTrue(files.waitUntilExists(timeout: 5), "Files panel did not open")
-        let handle = app.descendants(matching: .any)["trailingColumn.resizeHandle"]
-        XCTAssertTrue(handle.waitUntilExists(timeout: 5), "The resize handle did not appear")
-        // Proportional to the window, not a fixed point count, so the same
-        // drags cross the same commit thresholds in portrait and landscape,
-        // on an iPhone split, and on an iPad whichever width Stage Manager
-        // gives the window.
-        let windowWidth = app.windows.firstMatch.frame.width
-        let openWidth = files.frame.width
-        attachScreenshot("trailing-column-before-drag")
-
-        // A moderate drag toward the chat widens the column.
-        drag(handle, by: -(windowWidth * 0.15))
-        XCTAssertTrue(waitFor(files.frame.width > openWidth + 100), "Dragging the divider did not widen the panel")
-        let resizedWidth = files.frame.width
-        attachScreenshot("trailing-column-after-drag")
-
-        // A decisive drag the rest of the way to the chat's own edge commits
-        // to the full window, the chat covered but a grab edge.
-        drag(app.descendants(matching: .any)["trailingColumn.resizeHandle"], by: -(windowWidth + 100))
-        XCTAssertTrue(waitFor(files.frame.width > windowWidth - 80), "Dragging past the threshold did not expand to the full window")
-        attachScreenshot("trailing-column-full-window")
-
-        // Dragging the grab edge back past the expand threshold returns to
-        // the remembered width, not wherever the pull-back stopped: drag far
-        // enough, from the full window, to land back at that remembered
-        // width itself.
-        drag(app.descendants(matching: .any)["trailingColumn.resizeHandle"], by: windowWidth - resizedWidth)
-        XCTAssertTrue(
-            waitFor(abs(files.frame.width - resizedWidth) < 60),
-            "Dragging back did not return to the remembered width: \(files.frame.width) vs \(resizedWidth)"
-        )
-        attachScreenshot("trailing-column-restored")
-
-        // A decisive drag toward the far edge closes the panel, same as Done.
-        drag(app.descendants(matching: .any)["trailingColumn.resizeHandle"], by: resizedWidth + 100)
-        XCTAssertTrue(files.waitUntilGone(timeout: 5), "A decisive drag toward the far edge did not close the panel")
         assertRunning()
     }
 
@@ -1011,15 +956,6 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         launch()
         openShareSheet()
         let share = app.navigationBars["Share Session"]
-        // Regular width now mounts Share in the same trailing column as
-        // every other panel, the resize handle included, instead of the
-        // full-screen cover it used to be: the chat stays reachable beside it.
-        if !usesSheets {
-            XCTAssertTrue(
-                app.descendants(matching: .any)["trailingColumn.resizeHandle"].waitUntilExists(timeout: 5),
-                "Share must open in the trailing column, not a full-screen cover"
-            )
-        }
         // Without a server the preflight fails after the scan starts. Its
         // error shows only if the open sheet reads chat's share model live.
         XCTAssertTrue(
@@ -1298,7 +1234,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     /// What a commit pill and a file pill open, through the destination action
     /// the chat gave its timeline (harness controls; a test tap on the pill does
     /// not reach it). Compact width presents a modal; regular width opens the
-    /// trailing column, with the chat still beside it.
+    /// attached leaf, with the chat still beside it.
     func testTimelineCommitAndFileViewers() {
         launch()
         XCTAssertTrue(
@@ -1454,32 +1390,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
-    /// A second link replaces the open pane, and a window that narrows to
-    /// compact (Split View) presents the open pane as the sheet it is there,
-    /// not dropping it.
-    func testTimelinePaneIsReplacedAndMovesToASheetWhenTheWindowNarrows() throws {
-        launch()
-        try XCTSkipIf(usesSheets, "The column exists only at regular width")
-        let commit = app.navigationBars["Commit"]
-        app.buttons["chatRoutes.openCommitViewer"].tap()
-        XCTAssertTrue(commit.waitUntilExists(timeout: 5), "The commit link did not open a pane")
-
-        app.buttons["chatRoutes.openFileViewer"].tap()
-        XCTAssertTrue(commit.waitUntilGone(timeout: 5), "A second link must replace the open pane")
-        XCTAssertTrue(app.buttons["fullScreen.code.close"].waitUntilExists(timeout: 10), "The file link did not open a pane")
-
-        app.buttons["chatRoutes.openCommitViewer"].tap()
-        XCTAssertTrue(commit.waitUntilExists(timeout: 5), "The next link must replace the file pane")
-        app.buttons["chatRoutes.narrowWindow"].tap()
-        let dismiss = app.buttons["chat.commit-detail.dismiss"]
-        XCTAssertTrue(
-            waitFor(dismiss.exists && dismiss.label == "Done"),
-            "Narrowing must present the open commit as its sheet, not drop it"
-        )
-        assertRunning()
-    }
-
-    /// Regular width opens a timeline viewer in the trailing column: the chat's
+    /// Regular width opens a timeline viewer beside the chat: the chat's
     /// timeline keeps its own width and stays hittable beside it. Compact width
     /// covers the chat with a sheet, so there is nothing to check.
     private func assertChatBesideTimelineViewer(_ name: String, file: StaticString = #filePath, line: UInt = #line) {
@@ -1560,7 +1471,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         launchPreview(screen: screen, environment: environment, arguments: arguments, ready: nil)
     }
 
-    /// In the trailing column (regular width) the panel's bar button stays on
+    /// Beside the chat (regular width) the panel's bar button stays on
     /// screen beside it and reads as selected; no other panel button does.
     /// A compact-width sheet covers the bar, so there is nothing to check.
     private func assertOpenInColumn(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
@@ -1578,7 +1489,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// Compact width presents chat panels as sheets; regular width puts them
-    /// in the trailing column, Share included. The window's size class decides,
+    /// beside the chat, Share included (`PaneUITests`). The window's size class decides,
     /// as the app does: a point width misreads the Duo's inner display.
     private var usesSheets: Bool {
         app.windows.firstMatch.horizontalSizeClass == .compact
@@ -1604,23 +1515,6 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         let bottom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98))
         start.press(forDuration: 0.1, thenDragTo: bottom, withVelocity: .fast, thenHoldForDuration: 0)
-    }
-
-    /// Drags `element` horizontally by `dx` points: negative widens the
-    /// trailing column (toward the chat), positive narrows or closes it. The
-    /// finger starts and stops 30 pt inside the window (a full-window pane's
-    /// handle reaches its leading edge): a touch at or past the window's edge
-    /// can start an iPadOS window gesture instead, which shrank the app into
-    /// a compact floating window, where the panel is a sheet with no divider.
-    private func drag(_ element: XCUIElement, by dx: CGFloat) {
-        let window = app.windows.firstMatch.frame
-        let inside = { (x: CGFloat) in min(max(x, window.minX + 30), window.maxX - 30) }
-        let frame = element.frame
-        let startX = min(max(frame.midX, inside(frame.minX)), frame.maxX - 2)
-        let endX = inside(startX + dx)
-        let start = element.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: startX - frame.minX, dy: frame.height / 2))
-        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: endX - startX, dy: 0)))
     }
 
     /// Scrolls the Context list until all of `element` shows above the list's

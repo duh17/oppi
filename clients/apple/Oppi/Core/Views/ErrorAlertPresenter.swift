@@ -190,22 +190,11 @@ final class ErrorAlertPresenter {
     }
 
     /// The controller that holds `screen` in its window: the window's root or a
-    /// presented controller, at the top of `screen`'s parents. A trailing
-    /// column's panel has no parent (`TrailingColumnController` embeds its
-    /// navigation controller by view), so the walk goes on from the controller
-    /// whose view the panel sits in; presenting from the detached panel itself
-    /// would ignore a sheet over its host, and UIKit does not support it.
+    /// presented controller, at the top of `screen`'s parents.
     private static func holder(of screen: UIViewController) -> UIViewController {
         var top = screen
-        while true {
-            while let parent = top.parent { top = parent }
-            guard top.presentingViewController == nil,
-                  let view = top.viewIfLoaded, top !== view.window?.rootViewController,
-                  let superview = view.superview,
-                  let embedding = superview.nearestViewController
-            else { return top }
-            top = embedding
-        }
+        while let parent = top.parent { top = parent }
+        return top
     }
 
     /// Tries again when `coordinator`'s transition ends, or shortly, bounded.

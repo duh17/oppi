@@ -240,30 +240,29 @@ struct ErrorAlertPresenterTests {
         #expect(alert.message == "raised by the sheet")
     }
 
-    /// A trailing column's panel has no parent controller: its navigation
-    /// controller is embedded by view over the host's. A sheet over the host
-    /// still covers the panel, and the alert comes from the window's chain.
-    @Test func anErrorFromATrailingColumnPanelWaitsForASheetOverItsHost() async throws {
-        let screen = ColumnHostScreen()
-        let (window, navigation) = try mount(screen)
-        defer { hideTestWindow(window) }
-        screen.showPanel(root: makeTestAppRoot())
-        let panel = screen.panel
+    /// A companion's screen sits in its own leaf beside the screen that
+    /// opened it. A sheet over that screen's stack still covers the window,
+    /// and the alert comes from the window's chain once the sheet is gone.
+    @Test func anErrorFromACompanionWaitsForASheetOverItsHost() async throws {
+        let host = PaneTestHost(width: 1000, inNavigation: true)
+        defer { host.hide() }
+        let panel = UIViewController()
+        host.showPanel(makeScreen: { panel })
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { panel.viewIfLoaded?.window != nil })
+        let navigation = try #require(host.panes.primary as? UINavigationController)
         let sheet = UIViewController()
         sheet.modalPresentationStyle = .pageSheet
         navigation.present(sheet, animated: false)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { sheet.presentingViewController != nil })
 
-        panel.errorAlerts.show(message: "raised in the column")
+        panel.errorAlerts.show(message: "raised in the companion")
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
-            sheet.presentedViewController == nil && navigation.presentedViewController === sheet
-                && panel.navigationController?.presentedViewController == nil
-        }, "the error does not pop over a sheet that covers the column")
+            sheet.presentedViewController == nil && sheet.presentingViewController != nil
+        }, "the error does not pop over a sheet that covers the window")
 
         sheet.dismiss(animated: false)
-        let alert = try #require(await settledAlert(in: window))
-        #expect(alert.message == "raised in the column")
+        let alert = try #require(await settledAlert(in: host.window))
+        #expect(alert.message == "raised in the companion")
     }
 
     @Test func aWorkspaceThatIsNotShowingItsContentHoldsNoErrorForLater() async throws {
@@ -316,30 +315,5 @@ struct ErrorAlertPresenterTests {
         _ = await settledAlert(in: window)
         try await tap("Delete", on: second)
         #expect((confirmed, cancelled) == (1, 1))
-    }
-}
-
-/// A screen with a trailing column open, the way the chat mounts one.
-@MainActor
-private final class ColumnHostScreen: UIViewController {
-    lazy var column = TrailingColumnController(screen: self)
-    let panel = UIViewController()
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        addChild(column)
-        column.view.frame = .zero
-        view.addSubview(column.view)
-        column.didMove(toParent: self)
-    }
-
-    func showPanel(root: AppRootEnvironment) {
-        column.show(
-            TrailingColumnController.Panel(
-                id: "panel", minWidth: 200, idealWidth: 300, maxWidth: 400,
-                makeScreen: { [panel] in panel }
-            ),
-            root: root
-        )
     }
 }

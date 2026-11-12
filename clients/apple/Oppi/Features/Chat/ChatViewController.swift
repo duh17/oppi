@@ -52,10 +52,10 @@ final class ChatScreenModel {
     var isFilePanelVisible = false
     var showContextInspector = false
     /// A timeline-opened reader (a document, image, or an extension drawer's
-    /// full screen) shown in the trailing column at regular width, instead of
+    /// full screen) shown in the chat's attached leaf at regular width, instead of
     /// the narrow width's pushed `.chatReader` route.
     var sidePanelReaderTarget: ChatReaderNavTarget?
-    /// A timeline file or commit pill shown in the trailing column at regular
+    /// A timeline file or commit pill shown in the attached leaf at regular
     /// width, where narrow width presents it as a modal.
     var sidePanelTimelineTarget: ChatTimelineSidePanelTarget?
     var showModelPicker = false
@@ -159,20 +159,20 @@ final class ChatViewController: UIViewController {
     /// Set once the footer rows, title, and jump hint are installed.
     var footerAbove: ChatFooterAboveView?
     let canvasAnchor = ComposerCanvasDestinationAnchorController()
-    lazy var trailingColumn = TrailingColumnController(screen: self)
+    lazy var attachedLeaf = AttachedLeafController(screen: self)
     /// Modals the chat presents; each is one router presentation slot.
     let modals = ChatModalSlots()
     let barItems = ChatBarItems()
 
     /// The bottom the timeline and footer sit on: the keyboard's top, or the
-    /// safe area while a field in the trailing column has the keyboard
-    /// (`TrailingColumnKeyboardScreen`).
+    /// safe area while a field in another leaf has the keyboard
+    /// (`PaneKeyboardFollowing`).
     let contentBottomGuide = UILayoutGuide()
     var bottomFollowsKeyboard: NSLayoutConstraint?
     var bottomAtSafeArea: NSLayoutConstraint?
 
-    /// Whether the timeline and footer follow the keyboard. The trailing
-    /// column turns it off while a field in its panel (Outline search) has
+    /// Whether the timeline and footer follow the keyboard. The pane host
+    /// turns it off while a field in another leaf (the Outline's search) has
     /// the keyboard: the keyboard spans the window, and following it lifted
     /// this chat's composer over its timeline beside the panel.
     var followsKeyboard: Bool = true {

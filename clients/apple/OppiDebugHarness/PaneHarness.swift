@@ -1,15 +1,15 @@
 #if DEBUG
 import UIKit
 
-/// Reproduces popping a chat while its trailing column (Git, Files, Outline,
-/// Context) is open: a session-list stand-in sits under the chat in one
-/// navigation stack (`SCREENSHOT_SCREEN=chat-pop-column`), so a back-button
-/// tap, an interactive edge-swipe pop, and a cancelled edge swipe can all be
-/// driven against the production `ChatViewController` and
-/// `TrailingColumnController`. Reuses the chat-routes fixtures (Git status,
-/// timeline, bar layout) so the Git panel opens the same way
-/// `ChatRoutesUITests` already proves it does.
-final class ChatPopColumnPreviewController: PreviewRootController {
+/// A chat over a session-list stand-in in one navigation stack, the pane
+/// host's primary leaf (`SCREENSHOT_SCREEN=panes`), so a back-button tap, an
+/// interactive edge-swipe pop, and a cancelled edge swipe can all be driven
+/// against the production `ChatViewController`, its `AttachedLeafController`
+/// and the `PaneHostController` around the stack. Reuses the chat-routes
+/// fixtures (Git status, timeline, bar layout) so the Git panel opens the
+/// same way `ChatRoutesUITests` already proves it does.
+/// `CHAT_ROUTES_SESSION_TITLE` names the chat, for a long-title check.
+final class PanePreviewController: PreviewRootController {
     private let reducer: TimelineReducer
     private let stack: RouterNavigationController
     private let chat: ChatViewController
@@ -33,7 +33,7 @@ final class ChatPopColumnPreviewController: PreviewRootController {
         chat.traitOverrides.appRootEnvironment = root
         reducer = chat.reducer
 
-        let sessionList = ChatPopColumnSessionListPlaceholder()
+        let sessionList = PaneSessionListPlaceholder()
         sessionList.traitOverrides.appRootEnvironment = root
         let stack = RouterNavigationController(rootViewController: sessionList)
         let themeStore = root.themeStore
@@ -59,18 +59,18 @@ final class ChatPopColumnPreviewController: PreviewRootController {
 }
 
 /// Stands in for All Sessions: a full-width content view pinned to the safe
-/// area. A leftover trailing inset from a popped chat's trailing column
+/// area. A leftover companion width from a popped chat's attached leaf
 /// narrows this instead of letting it fill the window, which is the
 /// regression this harness exists to show.
-private final class ChatPopColumnSessionListPlaceholder: UIViewController {
+private final class PaneSessionListPlaceholder: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Sessions"
-        view.accessibilityIdentifier = "chatPopColumn.sessionList"
+        view.accessibilityIdentifier = "panes.sessionList"
         view.backgroundColor = .systemBackground
         let content = UIView()
         content.backgroundColor = .secondarySystemBackground
-        content.accessibilityIdentifier = "chatPopColumn.sessionList.content"
+        content.accessibilityIdentifier = "panes.sessionList.content"
         content.isAccessibilityElement = true
         content.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(content)

@@ -102,7 +102,7 @@ final class ChatBarItems {
         let navigationItem = chat.screen.navigationItem
         let joinsRail = SystemVerticalBar.traitIsActive(chat.traitCollection)
         let usesCustomBack = chat.usesCustomChatBackButton
-        let usesColumn = chat.usesTrailingSidePanel
+        let usesColumn = chat.opensPanelsBeside
         let palette = AppRootEnvironment.near(chat)?.themeStore.activeThemeID.palette
             ?? ThemeRuntimeState.currentPalette()
         let colors = ComposerThemeColors(palette: palette)
@@ -650,7 +650,7 @@ final class ContextUsageRingButton: UIControl {
     private let fill = CAShapeLayer()
     private let label = UILabel()
     /// The selected platter behind the ring while the Context panel is open
-    /// in the trailing column, as the other panel buttons show it.
+    /// beside the chat, as the other panel buttons show it.
     private let platter = CALayer()
 
     override var isSelected: Bool {
@@ -751,8 +751,10 @@ private extension UIFont {
 }
 
 extension ChatViewController {
-    var usesTrailingSidePanel: Bool {
-        AdaptiveWidth.isWide(traitCollection)
+    /// Panels open beside the chat in its pane host's companion (regular
+    /// width), and as sheets elsewhere.
+    var opensPanelsBeside: Bool {
+        attachedLeaf.opensBeside
     }
 
     func toggleChatFilePanel(source: String) {
@@ -778,7 +780,7 @@ extension ChatViewController {
     /// Rail and bar buttons stay visible beside an open panel in the column,
     /// so there they switch panels; a sheet covers the chat.
     func toggleOutlinePanel() {
-        if usesTrailingSidePanel {
+        if opensPanelsBeside {
             showSidePanel(model.showOutline ? nil : .outline)
         } else {
             model.showOutline = true
@@ -786,7 +788,7 @@ extension ChatViewController {
     }
 
     func toggleContextPanel() {
-        if usesTrailingSidePanel {
+        if opensPanelsBeside {
             showSidePanel(model.showContextInspector ? nil : .context)
         } else {
             model.showContextInspector = true
@@ -794,7 +796,7 @@ extension ChatViewController {
     }
 
     func toggleGitPanel() {
-        if usesTrailingSidePanel {
+        if opensPanelsBeside {
             showSidePanel(model.showGit ? nil : .git)
         } else {
             model.showGit = true

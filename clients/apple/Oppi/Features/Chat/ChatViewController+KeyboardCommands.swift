@@ -16,7 +16,7 @@ extension ChatViewController {
     /// The composer is hidden for a stopped session, which offers Resume instead.
     var canFocusComposer: Bool { !isStopped }
 
-    /// A panel shows in the trailing column (a compact width presents it as a
+    /// A panel shows beside the chat (a compact width presents it as a
     /// sheet, which closes as any sheet does).
     var hasOpenSidePanel: Bool { activeSidePanel != nil }
 

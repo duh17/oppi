@@ -62,11 +62,11 @@ enum WorkspaceReviewFileDetailPhase: Equatable {
 
 /// One changed file of a workspace: its header, Changes (the diff) and File
 /// (the current bytes in this checkout, editable) tabs, previous/next across
-/// the review's files, a file list (a column in regular width, or, hosted in
-/// a trailing column's own panel navigation, pushed there with a back button
-/// to this screen), sharing, and prompt templates that start a session about
-/// the file. Hosted in a panel, a started session's chat goes to `pushChat`,
-/// which closes the column and pushes the chat beside it.
+/// the review's files, a file list (an attached leaf in regular width, or,
+/// hosted in an attached leaf's own panel navigation, pushed there with a
+/// back button to this screen), sharing, and prompt templates that start a
+/// session about the file. Hosted in a panel, a started session's chat goes
+/// to `pushChat`, which closes the leaf and pushes the chat beside it.
 ///
 /// A new file shows its current bytes; a deleted one only its diff and is
 /// never recreated. While the File tab's editor is open it owns the bar, the
@@ -84,7 +84,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         var allowsHorizontalBackSwipe = true
         /// Session-file pushes already sit in chat's Files panel. The list
         /// stays on the adjacent-file controls there. Sheets and the
-        /// screenshot host keep the column.
+        /// screenshot host keep the attached leaf.
         var showsFileListInspector = true
     }
 
@@ -122,9 +122,9 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     var onClose: (() -> Void)? {
         didSet { setNeedsUpdateProperties() }
     }
-    /// This screen is itself pushed in a trailing column's panel navigation
+    /// This screen is itself pushed in an attached leaf's panel navigation
     /// (the Git panel's file review at regular width): its file list pushes
-    /// there too, instead of this screen's own column.
+    /// there too, instead of this screen's own leaf.
     private let hostedInPanel: Bool
     /// Where a started session's chat goes; nil pushes it onto this screen's
     /// own stack.
@@ -159,7 +159,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     private var diffRevision = 0 {
         didSet { if diffRevision != oldValue { restartDiffLoad() } }
     }
-    /// Survives a fold. Compact hides the column; regular shows it again.
+    /// Survives a fold. Compact hides the list; regular shows it again.
     private var showsFileListColumn = true {
         didSet { setNeedsUpdateProperties() }
     }
@@ -187,7 +187,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         self?.navigateToAdjacentReviewFile(direction)
     }
     private let stashButton = ReviewCommentStashFloatingButton()
-    private lazy var column = TrailingColumnController(screen: self)
+    private lazy var fileListLeaf = AttachedLeafController(screen: self)
     private weak var fileList: ReviewFileListViewController?
 
     // Bar items, kept while their inputs hold.
@@ -210,10 +210,11 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         return item
     }()
 
-    /// Shows the file list: hosted in a panel, pushed there with a back
-    /// button to this screen; otherwise this screen's own column.
+    /// Shows the file list: this screen's own attached leaf beside it, or
+    /// else pushed on this screen's stack (a panel's, or a wide modal's) with
+    /// a back button to this screen.
     private func openFileList() {
-        guard hostedInPanel else {
+        guard pushesFileList else {
             showsFileListColumn = true
             return
         }
@@ -314,18 +315,25 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     }
 
     /// Whether the review offers a file list at all: more than one file to
-    /// switch between, and either a panel to push it into or room for its
-    /// own column.
+    /// switch between, and a panel to push it into, room for its own
+    /// attached leaf, or a wide stack outside any pane host (a modal) to
+    /// push it onto. A compact screen keeps the previous and next buttons.
     private var showsFileListEntry: Bool {
         configuration.showsFileListInspector
             && WorkspaceReviewFileNavigationPolicy.navigationFiles(configuration.navigationFiles).count > 1
-            && (hostedInPanel || AdaptiveWidth.isWide(traitCollection))
+            && (hostedInPanel || fileListLeaf.opensBeside
+                || (AdaptiveWidth.isWide(traitCollection) && navigationController != nil))
     }
 
-    /// Whether the file list lays out as this screen's own column: never
-    /// while hosted in a panel, whose own navigation it pushes into instead.
+    /// The file list pushes onto this screen's stack instead of opening
+    /// beside it: hosted in a panel, or with no pane host to open beside.
+    private var pushesFileList: Bool {
+        hostedInPanel || !fileListLeaf.opensBeside
+    }
+
+    /// Whether the file list lays out as this screen's own leaf.
     private var usesReviewFileColumn: Bool {
-        !hostedInPanel && showsFileListEntry
+        !pushesFileList && showsFileListEntry
     }
 
     private var showsReviewFileList: Bool {
@@ -379,10 +387,10 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
             progressPanel.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor),
             progressPanel.widthAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.widthAnchor, constant: -32),
         ])
-        addChild(column)
-        view.addSubview(column.view)
-        column.view.frame = .zero
-        column.didMove(toParent: self)
+        addChild(fileListLeaf)
+        view.addSubview(fileListLeaf.view)
+        fileListLeaf.view.frame = .zero
+        fileListLeaf.didMove(toParent: self)
         registerForTraitChanges([UITraitHorizontalSizeClass.self]) { (screen: Self, _) in
             screen.setNeedsUpdateProperties()
         }
@@ -701,14 +709,14 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
 
     private func updateFileListColumn() {
         guard showsReviewFileList, let root = AppRootEnvironment.near(self) else {
-            column.show(nil, root: nil)
+            fileListLeaf.show(nil, root: nil)
             return
         }
         let files = WorkspaceReviewFileNavigationPolicy.navigationFiles(configuration.navigationFiles)
         fileList?.update(files: files, currentPath: currentFile.path)
-        column.onDismissRequested = { [weak self] in self?.showsFileListColumn = false }
-        column.show(
-            TrailingColumnController.Panel(
+        fileListLeaf.onDismissRequested = { [weak self] in self?.showsFileListColumn = false }
+        fileListLeaf.show(
+            AttachedLeafController.Panel(
                 id: AnyHashable(FileListPanel().id),
                 minWidth: 240,
                 idealWidth: 300,
@@ -740,7 +748,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
             navigationItem.additionalOverflowItems = nil
             return
         }
-        if hostedInPanel ? showsFileListEntry : (usesReviewFileColumn && !showsFileListColumn) {
+        if pushesFileList ? showsFileListEntry : (usesReviewFileColumn && !showsFileListColumn) {
             leading.append(showFilesItem)
         }
         var trailing: [UIBarButtonItem] = []
@@ -1007,7 +1015,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     }
 }
 
-/// The review's files: this screen's own trailing column, or, hosted in a
+/// The review's files: this screen's own attached leaf, or, hosted in a
 /// panel (`hostedInPanel`), pushed in the panel's navigation with its native
 /// back button instead of Hide Files. The current file is checked.
 @MainActor

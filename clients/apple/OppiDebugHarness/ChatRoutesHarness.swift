@@ -26,6 +26,7 @@ import UIKit
 /// the strip to the surfaces. `CHAT_ROUTES_WARNINGS=N` adds N warning rows
 /// above the composer.
 /// `SCREENSHOT_COLOR_SCHEME=light` shows the chat in the light theme.
+/// `CHAT_ROUTES_SESSION_TITLE=<title>` names the chat (a long-title check).
 /// `CHAT_ROUTES_LONG_FILE=1` serves a long file with wide lines;
 /// `CHAT_ROUTES_LONG_FILE=<n>` serves n lines of wrapping code.
 /// `CHAT_ROUTES_PANE_RESIZE=1` adds the live divider resize readout
@@ -494,7 +495,9 @@ enum ChatRoutesFixture {
             id: id,
             workspaceId: workspace.id,
             workspaceName: workspace.name,
-            name: id == sessionId ? "Routes" : "New routes session",
+            name: id == sessionId
+                ? ProcessInfo.processInfo.environment["CHAT_ROUTES_SESSION_TITLE"] ?? "Routes"
+                : "New routes session",
             status: status,
             createdAt: Date(timeIntervalSince1970: 1_770_000_010),
             lastActivity: Date(timeIntervalSince1970: 1_770_000_020 + TimeInterval(activityTick)),
@@ -730,7 +733,7 @@ enum ChatRoutesFixture {
     }
 
     /// What a timeline pill tap does: the destination action the chat gave its
-    /// timeline (a modal or the trailing column, by width).
+    /// timeline (a modal or the attached leaf, by width).
     @MainActor static func openFromTimeline(_ destination: ChatTimelineDestination) {
         guard let timeline = timelineCollectionInWindows(),
               let open = (timeline.delegate as? ChatTimelineController)?.openDestination,

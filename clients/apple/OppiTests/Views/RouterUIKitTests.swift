@@ -397,67 +397,6 @@ struct RouterUIKitTests {
         #expect(popoverController.presentationStyle == .popover, "a wide window gets a popover")
         #expect(popoverController.sourceView === control, "the popover points at the control that opened it")
     }
-
-    /// The keyboard spans the window. A field in the trailing column lifted
-    /// the chat's composer beside it over the timeline; the screen's own
-    /// field still moves it, and closing the column gives the keyboard back.
-    @Test("a trailing column's field leaves the screen beside it in place")
-    func trailingColumnFieldLeavesTheScreenInPlace() async throws {
-        try await expectColumnFieldLeavesScreenInPlace(inNavigationController: true)
-    }
-
-    /// Without a navigation controller the column lands inside the screen's
-    /// own view, so "inside the screen" cannot tell the panel's field apart.
-    @Test("a trailing column's field leaves a screen outside a navigation controller in place")
-    func trailingColumnFieldLeavesAStandaloneScreenInPlace() async throws {
-        try await expectColumnFieldLeavesScreenInPlace(inNavigationController: false)
-    }
-
-    /// A sheet over the chat is neither the column nor the screen's own view;
-    /// its field must not switch off the chat's keyboard avoidance.
-    @Test("a field in a sheet over the screen keeps the screen following the keyboard")
-    func sheetFieldKeepsTheScreenFollowingTheKeyboard() async throws {
-        let panelField = UITextField()
-        let screen = ColumnScreen(panelField: panelField)
-        let window = try showInWindow(RouterNavigationController(rootViewController: screen))
-        defer { hide(window) }
-        screen.showPanel(root: makeTestAppRoot())
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { panelField.window === window })
-        let sheet = UIViewController()
-        let sheetField = UITextField()
-        sheet.view.addSubview(sheetField)
-        screen.present(sheet, animated: false)
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
-            sheetField.window === window
-        })
-
-        beginEditing(sheetField)
-        #expect(screen.followsKeyboard)
-    }
-
-    private func expectColumnFieldLeavesScreenInPlace(inNavigationController: Bool) async throws {
-        let panelField = UITextField()
-        let screen = ColumnScreen(panelField: panelField)
-        let window = try showInWindow(
-            inNavigationController ? RouterNavigationController(rootViewController: screen) : screen
-        )
-        defer { hide(window) }
-        let screenField = UITextField()
-        screen.view.addSubview(screenField)
-        screen.showPanel(root: makeTestAppRoot())
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { panelField.window === window })
-
-        beginEditing(panelField)
-        #expect(!screen.followsKeyboard)
-        beginEditing(screenField)
-        #expect(screen.followsKeyboard)
-        beginEditing(panelField)
-        #expect(!screen.followsKeyboard)
-
-        screen.hidePanel()
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { panelField.window == nil })
-        #expect(screen.followsKeyboard)
-    }
 }
 
 /// A shell stack's routes: a route update that arrives during a transition the
@@ -553,54 +492,6 @@ struct ShellStackRoutesTests {
         window.rootViewController = root
         window.makeKeyAndVisible()
         return window
-    }
-}
-
-/// What UIKit posts as `field` becomes first responder.
-@MainActor
-private func beginEditing(_ field: UITextField) {
-    NotificationCenter.default.post(name: UITextField.textDidBeginEditingNotification, object: field)
-}
-
-// MARK: - Fixtures
-
-/// A UIKit screen with a trailing column whose panel holds `panelField`,
-/// mounted the way the chat mounts its column.
-private final class ColumnScreen: UIViewController, TrailingColumnKeyboardScreen {
-    var followsKeyboard = true
-    private let panelField: UITextField
-    private lazy var column = TrailingColumnController(screen: self)
-
-    init(panelField: UITextField) {
-        self.panelField = panelField
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        addChild(column)
-        column.view.frame = .zero
-        view.addSubview(column.view)
-        column.didMove(toParent: self)
-    }
-
-    func showPanel(root: AppRootEnvironment) {
-        let panelField = panelField
-        column.show(
-            TrailingColumnController.Panel(id: "panel", minWidth: 100, idealWidth: 150, makeScreen: {
-                let panel = UIViewController()
-                panel.view.addSubview(panelField)
-                return panel
-            }),
-            root: root
-        )
-    }
-
-    func hidePanel() {
-        column.show(nil, root: nil)
     }
 }
 

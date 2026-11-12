@@ -76,7 +76,7 @@ struct ChatTimelineDestinationPresenter {
         )
     }
 
-    /// The destination as the root of the chat's trailing column, beside the
+    /// The destination as the root of the chat's attached leaf, beside the
     /// chat instead of over it (regular width). `onClose` closes the panel;
     /// `pushChat` is where a session started from a commit opens.
     func panelScreen(

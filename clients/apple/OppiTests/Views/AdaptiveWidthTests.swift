@@ -5,7 +5,7 @@ import UIKit
 @MainActor
 @Suite("Adaptive width")
 struct AdaptiveWidthTests {
-    /// A panel in the trailing column reads compact through a trait override
+    /// A panel in an attached leaf reads compact through a trait override
     /// while its window is wide, and the search bar's Cancel follows the
     /// window. The override here flips the view away from the scene's width, so
     /// a read of the view's own traits would answer the wrong way round.

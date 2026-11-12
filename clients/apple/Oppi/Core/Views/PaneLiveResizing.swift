@@ -23,16 +23,3 @@ protocol PaneLiveResizing: UIViewController {
     /// `size`, the screen's size now, keeping the reading position.
     func paneSettleLiveResize(to size: CGSize, final: Bool)
 }
-
-@MainActor
-enum PaneLiveResizingTree {
-    /// The adopters in `controller` and the children it shows, outermost
-    /// first; an adopter speaks for its own children.
-    static func adopters(in controller: UIViewController?) -> [any PaneLiveResizing] {
-        guard let controller else { return [] }
-        if let adopter = controller as? any PaneLiveResizing { return [adopter] }
-        let shown = (controller as? UINavigationController).map { $0.topViewController.map { [$0] } ?? [] }
-            ?? controller.children
-        return shown.flatMap { adopters(in: $0) }
-    }
-}

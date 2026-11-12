@@ -2,7 +2,7 @@ import UIKit
 
 /// The shell's `.chatReader` route: a full-screen reader pushed from a chat's
 /// timeline, an extension drawer, or another reader, at narrow width. At
-/// regular width this same screen mounts as a trailing column's panel root
+/// regular width this same screen mounts as an attached leaf's panel root
 /// instead (`Hosting.panel`), so the reader and document viewers, and the
 /// jobs/subagents drawers' full-screen button, go through the one container
 /// every other top-bar destination uses, beside the chat rather than over it.
@@ -29,7 +29,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
         /// joins `AppNavigation`'s own route list, like this reader's own
         /// push.
         case pushedRoute
-        /// Hosted as a trailing column's panel root (regular width): there is
+        /// Hosted as an attached leaf's panel root (regular width): there is
         /// nothing to pop, so leaving asks the owner to close the panel
         /// instead, and a nested open pushes locally within the panel's own
         /// navigation stack, the way the Files panel's own document pushes
@@ -91,7 +91,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
         traitOverrides.appRootEnvironment = root
     }
 
-    /// A trailing column's panel root: a timeline-opened reader at regular
+    /// An attached leaf's panel root: a timeline-opened reader at regular
     /// width. `onClose` closes the panel the same way its own Close control
     /// does.
     convenience init(

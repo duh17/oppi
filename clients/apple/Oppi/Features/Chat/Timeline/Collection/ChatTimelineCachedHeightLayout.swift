@@ -23,9 +23,9 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
 
     /// Horizontal span rows occupy: the timeline's width inside the section
     /// insets, and nothing else. The chat pins the timeline to its safe-area
-    /// guide, so a side rail or the iPad trailing column already sits outside
+    /// guide, so a side rail or the iPad attached leaf already sits outside
     /// it. The column never reads safe-area insets or the frame's position:
-    /// opening the trailing column narrows the timeline inside one layout pass,
+    /// opening the attached leaf narrows the timeline inside one layout pass,
     /// and UIKit lays it out once with its new bounds but its old center, while
     /// its own `safeAreaInsets` still held the overlap of its old full-width
     /// frame (520 pt on a 512 pt timeline). Rows measured in the column either

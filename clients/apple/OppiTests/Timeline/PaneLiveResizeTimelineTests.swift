@@ -2,7 +2,7 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// The chat's timeline beside today's trailing column while its divider moves
+/// The chat's timeline beside its attached leaf while its divider moves
 /// (`PaneLiveResizing`): no row layout while the divider moves, one bounded
 /// reflow where it rests at the same reading position, and no row measured
 /// again when a divider brings a width back.
@@ -17,7 +17,7 @@ struct PaneLiveResizeTimelineTests {
         defer { host.hide() }
         let timeline = host.timeline
         let startWidth = timeline.bounds.width
-        let column = try #require(host.chat.trailingColumn.resizeHandleForTesting)
+        let column = try #require(host.chat.attachedLeaf.hostForTesting?.dividerForTesting)
 
         let rebuildsBefore = ChatTimelinePerf.layoutRebuildCount
         let measuredBefore = ChatTimelinePerf.rowMeasureCount
@@ -57,7 +57,7 @@ struct PaneLiveResizeTimelineTests {
         try #require(!(host.chat.timeline.scrollController?.isCurrentlyNearBottom ?? true), "the timeline must be off its tail")
         let before = try #require(firstReadRow(timeline, controller: host.chat.timeline))
 
-        let column = try #require(host.chat.trailingColumn.resizeHandleForTesting)
+        let column = try #require(host.chat.attachedLeaf.hostForTesting?.dividerForTesting)
         column.onBegan?()
         column.onChanged?(-150)
         host.window.layoutIfNeeded()
@@ -96,7 +96,7 @@ struct PaneLiveResizeTimelineTests {
     // MARK: - Helpers
 
     private func endDrag(
-        _ handle: TrailingColumnResizeHandle,
+        _ handle: PaneDividerView,
         translation: CGFloat,
         host: Host
     ) async throws -> (rebuilds: Int, measured: Int) {
@@ -105,7 +105,7 @@ struct PaneLiveResizeTimelineTests {
         let rebuilds = ChatTimelinePerf.layoutRebuildCount
         let measured = ChatTimelinePerf.rowMeasureCount
         handle.onEnded?(translation, 0)
-        host.chat.trailingColumn.finishSettleForTesting()
+        host.chat.attachedLeaf.hostForTesting?.finishSettleForTesting()
         host.window.layoutIfNeeded()
         return (ChatTimelinePerf.layoutRebuildCount - rebuilds, ChatTimelinePerf.rowMeasureCount - measured)
     }
@@ -147,7 +147,7 @@ struct PaneLiveResizeTimelineTests {
     }
 
     /// The chat at regular width in an iPad mini landscape window, 160 rows of
-    /// wrapping prose at its tail, with Outline open in the trailing column.
+    /// wrapping prose at its tail, with Outline open in the attached leaf.
     private func makeHostWithOpenPanel() async throws -> Host {
         let sessionId = "pane-resize-\(UUID().uuidString)"
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
@@ -164,7 +164,7 @@ struct PaneLiveResizeTimelineTests {
         window.frame = CGRect(origin: .zero, size: Self.landscape)
         window.traitOverrides.appRootEnvironment = appRoot
         window.traitOverrides.horizontalSizeClass = .regular
-        window.rootViewController = navigation
+        window.rootViewController = PaneHostController(primary: navigation)
         window.makeKeyAndVisible()
         window.layoutIfNeeded()
         let host = Host(
@@ -194,11 +194,11 @@ struct PaneLiveResizeTimelineTests {
 
         chat.showSidePanel(.outline)
         let opened = await waitForMainActorCondition(timeout: .seconds(3)) {
-            chat.trailingColumn.mountedScreenForTesting != nil
+            chat.attachedLeaf.mountedScreenForTesting != nil
         }
         if !opened { host.hide() }
         try #require(opened, "the panel never mounted")
-        chat.trailingColumn.finishSettleForTesting()
+        chat.attachedLeaf.hostForTesting?.finishSettleForTesting()
         window.layoutIfNeeded()
         // Measured at this width, and on the tail.
         window.layoutIfNeeded()

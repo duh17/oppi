@@ -45,7 +45,8 @@ struct FrontScreens {
     }
 
     /// What shows: a presented screen over its presenter, a stack's top, each
-    /// column of a split, and a screen with no children of its own.
+    /// column of a split, and a screen with no children of its own. A hidden
+    /// child (a parked companion) does not.
     private static func collect(_ screen: UIViewController, into fronts: inout [UIViewController]) {
         // An active search is presented by UIKit but is not a screen of its own.
         if let presented = screen.presentedViewController, !(presented is UISearchController) {
@@ -57,7 +58,9 @@ struct FrontScreens {
         } else if screen.children.isEmpty {
             fronts.append(screen)
         } else {
-            for child in screen.children { collect(child, into: &fronts) }
+            for child in screen.children where child.viewIfLoaded?.isHidden != true {
+                collect(child, into: &fronts)
+            }
         }
     }
 }
