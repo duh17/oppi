@@ -27,6 +27,7 @@ final class ToolExpandedHostedSurface {
         let audioPlayer: AudioPlayerService?
         let sessionId: String?
         let attachmentFetcher: ((String) async throws -> Data)?
+        let attachmentReconnect: ContentReconnectSignal?
         let attachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)?
         let sessionFileDataFetcher: ((String) async throws -> Data)?
         let sessionFileMediaSourceProvider: ((String) async throws -> AuthenticatedMediaSource)?
@@ -118,6 +119,7 @@ final class ToolExpandedHostedSurface {
             audioPlayer: resources.audioPlayer,
             sessionId: resources.sessionId,
             attachmentFetcher: resources.attachmentFetcher,
+            attachmentReconnect: resources.attachmentReconnect,
             attachmentMediaSourceProvider: resources.attachmentMediaSourceProvider,
             sessionFileDataFetcher: resources.sessionFileDataFetcher,
             sessionFileMediaSourceProvider: resources.sessionFileMediaSourceProvider

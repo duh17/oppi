@@ -48,6 +48,7 @@ final class NativeExpandedReadMediaView: UIView {
         audioPlayer: AudioPlayerService?,
         sessionId: String? = nil,
         attachmentFetcher: ((String) async throws -> Data)?,
+        attachmentReconnect: ContentReconnectSignal? = nil,
         attachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)? = nil,
         sessionFileDataFetcher: ((String) async throws -> Data)?,
         sessionFileMediaSourceProvider: ((String) async throws -> AuthenticatedMediaSource)?
@@ -67,6 +68,7 @@ final class NativeExpandedReadMediaView: UIView {
             hasher.combine(attachment.height)
         }
         hasher.combine(attachmentFetcher != nil)
+        hasher.combine(attachmentReconnect != nil)
         hasher.combine(attachmentMediaSourceProvider != nil)
         hasher.combine(sessionFileDataFetcher != nil)
         hasher.combine(sessionFileMediaSourceProvider != nil)
@@ -218,7 +220,7 @@ final class NativeExpandedReadMediaView: UIView {
             if renderedCount < 6 {
                 for attachment in imageAttachments.prefix(6 - renderedCount) {
                     let imageView = NativeExpandedInlineImageView(maxPixelSize: maxInlineImagePixelSize)
-                    imageView.apply(attachment: attachment, fetcher: attachmentFetcher)
+                    imageView.apply(attachment: attachment, fetcher: attachmentFetcher, reconnect: attachmentReconnect)
                     contentStack.addArrangedSubview(imageView)
                     renderedCount += 1
                 }
@@ -1043,9 +1045,14 @@ final class NativeExpandedInlineImageView: UIView {
         }
     }
 
+    /// Fetches a stored image attachment. With `reconnect`, a fetch that failed because
+    /// the app had no server client yet or could not reach the server runs once more on
+    /// each later route commit, while this view still shows the attachment; the failure
+    /// state stays up until the image arrives. A new apply or deinit cancels the wait.
     func apply(
         attachment: ToolPresentationBuilder.ToolMediaAttachment,
-        fetcher: ((String) async throws -> Data)?
+        fetcher: ((String) async throws -> Data)?,
+        reconnect: ContentReconnectSignal? = nil
     ) {
         let key = "attachment:\(attachment.id):\(attachment.mimeType):\(attachment.sizeBytes ?? 0):\(attachment.sha256 ?? ""):\(attachment.width ?? 0)x\(attachment.height ?? 0):fetcher=\(fetcher != nil)"
         guard key != decodedKey else { return }
@@ -1073,40 +1080,61 @@ final class NativeExpandedInlineImageView: UIView {
 
         let maxPixelSize = self.maxPixelSize
         let attachmentCacheKey = ToolImageAttachmentDataCache.key(for: attachment)
+        // The task holds the view weakly across every await (including the reconnect
+        // wait), so a reused or replaced row frees the view and deinit cancels the task.
         decodeTask = Task { [weak self] in
             let attachmentIdPrefix = String(attachment.id.prefix(12))
-            ClientLog.info("Network", "Tool image attachment fetch started", metadata: [
-                "attachmentIdPrefix": attachmentIdPrefix,
-                "mimeType": attachment.mimeType,
-            ])
-            do {
-                let data = try await ToolImageAttachmentDataCache.data(for: attachmentCacheKey) {
-                    let fetchedData = try await fetcher(attachment.id)
-                    try Self.validateAttachmentData(fetchedData, attachment: attachment)
-                    return fetchedData
-                }
-                try Self.validateAttachmentData(data, attachment: attachment)
-                ClientLog.info("Network", "Tool image attachment fetch completed", metadata: [
+            var attempt = 1
+            while true {
+                let routeMark = reconnect?.mark()
+                ClientLog.info("Network", "Tool image attachment fetch started", metadata: [
                     "attachmentIdPrefix": attachmentIdPrefix,
-                    "bytes": String(data.count),
+                    "attempt": String(attempt),
                     "mimeType": attachment.mimeType,
                 ])
-                await self?.applyFetchedImageData(data, mimeType: attachment.mimeType, key: key, maxPixelSize: maxPixelSize)
-            } catch {
-                var metadata = ClientLog.networkErrorMetadata(error)
-                metadata["attachmentIdPrefix"] = attachmentIdPrefix
-                metadata["mimeType"] = attachment.mimeType
-                ClientLog.error(
-                    "Network",
-                    "Tool image attachment fetch failed",
-                    metadata: metadata,
-                    flush: true
-                )
-                await MainActor.run { [weak self] in
-                    guard let self, self.decodedKey == key else { return }
-                    self.decodedKey = nil
-                    self.applyDecodedImage(nil)
+                do {
+                    let data = try await ToolImageAttachmentDataCache.data(for: attachmentCacheKey) {
+                        let fetchedData = try await fetcher(attachment.id)
+                        try Self.validateAttachmentData(fetchedData, attachment: attachment)
+                        return fetchedData
+                    }
+                    try Self.validateAttachmentData(data, attachment: attachment)
+                    ClientLog.info("Network", "Tool image attachment fetch completed", metadata: [
+                        "attachmentIdPrefix": attachmentIdPrefix,
+                        "attempt": String(attempt),
+                        "bytes": String(data.count),
+                        "mimeType": attachment.mimeType,
+                    ])
+                    await self?.applyFetchedImageData(data, mimeType: attachment.mimeType, key: key, maxPixelSize: maxPixelSize)
+                    return
+                } catch {
+                    var metadata = ClientLog.networkErrorMetadata(error)
+                    metadata["attachmentIdPrefix"] = attachmentIdPrefix
+                    metadata["attempt"] = String(attempt)
+                    metadata["mimeType"] = attachment.mimeType
+                    ClientLog.error(
+                        "Network",
+                        "Tool image attachment fetch failed",
+                        metadata: metadata,
+                        flush: true
+                    )
+                    guard let view = self, view.decodedKey == key else { return }
+                    view.decodedKey = nil
+                    view.applyDecodedImage(nil)
+                    // Retry only what the next route can get past: the not-ready 503,
+                    // an unreachable server, or a server-side failure. A 404,
+                    // validation failure, or bad data stays failed.
+                    guard reconnect != nil,
+                          !Task.isCancelled,
+                          ServerRouteFailure.isTransient(error) else { return }
                 }
+                // One refetch per route commit: the mark names the route this attempt
+                // used, so a failure on the new route waits for the one after it.
+                guard let reconnect, let routeMark else { return }
+                await reconnect.waitForRoute(after: routeMark)
+                guard let view = self, !Task.isCancelled else { return }
+                view.decodedKey = key
+                attempt += 1
             }
         }
     }

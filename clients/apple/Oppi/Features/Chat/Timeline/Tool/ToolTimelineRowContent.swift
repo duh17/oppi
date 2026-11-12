@@ -49,6 +49,8 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     let segmentAttributedTrailing: NSAttributedString?
     var audioPlayer: AudioPlayerService? = nil
     var sessionAttachmentFetcher: ((String) async throws -> Data)? = nil
+    /// Route commits for refetching a stored image that failed while reconnecting.
+    var sessionContentReconnect: ContentReconnectSignal? = nil
     var sessionAttachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)? = nil
     var sessionFileDataFetcher: ((String) async throws -> Data)? = nil
     var sessionFileMediaSourceProvider: ((String) async throws -> AuthenticatedMediaSource)? = nil
@@ -107,6 +109,12 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     func withSessionAttachmentFetcher(_ fetcher: ((String) async throws -> Data)?) -> Self {
         var copy = self
         copy.sessionAttachmentFetcher = fetcher
+        return copy
+    }
+
+    func withSessionContentReconnect(_ reconnect: ContentReconnectSignal?) -> Self {
+        var copy = self
+        copy.sessionContentReconnect = reconnect
         return copy
     }
 
@@ -757,6 +765,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             audioPlayer: currentConfiguration.audioPlayer,
             sessionId: perfSessionId,
             attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
+            attachmentReconnect: currentConfiguration.sessionContentReconnect,
             attachmentMediaSourceProvider: currentConfiguration.sessionAttachmentMediaSourceProvider,
             sessionFileDataFetcher: currentConfiguration.sessionFileDataFetcher,
             sessionFileMediaSourceProvider: currentConfiguration.sessionFileMediaSourceProvider

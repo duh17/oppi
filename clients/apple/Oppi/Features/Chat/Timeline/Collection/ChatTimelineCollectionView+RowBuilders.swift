@@ -620,6 +620,7 @@ extension ChatTimelineController {
             .withReviewCommentSelection(router: interactionCtx.reviewCommentSelectionRouter, sessionId: interactionCtx.sessionId)
             .withAudioPlayer(audioPlayer)
             .withSessionAttachmentFetcher(attachmentFetcher)
+            .withSessionContentReconnect(sessionContent?.reconnectSignal)
             .withSessionAttachmentMediaSourceProvider(attachmentMediaSourceProvider)
             .withSessionFileDataFetcher(sessionFileDataFetcher)
             .withSessionFileMediaSourceProvider(sessionFileMediaSourceProvider)

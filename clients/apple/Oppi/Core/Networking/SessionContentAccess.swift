@@ -21,7 +21,7 @@ final class SessionContentAccess {
     static let readinessAttempts = 50
     static let defaultReadinessPoll: Duration = .milliseconds(100)
 
-    private let currentAPIClient: @MainActor () -> APIClient?
+    private let currentAPIClient: @MainActor @Sendable () -> APIClient?
     private let currentServerId: @MainActor () -> String?
     private let speechRequestFailed: @MainActor () -> Void
     private let sessionStore: SessionStore
@@ -29,7 +29,7 @@ final class SessionContentAccess {
     private let readinessPoll: Duration
 
     init(
-        apiClient: @escaping @MainActor () -> APIClient?,
+        apiClient: @escaping @MainActor @Sendable () -> APIClient?,
         serverId: @escaping @MainActor () -> String?,
         speechRequestFailed: @escaping @MainActor () -> Void = {},
         sessionStore: SessionStore,
@@ -86,6 +86,12 @@ final class SessionContentAccess {
                 ? "Output truncated by producer. Earlier output is unavailable.\n\n" : ""
             return warning + (text.isEmpty ? "(no output)" : text)
         }
+    }
+
+    /// The connection's route commits, for a row that refetches stored media once the
+    /// connection is back.
+    var reconnectSignal: ContentReconnectSignal {
+        ContentReconnectSignal(currentClient: currentAPIClient)
     }
 
     // MARK: - Tool output
@@ -605,6 +611,37 @@ final class SessionContentAccess {
     private static func normalizedWorkspaceId(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed : nil
+    }
+}
+
+// MARK: - Reconnect signal
+
+/// A content row's view of route commits. Every committed route installs a new API
+/// client on `ServerConnection` (an observable property), so "the connection is back"
+/// is a client other than the one an attempt started with. Waiting observes that
+/// property; it never polls.
+@MainActor
+struct ContentReconnectSignal {
+    /// The route an attempt started on. Weak, so a torn-down client that is freed
+    /// (and whose address a new client may reuse) still reads as gone.
+    struct Mark {
+        fileprivate weak var client: APIClient?
+    }
+
+    fileprivate let currentClient: @MainActor @Sendable () -> APIClient?
+
+    func mark() -> Mark {
+        Mark(client: currentClient())
+    }
+
+    /// Returns once a client other than `mark`'s is installed, or when the task is cancelled.
+    func waitForRoute(after mark: Mark) async {
+        for await committed in Observations({ isRoute(after: mark) }) where committed { return }
+    }
+
+    private func isRoute(after mark: Mark) -> Bool {
+        guard let client = currentClient() else { return false }
+        return client !== mark.client
     }
 }
 

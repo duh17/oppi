@@ -377,6 +377,125 @@ struct ToolExpandedSurfaceHostTests {
         #expect(!visibleLabelText.contains { $0.contains("original 240x160") })
     }
 
+    // MARK: Reconnect refetch
+
+    @Test func readMediaAttachmentImageRefetchesWhenConnectionReturnsAfterNotReady() async throws {
+        let imageData = try #require(makeReadToolTestImage(size: CGSize(width: 120, height: 80)).pngData())
+        let attachment = makeReconnectAttachment(id: "att-reconnect-not-ready", data: imageData)
+        let connection = ServerConnection()
+        let fetches = AttachmentFetchRecorder { attempt in
+            if attempt == 1 { throw APIError.server(status: 503, message: "Server client is not ready") }
+            return imageData
+        }
+        let view = NativeExpandedReadMediaView()
+        applyReconnectRow(view, attachment: attachment, fetches: fetches, connection: connection)
+
+        #expect(await waitForImageUnavailable(in: view))
+        #expect(fetches.count == 1)
+
+        connection.setAPIClientForTesting(makeReconnectClient())
+
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+            return readMediaContentImageView(in: view) != nil
+        }
+        #expect(decoded, "The failed image loads once a route commits, with no redraw")
+        #expect(fetches.count == 2)
+    }
+
+    @Test(arguments: ["notFound", "sizeMismatch"])
+    func readMediaAttachmentImageDoesNotRefetchFailuresReconnectCannotHeal(failure: String) async throws {
+        let imageData = try #require(makeReadToolTestImage(size: CGSize(width: 120, height: 80)).pngData())
+        let attachment = makeReconnectAttachment(id: "att-reconnect-\(failure)", data: imageData)
+        let connection = ServerConnection()
+        let fetches = AttachmentFetchRecorder { _ in
+            if failure == "notFound" { throw APIError.server(status: 404, message: "Not found") }
+            return imageData.prefix(imageData.count - 1)
+        }
+        let view = NativeExpandedReadMediaView()
+        applyReconnectRow(view, attachment: attachment, fetches: fetches, connection: connection)
+
+        #expect(await waitForImageUnavailable(in: view))
+        connection.setAPIClientForTesting(makeReconnectClient())
+
+        let refetched = await waitForTimelineCondition(timeoutMs: 300) { @MainActor in fetches.count > 1 }
+        #expect(!refetched)
+        #expect(fetches.count == 1)
+    }
+
+    @Test func readMediaAttachmentImageRefetchesAtMostOncePerRouteCommit() async throws {
+        let imageData = try #require(makeReadToolTestImage(size: CGSize(width: 120, height: 80)).pngData())
+        let attachment = makeReconnectAttachment(id: "att-reconnect-unreachable", data: imageData)
+        let connection = ServerConnection()
+        connection.setAPIClientForTesting(makeReconnectClient())
+        let fetches = AttachmentFetchRecorder { _ in throw URLError(.cannotConnectToHost) }
+        let view = NativeExpandedReadMediaView()
+        applyReconnectRow(view, attachment: attachment, fetches: fetches, connection: connection)
+
+        #expect(await waitForImageUnavailable(in: view))
+        #expect(fetches.count == 1)
+
+        connection.setAPIClientForTesting(makeReconnectClient())
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in fetches.count == 2 })
+        let extraRefetch = await waitForTimelineCondition(timeoutMs: 300) { @MainActor in fetches.count > 2 }
+        #expect(!extraRefetch, "A refetch that fails on the new route waits for the next commit")
+
+        connection.setAPIClientForTesting(makeReconnectClient())
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in fetches.count == 3 })
+        #expect(await waitForImageUnavailable(in: view))
+    }
+
+    @Test func readMediaAttachmentReplacedBeforeReconnectDoesNotRefetch() async throws {
+        let imageData = try #require(makeReadToolTestImage(size: CGSize(width: 120, height: 80)).pngData())
+        let failed = makeReconnectAttachment(id: "att-reconnect-replaced", data: imageData)
+        let replacement = makeReconnectAttachment(id: "att-reconnect-replacement", data: imageData)
+        let connection = ServerConnection()
+        let failedFetches = AttachmentFetchRecorder { _ in
+            throw APIError.server(status: 503, message: "Server client is not ready")
+        }
+        let replacementFetches = AttachmentFetchRecorder { _ in imageData }
+        let view = NativeExpandedReadMediaView()
+        applyReconnectRow(view, attachment: failed, fetches: failedFetches, connection: connection)
+        #expect(await waitForImageUnavailable(in: view))
+
+        // Reuse: the row now shows a different attachment.
+        applyReconnectRow(view, attachment: replacement, fetches: replacementFetches, connection: connection)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            view.layoutIfNeeded()
+            return readMediaContentImageView(in: view) != nil
+        })
+
+        connection.setAPIClientForTesting(makeReconnectClient())
+        let refetched = await waitForTimelineCondition(timeoutMs: 300) { @MainActor in failedFetches.count > 1 }
+        #expect(!refetched)
+        #expect(failedFetches.count == 1)
+    }
+
+    @Test func inlineImageAttachmentChangeCancelsPendingRefetch() async throws {
+        let imageData = try #require(makeReadToolTestImage(size: CGSize(width: 120, height: 80)).pngData())
+        let failed = makeReconnectAttachment(id: "att-reconnect-inline-old", data: imageData)
+        let replacement = makeReconnectAttachment(id: "att-reconnect-inline-new", data: imageData)
+        let connection = ServerConnection()
+        let failedFetches = AttachmentFetchRecorder { _ in throw URLError(.timedOut) }
+        let replacementFetches = AttachmentFetchRecorder { _ in
+            throw APIError.server(status: 404, message: "Not found")
+        }
+        let preview = NativeExpandedInlineImageView(maxPixelSize: 1_600)
+        preview.apply(attachment: failed, fetcher: failedFetches.fetch, reconnect: connection.sessionContent.reconnectSignal)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            preview.accessibilityLabel == "Image unavailable"
+        })
+
+        preview.apply(attachment: replacement, fetcher: replacementFetches.fetch, reconnect: connection.sessionContent.reconnectSignal)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in replacementFetches.count == 1 })
+
+        connection.setAPIClientForTesting(makeReconnectClient())
+        let refetched = await waitForTimelineCondition(timeoutMs: 300) { @MainActor in failedFetches.count > 1 }
+        #expect(!refetched)
+        #expect(failedFetches.count == 1)
+    }
+
     @Test func readMediaAttachmentImageRetriesWhenFetcherBecomesAvailable() async throws {
         let imageData = try #require(makeTallReadToolTestImage().pngData())
         let attachment = ToolPresentationBuilder.ToolMediaAttachment(
@@ -1812,6 +1931,53 @@ struct ToolExpandedSurfaceHostTests {
         return ReadMediaSnapshotResult(rowSize: rowSize, imageFrame: imageFrame, outputURL: outputURL)
     }
 
+    private func makeReconnectAttachment(id: String, data: Data) -> ToolPresentationBuilder.ToolMediaAttachment {
+        ToolPresentationBuilder.ToolMediaAttachment(
+            kind: "image",
+            id: id,
+            mimeType: "image/png",
+            fileName: "generated.png",
+            sizeBytes: data.count,
+            width: 120,
+            height: 80
+        )
+    }
+
+    private func makeReconnectClient() -> APIClient {
+        APIClient(
+            baseURL: testUnwrap(URL(string: "http://reconnect.test:7749")),
+            token: "sk_test",
+            configuration: .ephemeral
+        )
+    }
+
+    private func applyReconnectRow(
+        _ view: NativeExpandedReadMediaView,
+        attachment: ToolPresentationBuilder.ToolMediaAttachment,
+        fetches: AttachmentFetchRecorder,
+        connection: ServerConnection
+    ) {
+        view.apply(
+            output: "Read image file [image/png]",
+            isError: false,
+            filePath: "/tmp/generated.png",
+            startLine: 1,
+            attachments: [attachment],
+            themeID: ThemeRuntimeState.currentThemeID(),
+            audioPlayer: nil,
+            attachmentFetcher: fetches.fetch,
+            attachmentReconnect: connection.sessionContent.reconnectSignal,
+            sessionFileDataFetcher: nil,
+            sessionFileMediaSourceProvider: nil
+        )
+    }
+
+    private func waitForImageUnavailable(in view: UIView) async -> Bool {
+        await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: view)?.accessibilityLabel == "Image unavailable"
+        }
+    }
+
     private func readMediaContentImageView(in root: UIView) -> UIImageView? {
         timelineAllImageViews(in: root)
             .filter { view in
@@ -2152,4 +2318,24 @@ private final class ToolInteractionTrackingCollectionView: UICollectionView {
     var testIsTracking = false
 
     override var isTracking: Bool { testIsTracking }
+}
+
+/// Counts attachment fetches; `respond` gets the 1-based attempt number.
+@MainActor
+private final class AttachmentFetchRecorder {
+    private(set) var count = 0
+    private let respond: @MainActor (Int) throws -> Data
+
+    init(respond: @escaping @MainActor (Int) throws -> Data) {
+        self.respond = respond
+    }
+
+    var fetch: (String) async throws -> Data {
+        { [self] _ in try await record() }
+    }
+
+    private func record() async throws -> Data {
+        count += 1
+        return try respond(count)
+    }
 }

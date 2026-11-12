@@ -424,6 +424,7 @@ extension ToolExpandedHostedSurface.MediaResources {
             audioPlayer: nil,
             sessionId: nil,
             attachmentFetcher: nil,
+            attachmentReconnect: nil,
             attachmentMediaSourceProvider: nil,
             sessionFileDataFetcher: nil,
             sessionFileMediaSourceProvider: nil
