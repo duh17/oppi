@@ -76,7 +76,8 @@ run_self_test() {
     bash -n "$REPO_ROOT/.githooks/pre-push" "$REPO_ROOT/clients/apple/scripts/check-coverage.sh" "$SIM_POOL" "$HEAVY"
     bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts" "$REPO_ROOT/scripts/heavy.test.ts" \
       "$REPO_ROOT/scripts/batch-gate.test.ts" "$REPO_ROOT/scripts/batch-gate-health.test.ts" \
-      "$REPO_ROOT/scripts/gate-report.test.ts" "$REPO_ROOT/scripts/dev-docs-guard.test.ts"
+      "$REPO_ROOT/scripts/gate-report.test.ts" "$REPO_ROOT/scripts/dev-docs-guard.test.ts" \
+      "$REPO_ROOT/scripts/apple-warnings.test.ts"
     "$SIM_POOL" self-test
   fi
 
@@ -786,7 +787,10 @@ run_apple_gate() {
   # sim-pool builds without a simulator slot. The lane takes the machine-wide xcode-build slot for
   # it (with_apple_slot), so sim-pool, seeing OPPI_HEAVY_HELD, takes no second one.
   (cd "$REPO_ROOT/clients/apple" && with_apple_slot "$SIM_POOL" run -- \
-    xcodebuild -project Oppi.xcodeproj -scheme "$(apple_scheme)" build-for-testing)
+    xcodebuild -project Oppi.xcodeproj -scheme "$(apple_scheme)" build-for-testing) || return $?
+  # More compiler or SwiftLint warnings than scripts/apple-warnings-baseline.json in that build's log
+  # fail the lane. A build sim-pool skipped as unchanged writes no warnings, so it compares nothing.
+  (cd "$REPO_ROOT" && run_without_git_local_env bun scripts/apple-warnings.ts --latest clients/apple/.build/logs)
 }
 
 # Run "$@" in a heavy.sh xcode-build slot, first marking $APPLE_SLOT_SIGNAL/held: the early Release

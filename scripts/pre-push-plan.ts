@@ -141,6 +141,13 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
       continue;
     }
 
+    // The ratchet reads the Apple lane's build log; its script and test run in the hook's self-test.
+    if (path.startsWith("scripts/apple-warnings")) {
+      apple = strongerApple(apple, "unit");
+      if (path.endsWith(".ts")) harness = true;
+      continue;
+    }
+
     // The guard reads iOS app sources and runs with the architecture check.
     if (path === "scripts/document-edit-guard.ts") {
       apple = strongerApple(apple, "unit");

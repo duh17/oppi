@@ -14,6 +14,8 @@ describe("pre-push gate planning", () => {
     ["iOS E2E", ["clients/apple/OppiE2ETests/ReleaseGateE2ETests.swift"], ["none", "all", false]],
     ["accessibility id guard", ["scripts/ax-id-guard.ts", "scripts/ax-id-baseline.json"], ["none", "unit", false]],
     ["document edit guard", ["scripts/document-edit-guard.ts"], ["none", "unit", false]],
+    ["warnings ratchet", ["scripts/apple-warnings.ts", "scripts/apple-warnings.test.ts"], ["none", "unit", true]],
+    ["warnings baseline", ["scripts/apple-warnings-baseline.json"], ["none", "unit", false]],
     ["protocol", ["protocol/server-messages.json"], ["full", "unit", false]],
     ["server protocol model", ["server/src/types/protocol.ts"], ["full", "unit", false]],
     ["server session protocol model", ["server/src/types/session.ts"], ["full", "unit", false]],

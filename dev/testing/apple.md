@@ -49,6 +49,17 @@ bun clients/apple/scripts/unit-shards.ts     # whole suite, OPPI_UNIT_SHARDS (3)
 - `unit-shards.ts`: the last shard runs `-skip-testing` of the others' type lists, so a type the scan misses still runs; a zero-test shard fails the run. `--strict` (release gates) ignores quarantine and reruns. Refresh timings with `--record <pool log>`.
 - UI shards: `bun clients/apple/scripts/ui-shards.ts --profile iphone -- OppiUITests/<Suite> ...` (`--plan` prints the shards; `OPPI_UI_SHARDS` caps and `--shards N` forces the count; `--record <pool log>...` refreshes timings). A heavy class splits into methods plus a catch-all shard, so a method the scan missed still runs once; a shard fails when a planned test has no `Test Case` line. xcresults are best effort (sim-pool stops xcodebuild after the summary): the shard output and sim-pool log are the record. Gate formats: [Gate reports](README.md#gate-reports).
 
+## Warnings ratchet
+
+```bash
+bun scripts/apple-warnings.ts --latest clients/apple/.build/logs   # newest sim-pool build log, from the repo root
+bun scripts/apple-warnings.ts <build log> --update                 # lower the baseline
+```
+
+- The pre-push Apple lane runs it on its own build log. It counts unique compiler warnings, SwiftLint findings and SwiftPM dependency-scan warnings apart, per folder (`Oppi`, `OppiTests`, ...), and fails when a count passes `scripts/apple-warnings-baseline.json`, printing the warnings of each file that gained one. Fix the warning; a count only goes down.
+- A folder the build did not compile has no warnings in the log, so a unit-scheme push checks what it built; the `Oppi` scheme also builds the UI, E2E and perf targets. A build sim-pool skips as unchanged compares nothing.
+- `--update` lowers a count only when the log holds all of it (every Swift file of the folder compiled, the SwiftLint phase ran) and never raises one. Run it on a build into fresh DerivedData, which replays warnings from sim-pool's cache, and commit the file with the fix.
+
 ## Swift Testing filters
 
 With Xcode 27 a function filter takes its single `()`; the old doubled `()()` matches nothing.
