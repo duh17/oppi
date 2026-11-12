@@ -1598,12 +1598,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             if commit.accepted { debugGeometryCommitCount += 1 }
             #endif
         }
-        let views = cell.yieldArrangedSegmentViews()
-        if !views.isEmpty {
-            discardParkedVideoViews(parkedSegmentViews[id] ?? [])
-            parkedSegmentViews[id] = views
-            views.forEach { parkedSegmentHost.addSubview($0) }
-        }
+        // Parked at a fixed frame like a recycled cell's views: a table left
+        // without a width re-plans at each width its own constraints give it
+        // and dirties itself every layout pass, which froze the app.
+        parkSegmentViews(from: cell)
         cell.resetApplierAfterYield()
         #if DEBUG
         debugAppliedItems.insert(item)
