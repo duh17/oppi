@@ -4,11 +4,19 @@
   The Mac Catalyst build: not sandboxed (Developer ID; it will run the server
   as a launch agent), with Hardened Runtime. Under Hardened Runtime the
   microphone, camera and Photos each need their resource entitlement.
-  The iOS file's restricted keys (push, time-sensitive alerts, default data
-  protection) need a Mac Catalyst provisioning profile and are added with it.
+  Push, time-sensitive alerts and default data protection mirror the iOS
+  file (see project.yml for why each exists); macOS names the push key
+  com.apple.developer.aps-environment. They need the Mac Catalyst
+  provisioning profile that automatic signing creates.
 -->
 <plist version="1.0">
 <dict>
+	<key>com.apple.developer.aps-environment</key>
+	<string>development</string>
+	<key>com.apple.developer.default-data-protection</key>
+	<string>NSFileProtectionCompleteUnlessOpen</string>
+	<key>com.apple.developer.usernotifications.time-sensitive</key>
+	<true/>
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>$(APP_GROUP_IDENTIFIER)</string>
