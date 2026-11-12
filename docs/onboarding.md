@@ -56,7 +56,7 @@ oppi server stop
 oppi server uninstall
 ```
 
-- **macOS:** the LaunchAgent `dev.chaosdonkey.oppi` starts Oppi at login and restarts it after a crash. Logs go to `~/.config/oppi/server.log`.
+- **macOS:** the LaunchAgent `dev.chaosdonkey.oppi` starts Oppi at login and restarts it after a crash. Logs go to `~/.config/oppi/server.log`; each finished day moves to `server-YYYY-MM-DD.log` next to it, kept 14 days (`OPPI_SERVER_LOG_RETENTION_DAYS` changes that).
 - **Linux:** the systemd user service `~/.config/systemd/user/oppi.service` restarts Oppi after a crash. Logs: `journalctl --user -u oppi`. To keep Oppi running after you log out and start it at boot, the installer turns on lingering with `loginctl enable-linger`. If your system needs an admin for that, the installer says so; until someone runs `sudo loginctl enable-linger <user>`, Oppi stops when your last session ends.
 - **No systemd** (most containers, WSL without systemd): the installer starts `oppi serve` in the background and logs to `~/.oppi/serve.log`. Run `oppi serve` under your own supervisor to keep it running.
 

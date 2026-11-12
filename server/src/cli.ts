@@ -47,6 +47,7 @@ import { generateInvite, type GeneratedInvite } from "./invite.js";
 import { activePushRelays, releasePushPermissions } from "./push/push-sender.js";
 import { allowsTrustedPrivateHttpBind, parsePublicUrl } from "./proxy-config.js";
 import { getPackageInfo } from "./version.js";
+import { startServerLogRotation } from "./server-log-rotation.js";
 import { requestServerStop } from "./server-stop-marker.js";
 import {
   getServiceStatus,
@@ -335,6 +336,8 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
     cliLog.error("server.unhandled_rejection", { error: safeErrorMessage(reason) });
   });
 
+  // The log is this process's stdout and stderr under launchd, so it outlives in-process restarts.
+  startServerLogRotation(storage.getDataDir());
   await server.start();
 
   // Only the banner reads these. The `tailscale` and `scutil` lookups run after the listener is

@@ -5,9 +5,9 @@
  * problem events, and keeps noisy lifecycle lines separate from real failures.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 const HOUR_MS = 60 * 60 * 1_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -188,6 +188,21 @@ function addProblem(
   if (typeof record.workspaceId === "string") problem.workspaces.add(record.workspaceId);
 }
 
+/**
+ * The server moves each finished UTC day out of server.log into server-YYYY-MM-DD.log
+ * (server/src/server-log-rotation.ts). Older days inside the window come first.
+ */
+function dailyLogTexts(logPath: string, cutoffMs: number): string[] {
+  if (basename(logPath) !== "server.log") return [];
+  const firstDay = new Date(cutoffMs).toISOString().slice(0, 10);
+  const dir = dirname(logPath);
+  return readdirSync(dir)
+    .map((name) => /^server-(\d{4}-\d{2}-\d{2})\.log$/.exec(name))
+    .filter((m): m is RegExpExecArray => m !== null && m[1] >= firstDay)
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .map((m) => readFileSync(join(dir, m[0]), "utf8"));
+}
+
 export function buildServerLogReview(options: {
   logPath: string;
   days?: number;
@@ -244,7 +259,7 @@ export function buildServerLogReview(options: {
     };
   }
 
-  const text = readFileSync(options.logPath, "utf8");
+  const text = [...dailyLogTexts(options.logPath, cutoffMs), readFileSync(options.logPath, "utf8")].join("");
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     lines += 1;
