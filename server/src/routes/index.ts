@@ -12,6 +12,7 @@ import { createDictationDictionaryRoutes } from "./dictation-dictionary.js";
 import { createSpeechRoutes } from "./speech.js";
 import { createSkillRoutes } from "./skills.js";
 import { createWorkspaceRoutes } from "./workspaces.js";
+import { createLayoutRoutes } from "./layouts.js";
 import { createAgentRoutes } from "./agents.js";
 import { createSessionRoutes } from "./sessions.js";
 import { createUploadRoutes } from "./uploads.js";
@@ -46,6 +47,7 @@ export class RouteHandler {
       createServerResourceRoutes(this.ctx, this.helpers),
       createSkillRoutes(this.ctx, this.helpers),
       createWorkspaceRoutes(this.ctx, this.helpers),
+      createLayoutRoutes(this.ctx, this.helpers),
       createAgentRoutes(this.ctx, this.helpers),
       createIconAssetRoutes(this.ctx, this.helpers),
       createUploadRoutes(this.ctx, this.helpers),

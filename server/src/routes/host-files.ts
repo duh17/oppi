@@ -29,6 +29,7 @@ import {
   piFileEditTarget,
   protectedRoots,
   resolveFileEditOwner,
+  workspaceFileEditTarget,
 } from "../file-edit-owner.js";
 import { decodeWorkspaceRoutePath, getContentType } from "../file-serving-policy.js";
 import { expandExactHostPath } from "../host-file-path.js";
@@ -95,11 +96,7 @@ function editTargetFor(request: {
   path: string;
 }): FileEditTarget | null {
   if (request.originKind === "workspace" && request.origin.kind === "workspace") {
-    return {
-      workspace: request.origin.workspace,
-      root: request.origin.root,
-      requestedPath: request.path,
-    };
+    return workspaceFileEditTarget(request.origin.workspace, request.origin.root, request.path);
   }
   if (request.originKind === "skill" && request.origin.kind === "skill") {
     return { root: request.origin.root, requestedPath: request.path };
@@ -450,7 +447,8 @@ export function createHostFileRoutes(
           {
             [FILE_EDIT_CREATABLE_HEADER]: "1",
             // A missing file has no canonical path: the origin that offers to
-            // create it (only Pi's own files) is the one that writes it.
+            // create it (Pi's own files, a checkout's pane layouts) is the one
+            // that writes it.
             ...(asksForEditOrigin(req) && request.origin.kind === "pi"
               ? {
                   [FILE_EDIT_ORIGIN_HEADER]: fileEditOriginQuery({

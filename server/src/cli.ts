@@ -1409,6 +1409,11 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
   if (rejectUnsupportedFlags(parsed)) return;
   if (rejectValuelessDataDir(command, flags)) return;
 
+  if (command === "layout") {
+    const { cmdLayout } = await import("./cli/commands/layout.js");
+    cmdLayout(positional[0], positional.slice(1), flags, process.cwd());
+    return;
+  }
   // These commands run before Storage to avoid creating default config prematurely
   if (command === "init") {
     await cmdInit(flags);

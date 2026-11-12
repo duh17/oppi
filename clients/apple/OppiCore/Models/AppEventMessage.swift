@@ -25,6 +25,8 @@ enum AppEventMessage: Sendable, Equatable {
     case extensionUINotification(notification: ExtensionUINotification, sessionId: String, workspaceId: String?, emittedAt: Int64)
 
     case workspaceGitChanged(workspaceId: String, worktreeId: String?, emittedAt: Int64, sessionId: String?, reason: String?)
+    /// A layouts folder of the workspace changed (`GET /workspaces/{id}/layouts` is stale).
+    case workspaceLayoutsChanged(workspaceId: String, emittedAt: Int64)
 
     case pairingApprovalRequested(emittedAt: Int64, approval: PendingPairingApproval)
     case pairingApprovalSettled(emittedAt: Int64, approvalId: String, outcome: PairingApprovalSettlement)
@@ -167,6 +169,12 @@ extension AppEventMessage: Decodable {
                 emittedAt: try c.decode(Int64.self, forKey: .emittedAt),
                 sessionId: try c.decodeIfPresent(String.self, forKey: .sessionId),
                 reason: try c.decodeIfPresent(String.self, forKey: .reason)
+            )
+
+        case "workspace_layouts_changed":
+            self = .workspaceLayoutsChanged(
+                workspaceId: try c.decode(String.self, forKey: .workspaceId),
+                emittedAt: try c.decode(Int64.self, forKey: .emittedAt)
             )
 
         case "pairing_approval_requested":

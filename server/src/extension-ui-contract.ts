@@ -72,6 +72,11 @@ export const EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY = "extension-native-ui:v2:blo
  * send time; it draws a pill's `headline` at a card title's size, so it is sent `caption` instead.
  */
 export const EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY = "extension-native-ui:v2:elapsed";
+/**
+ * Pane layouts: the client draws a `layout_proposal` as a card. Declared in the same
+ * `client_capabilities` list; a socket that has not named it is never sent one.
+ */
+export const PANE_LAYOUTS_CLIENT_CAPABILITY = "pane-layouts:v1";
 export const EXTENSION_NATIVE_UI_SERVER_CAPABILITIES = [
   EXTENSION_NATIVE_UI_TEXT_FALLBACK_CAPABILITY,
   EXTENSION_NATIVE_UI_PROMPT_NATIVE_CAPABILITY,

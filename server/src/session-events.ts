@@ -4,6 +4,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { ExtensionUIState } from "./extension-ui-state.js";
 import { gitTrustForWorkspace } from "./git-safe.js";
 import { getGitStatus } from "./git-status.js";
+import { LayoutFiles } from "./layout-files.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import {
@@ -138,6 +139,8 @@ export interface EventProcessorSessionState extends ExtensionUIState {
   turnToolCallCount?: number;
   /** In-flight tool starts keyed by toolCallId so concurrent calls pair correctly. */
   inflightToolStarts?: Map<string, { startedAt: number; toolName?: string }>;
+  /** Running tracked writes and edits whose paths name a layouts folder, by toolCallId. */
+  layoutWrites?: Map<string, { toolName: unknown; args: unknown }>;
   /** Timestamp (ms) when auto-compaction started (for duration tracking). */
   compactionStartedAt?: number;
   /** Authoritative context usage at the start of the active turn/estimate window. */
@@ -162,6 +165,8 @@ export interface SessionEventProcessorDeps {
   recordUserMessagesFromEvents?: boolean;
   /** Called when an event changes the session's program status. */
   onProgramStatusChange?: ProgramStatusChangeListener;
+  /** Layout files, for the cards a tracked write in a layouts folder makes. */
+  getLayoutFiles?: () => LayoutFiles | null;
 }
 
 export class SessionEventProcessor {
@@ -301,12 +306,18 @@ export class SessionEventProcessor {
             startedAt: Date.now(),
             toolName: sanitizeToolName(event.toolName),
           });
+          // The end event may not carry the arguments, so a layouts write is noted here.
+          if (LayoutFiles.mayTouchLayouts(event.toolName, event.args)) {
+            active.layoutWrites ??= new Map();
+            active.layoutWrites.set(toolCallId, { toolName: event.toolName, args: event.args });
+          }
         }
         break;
       }
 
       case "tool_execution_end": {
         this.maybeEmitGitStatus(key, session, event.toolName);
+        this.maybeProposeLayouts(key, active, event);
         this.addEstimatedContextChars(key, active, estimateToolResultChars(event.result));
         if (metrics) {
           const toolCallId =
@@ -539,6 +550,37 @@ export class SessionEventProcessor {
     active.contextUsageLastBroadcastTokens = estimatedTokens;
     this.deps.broadcast(key, { type: "state", session: active.session });
     this.deps.markSessionDirty(key);
+  }
+
+  /**
+   * After a tracked write or edit of a layouts file ends without an error, send the session's
+   * clients a `layout_proposal` for each file it left. Read after the call, never blocking it.
+   */
+  private maybeProposeLayouts(
+    key: string,
+    active: EventProcessorSessionState,
+    event: Extract<AgentSessionEvent, { type: "tool_execution_end" }>,
+  ): void {
+    const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : undefined;
+    const write = toolCallId ? active.layoutWrites?.get(toolCallId) : undefined;
+    if (!toolCallId || !write) return;
+    active.layoutWrites?.delete(toolCallId);
+    const layoutFiles = this.deps.getLayoutFiles?.();
+    if (!layoutFiles || event.isError === true) return;
+    const session = active.session;
+    layoutFiles
+      .proposalsForToolCall(session, toolCallId, write.toolName, write.args)
+      .then((proposals) => {
+        for (const proposal of proposals) {
+          this.deps.broadcast(key, { type: "layout_proposal", ...proposal });
+        }
+      })
+      .catch((error: unknown) => {
+        log.warn("session_events.layout_proposal_failed", {
+          sessionId: session.id,
+          error: safeErrorMessage(error),
+        });
+      });
   }
 
   /**

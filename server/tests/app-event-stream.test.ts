@@ -122,6 +122,7 @@ describe("AppEventMessage protocol", () => {
       "extension_ui_settled",
       "extension_ui_notification",
       "workspace_git_changed",
+      "workspace_layouts_changed",
       "pairing_approval_requested",
       "pairing_approval_settled",
     ]);

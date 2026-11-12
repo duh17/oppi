@@ -72,6 +72,10 @@ extension ServerConnection {
             invalidateWorkspaceCaches(workspaceId: workspaceId, worktreeId: worktreeId)
             refreshWorkspaceSidebarGitSummary(workspaceId: workspaceId, worktreeId: worktreeId)
 
+        case .workspaceLayoutsChanged:
+            // No screen lists layouts yet; the Layouts list that reads the route owns this event.
+            break
+
         case .pairingApprovalRequested(_, let approval):
             pairingApprovals.upsert(approval)
 

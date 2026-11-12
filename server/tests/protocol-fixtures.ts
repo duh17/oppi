@@ -675,6 +675,76 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     },
   },
 
+  // Pane layouts
+  layout_proposal: {
+    type: "layout_proposal",
+    toolCallId: "toolu_layout_1",
+    workspaceId: "ws-1",
+    worktreeId: "main",
+    checkout: "Main checkout",
+    name: "review",
+    path: ".oppi/layouts/review.json",
+    file: {
+      state: "valid",
+      hash: "sha256-6c8b2a4f1e0d3c5b7a9e8d6c4b2a0f1e3d5c7b9a8e6d4c2b0a1f3e5d7c9b8a6e",
+      layout: {
+        v: 1,
+        title: "Review auth fix",
+        root: {
+          split: "row",
+          weights: [0.42, 0.58],
+          children: [
+            { pane: "chat", chat: "self" },
+            {
+              split: "column",
+              children: [
+                { pane: "agents", panel: "widget:subagents" },
+                {
+                  pane: "code",
+                  name: "Device auth",
+                  file: "server/src/storage/device-auth.ts",
+                  line: 208,
+                },
+              ],
+            },
+          ],
+        },
+        focus: "chat",
+      },
+      warnings: [
+        {
+          code: "unknownField",
+          path: "root.children[1].children[1].syntax",
+          message: "unknown field, ignored",
+        },
+      ],
+    },
+    sessionId: "test-session-1",
+  },
+  layout_proposal_problem: {
+    type: "layout_proposal",
+    toolCallId: "toolu_layout_2",
+    workspaceId: "ws-1",
+    worktreeId: "wt_feature-auth-1a2b3c4d",
+    checkout: "feature/auth",
+    name: "broken",
+    path: ".oppi/layouts/broken.json",
+    file: {
+      state: "invalid",
+      hash: "sha256-0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+      problems: [
+        {
+          code: "children",
+          path: "root",
+          message: "a split needs 2 to 8 children, found 1",
+        },
+      ],
+      warnings: [],
+    },
+    changed: true,
+    sessionId: "test-session-1",
+  },
+
   // Continuous voice control
   voice_call_state: {
     type: "voice_call_state",
@@ -928,6 +998,8 @@ const SERVER_MESSAGE_ORDER = [
   "extension_ui_surface",
   "extension_ui_patch",
   "git_status",
+  "layout_proposal",
+  "layout_proposal_problem",
   "voice_call_state",
   "voice_delegation_update",
   "dictation_ready",
@@ -1107,6 +1179,11 @@ const APP_EVENT_CANONICAL_EXAMPLES = {
     emittedAt: appEventEmittedAt,
     reason: "mutation_tool",
   },
+  workspace_layouts_changed: {
+    type: "workspace_layouts_changed",
+    workspaceId: "ws-1",
+    emittedAt: appEventEmittedAt,
+  },
   pairing_approval_requested: {
     type: "pairing_approval_requested",
     emittedAt: appEventEmittedAt,
@@ -1197,6 +1274,7 @@ const APP_EVENT_MESSAGE_ORDER = [
   "extension_ui_settled",
   "extension_ui_notification",
   "workspace_git_changed",
+  "workspace_layouts_changed",
   "pairing_approval_requested",
   "pairing_approval_settled",
 ] as const satisfies readonly (

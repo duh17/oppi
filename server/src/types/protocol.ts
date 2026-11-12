@@ -4,6 +4,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { PairingMethod } from "./config.js";
 import type { GitStatus } from "./git.js";
+import type { LayoutProposal } from "./layout.js";
 import type { Session, SessionSummary } from "./session.js";
 import type { StyledSegment } from "./shared.js";
 import type { StreamAuthRenewResultMessage } from "./stream-auth-renewal.js";
@@ -938,6 +939,11 @@ export type AppEventMessage =
       reason?: string;
     })
   | (AppEventBase & {
+      /** A layouts folder of this workspace changed: re-read `GET /workspaces/{id}/layouts`. */
+      type: "workspace_layouts_changed";
+      workspaceId: string;
+    })
+  | (AppEventBase & {
       type: "pairing_approval_requested";
       approval: PendingPairingApproval;
     })
@@ -1204,6 +1210,9 @@ export type ServerMessage =
         worktreeId?: string;
         status: GitStatus;
       }
+    // ── Pane layouts (only to sockets that declared `pane-layouts:v1`) ──
+    /** A tracked `write`/`edit` of this session left a file in a layouts folder. */
+    | ({ type: "layout_proposal" } & LayoutProposal)
     // ── Continuous voice control ──
     | ({ type: "voice_call_state" } & VoiceCallStateSnapshot)
     | VoiceDelegationUpdateMessage

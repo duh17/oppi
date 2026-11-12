@@ -575,13 +575,82 @@ describe("PUT /files/current?origin=workspace", () => {
     expect(editTemps(fixture.hostRoot)).toEqual([]);
   });
 
-  it("never creates a workspace file, on either precondition", async () => {
+  it("creates a pane layout and its folders, once, and no other workspace file", async () => {
+    const fixture = seed();
+    const layout = Buffer.from(
+      '{"v":1,"title":"Review","root":{"pane":"chat","chat":"self"},"focus":"chat"}\n',
+    );
+
+    const base = await currentFile(
+      fixture,
+      "GET",
+      `/files/current?${query(workspaceQuery(fixture, ".oppi/layouts/review.json"))}`,
+    );
+    expect(base.statusCode).toBe(200);
+    expect(base.headers["X-Oppi-Creatable"]).toBe("1");
+    expect(readdirSync(fixture.hostRoot)).not.toContain(".oppi");
+
+    const created = await putCurrent(
+      fixture,
+      workspaceQuery(fixture, ".oppi/layouts/review.json"),
+      layout,
+      { "if-none-match": "*" },
+    );
+    expect(created.statusCode).toBe(200);
+    expect(
+      readFileSync(join(fixture.hostRoot, ".oppi", "layouts", "review.json")).equals(layout),
+    ).toBe(true);
+    expect(editTemps(join(fixture.hostRoot, ".oppi", "layouts"))).toEqual([]);
+
+    // A second create of the same name is a conflict, not an overwrite.
+    const again = await putCurrent(
+      fixture,
+      workspaceQuery(fixture, ".oppi/layouts/review.json"),
+      Buffer.from("{}\n"),
+      { "if-none-match": "*" },
+    );
+    expect(again.statusCode).toBe(412);
+
+    // Only `<checkout>/.oppi/layouts/<name>.json`, with a layout file's name.
+    for (const path of [
+      ".oppi/notes.json",
+      ".oppi/layouts/Other.json",
+      ".oppi/layouts/review.md",
+      ".oppi/layouts/deeper/review.json",
+      "sub/.oppi/layouts/review.json",
+    ]) {
+      const refused = await putCurrent(fixture, workspaceQuery(fixture, path), layout, {
+        "if-none-match": "*",
+      });
+      expect(refused.statusCode, path).toBe(404);
+    }
+    expect(readdirSync(join(fixture.hostRoot, ".oppi"))).toEqual(["layouts"]);
+    expect(readdirSync(join(fixture.hostRoot, ".oppi", "layouts"))).toEqual(["review.json"]);
+    expect(readdirSync(join(fixture.hostRoot, "sub"))).toEqual(["nested.md"]);
+  });
+
+  it("never creates a layout through a linked .oppi folder", async () => {
+    const fixture = seed();
+    const elsewhere = tempRoot("oppi-edit-elsewhere-");
+    symlinkSync(elsewhere, join(fixture.hostRoot, ".oppi"));
+
+    const refused = await putCurrent(
+      fixture,
+      workspaceQuery(fixture, ".oppi/layouts/review.json"),
+      Buffer.from("{}\n"),
+      { "if-none-match": "*" },
+    );
+    expect(refused.statusCode).toBe(404);
+    expect(readdirSync(elsewhere)).toEqual([]);
+  });
+
+  it("never creates any other workspace file, on either precondition", async () => {
     const fixture = seed();
     const target = join(fixture.hostRoot, "README.md");
     const original = readFileSync(target);
 
-    // `If-None-Match: *` is the create precondition, and a workspace file is
-    // never created: the file is not there, so there is nothing to write.
+    // `If-None-Match: *` is the create precondition, and an ordinary workspace
+    // file is never created: the file is not there, so there is nothing to write.
     const absent = await putCurrent(
       fixture,
       workspaceQuery(fixture, "created.md"),

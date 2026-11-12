@@ -148,6 +148,40 @@ struct AudioStreamMessage: Sendable, Equatable {
     let playbackBehavior: AudioPlaybackBehavior?
 }
 
+/// One problem or warning in a pane layout document (`docs/layouts.md`).
+struct LayoutIssue: Codable, Sendable, Equatable {
+    let code: String
+    let path: String
+    let message: String
+}
+
+/// A layout file as the server read it. `state` is `valid`, `invalid`, `newer`, or `missing`; the
+/// document stays JSON here, and the typed leaves are read where a layout opens.
+struct LayoutFileState: Codable, Sendable, Equatable {
+    let state: String
+    var hash: String?
+    var layout: JSONValue?
+    var warnings: [LayoutIssue]?
+    var problems: [LayoutIssue]?
+    /// The file's version when it is newer than the server reads.
+    var v: Int?
+    var title: String?
+}
+
+/// A layouts file a session's tracked `write` or `edit` left (`layout_proposal`). Sent only to a
+/// client that declares `pane-layouts:v1`.
+struct LayoutProposal: Codable, Sendable, Equatable {
+    let toolCallId: String
+    let workspaceId: String
+    let worktreeId: String
+    let checkout: String
+    let name: String
+    let path: String
+    let file: LayoutFileState
+    /// The file no longer holds what this tool call left.
+    var changed: Bool?
+}
+
 enum ServerMessage: Sendable, Equatable {
     // Connection lifecycle
     case streamConnected(userName: String, serverDictationAvailable: Bool)
@@ -215,6 +249,9 @@ enum ServerMessage: Sendable, Equatable {
 
     // Git status (workspace/worktree-level, pushed after file-mutating tool calls)
     case gitStatus(workspaceId: String, worktreeId: String?, status: GitStatus)
+
+    // Pane layouts
+    case layoutProposal(LayoutProposal)
 
     // Continuous voice control
     case voiceCallState(VoiceCallStateSnapshot)
@@ -694,6 +731,9 @@ extension ServerMessage: Decodable {
             let status = try c.decode(GitStatus.self, forKey: .status)
             self = .gitStatus(workspaceId: workspaceId, worktreeId: worktreeId, status: status)
 
+        case "layout_proposal":
+            self = .layoutProposal(try LayoutProposal(from: decoder))
+
         // ── Continuous voice control ──
         case "voice_call_state":
             self = .voiceCallState(
@@ -915,6 +955,7 @@ extension ServerMessage {
         case .extensionUISurface: "extensionUISurface"
         case .extensionUIPatch: "extensionUIPatch"
         case .gitStatus: "gitStatus"
+        case .layoutProposal: "layoutProposal"
         case .voiceCallState: "voiceCallState"
         case .voiceDelegationUpdate: "voiceDelegationUpdate"
         case .dictationReady: "dictationReady"

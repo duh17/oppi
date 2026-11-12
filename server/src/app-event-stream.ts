@@ -48,6 +48,7 @@ export const APP_EVENT_ALLOWED_TYPES = [
   "extension_ui_settled",
   "extension_ui_notification",
   "workspace_git_changed",
+  "workspace_layouts_changed",
   "pairing_approval_requested",
   "pairing_approval_settled",
 ] as const satisfies readonly AppEventMessage["type"][];
@@ -305,6 +306,11 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
       return;
     }
     this.emitSessionSummary(session);
+  }
+
+  /** A layouts folder of this workspace changed; clients read the list again. */
+  emitWorkspaceLayoutsChanged(workspaceId: string): void {
+    this.emit({ type: "workspace_layouts_changed", emittedAt: this.now(), workspaceId });
   }
 
   emitPairingApprovalRequested(approval: PendingPairingApproval): void {

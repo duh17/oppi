@@ -17,6 +17,7 @@ The docs have two tracks: **daily use** and **extension authoring**. Pi owns the
 - [Document viewers](document-viewers.md): viewers, wiki links, Org files, EPUB books, file editing
 - [Provider quotas](provider-quotas.md): remaining quota and pace
 - [Deep links](deeplinks.md): `oppi://` links
+- [Pane layouts](layouts.md): layout files and `oppi-layout` blocks that arrange panes, for agents and people
 - [Support](support.md) and [Privacy](privacy.md)
 - [Screenshots](https://github.com/duh17/oppi/tree/main/docs/demo)
 

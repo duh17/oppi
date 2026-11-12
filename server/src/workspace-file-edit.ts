@@ -16,7 +16,9 @@
  * (`createsIn`), and only on `If-None-Match: *`: the bytes are written and
  * fsynced to a temp beside the target and then `link`ed into place, so the
  * final name never holds a partial document and a file another writer created
- * first is a 412. A workspace file and a Skill file never create.
+ * first is a 412. Pi's own allowlisted files and a workspace checkout's pane
+ * layouts (`.oppi/layouts/<name>.json`) create; no other workspace file and no
+ * Skill file does.
  *
  * Residual race, same-user only: `O_NOFOLLOW` and the containment checks cover
  * the path this request resolves, not a parent directory swapped for a link
@@ -46,7 +48,7 @@ export const WORKSPACE_FILE_EDIT_MAX_BYTES = MAX_WORKSPACE_FILE_EDIT_BYTES;
 /**
  * Response header on the editor's read of a file that does not exist yet: the
  * body is empty, there is no ETag, and a `PUT` with `If-None-Match: *` creates
- * it. Only Pi's own allowlisted files answer it.
+ * it. Only Pi's own allowlisted files and a checkout's pane layouts answer it.
  */
 export const FILE_EDIT_CREATABLE_HEADER = "X-Oppi-Creatable";
 
@@ -79,13 +81,14 @@ export type FileEditInspection =
   /**
    * The file does not exist, and this target may create it: the parent is the
    * real directory the target names, so a first save can put the file there.
-   * `createDirectory` means that directory is `prompts/` itself, absent today.
+   * `createDirectories` are the parent's missing directories, outermost first,
+   * made with the file (`prompts/`, or `.oppi/` and `.oppi/layouts/`).
    */
   | {
       kind: "creatable";
       createPath: string;
       parentReal: string;
-      createDirectory: boolean;
+      createDirectories: string[];
       realRoot: string;
     }
   | { kind: "not-found" }
@@ -117,10 +120,10 @@ export interface FileEditTarget {
   allowsFile?: (file: { mode: number; nlink: number }) => boolean;
   /**
    * Whether a *missing* file may be created, asked about the parent directory
-   * (root-relative, `""` for the root itself). Absent means this target never
-   * creates: a workspace file and a Skill file only ever overwrite.
+   * (root-relative, `""` for the root itself) and the file's name. Absent means
+   * this target never creates: a Skill file only ever overwrites.
    */
-  createsIn?: (parentRelativeToRealRoot: string) => boolean;
+  createsIn?: (parentRelativeToRealRoot: string, fileName: string) => boolean;
 }
 
 function isSandboxed(target: { workspace?: Workspace }): boolean {
@@ -255,9 +258,10 @@ function inspectionError(inspection: FileEditInspection): PutEditedFileResult | 
 /**
  * A missing file. Only a target that names where its files may appear creates
  * one, and only inside the real directory that would hold it: the parent is
- * built from the real root, so a link anywhere is refused before anything is
- * created. A missing `prompts/` is created with the first template; a deeper
- * missing directory is not.
+ * built from the real root one directory at a time, so a link anywhere on the
+ * way is refused before anything is created. The directories of the parent the
+ * target names that are missing (`prompts/`, or `.oppi/` and `.oppi/layouts/`)
+ * are created with the first file.
  */
 async function inspectCreatable(
   input: FileEditTarget,
@@ -268,25 +272,29 @@ async function inspectCreatable(
   const requested = requestedPath.replaceAll("\\", "/");
   const parent = dirname(requested);
   const parentRelative = parent === "." || parent === "" ? "" : parent;
-  if (!input.createsIn(parentRelative)) return { kind: "not-found" };
+  if (!input.createsIn(parentRelative, basename(requested))) return { kind: "not-found" };
 
-  const parentPath = parentRelative ? join(realRoot, parentRelative) : realRoot;
-  const createPath = join(parentPath, basename(requested));
-  let parentLst: Awaited<ReturnType<typeof fs.lstat>>;
-  try {
-    parentLst = await fs.lstat(parentPath);
-  } catch (error: unknown) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT" || parentRelative === "") return { kind: "not-found" };
-    return {
-      kind: "creatable",
-      createPath,
-      parentReal: parentPath,
-      createDirectory: true,
-      realRoot,
-    };
+  let current = realRoot;
+  const createDirectories: string[] = [];
+  for (const segment of parentRelative ? parentRelative.split("/") : []) {
+    current = join(current, segment);
+    if (createDirectories.length > 0) {
+      createDirectories.push(current);
+      continue;
+    }
+    try {
+      const lst = await fs.lstat(current);
+      if (lst.isSymbolicLink() || !lst.isDirectory()) return { kind: "not-found" };
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return { kind: "not-found" };
+      createDirectories.push(current);
+    }
   }
-  if (parentLst.isSymbolicLink() || !parentLst.isDirectory()) return { kind: "not-found" };
+  const parentPath = current;
+  const createPath = join(parentPath, basename(requested));
+  if (createDirectories.length > 0) {
+    return { kind: "creatable", createPath, parentReal: parentPath, createDirectories, realRoot };
+  }
   let parentReal: string;
   try {
     parentReal = await fs.realpath(parentPath);
@@ -296,7 +304,7 @@ async function inspectCreatable(
   if (parentReal !== parentPath || !isPathWithinRoot(parentReal, realRoot)) {
     return { kind: "not-found" };
   }
-  return { kind: "creatable", createPath, parentReal, createDirectory: false, realRoot };
+  return { kind: "creatable", createPath, parentReal, createDirectories: [], realRoot };
 }
 
 /**
@@ -668,10 +676,11 @@ async function createEditedFile(
 ): Promise<PutEditedFileResult> {
   const { creatable, bytes } = input;
   const parentReal = creatable.parentReal;
-  let madeDirectory = false;
-  if (creatable.createDirectory) {
+  // Outermost first, each one proven real before the next is made inside it.
+  for (const directory of creatable.createDirectories) {
+    let madeDirectory = false;
     try {
-      await fs.mkdir(parentReal, { mode: NEW_DIRECTORY_MODE });
+      await fs.mkdir(directory, { mode: NEW_DIRECTORY_MODE });
       madeDirectory = true;
     } catch (error: unknown) {
       // Someone else made it meanwhile: it still has to be the real directory.
@@ -680,11 +689,11 @@ async function createEditedFile(
       }
     }
     try {
-      const lst = await fs.lstat(parentReal);
+      const lst = await fs.lstat(directory);
       if (lst.isSymbolicLink() || !lst.isDirectory()) {
         return { kind: "error", status: 404, message: "File not found" };
       }
-      if ((await fs.realpath(parentReal)) !== parentReal) {
+      if ((await fs.realpath(directory)) !== directory) {
         return { kind: "error", status: 404, message: "File not found" };
       }
     } catch {
@@ -693,7 +702,7 @@ async function createEditedFile(
     // The new directory is itself an entry in its parent, and needs the same
     // sync the file's name gets: without it a power loss can keep the file and
     // lose the directory that holds it.
-    if (madeDirectory) await syncDirectory(dirname(parentReal));
+    if (madeDirectory) await syncDirectory(dirname(directory));
   }
 
   // The temp is written and fsynced beside the target, then linked into place:

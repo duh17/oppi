@@ -35,6 +35,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { isWorkspaceEditorTextPath } from "./file-serving-policy.js";
+import { LAYOUT_FILE_NAME, LAYOUTS_FOLDER } from "./layout-validation.js";
 import { canonicalRealPath, isPathWithinRoot } from "./path-utils.js";
 import { piAgentCreatesIn, piAgentEditablePath } from "./pi-agent-files.js";
 import { workspaceMountRoot } from "./session-work-root.js";
@@ -505,7 +506,7 @@ export function fileEditTargetForOwner(
 ): FileEditTarget | null {
   switch (owner.kind) {
     case "workspace":
-      return { workspace: owner.workspace, root: owner.root, requestedPath: owner.path };
+      return workspaceFileEditTarget(owner.workspace, owner.root, owner.path);
     case "skill":
       return { root: owner.root, requestedPath: owner.path };
     case "pi":
@@ -517,7 +518,26 @@ export function fileEditTargetForOwner(
   }
 }
 
-/** Pi's agent directory: the allowlist again after symlinks, and the one place a file is created. */
+/**
+ * A file in a workspace checkout (its mount or a worktree). The one kind of file it creates is a
+ * pane layout, `.oppi/layouts/<name>.json` at the checkout's top, where Save Layout… puts a new
+ * one; the folders are made with it. Every other workspace file only ever overwrites.
+ */
+export function workspaceFileEditTarget(
+  workspace: Workspace,
+  root: string,
+  path: string,
+): FileEditTarget {
+  return {
+    workspace,
+    root,
+    requestedPath: path,
+    createsIn: (parentRelativeToRealRoot, fileName) =>
+      parentRelativeToRealRoot === LAYOUTS_FOLDER && LAYOUT_FILE_NAME.test(fileName),
+  };
+}
+
+/** Pi's agent directory: the allowlist again after symlinks, and where its files are created. */
 export function piFileEditTarget(agentDir: string, path: string): FileEditTarget {
   return {
     root: agentDir,

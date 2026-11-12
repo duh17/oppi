@@ -40,7 +40,7 @@ Part of [Oppi server architecture](../architecture-server.md).
 - `PUT ?origin=host` is owner or `at_` device only, 403 for a refused file, and 409 when a narrower origin owns it; the refusal list and `allowsHostFile` are rechecked on every inspection.
 
 - Workspace-, skill-, and pi-origin reads advertise a strong `ETag` of the exact bytes. `origin=skill` resolves through `ServerResourceService.skillEditRoot` (editable Skills only, a single-file Skill limited to its file). `origin=pi` is allowlisted in `pi-agent-files.ts` (`SYSTEM.md`, `prompts/*.md`), re-checked on the canonical path so a link cannot reach another agent file.
-- A missing allowlisted pi file answers an empty body, no `ETag`, and `X-Oppi-Creatable: 1`; one `PUT` with `If-None-Match: *` creates it via an fsynced temp `link`ed into place (a file that appeared first is 412). Workspace and Skill files are never created.
+- A missing allowlisted pi file answers an empty body, no `ETag`, and `X-Oppi-Creatable: 1`; one `PUT` with `If-None-Match: *` creates it via an fsynced temp `link`ed into place (a file that appeared first is 412). Workspace pane layouts (`.oppi/layouts/*.json`) create too; other files never do.
 - Writes serialize per canonical file in-process only. The last recheck proves the target tag and the temp's inode and bytes, then renames by path; a same-host writer that swaps the temp after that check can still win (an accepted race, like an agent or git writing during the save). A 200 means "the editor's bytes were renamed into place", not a no-clobber guarantee.
 
 ## WebSocket upgrades

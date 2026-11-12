@@ -759,4 +759,63 @@ describe("SessionEventProcessor program status", () => {
     send({ type: "compaction_end", reason: "threshold", aborted: false, willRetry: false });
     expect(active.session.programStatus?.state).toBe("idle");
   });
+
+  it("sends a layout card after a tracked write to a layouts folder ends, and for nothing else", async () => {
+    const broadcast = vi.fn();
+    const proposalsForToolCall = vi.fn(async (_session: Session, toolCallId: string) => [
+      {
+        toolCallId,
+        workspaceId: "ws-1",
+        worktreeId: "main",
+        checkout: "Main checkout",
+        name: "review",
+        path: ".oppi/layouts/review.json",
+        file: { state: "missing" as const },
+      },
+    ]);
+    const processor = new SessionEventProcessor({
+      mobileRenderers: new MobileRendererRegistry(),
+      storage: {} as never,
+      broadcast,
+      persistSessionNow: vi.fn(),
+      markSessionDirty: vi.fn(),
+      getLayoutFiles: () => ({ proposalsForToolCall }) as never,
+    });
+    const active = makeActiveSession(makeSession("sess-1"));
+    const call = (toolCallId: string, toolName: string, args: unknown, isError = false): void => {
+      processor.updateSessionFromEvent("sess-1", active, {
+        type: "tool_execution_start",
+        toolCallId,
+        toolName,
+        args,
+      } as never);
+      // The end event carries no arguments, as Pi's does not.
+      processor.updateSessionFromEvent("sess-1", active, {
+        type: "tool_execution_end",
+        toolCallId,
+        toolName,
+        result: { content: [] },
+        isError,
+      } as never);
+    };
+
+    call("write-1", "write", { path: ".oppi/layouts/review.json", content: "{}" });
+    call("edit-1", "edit", {
+      path: "/repo/.oppi/layouts/review.json",
+      edits: [{ oldText: "a", newText: "b" }],
+    });
+    call("bash-1", "bash", { command: "cat > .oppi/layouts/review.json" });
+    call("write-2", "write", { path: "src/review.json", content: "{}" });
+    call("write-3", "write", { path: ".oppi/layouts/review.json", content: "{}" }, true);
+    await vi.waitFor(() => expect(broadcast).toHaveBeenCalledTimes(2));
+
+    expect(proposalsForToolCall.mock.calls.map((args) => args[1])).toEqual(["write-1", "edit-1"]);
+    expect(
+      broadcast.mock.calls.map(([key, message]) => [key, message.type, message.toolCallId]),
+    ).toEqual([
+      ["sess-1", "layout_proposal", "write-1"],
+      ["sess-1", "layout_proposal", "edit-1"],
+    ]);
+    expect(active.layoutWrites?.size).toBe(0);
+  });
 });

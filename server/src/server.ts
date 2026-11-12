@@ -22,6 +22,7 @@ import { WS_CLOSE_AUTH_EXPIRED, WS_CLOSE_REASON_AUTH_EXPIRED } from "./storage/d
 import { SessionManager } from "./sessions.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
 import { AppEventStreamMux } from "./app-event-stream.js";
+import { LayoutFiles } from "./layout-files.js";
 import { BoundSessionStreamMux, DictationStreamMux } from "./stream.js";
 import { SocketAccessDeadlines, type RenewStreamAccess } from "./stream-auth-renewal.js";
 import { RouteHandler } from "./routes/index.js";
@@ -748,6 +749,7 @@ export class Server {
       events: this.appEventStreamMux,
       authModule: this.authModule,
     });
+    this.sessions.layoutFiles = new LayoutFiles(this.storage, this.appEventStreamMux);
     this.boundSessionStreamMux = new BoundSessionStreamMux(streamContext);
     this.dictationStreamMux = new DictationStreamMux(streamContext);
 

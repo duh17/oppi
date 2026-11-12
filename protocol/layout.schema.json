@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oppi.chat/schema/layout-1.json",
+  "title": "Oppi pane layout",
+  "description": "A pane layout file, .oppi/layouts/<name>.json in a workspace checkout (docs/layouts.md). Every object stays open to unknown fields: a reader ignores them, and a leaf with no known content field is a leaf of a newer kind. Limits a schema cannot state: at most 16 KiB, at most 8 leaves, splits at most 3 deep, pane ids unique, focus naming a leaf, one weight per child, no '..' in a file path, and no loopback host in a web URL. Titles and names are counted after control and bidirectional formatting characters are removed.",
+  "type": "object",
+  "required": ["v", "title", "root", "focus"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "v": {
+      "description": "Layout version: this schema is version 1. A reader that knows only a lower version lists the file as needing a newer Oppi and never opens it.",
+      "const": 1
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "root": { "$ref": "#/$defs/node" },
+    "focus": {
+      "description": "The pane of the leaf that takes focus when the layout opens.",
+      "$ref": "#/$defs/paneId"
+    }
+  },
+  "$defs": {
+    "paneId": { "type": "string", "pattern": "^[a-z0-9-]{1,24}$" },
+    "reference": {
+      "description": "A session id or a surface id: printable ASCII, no spaces.",
+      "type": "string",
+      "pattern": "^[!-~]{1,128}$"
+    },
+    "node": {
+      "oneOf": [{ "$ref": "#/$defs/split" }, { "$ref": "#/$defs/leaf" }]
+    },
+    "split": {
+      "type": "object",
+      "required": ["split", "children"],
+      "properties": {
+        "split": {
+          "description": "row lays children out left to right, column top to bottom.",
+          "enum": ["row", "column"]
+        },
+        "children": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/node" }
+        },
+        "weights": {
+          "description": "One positive share per child; equal shares when absent.",
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 8,
+          "items": { "type": "number", "exclusiveMinimum": 0 }
+        }
+      }
+    },
+    "leaf": {
+      "type": "object",
+      "required": ["pane"],
+      "not": { "required": ["split"] },
+      "properties": {
+        "pane": { "$ref": "#/$defs/paneId" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 24 },
+        "chat": {
+          "description": "\"self\" (the chat the layout opens from) or a session id.",
+          "anyOf": [{ "const": "self" }, { "$ref": "#/$defs/reference" }]
+        },
+        "file": {
+          "description": "A path relative to the checkout, or an absolute path (which ties the layout to one machine).",
+          "type": "string",
+          "minLength": 1,
+          "not": { "pattern": "(^|[/\\\\])\\.\\.([/\\\\]|$)|^~" }
+        },
+        "line": { "type": "integer", "minimum": 1 },
+        "panel": {
+          "description": "An extension surface id, like widget:subagents.",
+          "$ref": "#/$defs/reference"
+        },
+        "session": {
+          "description": "The session whose panel this is; \"self\" when absent.",
+          "anyOf": [{ "const": "self" }, { "$ref": "#/$defs/reference" }]
+        },
+        "git": {
+          "description": "\"status\" or a commit sha.",
+          "anyOf": [{ "const": "status" }, { "type": "string", "pattern": "^[0-9a-f]{7,64}$" }]
+        },
+        "web": {
+          "description": "An http or https URL with no user name or password, on a host other than loopback.",
+          "type": "string",
+          "pattern": "^[hH][tT][tT][pP][sS]?://[^/?#@]+([/?#]|$)",
+          "maxLength": 2048
+        },
+        "terminal": {
+          "description": "Exactly one of rex (a block), hc (a terminal), or ssh (a saved host).",
+          "type": "object",
+          "minProperties": 1,
+          "oneOf": [
+            { "required": ["rex"], "not": { "anyOf": [{ "required": ["hc"] }, { "required": ["ssh"] }] } },
+            { "required": ["hc"], "not": { "anyOf": [{ "required": ["rex"] }, { "required": ["ssh"] }] } },
+            { "required": ["ssh"], "not": { "anyOf": [{ "required": ["rex"] }, { "required": ["hc"] }] } }
+          ],
+          "properties": {
+            "rex": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "hc": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "ssh": { "type": "string", "minLength": 1, "maxLength": 128 }
+          }
+        }
+      },
+      "dependentRequired": { "line": ["file"], "session": ["panel"] },
+      "oneOf": [
+        { "required": ["chat"], "not": { "anyOf": [{ "required": ["file"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["web"] }, { "required": ["terminal"] }] } },
+        { "required": ["file"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["web"] }, { "required": ["terminal"] }] } },
+        { "required": ["panel"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["git"] }, { "required": ["web"] }, { "required": ["terminal"] }] } },
+        { "required": ["git"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["panel"] }, { "required": ["web"] }, { "required": ["terminal"] }] } },
+        { "required": ["web"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["terminal"] }] } },
+        { "required": ["terminal"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["web"] }] } },
+        {
+          "description": "A leaf of a kind a newer Oppi knows: no known content field, at least one other field.",
+          "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["web"] }, { "required": ["terminal"] }] },
+          "allOf": [{ "not": { "propertyNames": { "enum": ["pane", "name", "line", "session"] } } }]
+        }
+      ]
+    }
+  }
+}

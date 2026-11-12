@@ -5,6 +5,7 @@ import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import type { ProgramStatusChangeListener } from "./program-status.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
+import type { LayoutFiles } from "./layout-files.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import {
   SessionAgentEventCoordinator,
@@ -69,6 +70,7 @@ export interface SessionCoordinatorBundleDeps {
   getContextWindowResolver: () => ((modelId: string) => number) | null;
   getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
   getNotifyPort: () => SessionNotifyPort | null;
+  getLayoutFiles?: () => LayoutFiles | null;
   emitSessionEvent: (payload: SessionBroadcastEvent) => void;
   onProgramStatusChange?: ProgramStatusChangeListener;
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
@@ -120,6 +122,7 @@ export function createSessionCoordinatorBundle(
     markSessionDirty: (key) => deps.markSessionDirty(key),
     onProgramStatusChange: deps.onProgramStatusChange,
     metrics: deps.metrics,
+    getLayoutFiles: () => deps.getLayoutFiles?.() ?? null,
   });
 
   const stopCoordinator = new SessionStopCoordinator(

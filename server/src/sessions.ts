@@ -68,6 +68,7 @@ import { notifySandboxWorkspaceActivity } from "./workspace-sandbox-lifecycle.js
 import { StartingRegistry } from "./session-starting.js";
 import type { DurableSessionNaming } from "./durable-harness.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
+import type { LayoutFiles } from "./layout-files.js";
 import { SessionSurfaces, type SessionMessageSubscriber } from "./session-surfaces.js";
 import type { ExtensionUISurfaceAudience } from "./extension-surface-runtime.js";
 import type { SurfacePublisher } from "./durable-surface.js";
@@ -118,6 +119,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   /** Injected by the server: who is offered the agent `notify` tool, and its send. */
   notifyPort: SessionNotifyPort | null = null;
+  layoutFiles: LayoutFiles | null = null;
 
   /** Injected by the server: names a Session for durable extensions (the auto-name extension). */
   sessionNaming: DurableSessionNaming | null = null;
@@ -249,6 +251,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       getContextWindowResolver: () => this.contextWindowResolver,
       getSkillPathResolver: () => this.skillPathResolver,
       getNotifyPort: () => this.notifyPort,
+      getLayoutFiles: () => this.layoutFiles,
       emitSessionEvent: (payload) => this.emit("session_event", payload),
       onProgramStatusChange: (session, change) =>
         this.emit("program_status_change", session, change),

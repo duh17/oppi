@@ -538,7 +538,7 @@ const rawApiRouteSpecs = [
     surface: "core",
     auth: "owner",
     description:
-      "Guarded write of a text file. origin=workspace, origin=skill (an editable Skill's own file), origin=pi (Pi's own agent files), or origin=host (a home file no other origin owns, outside the refusal list); requires one concrete If-Match, or If-None-Match: * to create a missing Pi agent file. A workspace, Skill, or host file is never created.",
+      "Guarded write of a text file. origin=workspace, origin=skill (an editable Skill's own file), origin=pi (Pi's own agent files), or origin=host (a home file no other origin owns, outside the refusal list); requires one concrete If-Match, or If-None-Match: * to create a missing Pi agent file or a checkout's pane layout (origin=workspace, path .oppi/layouts/<name>.json). No other workspace file, and no Skill or host file, is ever created.",
   },
   {
     method: "GET",
@@ -1128,6 +1128,25 @@ const rawApiRouteSpecs = [
     operationId: "headWorkspaceGitBlob",
     surface: "core",
     auth: "owner",
+  },
+
+  {
+    method: "GET",
+    path: "/workspaces/{workspaceId}/layouts",
+    operationId: "listWorkspaceLayouts",
+    surface: "core",
+    auth: "owner",
+    description:
+      "Pane layout files in .oppi/layouts/ of the workspace root and each worktree: name, checkout, title, leaf count, source, first problem or newer version, and hash.",
+  },
+  {
+    method: "GET",
+    path: "/workspaces/{workspaceId}/layouts/{name}",
+    operationId: "getWorkspaceLayout",
+    surface: "core",
+    auth: "owner",
+    description:
+      "One layout file, read now: the canonical document and its warnings, or its problems. worktree names the checkout (default main).",
   },
 
   {

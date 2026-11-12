@@ -23,3 +23,4 @@ export * from "./types/server-update.js";
 export type * from "./types/push.js";
 export type * from "./types/invite.js";
 export type * from "./types/mcp.js";
+export type * from "./types/layout.js";

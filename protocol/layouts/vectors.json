@@ -1,0 +1,1906 @@
+{
+  "version": 1,
+  "description": "Pane layout documents (docs/layouts.md) and what the validator makes of each: the canonical layout and its warnings, the problems that refuse it, or a newer version. Issues compare by code and path, in order; messages are each validator's own. inputText is raw JSON text, for cases a parsed value cannot show.",
+  "vectors": [
+    {
+      "name": "worked example: chat beside a panel over a file",
+      "input": {
+        "$schema": "https://oppi.chat/schema/layout-1.json",
+        "v": 1,
+        "title": "Review auth fix",
+        "root": {
+          "split": "row",
+          "weights": [
+            0.42,
+            0.58
+          ],
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "split": "column",
+              "weights": [
+                0.46,
+                0.54
+              ],
+              "children": [
+                {
+                  "pane": "agents",
+                  "panel": "widget:subagents"
+                },
+                {
+                  "pane": "code",
+                  "file": "server/src/storage/device-auth.ts",
+                  "line": 208
+                }
+              ]
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "Review auth fix",
+        "root": {
+          "split": "row",
+          "weights": [
+            0.42,
+            0.58
+          ],
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "split": "column",
+              "weights": [
+                0.46,
+                0.54
+              ],
+              "children": [
+                {
+                  "pane": "agents",
+                  "panel": "widget:subagents"
+                },
+                {
+                  "pane": "code",
+                  "file": "server/src/storage/device-auth.ts",
+                  "line": 208
+                }
+              ]
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "warnings": []
+    },
+    {
+      "name": "a lone leaf is a whole layout",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "pane": "chat",
+          "chat": "self"
+        },
+        "focus": "chat"
+      },
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "pane": "chat",
+          "chat": "self"
+        },
+        "focus": "chat"
+      },
+      "warnings": []
+    },
+    {
+      "name": "every kind of leaf, eight leaves",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "other",
+              "chat": "2f6c1a9e-4b1d-4c5e-9a7b-0d1e2f3a4b5c"
+            },
+            {
+              "pane": "code",
+              "file": "src/main.ts",
+              "line": 12,
+              "name": "Main"
+            },
+            {
+              "pane": "agents",
+              "panel": "widget:subagents",
+              "session": "self"
+            },
+            {
+              "split": "column",
+              "children": [
+                {
+                  "pane": "git",
+                  "git": "status"
+                },
+                {
+                  "pane": "commit",
+                  "git": "a1b2c3d"
+                },
+                {
+                  "pane": "docs",
+                  "web": "https://developer.apple.com/documentation/uikit"
+                },
+                {
+                  "pane": "shell",
+                  "terminal": {
+                    "rex": "build"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "other",
+              "chat": "2f6c1a9e-4b1d-4c5e-9a7b-0d1e2f3a4b5c"
+            },
+            {
+              "pane": "code",
+              "file": "src/main.ts",
+              "line": 12,
+              "name": "Main"
+            },
+            {
+              "pane": "agents",
+              "panel": "widget:subagents",
+              "session": "self"
+            },
+            {
+              "split": "column",
+              "children": [
+                {
+                  "pane": "git",
+                  "git": "status"
+                },
+                {
+                  "pane": "commit",
+                  "git": "a1b2c3d"
+                },
+                {
+                  "pane": "docs",
+                  "web": "https://developer.apple.com/documentation/uikit"
+                },
+                {
+                  "pane": "shell",
+                  "terminal": {
+                    "rex": "build"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "warnings": []
+    },
+    {
+      "name": "weights are optional",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "files",
+              "git": "status"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "files",
+              "git": "status"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "warnings": []
+    },
+    {
+      "name": "a child split on its parent's axis is allowed",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "split": "row",
+              "children": [
+                {
+                  "pane": "a",
+                  "git": "status"
+                },
+                {
+                  "pane": "b",
+                  "file": "README.md"
+                }
+              ]
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "split": "row",
+              "children": [
+                {
+                  "pane": "a",
+                  "git": "status"
+                },
+                {
+                  "pane": "b",
+                  "file": "README.md"
+                }
+              ]
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "warnings": []
+    },
+    {
+      "name": "splits three deep",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "split": "column",
+              "children": [
+                {
+                  "pane": "a",
+                  "git": "status"
+                },
+                {
+                  "split": "row",
+                  "children": [
+                    {
+                      "pane": "b",
+                      "file": "a.md"
+                    },
+                    {
+                      "pane": "c",
+                      "file": "b.md"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "split": "column",
+              "children": [
+                {
+                  "pane": "a",
+                  "git": "status"
+                },
+                {
+                  "split": "row",
+                  "children": [
+                    {
+                      "pane": "b",
+                      "file": "a.md"
+                    },
+                    {
+                      "pane": "c",
+                      "file": "b.md"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "warnings": []
+    },
+    {
+      "name": "unknown fields are ignored and dropped",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self",
+              "color": "red"
+            },
+            {
+              "split": "column",
+              "gap": 4,
+              "children": [
+                {
+                  "pane": "a",
+                  "git": "status"
+                },
+                {
+                  "pane": "b",
+                  "file": "a.md",
+                  "syntax": "swift"
+                }
+              ]
+            }
+          ]
+        },
+        "focus": "chat",
+        "theme": "dark"
+      },
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "split": "column",
+              "children": [
+                {
+                  "pane": "a",
+                  "git": "status"
+                },
+                {
+                  "pane": "b",
+                  "file": "a.md"
+                }
+              ]
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "warnings": [
+        {
+          "code": "unknownField",
+          "path": "theme"
+        },
+        {
+          "code": "unknownField",
+          "path": "root.children[0].color"
+        },
+        {
+          "code": "unknownField",
+          "path": "root.children[1].gap"
+        },
+        {
+          "code": "unknownField",
+          "path": "root.children[1].children[1].syntax"
+        }
+      ]
+    },
+    {
+      "name": "a leaf of an unknown kind keeps its fields",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "map",
+              "name": "Route",
+              "map": {
+                "lat": 47.6,
+                "lon": -122.3
+              }
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "map",
+              "name": "Route",
+              "map": {
+                "lat": 47.6,
+                "lon": -122.3
+              }
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "warnings": [
+        {
+          "code": "unknownKind",
+          "path": "root.children[1]"
+        }
+      ]
+    },
+    {
+      "name": "an absolute file path is valid with a warning",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "notes",
+              "file": "/srv/notes/plan.md"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "notes",
+              "file": "/srv/notes/plan.md"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "warnings": [
+        {
+          "code": "absolutePath",
+          "path": "root.children[1].file"
+        }
+      ]
+    },
+    {
+      "name": "bidi controls are removed from the title and names",
+      "input": {
+        "v": 1,
+        "title": "Review ⁦auth⁩ fix‏",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self",
+              "name": "‮Chat‬"
+            },
+            {
+              "pane": "a",
+              "git": "status"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "Review auth fix",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self",
+              "name": "Chat"
+            },
+            {
+              "pane": "a",
+              "git": "status"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "warnings": []
+    },
+    {
+      "name": "line breaks become spaces and controls go",
+      "input": {
+        "v": 1,
+        "title": "  Review\nauth\tfix\u0007 ",
+        "root": {
+          "pane": "chat",
+          "chat": "self"
+        },
+        "focus": "chat"
+      },
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "Review auth fix",
+        "root": {
+          "pane": "chat",
+          "chat": "self"
+        },
+        "focus": "chat"
+      },
+      "warnings": []
+    },
+    {
+      "name": "title of 60 characters and a name of 24",
+      "input": {
+        "v": 1,
+        "title": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+        "root": {
+          "pane": "chat",
+          "chat": "self",
+          "name": "nnnnnnnnnnnnnnnnnnnnnnnn"
+        },
+        "focus": "chat"
+      },
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+        "root": {
+          "pane": "chat",
+          "chat": "self",
+          "name": "nnnnnnnnnnnnnnnnnnnnnnnn"
+        },
+        "focus": "chat"
+      },
+      "warnings": []
+    },
+    {
+      "name": "the last of two equal keys wins",
+      "inputText": "{\"v\":1,\"title\":\"First\",\"title\":\"Second\",\"root\":{\"pane\":\"chat\",\"chat\":\"self\"},\"focus\":\"chat\"}",
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "Second",
+        "root": {
+          "pane": "chat",
+          "chat": "self"
+        },
+        "focus": "chat"
+      },
+      "warnings": []
+    },
+    {
+      "name": "a web page on a public host and port",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "site",
+              "web": "http://example.com:8080/preview"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "site",
+              "web": "http://example.com:8080/preview"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "warnings": []
+    },
+    {
+      "name": "a newer version is listed, not read",
+      "input": {
+        "v": 2,
+        "title": "From the future",
+        "root": {
+          "anything": true
+        }
+      },
+      "expect": "newer",
+      "v": 2,
+      "title": "From the future"
+    },
+    {
+      "name": "not an object",
+      "input": [
+        {
+          "v": 1,
+          "title": "Review",
+          "root": {
+            "pane": "chat",
+            "chat": "self"
+          },
+          "focus": "chat"
+        }
+      ],
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "type",
+          "path": ""
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "not JSON",
+      "inputText": "{\"v\": 1,",
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "notJson",
+          "path": ""
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "v is required",
+      "input": {
+        "title": "Review",
+        "root": {
+          "pane": "chat",
+          "chat": "self"
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "required",
+          "path": "v"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "v is an integer, not a string",
+      "input": {
+        "v": "1",
+        "title": "Review",
+        "root": {
+          "pane": "chat",
+          "chat": "self"
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "type",
+          "path": "v"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "v is an integer, not a fraction",
+      "input": {
+        "v": 1.5,
+        "title": "Review",
+        "root": {
+          "pane": "chat",
+          "chat": "self"
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "type",
+          "path": "v"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "v below 1",
+      "input": {
+        "v": 0,
+        "title": "Review",
+        "root": {
+          "pane": "chat",
+          "chat": "self"
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "range",
+          "path": "v"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "title is required",
+      "input": {
+        "v": 1,
+        "root": {
+          "pane": "chat",
+          "chat": "self"
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "required",
+          "path": "title"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a title of 61 characters",
+      "input": {
+        "v": 1,
+        "title": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+        "root": {
+          "pane": "chat",
+          "chat": "self"
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "tooLong",
+          "path": "title"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a title that is only bidi controls",
+      "input": {
+        "v": 1,
+        "title": "‮⁦",
+        "root": {
+          "pane": "chat",
+          "chat": "self"
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "empty",
+          "path": "title"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a name of 25 characters",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "pane": "chat",
+          "chat": "self",
+          "name": "nnnnnnnnnnnnnnnnnnnnnnnnn"
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "tooLong",
+          "path": "root.name"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "root is required",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "required",
+          "path": "root"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "focus is required",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "pane": "chat",
+          "chat": "self"
+        }
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "required",
+          "path": "focus"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "focus names no leaf",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "pane": "chat",
+          "chat": "self"
+        },
+        "focus": "editor"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "focus",
+          "path": "focus"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "splits four deep",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "split": "column",
+              "children": [
+                {
+                  "pane": "a",
+                  "git": "status"
+                },
+                {
+                  "split": "row",
+                  "children": [
+                    {
+                      "pane": "b",
+                      "file": "a.md"
+                    },
+                    {
+                      "split": "column",
+                      "children": [
+                        {
+                          "pane": "c",
+                          "file": "b.md"
+                        },
+                        {
+                          "pane": "d",
+                          "file": "c.md"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "depth",
+          "path": "root.children[1].children[1].children[1]"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "nine leaves",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "a",
+              "file": "a.md"
+            },
+            {
+              "pane": "b",
+              "file": "b.md"
+            },
+            {
+              "pane": "c",
+              "file": "c.md"
+            },
+            {
+              "pane": "d",
+              "file": "d.md"
+            },
+            {
+              "pane": "e",
+              "file": "e.md"
+            },
+            {
+              "pane": "f",
+              "file": "f.md"
+            },
+            {
+              "split": "column",
+              "children": [
+                {
+                  "pane": "g",
+                  "file": "g.md"
+                },
+                {
+                  "pane": "h",
+                  "file": "h.md"
+                }
+              ]
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "leafCount",
+          "path": "root"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a split with one child",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "children",
+          "path": "root"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a split with nine children",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "a",
+              "file": "a.md"
+            },
+            {
+              "pane": "b",
+              "file": "b.md"
+            },
+            {
+              "pane": "c",
+              "file": "c.md"
+            },
+            {
+              "pane": "d",
+              "file": "d.md"
+            },
+            {
+              "pane": "e",
+              "file": "e.md"
+            },
+            {
+              "pane": "f",
+              "file": "f.md"
+            },
+            {
+              "pane": "g",
+              "file": "g.md"
+            },
+            {
+              "pane": "h",
+              "file": "h.md"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "children",
+          "path": "root"
+        },
+        {
+          "code": "leafCount",
+          "path": "root"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "fewer weights than children",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "a",
+              "git": "status"
+            }
+          ],
+          "weights": [
+            1
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "weights",
+          "path": "root.weights"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a weight that is not positive",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "a",
+              "git": "status"
+            }
+          ],
+          "weights": [
+            1,
+            0
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "weights",
+          "path": "root.weights"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a split axis that is neither row nor column",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "diagonal",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "a",
+              "git": "status"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "value",
+          "path": "root.split"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a node that is neither split nor leaf",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "file": "a.md"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "required",
+          "path": "root.children[1]"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "two leaves with one id",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "chat",
+              "git": "status"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "duplicatePane",
+          "path": "root.children[1].pane"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a pane id with capitals",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "pane": "Chat",
+          "chat": "self"
+        },
+        "focus": "Chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "pattern",
+          "path": "root.pane"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "two content fields",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "pane": "chat",
+          "chat": "self",
+          "file": "a.md"
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "contentCount",
+          "path": "root"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "no content field",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "pane": "chat",
+          "name": "Chat"
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "noContent",
+          "path": "root"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "line without a file",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "pane": "chat",
+          "chat": "self",
+          "line": 3
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "modifier",
+          "path": "root.line"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "line below 1",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "code",
+              "file": "a.md",
+              "line": 0
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "range",
+          "path": "root.children[1].line"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a relative path through ..",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "code",
+              "file": "../other/secret.md"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "parentPath",
+          "path": "root.children[1].file"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a path from the home folder",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "code",
+              "file": "~/notes.md"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "value",
+          "path": "root.children[1].file"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "chat is self or a session id",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "pane": "chat",
+          "chat": "the main one"
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "value",
+          "path": "root.chat"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "git is status or a sha",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "git",
+              "git": "main"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "value",
+          "path": "root.children[1].git"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a javascript: URL",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "web",
+              "web": "javascript:alert(1)"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "webScheme",
+          "path": "root.children[1].web"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a file: URL",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "web",
+              "web": "file:///etc/passwd"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "webScheme",
+          "path": "root.children[1].web"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a URL with a user name and password",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "web",
+              "web": "https://alex:secret@example.com/"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "webUserInfo",
+          "path": "root.children[1].web"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a loopback host: http://localhost:3000/",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "web",
+              "web": "http://localhost:3000/"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "webLoopback",
+          "path": "root.children[1].web"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a loopback host: http://app.localhost/",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "web",
+              "web": "http://app.localhost/"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "webLoopback",
+          "path": "root.children[1].web"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a loopback host: http://127.0.0.1:8080/",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "web",
+              "web": "http://127.0.0.1:8080/"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "webLoopback",
+          "path": "root.children[1].web"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a loopback host: http://127.4.5.6/",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "web",
+              "web": "http://127.4.5.6/"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "webLoopback",
+          "path": "root.children[1].web"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a loopback host: http://[::1]:5173/",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "web",
+              "web": "http://[::1]:5173/"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "webLoopback",
+          "path": "root.children[1].web"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a loopback host: http://[::ffff:127.0.0.1]/",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "web",
+              "web": "http://[::ffff:127.0.0.1]/"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "webLoopback",
+          "path": "root.children[1].web"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a loopback host: http://LOCALHOST./",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "web",
+              "web": "http://LOCALHOST./"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "webLoopback",
+          "path": "root.children[1].web"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a URL over 2 KiB",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "web",
+              "web": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "tooLong",
+          "path": "root.children[1].web"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a terminal naming two kinds",
+      "input": {
+        "v": 1,
+        "title": "Review",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "shell",
+              "terminal": {
+                "rex": "build",
+                "ssh": "mini"
+              }
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "value",
+          "path": "root.children[1].terminal"
+        }
+      ],
+      "warnings": []
+    }
+  ]
+}

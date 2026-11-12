@@ -381,7 +381,16 @@ export function createSessionTraceRouteHandlers(
       helpers.error(res, 409, "Session trace is not synchronized with the active tree leaf");
       return;
     }
-    helpers.compressedJson(req, res, attachTracePageResponseMetrics(result));
+    // The cards this page's tracked layouts writes make, derived again on every load.
+    const layoutProposals =
+      (await ctx.sessions.layoutFiles?.proposalsForTrace(session, result.trace)) ?? [];
+    helpers.compressedJson(
+      req,
+      res,
+      attachTracePageResponseMetrics(
+        layoutProposals.length > 0 ? { ...result, layoutProposals } : result,
+      ),
+    );
   }
 
   async function handleGetSessionTraceOutlineForSession(

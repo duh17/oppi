@@ -10,6 +10,7 @@ import { AgentConfigurationError } from "./agent-launch-errors.js";
 import type { SessionManager } from "./sessions.js";
 import type { Storage } from "./storage.js";
 import { extensionUISurfaceWidgetKey } from "./extension-surface.js";
+import { PANE_LAYOUTS_CLIENT_CAPABILITY } from "./extension-ui-contract.js";
 import type { ExtensionUISurfaceAudience } from "./extension-surface-runtime.js";
 import type {
   ClientMessage,
@@ -626,6 +627,14 @@ export class BoundSessionStreamMux {
     /** Whether this socket draws the shape a frame was built for; frames with no shape go to all. */
     const drawsAudience = (audience?: ExtensionUISurfaceAudience): boolean =>
       !audience || audience === this.ctx.sessions.surfaceAudience(sessionId, connId);
+    /**
+     * Whether this socket said it draws layout cards (`pane-layouts:v1`). Like a surface shape,
+     * a later declaration without it never takes it back.
+     */
+    let drawsLayoutCards = false;
+    const declare = (capabilities: readonly string[]): void => {
+      if (capabilities.includes(PANE_LAYOUTS_CLIENT_CAPABILITY)) drawsLayoutCards = true;
+    };
     const broadcastForSession = (
       msg: ServerMessage,
       audience?: ExtensionUISurfaceAudience,
@@ -634,6 +643,7 @@ export class BoundSessionStreamMux {
       // A composable surface frame is built twice, once per shape: this socket gets only the
       // shape it draws (`client_capabilities`), and the session stream never mixes them.
       if (!drawsAudience(audience)) return;
+      if (msg.type === "layout_proposal" && !drawsLayoutCards) return;
       if (restatedByConversationStream(msg) && replicatesOwnConversation()) return;
       sendForSession(msg);
     };
@@ -718,6 +728,7 @@ export class BoundSessionStreamMux {
       ) {
         msgRecv += 1;
         startupCapabilities = parsed.message.capabilities;
+        declare(parsed.message.capabilities);
         const { requestId } = parsed.message;
         if (requestId !== undefined) {
           sendForSession({
@@ -1112,6 +1123,7 @@ export class BoundSessionStreamMux {
                   return;
                 }
 
+                if (msg.type === "client_capabilities") declare(msg.capabilities);
                 const targetSession = this.ctx.storage.getSession(sessionId);
                 if (!targetSession) {
                   // Deleted under the stream: terminal for chat and for a call riding it.

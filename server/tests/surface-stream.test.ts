@@ -7,6 +7,7 @@ import {
   EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
   EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
   EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+  PANE_LAYOUTS_CLIENT_CAPABILITY,
 } from "../src/extension-ui-contract.js";
 import { readExtensionUISurface } from "../src/extension-surface.js";
 import type { ExtensionUISurfaceAudience } from "../src/extension-surface-runtime.js";
@@ -178,7 +179,7 @@ function streamHarness(session: Session) {
     untrackConnection: vi.fn(),
   } as unknown as StreamContext;
 
-  return { ctx, surfaces, start, startSession };
+  return { ctx, surfaces, start, startSession, broadcast };
 }
 
 /** Let every queued promise and the socket's inbound queue run. */
@@ -398,5 +399,51 @@ describe("session stream surfaces", () => {
     expect(JSON.stringify(older.sent)).not.toContain('"elapsed"');
     current.close();
     older.close();
+  });
+});
+
+describe("session stream layout cards", () => {
+  it("sends a layout card only to sockets that declared pane-layouts:v1", async () => {
+    const session = makeSession("sess-layouts", "w1");
+    const { ctx, start, startSession, broadcast } = streamHarness(session);
+    const mux = new BoundSessionStreamMux(ctx);
+
+    // One declares while the session is still opening, one after, one never.
+    const early = new FakeWebSocket();
+    const opening = mux.handleWebSocket("w1", session.id, early as unknown as WebSocket);
+    await until(() => startSession.mock.calls.length === 1);
+    early.receive({ type: "client_capabilities", capabilities: [PANE_LAYOUTS_CLIENT_CAPABILITY] });
+    start.resolve(session);
+    await opening;
+    const late = new FakeWebSocket();
+    await mux.handleWebSocket("w1", session.id, late as unknown as WebSocket);
+    late.receive({
+      type: "client_capabilities",
+      capabilities: [EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY, PANE_LAYOUTS_CLIENT_CAPABILITY],
+    });
+    const never = new FakeWebSocket();
+    await mux.handleWebSocket("w1", session.id, never as unknown as WebSocket);
+    never.receive({
+      type: "client_capabilities",
+      capabilities: [EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY],
+    });
+    await flush();
+
+    broadcast({
+      type: "layout_proposal",
+      toolCallId: "call-1",
+      workspaceId: "w1",
+      worktreeId: "main",
+      checkout: "Main checkout",
+      name: "review",
+      path: ".oppi/layouts/review.json",
+      file: { state: "missing" },
+    });
+    await flush();
+
+    expect(early.sentOfType("layout_proposal").map((card) => card.toolCallId)).toEqual(["call-1"]);
+    expect(late.sentOfType("layout_proposal").map((card) => card.toolCallId)).toEqual(["call-1"]);
+    expect(never.sentOfType("layout_proposal")).toEqual([]);
+    for (const ws of [early, late, never]) ws.close();
   });
 });

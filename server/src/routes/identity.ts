@@ -509,6 +509,10 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         // streams durable conversations: Oppi Control sessions are durable without the flag.
         // v2: `attach { mode: "live" }` streams the live tails of its subagents, and `detach`.
         conversationStream: { version: 2 },
+        // Pane layout files: `GET /workspaces/{id}/layouts[/{name}]`, `workspace_layouts_changed`,
+        // `layout_proposal` cards to sockets that declare `pane-layouts:v1`, and Save Layout…
+        // creating `.oppi/layouts/<name>.json` through the file editor.
+        paneLayouts: { version: 1 },
         extensionNativeUI: {
           version: 1,
           capabilities: [...EXTENSION_NATIVE_UI_SERVER_CAPABILITIES],

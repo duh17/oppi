@@ -86,6 +86,7 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "edit server-owned dictation hints (also in Server Settings)",
       },
       { name: "worktree", summary: "list, create, open, and remove workspace worktrees" },
+      { name: "layout", summary: "check a pane layout, or print the guide to writing one" },
       {
         name: "session",
         summary: "list, launch, inspect, message, resume, fork, and stop sessions",
@@ -104,7 +105,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Default output is terminal-friendly for humans and agents; use '--json' for strict machine parsing.",
-      "Help, version, init, serve, pair, status, doctor, config, server, and update are available during setup; quota, models, workspace, worktree, session, Agent, schedule, devices, and wait commands require local owner credentials and a running server.",
+      "Help, version, init, serve, pair, status, doctor, config, server, update, and layout are available during setup; quota, models, workspace, worktree, session, Agent, schedule, devices, and wait commands require local owner credentials and a running server.",
       "Use '<noun> help' or '<command> --help' for flags and deeper examples.",
       "Use '--json' with help for an agent-readable description of the same topic.",
     ],
@@ -908,6 +909,54 @@ const HELP_TOPICS: HelpTopic[] = [
       "A worktree id stays reserved only while sessions are still bound to it. Idle sessions continue on Main after their worktree is gone.",
     ],
     examples: [{ command: "oppi worktree remove wt_feature-foo-abc12345 --workspace ws_123" }],
+  },
+  {
+    path: ["layout"],
+    title: "Pane layouts",
+    summary: "Check a pane layout, or print the guide for writing one.",
+    usage: "oppi layout <check|guide> [flags]",
+    subcommands: [
+      { name: "check <file|->", summary: "validate a layout file, or a layout on stdin" },
+      { name: "guide", summary: "print the agent's guide to pane layouts" },
+    ],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    notes: [
+      "Layouts live in .oppi/layouts/<name>.json of a workspace checkout. Neither command needs a server.",
+    ],
+    examples: [
+      { command: "oppi layout check .oppi/layouts/review.json" },
+      { command: "oppi layout guide" },
+    ],
+  },
+  {
+    path: ["layout", "check"],
+    title: "Check layout",
+    summary: "Validate a pane layout and list its panes, problems, and warnings.",
+    usage: "oppi layout check <file|-> [--json]",
+    arguments: [
+      {
+        name: "<file>",
+        summary: "a layout file; relative paths in it are checked against its checkout",
+      },
+      { name: "-", summary: "read the layout from stdin, as for an oppi-layout block in a reply" },
+    ],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    notes: [
+      "Exits 1 when the layout has a problem or needs a newer Oppi. It only reads: nothing is proposed, saved, or opened.",
+      "Warnings (unknown fields, absolute paths, files that do not exist yet) do not fail the check.",
+    ],
+    examples: [
+      { command: "oppi layout check .oppi/layouts/review.json" },
+      { command: "oppi layout check - --json < draft.json" },
+    ],
+  },
+  {
+    path: ["layout", "guide"],
+    title: "Layout guide",
+    summary: "Print the agent's guide to pane layouts from docs/layouts.md.",
+    usage: "oppi layout guide [--json]",
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi layout guide" }],
   },
   {
     path: ["wait"],
