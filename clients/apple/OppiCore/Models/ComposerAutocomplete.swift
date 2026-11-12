@@ -45,23 +45,6 @@ enum ComposerAutocomplete {
         return .none
     }
 
-    /// Keep `/compact` available even before `get_commands` returns, matching iOS.
-    static func availableCommands(from serverCommands: [SlashCommand]) -> [SlashCommand] {
-        guard !serverCommands.contains(where: {
-            $0.name.caseInsensitiveCompare("compact") == .orderedSame
-        }) else {
-            return serverCommands
-        }
-
-        return serverCommands + [
-            SlashCommand(
-                name: "compact",
-                description: "Compact context",
-                source: .builtin
-            ),
-        ]
-    }
-
     static func slashSuggestions(
         query: String,
         commands: [SlashCommand],

@@ -171,7 +171,6 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     private let transitionView = UIView()
     private let pageView = UIView()
     private var mountedKey: MountKey?
-    private var mountedViews: [UIView] = []
     private var mountedChildren: [UIViewController] = []
     private var tabs: UISegmentedControl?
     private var divider: UIView?
@@ -354,16 +353,6 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
             canGoPrevious: adjacentReviewFile(.previous) != nil,
             canGoNext: adjacentReviewFile(.next) != nil
         )
-    }
-
-    private var diffTaskID: String {
-        [
-            configuration.workspaceId,
-            configuration.selectedSessionId ?? "",
-            configuration.worktreeId ?? "",
-            currentFile.path,
-            String(diffRevision),
-        ].joined(separator: "|")
     }
 
     // MARK: Lifecycle

@@ -300,24 +300,4 @@ extension ComposerBarController {
         button.accessibilityLabel = "Expand composer"
         button.accessibilityHint = "Opens the full-screen message editor"
     }
-
-    private func embed(_ child: UIViewController?, in container: UIView, stored: inout UIViewController?) {
-        if stored === child { return }
-        stored?.willMove(toParent: nil)
-        stored?.view.removeFromSuperview()
-        stored?.removeFromParent()
-        stored = child
-        guard let child else { return }
-        addChild(child)
-        child.view.translatesAutoresizingMaskIntoConstraints = false
-        child.view.backgroundColor = .clear
-        container.addSubview(child.view)
-        NSLayoutConstraint.activate([
-            child.view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            child.view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            child.view.topAnchor.constraint(equalTo: container.topAnchor),
-            child.view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-        child.didMove(toParent: self)
-    }
 }

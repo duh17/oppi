@@ -877,14 +877,6 @@ enum MarkdownWikiLinkRewriter {
         return rewrite(blocks: blocks, context: context)
     }
 
-    static func resolvedWorkspacePath(target: String, sourceDirectory: String?) -> String? {
-        guard let classified = classifyWikiTarget(target, sourceDirectory: sourceDirectory),
-              classified.kind == .workspaceFile else {
-            return nil
-        }
-        return classified.path
-    }
-
     private struct ClassifiedWikiTarget {
         let parsed: ParsedWikiTarget
         let kind: ResourceReferenceKind

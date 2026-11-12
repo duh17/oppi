@@ -4,35 +4,6 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "VoiceInput")
 
-/// On-device speech-to-text using `SpeechAnalyzer` (iOS 26+).
-///
-/// Prefers Apple's `DictationTranscriber` (keyboard-dictation models) and falls
-/// back to `SpeechTranscriber` when classic dictation is unavailable. Both engines
-/// stream progressive results. Phrase hints from the shared dictation dictionary
-/// go to on-device `AnalysisContext` without server-send consent.
-///
-/// **Language detection:** By default, follows the active keyboard language
-/// at mic-tap time (Chinese keyboard → Chinese model, English keyboard →
-/// English model). Users can override to a specific locale in Settings.
-///
-/// Results are either **volatile** (immediate rough guesses that update
-/// as more context arrives) or **finalized** (accurate, won't change).
-/// The manager accumulates finalized text and replaces the volatile
-/// portion on each update, exposing a combined `currentTranscript`.
-///
-/// **Key design: transcribers are never reused.** A speech transcriber
-/// becomes invalid after its analyzer is finalized. We create a fresh
-/// pair for each recording session. Pre-warming only checks model
-/// availability and caches the audio format.
-///
-/// Audio engine setup is extracted to a `nonisolated` helper to avoid
-/// MainActor isolation violations in the audio tap callback.
-@MainActor
-protocol VoicePlaybackInterrupter: AnyObject {
-    var hasActivePlayback: Bool { get }
-    func stop()
-}
-
 /// Hardware playback gate used by dictation startup.
 ///
 /// This intentionally excludes presentation-only coordinators. Voice input needs
@@ -80,6 +51,29 @@ struct VoiceCaptureFailure: Equatable, Sendable {
     let message: String
 }
 
+/// On-device speech-to-text using `SpeechAnalyzer` (iOS 26+).
+///
+/// Prefers Apple's `DictationTranscriber` (keyboard-dictation models) and falls
+/// back to `SpeechTranscriber` when classic dictation is unavailable. Both engines
+/// stream progressive results. Phrase hints from the shared dictation dictionary
+/// go to on-device `AnalysisContext` without server-send consent.
+///
+/// **Language detection:** By default, follows the active keyboard language
+/// at mic-tap time (Chinese keyboard → Chinese model, English keyboard →
+/// English model). Users can override to a specific locale in Settings.
+///
+/// Results are either **volatile** (immediate rough guesses that update
+/// as more context arrives) or **finalized** (accurate, won't change).
+/// The manager accumulates finalized text and replaces the volatile
+/// portion on each update, exposing a combined `currentTranscript`.
+///
+/// **Key design: transcribers are never reused.** A speech transcriber
+/// becomes invalid after its analyzer is finalized. We create a fresh
+/// pair for each recording session. Pre-warming only checks model
+/// availability and caches the audio format.
+///
+/// Audio engine setup is extracted to a `nonisolated` helper to avoid
+/// MainActor isolation violations in the audio tap callback.
 @MainActor @Observable
 final class VoiceInputManager {
 

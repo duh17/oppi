@@ -55,10 +55,6 @@ enum ExtensionNativeBlockPresentation {
         return url
     }
 
-    static func activityRowAccessibilityLabel(_ row: ExtensionUIActivityRow) -> String {
-        joinedNonEmpty([row.title, row.subtitle, row.detail], separator: ", ")
-    }
-
     static func activityRowAccessibilityValue(_ row: ExtensionUIActivityRow) -> String {
         joinedNonEmpty(
             [

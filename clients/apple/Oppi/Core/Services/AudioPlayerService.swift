@@ -15,7 +15,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Audi
 /// Tracks which item is currently playing so the UI can render
 /// per-row play/stop/loading state.
 @MainActor @Observable
-final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybackCaptureCoordinating {
+final class AudioPlayerService: NSObject, VoicePlaybackCaptureCoordinating {
     nonisolated static let stateDidChangeNotification = Notification.Name("AudioPlayerService.stateDidChange")
     nonisolated static let previousPlayingItemIDUserInfoKey = "previousPlayingItemID"
     nonisolated static let playingItemIDUserInfoKey = "playingItemID"
