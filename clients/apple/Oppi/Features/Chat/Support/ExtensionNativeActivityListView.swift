@@ -183,7 +183,8 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
         separator.isHidden = true
         addSubview(separator)
 
-        let hairline = 1 / max(1, UIScreen.main.scale)
+        // One device pixel, from the screen this row lands on.
+        let separatorHeight = separator.heightAnchor.constraint(equalToConstant: 1 / max(1, traitCollection.displayScale))
         NSLayoutConstraint.activate([
             column.topAnchor.constraint(equalTo: topAnchor),
             column.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -198,7 +199,7 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
             control.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             trailing.centerYAnchor.constraint(equalTo: marker.centerYAnchor),
             progressBar.heightAnchor.constraint(equalToConstant: 3),
-            separator.heightAnchor.constraint(equalToConstant: hairline),
+            separatorHeight,
             separator.bottomAnchor.constraint(equalTo: bottomAnchor),
             separator.trailingAnchor.constraint(equalTo: trailingAnchor),
             // Inset to the text, as a list cell's separator is.
@@ -209,6 +210,9 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
         ])
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _) in
             self.render()
+        }
+        registerForTraitChanges([UITraitDisplayScale.self]) { (self: Self, _) in
+            separatorHeight.constant = 1 / max(1, self.traitCollection.displayScale)
         }
     }
 

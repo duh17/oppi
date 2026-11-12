@@ -381,7 +381,7 @@ final class ProviderAPIKeyViewController: ListScreenController<ProviderAPIKeyVie
             Router.finish(self)
         })
         saveItem.primaryAction = UIAction(title: "Save") { [weak self] _ in self?.save() }
-        saveItem.style = .done
+        saveItem.style = .prominent
         saveItem.accessibilityIdentifier = "server.modelProviders.apiKey.save"
     }
 

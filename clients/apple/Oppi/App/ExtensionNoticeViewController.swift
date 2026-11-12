@@ -34,7 +34,7 @@ final class ExtensionNoticeViewController: UIViewController {
         navigationItem.largeTitleDisplayMode = .never
         let done = UIBarButtonItem(
             title: String(localized: "Done"),
-            style: .done,
+            style: .prominent,
             target: self,
             action: #selector(finish)
         )

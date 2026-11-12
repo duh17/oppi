@@ -633,7 +633,7 @@ final class ExtensionNativeTerminalView: UIView, ExtensionNativeBlockRendering {
 /// A titled group of blocks, drawn as a list section is: a grouped header over its blocks, with
 /// no box of its own, so a section of lists in a drawer is not a card inside a card.
 final class ExtensionNativeSectionBlockView: UIView, ExtensionNativeBlockRendering {
-    private let header = UIListContentView(configuration: .groupedHeader())
+    private let header = UIListContentView(configuration: .header())
     private let children = ExtensionNativeBlockStackView()
 
     override init(frame: CGRect) {
@@ -662,7 +662,7 @@ final class ExtensionNativeSectionBlockView: UIView, ExtensionNativeBlockRenderi
     func apply(_ block: ExtensionUINativeBlock, context: ExtensionNativeBlockContext) {
         guard case .section(let base, let title, let subtitle, let blocks) = block else { return }
         let palette = context.palette
-        var configuration = UIListContentConfiguration.groupedHeader()
+        var configuration = UIListContentConfiguration.header()
         configuration.text = title?.trimmedNonEmpty
         configuration.textProperties.color = palette.ui.comment
         configuration.textProperties.font = ExtensionNativeBlockStyle.font(.footnote, weight: .semibold)

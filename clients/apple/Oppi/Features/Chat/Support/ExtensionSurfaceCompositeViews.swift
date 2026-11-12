@@ -1101,6 +1101,9 @@ final class ExtensionSurfaceActionRow: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (row: Self, _) in
+            row.applyAxis()
+        }
         stack.axis = .horizontal
         stack.alignment = .fill
         stack.spacing = 8
@@ -1256,12 +1259,6 @@ final class ExtensionSurfaceActionRow: UIView {
         return button
     }
 
-    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
-        super.traitCollectionDidChange(previous)
-        if previous?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
-            applyAxis()
-        }
-    }
 }
 
 // MARK: - Atoms

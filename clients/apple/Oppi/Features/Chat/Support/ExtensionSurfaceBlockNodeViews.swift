@@ -723,6 +723,9 @@ final class BlocksIconView: UIView {
             image.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
         setContentHuggingPriority(.required, for: .horizontal)
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: Self, _) in
+            view.invalidateIntrinsicContentSize()
+        }
         setContentCompressionResistancePriority(.required, for: .horizontal)
     }
 
@@ -765,12 +768,6 @@ final class BlocksIconView: UIView {
         return CGSize(width: ceil(height * 1.2), height: height)
     }
 
-    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
-        super.traitCollectionDidChange(previous)
-        if previous?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
-            invalidateIntrinsicContentSize()
-        }
-    }
 }
 
 // MARK: - Group
@@ -1143,6 +1140,9 @@ private final class BlocksKeyValueRow: UIStackView {
         // (750), the shared column wins over that hugging (999), and `keyCap` wins over the column.
         keyWidth.priority = UILayoutPriority(999)
         super.init(frame: .zero)
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (row: Self, _) in
+            row.applyStacking()
+        }
         // A key is a label, not prose: it stays on one line and the tail truncates, and the pair's
         // accessibility label keeps the whole of it.
         key.numberOfLines = 1
@@ -1189,12 +1189,6 @@ private final class BlocksKeyValueRow: UIStackView {
         keyCap.isActive = !stacked
     }
 
-    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
-        super.traitCollectionDidChange(previous)
-        if previous?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
-            applyStacking()
-        }
-    }
 }
 
 // MARK: - Table
