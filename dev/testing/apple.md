@@ -56,9 +56,8 @@ bun scripts/apple-warnings.ts --latest clients/apple/.build/logs   # newest sim-
 bun scripts/apple-warnings.ts <build log> --update                 # lower the baseline
 ```
 
-- The pre-push Apple lane runs it on its own build log. It counts unique compiler warnings, SwiftLint findings and SwiftPM dependency-scan warnings apart, per folder (`Oppi`, `OppiTests`, ...), and fails when a count passes `scripts/apple-warnings-baseline.json`, printing the warnings of each file that gained one. Fix the warning; a count only goes down.
-- A folder the build did not compile has no warnings in the log, so a unit-scheme push checks what it built; the `Oppi` scheme also builds the UI, E2E and perf targets. A build sim-pool skips as unchanged compares nothing.
-- `--update` lowers a count only when the log holds all of it (every Swift file of the folder compiled, the SwiftLint phase ran) and never raises one. Run it on a build into fresh DerivedData, which replays warnings from sim-pool's cache, and commit the file with the fix.
+- The pre-push Apple lane runs it on its build log. Compiler, SwiftLint and SwiftPM warnings count separately per folder and per file; any count above `scripts/apple-warnings-baseline.json` fails and prints the new warnings. Fix the warning; counts only go down.
+- It checks only what the build compiled. `--update` never raises a count and lowers one only from a complete log: build into fresh DerivedData, then commit the baseline with the fix.
 
 ## Swift Testing filters
 
