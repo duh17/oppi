@@ -17,7 +17,6 @@ type Options = {
   json: boolean;
   strict: boolean;
   cleanBuild: boolean;
-  skipXcodegen: boolean;
   verbose: boolean;
   writeResults?: string;
   reportIncludes: string[];
@@ -31,7 +30,7 @@ Usage:
   bun scripts/periphery-scan.ts [options] [-- <extra periphery args>]
 
 Defaults:
-  - regenerates Oppi.xcodeproj with xcodegen
+  - scans the tracked Oppi.xcodeproj as is (run xcodegen yourself after a project.yml change)
   - scans schemes: ${DEFAULT_SCHEMES.join(", ")}
   - reports only app sources: ${DEFAULT_REPORT_INCLUDES.join(", ")}
   - retains ObjC-accessible declarations, Codable properties, and SwiftUI previews
@@ -40,7 +39,6 @@ Options:
   --json                   Emit structured JSON to stdout
   --strict                 Exit non-zero when unused code is found
   --clean-build            Ask Periphery to clean before building
-  --skip-xcodegen          Skip xcodegen project regeneration
   --write-results <path>   Persist raw Periphery results to this path
   --report-include <glob>  Override report include globs (repeatable)
   --verbose                Enable verbose Periphery logging
@@ -62,7 +60,6 @@ function parseArgs(argv: string[]): Options {
     json: false,
     strict: false,
     cleanBuild: false,
-    skipXcodegen: false,
     verbose: false,
     reportIncludes: [],
     passthrough: [],
@@ -86,10 +83,6 @@ function parseArgs(argv: string[]): Options {
     }
     if (arg === "--clean-build") {
       options.cleanBuild = true;
-      continue;
-    }
-    if (arg === "--skip-xcodegen") {
-      options.skipXcodegen = true;
       continue;
     }
     if (arg === "--verbose") {
@@ -128,26 +121,6 @@ function parseArgs(argv: string[]): Options {
   }
 
   return options;
-}
-
-function run(command: string, args: string[], cwd: string, quiet = false): void {
-  const result = spawnSync(command, args, {
-    cwd,
-    encoding: "utf8",
-    stdio: quiet ? "pipe" : "inherit",
-  });
-
-  if (result.status === 0) {
-    return;
-  }
-
-  if (quiet) {
-    if (result.stdout) process.stderr.write(result.stdout);
-    if (result.stderr) process.stderr.write(result.stderr);
-  }
-
-  const detail = result.error?.message ?? `exit ${result.status ?? 1}`;
-  throw new Error(`${command} failed: ${detail}`);
 }
 
 function buildPeripheryArgs(options: Options, resultPath: string): string[] {
@@ -200,10 +173,6 @@ function main(): void {
     : join(defaultReportDir, options.json ? "periphery-results.json" : "periphery-results.txt");
 
   try {
-    if (!options.skipXcodegen) {
-      run("xcodegen", ["generate"], cwd, true);
-    }
-
     const args = buildPeripheryArgs(options, resultPath);
     const result = spawnSync("periphery", args, {
       cwd,
@@ -241,7 +210,6 @@ function main(): void {
         summary: {
           findings: findings.length,
           success: result.status === 0,
-          xcodegenRan: !options.skipXcodegen,
         },
         ...(parseError ? { parse_error: parseError } : {}),
         ...(stdout.trim().length > 0 ? { stdout } : {}),
