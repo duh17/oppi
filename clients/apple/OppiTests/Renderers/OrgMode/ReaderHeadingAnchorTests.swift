@@ -477,6 +477,27 @@ struct ReaderHeadingAnchorTests {
         #expect(found && reader.notices.messages.count == 1, "a heading that exists says nothing")
     }
 
+    /// A save mounts a new reader at the position the old one was read at. The
+    /// last heading's segment lies past the opening runway, still at its
+    /// estimate, so a restore placed by that estimate stops short of the end.
+    @MainActor
+    @Test func aReaderRestoredAtTheEndShowsTheEnd() async throws {
+        let source = "* Plain heading\n"
+            + (1...60).map { "Paragraph \($0) of filler prose that makes the file long enough to scroll." }.joined(separator: "\n\n")
+            + "\n\n* TODO Bottom\n- [ ] bottom box\n- [ ] second box\n"
+        let reader = Mounted(source: source)
+        reader.body.restoreViewport(.tail)
+        try await reader.settle("the restore") { reader.offset > 100 && reader.body.viewportIntent != nil }
+        // Let the cells the restore shows measure themselves and reconcile.
+        for _ in 0..<30 {
+            try await Task.sleep(for: .milliseconds(10))
+            reader.body.layoutIfNeeded()
+        }
+        let collection = reader.body.collectionView
+        let end = collection.contentSize.height - collection.bounds.height + collection.adjustedContentInset.bottom
+        #expect(abs(reader.offset - end) < 1, "the reader shows the end of the file: offset \(reader.offset), end \(end)")
+    }
+
     @MainActor
     @Test func aMarkdownReaderScrollsToASlug() async throws {
         let source = (1...10).map { n in

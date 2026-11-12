@@ -543,6 +543,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         viewportOwner.scheduleExplicitFocus { [weak self] in
             guard let self else { return nil }
             self.layoutIfNeeded()
+            self.settleGeometry(shownBy: intent)
             self.collectionView.layoutIfNeeded()
             self.markdownViewportRestoreSettled = true
             return self.offsetY(forMutableTransition: intent)
@@ -552,6 +553,41 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         if viewportOwner.isInteracting {
             markdownViewportRestoreSettled = true
         }
+    }
+
+    /// Measures the segments a restored viewport shows before its offset is
+    /// chosen. The opening runway measures only the top of the document, so a
+    /// restore further down would place itself by estimates: at the tail, an
+    /// estimate short by a heading line puts the end that much short, and the
+    /// reconciliation after it keeps the top row, so the page stays moved.
+    private func settleGeometry(shownBy intent: FullScreenMarkdownViewportIntent) {
+        guard let config = currentConfig,
+              let canonicalWidth = preparedCanonicalWidth,
+              !renderedSegments.isEmpty else { return }
+        let viewportHeight = collectionView.bounds.height
+        let previousHeights = itemHeights
+        switch intent {
+        case .top:
+            return
+        case .tail:
+            var item = renderedSegments.count - 1
+            var covered = CGFloat(0)
+            while item >= 0, covered < viewportHeight {
+                if heightLedger.finalHeight(for: renderedSegmentIDs[item], canonicalWidth: canonicalWidth) == nil {
+                    settleItemGeometry(item, config: config, canonicalWidth: canonicalWidth)
+                    itemHeights = heightLedger.heights()
+                }
+                covered += itemHeights[item]
+                item -= 1
+            }
+        case .detached(let anchor):
+            guard let segmentID = resolvedSegmentID(for: anchor),
+                  let item = renderedSegmentIDs.firstIndex(of: segmentID),
+                  let anchorY = offsetY(for: anchor) else { return }
+            settleRenderAhead(fromItem: item, throughY: anchorY + viewportHeight)
+        }
+        guard itemHeights != previousHeights else { return }
+        replaceCollectionLayout(preserveViewport: false, reason: .preparedGeometry)
     }
 
     private func offsetY(
