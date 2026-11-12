@@ -125,7 +125,7 @@ describe("Durable sandbox file capability", () => {
     const { env, vm } = fixture();
     const abort = new AbortController();
     vm.exec = vi.fn((args) => {
-      if (Array.isArray(args) && args[0] === "/bin/sh")
+      if (Array.isArray(args) && args.includes("oppi-kill"))
         throw new Error("Guest control connection lost");
       return Object.assign(
         Promise.resolve({ ok: true, exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0) }),

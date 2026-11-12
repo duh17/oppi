@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, readdirSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { machineGondolinImageStore } from "./vitest.gondolin-image-store.js";
 
 const serverRoot = dirname(fileURLToPath(import.meta.url));
 
@@ -114,6 +115,9 @@ export default function buildCliOnce(): () => void {
     // mock); dependencies such as Pi import homedir() directly. Launch every Bun worker with a
     // run-private home so they never read the developer's either. Node needs none of this.
     if (process.versions.bun) {
+      // The run-private home would put the Gondolin guest image store in the run root, pulling
+      // the image from the network on every run. Name the machine's store while HOME is real.
+      process.env.GONDOLIN_IMAGE_STORE ??= machineGondolinImageStore();
       const home = join(runRoot, "home");
       mkdirSync(home);
       process.env.HOME = home;

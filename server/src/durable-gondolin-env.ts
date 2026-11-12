@@ -47,6 +47,21 @@ const EXEC_HANDSHAKE = [
   'exec "$@"',
 ].join("\n");
 
+// Runs first. The handshake must be its own process group, and busybox setsid forks
+// (its parent exits 0, losing the real exit status) when the caller is already a group
+// leader. Whether an exec starts as one depends on the guest image's sandboxd, and a
+// registry's moving `latest` image changes it, so ask the process instead of assuming.
+const EXEC_LAUNCH = [
+  "script=$1; shift",
+  "IFS= read -r stat < /proc/$$/stat || exit 125",
+  // eslint-disable-next-line no-template-curly-in-string -- Guest shell parameter expansion.
+  "fields=${stat##*) }",
+  // After the command name /proc/<pid>/stat holds state, ppid, pgrp: "$3" is the group.
+  'leader() { [ "$3" = "$$" ]; }',
+  'if leader $fields; then exec /bin/sh -c "$script" oppi-exec "$@"; fi',
+  'exec /usr/bin/setsid /bin/sh -c "$script" oppi-exec "$@"',
+].join("\n");
+
 const KILL_GROUP = [
   'p="$1"; start="$2"',
   // Repeat the host validation at the signaling boundary. Leading zeros,
@@ -636,10 +651,11 @@ export class GondolinExecutionEnv implements ExecutionEnv {
     const decoders = { stdout: new StringDecoder("utf8"), stderr: new StringDecoder("utf8") };
     try {
       const cwd = this.path(options?.cwd ?? this.cwd);
-      // setsid is required. Capture both identity fields on the exec stream
-      // before ACK: the workload cannot replace them after it starts.
+      // The workload runs in its own process group (see EXEC_LAUNCH). Capture both
+      // identity fields on the exec stream before ACK: the workload cannot replace
+      // them after it starts.
       const proc = this.vm.exec(
-        ["/usr/bin/setsid", "/bin/sh", "-c", EXEC_HANDSHAKE, "oppi-exec", ...argv],
+        ["/bin/sh", "-c", EXEC_LAUNCH, "oppi-exec", EXEC_HANDSHAKE, ...argv],
         {
           cwd,
           env: options?.env,

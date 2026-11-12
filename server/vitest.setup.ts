@@ -9,9 +9,10 @@
  */
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, vi } from "vitest";
+import { machineGondolinImageStore } from "./vitest.gondolin-image-store.js";
 
 // Node's os.homedir() reads HOME on every call; Bun's reads it once at launch. The temp home
 // below, and tests that point HOME at a fixture, change HOME after launch, so under Bun the
@@ -94,12 +95,8 @@ afterAll(() => {
 // and a host without network cannot boot a VM at all. Keep the store on the machine instead — the
 // first run on a host fetches it once, every later run is offline. GONDOLIN_IMAGE_STORE is the
 // SDK's own knob for the store, and `tests/helpers/real-vm.ts` skips a real-VM test that has none.
-const developerHome = process.env.HOME ?? homedir();
-const developerCache =
-  process.platform === "darwin"
-    ? join(developerHome, "Library", "Caches")
-    : (process.env.XDG_CACHE_HOME ?? join(developerHome, ".cache"));
-process.env.GONDOLIN_IMAGE_STORE ??= join(developerCache, "oppi-gondolin", "images");
+// Under Bun, vitest.global-setup.ts has already set it: HOME here is that run's temp home.
+process.env.GONDOLIN_IMAGE_STORE ??= machineGondolinImageStore();
 
 // Skill discovery (Pi's SDK and Oppi's resource service) reads ~/.agents/skills,
 // ~/.claude/skills and other user-level dirs through os.homedir(), which follows HOME. A skill

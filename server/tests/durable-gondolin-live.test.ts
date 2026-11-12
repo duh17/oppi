@@ -230,6 +230,86 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
     if (!result.ok) expect(result.error.code).toBe("permission_denied");
   });
 
+  // Which guest image boots decides whether sandboxd starts each exec as a process-group
+  // leader (a newer `alpine-base:latest` does). busybox setsid then forks and its parent exits 0,
+  // so a command's exit code and a missing program vanished. This guest forces that start state
+  // whatever image the machine has cached, so both runtimes exercise it.
+  describe("a guest that starts every exec as its own group leader", () => {
+    const asGroupLeader: GondolinVm = {
+      id: undefined,
+      get fs() {
+        return vm.fs;
+      },
+      exec: (args, options) =>
+        vm.exec(
+          [
+            "/bin/sh",
+            "-c",
+            [
+              "IFS= read -r s < /proc/$$/stat",
+              "fields=${s##*) }",
+              'leader() { [ "$3" = "$$" ]; }',
+              'if leader $fields; then exec "$@"; fi',
+              'exec /usr/bin/setsid "$@"',
+            ].join("\n"),
+            "as-group-leader",
+            ...(Array.isArray(args) ? args : ["/bin/sh", "-c", args]),
+          ],
+          options,
+        ),
+    };
+
+    it("really is one", async () => {
+      if (!qemuAvailable) return;
+      const probe = await asGroupLeader.exec([
+        "/bin/sh",
+        "-c",
+        'IFS= read -r s < /proc/$$/stat; fields=${s##*) }; set -- $fields; echo "$3 $$"',
+      ]);
+      const [group, pid] = probe.stdout.trim().split(" ");
+      expect(group).toBe(pid);
+    });
+
+    it("keeps a command's exit code and cwd", async () => {
+      if (!qemuAvailable) return;
+      const env = new GondolinExecutionEnv(asGroupLeader, "leader", root);
+      const cwd = `${root}/leader-${randomUUID()}`;
+      await vm.fs.mkdir(cwd, { recursive: true });
+      env.cwd = cwd;
+      const result = await env.exec(["/bin/sh", "-c", "printf x > made.txt; exit 3"], {}, context);
+      expect(result).toEqual({ ok: true, value: { exitCode: 3 } });
+      expect(await env.readTextFile("made.txt", context)).toEqual({ ok: true, value: "x" });
+    });
+
+    it("reports a missing program as a spawn error", async () => {
+      if (!qemuAvailable) return;
+      const env = new GondolinExecutionEnv(asGroupLeader, "leader", root);
+      const result = await env.exec(["oppi-no-such-program"], {}, context);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("spawn_error");
+    });
+
+    it("kills the whole group on abort", async () => {
+      if (!qemuAvailable) return;
+      const env = new GondolinExecutionEnv(asGroupLeader, "leader", root);
+      const abort = new AbortController();
+      const running = env.exec(
+        ["/bin/sh", "-c", `sleep 29.5 & echo started; wait`],
+        { onOutput: () => abort.abort() },
+        withAbortSignal(abort.signal, context),
+      );
+      const result = await running;
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("aborted");
+      await expect
+        .poll(async () => (await vm.exec(["/bin/sh", "-c", `! pgrep -f '[s]leep 29.5'`])).ok, {
+          timeout: 3000,
+          interval: 50,
+        })
+        .toBe(true);
+    });
+  });
+
   // Pi's own ExecutionEnv contract, run against a real guest. The guest has no
   // change notification, so watch must refuse (below) instead of passing these.
   for (const testCase of createEnvConformance({
