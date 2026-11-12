@@ -817,8 +817,7 @@ final class TrailingColumnController: UIViewController {
         let velocityVector = distance == 0 ? .zero : CGVector(dx: initialVelocity / distance, dy: 0)
         let timing = UISpringTimingParameters(dampingRatio: 0.86, initialVelocity: velocityVector)
         let animator = UIViewPropertyAnimator(duration: 0.42, timingParameters: timing)
-        animator.addAnimations { [weak self] in
-            guard let self else { return }
+        animator.addAnimations {
             overlay.width = target
             overlay.layoutIfNeeded()
             host.view.layoutIfNeeded()
@@ -855,7 +854,7 @@ final class TrailingColumnController: UIViewController {
 final class TrailingColumnOverlayView: UIView {
     /// What stays of the screen beside a full-window pane: a slim strip that
     /// carries the divider's grabber, the way back to side by side.
-    static let fullWindowGrabEdge: CGFloat = 20
+    nonisolated static let fullWindowGrabEdge: CGFloat = 20
 
     /// The column's own width, the one source of truth for layout; the
     /// controller sets it directly during a drag (cheap, every touch event)

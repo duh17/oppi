@@ -42,7 +42,7 @@ final class ReaderTrace<Snapshot> {
 
 extension ReaderTrace where Snapshot: Equatable {
     convenience init(_ snapshot: Snapshot) {
-        self.init(snapshot, isNews: !=)
+        self.init(snapshot) { $0 != $1 }
     }
 }
 

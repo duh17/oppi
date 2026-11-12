@@ -25,6 +25,7 @@ struct ReaderReadingColumn: Equatable {
     }
 
     /// The leading and trailing inset of `segment` in `available` width.
+    @MainActor
     func inset(for segment: FlatSegment, in available: CGFloat) -> CGFloat {
         inset(blockWidth: naturalWidth(of: segment, in: available), in: available)
     }
@@ -41,6 +42,7 @@ struct ReaderReadingColumn: Equatable {
 
     /// The width a wide block draws at without sideways scrolling; nil for a
     /// block that reads in the prose column.
+    @MainActor
     private func naturalWidth(of segment: FlatSegment, in available: CGFloat) -> CGFloat? {
         switch segment {
         case .table(let headers, let rows):

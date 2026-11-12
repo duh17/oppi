@@ -89,6 +89,7 @@ extension UIContentUnavailableConfiguration {
     /// cell's content): the theme's text and symbol colors, the theme
     /// `background` behind it, a warning-colored symbol on a failure, and for
     /// a retry the one Retry button (prominent, titled "Retry").
+    @MainActor
     static func loadState(
         _ state: LoadState,
         palette: ThemePalette,
@@ -137,6 +138,7 @@ extension UIContentUnavailableConfiguration {
 
     /// The prominent button every load state uses (Retry, or a screen's one
     /// way out of its state, such as Server Metrics' Turn On).
+    @MainActor
     mutating func setProminentButton(_ title: String, action: @escaping @MainActor () -> Void) {
         var button = UIButton.Configuration.borderedProminent()
         button.title = title

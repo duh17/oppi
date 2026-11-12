@@ -2051,7 +2051,7 @@ enum FlatSegment: Sendable {
                     rendered[run.range].uiKit.foregroundColor = color
                 }
             }
-            rendered.uiKit.paragraphStyle = paragraphStyle
+            rendered.setParagraphStyle(paragraphStyle)
             return rendered
 
         case .paragraph(let inlines):
@@ -2140,7 +2140,7 @@ enum FlatSegment: Sendable {
                 var paragraph = layout.checkbox
                 for (j, block) in item.content.enumerated() {
                     if j > 0 {
-                        paragraph.uiKit.paragraphStyle = j == 1 ? layout.firstParagraph : layout.laterParagraph
+                        paragraph.setParagraphStyle(j == 1 ? layout.firstParagraph : layout.laterParagraph)
                         result.append(paragraph)
                         paragraph = AttributedString("\n")
                     }
@@ -2157,7 +2157,7 @@ enum FlatSegment: Sendable {
                     }
                     paragraph.append(content)
                 }
-                paragraph.uiKit.paragraphStyle = item.content.count > 1 ? layout.laterParagraph : layout.firstParagraph
+                paragraph.setParagraphStyle(item.content.count > 1 ? layout.laterParagraph : layout.firstParagraph)
                 result.append(paragraph)
             }
             return result
@@ -2788,5 +2788,13 @@ final class InlineLatexTextAttachment: NSTextAttachment {
     override var accessibilityLabel: String? {
         get { formulaLabel }
         set { formulaLabel = newValue ?? "" }
+    }
+}
+
+private extension AttributedString {
+    /// Through the attribute dictionary: the typed key needs `Sendable`, which `NSParagraphStyle`
+    /// is not (it has a mutable subclass); these styles are built here and never mutated after.
+    mutating func setParagraphStyle(_ style: NSParagraphStyle) {
+        mergeAttributes(AttributeContainer([.paragraphStyle: style]))
     }
 }

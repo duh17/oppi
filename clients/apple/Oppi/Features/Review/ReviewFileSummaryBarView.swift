@@ -139,6 +139,7 @@ final class ReviewFileSummaryBarView: UIView {
 
 /// The padded row a review page puts its segmented control in, under the file header.
 enum ReviewSegmentedControlSlot {
+    @MainActor
     static func wrap(_ control: UISegmentedControl) -> UIView {
         let slot = UIView()
         control.translatesAutoresizingMaskIntoConstraints = false

@@ -375,7 +375,7 @@ final class RexTLSStream: Sendable {
             throw error
         }
         // The consumer's resume reads on, once per pause.
-        inboundFlow?.attach { [weak stream] in stream?.queue.async { stream?.readNext() } }
+        inboundFlow?.attach { [weak stream] in stream?.queue.async { [weak stream] in stream?.readNext() } }
         queue.async { stream.readNext() }
         return SSHExecStream(send: { try await stream.send($0) }, close: { stream.close() })
     }

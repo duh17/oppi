@@ -20,6 +20,7 @@ struct ListRowAction {
     var performsWithFullSwipe = true
     var handler: @MainActor (_ completion: @escaping (Bool) -> Void) -> Void
 
+    @MainActor
     var contextualAction: UIContextualAction {
         // A destructive swipe with its own color keeps the normal style, which
         // does not animate the row away before the confirmation.
@@ -37,6 +38,7 @@ struct ListRowAction {
         return action
     }
 
+    @MainActor
     var menuAction: UIAction {
         let action = UIAction(
             title: title,

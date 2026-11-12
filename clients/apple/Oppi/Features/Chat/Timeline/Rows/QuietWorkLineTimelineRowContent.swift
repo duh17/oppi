@@ -240,6 +240,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         let isConversation: Bool
         let isStacked: Bool
 
+        @MainActor
         func constraints(in view: QuietWorkLineTimelineRowContentView) -> [NSLayoutConstraint] {
             switch (isConversation, isStacked) {
             case (false, false): view.standardConstraints

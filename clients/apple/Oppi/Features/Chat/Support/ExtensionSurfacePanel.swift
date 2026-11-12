@@ -22,6 +22,7 @@ enum ExtensionStripPillHitBand {
     /// reaches a descendant that claims it, but never `view` itself, so the band takes no touch
     /// from what lies around it. And a subview whose own bounds hold the point is asked before one
     /// whose band only reaches it: where a band overlaps another view, the nearer view wins.
+    @MainActor
     static func hitTest(_ point: CGPoint, in view: UIView, with event: UIEvent?) -> UIView? {
         guard view.isUserInteractionEnabled, !view.isHidden, view.alpha >= 0.01 else { return nil }
         let inside = view.point(inside: point, with: event)

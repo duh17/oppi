@@ -63,7 +63,7 @@ final class SessionListEntryContentView: UIView, UIContentView {
         /// takes the stack's spacing with it.
         let slot: UIView
 
-        var isShown: Bool { !slot.isHidden }
+        @MainActor var isShown: Bool { !slot.isHidden }
     }
 
     private var strip: ThreadControl<SessionThreadStripView>?

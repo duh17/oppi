@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import Synchronization
 
 /// URLSession delegate that optionally pins the leaf certificate fingerprint.
 ///
@@ -9,8 +10,7 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
     private let pinnedLeafFingerprint: String?
     let expectedServerName: String?
     private let followsRedirects: Bool
-    private let rejectionLock = NSLock()
-    private var rejections = 0
+    private let rejections = Mutex(0)
 
     /// What a rejected certificate says when it surfaces as an error.
     static let rejectionMessage = "The server's certificate doesn't match the paired one."
@@ -18,10 +18,10 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
     /// How many server-trust challenges this delegate has rejected. URLSession
     /// reports each one as a cancelled request, so a caller that sees
     /// `URLError.cancelled` reads this before and after to tell the two apart.
-    var rejectionCount: Int { rejectionLock.withLock { rejections } }
+    var rejectionCount: Int { rejections.withLock { $0 } }
 
     private func reject(_ completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        rejectionLock.withLock { rejections += 1 }
+        rejections.withLock { $0 += 1 }
         completionHandler(.cancelAuthenticationChallenge, nil)
     }
 
