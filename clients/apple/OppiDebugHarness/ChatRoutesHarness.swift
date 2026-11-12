@@ -11,7 +11,8 @@ import UIKit
 /// a commit pill and a file pill; the context bar has a changed file and a
 /// commit; one review comment is staged; Share is enabled.
 /// `CHAT_ROUTES_STATUS=busy` makes the session busy (busy send mode picker);
-/// `CHAT_ROUTES_ASK=1` puts a two-question ask in the composer.
+/// `CHAT_ROUTES_ASK=1` puts a two-question ask in the composer (`single`: one question).
+/// The `chatRoutes.raiseAsk` control raises the one-question ask later, over what is already open.
 /// `CHAT_ROUTES_QUEUE=long` queues a report taller than the screen.
 /// `CHAT_ROUTES_SURFACE=tall` publishes a composable surface (a long table
 /// card, then an Actions card with Run again) whose drawer is taller than the
@@ -118,6 +119,11 @@ final class ChatRoutesPreviewController: PreviewRootController {
             },
             control("chatRoutes.narrowWindow") { [weak self] in
                 self?.view.window?.traitOverrides.horizontalSizeClass = .compact
+            },
+            control("chatRoutes.raiseAsk") {
+                let connection = ChatRoutesFixture.connection
+                connection.askRequestStore.switchServer(to: ChatRoutesFixture.serverId)
+                _ = connection.askRequestStore.set(ChatRoutesFixture.singleQuestionAsk, for: ChatRoutesFixture.sessionId)
             },
             control("chatRoutes.openFileViewer") {
                 ChatRoutesFixture.openFromTimeline(
@@ -366,9 +372,9 @@ enum ChatRoutesFixture {
         ))
         enableShare(on: connection)
         connection.chatState.cachedModels = models
-        if environment["CHAT_ROUTES_ASK"] == "1" {
+        if let mode = environment["CHAT_ROUTES_ASK"], mode == "1" || mode == "single" {
             connection.askRequestStore.switchServer(to: serverId)
-            _ = connection.askRequestStore.set(ask, for: sessionId)
+            _ = connection.askRequestStore.set(mode == "single" ? singleQuestionAsk : ask, for: sessionId)
         }
         return connection
     }
@@ -557,6 +563,17 @@ enum ChatRoutesFixture {
         ModelInfo(id: "claude-sonnet-routes", name: "Claude Sonnet Routes", provider: "anthropic", contextWindow: 200_000),
         ModelInfo(id: "gpt-routes", name: "GPT Routes", provider: "openai", contextWindow: 200_000),
     ]
+
+    /// `CHAT_ROUTES_ASK=single`: one question, so a typed answer sent from the composer submits
+    /// the whole ask.
+    static let singleQuestionAsk = AskRequest(
+        id: "chat-routes-ask",
+        sessionId: sessionId,
+        questions: [ask.questions[0]],
+        allowCustom: true,
+        timeout: nil,
+        workspaceId: workspace.id
+    )
 
     static let ask = AskRequest(
         id: "chat-routes-ask",
@@ -830,6 +847,9 @@ private final class ChatRoutesURLProtocol: URLProtocol {
             ])
         case ("GET", "\(workspace)/git/commits/abc1234/diff"), ("GET", "\(workspace)/git/diff"):
             body = Self.json(Self.diff)
+        case ("POST", "\(workspace)/sessions/chat-routes-session/command"):
+            // The server took the command (an ask's answer) and settled it.
+            body = Self.json(["messages": [Any]()])
         case ("GET", "\(workspace)/quick-actions"):
             body = Self.json(["actions": []])
         case ("GET", "\(workspace)/sessions/chat-routes-session/changes"):

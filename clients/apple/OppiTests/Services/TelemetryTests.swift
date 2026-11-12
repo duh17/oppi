@@ -65,6 +65,25 @@ struct TelemetryTests {
         #expect(capture.events.map { $0.fields["duration_ms"] } == [60_000, 1_000, 60_000])
     }
 
+    /// Where the interval starts is the line between "after the return" and "spanned it": an
+    /// interval that began at the return instant is foreground only.
+    @Test func backgroundOverlapIsDecidedAtTheReturnInstant() {
+        let returned = ContinuousClock.now
+        let background = TelemetryBackgroundSpans()
+        #expect(!background.overlaps(intervalMs: 600_000, endingAt: returned), "No trip yet")
+
+        // A return the app never left for is not a trip.
+        background.leftBackground(at: returned)
+        #expect(!background.overlaps(intervalMs: 600_000, endingAt: returned))
+
+        background.enteredBackground()
+        #expect(background.overlaps(intervalMs: 1, endingAt: returned), "Away: every interval overlaps")
+
+        background.leftBackground(at: returned)
+        #expect(!background.overlaps(intervalMs: 1_000, endingAt: returned + .seconds(1)))
+        #expect(background.overlaps(intervalMs: 1_001, endingAt: returned + .seconds(1)))
+    }
+
     @Test func fastSuccessfulQueuePollsAreDroppedButFailuresAreKept() {
         let capture = TelemetryCapture()
         capture.runSync {

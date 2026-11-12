@@ -663,6 +663,69 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// A custom answer typed into the composer and sent from an ask card, with the surface drawer
+    /// open above the composer and the footer repainting under it as a busy session's does. The
+    /// ask card covers the strip while it shows, so the drawer was opened first.
+    func testAskCustomAnswerSendsWithTheSurfaceDrawerOpen() {
+        runAskCustomAnswer(environment: ["CHAT_ROUTES_SURFACE": "tall"], opensDrawer: true)
+    }
+
+    func testAskCustomAnswerSendsWithTheDrawerOpenAmongWarnings() {
+        runAskCustomAnswer(
+            environment: ["CHAT_ROUTES_SURFACE": "tall", "CHAT_ROUTES_WARNINGS": "6", "CHAT_ROUTES_STATUS": "busy"],
+            opensDrawer: true
+        )
+    }
+
+    func testAskCustomAnswerSendsWithoutADrawer() {
+        runAskCustomAnswer(environment: [:], opensDrawer: false)
+    }
+
+    /// The same answer typed into the expanded ask sheet's own field and sent from the sheet.
+    func testAskSheetCustomAnswerSendsWithTheSurfaceDrawerOpen() {
+        runAskCustomAnswer(environment: ["CHAT_ROUTES_SURFACE": "tall"], opensDrawer: true, fromSheet: true)
+    }
+
+    private func runAskCustomAnswer(environment: [String: String], opensDrawer: Bool, fromSheet: Bool = false) {
+        launch(environment: environment)
+        let drawer = app.descendants(matching: .any)["extension-strip-aboveEditor-drawer-surface-query"]
+        if opensDrawer {
+            let pill = app.descendants(matching: .any)["extension-strip-aboveEditor-pill-surface-query"]
+            XCTAssertTrue(pill.waitUntilExists(timeout: 10), "The published surface shows its pill")
+            pill.tap()
+            XCTAssertTrue(drawer.waitUntilExists(timeout: 5), "Tapping the pill opens its drawer")
+        }
+        app.buttons["chatRoutes.raiseAsk"].tap()
+        let expand = app.descendants(matching: .any)["ask.expand"]
+        XCTAssertTrue(expand.waitUntilExists(timeout: 10), "Ask card did not appear")
+        attachScreenshot("ask-custom-raised")
+        if fromSheet {
+            expand.tap()
+            let field = app.descendants(matching: .any)["ask.input"]
+            XCTAssertTrue(field.waitUntilExists(timeout: 5), "The expanded ask sheet did not open")
+            field.tap()
+            field.typeText("a custom answer")
+            XCTAssertTrue(app.keyboards.firstMatch.waitUntilExists(timeout: 5), "Sending must come with the keyboard up")
+            attachScreenshot("ask-custom-typed")
+            app.buttons["Send"].firstMatch.tap()
+        } else {
+            focusComposer()
+            app.descendants(matching: .any)["chat.input"].typeText("a custom answer")
+            XCTAssertTrue(app.keyboards.firstMatch.waitUntilExists(timeout: 5), "Sending must come with the keyboard up")
+            attachScreenshot("ask-custom-typed")
+            app.buttons["chat.send"].tap()
+        }
+        let allow = app.buttons["aiConsent.allow"]
+        if allow.waitForExistence(timeout: 2) { allow.tap() }
+        XCTAssertTrue(expand.waitUntilGone(timeout: 10), "The answered ask card must leave the composer")
+        hold()
+        attachScreenshot("ask-custom-sent")
+        if opensDrawer {
+            XCTAssertTrue(drawer.waitUntilExists(timeout: 5), "The drawer comes back after the ask is answered")
+        }
+        assertRunning()
+    }
+
     /// A queued report taller than the screen stays inside the drawer: its
     /// collapse button and Edit in composer stay on screen, a double tap opens
     /// the message rendered in the reader, and the drawer still collapses.

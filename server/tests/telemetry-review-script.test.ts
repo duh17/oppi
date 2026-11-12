@@ -15,6 +15,7 @@ import {
   review,
   reviewHttp,
   reviewModels,
+  sloValue,
   type LoadedRecord,
 } from "../scripts/telemetry-review.ts";
 
@@ -492,6 +493,22 @@ describe("telemetry-review on v2 events", () => {
 });
 
 const ROUTE = { runtime: "durable", provider: "anthropic", model: "claude-sonnet-4-0" };
+
+describe("per-minute SLO value", () => {
+  const slo = SLO_THRESHOLDS[APPLY]!;
+
+  it("counts only updates over the 120 Hz frame, per foreground minute", () => {
+    expect(slo.kind).toBe("per_minute");
+    // 8.3 ms is the frame itself, not a miss; three values are over it across two minutes.
+    expect(sloValue(slo, [4, 8.3, 8.31, 12, 40], 2)).toBe(1.5);
+    expect(sloValue(slo, [4, 8.3], 2)).toBe(0);
+  });
+
+  it("is not judged without foreground time, so slow work never divides by zero", () => {
+    expect(sloValue(slo, [40, 50], undefined)).toBeUndefined();
+    expect(sloValue(slo, [40, 50], 0)).toBeUndefined();
+  });
+});
 
 describe("telemetry-review --models", () => {
   it("parses a read-only models mode", () => {
