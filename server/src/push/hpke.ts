@@ -3,15 +3,16 @@
  * DHKEM(X25519, HKDF-SHA256) 0x0020, HKDF-SHA256 0x0001, ChaCha20-Poly1305 0x0003.
  * CryptoKit calls it `HPKE.Ciphersuite.Curve25519_SHA256_ChachaPoly`.
  *
- * Only `node:crypto` primitives (X25519, HMAC-SHA256, ChaCha20-Poly1305) composed as the RFC
- * specifies; no primitive math here. Checked against RFC 9180 Appendix A.2.1 in
+ * `node:crypto` X25519 and HMAC-SHA256 plus @noble/ciphers' audited ChaCha20-Poly1305, composed
+ * as the RFC specifies; no primitive math here. The AEAD is not `node:crypto` because Bun's
+ * `createCipheriv` has no "chacha20-poly1305", and WebCrypto's ChaCha20-Poly1305 is async,
+ * experimental in Node 24 and missing in Node 22. Checked against RFC 9180 Appendix A.2.1 in
  * tests/push-hpke.test.ts. Single shot means sequence number 0, so the nonce is `base_nonce`
  * (§5.2) and no context outlives one call.
  */
 
+import { chacha20poly1305 } from "@noble/ciphers/chacha.js";
 import {
-  createCipheriv,
-  createDecipheriv,
   createHmac,
   createPrivateKey,
   createPublicKey,
@@ -176,14 +177,12 @@ export function hpkeSeal(input: {
   const sharedSecret = extractAndExpand(dh(skE, pkR), kemContext);
 
   const { key, nonce } = keySchedule(sharedSecret, input.info);
-  const cipher = createCipheriv("chacha20-poly1305", key, nonce, { authTagLength: HPKE_TAG_BYTES });
-  cipher.setAAD(input.aad, { plaintextLength: input.plaintext.length });
-  const ciphertext = Buffer.concat([
-    cipher.update(input.plaintext),
-    cipher.final(),
-    cipher.getAuthTag(),
-  ]);
-  return { enc, ciphertext };
+  // Ciphertext followed by the 16-byte tag, as §5.2 Seal returns it.
+  const ciphertext = chacha20poly1305(key, nonce, input.aad).encrypt(input.plaintext);
+  return {
+    enc,
+    ciphertext: Buffer.from(ciphertext.buffer, ciphertext.byteOffset, ciphertext.length),
+  };
 }
 
 /** §6.1 OpenBase. Throws when the key, `enc`, or ciphertext is wrong. Tests and tools only. */
@@ -201,11 +200,6 @@ export function hpkeOpen(input: {
 
   if (input.ciphertext.length < HPKE_TAG_BYTES) throw new Error("HPKE ciphertext too short");
   const { key, nonce } = keySchedule(sharedSecret, input.info);
-  const tagStart = input.ciphertext.length - HPKE_TAG_BYTES;
-  const decipher = createDecipheriv("chacha20-poly1305", key, nonce, {
-    authTagLength: HPKE_TAG_BYTES,
-  });
-  decipher.setAAD(input.aad, { plaintextLength: tagStart });
-  decipher.setAuthTag(input.ciphertext.subarray(tagStart));
-  return Buffer.concat([decipher.update(input.ciphertext.subarray(0, tagStart)), decipher.final()]);
+  const plaintext = chacha20poly1305(key, nonce, input.aad).decrypt(input.ciphertext);
+  return Buffer.from(plaintext.buffer, plaintext.byteOffset, plaintext.length);
 }
