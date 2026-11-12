@@ -719,3 +719,130 @@ private actor RecordingClientLogUploader: ClientLogUploading {
         uploadedEntries
     }
 }
+
+@Suite("Uncaught exception report")
+struct UncaughtExceptionReportTests {
+    private func makeDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "uncaught-exception-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    @Test func handlerWriteIsReadOnceThenDeleted() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let exception = NSException(
+            name: .internalInconsistencyException,
+            reason: "Cannot set view controllers\nwhile a transition is in progress",
+            userInfo: nil
+        )
+
+        directory.appending(path: UncaughtExceptionRecorder.fileName).path.withCString { path in
+            UncaughtExceptionRecorder.write(exception, buildNumber: "57", to: path)
+        }
+
+        let report = try #require(UncaughtExceptionRecorder.takePendingReport(in: directory))
+        #expect(report.name == "NSInternalInconsistencyException")
+        #expect(report.reason == "Cannot set view controllers while a transition is in progress")
+        #expect(report.buildNumber == "57")
+        #expect(report.crashedAtMs > 0)
+        #expect(UncaughtExceptionRecorder.takePendingReport(in: directory) == nil)
+    }
+
+    @Test func writeReplacesAnEarlierReport() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appending(path: UncaughtExceptionRecorder.fileName).path
+        path.withCString { path in
+            UncaughtExceptionRecorder.write(
+                NSException(name: .genericException, reason: String(repeating: "long ", count: 400), userInfo: nil),
+                buildNumber: "56",
+                to: path
+            )
+            UncaughtExceptionRecorder.write(
+                NSException(name: .rangeException, reason: "short", userInfo: nil),
+                buildNumber: "57",
+                to: path
+            )
+        }
+
+        let report = try #require(UncaughtExceptionRecorder.takePendingReport(in: directory))
+        #expect(report.name == "NSRangeException")
+        #expect(report.reason == "short")
+        #expect(report.buildNumber == "57")
+    }
+
+    @Test func malformedFileIsDeletedWithoutAReport() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: UncaughtExceptionRecorder.fileName)
+        try Data("not a report".utf8).write(to: url)
+
+        #expect(UncaughtExceptionRecorder.takePendingReport(in: directory) == nil)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func fileRoundTripKeepsFramesAndBoundsFields() throws {
+        let frames = (0..<100).map { index in
+            "\(index)   UIKitCore                           0x00000001853c1e5c -[UINavigationController setViewControllers:animated:] + 120"
+        }
+        let report = UncaughtExceptionReport(
+            crashedAtMs: 1_700_000_000_000,
+            buildNumber: "57",
+            name: "NSInternalInconsistencyException",
+            reason: String(repeating: "r", count: 5_000),
+            frames: frames
+        )
+
+        #expect(report.reason.count == UncaughtExceptionReport.maxReasonLength)
+        #expect(report.frames.count == UncaughtExceptionReport.maxFrames)
+        #expect(report.frames[3] == "3 UIKitCore 0x00000001853c1e5c -[UINavigationController setViewControllers:animated:] + 120")
+        #expect(UncaughtExceptionReport(fileContents: report.fileContents) == report)
+    }
+
+    @Test func uploadEntryCarriesNameReasonStackAndPreviousContext() {
+        let frames = (0..<40).map { "\($0) Oppi 0x0000000100abcdef ShellNavigationController.applyRoutes(_:) + \($0)" }
+        let report = UncaughtExceptionReport(
+            crashedAtMs: 1_700_000_000_000,
+            buildNumber: "57",
+            name: "NSInternalInconsistencyException",
+            reason: "bad transition",
+            frames: frames
+        )
+
+        let metadata = report.logMetadata(context: [
+            "lastSessionId": "session-1",
+            "lastScreen": "chat",
+            "lastStreamState": "connected",
+        ])
+        let redacted = ClientLogRedactor.redactedMetadata(metadata)
+
+        #expect(report.logMessage == "Uncaught exception NSInternalInconsistencyException: bad transition")
+        #expect(redacted == metadata, "every field survives the upload caps unchanged")
+        #expect(metadata["exceptionName"] == "NSInternalInconsistencyException")
+        #expect(metadata["crashedBuild"] == "57")
+        #expect(metadata["sessionId"] == "session-1")
+        #expect(metadata["lastScreen"] == "chat")
+        #expect(metadata["lastStreamState"] == nil)
+        let stack = (0..<UncaughtExceptionReport.maxStackChunks)
+            .compactMap { metadata["stack\($0)"] }
+            .joined(separator: "\n")
+        #expect(stack == frames.joined(separator: "\n"))
+    }
+
+    @Test func stackStopsAtTheChunkLimitOnAFrameBoundary() {
+        let frames = (0..<64).map { "\($0) " + String(repeating: "x", count: 200) }
+        let report = UncaughtExceptionReport(
+            crashedAtMs: 1, buildNumber: "57", name: "N", reason: "R", frames: frames
+        )
+
+        let metadata = report.logMetadata(context: [:])
+        let chunks = (0..<UncaughtExceptionReport.maxStackChunks).compactMap { metadata["stack\($0)"] }
+
+        #expect(chunks.count == UncaughtExceptionReport.maxStackChunks)
+        #expect(metadata["stack\(UncaughtExceptionReport.maxStackChunks)"] == nil)
+        #expect(chunks.allSatisfy { $0.count <= UncaughtExceptionReport.maxStackChunkLength })
+        #expect(chunks.joined(separator: "\n") == frames.prefix(chunks.count * 2).joined(separator: "\n"))
+    }
+}

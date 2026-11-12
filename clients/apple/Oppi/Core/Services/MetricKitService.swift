@@ -860,6 +860,207 @@ enum MetricKitCrashContextStore {
     }
 }
 
+// MARK: - Uncaught Objective-C exceptions
+
+/// MetricKit's crash diagnostic for an uncaught Objective-C exception keeps
+/// the stack but drops the exception's name and reason, so a UIKit
+/// consistency exception (`setViewControllers` during a resize) reads like
+/// any other abort. The handler writes them to a small file as the process
+/// dies; the next launch uploads the file as one client-log error, under the
+/// same telemetry opt-in as every other upload, and deletes it.
+enum UncaughtExceptionRecorder {
+    static let fileName = "uncaught-exception.v1.txt"
+
+    // Set once at launch before any exception can reach the handler, then only read.
+    nonisolated(unsafe) private static var reportPath: UnsafeMutablePointer<CChar>?
+    nonisolated(unsafe) private static var buildNumber = ""
+    nonisolated(unsafe) private static var previousHandler: (@convention(c) (NSException) -> Void)?
+
+    static var defaultDirectory: URL {
+        URL.cachesDirectory
+    }
+
+    /// Uploads the previous process's report, then installs the handler.
+    /// Call first thing at launch.
+    static func start() {
+        if let report = takePendingReport(in: defaultDirectory),
+           TelemetrySettings.allowsRemoteDiagnosticsUpload {
+            ClientLog.error(
+                "Crash",
+                report.logMessage,
+                metadata: report.logMetadata(context: MetricKitCrashContextStore.postMortemSnapshotMetadata()),
+                flush: true
+            )
+        }
+        install(
+            directory: defaultDirectory,
+            buildNumber: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        )
+    }
+
+    static func install(directory: URL, buildNumber: String) {
+        guard reportPath == nil else { return }
+        self.buildNumber = buildNumber
+        reportPath = strdup(directory.appending(path: fileName).path)
+        // Chain whatever handler was installed first so it still sees the exception.
+        previousHandler = NSGetUncaughtExceptionHandler()
+        NSSetUncaughtExceptionHandler { exception in
+            if let path = Self.reportPath {
+                Self.write(exception, buildNumber: Self.buildNumber, to: path)
+            }
+            Self.previousHandler?(exception)
+        }
+    }
+
+    /// Runs on the dying thread. Not a signal handler, so building strings is
+    /// safe, but it takes no locks it does not own: no FileManager, no
+    /// logging, no network. One `open`/`write`/`close` on a path resolved at
+    /// install; the page cache survives the abort that follows.
+    static func write(_ exception: NSException, buildNumber: String, to path: UnsafePointer<CChar>) {
+        let report = UncaughtExceptionReport(
+            crashedAtMs: Int64(Date().timeIntervalSince1970 * 1_000),
+            buildNumber: buildNumber,
+            name: exception.name.rawValue,
+            reason: exception.reason ?? "",
+            frames: exception.callStackSymbols
+        )
+        let bytes = Array(report.fileContents.utf8)
+        let fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { return }
+        bytes.withUnsafeBytes { buffer in
+            guard let base = buffer.baseAddress else { return }
+            var offset = 0
+            while offset < buffer.count {
+                let written = Darwin.write(fd, base + offset, buffer.count - offset)
+                if written <= 0 { break }
+                offset += written
+            }
+        }
+        close(fd)
+    }
+
+    /// Reads and deletes the report a previous process left, if any.
+    static func takePendingReport(in directory: URL) -> UncaughtExceptionReport? {
+        let url = directory.appending(path: fileName)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        try? FileManager.default.removeItem(at: url)
+        return UncaughtExceptionReport(fileContents: String(decoding: data, as: UTF8.self))
+    }
+
+#if DEBUG
+    /// `--raise-uncaught-exception-for-testing` proves the handler end to end:
+    /// the app dies on its first main-queue turn, and the next launch uploads.
+    static func raiseForTestingIfRequested() {
+        guard ProcessInfo.processInfo.arguments.contains("--raise-uncaught-exception-for-testing") else { return }
+        DispatchQueue.main.async {
+            NSException(
+                name: .internalInconsistencyException,
+                reason: "Debug uncaught exception raised by --raise-uncaught-exception-for-testing",
+                userInfo: nil
+            ).raise()
+        }
+    }
+#endif
+}
+
+struct UncaughtExceptionReport: Equatable {
+    static let header = "oppi-uncaught-exception-v1"
+    static let maxNameLength = 256
+    static let maxReasonLength = 1_024
+    static let maxFrames = 64
+    static let maxFrameLength = 256
+    /// Server and client cap a metadata value at 512 characters.
+    static let maxStackChunkLength = 500
+    static let maxStackChunks = 8
+
+    let crashedAtMs: Int64
+    let buildNumber: String
+    let name: String
+    let reason: String
+    let frames: [String]
+
+    /// Flattens newlines (the file is line-based), collapses the column
+    /// padding in `callStackSymbols`, and bounds every field.
+    init(crashedAtMs: Int64, buildNumber: String, name: String, reason: String, frames: [String]) {
+        self.crashedAtMs = crashedAtMs
+        self.buildNumber = Self.line(buildNumber, maxLength: 64)
+        self.name = Self.line(name, maxLength: Self.maxNameLength)
+        self.reason = Self.line(reason, maxLength: Self.maxReasonLength)
+        self.frames = frames.prefix(Self.maxFrames).map { frame in
+            Self.line(
+                frame.split(separator: " ", omittingEmptySubsequences: true).joined(separator: " "),
+                maxLength: Self.maxFrameLength
+            )
+        }
+    }
+
+    /// A header line, the timestamp, build, name, and reason, then one frame per line.
+    var fileContents: String {
+        ([Self.header, String(crashedAtMs), buildNumber, name, reason] + frames).joined(separator: "\n")
+    }
+
+    init?(fileContents: String) {
+        let lines = fileContents.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard lines.count >= 5, lines[0] == Self.header, let crashedAtMs = Int64(lines[1]) else { return nil }
+        self.init(
+            crashedAtMs: crashedAtMs,
+            buildNumber: lines[2],
+            name: lines[3],
+            reason: lines[4],
+            frames: lines.dropFirst(5).filter { !$0.isEmpty }
+        )
+    }
+
+    var logMessage: String {
+        "Uncaught exception \(name): \(reason)"
+    }
+
+    /// The stack goes in whole frames, `stack0` first, each chunk under the
+    /// metadata value cap. The previous process's crash context (screen,
+    /// lifecycle step, session) says what the app was doing.
+    func logMetadata(context: [String: String]) -> [String: String] {
+        var metadata: [String: String] = [
+            "exceptionName": name,
+            "crashedAtMs": String(crashedAtMs),
+            "crashedBuild": buildNumber,
+            "frameCount": String(frames.count),
+        ]
+        for (key, contextKey) in [
+            ("sessionId", "lastSessionId"),
+            ("workspaceId", "lastWorkspaceId"),
+            ("lastScreen", "lastScreen"),
+            ("lastScenePhase", "lastScenePhase"),
+            ("lastLifecycleEvent", "lastLifecycleEvent"),
+            ("lastLifecycleStep", "lastLifecycleStep"),
+        ] {
+            if let value = context[contextKey] {
+                metadata[key] = value
+            }
+        }
+        var chunks: [String] = []
+        var current = ""
+        for frame in frames {
+            if !current.isEmpty, current.count + 1 + frame.count > Self.maxStackChunkLength {
+                chunks.append(current)
+                current = ""
+                if chunks.count == Self.maxStackChunks { break }
+            }
+            current += current.isEmpty ? frame : "\n\(frame)"
+        }
+        if !current.isEmpty, chunks.count < Self.maxStackChunks {
+            chunks.append(current)
+        }
+        for (index, chunk) in chunks.enumerated() {
+            metadata["stack\(index)"] = chunk
+        }
+        return metadata
+    }
+
+    private static func line(_ value: String, maxLength: Int) -> String {
+        String(value.replacing("\r", with: " ").replacing("\n", with: " ").prefix(maxLength))
+    }
+}
+
 // MARK: - Payload item builder (internal for testing)
 
 /// Converts a dictionary (from MX*.jsonRepresentation()) into a MetricKitPayloadItem.

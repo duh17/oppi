@@ -25,6 +25,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         // from the state its launch arguments ask for.
         TestLaunchContract.applyAtLaunch()
 #endif
+        // First, so an exception anywhere in launch below still leaves a report.
+        UncaughtExceptionRecorder.start()
+#if DEBUG
+        UncaughtExceptionRecorder.raiseForTestingIfRequested()
+#endif
         // Force-capture process start timestamp before any SwiftUI views load.
         // Static lets are lazy — this ensures it runs at app delegate init, not first view appear.
         ChatSessionTelemetry.warmProcessStartTime()
