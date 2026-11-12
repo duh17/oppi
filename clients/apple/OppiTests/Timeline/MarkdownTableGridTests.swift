@@ -352,7 +352,9 @@ struct MarkdownTableGridTests {
         #expect(cell.accessibilityRowRange() == NSRange(location: 2, length: 1))
         #expect(cell.accessibilityColumnRange() == NSRange(location: 1, length: 1))
 
-        let header = try #require(grid.accessibilityHeaderElements(forColumn: 1)?.first)
+        // Through the protocol, as VoiceOver asks: a near-miss signature is never called.
+        let dataTable: any UIAccessibilityContainerDataTable = grid
+        let header = try #require(dataTable.accessibilityHeaderElements?(forColumn: 1)?.first as? UIAccessibilityElement)
         #expect(header.accessibilityLabel == "Value")
         #expect(header.accessibilityTraits.contains(.header))
         #expect(!value.accessibilityTraits.contains(.header))

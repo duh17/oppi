@@ -384,7 +384,7 @@ extension MarkdownTableGridView: UIAccessibilityContainerDataTable {
 
     func accessibilityColumnCount() -> Int { layout?.columnWidths.count ?? 0 }
 
-    func accessibilityHeaderElements(forColumn column: Int) -> [UIAccessibilityElement]? {
+    func accessibilityHeaderElements(forColumn column: Int) -> [any UIAccessibilityContainerDataTableCell]? {
         guard let layout, column >= 0, column < layout.columnWidths.count else { return nil }
         return [cellElements()[column]]
     }
