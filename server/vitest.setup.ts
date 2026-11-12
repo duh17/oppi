@@ -11,7 +11,24 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll } from "vitest";
+import { afterAll, vi } from "vitest";
+
+// Node's os.homedir() reads HOME on every call; Bun's reads it once at launch. The temp home
+// below, and tests that point HOME at a fixture, change HOME after launch, so under Bun the
+// code under test would see the developer's real home. Give it Node's behaviour here.
+// Production sets HOME before launch, so both runtimes agree there. Dependencies Vitest does
+// not transform miss this mock; vitest.global-setup.ts launches Bun workers with a temp home.
+// Tests that mock node:os themselves replace this one. Bun only: on Node even a pass-through
+// mock of node:os left files in the per-file temp home at teardown.
+if (process.versions.bun) {
+  const homeFollowingOs = async (importOriginal: () => Promise<typeof import("node:os")>) => {
+    const os = await importOriginal();
+    const homedir = () => process.env.HOME || os.homedir();
+    return { ...os, homedir, default: { ...os, homedir } };
+  };
+  vi.doMock("node:os", homeFollowingOs);
+  vi.doMock("os", homeFollowingOs);
+}
 
 export function sanitizeGitLocalEnvironment(
   environment: NodeJS.ProcessEnv,

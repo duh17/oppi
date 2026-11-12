@@ -327,7 +327,9 @@ function requestIds(
   const storeId = row.serverDurable?.storeId;
   const id = row.serverDurable?.conversationId as ConversationId | undefined;
   if (!storeId || id === undefined) return [];
-  const db = new DatabaseSync(durableStoreSqlitePath(dir, storeId), { readOnly: true });
+  // Not readOnly: once the store has closed, its WAL-mode file has no -shm, and the macOS
+  // system SQLite that Bun's node:sqlite uses cannot open it read-only (Node's bundled one can).
+  const db = new DatabaseSync(durableStoreSqlitePath(dir, storeId));
   try {
     return (
       db

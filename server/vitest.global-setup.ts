@@ -108,6 +108,16 @@ export default function buildCliOnce(): () => void {
     const cliPath = join(buildRoot, "src", "cli.js");
     chmodSync(cliPath, 0o755);
     process.env.OPPI_TEST_CLI = cliPath;
+
+    // Bun's os.homedir() keeps the HOME a process launched with. vitest.setup.ts points HOME at
+    // a per-file temp home after launch, which only code Vitest transforms sees (its node:os
+    // mock); dependencies such as Pi import homedir() directly. Launch every Bun worker with a
+    // run-private home so they never read the developer's either. Node needs none of this.
+    if (process.versions.bun) {
+      const home = join(runRoot, "home");
+      mkdirSync(home);
+      process.env.HOME = home;
+    }
   } catch (error) {
     rmSync(runRoot, { recursive: true, force: true });
     throw error;

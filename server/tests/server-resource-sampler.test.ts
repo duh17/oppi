@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ServerResourceSampler, type ServerMetricsDeps } from "../src/server-resource-sampler.js";
@@ -51,6 +52,16 @@ describe("ServerResourceSampler", () => {
       external: 5 * 1024 * 1024,
       arrayBuffers: 0,
     });
+    // Under Bun the sampler reads heap figures from bun:jsc instead of memoryUsage().
+    if (process.versions.bun) {
+      const jsc = createRequire(import.meta.url)("bun:jsc") as {
+        heapStats(): { heapSize: number; heapCapacity: number };
+      };
+      vi.spyOn(jsc, "heapStats").mockReturnValue({
+        heapSize: 25 * 1024 * 1024,
+        heapCapacity: 50 * 1024 * 1024,
+      });
+    }
     vi.spyOn(process, "cpuUsage").mockReturnValue({ user: 250_000, system: 50_000 });
 
     const sampler = new ServerResourceSampler(deps);

@@ -35,47 +35,57 @@ describe("listAuthenticatedModelProviders", () => {
     expect(process.env.PI_CODING_AGENT_DIR).toBe(join(root, "agent"));
   });
 
-  it("resolves a !command credential on the PATH the service gets from runtimePathEntries", async () => {
-    const binDir = join(root, "service-bin");
-    mkdirSync(binDir);
-    writeFileSync(join(binDir, "oppi-test-key"), "#!/bin/sh\necho sk-ant-from-command\n", {
-      mode: 0o755,
-    });
-    // The service has no PI_CODING_AGENT_DIR, so it reads the agent dir under HOME.
-    const serviceAgentDir = join(root, ".pi", "agent");
-    mkdirSync(serviceAgentDir, { recursive: true });
-    writeFileSync(
-      join(serviceAgentDir, "auth.json"),
-      JSON.stringify({ anthropic: { type: "api_key", key: "!oppi-test-key" } }),
-      { mode: 0o600 },
-    );
-    delete process.env.ANTHROPIC_API_KEY;
+  // These read credentials from the agent dir under a HOME set after launch. Pi resolves that
+  // dir with os.homedir(), which under Bun keeps the launch HOME (vitest.global-setup.ts).
+  const homeFollowsEnv = !process.versions.bun;
 
-    const withPath = { ...ConfigStore.getDefaultConfig(root), runtimePathEntries: [binDir] };
-    expect(await listAuthenticatedModelProviders(withPath, true)).toContain("anthropic");
-  });
+  it.runIf(homeFollowsEnv)(
+    "resolves a !command credential on the PATH the service gets from runtimePathEntries",
+    async () => {
+      const binDir = join(root, "service-bin");
+      mkdirSync(binDir);
+      writeFileSync(join(binDir, "oppi-test-key"), "#!/bin/sh\necho sk-ant-from-command\n", {
+        mode: 0o755,
+      });
+      // The service has no PI_CODING_AGENT_DIR, so it reads the agent dir under HOME.
+      const serviceAgentDir = join(root, ".pi", "agent");
+      mkdirSync(serviceAgentDir, { recursive: true });
+      writeFileSync(
+        join(serviceAgentDir, "auth.json"),
+        JSON.stringify({ anthropic: { type: "api_key", key: "!oppi-test-key" } }),
+        { mode: 0o600 },
+      );
+      delete process.env.ANTHROPIC_API_KEY;
 
-  it("adds the installer Node's directory to the service PATH, last", async () => {
-    const nodeDir = join(root, "installer-node");
-    mkdirSync(nodeDir);
-    writeFileSync(join(nodeDir, "oppi-test-key"), "#!/bin/sh\necho sk-ant-from-node-dir\n", {
-      mode: 0o755,
-    });
-    const serviceAgentDir = join(root, ".pi", "agent");
-    mkdirSync(serviceAgentDir, { recursive: true });
-    writeFileSync(
-      join(serviceAgentDir, "auth.json"),
-      JSON.stringify({ anthropic: { type: "api_key", key: "!oppi-test-key" } }),
-      { mode: 0o600 },
-    );
-    delete process.env.ANTHROPIC_API_KEY;
-    process.env.OPPI_NODE = join(nodeDir, "node");
+      const withPath = { ...ConfigStore.getDefaultConfig(root), runtimePathEntries: [binDir] };
+      expect(await listAuthenticatedModelProviders(withPath, true)).toContain("anthropic");
+    },
+  );
 
-    const config = ConfigStore.getDefaultConfig(root);
-    expect(await listAuthenticatedModelProviders(config, true)).toContain("anthropic");
-    // The lookup restores the shell environment it started from.
-    expect(process.env.OPPI_NODE).toBe(join(nodeDir, "node"));
-  });
+  it.runIf(homeFollowsEnv)(
+    "adds the installer Node's directory to the service PATH, last",
+    async () => {
+      const nodeDir = join(root, "installer-node");
+      mkdirSync(nodeDir);
+      writeFileSync(join(nodeDir, "oppi-test-key"), "#!/bin/sh\necho sk-ant-from-node-dir\n", {
+        mode: 0o755,
+      });
+      const serviceAgentDir = join(root, ".pi", "agent");
+      mkdirSync(serviceAgentDir, { recursive: true });
+      writeFileSync(
+        join(serviceAgentDir, "auth.json"),
+        JSON.stringify({ anthropic: { type: "api_key", key: "!oppi-test-key" } }),
+        { mode: 0o600 },
+      );
+      delete process.env.ANTHROPIC_API_KEY;
+      process.env.OPPI_NODE = join(nodeDir, "node");
+
+      const config = ConfigStore.getDefaultConfig(root);
+      expect(await listAuthenticatedModelProviders(config, true)).toContain("anthropic");
+      // The lookup restores the shell environment it started from.
+      expect(process.env.OPPI_NODE).toBe(join(nodeDir, "node"));
+    },
+  );
 
   it("counts a key the service receives through runtimeEnv", async () => {
     const config = {

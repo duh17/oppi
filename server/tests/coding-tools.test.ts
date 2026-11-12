@@ -60,8 +60,9 @@ describe("read images", () => {
 
   it("reads a small image from a pooled Buffer and leaves the caller's bytes intact", async () => {
     const file = png(40, 10);
-    const view = Buffer.concat([file]); // under 4 KiB: a slice of Node's shared pool
-    expect(view.buffer.byteLength).toBeGreaterThan(view.length);
+    // A view into a larger ArrayBuffer at an offset, like a small Buffer from Node's shared pool.
+    const view = Buffer.alloc(file.length + 64).subarray(32, 32 + file.length);
+    file.copy(view);
     const prepared = await readImages.prepare(view, "image/png", DEFAULT_IMAGE_LIMITS);
     expect(prepared && size(prepared.data)).toEqual({ width: 40, height: 10 });
     expect(view.equals(file)).toBe(true);

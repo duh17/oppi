@@ -181,7 +181,8 @@ export class MobileRendererRegistry {
     if (!existsSync(renderersDir)) return [];
 
     const files: string[] = [];
-    for (const entry of readdirSync(renderersDir)) {
+    // Sorted: Node's readdir returns names sorted, Bun's in directory order.
+    for (const entry of readdirSync(renderersDir).sort()) {
       if (entry.startsWith(".")) continue;
       if (entry.endsWith(".ts") || entry.endsWith(".js")) {
         files.push(join(renderersDir, entry));

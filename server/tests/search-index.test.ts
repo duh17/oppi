@@ -504,9 +504,20 @@ describe("SearchIndex indexes transcript content only", () => {
 
     const index = new SearchIndex(dataDir, () => undefined);
     cleanupPaths.add(join(dataDir, "session-search.db"));
-    index.close();
+    // Break the table under the index's prepared statement. (Querying after close() does not
+    // fail everywhere: bun:sqlite keeps a closed database usable while statements remain.)
+    const db = openDatabase(join(dataDir, "session-search.db"));
+    try {
+      db.exec("DROP TABLE fts_meta");
+    } finally {
+      db.close();
+    }
 
-    expect(() => index.search("", undefined, 10, { sinceMs: 0 })).toThrow();
+    try {
+      expect(() => index.search("", undefined, 10, { sinceMs: 0 })).toThrow();
+    } finally {
+      index.close();
+    }
   });
 
   it("boosts newer sessions for equal-relevance query matches", () => {

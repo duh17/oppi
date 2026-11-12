@@ -1,8 +1,11 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { extensionScopeFromPath } from "../src/sdk-ui-bridge.js";
+
+// The home Pi expands `~` against: the unmocked os.homedir(). Under Bun it keeps the launch
+// HOME, not the per-file one vitest.setup.ts sets afterwards.
+const { homedir } = await vi.importActual<typeof import("node:os")>("node:os");
 
 describe("extensionScopeFromPath", () => {
   it("attributes npm packages from node_modules", () => {

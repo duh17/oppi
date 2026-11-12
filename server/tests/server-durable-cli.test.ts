@@ -10,9 +10,29 @@ it("flag-off CLI loads no Durable implementation or pi-durable modules", () => {
   const graph = join(dir, "resolved-urls.txt");
   const hook = join(dir, "resolve-hook.mjs");
   writeFileSync(graph, "");
+  // Record every resolved module of the child, with the runtime's own loader hook: Node's
+  // module.registerHooks through --import, a Bun runtime plugin through --preload.
   writeFileSync(
     hook,
-    `import { registerHooks } from "node:module";
+    process.versions.bun
+      ? `import { plugin } from "bun";
+import { appendFileSync } from "node:fs";
+import { dirname } from "node:path";
+let resolving = false; // Bun.resolveSync re-enters this hook
+plugin({ name: "resolve-trace", setup(build) {
+  build.onResolve({ filter: /.*/ }, (args) => {
+    if (resolving) return;
+    resolving = true;
+    try {
+      const from = args.importer.startsWith("/") ? dirname(args.importer) : process.cwd();
+      appendFileSync(${JSON.stringify(graph)}, Bun.resolveSync(args.path, from) + "\\n");
+    } finally {
+      resolving = false;
+    }
+  });
+} });
+`
+      : `import { registerHooks } from "node:module";
 import { appendFileSync } from "node:fs";
 registerHooks({ resolve(specifier, context, nextResolve) {
   const result = nextResolve(specifier, context);
@@ -21,7 +41,8 @@ registerHooks({ resolve(specifier, context, nextResolve) {
 } });
 `,
   );
-  const stdout = execFileSync(process.execPath, ["--import", hook, CLI, "config", "get", "port"], {
+  const loaderFlag = process.versions.bun ? "--preload" : "--import";
+  const stdout = execFileSync(process.execPath, [loaderFlag, hook, CLI, "config", "get", "port"], {
     encoding: "utf8",
     env: cliSpawnEnv({ ...process.env, OPPI_DATA_DIR: dir }),
     timeout: 15_000,
