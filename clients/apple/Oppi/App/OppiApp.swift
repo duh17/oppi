@@ -205,6 +205,7 @@ final class OppiApp {
             })
         )
         coordinator.liveVoiceCalls = liveVoiceCalls
+        coordinator.onActiveServerChanged = { AppPreferences.LastActiveServer.set($0) }
         VoiceInputManager.shared.liveVoiceCalls = liveVoiceCalls
         // The opener exists before any scene connects, so a notification
         // response or scene URL delivered during launch has its owner.
@@ -244,9 +245,10 @@ final class OppiApp {
     // MARK: - Scene
 
     /// The scene's window is up: wire the app-wide handlers and launch.
-    func sceneDidConnect() {
+    func sceneDidConnect(sceneIdentifier: String) {
         guard !hasConnectedScene else { return }
         hasConnectedScene = true
+        navigation.panes.connect(scene: sceneIdentifier)
         observeAppEvents()
         observeNavigation()
         recordDiagnosticContext(lifecycleEvent: "root", lifecycleStep: "appear")
@@ -280,6 +282,12 @@ final class OppiApp {
     private func observeAppEvents() {
         observeAppEvent(UIApplication.didReceiveMemoryWarningNotification) { app, _ in
             app.handleMemoryWarning()
+        }
+        // A deleted session's chat leaves every pane.
+        observeAppEvent(ServerConnection.sessionDeletedNotification) { app, notification in
+            guard let serverId = notification.userInfo?["serverId"] as? String,
+                  let sessionId = notification.userInfo?["sessionId"] as? String else { return }
+            app.navigation.removeSessionRoute(serverId: serverId, sessionId: sessionId)
         }
         observeAppEvent(AppFont.didRebuildNotification) { _, _ in
             MarkdownSegmentCache.shared.clearAll()
@@ -660,7 +668,7 @@ final class OppiApp {
 
             let restorationInterval = lifecycleSignposter.beginInterval("scene.background.restoration_save")
             recordLifecycleStep(phase, "restoration_save_begin", flush: true)
-            RestorationState.save(from: connection, coordinator: coordinator, navigation: navigation)
+            navigation.panes.flush()
             recordLifecycleStep(phase, "restoration_save_done", flush: true)
             lifecycleSignposter.endInterval("scene.background.restoration_save", restorationInterval)
 
@@ -861,16 +869,17 @@ final class OppiApp {
             }
         }
 
-        // 1. Load credentials — prefer restored server, then first server
-        let restored = RestorationState.load()
+        // 1. Load credentials — prefer the last active server, then the first
         let route = AppLaunchPairingPolicy.route(
             loadState: serverStore.loadState,
             pairedServerCount: serverStore.servers.count
         )
-        let targetServer = restored?.activeServerId.flatMap { serverStore.server(for: $0) }
+        let targetServer = AppPreferences.LastActiveServer.id().flatMap { serverStore.server(for: $0) }
             ?? serverStore.servers.first
 
         guard route == .pairedShell, let server = targetServer else {
+            // Nothing paired to show a saved tree on: start fresh, and save from here.
+            navigation.panes.restore(navigation: navigation, coordinator: coordinator, applying: false)
             workspaceRefreshOutcome = "not_attempted"
             sessionRefreshOutcome = "not_attempted"
             if route == .onboarding {
@@ -897,18 +906,7 @@ final class OppiApp {
             WhatsNewManager.recordFirstLaunchIfNeeded()
         }
 
-        // 2. Restore UI state (tab, active session, draft)
-        if let restored {
-            navigation.selectedTab = AppTab(rawString: restored.selectedTab)
-            launchConnection.sessionStore.activeSessionId = restored.activeSessionId
-            composerDraftStore.stageLegacyDraft(
-                text: restored.composerDraft,
-                serverID: restored.activeServerId,
-                sessionID: restored.activeSessionId
-            )
-        }
-
-        // 3. Load local state before any network wait. The normal paired shell
+        // 2. Load local state before any network wait. The normal paired shell
         // renders cached content—or its ordinary empty/offline state—while the
         // connection badge reports transport preparation and recovery.
         let cache = TimelineCache.shared
@@ -926,6 +924,9 @@ final class OppiApp {
                 await launchConnection.workspaceStore.loadCachedCatalog(serverId: server.id)
             },
             reveal: {
+                // 3. The window's panes, resolved against the cached stores:
+                // what they hold opens now, the rest shows its leaf state.
+                navigation.panes.restore(navigation: navigation, coordinator: coordinator)
                 navigation.revealPairedServerShell()
             },
             // 4. Prepare the HTTPS endpoint after revealing the paired shell.

@@ -295,6 +295,8 @@ enum ChatRoutesFixture {
     /// A file the session wrote outside Git's changes: the Git panel's This
     /// session opens the session's copy instead of a diff.
     static let touchedPath = "Notes/plan.md"
+    /// A file the server no longer has: reading it answers 404 (`pane-restore`).
+    static let removedFileName = "Removed.swift"
     static let skillName = "route-skill"
     static let seedMarkerId = "chat-routes-user"
 
@@ -898,7 +900,7 @@ private final class ChatRoutesURLProtocol: URLProtocol {
                 "paths": ["Alpha.txt", "Route.md", "Sources/App.swift", "Sources/RouteView.swift"],
                 "truncated": false,
             ])
-        case ("GET", "/files/current"):
+        case ("GET", "/files/current") where !(url.query ?? "").contains(ChatRoutesFixture.removedFileName):
             contentType = "text/plain"
             body = Data(ChatRoutesFixture.fileText.utf8)
         case ("GET", "/models"):

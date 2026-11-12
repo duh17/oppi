@@ -141,6 +141,8 @@ enum WorkspaceSplitDetailPathElement: Hashable {
     case serverSkillFile(ServerSkillFileNavTarget)
     case serverDetails(ServerDetailsNavTarget)
     case modelProviders(ModelProvidersNavTarget)
+    /// A restored or linked pane entry shown through its leaf state.
+    case paneEntry(PaneStackEntry)
 }
 
 /// A screen on the compact workspace stack, above the all-sessions inbox.
@@ -157,6 +159,8 @@ enum WorkspaceStackRouteElement: Hashable {
     case serverResourceDetail(ServerResourceDetailNavTarget)
     case serverSkillBrowser(ServerSkillBrowserNavTarget)
     case serverSkillFile(ServerSkillFileNavTarget)
+    /// A restored or linked pane entry shown through its leaf state.
+    case paneEntry(PaneStackEntry)
 }
 
 struct WorkspaceStackDiagnosticContext: Equatable, Sendable {
@@ -174,6 +178,8 @@ struct WorkspaceStackDiagnosticContext: Equatable, Sendable {
 /// Navigation state for the app.
 @MainActor @Observable
 final class AppNavigation {
+    /// The window's pane tree beyond its routes: the companion, restoration.
+    @ObservationIgnored let panes = ScenePanes()
     var selectedTab: AppTab = .workspaces
     var showOnboarding: Bool = true
     var showWhatsNew: Bool = false
@@ -193,7 +199,7 @@ final class AppNavigation {
     /// Screens pushed on the regular-width detail column above its root,
     /// bottom to top. Keeps detail-only pushes, such as file browser
     /// directory drilling, out of the workspace sidebar.
-    private(set) var splitDetailPathElements: [WorkspaceSplitDetailPathElement] = [] {
+    var splitDetailPathElements: [WorkspaceSplitDetailPathElement] = [] {
         didSet {
             if isRestoringMediaOverlay { return }
             restoreMediaOverlayRouteIfNeeded(
@@ -247,7 +253,7 @@ final class AppNavigation {
 
     /// Screens pushed on the compact workspace stack above the all-sessions
     /// inbox, bottom to top. The shell's stack shows exactly these.
-    private(set) var workspaceStackRouteElements: [WorkspaceStackRouteElement] = [] {
+    var workspaceStackRouteElements: [WorkspaceStackRouteElement] = [] {
         didSet {
             if isRestoringMediaOverlay { return }
             if restoreMediaOverlayRouteIfNeeded(
@@ -307,7 +313,7 @@ final class AppNavigation {
         let from = workspaceNavigationPresentation
         let fromSessionId = visibleDiagnosticSessionId()
         let preservedStack = presentation == .stack ? stackForCurrentSplitSelection() : nil
-        let preservedSplitState = presentation == .split ? splitStateForCurrentStackSelection() : nil
+        let preservedSplitState = presentation == .split ? splitState(forStack: workspaceStackRouteElements) : nil
 
         workspaceNavigationPresentation = presentation
         switch presentation {
@@ -678,13 +684,13 @@ final class AppNavigation {
         lhs.serverId == rhs.serverId && lhs.sessionId == rhs.sessionId
     }
 
-    private enum ChatCoveringRouteElement {
+    enum ChatCoveringRouteElement {
         case session(String)
         case coveringPage(sourceSessionId: String?)
         case other
     }
 
-    private static func coveringElement(from element: WorkspaceStackRouteElement) -> ChatCoveringRouteElement {
+    static func coveringElement(from element: WorkspaceStackRouteElement) -> ChatCoveringRouteElement {
         switch element {
         case .session(let target):
             return .session(target.sessionId)
@@ -694,12 +700,12 @@ final class AppNavigation {
             return .coveringPage(sourceSessionId: coveringSourceSessionId(for: target))
         case .workspace, .fileBrowser, .workspaceConfiguration, .utility,
              .serverDetails, .modelProviders, .serverResourceDetail,
-             .serverSkillBrowser, .serverSkillFile:
+             .serverSkillBrowser, .serverSkillFile, .paneEntry:
             return .other
         }
     }
 
-    private static func coveringElement(from target: WorkspaceSplitDetailTarget) -> ChatCoveringRouteElement {
+    static func coveringElement(from target: WorkspaceSplitDetailTarget) -> ChatCoveringRouteElement {
         switch target {
         case .session(let session):
             return .session(session.sessionId)
@@ -710,7 +716,7 @@ final class AppNavigation {
         }
     }
 
-    private static func coveringElement(from element: WorkspaceSplitDetailPathElement) -> ChatCoveringRouteElement {
+    static func coveringElement(from element: WorkspaceSplitDetailPathElement) -> ChatCoveringRouteElement {
         switch element {
         case .session(let target):
             return .session(target.sessionId)
@@ -719,7 +725,7 @@ final class AppNavigation {
         case .linkedFile(let target):
             return .coveringPage(sourceSessionId: coveringSourceSessionId(for: target))
         case .fileBrowser, .serverResourceDetail, .serverSkillBrowser,
-             .serverSkillFile, .serverDetails, .modelProviders:
+             .serverSkillFile, .serverDetails, .modelProviders, .paneEntry:
             return .other
         }
     }
@@ -1230,7 +1236,7 @@ final class AppNavigation {
     /// Back, which looks like a stuck back stack. A non-navigation clear (a
     /// server or lock reset) still restores through
     /// `restoreMediaOverlayRouteIfNeeded`.
-    private func mediaOverlayYieldsToUserNavigation() {
+    func mediaOverlayYieldsToUserNavigation() {
         guard isMediaOverlayActive else { return }
         mediaOverlayDepth = 0
         isMediaOverlayActive = false
@@ -1252,75 +1258,6 @@ final class AppNavigation {
         case .split:
             splitSelectedWorkspace == nil && splitDetailTarget == nil && splitDetailPathElements.isEmpty
         }
-    }
-
-    /// Takes the session's routes off the compact stack or the split detail,
-    /// for a session whose lock was refused after its route was pushed, so Back
-    /// never reaches its chat. A session's route goes together with the screens
-    /// pushed from that chat (a reader, whose lock origin was fixed when it
-    /// opened), up to the next session route: another session's chat is not
-    /// under this lock, so it and what is over it stay. The split detail column
-    /// clears when the session is its root: the screens pushed over a root go
-    /// with it. Returns true when the removed screens reached the top, so the
-    /// person was still in this session's screens.
-    @discardableResult
-    func removeSessionRoute(serverId: String, sessionId: String) -> Bool {
-        func matches(_ target: WorkspaceSessionNavTarget) -> Bool {
-            target.serverId == serverId && target.sessionId == sessionId
-        }
-        switch workspaceNavigationPresentation {
-        case .stack:
-            let cut = Self.removingSessionBlocks(
-                from: workspaceStackRouteElements,
-                startsRemoving: false,
-                session: { if case .session(let target) = $0 { return target } else { return nil } },
-                matches: matches
-            )
-            if cut.remaining.count != workspaceStackRouteElements.count {
-                mediaOverlayYieldsToUserNavigation()
-                workspaceStackRouteElements = cut.remaining
-            }
-            return cut.reachedTop
-        case .split:
-            var rootMatches = false
-            if case .session(let root)? = splitDetailTarget { rootMatches = matches(root) }
-            let cut = Self.removingSessionBlocks(
-                from: splitDetailPathElements,
-                startsRemoving: rootMatches,
-                session: { if case .session(let target) = $0 { return target } else { return nil } },
-                matches: matches
-            )
-            if rootMatches {
-                mediaOverlayYieldsToUserNavigation()
-                splitDetailTarget = nil
-                splitDetailPathElements = []
-                splitColumnVisibility = .all
-            } else if cut.remaining.count != splitDetailPathElements.count {
-                mediaOverlayYieldsToUserNavigation()
-                splitDetailPathElements = cut.remaining
-            }
-            return cut.reachedTop
-        }
-    }
-
-    /// Drops each matching session element and every element after it up to
-    /// the next session element. `reachedTop` is true when the last dropped
-    /// block extends to the end, so nothing of another session is above it.
-    /// `startsRemoving` treats the screens before the first session element as
-    /// part of a removed block (a split detail whose root is the session).
-    private static func removingSessionBlocks<Element>(
-        from elements: [Element],
-        startsRemoving: Bool,
-        session: (Element) -> WorkspaceSessionNavTarget?,
-        matches: (WorkspaceSessionNavTarget) -> Bool
-    ) -> (remaining: [Element], reachedTop: Bool) {
-        var removing = startsRemoving
-        var remaining: [Element] = []
-        for element in elements {
-            if let target = session(element) { removing = matches(target) }
-            if !removing { remaining.append(element) }
-        }
-        return (remaining, removing)
     }
 
     /// The user popped the split detail column back to `depth` pushed screens.
@@ -1358,6 +1295,7 @@ final class AppNavigation {
         case .serverResourceDetail(let target): serverResourceDetailDiagnosticContext(target)
         case .serverSkillBrowser: serverSkillBrowserDiagnosticContext
         case .serverSkillFile: serverSkillFileDiagnosticContext
+        case .paneEntry(let entry): paneEntryDiagnosticContext(entry)
         }
     }
 
@@ -1374,6 +1312,7 @@ final class AppNavigation {
         case .serverSkillFile: serverSkillFileDiagnosticContext
         case .serverDetails: serverDetailsDiagnosticContext
         case .modelProviders: modelProvidersDiagnosticContext
+        case .paneEntry(let entry): paneEntryDiagnosticContext(entry)
         }
     }
 
@@ -1488,7 +1427,7 @@ final class AppNavigation {
         workspaceId: nil
     )
 
-    private func stackForCurrentSplitSelection() -> [WorkspaceStackRouteElement]? {
+    func stackForCurrentSplitSelection() -> [WorkspaceStackRouteElement]? {
         var routeElements: [WorkspaceStackRouteElement] = []
 
         let includesWorkspaceDetail = switch splitDetailTarget {
@@ -1527,6 +1466,7 @@ final class AppNavigation {
             case .serverSkillFile(let target): .serverSkillFile(target)
             case .serverDetails(let target): .serverDetails(target)
             case .modelProviders(let target): .modelProviders(target)
+            case .paneEntry(let entry): .paneEntry(entry)
             }
             routeElements.append(stackElement)
         }
@@ -1534,7 +1474,7 @@ final class AppNavigation {
         return routeElements.isEmpty ? nil : routeElements
     }
 
-    private func splitStateForCurrentStackSelection() -> (
+    func splitState(forStack stackElements: [WorkspaceStackRouteElement]) -> (
         workspace: WorkspaceNavTarget?,
         detail: WorkspaceSplitDetailTarget?,
         detailPathElements: [WorkspaceSplitDetailPathElement]
@@ -1543,7 +1483,7 @@ final class AppNavigation {
         var detail: WorkspaceSplitDetailTarget?
         var detailPathElements: [WorkspaceSplitDetailPathElement] = []
 
-        for element in workspaceStackRouteElements {
+        for element in stackElements {
             switch element {
             case .workspace(let target):
                 workspace = target
@@ -1584,13 +1524,15 @@ final class AppNavigation {
                 detailPathElements.append(.serverDetails(target))
             case .modelProviders(let target):
                 detailPathElements.append(.modelProviders(target))
+            case .paneEntry(let entry):
+                detailPathElements.append(.paneEntry(entry))
             }
         }
 
         return (workspace, detail, detailPathElements)
     }
 
-    private func splitVisibility(
+    func splitVisibility(
         for detail: WorkspaceSplitDetailTarget?
     ) -> SplitColumnVisibility {
         switch detail {

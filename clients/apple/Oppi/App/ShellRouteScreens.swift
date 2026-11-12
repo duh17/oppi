@@ -70,6 +70,8 @@ enum ShellRouteScreens {
             return ServerSkillBrowserViewController(target: target, root: root)
         case .serverSkillFile(let target):
             return ServerSkillFileViewController(target: target, root: root)
+        case .paneEntry(let entry):
+            return PaneLeafStateViewController(entry: entry, root: root)
         }
     }
 

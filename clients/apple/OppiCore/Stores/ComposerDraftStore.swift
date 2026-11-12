@@ -377,12 +377,6 @@ private actor ComposerDraftPersistence {
 
 @MainActor @Observable
 final class ComposerDraftStore {
-    private struct PendingLegacyDraft {
-        let serverID: String
-        let sessionID: String
-        let text: String
-    }
-
     private(set) var isLoaded = false
     private(set) var lastError: String?
 
@@ -398,7 +392,6 @@ final class ComposerDraftStore {
     /// may hold drafts newer than the main file, so it is never overwritten or
     /// removed until it has been read and merged.
     @ObservationIgnored private var fallbackFileUnreadable = false
-    @ObservationIgnored private var pendingLegacyDraft: PendingLegacyDraft?
     @ObservationIgnored private var fallbackDocument = ComposerDraftFallbackDocument.empty
     @ObservationIgnored private var attachmentDataByKey: [ComposerDraftKey: [String: Data]] = [:]
 
@@ -831,31 +824,6 @@ final class ComposerDraftStore {
         guard let record, !record.payload.isEmpty else { return }
         mergeLoadedRecord(record)
         scheduleSave()
-    }
-
-    func stageLegacyDraft(text: String?, serverID: String?, sessionID: String?) {
-        guard let text, !text.isEmpty,
-              let serverID, !serverID.isEmpty,
-              let sessionID, !sessionID.isEmpty else {
-            return
-        }
-        pendingLegacyDraft = PendingLegacyDraft(
-            serverID: serverID,
-            sessionID: sessionID,
-            text: text
-        )
-    }
-
-    func consumeLegacyDraft(for key: ComposerDraftKey) -> ComposerDraftPayload? {
-        guard let pendingLegacyDraft,
-              pendingLegacyDraft.serverID == key.serverID,
-              pendingLegacyDraft.sessionID == key.sessionID else {
-            return nil
-        }
-
-        self.pendingLegacyDraft = nil
-        guard records[key] == nil else { return nil }
-        return ComposerDraftPayload(text: pendingLegacyDraft.text, repoPointers: [])
     }
 
     func flush() async {

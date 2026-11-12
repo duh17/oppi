@@ -230,7 +230,10 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
     }
 
     private var linkedSessionId: String? {
-        linkURL.flatMap { SessionOpen(url: $0, origin: .inAppHyperlink)?.sessionId }
+        linkURL.flatMap { url in
+            guard case .success(let link)? = PaneLinkCodec.decode(url), case .session(let id) = link.route else { return nil }
+            return id
+        }
     }
 
     private var detailBlocks: [ExtensionUINativeBlock] {

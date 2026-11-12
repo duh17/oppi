@@ -85,7 +85,7 @@ extension ServerConnection {
 
         case .sessionDeleted(let deletedId):
             let workspaceId = sessionStore.session(id: deletedId)?.workspaceId
-            sessionStore.remove(id: deletedId)
+            removeSession(deletedId)
             if let currentServerId {
                 scopedLocks.forgetSession(serverId: currentServerId, sessionId: deletedId)
             }

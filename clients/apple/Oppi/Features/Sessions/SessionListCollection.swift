@@ -623,7 +623,7 @@ enum SessionListLifecycle {
             onError("Delete failed: \(error.localizedDescription)")
             return false
         }
-        connection.sessionStore.remove(id: session.id)
+        connection.removeSession(session.id)
         await TimelineCache.shared.removeTrace(session.id, serverId: serverId)
         ScopedLockService.shared.forgetSession(serverId: serverId, sessionId: session.id)
         drafts.clearDraft(serverID: serverId, workspaceID: scope.composerDraftScopeID, sessionID: session.id)

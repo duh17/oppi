@@ -158,7 +158,14 @@ final class ConnectionCoordinator {
 
     /// Currently focused server ID (fingerprint). The server whose data
     /// is displayed in the main UI.
-    private(set) var activeServerId: String?
+    private(set) var activeServerId: String? {
+        didSet {
+            if let activeServerId, activeServerId != oldValue { onActiveServerChanged(activeServerId) }
+        }
+    }
+    /// Records each newly active server; the app keeps it as the last active
+    /// server (`AppPreferences.LastActiveServer`). Tests leave it a no-op.
+    @ObservationIgnored var onActiveServerChanged: @MainActor (String) -> Void = { _ in }
     private var selectionRevision = 0
     /// Pairing attempts in start order, across every pairing flow, so an older
     /// approval cannot undo a newer one. See `addEnrolledServer`.
@@ -260,9 +267,6 @@ final class ConnectionCoordinator {
 
     private static let pathMonitorQueueLabel = "oppi.path-monitor"
     private static let pathChangeDebounceDelay: Duration = .milliseconds(200)
-
-    // periphery:ignore - used by RestorationStateTests via @testable import
-    var connection: ServerConnection { activeConnection }
 
     init(
         serverStore: ServerStore,
@@ -1462,28 +1466,46 @@ final class ConnectionCoordinator {
         )
 
         var couldNotAsk = false
-        for serverId in hintedServerIds {
-            guard let connection = connections[serverId] else { continue }
-            do {
-                let session: Session
-                if let fetchHook = _getSessionRecordForTesting {
-                    session = try await fetchHook(serverId, id)
-                } else if let api = await apiClientReady(for: serverId) {
-                    session = try await api.getSessionRecord(sessionId: id)
-                } else {
-                    couldNotAsk = true
-                    continue
-                }
-                connection.sessionStore.upsert(session)
-                return .found(SessionLookupResult(serverId: serverId, connection: connection))
-            } catch {
-                if case APIError.server(let status, _) = error, status == 404 { continue }
-                if case APIError.codedServer(let status, _, _) = error, status == 404 { continue }
-                couldNotAsk = true
+        for serverId in hintedServerIds where connections[serverId] != nil {
+            switch await fetchSession(id: id, on: serverId) {
+            case .found(let result): return .found(result)
+            case .notFound: continue
+            case .unreachable: couldNotAsk = true
             }
         }
 
         return couldNotAsk ? .unreachable : .notFound
+    }
+
+    /// `lookupSession` on one named server only, for a pane entry, which
+    /// names the server its session lives on: another server's answer says
+    /// nothing about it.
+    func lookupSession(id: String, on serverId: String) async -> SessionLookup {
+        if let connection = connections[serverId], connection.sessionStore.session(id: id) != nil {
+            return .found(SessionLookupResult(serverId: serverId, connection: connection))
+        }
+        return await fetchSession(id: id, on: serverId)
+    }
+
+    /// `GET /sessions/:id` on one server; a found record lands in its store.
+    private func fetchSession(id: String, on serverId: String) async -> SessionLookup {
+        guard let connection = connections[serverId] else { return .unreachable }
+        do {
+            let session: Session
+            if let fetchHook = _getSessionRecordForTesting {
+                session = try await fetchHook(serverId, id)
+            } else if let api = await apiClientReady(for: serverId) {
+                session = try await api.getSessionRecord(sessionId: id)
+            } else {
+                return .unreachable
+            }
+            connection.sessionStore.upsert(session)
+            return .found(SessionLookupResult(serverId: serverId, connection: connection))
+        } catch {
+            if case APIError.server(let status, _) = error, status == 404 { return .notFound }
+            if case APIError.codedServer(let status, _, _) = error, status == 404 { return .notFound }
+            return .unreachable
+        }
     }
 
     /// Get the connection for a specific server.

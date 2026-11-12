@@ -11,6 +11,9 @@ enum LoadState {
     /// A spinner with its caption. A nil caption shows the spinner alone.
     case loading(String?)
     case empty(title: String, systemImage: String, message: String? = nil)
+    /// Content that is gone (`paneMissing`); `retry` reads again, for a file
+    /// an agent may be about to write.
+    case missing(title: String, systemImage: String, message: String, retry: RetryAction?)
     /// A search that matched nothing.
     case noResults(query: String)
     /// A failure. With `retry` the screen offers one "Retry" button; a screen
@@ -19,6 +22,42 @@ enum LoadState {
 }
 
 extension LoadState {
+    /// A pane's content that is gone (`PaneLeafState.missing`), in the same
+    /// words wherever a pane shows it: its leaf state, or a file viewer whose
+    /// file the server no longer has.
+    static func paneMissing(_ content: PaneMissingContent, retry: RetryAction? = nil) -> LoadState {
+        switch content {
+        case .session:
+            .missing(
+                title: String(localized: "Session Not Found"),
+                systemImage: "bubble.left.and.exclamationmark.bubble.right",
+                message: String(localized: "This session no longer exists."),
+                retry: retry
+            )
+        case .file:
+            .missing(
+                title: String(localized: "File Not Found"),
+                systemImage: "doc.questionmark",
+                message: String(localized: "This file no longer exists."),
+                retry: retry
+            )
+        case .workspace:
+            .missing(
+                title: String(localized: "Workspace Not Found"),
+                systemImage: "folder.badge.questionmark",
+                message: String(localized: "This workspace no longer exists."),
+                retry: retry
+            )
+        case .server:
+            .missing(
+                title: String(localized: "Server Removed"),
+                systemImage: "server.rack",
+                message: String(localized: "This pane\u{2019}s server is no longer paired with this device."),
+                retry: retry
+            )
+        }
+    }
+
     /// A screen pinned to a paired server that has been removed.
     static var serverUnavailable: LoadState {
         .empty(
@@ -41,6 +80,8 @@ extension LoadState {
             caption ?? ""
         case .empty(let title, _, let message):
             [title, message].compactMap { $0 }.joined(separator: " ")
+        case .missing(let title, _, let message, _):
+            "\(title) \(message)"
         case .noResults(let query):
             String(localized: "No results for “\(query)”.")
         case .failed(let title, let message, _):
@@ -51,8 +92,10 @@ extension LoadState {
     /// The Retry a row shows under the state, for the states that have one. The
     /// row's button runs it on the main thread; `rowAction` says so.
     var rowRetry: (() -> Void)? {
-        guard case .failed(_, _, let retry) = self else { return nil }
-        return retry?.rowAction
+        switch self {
+        case .failed(_, _, let retry), .missing(_, _, _, let retry): return retry?.rowAction
+        default: return nil
+        }
     }
 }
 
@@ -114,6 +157,16 @@ extension UIContentUnavailableConfiguration {
             config.text = title
             config.textProperties.color = fg
             config.secondaryText = message
+        case .missing(let title, let systemImage, let message, let retry):
+            config = empty()
+            config.image = UIImage(systemName: systemImage)
+            config.imageProperties.tintColor = comment
+            config.text = title
+            config.textProperties.color = fg
+            config.secondaryText = message
+            if let retry {
+                config.setProminentButton(String(localized: "Retry"), action: retry.run)
+            }
         case .noResults(let query):
             config = search()
             config.imageProperties.tintColor = comment

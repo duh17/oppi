@@ -23,6 +23,12 @@ enum AppOpenRequest: Equatable, Sendable {
     case createWorkspace(WorkspaceDeepLink.Payload)
     /// `oppi://terminal/rex?session=&block=`: opens one Rex pane. Open-only.
     case terminal(TerminalOpen)
+    /// `oppi://sessions`, `file`, `files`, `git` or `panel` (`PaneLinkCodec`):
+    /// opens the place it names. `sourceServerID` is an in-app link's server.
+    case pane(PaneLink, sourceServerID: String?)
+    /// An `oppi://` pane link the codec refused: an unknown or repeated
+    /// parameter, a path the route does not take.
+    case invalidLink(URL)
     /// `oppi://connect` or `oppi://pair`.
     case invite(URL)
     /// http(s): the browser preference decides in-app or system.
@@ -44,18 +50,23 @@ enum AppOpenRequest: Equatable, Sendable {
     /// back to the cached stores.
     init(url: URL, origin: SessionNavigationSource, sourceServerID: String? = nil) {
         let scheme = url.scheme?.lowercased()
-        if let session = SessionOpen(
-            url: url,
-            origin: origin,
-            sourceServerID: sourceServerID
-        ) {
-            self = .session(session)
-        } else if let thread = SessionOpen(
-            threadURL: url,
-            origin: origin,
-            sourceServerID: sourceServerID
-        ) {
-            self = .thread(thread)
+        if let decoded = PaneLinkCodec.decode(url) {
+            switch decoded {
+            case .success(let link):
+                // A link that names its server opens there; else on the server
+                // it came from (an in-app link), else by lookup.
+                let serverId = link.server ?? sourceServerID
+                switch link.route {
+                case .session(let id):
+                    self = .session(SessionOpen(serverId: serverId, sessionId: id, origin: origin))
+                case .thread(let id):
+                    self = .thread(SessionOpen(serverId: serverId, sessionId: id, origin: origin))
+                default:
+                    self = .pane(link, sourceServerID: sourceServerID)
+                }
+            case .failure:
+                self = .invalidLink(url)
+            }
         } else if scheme == "oppi", let payload = WorkspaceDeepLink.payload(from: url) {
             self = .createWorkspace(payload)
         } else if let terminal = TerminalOpen(url: url, sourceServerID: sourceServerID) {
@@ -102,33 +113,6 @@ struct SessionOpen: Equatable, Sendable {
         self.startedSessionRequestID = startedSessionRequestID
     }
 
-    /// Nil unless `url` is `oppi://session/<id>`. A `?workspaceId=` query is
-    /// ignored: a URL must never choose the session's workspace (or its lock
-    /// scope); only server-provided payloads carry one.
-    init?(url: URL, origin: SessionNavigationSource, sourceServerID: String? = nil) {
-        self.init(url: url, host: "session", origin: origin, sourceServerID: sourceServerID)
-    }
-
-    /// Nil unless `url` is `oppi://thread/<id>`: the same validation as a session link.
-    init?(threadURL url: URL, origin: SessionNavigationSource, sourceServerID: String? = nil) {
-        self.init(url: url, host: "thread", origin: origin, sourceServerID: sourceServerID)
-    }
-
-    private init?(url: URL, host: String, origin: SessionNavigationSource, sourceServerID: String?) {
-        guard url.scheme?.lowercased() == "oppi",
-              url.host?.lowercased() == host else {
-            return nil
-        }
-        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        let pathParts = (components?.percentEncodedPath ?? url.path)
-            .split(separator: "/", omittingEmptySubsequences: true)
-        guard pathParts.count == 1, let rawId = pathParts.first else { return nil }
-        let sessionId = (String(rawId).removingPercentEncoding ?? String(rawId))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !sessionId.isEmpty else { return nil }
-
-        self.init(serverId: sourceServerID, sessionId: sessionId, origin: origin)
-    }
 }
 
 /// In-app session links resolve through the source server when it has the
@@ -531,6 +515,8 @@ final class AppOpener {
             return reference.sourceServerID
         case .createWorkspace(let payload):
             return payload.resolvedServerId
+        case .pane(let link, let sourceServerID):
+            return link.server ?? sourceServerID
         default:
             return nil
         }
@@ -624,6 +610,11 @@ final class AppOpener {
             outcome = await openSessionFileReference(reference, generation: generation)
         case .fileLink(let payload):
             outcome = await handleFileLink(payload, generation: generation)
+        case .pane(let link, let sourceServerID):
+            outcome = await performPane(link, sourceServerID: sourceServerID, generation: generation)
+        case .invalidLink:
+            toast(String(localized: "This Oppi link isn\u{2019}t valid"))
+            outcome = .finished
         case .invite:
             // accept() runs invites on their own generation; nothing reaches
             // perform with one.
@@ -684,8 +675,14 @@ final class AppOpener {
                     // again at every launch.
                     if let requestID = open.startedSessionRequestID {
                         intentSessionOpenTrigger.abandon(requestID: requestID)
+                        toast("Server not found for this \(link) link")
+                    } else if link == "session" {
+                        // A link naming a server this device has not paired
+                        // opens as the pane's missing state.
+                        navigation.pushPaneEntry(PaneStackEntry(serverId: named, route: .session(open.sessionId)))
+                    } else {
+                        toast("Server not found for this \(link) link")
                     }
-                    toast("Server not found for this \(link) link")
                     return .done(.finished)
                 }
                 return .server(named)

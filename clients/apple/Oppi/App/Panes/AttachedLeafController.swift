@@ -24,6 +24,8 @@ final class AttachedLeafController: UIViewController {
         /// The soft ceiling of ordinary dragging; nil picks a width generous
         /// enough for most content without being the whole window.
         var maxWidth: CGFloat? = nil
+        /// The panel's link, when it has one, so the window can restore it.
+        var route: PaneStackEntry? = nil
         /// Builds the panel's UIKit screen when the leaf installs it.
         let makeScreen: () -> UIViewController
 
@@ -45,7 +47,7 @@ final class AttachedLeafController: UIViewController {
     private var requested: Panel?
     /// The panel the leaf shows, mounted, parked, or dropped by a memory
     /// warning (then `container` is nil until the screen returns).
-    private var installed: (id: AnyHashable, widths: PaneCompanionWidths)?
+    private var installed: (id: AnyHashable, widths: PaneCompanionWidths, route: PaneStackEntry?)?
     private var container: RouterNavigationController?
     /// The host the leaf is mounted or parked in.
     private weak var host: PaneHostController?
@@ -172,7 +174,7 @@ final class AttachedLeafController: UIViewController {
 
     private func installRequestedPanel() {
         guard let panel = requested, root != nil, installed == nil else { return }
-        installed = (panel.id, panel.widths)
+        installed = (panel.id, panel.widths, panel.route)
         container = makeContainer(panel)
         setNeedsUpdateProperties()
         attach(opening: true)
@@ -187,7 +189,7 @@ final class AttachedLeafController: UIViewController {
         guard let container else { return }
         self.host = host
         isMounted = true
-        host.mountCompanion(container, widths: installed.widths, owner: self, opening: opening)
+        host.mountCompanion(container, widths: installed.widths, route: installed.route, owner: self, opening: opening)
     }
 
     private func swapPanel(_ panel: Panel) {
@@ -195,10 +197,10 @@ final class AttachedLeafController: UIViewController {
             guard let self else { return }
             let old = self.container
             let new = self.makeContainer(panel)
-            self.installed = (panel.id, panel.widths)
+            self.installed = (panel.id, panel.widths, panel.route)
             self.container = new
             if let old, self.isMounted, let host = self.host {
-                host.replaceCompanion(old, with: new, widths: panel.widths)
+                host.replaceCompanion(old, with: new, widths: panel.widths, route: panel.route)
             } else if let old {
                 self.host?.releaseParked(old)
             }

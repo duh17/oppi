@@ -25,11 +25,6 @@ final class ChatSessionState {
     var extensionEditorTextUpdate: ExtensionEditorTextUpdate?
     @ObservationIgnored private var extensionEditorTextRevision = 0
 
-    // MARK: - Scroll restoration (non-observed, persisted via RestorationState)
-
-    @ObservationIgnored var scrollAnchorItemId: String?
-    @ObservationIgnored var scrollWasNearBottom: Bool = true
-
     // MARK: - Thinking level
 
     var thinkingLevel: ThinkingLevel = .medium

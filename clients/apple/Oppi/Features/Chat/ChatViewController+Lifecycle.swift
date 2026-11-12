@@ -75,6 +75,7 @@ extension ChatViewController {
         // Dragging or flinging the divider past the close threshold closes
         // the open panel the same way its own Close or Done control does.
         attachedLeaf.onDismissRequested = { [weak self] in self?.showSidePanel(nil) }
+        appNavigation.panes.register(chat: self)
 
         modals.anchor = self
         barItems.chat = self
@@ -400,6 +401,7 @@ extension ChatViewController {
         // position the same chat had in the other shell before history lands.
         mountedPresentation = appNavigation.workspaceNavigationPresentation
         isRouteManaged = appNavigation.routeContainsSession(sessionId)
+        takeRestoredPaneState()
         incognitoRouteWatch?.cancel()
         incognitoRouteWatch = nil
         let shellSwapRemount = ChatScrollShellSwapHandoff.shared.chatDidAppear(

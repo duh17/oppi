@@ -562,29 +562,6 @@ struct ComposerDraftStoreTests {
         #expect(store.record(for: key) == backup)
     }
 
-    @Test func migratesLegacyDraftOnlyToMatchingServerAndSession() async throws {
-        let fixture = try Fixture()
-        defer { fixture.remove() }
-        let store = fixture.makeStore()
-        await store.load()
-        let matching = try #require(ComposerDraftKey(
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-a"
-        ))
-        let other = try #require(ComposerDraftKey(
-            serverID: "server-a",
-            workspaceID: "workspace-a",
-            sessionID: "session-b"
-        ))
-
-        store.stageLegacyDraft(text: "old draft", serverID: "server-a", sessionID: "session-a")
-
-        #expect(store.consumeLegacyDraft(for: other) == nil)
-        #expect(store.consumeLegacyDraft(for: matching)?.text == "old draft")
-        #expect(store.consumeLegacyDraft(for: matching) == nil)
-    }
-
     @Test func corruptStorageFailsOpenWithoutCrashing() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }

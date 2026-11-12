@@ -167,6 +167,11 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
         func cachedHeightForTesting(itemID: String) -> CGFloat? {
             cachedHeightByItemID[itemID]?.latest.height
         }
+
+        /// The row's height at `width`, from either generation.
+        func cachedHeightForTesting(itemID: String, width: CGFloat) -> CGFloat? {
+            cachedHeightByItemID[itemID]?.height(atWidth: width)
+        }
     #endif
 
     override var collectionViewContentSize: CGSize { contentSize }

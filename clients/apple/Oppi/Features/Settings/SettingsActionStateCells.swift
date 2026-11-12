@@ -173,6 +173,8 @@ final class SettingsStateRowCell: UICollectionViewListCell {
                 self = .message(loadState.rowText)
             case .failed(let title, let message, _):
                 self = .failure(title: title, reason: message, retry: loadState.rowRetry)
+            case .missing(let title, _, let message, _):
+                self = .failure(title: title, reason: message, retry: loadState.rowRetry)
             }
         }
     }

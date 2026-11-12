@@ -185,11 +185,45 @@ extension ChatViewController {
                     minWidth: width.minimum,
                     idealWidth: width.ideal,
                     maxWidth: width.maximum,
+                    route: paneEntry(for: panel),
                     makeScreen: sidePanelController(panel)
                 )
             },
             root: panel == nil ? nil : root
         )
+    }
+
+    /// A panel's link, so the window restores it beside this chat: Files and
+    /// Git name the chat's workspace; Outline, Context, Share and readers
+    /// have none.
+    private func paneEntry(for panel: ChatSidePanel) -> PaneStackEntry? {
+        guard let serverId = connection.currentServerId ?? serverIdHint,
+              let workspaceId = session?.workspaceId ?? workspaceIdHint else { return nil }
+        switch panel {
+        case .files:
+            return PaneStackEntry(serverId: serverId, route: .files(workspace: workspaceId, path: nil))
+        case .git:
+            return PaneStackEntry(serverId: serverId, route: .git(workspace: workspaceId, worktree: session?.worktreeId))
+        case .outline, .context, .share, .reader, .timeline:
+            return nil
+        }
+    }
+
+    /// A relaunch reopens the panel this chat had beside it, where panels
+    /// still open beside (a narrower window keeps it closed rather than
+    /// raising a sheet), and starts at the saved reading position.
+    func takeRestoredPaneState() {
+        if let scroll = appNavigation.panes.takeRestoredScroll(for: sessionId) {
+            scrollController.adoptReentryIntent(
+                ChatScrollReentryIntent(savedItemID: scroll.itemId, relativeY: CGFloat(scroll.relativeY))
+            )
+        }
+        guard let route = appNavigation.panes.takeRestoredPanel(for: sessionId), opensPanelsBeside else { return }
+        switch route {
+        case .files: showSidePanel(.files)
+        case .git: showSidePanel(.git)
+        default: break
+        }
     }
 
     /// Outline, Git, Context, and Files are UIKit screens; the reader is a
@@ -394,6 +428,20 @@ extension ChatViewController {
                 )
             },
             onClose: { [weak self] in self?.model.showContextInspector = false }
+        )
+    }
+}
+
+extension ChatViewController: PaneChatScrollReporting {
+    /// Where the reader is, for the window's saved tree: the live tail, or
+    /// the item at the top with its offset.
+    var paneChatScroll: PaneChatScroll? {
+        guard let intent = scrollController.reentryIntent else { return nil }
+        let viewport = intent.savedViewport
+        return PaneChatScroll(
+            sessionId: sessionId,
+            itemId: viewport?.itemID,
+            relativeY: Double(viewport?.relativeY ?? 0)
         )
     }
 }

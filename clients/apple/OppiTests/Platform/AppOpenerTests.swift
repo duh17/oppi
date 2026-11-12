@@ -152,15 +152,27 @@ struct AppOpenerTests {
         #expect(try request(referenceURL.absoluteString) == .resourceReference(reference))
     }
 
-    @Test func malformedSessionURLsStayInvites() throws {
-        // `oppi://session` with a nested path and a non-connect oppi link both
-        // fall through to the invite route, which drops silently unless it
-        // looks like a connect/pair link.
-        for raw in ["oppi://session/a/b", "oppi://nonsense"] {
-            let url = try #require(URL(string: raw))
-            #expect(AppOpenRequest(url: url, origin: .externalURL) == .invite(url), Comment(rawValue: raw))
-            #expect(!InAppInviteLink.claims(url), Comment(rawValue: raw))
+    @Test func paneLinksDecodeThroughTheCodec() throws {
+        func request(_ raw: String) throws -> AppOpenRequest {
+            AppOpenRequest(url: try #require(URL(string: raw)), origin: .externalURL)
         }
+        // A session link may name its server; the open goes there.
+        #expect(try request("oppi://session/child?server=sha256:aa") == .session(SessionOpen(
+            serverId: "sha256:aa", sessionId: "child", origin: .externalURL
+        )))
+        #expect(try request("oppi://files?workspace=w1&path=src") == .pane(
+            PaneLink(server: nil, route: .files(workspace: "w1", path: "src")), sourceServerID: nil
+        ))
+        // The codec's stricter rules: a nested session path, a repeated or
+        // unknown parameter on a pane link. Any other oppi link stays an
+        // invite, which drops silently unless it looks like connect/pair.
+        for raw in ["oppi://session/a/b", "oppi://session/a?server=x&server=y", "oppi://files?workspace=w1&sort=name"] {
+            let url = try #require(URL(string: raw))
+            #expect(AppOpenRequest(url: url, origin: .externalURL) == .invalidLink(url), Comment(rawValue: raw))
+        }
+        let other = try #require(URL(string: "oppi://nonsense"))
+        #expect(AppOpenRequest(url: other, origin: .externalURL) == .invite(other))
+        #expect(!InAppInviteLink.claims(other))
     }
 
     // MARK: - Warm and cold
@@ -450,18 +462,20 @@ struct AppOpenerTests {
         harness.expectSessionRoute(serverId: "server-a", sessionId: "shared-session")
     }
 
-    @Test func unknownServerShowsAToastAndDropsTheRequest() async throws {
+    /// X10: a session link naming a server this device has not paired opens
+    /// the pane's missing state rather than guessing another server.
+    @Test func anUnpairedServerOpensTheMissingStateAndDropsTheRequest() async throws {
         let harness = await OpenerHarness(servers: [makeServer("server-a")])
 
-        harness.opener.open(.session(SessionOpen(
-            serverId: "unpaired-server",
-            sessionId: "child",
+        harness.opener.open(AppOpenRequest(
+            url: try #require(URL(string: "oppi://session/child?server=unpaired-server")),
             origin: .externalURL
-        )))
+        ))
         await harness.settle()
 
-        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
-        #expect(harness.connection("server-a").extensionToast == "Server not found for this session link")
+        #expect(harness.navigation.workspaceStackRouteElements == [
+            .paneEntry(PaneStackEntry(serverId: "unpaired-server", route: .session("child"))),
+        ])
         #expect(harness.opener._parkedRequestForTesting == nil)
     }
 
@@ -482,7 +496,7 @@ struct AppOpenerTests {
         )))
         for raw in ["oppi://thread", "oppi://thread/", "oppi://thread/a/b"] {
             let url = try #require(URL(string: raw))
-            #expect(AppOpenRequest(url: url, origin: .externalURL) == .invite(url), Comment(rawValue: raw))
+            #expect(AppOpenRequest(url: url, origin: .externalURL) == .invalidLink(url), Comment(rawValue: raw))
         }
     }
 

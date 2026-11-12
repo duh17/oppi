@@ -20,7 +20,8 @@ struct PaneCompanionWidths: Equatable {
 ///
 /// The companion lays out compact (`AttachedLeafController` sets the trait),
 /// as an inspector does. Its width is a share of the host's width, remembered
-/// across companions and launches (`AppPreferences.TrailingColumn`). Past the
+/// across companions, hosts and launches by the window's `ScenePanes`, which
+/// also hears which companion is shown and which leaf is focused. Past the
 /// side-by-side maximum it slides over the primary, which keeps its width and
 /// is covered, up to the full window but a grab edge. A companion whose
 /// minimum does not fit beside the primary's opens full.
@@ -28,6 +29,8 @@ final class PaneHostController: UIViewController {
     enum Leaf: Equatable { case primary, companion }
 
     let primary: UIViewController
+    /// The window's pane state; nil in a harness or test host.
+    private let panes: ScenePanes?
     /// How long a parked companion's view stays in the hierarchy, hidden, so
     /// a quick return (a push and pop over its owner) does not rebuild it.
     let parkedViewLifetime: TimeInterval
@@ -37,6 +40,8 @@ final class PaneHostController: UIViewController {
         let controller: UIViewController
         weak var owner: AttachedLeafController?
         var widths: PaneCompanionWidths
+        /// The companion's link, for restoration; nil when it has none.
+        var route: PaneStackEntry?
     }
 
     private var companion: Companion?
@@ -56,7 +61,9 @@ final class PaneHostController: UIViewController {
     private var width: CGFloat = 0
     /// The last settled ordinary width as a fraction of the host's width, so
     /// it scales with rotation and window resizing. Nil until known.
-    private var restingFraction: CGFloat? = AppPreferences.TrailingColumn.widthFraction
+    private var restingFraction: CGFloat? {
+        didSet { panes?.companionFraction = restingFraction }
+    }
     private var isFull = false
     private var isClosing = false
     private var lastBoundsWidth: CGFloat?
@@ -80,13 +87,33 @@ final class PaneHostController: UIViewController {
     private static let pauseDelay: TimeInterval = 0.1
     private let resizeMeter = PaneResizeMeter()
 
-    /// The visibility each leaf's screens were last told, by leaf controller.
-    private var reported: [ObjectIdentifier: PaneVisibility] = [:]
+    /// What each leaf's screens were last told, by leaf controller: the
+    /// visibility and the screens that heard it, so a screen pushed inside
+    /// a leaf later hears the current visibility once.
+    private var reported: [ObjectIdentifier: (visibility: PaneVisibility, screens: Set<ObjectIdentifier>)] = [:]
 
-    init(primary: UIViewController, parkedViewLifetime: TimeInterval = 10) {
+    init(primary: UIViewController, panes: ScenePanes? = nil, parkedViewLifetime: TimeInterval = 10) {
         self.primary = primary
+        self.panes = panes
         self.parkedViewLifetime = parkedViewLifetime
         super.init(nibName: nil, bundle: nil)
+        restingFraction = panes?.companionFraction
+    }
+
+    /// The host either of whose leaves holds `controller`.
+    static func containing(_ controller: UIViewController) -> PaneHostController? {
+        var current = controller.parent
+        while let candidate = current {
+            if let host = candidate as? PaneHostController { return host }
+            current = candidate.parent
+        }
+        return nil
+    }
+
+    /// A leaf's navigation controller showed another screen: it hears the
+    /// leaf's current visibility, as its siblings did at the transition.
+    func leafDidShowScreen() {
+        updateVisibility()
     }
 
     @available(*, unavailable)
@@ -177,9 +204,32 @@ final class PaneHostController: UIViewController {
             // leave the open's spring to carry the width from zero.
             let changed = lastBoundsWidth != nil
             lastBoundsWidth = view.bounds.width
-            if changed { boundsWidthChanged() }
+            if changed {
+                boundsWidthChanged()
+                windowWidthChanged()
+            }
         }
         layoutLeaves()
+    }
+
+    /// A window resize (rotation, Split View, Stage Manager, a Mac window
+    /// edge) is held and settled like a divider: the leaves hold at their
+    /// widths from the first change, and reflow once, keeping their reading
+    /// position, when the width has rested `pauseDelay`. A rotation is one
+    /// change and one settle; a live resize reflows nothing while it moves.
+    /// Without it a chat on its tail kept its old offset over a new content
+    /// height and landed mid-history. A settle spring in flight (an open or
+    /// a close) owns the hold and settles at its end.
+    private func windowWidthChanged() {
+        guard settleAnimator == nil, dragStartWidth == nil else { return }
+        holdScreens()
+        pauseTimer?.invalidate()
+        pauseTimer = Timer.scheduledTimer(withTimeInterval: Self.pauseDelay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.dragStartWidth == nil, self.settleAnimator == nil else { return }
+                self.settleHeldScreens(final: true)
+            }
+        }
     }
 
     // MARK: Companion
@@ -190,6 +240,7 @@ final class PaneHostController: UIViewController {
     func mountCompanion(
         _ controller: UIViewController,
         widths: PaneCompanionWidths,
+        route: PaneStackEntry? = nil,
         owner: AttachedLeafController,
         opening: Bool
     ) {
@@ -201,7 +252,8 @@ final class PaneHostController: UIViewController {
             parked[index].release.invalidate()
             parked.remove(at: index)
         }
-        companion = Companion(controller: controller, owner: owner, widths: widths)
+        companion = Companion(controller: controller, owner: owner, widths: widths, route: route)
+        panes?.companionDidChange(route, shown: true)
         if controller.parent !== self {
             addChild(controller)
             view.insertSubview(controller.view, belowSubview: divider)
@@ -216,6 +268,9 @@ final class PaneHostController: UIViewController {
         if opening {
             animateWidth(to: target, initialVelocity: 0)
         }
+        if panes?.takeRestoredCompanionFocus() == true {
+            focus(.companion)
+        }
         updateVisibility()
     }
 
@@ -229,13 +284,19 @@ final class PaneHostController: UIViewController {
 
     /// Replaces the shown companion in place: the width and full state stay,
     /// so the pane does not close and reopen for a second reflow.
-    func replaceCompanion(_ old: UIViewController, with new: UIViewController, widths: PaneCompanionWidths) {
+    func replaceCompanion(
+        _ old: UIViewController,
+        with new: UIViewController,
+        widths: PaneCompanionWidths,
+        route: PaneStackEntry? = nil
+    ) {
         guard let current = companion, current.controller === old else {
             releaseParked(old)
             return
         }
         removeChild(old)
-        companion = Companion(controller: new, owner: current.owner, widths: widths)
+        companion = Companion(controller: new, owner: current.owner, widths: widths, route: route)
+        panes?.companionDidChange(route, shown: true)
         addChild(new)
         view.insertSubview(new.view, belowSubview: divider)
         new.didMove(toParent: self)
@@ -326,6 +387,7 @@ final class PaneHostController: UIViewController {
     private func companionLeft() {
         width = 0
         focusedLeaf = .primary
+        panes?.companionDidChange(nil, shown: false)
         applyKeyboardFollowing(firstResponderIn: nil)
         view.setNeedsLayout()
         view.layoutIfNeeded()
@@ -444,6 +506,7 @@ final class PaneHostController: UIViewController {
     private func focus(_ leaf: Leaf) {
         guard focusedLeaf != leaf, leaf == .primary || companion != nil else { return }
         focusedLeaf = leaf
+        panes?.focusDidChange(onCompanion: leaf == .companion)
         updateVisibility()
     }
 
@@ -484,9 +547,15 @@ final class PaneHostController: UIViewController {
 
     private func report(_ visibility: PaneVisibility, to leaf: UIViewController) {
         let key = ObjectIdentifier(leaf)
-        guard reported[key] != visibility else { return }
-        reported[key] = visibility
-        for screen in PaneLeafScreens.adopters(in: leaf, as: (any PaneVisibilityObserving).self) {
+        let screens = PaneLeafScreens.adopters(in: leaf, as: (any PaneVisibilityObserving).self)
+        let ids = Set(screens.map { ObjectIdentifier($0) })
+        let previous = reported[key]
+        guard previous?.visibility != visibility || previous?.screens != ids else { return }
+        reported[key] = (visibility, ids)
+        // A changed visibility reaches every screen; an unchanged one only a
+        // screen that has not heard it (pushed since).
+        let heard = previous?.visibility == visibility ? previous?.screens ?? [] : []
+        for screen in screens where !heard.contains(ObjectIdentifier(screen)) {
             screen.paneVisibilityDidChange(visibility)
         }
     }
@@ -625,9 +694,7 @@ final class PaneHostController: UIViewController {
             animateWidth(to: policy.full, initialVelocity: initialVelocityPointsPerSecond)
         case .width(let target):
             isFull = false
-            let fraction = policy.window > 0 ? target / policy.window : 0
-            restingFraction = fraction
-            AppPreferences.TrailingColumn.setWidthFraction(fraction)
+            restingFraction = policy.window > 0 ? target / policy.window : 0
             animateWidth(to: target, initialVelocity: initialVelocityPointsPerSecond)
         }
         updateVisibility()

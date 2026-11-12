@@ -175,7 +175,7 @@ struct PairedServerEntityQuery: EntityQuery {
             servers,
             id: \.id,
             name: \.name,
-            lastUsedId: RestorationState.load()?.activeServerId,
+            lastUsedId: AppPreferences.LastActiveServer.id(),
             defaultId: nil
         )
     }

@@ -223,7 +223,7 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
         self.root = root
         sidebarStack = ShellNavigationController(root: root, rootPlacement: .splitSidebar)
         detailStack = ShellNavigationController(root: root, rootPlacement: .splitDetailRoot)
-        panes = PaneHostController(primary: detailStack)
+        panes = PaneHostController(primary: detailStack, panes: root.navigation.panes)
         super.init(style: .doubleColumn)
         delegate = self
         preferredSplitBehavior = .tile
@@ -352,7 +352,7 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
     init(root: AppRootEnvironment) {
         self.root = root
         stack = ShellNavigationController(root: root, rootPlacement: .compactRoot)
-        panes = PaneHostController(primary: stack)
+        panes = PaneHostController(primary: stack, panes: root.navigation.panes)
         let closeSidebar = DrawerAction()
         sidebar = ShellRouteScreens.drawerSidebar(root: root) { closeSidebar.perform?() }
         super.init(nibName: nil, bundle: nil)

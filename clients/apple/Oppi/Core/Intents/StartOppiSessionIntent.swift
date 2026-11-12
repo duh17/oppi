@@ -267,7 +267,7 @@ struct StartOppiSessionIntent: AppIntent {
                     servers,
                     id: \.serverId,
                     name: \.serverName,
-                    lastUsedId: RestorationState.load()?.activeServerId,
+                    lastUsedId: AppPreferences.LastActiveServer.id(),
                     defaultId: nil
                 )
                 let entities = ranked.map { PairedServerEntity(id: $0.serverId, name: $0.serverName) }

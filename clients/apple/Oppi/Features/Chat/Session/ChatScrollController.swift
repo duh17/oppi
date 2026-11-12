@@ -172,6 +172,9 @@ final class ChatScrollController: NSObject {
     fileprivate enum NavigationRestoration {
         case liveTail
         case viewport(TimelineViewportSnapshot)
+        /// A position saved across launches: only its own item is known, so
+        /// an item gone from the history lands on the tail, not the top.
+        case saved(TimelineViewportSnapshot)
     }
 
     /// Current stable item order and viewport anchor are kept in the chat's
@@ -423,7 +426,10 @@ final class ChatScrollController: NSObject {
         case .liveTail:
             needsInitialScroll = false
             return prepareBottomPlacement(bottomItemID: bottomItemID)
-        case .viewport(let snapshot):
+        case .saved(let snapshot) where !availableFullTimelineItemIDs.contains(snapshot.anchorItemID):
+            needsInitialScroll = false
+            return prepareBottomPlacement(bottomItemID: bottomItemID)
+        case .viewport(let snapshot), .saved(let snapshot):
             guard let restoration = TimelineViewportRestorationResolver.resolve(
                 snapshot,
                 availableFullTimelineItemIDs: availableFullTimelineItemIDs
@@ -531,6 +537,32 @@ final class ChatScrollController: NSObject {
 /// next when the same chat is remounted.
 struct ChatScrollReentryIntent {
     fileprivate let restoration: ChatScrollController.NavigationRestoration
+
+    /// A position saved across launches (`PaneChatScroll`): the live tail,
+    /// or the item that was at the top with its offset.
+    init(savedItemID itemID: String?, relativeY: CGFloat) {
+        guard let itemID else {
+            restoration = .liveTail
+            return
+        }
+        restoration = .saved(TimelineViewportSnapshot(
+            anchorItemID: itemID,
+            anchorRelativeY: relativeY,
+            fullTimelineItemIDs: [itemID]
+        ))
+    }
+
+    fileprivate init(restoration: ChatScrollController.NavigationRestoration) {
+        self.restoration = restoration
+    }
+
+    /// The position to save: the top item and its offset, or nil at the tail.
+    var savedViewport: (itemID: String, relativeY: CGFloat)? {
+        switch restoration {
+        case .viewport(let snapshot), .saved(let snapshot): return (snapshot.anchorItemID, snapshot.anchorRelativeY)
+        case .liveTail: return nil
+        }
+    }
 }
 
 /// Carries a chat's reading position across a stack/split shell swap.

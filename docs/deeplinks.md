@@ -7,6 +7,9 @@ oppi://connect?v=3&invite=<base64url-signed-invite>
 oppi://workspace?path=/Users/example/workspace/oppi&name=Oppi&server=sha256:<server-fingerprint>
 oppi://session/<session-id>
 oppi://thread/<session-id>
+oppi://sessions?workspace=<workspace-id>
+oppi://file?workspace=<workspace-id>&path=src/app.ts#L12
+oppi://files?workspace=<workspace-id>&path=src
 oppi://terminal/rex?session=<rex-session-id>&block=<rex-block-id>
 ```
 
@@ -24,9 +27,24 @@ xcrun simctl openurl booted 'oppi://workspace?path=/Users/example/workspace/oppi
 | `oppi://workspace?path=<path>&name=<name>&server=<fingerprint>` | `path`; `name` and `server` optional | Opens Create Workspace with the path and name prefilled; you confirm |
 | `oppi://session/<session-id>` | Session ID | Opens the session if known locally or found by server lookup; otherwise opens Workspaces |
 | `oppi://thread/<session-id>` | ID of any session in the thread | Opens All Sessions (the matching list on iPad) with the session's thread open in place and scrolled to its root; if the session is a descendant, its root's thread opens. A session the server says it does not have opens the list with a "Session not found for this thread link" notice; a server that cannot be reached keeps the link for the next foreground, as a session link does |
+| `oppi://sessions[?workspace=<id>]` | Nothing; `workspace` optional | Opens All Sessions, or one workspace's sessions |
+| `oppi://file?workspace=<id>&path=<path>[&worktree=<id>][#L<line>]` | `workspace` and `path` | Opens a workspace file (in a worktree, at a line). `oppi://file?host=1&path=<absolute path>` opens a file on the server's host, and `oppi://file?session=<id>&path=<path>` a session's own copy |
+| `oppi://files?workspace=<id>[&path=<folder>]` | `workspace` | Opens the File Browser at the workspace root or a folder |
 | `oppi://terminal/rex?session=<id>&block=<id>` | Rex `session_id` and `block_id` (`session:…`, `block:…`, as `rex split --json` prints them; the colons may be percent-encoded) | Opens that Rex pane in the SSH terminal, on the saved SSH host for the server the link came from (the chat it was tapped in, else the active server) |
 
 Invite and workspace links accept `oppi://workspace?...` and `oppi:///workspace?...`. Session links use `oppi://session/<id>` and thread links `oppi://thread/<id>`, with the same ID validation and server lookup (a `?workspaceId=` query is ignored). Use lowercase parameter names; route names are case-insensitive.
+
+## Pane links
+
+Session, thread, `sessions`, `file`, and `files` links are pane links: each names one place a pane can show, and all of them accept an optional `server=<fingerprint>` (`sha256:<hash>` or `<hash>`). With `server`, the link opens on that server. Without it, a link tapped in a chat opens on that chat's server, and one from outside Oppi uses the server that has the session (session and thread links) or the active server.
+
+- A session or thread link takes exactly one ID after its route; any other path, or `server` given twice, makes it invalid. It ignores every other parameter.
+- On `sessions`, `file`, and `files` links, an unknown or repeated parameter, a fragment other than a file's `#L<line>`, user-info, or a port makes the link invalid. A `file` link names exactly one of `workspace`, `host=1`, or `session`, and only a workspace file takes `worktree`.
+- Oppi says when a link is invalid and opens nothing.
+- A session, `sessions`, `file`, or `files` link whose `server` this device has not paired opens a pane that says the server was removed, with **Choose…** (All Sessions) and **Close Pane**.
+- On a `sessions`, `file`, or `files` link, a workspace that no longer exists opens the same way, and a server that cannot be reached shows **Retry** until the place opens. A session link to a session no server has, or to a server that cannot be reached, behaves as described under Routes.
+
+The app saves its panes in the same form, so a relaunch shows the screens you left (on a wide window, with the chat's Files or Git panel beside it), each resolving on its own: a session, file, or server that is gone, or a server that cannot be reached, shows that state in its pane.
 
 If a link needs a server that is not reachable yet, Oppi says so once, keeps the request, and opens it when Oppi returns to the foreground and the server connects. A newer link replaces the kept one, and a kept link is dropped after 10 minutes or when its server is removed.
 

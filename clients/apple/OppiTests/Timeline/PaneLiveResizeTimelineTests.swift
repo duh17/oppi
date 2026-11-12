@@ -68,14 +68,28 @@ struct PaneLiveResizeTimelineTests {
         #expect(abs(attributes.frame.minY - timeline.contentOffset.y - before.screenY) <= 1, "the row read moved")
     }
 
-    @Test("a second rotation measures no rows")
+    /// R3: a chat on its tail stays on it through each turn, and a row
+    /// measured at a width is never measured at that width again. A row
+    /// first shown at a width (one the turn brings in at the viewport's
+    /// edge) is measured once, as it must be.
+    @Test("a second rotation measures no row again and keeps the tail")
     func rotationBackMeasuresNothing() async throws {
         let host = try await makeHostWithOpenPanel()
         defer { host.hide() }
         let portrait = CGSize(width: Self.landscape.height, height: Self.landscape.width)
-        func rotate(to size: CGSize) async throws -> Int {
+        let layout = try #require(host.timeline.collectionViewLayout as? ChatTimelineCachedHeightLayout)
+        /// Rows with a height at the timeline's row width now.
+        func rowsWithHeight(atRowWidth width: CGFloat) -> Int {
+            host.chat.timeline.currentIDs.filter { layout.cachedHeightForTesting(itemID: $0, width: width) != nil }.count
+        }
+        /// Rows measured, and rows that gained a height at the new width.
+        /// Each measure of a row new to the width adds it to the cache once;
+        /// a measure of a row the cache already had at that width adds
+        /// nothing, so the two counts differ.
+        func rotate(to size: CGSize, rowWidth: CGFloat? = nil) async throws -> (measured: Int, gained: Int) {
             // A turn of the main queue first: the width change before is over.
             try await Task.sleep(for: .milliseconds(30))
+            let before = rowWidth.map(rowsWithHeight(atRowWidth:)) ?? 0
             let measured = ChatTimelinePerf.rowMeasureCount
             host.window.frame = CGRect(origin: .zero, size: size)
             host.window.layoutIfNeeded()
@@ -83,14 +97,19 @@ struct PaneLiveResizeTimelineTests {
             // rotation's animation does; those count too.
             try await Task.sleep(for: .milliseconds(150))
             host.window.layoutIfNeeded()
-            return ChatTimelinePerf.rowMeasureCount - measured
+            // A chat that drifted mid-history would show other rows each turn.
+            #expect(isAtTail(host.timeline), "the rotation to \(size) left the chat's tail")
+            let after = rowWidth.map(rowsWithHeight(atRowWidth:)) ?? 0
+            return (ChatTimelinePerf.rowMeasureCount - measured, after - before)
         }
-        // The first round trip may meet rows at a width they never had (more of
-        // the chat shows in portrait); the second has a height for every row.
-        #expect(try await rotate(to: portrait) > 0, "the first portrait width is new to every row")
+        let first = try await rotate(to: portrait)
+        #expect(first.measured > 0, "the first portrait width is new to the rows it shows")
+        let portraitRowWidth = ChatTimelineCachedHeightLayout.rowColumn(boundsWidth: host.timeline.bounds.width).width
         _ = try await rotate(to: Self.landscape)
-        #expect(try await rotate(to: portrait) == 0, "the second rotation to portrait measured rows")
-        #expect(try await rotate(to: Self.landscape) == 0, "the second rotation back measured rows")
+        // Rows the turn brings in at the viewport's edge, never shown at this
+        // width, are measured once; no row measured here before is again.
+        let second = try await rotate(to: portrait, rowWidth: portraitRowWidth)
+        #expect(second.measured == second.gained, "rows measured again at the portrait width: \(second)")
     }
 
     // MARK: - Helpers

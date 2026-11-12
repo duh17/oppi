@@ -30,6 +30,9 @@ enum ShellRoute: Hashable {
     case serverResourceDetail(ServerResourceDetailNavTarget)
     case serverSkillBrowser(ServerSkillBrowserNavTarget)
     case serverSkillFile(ServerSkillFileNavTarget)
+    /// A restored or linked pane entry, shown through its leaf state until
+    /// its content can open (`PaneLeafStateViewController`).
+    case paneEntry(PaneStackEntry)
 
     /// The screen a route shows. A workspace route whose workspace was
     /// refreshed is the same screen with newer content.
@@ -59,6 +62,7 @@ enum ShellRoute: Hashable {
         case .serverResourceDetail(let target): self = .serverResourceDetail(target)
         case .serverSkillBrowser(let target): self = .serverSkillBrowser(target)
         case .serverSkillFile(let target): self = .serverSkillFile(target)
+        case .paneEntry(let entry): self = .paneEntry(entry)
         }
     }
 
@@ -74,6 +78,7 @@ enum ShellRoute: Hashable {
         case .serverSkillFile(let target): self = .serverSkillFile(target)
         case .serverDetails(let target): self = .serverDetails(target)
         case .modelProviders(let target): self = .modelProviders(target)
+        case .paneEntry(let entry): self = .paneEntry(entry)
         }
     }
 
@@ -303,5 +308,6 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         if routes != shownRoutes {
             applyRoutes()
         }
+        PaneHostController.containing(self)?.leafDidShowScreen()
     }
 }

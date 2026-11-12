@@ -192,7 +192,7 @@ extension ServerConnection {
         workspaceId: String?
     ) {
         let resolvedWorkspaceId = workspaceId ?? sessionStore.workspaceId(for: sessionId)
-        sessionStore.remove(id: sessionId)
+        removeSession(sessionId)
         clearSessionScopedAppEventState(for: event, sessionId: sessionId)
         syncScreenAwake()
         if let resolvedWorkspaceId {
@@ -200,6 +200,27 @@ extension ServerConnection {
         }
         syncLiveActivityState()
     }
+
+    /// Drops a session this device knows is gone (the server deleted it, or
+    /// this device did), and tells the window, which takes its routes off
+    /// every pane (`AppNavigation.removeSessionRoute`).
+    func removeSession(_ sessionId: String) {
+        sessionStore.remove(id: sessionId)
+        guard let currentServerId else { return }
+        NotificationCenter.default.post(
+            name: Self.sessionDeletedNotification,
+            object: self,
+            userInfo: ["serverId": currentServerId, "sessionId": sessionId]
+        )
+    }
+
+    static let sessionDeletedNotification = Notification.Name("ServerConnection.sessionDeleted")
+
+    /// What a pane can offer while this connection's server is unreachable
+    /// (`PaneConnectionStatus.unreachable`). Every connection today is to a
+    /// remote server, which can only be tried again; the Mac's own server will
+    /// answer Restart or Open Login Items here.
+    var unreachableRemedy: PaneConnectionRemedy { .retry }
 
     private func clearSessionScopedAppEventState(for event: AppEventMessage, sessionId: String) {
         applyCleanupEffects(ServerMessageEffects.cleanupEffects(for: event))

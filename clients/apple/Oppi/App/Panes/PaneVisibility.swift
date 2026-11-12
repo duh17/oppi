@@ -15,9 +15,9 @@ enum PaneVisibility: Equatable {
     case parked
 }
 
-/// A screen in a leaf that wants `PaneVisibility` changes. Only the leaf's
-/// front screen hears a transition; a screen pushed later hears the next one
-/// (re-reporting on a push waits for the per-window tree).
+/// A screen in a leaf that wants `PaneVisibility` changes. The leaf's front
+/// screen hears each transition; a screen pushed inside the leaf hears the
+/// leaf's current visibility once it is shown.
 @MainActor
 protocol PaneVisibilityObserving: UIViewController {
     func paneVisibilityDidChange(_ visibility: PaneVisibility)

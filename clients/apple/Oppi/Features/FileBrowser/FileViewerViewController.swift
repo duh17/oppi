@@ -94,6 +94,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         case loading
         case sizeWarning(Int)
         case error(String)
+        /// The server has no file at the path (404): the pane's missing state.
+        case missing
         case text(String)
         /// The file at `path`, loaded by its renderer. Every load passes
         /// through `.loading`, so only the same renderer compares equal.
@@ -104,6 +106,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             case (.loading, .loading): true
             case (.sizeWarning(let a), .sizeWarning(let b)): a == b
             case (.error(let a), .error(let b)): a == b
+            case (.missing, .missing): true
             case (.text(let a), .text(let b)): a == b
             case (.rendered(let a, _), .rendered(let b, _)): a === b
             default: false
@@ -420,7 +423,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         switch content {
         case .text: false
         case .rendered(let renderer, _): !renderer.ownsBackSwipe
-        case .loading, .sizeWarning, .error: true
+        case .loading, .sizeWarning, .error, .missing: true
         }
     }
 
@@ -491,6 +494,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
                 message: message,
                 retry: RetryAction { [weak self] in self?.startLoad(force: true) }
             ))
+        case .missing:
+            mounted = unavailable(.paneMissing(.file, retry: RetryAction { [weak self] in self?.startLoad(force: true) }))
         case .text(let text):
             if let page = editOwner.makeEditorPage(checkoutSubtitle: checkoutSubtitle), editOwner.isEditing {
                 mounted = mountEditor(page)
@@ -760,7 +765,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         shareItem = switch content {
         case .text(let text): ShareableFile.loaded(.fromText(text, filePath: currentFilePath)).barItem
         case .rendered(let renderer, _): renderer.share.barItem
-        case .loading, .sizeWarning, .error: nil
+        case .loading, .sizeWarning, .error, .missing: nil
         }
         return shareItem
     }
@@ -854,7 +859,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
                       Self.isHTTPError(error, statusCodes: [401, 403, 404]) else { return }
                 loadedTextPath = nil
                 loadedHostFilePath = nil
-                content = .error(error.localizedDescription)
+                content = Self.isHTTPError(error, statusCodes: [404]) ? .missing : .error(error.localizedDescription)
                 return
             }
         }
@@ -906,7 +911,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             }
         } catch {
             guard isCurrentFile(requestedPath) else { return }
-            content = .error(error.localizedDescription)
+            content = Self.isHTTPError(error, statusCodes: [404]) ? .missing : .error(error.localizedDescription)
         }
     }
 

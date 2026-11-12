@@ -88,6 +88,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
     }
 
+    /// The system discarded these scenes (closed, or swiped away): their
+    /// saved pane trees go with them.
+    func application(_ application: UIApplication, didDiscardSceneSessions sceneSessions: Set<UISceneSession>) {
+        PaneTreeStore().discard(scenes: sceneSessions.map(\.persistentIdentifier))
+    }
+
     func application(
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
@@ -138,7 +144,7 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate, @preconcurrency AppI
         window.rootViewController = app.makeRootViewController()
         self.window = window
         window.makeKeyAndVisible()
-        app.sceneDidConnect()
+        app.sceneDidConnect(sceneIdentifier: windowScene.session.persistentIdentifier)
         // An adopted scene may be past these callbacks already.
         switch windowScene.activationState {
         case .foregroundActive: app.sceneDidBecomeActive()

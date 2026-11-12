@@ -177,6 +177,14 @@ final class RouterNavigationController: UINavigationController, RouterModalConta
         applyNavigationBar(forIncoming: viewController, animated: animated)
     }
 
+    func navigationController(
+        _ navigationController: UINavigationController,
+        didShow viewController: UIViewController,
+        animated: Bool
+    ) {
+        // A page pushed inside a pane's companion hears the leaf's visibility.
+        PaneHostController.containing(self)?.leafDidShowScreen()
+    }
 
     override func updateProperties() {
         super.updateProperties()

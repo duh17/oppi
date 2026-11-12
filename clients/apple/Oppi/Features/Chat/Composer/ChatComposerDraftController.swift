@@ -143,8 +143,6 @@ final class ChatComposerDraftController {
             restoredPayload = .empty
         } else if let record = store.record(for: key) {
             restoredPayload = record.payload
-        } else if let migrated = store.consumeLegacyDraft(for: key) {
-            restoredPayload = migrated
         } else {
             restoredPayload = .empty
         }

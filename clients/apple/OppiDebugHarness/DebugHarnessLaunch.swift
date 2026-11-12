@@ -110,6 +110,8 @@ enum DebugHarnessLaunch {
         // The chat pushed above a session-list stand-in, for popping it while
         // its attached leaf is open (back button, edge swipe, cancelled swipe).
         case "panes": return PanePreviewController(root: root)
+        // The shell with its pane tree saved and restored across launches.
+        case "pane-restore": return PaneRestorePreviewController()
         case "session-timeline": return SessionTimelinePreviewController(root: root)
         case "markdown-tables": return MarkdownTablesPreviewController(root: root)
         // The files, terminal, and audio family: the motion captures, the

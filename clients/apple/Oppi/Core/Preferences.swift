@@ -490,26 +490,20 @@ enum AppPreferences {
         }
     }
 
-    // MARK: - Companion width
+    // MARK: - Last active server
 
-    /// The companion's user-resized width (`PaneHostController`), shared by every
-    /// attached leaf: chat's side panels, a commit's diff, a review's file list,
-    /// and the chat reader. Stored as a fraction of the host's width, not points,
-    /// so one remembered choice scales with rotation and window width instead of
-    /// needing a value per shape. The companion's default weight until the pane
-    /// tree restores its own.
-    enum TrailingColumn {
-        static let widthFractionKey = "\(AppIdentifiers.subsystem).trailingColumn.widthFraction"
+    /// The server a window last made active (`ConnectionCoordinator`). Launch
+    /// opens it, and App Intents rank it first when they ask which server.
+    /// Written on every change, never expires.
+    enum LastActiveServer {
+        static let key = "lastActiveServerId"
 
-        /// Nil until the user drags or adjusts the divider once; callers fall back
-        /// to their own default width.
-        static var widthFraction: CGFloat? {
-            guard UserDefaults.standard.object(forKey: widthFractionKey) != nil else { return nil }
-            return CGFloat(UserDefaults.standard.double(forKey: widthFractionKey))
+        static func id(in defaults: UserDefaults = .standard) -> String? {
+            defaults.string(forKey: key)
         }
 
-        static func setWidthFraction(_ fraction: CGFloat) {
-            UserDefaults.standard.set(Double(fraction), forKey: widthFractionKey)
+        static func set(_ serverId: String, in defaults: UserDefaults = .standard) {
+            defaults.set(serverId, forKey: key)
         }
     }
 

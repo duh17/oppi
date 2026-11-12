@@ -81,8 +81,10 @@ enum ExtensionSurfaceLinkRouting {
                 return "Opens the web page"
             case .fileLink, .resourceReference, .sessionFile:
                 return "Opens the file"
-            case .invite, .createWorkspace, .terminal:
+            case .invite, .createWorkspace, .terminal, .pane:
                 return "Opens the link"
+            case .invalidLink:
+                return nil
             case .quickSession, .pairing, .system:
                 return nil
             }

@@ -9,15 +9,23 @@ import UIKit
 struct PaneTestHost {
     let screen: PaneLeafScreen
     let panes: PaneHostController
+    /// The window's pane state; a host of its own starts with no remembered width.
+    let scenePanes: ScenePanes
     let window: UIWindow
     let root = makeTestAppRoot()
 
-    init(width: CGFloat, height: CGFloat = 900, inNavigation: Bool = false, parkedViewLifetime: TimeInterval = 10) {
+    init(
+        width: CGFloat,
+        height: CGFloat = 900,
+        inNavigation: Bool = false,
+        parkedViewLifetime: TimeInterval = 10,
+        scenePanes: ScenePanes = ScenePanes()
+    ) {
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
         guard let scene else { fatalError("Missing UIWindowScene for a pane test host") }
         let screen = PaneLeafScreen()
         let primary: UIViewController = inNavigation ? UINavigationController(rootViewController: screen) : screen
-        let panes = PaneHostController(primary: primary, parkedViewLifetime: parkedViewLifetime)
+        let panes = PaneHostController(primary: primary, panes: scenePanes, parkedViewLifetime: parkedViewLifetime)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: width, height: height)
         window.traitOverrides.horizontalSizeClass = .regular
@@ -26,6 +34,7 @@ struct PaneTestHost {
         window.layoutIfNeeded()
         self.screen = screen
         self.panes = panes
+        self.scenePanes = scenePanes
         self.window = window
     }
 
@@ -150,17 +159,4 @@ final class PaneCompanionScreen: UIViewController, PaneVisibilityObserving {
     func paneVisibilityDidChange(_ visibility: PaneVisibility) {
         visibilities.append(visibility)
     }
-}
-
-/// Runs `body` with the remembered companion width cleared, and restores it.
-@MainActor
-func withCleanCompanionWidth(_ body: () throws -> Void) rethrows {
-    let defaults = UserDefaults.standard
-    let key = AppPreferences.TrailingColumn.widthFractionKey
-    let original = defaults.object(forKey: key)
-    defer {
-        if let original { defaults.set(original, forKey: key) } else { defaults.removeObject(forKey: key) }
-    }
-    defaults.removeObject(forKey: key)
-    try body()
 }
