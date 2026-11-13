@@ -87,7 +87,7 @@ One owner per layout question. `userInterfaceIdiom` is never a layout signal: th
 - Presentation: a control's choice panel is `ModalPresentation.popoverOrSheet` sourced there; direct presenters use `apply(to:source:)`. Never scan `connectedScenes`: `Router.presenter(near:)`, `Router.focusedScreen(in:)`.
 - Content width: a full-width content column caps at `ReadableContentWidth`, by width alone; bars, backgrounds and scroll views stay full-bleed. Reader prose keeps `ReaderReadingColumn`.
 - Media: a box the content does not size uses `ImageViewportSizing.aspectFit` (`AspectFitMediaView` for a page).
-- File Browser: `FileBrowserViewController.Layout` alone arranges the tree and the open file; a tucked-away regular-width tree is the app-wide `FileBrowserViewOptionsStore.hidesTree`, toggled only through `toggleTree()`.
+- File Browser: the open file is the list's `AttachedLeafController` companion (else a sheet); the pane divider owns resize and collapse.
 
 ### Presentation gotchas
 

@@ -4,8 +4,9 @@ import XCTest
 /// (`SCREENSHOT_SCREEN=pane-restore`), on the iPad mini in landscape: ⌘D puts
 /// the launcher beside the chat, its choices fill the pane, the grip's menu
 /// zooms and closes, and a file dragged from the Files pane onto the chat
-/// becomes a file reference in the message. Compact width keeps one pane, so
-/// every test skips on iPhone.
+/// becomes a file reference in the message. A divider dragged past a pane
+/// collapses it to a strip. Compact width shows one pane at a time with the
+/// pane chip, which is the one test that runs on iPhone.
 @MainActor
 final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
     var app: XCUIApplication!
@@ -114,12 +115,13 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         attachScreenCapture("touch-resized")
         // The chat's bar fits its pane once the divider settles: narrowed to
         // its minimum it keeps fewer buttons (the rest move to …), and given
-        // room again it shows them all.
+        // room again it shows them all. A drag short of half the chat's
+        // minimum holds it there; further would collapse it.
         let barButtons = ["chat.toolbar.files", "chat.toolbar.git", "chat.toolbar.outline", "chat.toolbar.context"]
         let shownButtons = { barButtons.filter { self.app.buttons[$0].exists }.count }
         let roomy = shownButtons()
         divider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            .press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)))
+            .press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)))
         XCTAssertTrue(waitFor(shownButtons() < roomy), "A narrow chat pane moves bar buttons into … (\(roomy) before)")
         attachScreenCapture("touch-chat-narrow")
         divider.doubleTap()
@@ -163,6 +165,104 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         let composer = app.descendants(matching: .any)["chat.input"]
         XCTAssertTrue(composer.isHittable, "The chat stays beside it")
         attachScreenCapture("split-terminal")
+    }
+
+    /// R2: a divider dragged past half a pane's minimum collapses that pane
+    /// to a 20 pt strip, and the chat takes the room; a tap on the strip
+    /// brings the pane back.
+    func testADividerDraggedPastAPaneCollapsesItToAStrip() throws {
+        try openChatInLandscape()
+        let window = app.windows.firstMatch
+        app.typeKey("d", modifierFlags: .command)
+        let launcher = app.descendants(matching: .any)["pane.launcher"]
+        XCTAssertTrue(launcher.waitUntilExists(timeout: 5), "⌘D opened the launcher beside the chat")
+        let divider = app.descendants(matching: .any)["pane.divider.1"]
+        XCTAssertTrue(divider.waitUntilExists(timeout: 5), "A divider sits between the panes")
+        divider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.99, dy: 0.5)))
+        let strip = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.strip.'")).firstMatch
+        XCTAssertTrue(strip.waitUntilExists(timeout: 5), "Past the launcher's minimum, the release collapsed it")
+        XCTAssertEqual(strip.frame.width, 20, accuracy: 1, "A collapsed pane is a 20 pt strip")
+        XCTAssertEqual(strip.frame.maxX, window.frame.maxX, accuracy: 1)
+        XCTAssertTrue(waitFor(!launcher.exists || !launcher.isHittable), "The launcher is out of reach")
+        let timeline = app.collectionViews["chat.timeline"]
+        XCTAssertEqual(timeline.frame.maxX, strip.frame.minX - 1, accuracy: 2, "The chat takes the room")
+        attachScreenCapture("collapse-strip")
+
+        strip.tap()
+        XCTAssertTrue(waitFor(launcher.exists && launcher.isHittable), "A tap on the strip brought the pane back")
+        XCTAssertTrue(strip.waitUntilGone(timeout: 5))
+        XCTAssertGreaterThan(launcher.frame.width, 300, "at a pane's width")
+        attachScreenCapture("collapse-restored")
+    }
+
+    /// §1.5 and I2: a compact window (the iPhone) shows a tree a wide window
+    /// left behind one pane at a time. The chip under the bar names the pane
+    /// and its place; its list shows another pane, and a swipe the next or
+    /// previous one in tree order.
+    func testACompactWindowShowsOnePaneAndTheChipListsTheOthers() throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else {
+            throw XCTSkip("Compact width is the phone's; the iPad mini is always wide")
+        }
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(screen: "pane-restore", environment: ["PANE_RESTORE_SEED": "splits"], ready: nil)
+        let chip = app.buttons["pane.chip"]
+        XCTAssertTrue(chip.waitUntilExists(timeout: 10), "Three panes on a phone show the chip")
+        XCTAssertTrue(chip.label.hasSuffix("1 of 3"), "The chip names the shown pane's place: \(chip.label)")
+        let grips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.'"))
+        XCTAssertEqual(grips.count, 0, "No grips on a compact window")
+        attachScreenCapture("chip-first")
+
+        chip.tap()
+        let files = app.buttons["pane.list.leaf-2"]
+        XCTAssertTrue(files.waitUntilExists(timeout: 5), "The chip lists the panes")
+        files.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["fileBrowser.row.Route.md"].waitUntilExists(timeout: 10),
+                      "The chosen Files pane fills the window")
+        XCTAssertTrue(waitFor(chip.label.hasSuffix("2 of 3")), "and the chip follows: \(chip.label)")
+        attachScreenCapture("chip-files")
+
+        chip.swipeLeft()
+        XCTAssertTrue(waitFor(chip.label.hasSuffix("3 of 3")), "A swipe shows the next pane: \(chip.label)")
+        chip.swipeRight()
+        chip.swipeRight()
+        XCTAssertTrue(waitFor(chip.label.hasSuffix("1 of 3")), "and back: \(chip.label)")
+    }
+
+    /// The pane control under the Sessions screen's bar (the chip on a
+    /// compact window, the pane's grip on a wide one) never covers its
+    /// search field: not when the screen appears, and not after the list
+    /// scrolls the search away and back. Portrait on the iPad mini too: the
+    /// sidebar is a drawer there, so the Sessions pane is not under it.
+    func testThePaneControlNeverCoversTheSessionsSearch() throws {
+        let isPad = UIDevice.current.userInterfaceIdiom == .pad
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(screen: "pane-restore", environment: ["PANE_RESTORE_SEED": "splits"], ready: nil)
+        let control = isPad
+            ? app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.' AND label ENDSWITH '1 of 3'")).firstMatch
+            : app.buttons["pane.chip"]
+        XCTAssertTrue(control.waitUntilExists(timeout: 10), "The Sessions pane shows its pane control")
+        let search = app.searchFields["Search sessions"]
+        XCTAssertTrue(search.waitUntilExists(timeout: 10), "The Sessions screen shows its search")
+        XCTAssertTrue(waitFor(search.isHittable), "The search shows")
+        let clear = { !control.frame.intersects(search.frame) || !search.isHittable }
+        XCTAssertTrue(waitFor(!control.frame.intersects(search.frame)),
+                      "The pane control covers the search: \(control.frame) over \(search.frame)")
+        hold()
+        XCTAssertFalse(control.frame.intersects(search.frame),
+                       "The pane control slid over the search once it settled: \(control.frame) over \(search.frame)")
+        attachScreenCapture("sessions-search-clear")
+
+        let list = app.collectionViews.firstMatch
+        list.swipeUp()
+        hold()
+        XCTAssertTrue(clear(), "After a scroll: \(control.frame) over \(search.frame)")
+        list.swipeDown()
+        list.swipeDown()
+        hold()
+        XCTAssertTrue(search.isHittable, "The search is back")
+        XCTAssertFalse(control.frame.intersects(search.frame), "With the search back: \(control.frame) over \(search.frame)")
+        attachScreenCapture("sessions-search-after-scroll")
     }
 
     private func openChatInLandscape() throws {

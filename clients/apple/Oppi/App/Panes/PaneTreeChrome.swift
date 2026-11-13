@@ -16,6 +16,8 @@ struct PaneMenuItem {
     var identifier: String
     var isEnabled = true
     var isDestructive = false
+    /// The pane list's mark on the pane that shows.
+    var isChecked = false
     var children: [Self] = []
     var run: @MainActor () -> Void = {}
 
@@ -33,6 +35,7 @@ struct PaneMenuItem {
         action.accessibilityIdentifier = identifier
         if !isEnabled { action.attributes.insert(.disabled) }
         if isDestructive { action.attributes.insert(.destructive) }
+        if isChecked { action.state = .on }
         return action
     }
 }
@@ -283,5 +286,222 @@ final class PaneSplitDividerView: UIView {
 extension PaneSplitDividerView: UIPointerInteractionDelegate {
     func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
         UIPointerStyle(effect: .highlight(UITargetedPreview(view: grabber)))
+    }
+}
+
+/// A collapsed pane: a 20 pt strip in its place along its split, with a mark
+/// across it and the pane's title for VoiceOver, the pointer and the Large
+/// Content Viewer. A tap (or VoiceOver's activate) expands the pane to the
+/// share it had.
+final class PaneStripView: UIView {
+    var onExpand: @MainActor () -> Void = {}
+
+    private let mark = UIView()
+    private var axis = PaneAxis.row
+
+    init(leafID: PaneID) {
+        super.init(frame: .zero)
+        accessibilityIdentifier = "pane.strip.\(leafID.raw)"
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        accessibilityHint = String(localized: "Expands the pane.")
+        backgroundColor = .secondarySystemBackground
+        mark.backgroundColor = .tertiaryLabel
+        mark.layer.cornerRadius = 2.5
+        mark.isUserInteractionEnabled = false
+        addSubview(mark)
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(expand)))
+        addInteraction(UIPointerInteraction(delegate: self))
+        showsLargeContentViewer = true
+        largeContentImage = UIImage(systemName: "rectangle.expand.vertical")
+        addInteraction(UILargeContentViewerInteraction())
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func show(title: String, axis: PaneAxis) {
+        accessibilityLabel = String(localized: "Collapsed pane, \(title)")
+        largeContentTitle = title
+        guard axis != self.axis else { return }
+        self.axis = axis
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // The mark runs along the strip, as the divider's grabber does.
+        let size = axis == .row ? CGSize(width: 5, height: 48) : CGSize(width: 48, height: 5)
+        mark.frame = CGRect(
+            x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2,
+            width: size.width, height: size.height
+        )
+    }
+
+    @objc private func expand() { onExpand() }
+
+    override func accessibilityActivate() -> Bool {
+        onExpand()
+        return true
+    }
+}
+
+extension PaneStripView: UIPointerInteractionDelegate {
+    func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
+        UIPointerStyle(effect: .highlight(UITargetedPreview(view: mark)))
+    }
+}
+
+/// The pane chip on a compact window (iPhone, a narrow iPad window), where
+/// one pane shows at a time: the shown pane's title and its place ("Files ·
+/// 2 of 3") in the strip under its bar. A tap lists the panes and shows the
+/// one chosen; a swipe shows the next or previous pane in tree order.
+///
+/// A plain view with an inner menu button that takes no touches, as the
+/// grip is, so the swipes reach it.
+final class PaneChipView: UIView {
+    struct Shown: Equatable {
+        var title: String
+        var position: Int
+        var count: Int
+    }
+
+    static let height: CGFloat = 22
+
+    /// The pane list as it is when it opens.
+    var items: @MainActor () -> [PaneMenuItem] = { [] }
+    /// A swipe: +1 the next pane, -1 the previous one.
+    var onStep: @MainActor (Int) -> Void = { _ in }
+
+    private let label = UILabel()
+    private let menuButton = UIButton(type: .custom)
+    private(set) var shown = Shown(title: "", position: 1, count: 1)
+
+    init() {
+        super.init(frame: .zero)
+        accessibilityIdentifier = "pane.chip"
+        isAccessibilityElement = true
+        backgroundColor = .secondarySystemFill
+        layer.cornerRadius = Self.height / 2
+        label.font = .preferredFont(forTextStyle: .caption1)
+        label.adjustsFontForContentSizeCategory = true
+        label.textAlignment = .center
+        label.lineBreakMode = .byTruncatingMiddle
+        label.isUserInteractionEnabled = false
+        addSubview(label)
+        menuButton.isUserInteractionEnabled = false
+        menuButton.isAccessibilityElement = false
+        menuButton.showsMenuAsPrimaryAction = true
+        menuButton.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
+            MainActor.assumeIsolated { completion(self?.items().map(\.element) ?? []) }
+        }])
+        addSubview(menuButton)
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(openList)))
+        for direction in [UISwipeGestureRecognizer.Direction.left, .right] {
+            let swipe = UISwipeGestureRecognizer(target: self, action: #selector(swiped(_:)))
+            swipe.direction = direction
+            addGestureRecognizer(swipe)
+        }
+        addInteraction(UIPointerInteraction(delegate: self))
+        showsLargeContentViewer = true
+        largeContentImage = UIImage(systemName: "rectangle.stack")
+        addInteraction(UILargeContentViewerInteraction())
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func show(_ next: Shown) {
+        guard next != shown else { return }
+        shown = next
+        let place = String(localized: "\(next.position) of \(next.count)")
+        label.text = "\(next.title) · \(place)"
+        accessibilityLabel = String(localized: "Panes, \(next.title), \(place)")
+        accessibilityHint = String(localized: "Lists the panes. Swipe to show the next or previous pane.")
+        largeContentTitle = label.text
+        setNeedsLayout()
+    }
+
+    /// The label's width, padded and capped by the pane it sits in.
+    func fittingWidth(maximum: CGFloat) -> CGFloat {
+        min(maximum, label.intrinsicContentSize.width + 24)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        label.frame = bounds.insetBy(dx: 10, dy: 0)
+        menuButton.frame = bounds
+    }
+
+    @objc private func openList() { menuButton.performPrimaryAction() }
+
+    @objc private func swiped(_ recognizer: UISwipeGestureRecognizer) {
+        onStep(recognizer.direction == .left ? 1 : -1)
+    }
+
+    override var accessibilityTraits: UIAccessibilityTraits {
+        get { .button }
+        set {}
+    }
+
+    override func accessibilityActivate() -> Bool {
+        openList()
+        return true
+    }
+
+    override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+        get {
+            [
+                UIAccessibilityCustomAction(name: String(localized: "Next Pane")) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.onStep(1) }
+                    return true
+                },
+                UIAccessibilityCustomAction(name: String(localized: "Previous Pane")) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.onStep(-1) }
+                    return true
+                },
+            ]
+        }
+        set {}
+    }
+}
+
+extension PaneChipView: UIPointerInteractionDelegate {
+    func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
+        UIPointerStyle(effect: .highlight(UITargetedPreview(view: self)))
+    }
+}
+
+/// The strip a pane reserves under its bar for its grip or chip, as a view in
+/// the pane's screen: pinned to the top of the screen's safe area, less the
+/// strip the host adds to it, so Auto Layout keeps it under the bar and
+/// anything the bar carries (a search that hides as the list scrolls) with
+/// no measuring. Draws nothing and takes no touches; the host places the grip
+/// or chip over it, and hears when it moves.
+final class PaneStripSlot: UIView {
+    private var onMove: () -> Void = {}
+
+    static func slot(in screen: UIViewController) -> PaneStripSlot? {
+        screen.view.subviews.lazy.compactMap { $0 as? PaneStripSlot }.first
+    }
+
+    static func install(in screen: UIViewController, onMove: @escaping () -> Void) {
+        let slot = PaneStripSlot()
+        slot.onMove = onMove
+        slot.isUserInteractionEnabled = false
+        slot.isAccessibilityElement = false
+        slot.translatesAutoresizingMaskIntoConstraints = false
+        screen.view.addSubview(slot)
+        let guide = screen.view.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            slot.bottomAnchor.constraint(equalTo: guide.topAnchor),
+            slot.heightAnchor.constraint(equalToConstant: PaneGripView.size.height),
+            slot.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
+            slot.trailingAnchor.constraint(equalTo: guide.trailingAnchor),
+        ])
+    }
+
+    override var center: CGPoint {
+        didSet { if center != oldValue { onMove() } }
     }
 }

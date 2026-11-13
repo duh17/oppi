@@ -125,24 +125,12 @@ final class FileBrowserViewOptionsStore {
 
     private(set) var options: FileBrowserViewOptions
 
-    /// Regular width: the folder tree is tucked away so the open file takes
-    /// the whole width. One choice for the app, like Mail's sidebar. Stored
-    /// apart from `options`, whose saved form has no such key.
-    var hidesTree: Bool {
-        didSet {
-            guard hidesTree != oldValue else { return }
-            defaults.set(hidesTree, forKey: Self.hidesTreeKey)
-        }
-    }
-
     @ObservationIgnored private let defaults: UserDefaults
     private static let key = "\(AppIdentifiers.subsystem).fileBrowser.viewOptions"
-    private static let hidesTreeKey = "\(AppIdentifiers.subsystem).fileBrowser.hidesTree"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         options = Self.load(from: defaults)
-        hidesTree = defaults.bool(forKey: Self.hidesTreeKey)
     }
 
     private static func load(from defaults: UserDefaults) -> FileBrowserViewOptions {
@@ -156,14 +144,16 @@ final class FileBrowserViewOptionsStore {
     /// in-process reset clears defaults, and this copy was read from them once.
     func resetForTesting() {
         options = Self.load(from: defaults)
-        hidesTree = defaults.bool(forKey: Self.hidesTreeKey)
     }
 #endif
 
-    /// The chat Files panel's per-session Changed / All tab, gone with the
-    /// Changed tab. Launch removes what an older build stored there.
-    nonisolated static func removeRetiredPanelTabs(from defaults: UserDefaults = .standard) {
+    /// Launch removes what an older build stored: the chat Files panel's
+    /// per-session Changed / All tab (gone with the Changed tab), and the
+    /// folder tree's hidden state (the list is a pane now, collapsed by its
+    /// divider).
+    nonisolated static func removeRetiredKeys(from defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: "\(AppIdentifiers.subsystem).chatFileBrowser.selectedTabsBySession")
+        defaults.removeObject(forKey: "\(AppIdentifiers.subsystem).fileBrowser.hidesTree")
     }
 
     func update(_ change: (inout FileBrowserViewOptions) -> Void) {

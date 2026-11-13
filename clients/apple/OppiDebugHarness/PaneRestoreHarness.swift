@@ -13,6 +13,9 @@ import UIKit
 /// holds what cannot open: a session this server no longer has, a file it no
 /// longer has, a session on a server that is unpaired, and one on a paired
 /// server that is offline (`mac-mini`). Close Pane steps down through them.
+/// `PANE_RESTORE_SEED=splits` saves the workspace's sessions with a Files and
+/// a Git pane split beside them, the tree a wide window leaves behind, so a
+/// compact window (the iPhone) shows it one pane at a time with the chip.
 final class PaneRestorePreviewController: PreviewRootController {
     static let serverId = "sha256:pane-restore"
     static let offlineServerId = "sha256:pane-restore-mini"
@@ -41,8 +44,10 @@ final class PaneRestorePreviewController: PreviewRootController {
         guard !connected, let scene = view.window?.windowScene?.session.persistentIdentifier else { return }
         connected = true
         let panes = root.navigation.panes
-        if ProcessInfo.processInfo.environment["PANE_RESTORE_SEED"] == "missing" {
-            PaneTreeStore().save(Self.missingTree(), scene: scene)
+        switch ProcessInfo.processInfo.environment["PANE_RESTORE_SEED"] {
+        case "missing": PaneTreeStore().save(Self.missingTree(), scene: scene)
+        case "splits": PaneTreeStore().save(Self.splitsTree(), scene: scene)
+        default: break
         }
         panes.connect(scene: scene)
         panes.restore(navigation: root.navigation, coordinator: root.coordinator)
@@ -82,6 +87,24 @@ final class PaneRestorePreviewController: PreviewRootController {
             ],
             attachedTo: nil, origin: .split
         )))
+    }
+
+    private static func splitsTree() -> PaneLayoutArchive? {
+        let workspace = ChatRoutesFixture.workspace.id
+        func leaf(_ id: String, _ route: PaneRoute) -> PaneNode {
+            guard let id = PaneID(id) else { preconditionFailure("\(id) is not a pane id") }
+            return .leaf(PaneLeaf(id: id, name: nil, stack: [PaneStackEntry(serverId: serverId, route: route)],
+                                  attachedTo: nil, origin: .split))
+        }
+        let routed = ScenePanes().routedLeafID
+        return PaneLayoutArchive(restorable: PaneLayout(
+            root: .split(axis: .row, children: [
+                leaf(routed.raw, .sessions(workspace: workspace)),
+                leaf("leaf-2", .files(workspace: workspace, path: nil)),
+                leaf("leaf-3", .git(workspace: workspace, worktree: nil)),
+            ], weights: [0.4, 0.3, 0.3]),
+            focus: routed
+        ))
     }
 
     private static func makeCoordinator() -> ConnectionCoordinator {

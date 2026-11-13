@@ -175,4 +175,124 @@ struct PaneTreeHostTests {
         #expect(try grip(host, host.scenePanes.routedLeafID).isHidden)
         #expect(host.screen.additionalSafeAreaInsets.top == 0, "one pane gives its strip back")
     }
+
+    private func strip(_ host: PaneTestHost, _ id: PaneID) -> PaneStripView? {
+        host.panes.view.subviews.lazy.compactMap { $0 as? PaneStripView }
+            .first { $0.accessibilityIdentifier == "pane.strip.\(id.raw)" }
+    }
+
+    /// R2: a divider dragged past half the pane's minimum collapses it to a
+    /// 20 pt strip on release, the chat takes the room, and no divider is left
+    /// to drag; activating the strip brings the pane back focused at its share.
+    @Test func aDividerDraggedPastAPaneCollapsesItAndItsStripExpandsIt() throws {
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer { host.hide() }
+        host.act { host.panes.split(axis: .row) }
+        let split = try #require(host.scenePanes.splitLeaves.first?.id)
+        let divider = try #require(host.panes.view.subviews.lazy.compactMap { $0 as? PaneSplitDividerView }.first)
+        let shareBefore = host.screenWidth
+        // Short of half the launcher's minimum: held at its minimum, no collapse.
+        divider.onBegan?()
+        divider.onChanged?(400)
+        host.act { divider.onEnded?() }
+        #expect(strip(host, split) == nil)
+        #expect(leafView(host, split)?.frame.width == PaneMinimumSize.list.width)
+
+        divider.onBegan?()
+        divider.onChanged?(300)
+        host.act { divider.onEnded?() }
+        let collapsed = try #require(strip(host, split), "past half its minimum the release collapsed it")
+        #expect(collapsed.frame == CGRect(x: 1133 - 20, y: 0, width: 20, height: 744))
+        #expect(abs(host.screenWidth - (1133 - 21)) < 0.5, "the chat takes the room")
+        #expect(leafView(host, split)?.isHidden == true)
+        #expect(try grip(host, split).isHidden, "a strip has no grip")
+        #expect(!host.panes.view.subviews.contains { $0 is PaneSplitDividerView && !$0.isHidden },
+                "no divider to drag beside a strip")
+        #expect(collapsed.accessibilityLabel == "Collapsed pane, New Pane")
+
+        host.act { _ = collapsed.accessibilityActivate() }
+        #expect(strip(host, split) == nil)
+        #expect(leafView(host, split)?.isHidden == false)
+        #expect(host.panes.focusedLeaf == .split(split), "the expanded pane takes focus")
+        #expect(abs(host.screenWidth - (1133 - 1 - PaneMinimumSize.list.width)) <= 1,
+                "at the share it had when it collapsed (\(shareBefore) before the drags)")
+    }
+
+    /// The pane menu's Collapse does the same, and is off for the window's
+    /// only open pane.
+    @Test func thePaneMenuCollapsesAPane() throws {
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer { host.hide() }
+        let routed = host.scenePanes.routedLeafID
+        host.act { host.panes.split(axis: .row) }
+        let split = try #require(host.scenePanes.splitLeaves.first?.id)
+        try run("Collapse", on: try grip(host, routed), in: host)
+        #expect(strip(host, routed)?.frame.width == 20, "the chat's cell collapsed to its strip")
+        #expect(host.panes.primary.view.isHidden)
+        #expect(host.panes.focusedLeaf == .split(split), "focus moved to the open pane")
+        #expect(host.panes.menuItems(for: split).first { $0.identifier == "pane.menu.collapse" }?.isEnabled == false,
+                "the last open pane cannot collapse")
+    }
+
+    /// §1.5: a compact window shows one pane, the focused one, and the chip
+    /// in place of the grips names it and its place; stepping shows the next
+    /// pane in tree order, and the list shows any of them.
+    @Test func aCompactWindowShowsOnePaneAndTheChip() throws {
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer { host.hide() }
+        let routed = host.scenePanes.routedLeafID
+        host.act { host.panes.split(axis: .row) }
+        let split = try #require(host.scenePanes.splitLeaves.first?.id)
+        host.window.traitOverrides.horizontalSizeClass = .compact
+        host.resize(width: 390)
+        host.act {}
+        let chip = try #require(host.panes.view.subviews.lazy.compactMap { $0 as? PaneChipView }.first)
+        #expect(!chip.isHidden)
+        #expect(chip.accessibilityLabel?.hasSuffix("1 of 2") == true)
+        #expect(host.screenWidth == 390, "the focused pane fills the window")
+        #expect(leafView(host, split)?.isHidden == true)
+        #expect(try grip(host, routed).isHidden && grip(host, split).isHidden, "no grips on a compact window")
+        #expect(host.scenePanes.tree.leaves.count == 2, "the tree is unchanged")
+
+        host.act { chip.onStep(1) }
+        #expect(leafView(host, split)?.frame.width == 390)
+        #expect(host.panes.primary.view.isHidden)
+        #expect(chip.accessibilityLabel == "Panes, New Pane, 2 of 2")
+        host.act { chip.onStep(1) }
+        #expect(host.panes.focusedLeaf == .primary, "stepping wraps around")
+
+        let list = host.panes.paneListItems()
+        #expect(list.map(\.identifier) == ["pane.list.\(routed.raw)", "pane.list.\(split.raw)"])
+        #expect(list.map(\.isChecked) == [true, false])
+        host.act { list[1].run() }
+        #expect(host.panes.focusedLeaf == .split(split))
+
+        host.window.traitOverrides.horizontalSizeClass = .regular
+        host.resize(width: 1133)
+        host.act {}
+        #expect(chip.isHidden)
+        #expect(leafView(host, split)?.isHidden == false && !host.panes.primary.view.isHidden,
+                "widened, both panes show again")
+    }
+
+    /// The companion fills the window and gives its leaf its room back on
+    /// request (⇧⌘L for the File Browser's list); a companion with no room
+    /// beside its leaf has nothing to toggle.
+    @Test func theCompanionFillsTheWindowAndGivesTheRoomBack() throws {
+        let host = PaneTestHost(width: 1133, height: 744)
+        defer { host.hide() }
+        host.showPanel(minWidth: 390, idealWidth: 520, maxWidth: 820)
+        #expect(host.screen.leaf.fillsWindow == false)
+        let beside = try #require(host.companionWidth)
+        host.act { host.screen.leaf.setFillsWindow(true) }
+        #expect(host.companionWidth == 1133 - PaneWidthPolicy.fullWindowGrabEdge)
+        #expect(host.screen.leaf.fillsWindow == true)
+        #expect(host.divider.accessibilityCustomActions?.map(\.name) == ["Show Both Panes"])
+        host.act { host.screen.leaf.setFillsWindow(false) }
+        #expect(host.companionWidth == beside)
+
+        host.resize(width: 744)
+        host.act {}
+        #expect(host.screen.leaf.fillsWindow == nil, "no room beside: full by the fit rule, only Close ends it")
+    }
 }

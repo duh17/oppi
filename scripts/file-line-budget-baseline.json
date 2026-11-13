@@ -91,7 +91,7 @@
       "reason": "Row chrome, viewport math, and expanded render dispatch; the expanded controller comes out first."
     },
     "clients/apple/Oppi/Features/FileBrowser/FileBrowserViewController.swift": {
-      "budget": 2200,
+      "budget": 2100,
       "owner": "file browser / list kit",
       "reason": "List, search, and navigation state in one collection view; list-kit migration may take it."
     },

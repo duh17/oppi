@@ -629,7 +629,6 @@ final class ChatBarItems {
     }
 }
 
-
 /// The session title in the bar: `ChatTitleView` (avatar, name, cost,
 /// mirror and durable marks, Conversation subtitle). A tap renames; a long
 /// press offers Copy Session ID and Share Session. One element for

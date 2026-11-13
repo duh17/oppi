@@ -67,8 +67,10 @@ final class AttachedLeafController: UIViewController {
     required init?(coder: NSCoder) { nil }
 
     override func loadView() {
+        // Never drawn: the panel shows in the host. Hidden, so a walk of the
+        // screens in front (`FrontScreens`) takes the screen, not this.
         let view = UIView(frame: .zero)
-        view.backgroundColor = .clear
+        view.isHidden = true
         view.isUserInteractionEnabled = false
         self.view = view
     }
@@ -94,6 +96,22 @@ final class AttachedLeafController: UIViewController {
     /// The screen in front inside the open panel, for the commands that ask
     /// what the panel shows.
     var frontScreen: UIViewController? { isMounted ? container?.topViewController : nil }
+
+    /// Whether the open panel fills the window by the person's choice, its
+    /// screen collapsed to the strip at the leading edge; nil while it is
+    /// not mounted beside its screen or has no room beside it (then it is
+    /// full already, and can only close).
+    var fillsWindow: Bool? {
+        guard isMounted, let container else { return nil }
+        return host?.companionFillsWindow(container)
+    }
+
+    /// Fills the window with the panel, or gives its screen its room back,
+    /// as the divider's drag and its strip's tap do.
+    func setFillsWindow(_ fills: Bool) {
+        guard isMounted, let container else { return }
+        host?.setCompanion(container, fillsWindow: fills)
+    }
 
     func show(_ panel: Panel?, root: AppRootEnvironment?) {
         guard let panel, let root else {

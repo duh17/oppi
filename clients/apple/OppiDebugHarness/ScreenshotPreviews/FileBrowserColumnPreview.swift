@@ -4,8 +4,9 @@ import UIKit
 
 /// `SCREENSHOT_SCREEN=file-browser-column`: the workspace File Browser route
 /// (the real `FileBrowserViewController`) over a fixture server, opened on a
-/// long Org file in `projects/`. Regular width shows the folder tree beside the
-/// file, with the tree's toggle in the bar; compact width shows the file alone.
+/// long Org file in `projects/`. Regular width shows the folder list and the
+/// file as two panes (the file full over the list where both do not fit);
+/// compact width shows the file as a sheet over the list.
 ///
 /// `SCREENSHOT_FILE_BROWSER_FOLDER=media/` opens that folder with no file
 /// selected instead: a video, an image, a slow download, and a file over the

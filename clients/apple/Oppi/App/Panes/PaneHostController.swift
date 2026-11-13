@@ -115,6 +115,9 @@ final class PaneHostController: UIViewController {
     var splitLeaves: [PaneID: PaneSplitLeaf] = [:]
     var splitDividers: [PaneSplitDividerView] = []
     var grips: [PaneID: PaneGripView] = [:]
+    var strips: [PaneID: PaneStripView] = [:]
+    /// The pane chip a compact window shows in place of the grips.
+    lazy var chip = makeChip()
     var splitDrag: PaneSplitDrag?
     /// Where each cell sits after the last layout pass.
     var cellPresentation: PanePresentation?
@@ -423,6 +426,25 @@ final class PaneHostController: UIViewController {
             focus(.companion)
         }
         updateVisibility()
+    }
+
+    /// Whether `controller`, the shown companion, fills the window by the
+    /// person's choice; nil when it is not the companion or does not fit
+    /// beside its leaf (full by the fit rule, which only Close ends).
+    func companionFillsWindow(_ controller: UIViewController) -> Bool? {
+        guard companion?.controller === controller, let policy, policy.fitsBeside else { return nil }
+        return isFull
+    }
+
+    /// Fills the window with the companion, or returns it beside its leaf at
+    /// the width it rests at.
+    func setCompanion(_ controller: UIViewController, fillsWindow fills: Bool) {
+        guard companionFillsWindow(controller) == !fills else { return }
+        if fills {
+            settle(.full, initialVelocityPointsPerSecond: 0)
+        } else {
+            restoreFromFull()
+        }
     }
 
     /// The owner's panel asked for other widths: the divider's range follows
@@ -752,8 +774,9 @@ final class PaneHostController: UIViewController {
         if let companion {
             report(routedShown ? .visible(focused: focusedLeaf == .companion) : .parked, to: companion.controller)
         }
+        let collapsed = panes.collapsedCells
         for (id, leaf) in splitLeaves {
-            let shown = cellPresentation?.frames[id] != nil
+            let shown = cellPresentation?.frames[id] != nil && !collapsed.contains(id)
             report(shown ? .visible(focused: focusedLeaf == .split(id)) : .parked, to: leaf.controller)
         }
     }

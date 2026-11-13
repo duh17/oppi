@@ -1,8 +1,7 @@
 {
   "counts": {
     "Oppi": {
-      "compiler": 5,
-      "swiftlint": 1
+      "compiler": 5
     },
     "OppiE2ETests": {
       "compiler": 29
@@ -148,9 +147,6 @@
     },
     "dependency": {
       "SwiftPM/(package scan)": 15
-    },
-    "swiftlint": {
-      "Oppi/Features/Chat/ChatViewController+Bars.swift": 1
     }
   }
 }

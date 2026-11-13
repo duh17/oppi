@@ -120,8 +120,8 @@ final class LiveKeyboardCommandSurface {
             title = isShown ? String(localized: "Hide Sidebar") : String(localized: "Show Sidebar")
         case .toggleFileTree:
             let browser = frontFileBrowser
-            run = browser.map { browser -> @MainActor () -> Void in { [weak browser] in browser?.toggleTree() } }
-            if browser?.treeToggleState.hidden == false { title = String(localized: "Hide File Tree") }
+            run = browser.map { browser -> @MainActor () -> Void in { [weak browser] in browser?.toggleListCollapse() } }
+            if browser?.listCollapse == false { title = String(localized: "Hide File Tree") }
         case .pane(let pane):
             run = togglePane(pane)
             if frontChat?.isPaneOpen(pane) == true { title = String(localized: "Hide \(pane.label)") }
@@ -235,15 +235,15 @@ final class LiveKeyboardCommandSurface {
         }
     }
 
-    /// The File Browser in front that offers its tree toggle (a file open in
-    /// regular width). Its open file is a child, so the front screen is the
-    /// file's and the browser is found above it.
+    /// The File Browser in front whose list can collapse beside its open file
+    /// (the reader in its pane, with room for both). A screen inside the
+    /// browser is found above it.
     private var frontFileBrowser: FileBrowserViewController? {
         guard isInteractive, topPresented == nil else { return nil }
         let browser = FrontScreens.screens(in: window).lazy.compactMap { screen in
             sequence(first: screen, next: \.parent).lazy.compactMap { $0 as? FileBrowserViewController }.first
         }.first
-        guard let browser, browser.treeToggleState.available else { return nil }
+        guard let browser, browser.listCollapse != nil else { return nil }
         return browser
     }
 

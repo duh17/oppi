@@ -34,7 +34,7 @@ struct FileBrowserEmbeddedChrome: Equatable {
     var searchScope: FileBrowserSearchScope
 }
 
-/// The keyed markdown viewport store the tree pane and pushed readers share,
+/// The keyed markdown viewport store the open file's reader and pushed readers share,
 /// so a file opened again comes back where it was read.
 @MainActor
 final class FileBrowserViewportRestore {
@@ -49,15 +49,20 @@ final class FileBrowserViewportRestore {
 /// its content; unlocked, it switches to its server and shows "Connecting…"
 /// until that server is ready. Compact width lists one folder, and each
 /// folder deeper is its own route, so Back and the swipe pop folders.
-/// Regular width shows the folder tree beside the open file, and folders
-/// open in place. In the chat panel (`compactOnly`) folders open in place and
-/// files push the reader onto the panel's stack.
+/// Regular width shows the folder tree, folders open in place, and the open
+/// file is a pane of its own: the reader opens as this screen's attached leaf
+/// (`AttachedLeafController`) beside the list, with the pane divider between
+/// them, or full over the list when the two do not fit side by side (the
+/// iPad mini in portrait). Each pane has its own bar: the list's carries the
+/// folder, its Back (up a folder) and View Options; the reader's the file's
+/// title, actions and Close. Where the reader cannot sit beside the list (a
+/// pane that is not the window's routed one, or a selection kept into compact
+/// width) it is a sheet. In the chat panel (`compactOnly`) folders open in
+/// place and files push the reader onto the panel's stack.
 ///
 /// The screen reads the lock service, the server's `FileIndexStore`, and
 /// `SceneNavigation` in `updateProperties()` and applies a diffable snapshot
-/// keyed by entry path; state rows have fixed ids. The open file is a
-/// `FileViewerViewController` from `FileBrowserViewerFactory`, a child whose
-/// bar items show in this screen's bar.
+/// keyed by entry path; state rows have fixed ids.
 @MainActor
 final class FileBrowserViewController: UIViewController, UICollectionViewDelegate, UITextFieldDelegate {
     /// The split detail root carries the sidebar toggle.
@@ -118,26 +123,20 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private let stateView = UIContentUnavailableView(loadState: .loading(nil))
     private let refreshControl = UIRefreshControl()
-    private let divider = UIView()
-    private let dividerTint = UIView()
-    private let paneContainer = UIView()
-    /// The "select a file" pane: never loading, so it starts as the state it shows.
-    private let paneEmpty = UIContentUnavailableView(loadState: FileBrowserViewController.paneEmptyState)
     private let search = ScreenSearchController(prompt: String(localized: "Search files"))
     private var searchInstalled = false
-    private var listConstraints: [NSLayoutConstraint] = []
-    private var columnConstraints: [NSLayoutConstraint] = []
-    private var paneOnlyConstraints: [NSLayoutConstraint] = []
     private var collectionTopInList: NSLayoutConstraint?
     private var collectionTopInColumn: NSLayoutConstraint?
-    /// The tree at the leading edge, or tucked past it (`.columnTreeHidden`).
-    private var treeLeading: NSLayoutConstraint?
-    private var treeTucked: NSLayoutConstraint?
     private var appliedLayout: Layout?
 
-    // The open file.
-    private var paneViewer: FileViewerViewController?
-    private var paneKey: PaneKey?
+    // The open file: a pane beside the list, or a sheet.
+    private lazy var readerLeaf = AttachedLeafController(screen: self)
+    private let readerSheet = RouterModalPresenter()
+    /// The reader built last, and the file it was last told to show: another
+    /// file on the same server goes to it, so its previous/next slide and
+    /// editing state carry over.
+    private weak var reader: FileViewerViewController?
+    private var readerShows: ReaderShows?
 
     // Snapshot and bar values.
     private var rows: [Item: Row] = [:]
@@ -148,7 +147,6 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private var lastThemeID: ThemeID?
     private var appliedBars: BarState?
     private var sidebarToggle: UIBarButtonItem?
-    private lazy var treeToggle = makeTreeToggle()
     private lazy var viewOptionsItem = Self.makeViewOptionsItem()
     private var lastChrome: FileBrowserEmbeddedChrome?
     /// The listing's order and the checkout's Git changes, read each pass.
@@ -259,21 +257,19 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             self?.setSearchScope(FileBrowserSearchScope(rawValue: index) ?? .everywhere)
         }
 
-        for subview in [treeColumn, divider, paneContainer] {
-            subview.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(subview)
-        }
-        // A tucked tree sits past the leading edge, over the split's sidebar.
-        view.clipsToBounds = true
-        dividerTint.translatesAutoresizingMaskIntoConstraints = false
-        divider.addSubview(dividerTint)
+        treeColumn.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(treeColumn)
         for subview in [columnSearch, collectionView, stateView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             treeColumn.addSubview(subview)
         }
-        paneEmpty.translatesAutoresizingMaskIntoConstraints = false
-        paneContainer.addSubview(paneEmpty)
         installConstraints()
+        addChild(readerLeaf)
+        view.addSubview(readerLeaf.view)
+        readerLeaf.view.frame = .zero
+        readerLeaf.didMove(toParent: self)
+        readerLeaf.onDismissRequested = { [weak self] in self?.selectFile(nil) }
+        readerSheet.anchor = self
 
         search.onTextChange = { [weak self] text in self?.setSearchText(text) }
         search.scopeAccessibilityIdentifier = "fileBrowser.searchScope"
@@ -307,6 +303,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         if searchInstalled {
             search.hostDidAppear(self)
         }
+        readerSheet.sync()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -332,18 +329,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         }
 
         let isLocked = lockTarget.map { ScopedLockService.shared.isLocked($0) } ?? false
-        // Read before any return, so a change from another browser or the
-        // keyboard re-runs this pass.
-        let hidesTree = viewOptions.hidesTree
-        // The sidebar toggle stays on the lock cover and "Connecting":
-        // the tree toggle and the column Back belong to the content.
+        // The sidebar toggle stays on the lock cover and "Connecting"; the
+        // column Back belongs to the content.
         if isShellRoute {
             let showsContent = !isLocked && services != nil
-            syncLeadingItems(
-                showsTreeToggle: showsContent && canToggleTree,
-                hidesTree: hidesTree,
-                showsColumnBack: showsContent && replacesStackBackButton
-            )
+            syncLeadingItems(showsColumnBack: showsContent && replacesStackBackButton)
         }
         if isLocked {
             show(.locked)
@@ -382,7 +372,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         let layout = currentLayout
         applyLayout(layout)
         applySnapshot(layout: layout, indexIsLoading: indexIsLoading, reconfigureAll: themeChanged)
-        syncPane(layout: layout, services: services)
+        syncReader(services: services)
         syncBars(layout: layout)
     }
 
@@ -390,11 +380,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         let background = palette.ui.bg
         view.backgroundColor = background
         collectionView.backgroundColor = .clear
-        divider.backgroundColor = .separator
-        dividerTint.backgroundColor = palette.ui.comment.withAlphaComponent(0.18)
         columnSearch.apply(palette)
-        paneEmpty.configuration = UIContentUnavailableConfiguration.loadState(Self.paneEmptyState, palette: palette, background: background)
-        paneViewer?.view.backgroundColor = background
+        reader?.view.backgroundColor = background
         overlay = nil
     }
 
@@ -444,10 +431,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         } else {
             contentUnavailableConfiguration = nil
         }
-        let showsContent = next == .content
-        treeColumn.isHidden = !showsContent
-        divider.isHidden = !showsContent
-        paneContainer.isHidden = !showsContent
+        treeColumn.isHidden = next != .content
         appliedLayout = nil
     }
 
@@ -497,7 +481,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         uninstallSearch()
         state = ContentState(treeDirectoryPath: restoredDirectory, selectedFile: restoredSelection)
         searchedKey = nil
-        removePane()
+        closeReader()
         rows = [:]
         taps = [:]
         overlay = nil
@@ -571,32 +555,23 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     }
 
     private var currentLayout: Layout {
-        if showsColumn { return canToggleTree && viewOptions.hidesTree ? .columnTreeHidden : .column }
-        return state.selectedFile == nil ? .list : .selectedFile
+        showsColumn ? .column : .list
     }
 
-    /// The tree can make way only for an open file: with none, it shows.
-    private var canToggleTree: Bool {
-        showsColumn && state.selectedFile != nil
+    /// Whether the list can collapse to its strip beside the open file
+    /// (⇧⌘L), and whether it is collapsed: the reader filling the window by
+    /// the person's choice. Nil while no reader sits beside the list, or
+    /// the two do not fit side by side (then the reader is full already).
+    var listCollapse: Bool? {
+        guard isOnScreen, phase == .content else { return nil }
+        return readerLeaf.fillsWindow
     }
 
-    /// Hides or shows the tree beside the open file, animated. The bar button,
-    /// its accessibility activation, and the keyboard command all run this.
-    func toggleTree() {
-        guard canToggleTree else { return }
-        viewOptions.hidesTree.toggle()
-        setNeedsUpdateProperties()
-        view.layoutIfNeeded()
-        UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState]) {
-            self.updatePropertiesIfNeeded()
-            self.view.layoutIfNeeded()
-        }
-    }
-
-    /// The keyboard command's state: whether the tree toggle is offered, and
-    /// whether it would show the tree.
-    var treeToggleState: (available: Bool, hidden: Bool) {
-        (isOnScreen && phase == .content && canToggleTree, viewOptions.hidesTree)
+    /// Collapses the list beside the open file, or gives it its room back,
+    /// as the divider's drag and its strip's tap do.
+    func toggleListCollapse() {
+        guard let collapsed = listCollapse else { return }
+        readerLeaf.setFillsWindow(!collapsed)
     }
 
     private var canGoBack: Bool {
@@ -629,7 +604,6 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     private var columnBackAction: FileBrowserColumnBackAction {
         FileBrowserTreeNavigationReducer.columnBackAction(
-            selectedFile: state.selectedFile,
             treeDirectoryPath: state.treeDirectoryPath,
             initialPath: initialPath,
             currentDirectoryPath: currentDirectoryPath
@@ -650,9 +624,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         )
     }
 
-    /// One bar for this screen: the open file, otherwise the folder.
+    /// The list's bar names its folder; the open file names itself in its own pane.
     private var barTitle: String {
-        if let selectedFile = state.selectedFile { return selectedFile.name }
         if isRoot { return scope.breadcrumbRootLabel }
         return folderName(currentDirectoryPath)
     }
@@ -882,12 +855,12 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     private func openDirectory(path: String) {
         guard !usesInPlaceDirectoryNavigation else {
-            showDirectoryInPlace(FileBrowserTreeNavigationReducer.openDirectory(path: path, selectedFile: state.selectedFile))
+            showDirectoryInPlace(path)
             return
         }
         state.selectedFile = nil
         guard let serverId, !serverId.isEmpty else {
-            showDirectoryInPlace(FileBrowserTreeNavigationReducer.openDirectory(path: path, selectedFile: nil))
+            showDirectoryInPlace(path)
             return
         }
         pushDirectory(path: path)
@@ -898,17 +871,16 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         navigation.pushWorkspaceFileBrowser(navTarget(path: path))
     }
 
-    private func showDirectoryInPlace(_ mutation: FileBrowserTreeNavigationMutation) {
+    /// Lists `path` in place. The open file stays open: it is a pane of its own.
+    private func showDirectoryInPlace(_ path: String) {
         var next = state
         if usesInlineCompactNavigation {
             // Moving up keeps the deepest folder for Forward; opening a folder
             // off that trail starts a new one.
-            let path = mutation.treeDirectoryPath
             let trail = state.forwardTrailPath ?? currentDirectoryPath
             next.forwardTrailPath = trail.hasPrefix(path) ? trail : path
         }
-        next.treeDirectoryPath = mutation.treeDirectoryPath
-        next.selectedFile = mutation.selectedFile
+        next.treeDirectoryPath = path
         next.error = nil
         next.listing = nil
         state = next
@@ -922,10 +894,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         let popCount = currentDepth - targetDepth
         guard popCount > 0 else { return }
         guard !usesInPlaceDirectoryNavigation else {
-            showDirectoryInPlace(FileBrowserTreeNavigationReducer.popToBreadcrumb(
-                path: breadcrumbPath(for: targetDepth),
-                selectedFile: state.selectedFile
-            ))
+            showDirectoryInPlace(breadcrumbPath(for: targetDepth))
             return
         }
         let depth = navigation.shownStackDepth
@@ -948,13 +917,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     private func performColumnBack() {
         switch columnBackAction {
-        case .clearSelectedFile:
-            selectFile(nil)
         case .popToDirectory(let path):
-            showDirectoryInPlace(FileBrowserTreeNavigationReducer.popToBreadcrumb(
-                path: path,
-                selectedFile: state.selectedFile
-            ))
+            showDirectoryInPlace(path)
         case .useStackBack:
             break
         }
@@ -963,6 +927,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private func selectFile(_ selection: FileBrowserSelection?) {
         guard state.selectedFile != selection else { return }
         state.selectedFile = selection
+        if selection == nil { state.selectedContext = nil }
         recordColumnRoute()
     }
 
@@ -1021,18 +986,13 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     // MARK: Layout
 
+    /// The list fills the screen; the column searches in its own field above it.
     private func installConstraints() {
-        let safe = view.safeAreaLayoutGuide
-        let treeWidth = treeColumn.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: 0.5, constant: -0.5)
-        treeWidth.priority = .defaultHigh
-        let hairline = 1 / max(1, traitCollection.displayScale)
-        let treeLeading = treeColumn.leadingAnchor.constraint(equalTo: view.leadingAnchor)
-        self.treeLeading = treeLeading
-        treeTucked = treeColumn.trailingAnchor.constraint(equalTo: view.leadingAnchor)
         NSLayoutConstraint.activate([
             treeColumn.topAnchor.constraint(equalTo: view.topAnchor),
             treeColumn.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            treeLeading,
+            treeColumn.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            treeColumn.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             columnSearch.topAnchor.constraint(equalTo: treeColumn.safeAreaLayoutGuide.topAnchor),
             columnSearch.leadingAnchor.constraint(equalTo: treeColumn.leadingAnchor),
             columnSearch.trailingAnchor.constraint(equalTo: treeColumn.trailingAnchor),
@@ -1043,42 +1003,9 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             stateView.bottomAnchor.constraint(equalTo: collectionView.bottomAnchor),
             stateView.leadingAnchor.constraint(equalTo: collectionView.leadingAnchor),
             stateView.trailingAnchor.constraint(equalTo: collectionView.trailingAnchor),
-            dividerTint.topAnchor.constraint(equalTo: divider.topAnchor),
-            dividerTint.bottomAnchor.constraint(equalTo: divider.bottomAnchor),
-            dividerTint.leadingAnchor.constraint(equalTo: divider.leadingAnchor),
-            dividerTint.trailingAnchor.constraint(equalTo: divider.trailingAnchor),
-            paneEmpty.topAnchor.constraint(equalTo: paneContainer.topAnchor),
-            paneEmpty.bottomAnchor.constraint(equalTo: paneContainer.bottomAnchor),
-            paneEmpty.leadingAnchor.constraint(equalTo: paneContainer.leadingAnchor),
-            paneEmpty.trailingAnchor.constraint(equalTo: paneContainer.trailingAnchor),
         ])
         collectionTopInList = collectionView.topAnchor.constraint(equalTo: treeColumn.topAnchor)
         collectionTopInColumn = collectionView.topAnchor.constraint(equalTo: columnSearch.bottomAnchor)
-        listConstraints = [
-            treeColumn.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-        ]
-        columnConstraints = [
-            treeWidth,
-            treeColumn.widthAnchor.constraint(greaterThanOrEqualToConstant: 280),
-            treeColumn.widthAnchor.constraint(lessThanOrEqualToConstant: 480),
-            divider.leadingAnchor.constraint(equalTo: treeColumn.trailingAnchor),
-            divider.widthAnchor.constraint(equalToConstant: hairline),
-            divider.topAnchor.constraint(equalTo: safe.topAnchor),
-            divider.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            paneContainer.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
-            paneContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            paneContainer.topAnchor.constraint(equalTo: view.topAnchor),
-            paneContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ]
-        paneOnlyConstraints = [
-            treeColumn.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            paneContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            paneContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            paneContainer.topAnchor.constraint(equalTo: view.topAnchor),
-            paneContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ]
-        // Until the content shows, the list's layout keeps the views defined.
-        NSLayoutConstraint.activate(listConstraints + paneOnlyConstraints.dropFirst())
         collectionTopInList?.isActive = true
     }
 
@@ -1086,37 +1013,19 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         guard appliedLayout != layout else { return }
         let previous = appliedLayout
         appliedLayout = layout
-        NSLayoutConstraint.deactivate(listConstraints + columnConstraints + paneOnlyConstraints)
-        treeTucked?.isActive = false
-        // The tree keeps its rows and width while tucked, so it slides out
-        // and back in place of reflowing.
-        let column = layout.isColumn
-        let tucked = layout == .columnTreeHidden
-        treeLeading?.isActive = !tucked
-        switch layout {
-        case .list: NSLayoutConstraint.activate(listConstraints)
-        case .column, .columnTreeHidden: NSLayoutConstraint.activate(columnConstraints)
-        case .selectedFile: NSLayoutConstraint.activate(paneOnlyConstraints)
-        }
-        treeTucked?.isActive = tucked
+        let column = layout == .column
         treeColumn.accessibilityIdentifier = column ? "fileBrowser.tree" : nil
-        // Off screen, but not hidden: hiding it would cut the slide short.
-        treeColumn.accessibilityElementsHidden = tucked
         // The tree searches in its own field (workspace files only).
         let showsSearchField = column && !isHostHome
         columnSearch.isHidden = !showsSearchField
         collectionTopInList?.isActive = false
         collectionTopInColumn?.isActive = showsSearchField
         collectionTopInList?.isActive = !showsSearchField
-        treeColumn.isHidden = layout == .selectedFile
-        divider.isHidden = !column
-        paneContainer.isHidden = layout == .list
-        paneEmpty.isHidden = true
-        if layout != .column, columnSearch.textField.isFirstResponder {
+        if !column, columnSearch.textField.isFirstResponder {
             columnSearch.textField.resignFirstResponder()
         }
         // Rows and spacing differ between the list and the tree.
-        if previous == nil || (previous?.isColumn ?? false) != column {
+        if previous != nil {
             collectionView.collectionViewLayout.invalidateLayout()
         }
     }
@@ -1226,7 +1135,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     }
 
     private func applySnapshot(layout: Layout, indexIsLoading: Bool, reconfigureAll: Bool) {
-        guard let dataSource, layout != .selectedFile else { return }
+        guard let dataSource else { return }
         let column = layout.isColumn
         var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
         var nextRows: [Item: Row] = [:]
@@ -1407,12 +1316,6 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         title: String(localized: "Empty Directory"),
         systemImage: "folder",
         message: String(localized: "No files in this directory.")
-    )
-
-    private static let paneEmptyState = LoadState.empty(
-        title: String(localized: "Select a File"),
-        systemImage: "doc.text.magnifyingglass",
-        message: String(localized: "Choose a file from the tree.")
     )
 
     // MARK: Cells
@@ -1833,6 +1736,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             }
         case .file(let selection, let context):
             if showsColumn {
+                state.selectedContext = context
                 selectFile(selection)
             } else {
                 openCompactFile(selection, context: context)
@@ -1842,54 +1746,89 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     // MARK: The open file
 
-    /// The tree-pane viewer beside the tree, or alone for a selection kept
-    /// in compact width. "Select a File" fills an empty column pane. Another
-    /// selection on the same server shows in the same viewer, so its
-    /// previous/next slide and editing state carry over.
-    private func syncPane(layout: Layout, services: FileBrowserServices) {
-        guard layout != .list, let selection = state.selectedFile else {
-            removePane()
-            paneEmpty.isHidden = layout != .column
+    /// The open file's reader: this screen's attached leaf beside the list
+    /// where the window has room for panes (`readerLeaf.opensBeside`), else a
+    /// sheet over it. One reader per server: another file goes to the reader
+    /// already open (`show`), so its previous/next slide and editing state
+    /// carry over. The reader keeps the folder it was opened from for
+    /// previous and next, also after the list moves to another folder.
+    private func syncReader(services: FileBrowserServices) {
+        guard let selection = state.selectedFile else {
+            closeReader()
             return
         }
-        paneEmpty.isHidden = true
-        let context = currentNavigationContext
-        let key = PaneKey(
-            selection: selection,
-            context: context,
+        let server = ReaderServer(
             connection: ObjectIdentifier(services.connection),
             apiClient: services.apiClient.map(ObjectIdentifier.init)
         )
-        guard key != paneKey else { return }
-        if let paneViewer, let paneKey,
-           paneKey.connection == key.connection, paneKey.apiClient == key.apiClient {
-            self.paneKey = key
-            paneViewer.show(selection, navigationContext: context)
-            return
+        let context: FileBrowserNavigationContext? = if let shows = readerShows, shows.selection == selection,
+                                                         shows.context != nil {
+            shows.context
+        } else {
+            state.selectedContext ?? currentNavigationContext
         }
-        removePane()
-        paneKey = key
+        let shows = ReaderShows(server: server, selection: selection, context: context)
+        if let reader, let shown = readerShows, shown.server == server, shown != shows {
+            readerShows = shows
+            reader.show(selection, navigationContext: context)
+        }
+        let makeReader: () -> UIViewController = { [weak self] in
+            guard let self else { preconditionFailure("The reader opens only while its browser is alive") }
+            return self.makeReader(shows, services: services)
+        }
+        let beside = readerLeaf.opensBeside
+        readerLeaf.show(
+            beside ? AttachedLeafController.Panel(
+                id: AnyHashable(server),
+                minWidth: PaneMinimumSize.attached.width,
+                idealWidth: 520,
+                maxWidth: 820,
+                route: paneEntry(forRowPath: selection.path),
+                makeScreen: makeReader
+            ) : nil,
+            root: beside ? root : nil
+        )
+        readerSheet.update(
+            id: beside ? nil : AnyHashable(server),
+            presentation: .sheet.inNavigation(),
+            root: root,
+            clear: { [weak self] in self?.selectFile(nil) },
+            screen: { .controller(makeReader) }
+        )
+    }
+
+    /// A reader for what the browser has open now (`shows` when it was
+    /// asked for), with a Close that closes the file.
+    private func makeReader(_ requested: ReaderShows, services: FileBrowserServices) -> FileViewerViewController {
+        let shows = state.selectedFile.map { ReaderShows(server: requested.server, selection: $0, context: requested.context) }
+            ?? requested
         let viewer = FileBrowserViewerFactory.make(
-            readerRequest(selection, context: context, services: services),
+            readerRequest(shows.selection, context: shows.context, services: services),
             onSelectionChange: { [weak self] selection in self?.selectFile(selection) },
             onBack: { [weak self] in self?.selectFile(nil) }
         )
         viewer.view.backgroundColor = palette.ui.bg
-        embed(viewer, in: paneContainer)
-        paneViewer = viewer
+        let mode = FullScreenViewerNavigationChrome.DismissMode.modal
+        let close = UIBarButtonItem(
+            title: mode.accessibilityLabel,
+            image: UIImage(systemName: mode.systemImageName),
+            primaryAction: UIAction { [weak self] _ in self?.selectFile(nil) }
+        )
+        close.accessibilityLabel = mode.accessibilityLabel
+        close.accessibilityIdentifier = "fileBrowser.reader.close"
+        viewer.navigationItem.leftBarButtonItem = close
+        reader = viewer
+        readerShows = shows
+        return viewer
     }
 
-    private func removePane() {
-        paneKey = nil
-        guard let paneViewer else { return }
-        paneViewer.willMove(toParent: nil)
-        paneViewer.view.removeFromSuperview()
-        paneViewer.removeFromParent()
-        self.paneViewer = nil
-        // The file's Edit, status, Preview, and Done go with it. Locking and
-        // "Connecting" tear the content down without the bar sync that
-        // otherwise follows.
-        navigationItem.rightBarButtonItems = nil
+    private func closeReader() {
+        readerShows = nil
+        readerLeaf.show(nil, root: nil)
+        readerSheet.update(
+            id: nil, presentation: .sheet.inNavigation(), root: root, clear: {},
+            screen: { preconditionFailure("No file is open to present") }
+        )
     }
 
     // MARK: Bars
@@ -1914,19 +1853,9 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         navigationItem.title = title
         navigationItem.hidesBackButton = replacesStackBackButton
 
-        // The open file's own items (Edit, the editor's status, Preview, and
-        // Done) join this screen's bar, outside the folder's View Options,
-        // which go with the tree.
-        var rightItems = paneViewer?.bar.trailingItems ?? []
-        if layout == .list || layout == .column {
-            rightItems.append(viewOptionsItem)
-        }
-        if !(navigationItem.rightBarButtonItems ?? []).elementsEqual(rightItems, by: ===) {
-            navigationItem.rightBarButtonItems = rightItems
-        }
-        // The open file's … menu (turned-off actions, Customize Bar…).
-        if navigationItem.additionalOverflowItems !== paneViewer?.bar.overflow {
-            navigationItem.additionalOverflowItems = paneViewer?.bar.overflow
+        // The folder's View Options; the open file's items are in its own pane's bar.
+        if navigationItem.rightBarButtonItems?.count != 1 || navigationItem.rightBarButtonItems?.first !== viewOptionsItem {
+            navigationItem.rightBarButtonItems = [viewOptionsItem]
         }
 
         // The bar's search lists files in place of the folder; the column
@@ -1943,12 +1872,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         columnSearch.setScopes(isSearching ? scopeTitles : nil, selected: effectiveSearchScope.rawValue)
     }
 
-    /// The split detail root's sidebar toggle in every phase, then the tree
-    /// toggle and the column Back while the content shows.
-    private func syncLeadingItems(showsTreeToggle: Bool, hidesTree: Bool, showsColumnBack: Bool) {
+    /// The split detail root's sidebar toggle in every phase, then the
+    /// column Back (up a folder) while the content shows.
+    private func syncLeadingItems(showsColumnBack: Bool) {
         let bars = BarState(
             showsSidebarToggle: showsSidebarToggle,
-            showsTreeToggle: showsTreeToggle,
             showsColumnBack: showsColumnBack,
             themeID: root.themeStore.activeThemeID
         )
@@ -1959,34 +1887,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         if let sidebarToggle {
             WorkspaceSplitSidebarToggle.sync(sidebarToggle, root: root)
         }
-        if showsTreeToggle {
-            treeToggle.title = hidesTree ? String(localized: "Show File Tree") : String(localized: "Hide File Tree")
-            treeToggle.tintColor = root.themeStore.activeThemeID.palette.ui.fg
-        }
     }
-
-    /// The tree's toggle, in Mail's place for its sidebar control. The title
-    /// says what a tap does; the bar shows only the symbol.
-    private func makeTreeToggle() -> UIBarButtonItem {
-        let item = UIBarButtonItem(
-            title: String(localized: "Hide File Tree"),
-            image: UIImage(systemName: Self.treeToggleSymbol),
-            primaryAction: UIAction { [weak self] _ in self?.toggleTree() }
-        )
-        item.accessibilityIdentifier = "fileBrowser.treeToggle"
-        return SessionListBarItems.horizontalOnly(item)
-    }
-
-    /// Not `sidebar.leading`: the split's own sidebar toggle sits beside it
-    /// with that symbol, and two identical buttons would not say which is which.
-    static let treeToggleSymbol = "sidebar.squares.leading"
 
     private func installBarItems(_ bars: BarState) {
         sidebarToggle = bars.showsSidebarToggle ? WorkspaceSplitSidebarToggle.makeItem(root: root) : nil
         var leading: [UIBarButtonItem] = sidebarToggle.map { [$0] } ?? []
-        if bars.showsTreeToggle {
-            leading.append(treeToggle)
-        }
         if bars.showsColumnBack {
             let back = UIBarButtonItem(
                 title: String(localized: "Back"),
@@ -2042,17 +1947,11 @@ private extension FileBrowserViewController {
     enum Layout: Equatable {
         /// One folder's list (compact width, the chat panel).
         case list
-        /// The tree beside the open file (regular width).
+        /// The folder tree, its rows and spacing (regular width); the open
+        /// file is a pane beside it.
         case column
-        /// Regular width with the tree tucked away by its toggle: the open
-        /// file takes the whole width. The tree keeps its rows.
-        case columnTreeHidden
-        /// The open file alone: a column selection kept in compact width or
-        /// across a stack/split swap.
-        case selectedFile
 
-        /// The tree's rows and spacing, shown or tucked away.
-        var isColumn: Bool { self == .column || self == .columnTreeHidden }
+        var isColumn: Bool { self == .column }
     }
 
     struct ContentState {
@@ -2067,6 +1966,9 @@ private extension FileBrowserViewController {
         var fuzzyResults: [FuzzyMatch.ScoredPath] = []
         var treeDirectoryPath: String?
         var selectedFile: FileBrowserSelection?
+        /// The folder the open file was chosen in, for its previous and next;
+        /// nil for a restored file until its folder lists.
+        var selectedContext: FileBrowserNavigationContext?
         var didRecordColumnRoute = false
         /// The chat panel's deepest folder on the current branch, where
         /// Forward leads back to.
@@ -2166,16 +2068,21 @@ private extension FileBrowserViewController {
         case empty
     }
 
-    struct PaneKey: Equatable {
-        let selection: FileBrowserSelection
-        let context: FileBrowserNavigationContext?
+    /// The server stores a reader reads with: one reader per server.
+    struct ReaderServer: Hashable {
         let connection: ObjectIdentifier
         let apiClient: ObjectIdentifier?
     }
 
+    /// What the reader was last told to show.
+    struct ReaderShows: Equatable {
+        let server: ReaderServer
+        let selection: FileBrowserSelection
+        let context: FileBrowserNavigationContext?
+    }
+
     struct BarState: Equatable {
         let showsSidebarToggle: Bool
-        let showsTreeToggle: Bool
         let showsColumnBack: Bool
         let themeID: ThemeID
     }

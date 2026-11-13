@@ -183,26 +183,15 @@ struct FileBrowserPushTransitionSpec: Equatable, Sendable {
     }
 }
 
-struct FileBrowserTreeNavigationMutation: Equatable {
-    let treeDirectoryPath: String
-    let selectedFile: FileBrowserSelection?
-}
-
+/// The column's Back: up a folder while the tree has gone deeper than the
+/// route's own folder, else the stack's Back. It never closes the open file,
+/// which is a pane of its own with its own Close.
 enum FileBrowserColumnBackAction: Equatable {
-    case clearSelectedFile
     case popToDirectory(String)
     case useStackBack
 }
 
 enum FileBrowserTreeNavigationReducer {
-    static func openDirectory(path: String, selectedFile: FileBrowserSelection?) -> FileBrowserTreeNavigationMutation {
-        FileBrowserTreeNavigationMutation(treeDirectoryPath: path, selectedFile: nil)
-    }
-
-    static func popToBreadcrumb(path: String, selectedFile: FileBrowserSelection?) -> FileBrowserTreeNavigationMutation {
-        FileBrowserTreeNavigationMutation(treeDirectoryPath: path, selectedFile: nil)
-    }
-
     /// Column drills stay in this destination after a fold. A compact drill
     /// that never set `treeDirectoryPath` still pushes the workspace stack.
     static func usesInPlaceDirectoryNavigation(
@@ -214,12 +203,10 @@ enum FileBrowserTreeNavigationReducer {
     }
 
     static func columnBackAction(
-        selectedFile: FileBrowserSelection?,
         treeDirectoryPath: String?,
         initialPath: String,
         currentDirectoryPath: String
     ) -> FileBrowserColumnBackAction {
-        if selectedFile != nil { return .clearSelectedFile }
         guard treeDirectoryPath != nil else { return .useStackBack }
         guard directoryDepth(currentDirectoryPath) > directoryDepth(initialPath) else {
             return .useStackBack

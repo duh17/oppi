@@ -206,10 +206,10 @@ final class PaneDividerView: UIView {
             (String(localized: "Drag, or use the rotor, to resize. Double-tap and drag to expand."),
              String(localized: "Expand Pane"))
         case .full:
-            (String(localized: "Drag, or use the rotor, to resize. Double-tap and drag to show chat."),
-             String(localized: "Show Chat"))
+            (String(localized: "Drag, or use the rotor, to resize. Double-tap to show the pane beside it again."),
+             String(localized: "Show Both Panes"))
         case .noRoomBeside:
-            (String(localized: "The chat has no room beside this panel. Double-tap and drag to close it."),
+            (String(localized: "There is no room beside this panel. Double-tap and drag to close it."),
              String(localized: "Close Panel"))
         }
         accessibilityHint = hint
@@ -256,8 +256,15 @@ final class PaneDividerView: UIView {
         grabber.isUserInteractionEnabled = false
         addSubview(grabber)
         addGestureRecognizer(pan)
+        // Full by choice, the divider is the strip at the leading edge that
+        // is left of the leaf beside: a tap gives that leaf its room back.
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap)))
         addInteraction(UIPointerInteraction(delegate: self))
         applyMode()
+    }
+
+    @objc private func handleTap() {
+        if mode == .full { onRestoreRequested?() }
     }
 
     @available(*, unavailable)

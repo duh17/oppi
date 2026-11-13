@@ -16,7 +16,7 @@ struct PaneSplitLeaf {
 }
 
 /// A divider drag in flight: the split, the two neighbours' lengths and
-/// weights when it began.
+/// weights when it began, and the neighbour a release would collapse.
 struct PaneSplitDrag {
     var place: PaneSplitDividerView.Place
     var before: CGFloat
@@ -24,6 +24,11 @@ struct PaneSplitDrag {
     var minimumBefore: CGFloat
     var minimumAfter: CGFloat
     var weights: [Double]
+    /// The leaves on either side, nil for a nested split (which does not
+    /// collapse as a whole).
+    var beforeLeaf: PaneID?
+    var afterLeaf: PaneID?
+    var collapsing: PaneID?
 }
 
 /// A direction a pane moves or a split opens toward.
@@ -57,6 +62,11 @@ extension PaneHostController {
         AdaptiveWidth.isWide(traitCollection) && panes.tree.leaves.count < PaneLayout.maximumLeaves
     }
 
+    /// Whether `id` can collapse to a strip: another cell stays open beside it.
+    func canCollapse(_ id: PaneID) -> Bool {
+        (try? panes.cellLayout.collapse(id)) != nil
+    }
+
     /// The cell `id` sits in now; nil when it is behind a zoom or in overflow.
     func cellFrame(_ id: PaneID) -> CGRect? { cellPresentation?.frames[id] }
 
@@ -65,7 +75,10 @@ extension PaneHostController {
     /// Lays the cells out by the fit rule: the routed leaf's cell (which the
     /// host fills with the primary and its companion) and each split leaf.
     func resolveCells() {
-        let cells = panes.cellLayout
+        var cells = panes.cellLayout
+        // A compact window shows one pane at a time, the focused one, and the
+        // chip lists the rest (build plan §1.5). The tree is unchanged.
+        if showsChip(cells) { cells.zoomed = cells.focus }
         let presentation = PanePresentation.resolve(
             cells,
             size: view.bounds.size,
@@ -80,14 +93,17 @@ extension PaneHostController {
             liveCap: PlatformCapabilities.livePaneLimit
         )
         cellPresentation = presentation
-        routedCell = presentation.frames[panes.routedLeafID] ?? .zero
+        // A collapsed routed leaf is its strip: the primary and its companion park.
+        let routedCollapsed = cells.collapsed[panes.routedLeafID] != nil
+        routedCell = routedCollapsed ? .zero : presentation.frames[panes.routedLeafID] ?? .zero
     }
 
     func layoutSplitLeaves() {
         guard let presentation = cellPresentation else { return }
+        let collapsed = panes.collapsedCells
         for (id, leaf) in splitLeaves {
             let leafView: UIView = leaf.controller.view
-            guard let frame = presentation.frames[id] else {
+            guard let frame = presentation.frames[id], !collapsed.contains(id) else {
                 leafView.isHidden = true
                 continue
             }
@@ -102,6 +118,7 @@ extension PaneHostController {
         }
         layoutDividers(presentation)
         layoutGrips(presentation)
+        layoutStrips(presentation)
     }
 
     /// The leaves a cell holds that have a frame, unioned.
@@ -112,11 +129,18 @@ extension PaneHostController {
 
     private func layoutDividers(_ presentation: PanePresentation) {
         var places: [(PaneSplitDividerView.Place, CGRect, Double)] = []
+        let collapsed = panes.collapsedCells
+        func isStrip(_ node: PaneNode) -> Bool {
+            if case .leaf(let leaf) = node { return collapsed.contains(leaf.id) }
+            return false
+        }
         func walk(_ node: PaneNode, _ path: [Int]) {
             guard case .split(let axis, let children, let weights) = node else { return }
             let frames = children.map { union($0, presentation.frames) }
             for index in 0..<(children.count - 1) {
-                guard let before = frames[index], let after = frames[index + 1] else { continue }
+                // A strip beside it expands by its own tap, not a drag.
+                guard let before = frames[index], let after = frames[index + 1],
+                      !isStrip(children[index]), !isStrip(children[index + 1]) else { continue }
                 let band = PaneDividerView.hitWidth
                 let rect = axis == .row
                     ? CGRect(x: before.maxX + PanePresentation.dividerThickness / 2 - band / 2, y: min(before.minY, after.minY),
@@ -197,21 +221,40 @@ extension PaneHostController {
               let before = union(children[place.index], presentation.frames),
               let after = union(children[place.index + 1], presentation.frames) else { return }
         let length: (CGRect) -> CGFloat = { place.axis == .row ? $0.width : $0.height }
+        let leafID: (PaneNode) -> PaneID? = { if case .leaf(let leaf) = $0 { leaf.id } else { nil } }
         splitDrag = PaneSplitDrag(
             place: place,
             before: length(before),
             after: length(after),
             minimumBefore: minimumLength(children[place.index], axis: place.axis),
             minimumAfter: minimumLength(children[place.index + 1], axis: place.axis),
-            weights: weights
+            weights: weights,
+            beforeLeaf: leafID(children[place.index]),
+            afterLeaf: leafID(children[place.index + 1])
         )
         holdForResize(beginningAt: length(before))
     }
 
+    /// Follows the finger, held at each neighbour's minimum. Past half of a
+    /// leaf's minimum the release collapses that leaf to its strip (build
+    /// plan R2), with a tick as the drag crosses in and out.
     private func splitDragChanged(_ distance: CGFloat) {
-        guard let drag = splitDrag else { return }
+        guard var drag = splitDrag else { return }
         let total = drag.before + drag.after
-        let before = min(max(drag.before + distance, min(drag.minimumBefore, total / 2)), max(total - drag.minimumAfter, total / 2))
+        let raw = drag.before + distance
+        let collapsing: PaneID? = if raw < drag.minimumBefore / 2 {
+            drag.beforeLeaf
+        } else if total - raw < drag.minimumAfter / 2 {
+            drag.afterLeaf
+        } else {
+            nil
+        }
+        if collapsing != drag.collapsing {
+            drag.collapsing = collapsing
+            splitDrag = drag
+            AppHaptics.selectionChanged()
+        }
+        let before = min(max(raw, min(drag.minimumBefore, total / 2)), max(total - drag.minimumAfter, total / 2))
         let pair = drag.weights[drag.place.index] + drag.weights[drag.place.index + 1]
         var weights = drag.weights
         weights[drag.place.index] = pair * Double(before / total)
@@ -221,9 +264,10 @@ extension PaneHostController {
     }
 
     private func splitDragEnded() {
-        guard splitDrag != nil else { return }
+        guard let drag = splitDrag else { return }
         splitDrag = nil
         resizeEnded()
+        if let collapsing = drag.collapsing { collapse(collapsing) }
     }
 
     // MARK: Leaves
@@ -284,25 +328,31 @@ extension PaneHostController {
 
     // MARK: Grips
 
+    /// Whether the window is compact and has more than one pane: the chip
+    /// then stands in for the grips.
+    func showsChip(_ cells: PaneLayout) -> Bool {
+        !AdaptiveWidth.isWide(traitCollection) && cells.leaves.count > 1
+    }
+
     private func layoutGrips(_ presentation: PanePresentation) {
         let cells = panes.cellLayout
         let order = cells.leaves.map(\.id)
         let zoomed = cells.zoomed
-        let showsGrips = order.count > 1
+        let hasPanes = order.count > 1
         var shown: Set<PaneID> = []
         for id in order {
-            reserveGripStrip(inCell: id, height: showsGrips ? PaneGripView.size.height : 0)
+            reserveGripStrip(inCell: id, height: hasPanes ? PaneGripView.size.height : 0)
         }
-        for id in order where showsGrips {
+        layoutChip(cells, presentation)
+        let showsGrips = hasPanes && !showsChip(cells)
+        let collapsed = panes.collapsedCells
+        for id in order where showsGrips && !collapsed.contains(id) {
             guard var frame = presentation.frames[id] else { continue }
             if id == panes.routedLeafID, !primary.view.isHidden { frame = primary.view.frame }
             shown.insert(id)
             let grip = grips[id] ?? makeGrip(id)
-            let screen = frontScreen(ofCell: id)
-            let title = screen?.navigationItem.title ?? screen?.title
-                ?? splitLeaves[id].map { Self.title(of: $0.entry) } ?? String(localized: "Pane")
             grip.show(PaneGripView.Shown(
-                title: title,
+                title: cellTitle(id),
                 position: (order.firstIndex(of: id) ?? 0) + 1,
                 count: order.count,
                 isFocused: cells.focus == id && order.count > 1,
@@ -323,35 +373,122 @@ extension PaneHostController {
         id == panes.routedLeafID ? primary : splitLeaves[id]?.controller
     }
 
-    /// The strip under each pane's bar that its grip sits in: the screens of
-    /// the cell's stack start that much lower, so the grip covers nothing (a
-    /// search field, a first row). Zero with one pane, as before.
+    /// The strip under each pane's bar that its grip or chip sits in: the
+    /// screens of the cell's stack start that much lower, so the grip covers
+    /// nothing (a search field, a first row). Zero with one pane, as before.
+    /// Each screen carries the strip's slot (`PaneStripSlot`), which Auto
+    /// Layout keeps at the top of the strip as the bar changes height (a
+    /// search that hides as the list scrolls); a slot that moves lays the
+    /// panes out again.
     private func reserveGripStrip(inCell id: PaneID, height: CGFloat) {
         guard let navigation = leafController(ofCell: id) as? UINavigationController else { return }
-        for screen in navigation.viewControllers where screen.additionalSafeAreaInsets.top != height {
-            screen.additionalSafeAreaInsets.top = height
+        for screen in navigation.viewControllers {
+            if screen.additionalSafeAreaInsets.top != height { screen.additionalSafeAreaInsets.top = height }
+            guard height > 0, screen.isViewLoaded, PaneStripSlot.slot(in: screen) == nil else { continue }
+            PaneStripSlot.install(in: screen) { [weak self] in self?.view.setNeedsLayout() }
         }
     }
 
-    /// Where a cell's grip goes: in its strip under the navigation bar, never
-    /// in the bar (a drag there moves a floating window), and never above the
-    /// window's own top inset (status bar, window controls). The leaf lays
-    /// out first, so a root it just took has its bar.
+    /// Where a cell's grip or chip goes: its front screen's strip slot, under
+    /// the bar and anything the bar carries, never in the bar (a drag there
+    /// moves a floating window), and never above the window's own top inset
+    /// (status bar, window controls). The leaf lays out first, so a root it
+    /// just took has its bar.
     private func gripTop(ofCell id: PaneID, in frame: CGRect) -> CGFloat {
         let floor = frame.minY + view.safeAreaInsets.top
         guard let leaf = leafController(ofCell: id), leaf.view.window != nil else { return floor }
         leaf.view.layoutIfNeeded()
-        var top = floor
-        if let navigation = leaf as? UINavigationController, !navigation.isNavigationBarHidden {
-            let bar = navigation.navigationBar
-            top = max(top, bar.convert(bar.bounds, to: view).maxY)
+        guard let screen = frontScreen(ofCell: id), let slot = PaneStripSlot.slot(in: screen) else { return floor }
+        return max(floor, slot.convert(slot.bounds, to: view).minY)
+    }
+
+    // MARK: Chip
+
+    /// The chip sits in the shown pane's strip under its bar, as a grip does.
+    private func layoutChip(_ cells: PaneLayout, _ presentation: PanePresentation) {
+        let order = cells.leaves.map(\.id)
+        guard showsChip(cells), let index = order.firstIndex(of: cells.focus),
+              var frame = presentation.frames[cells.focus] else {
+            chip.isHidden = true
+            return
         }
-        // A search field below the bar (Files) is the screen's, not the bar's.
-        if let screen = frontScreen(ofCell: id), screen.isViewLoaded {
-            let content = screen.view.safeAreaInsets.top - screen.additionalSafeAreaInsets.top
-            top = max(top, screen.view.convert(CGPoint(x: 0, y: content), to: view).y)
+        let id = cells.focus
+        if id == panes.routedLeafID, !primary.view.isHidden { frame = primary.view.frame }
+        chip.show(PaneChipView.Shown(title: cellTitle(id), position: index + 1, count: order.count))
+        let width = chip.fittingWidth(maximum: frame.width - 32)
+        chip.frame = CGRect(x: frame.midX - width / 2, y: gripTop(ofCell: id, in: frame), width: width, height: PaneChipView.height)
+        chip.isHidden = false
+        view.bringSubviewToFront(chip)
+    }
+
+    func makeChip() -> PaneChipView {
+        let chip = PaneChipView()
+        chip.isHidden = true
+        chip.items = { [weak self] in self?.paneListItems() ?? [] }
+        chip.onStep = { [weak self] step in self?.showAdjacentPane(step) }
+        view.addSubview(chip)
+        return chip
+    }
+
+    /// Every pane by its title, in tree order; the chosen one shows.
+    func paneListItems() -> [PaneMenuItem] {
+        let cells = panes.cellLayout
+        return cells.leaves.map(\.id).map { id in
+            let title = cellTitle(id)
+            return PaneMenuItem(
+                title: title, symbol: "rectangle", actionName: String(localized: "Show \(title)"),
+                identifier: "pane.list.\(id.raw)", isChecked: id == cells.focus,
+                run: { [weak self] in self?.focus(cell: id) }
+            )
         }
-        return top
+    }
+
+    /// Shows the pane `step` places from the shown one in tree order, wrapping.
+    func showAdjacentPane(_ step: Int) {
+        let cells = panes.cellLayout
+        let order = cells.leaves.map(\.id)
+        guard order.count > 1, let index = order.firstIndex(of: cells.focus) else { return }
+        focus(cell: order[(index + step + order.count) % order.count])
+        UIAccessibility.post(notification: .screenChanged, argument: nil)
+    }
+
+    // MARK: Strips
+
+    /// A collapsed cell is a 20 pt strip in its place; a tap expands it.
+    private func layoutStrips(_ presentation: PanePresentation) {
+        let collapsed = panes.collapsedCells
+        for (id, strip) in strips where !collapsed.contains(id) || presentation.frames[id] == nil {
+            strip.removeFromSuperview()
+            strips[id] = nil
+        }
+        guard panes.cellLayout.zoomed == nil else { return }
+        for id in collapsed {
+            guard let frame = presentation.frames[id], let axis = stripAxis(id) else { continue }
+            let strip = strips[id] ?? {
+                let strip = PaneStripView(leafID: id)
+                strip.onExpand = { [weak self] in self?.expand(id) }
+                strips[id] = strip
+                view.addSubview(strip)
+                return strip
+            }()
+            strip.show(title: cellTitle(id), axis: axis)
+            strip.frame = frame
+            view.bringSubviewToFront(strip)
+        }
+    }
+
+    /// The axis of the split a collapsed cell sits in.
+    private func stripAxis(_ id: PaneID) -> PaneAxis? {
+        let root = panes.cellLayout.root
+        guard let path = root.path(of: id), !path.isEmpty,
+              case .split(let axis, _, _)? = root.node(at: Array(path.dropLast())) else { return nil }
+        return axis
+    }
+
+    /// A cell's title: its front screen's, else what its entry names.
+    func cellTitle(_ id: PaneID) -> String {
+        let screen = frontScreen(ofCell: id)
+        return screen?.navigationItem.title ?? screen?.title ?? Self.title(of: panes.topEntry(of: id))
     }
 
     /// A pane's name for its grip when its screen has no title of its own.
@@ -407,6 +544,11 @@ extension PaneHostController {
                 isEnabled: canSplit, run: { [weak self] in self?.split(id, axis: .column) }
             ),
         ]
+        items.append(PaneMenuItem(
+            title: String(localized: "Collapse"), symbol: "rectangle.compress.vertical",
+            actionName: String(localized: "Collapse"), identifier: "pane.menu.collapse",
+            isEnabled: !isZoomed && canCollapse(id), run: { [weak self] in self?.collapse(id) }
+        ))
         if isSplitLeaf {
             items.append(PaneMenuItem(
                 title: String(localized: "Show in Pane"), symbol: "square.grid.2x2",
@@ -495,6 +637,22 @@ extension PaneHostController {
         syncSplitLeaves()
         relayoutCells()
         if cellFrame(made) == nil { focus(cell: made) }
+        announceLayoutChange()
+    }
+
+    /// Collapses `id` to its strip (a divider dragged past its minimum, or
+    /// the pane menu).
+    func collapse(_ id: PaneID) {
+        guard panes.collapse(id) else { return }
+        relayoutCells()
+        updateVisibility()
+        announceLayoutChange()
+    }
+
+    /// A strip's tap: its pane comes back at the share it had, focused.
+    func expand(_ id: PaneID) {
+        panes.expand(id)
+        focus(cell: id)
         announceLayoutChange()
     }
 

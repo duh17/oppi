@@ -1960,10 +1960,10 @@ struct WorkspaceFileEditEntryTests {
         #expect(!preferences.wrapsText && !preferences.wrapsCode, "notes.md is Markdown: the text setting turned off and the code setting is untouched")
     }
 
-    /// The Files screen shows the open file's Edit in its own bar. Locking
-    /// the workspace tears the content down; the file's items must go with
-    /// it, or the cover keeps an Edit whose target is gone.
-    @Test func filesScreenLockTakesTheOpenFilesBarItems() async throws {
+    /// The Files screen opens its file as a pane of its own beside the list.
+    /// Locking the workspace tears the content down; the file's pane must
+    /// close with it, or the cover sits beside an Edit whose target is gone.
+    @Test func filesScreenLockClosesTheOpenFilesPane() async throws {
         let client = TreePaneEditURLProtocol.makeClient()
         _ = try await client.serverInfo()
         let serverId = "sha256:files-lock-\(UUID().uuidString)"
@@ -1980,24 +1980,27 @@ struct WorkspaceFileEditEntryTests {
             ),
             showsSidebarToggle: false
         )
-        let navigation = UINavigationController(rootViewController: files)
+        let host = PaneHostController(primary: UINavigationController(rootViewController: files))
         let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
-        window.rootViewController = navigation
+        window.traitOverrides.horizontalSizeClass = .regular
+        window.rootViewController = host
         window.makeKeyAndVisible()
         defer { hideTestWindow(window) }
+        let reader = { host.leafScreens.compactMap { $0 as? FileViewerViewController }.first }
 
         let shown = await waitForMainActorCondition(timeout: .seconds(5)) {
-            navigation.view.layoutIfNeeded()
-            return Self.barButtonItem(titled: "Edit", in: files) != nil
+            host.view.layoutIfNeeded()
+            return reader().flatMap { Self.barButtonItem(titled: "Edit", in: $0) } != nil
         }
-        #expect(shown, "the Files bar showed no Edit for the open file; items: \(Self.titles(in: files))")
+        #expect(shown, "the open file did not show beside the list with its Edit")
+        #expect(Self.barButtonItem(titled: "Edit", in: files) == nil, "the list's bar keeps to the folder")
 
         ScopedLockService.shared.lock(.workspace(serverId: serverId, workspaceId: workspaceId))
-        let cleared = await waitForMainActorCondition(timeout: .seconds(5)) {
-            navigation.view.layoutIfNeeded()
-            return Self.barButtonItems(in: files).isEmpty
+        let closed = await waitForMainActorCondition(timeout: .seconds(5)) {
+            host.view.layoutIfNeeded()
+            return reader() == nil
         }
-        #expect(cleared, "the locked Files screen kept the file's items: \(Self.titles(in: files))")
+        #expect(closed, "the locked Files screen kept the open file's pane")
     }
 
     private static func barButtonItem(titled title: String, in controller: UIViewController) -> UIBarButtonItem? {

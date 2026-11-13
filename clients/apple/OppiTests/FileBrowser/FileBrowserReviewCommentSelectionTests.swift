@@ -59,8 +59,6 @@ struct FileBrowserReviewCommentSelectionTests {
     }
 
     @Test func foldedColumnBackStaysInsideTheFileBrowser() {
-        let selected = FileBrowserSelection(path: "src/App.swift", name: "App.swift", size: 12)
-
         #expect(
             FileBrowserTreeNavigationReducer.usesInPlaceDirectoryNavigation(
                 showsColumn: false,
@@ -77,15 +75,6 @@ struct FileBrowserReviewCommentSelectionTests {
         )
         #expect(
             FileBrowserTreeNavigationReducer.columnBackAction(
-                selectedFile: selected,
-                treeDirectoryPath: "src/components/",
-                initialPath: "",
-                currentDirectoryPath: "src/components/"
-            ) == .clearSelectedFile
-        )
-        #expect(
-            FileBrowserTreeNavigationReducer.columnBackAction(
-                selectedFile: nil,
                 treeDirectoryPath: "src/components/",
                 initialPath: "",
                 currentDirectoryPath: "src/components/"
@@ -93,7 +82,6 @@ struct FileBrowserReviewCommentSelectionTests {
         )
         #expect(
             FileBrowserTreeNavigationReducer.columnBackAction(
-                selectedFile: nil,
                 treeDirectoryPath: "",
                 initialPath: "",
                 currentDirectoryPath: ""
@@ -101,30 +89,11 @@ struct FileBrowserReviewCommentSelectionTests {
         )
         #expect(
             FileBrowserTreeNavigationReducer.columnBackAction(
-                selectedFile: nil,
                 treeDirectoryPath: nil,
                 initialPath: "",
                 currentDirectoryPath: "src/"
             ) == .useStackBack
         )
-    }
-
-    @Test func treeDirectoryNavigationClearsSelectedFile() {
-        let selected = FileBrowserSelection(path: "Sources/App.swift", name: "App.swift", size: 42)
-
-        let opened = FileBrowserTreeNavigationReducer.openDirectory(
-            path: "Sources/Features/",
-            selectedFile: selected
-        )
-        let breadcrumb = FileBrowserTreeNavigationReducer.popToBreadcrumb(
-            path: "Sources/",
-            selectedFile: selected
-        )
-
-        #expect(opened.treeDirectoryPath == "Sources/Features/")
-        #expect(opened.selectedFile == nil)
-        #expect(breadcrumb.treeDirectoryPath == "Sources/")
-        #expect(breadcrumb.selectedFile == nil)
     }
 
     @Test func workspaceLinkedFileDestinationIsReservedForWorkspaceStack() {

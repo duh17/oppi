@@ -398,6 +398,21 @@ final class ScenePanes {
     /// The cell that fills the window by the person's choice, if any.
     var zoomedCell: PaneID? { cellLayout.zoomed }
 
+    /// Collapses a cell to its strip; focus moves to the most recent open
+    /// cell. False when it cannot (the window's only open cell).
+    @discardableResult
+    func collapse(_ id: PaneID) -> Bool {
+        changeCells { try $0.collapse(id) }
+    }
+
+    /// Gives a collapsed cell back the share it had.
+    func expand(_ id: PaneID) {
+        changeCells { try $0.expand(id) }
+    }
+
+    /// The cells collapsed to strips.
+    var collapsedCells: Set<PaneID> { Set(cellLayout.collapsed.keys) }
+
     /// Moves `id` to `edge` of `target`.
     func move(_ id: PaneID, to target: PaneID, edge: PaneEdge) {
         changeCells { try $0.move(id, to: target, edge: edge) }
