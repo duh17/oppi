@@ -1167,6 +1167,64 @@ struct DictationCaptureStartupTests {
         #expect(delivered == 1)
     }
 
+    /// The server reads every byte as 16 kHz mono Int16 little-endian, whatever the
+    /// microphone rate (a Bluetooth HFP headset reports 24 kHz). A mislabelled rate
+    /// would shift pitch and duration; this feeds a tone through the real converter
+    /// in tap-sized buffers and checks duration, pitch, and level of the bytes sent.
+    @Test(arguments: [16_000.0, 24_000.0, 44_100.0, 48_000.0])
+    func capturedPCMIs16kMonoInt16AtAnyInputRate(inputRate: Double) async throws {
+        let audio = AsyncStream<DictationAudioInput>.makeStream(bufferingPolicy: .unbounded)
+        let events = AsyncThrowingStream<VoiceSessionEvent, Error>.makeStream()
+        let source = try #require(AVAudioFormat(standardFormatWithSampleRate: inputRate, channels: 1))
+        let target = try #require(AVAudioFormat(
+            commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false
+        ))
+        let converter = source == target ? nil : AVAudioConverter(from: source, to: target)
+
+        let tone = 440.0
+        let amplitude: Float = 0.5
+        let tapFrames = AVAudioFrameCount(inputRate / 10) // ~100 ms, as the HFP tap delivers
+        let buffers = 20
+        var phase = 0.0
+        for _ in 0..<buffers {
+            let buffer = try #require(AVAudioPCMBuffer(pcmFormat: source, frameCapacity: tapFrames))
+            buffer.frameLength = tapFrames
+            let samples = try #require(buffer.floatChannelData?[0])
+            for i in 0..<Int(tapFrames) {
+                samples[i] = amplitude * Float(sin(phase))
+                phase += 2 * .pi * tone / inputRate
+            }
+            _ = DictationAudioEngineHelper.feedCaptureBuffer(
+                buffer, converter: converter, inputFormat: source, targetFormat: target,
+                into: audio.continuation, events: events.continuation
+            )
+        }
+        audio.continuation.finish()
+        events.continuation.finish()
+        do { for try await _ in events.stream {} } catch { Issue.record("Conversion failed: \(error)") }
+
+        var pcm = Data()
+        for await input in audio.stream {
+            if case .pcm(let chunk) = input { pcm.append(chunk) }
+        }
+        #expect(pcm.count % 2 == 0)
+        let samples: [Int16] = pcm.withUnsafeBytes { raw in
+            raw.bindMemory(to: Int16.self).map { Int16(littleEndian: $0) }
+        }
+        let seconds = Double(buffers) * Double(tapFrames) / inputRate
+        // Duration: 16 kHz output within the converter's few-ms priming latency.
+        #expect(abs(Double(samples.count) - seconds * 16_000) < 16_000 * 0.02)
+
+        // Pitch and level over the settled middle of the take.
+        let settled = samples.dropFirst(1_600).dropLast(1_600).map { Double($0) / Double(Int16.max) }
+        var crossings = 0
+        for (a, b) in zip(settled, settled.dropFirst()) where (a < 0) != (b < 0) { crossings += 1 }
+        let measuredHz = Double(crossings) / 2 / (Double(settled.count) / 16_000)
+        #expect(abs(measuredHz - tone) < 5, "\(inputRate) Hz input played back at \(measuredHz) Hz")
+        let rms = sqrt(settled.map { $0 * $0 }.reduce(0, +) / Double(settled.count))
+        #expect(abs(rms - Double(amplitude) / sqrt(2)) < 0.02, "RMS \(rms)")
+    }
+
     @Test func stoppedEngineIsRebuiltBeforeSuccess() async throws {
         var starts = 0
         var stops = 0
