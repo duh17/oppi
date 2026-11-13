@@ -263,8 +263,8 @@ extension ChatViewController {
             agentId: session?.launch?.agentId,
             agentIcon: session?.launch?.agentIcon,
             // A message card names another session, so its header draws that
-            // session's identity: the same launch snapshot an assistant row reads
-            // for this one. An unknown sender stays nil and reads as the global avatar.
+            // session's identity from its launch snapshot. An unknown sender
+            // stays nil and reads as the global avatar.
             senderLaunch: { [sessionStore] sessionId in
                 sessionStore.session(id: sessionId)?.launch
             },

@@ -268,29 +268,6 @@ final class AssistantMarkdownContentView: UIView {
         ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
-    /// Leading hang used by assistant timeline rows: first text lines clear the
-    /// avatar, then content uses the full markdown width under that column.
-    /// Zero means no hang (full-screen readers, exports, non-chat surfaces).
-    var leadingHangClearance: CGFloat = 0 {
-        didSet {
-            guard oldValue != leadingHangClearance else { return }
-            segmentApplier.applyLeadingHang(
-                clearance: leadingHangClearance,
-                height: leadingHangHeight
-            )
-        }
-    }
-
-    var leadingHangHeight: CGFloat = 0 {
-        didSet {
-            guard oldValue != leadingHangHeight else { return }
-            segmentApplier.applyLeadingHang(
-                clearance: leadingHangClearance,
-                height: leadingHangHeight
-            )
-        }
-    }
-
     func setVideoPlaybackVisible(_ visible: Bool) {
         segmentApplier.setVideoPlaybackVisible(visible)
     }
@@ -362,10 +339,6 @@ final class AssistantMarkdownContentView: UIView {
             replacesFrozenSegments: segmentSource.lastBuildReplacedFrozenSegments,
             openSegmentStart: segmentSource.lastBuildOpenSegmentStart,
             streamingTextEdit: segmentSource.lastStreamingTextEdit
-        )
-        segmentApplier.applyLeadingHang(
-            clearance: leadingHangClearance,
-            height: leadingHangHeight
         )
 
         stackView.invalidateIntrinsicContentSize()

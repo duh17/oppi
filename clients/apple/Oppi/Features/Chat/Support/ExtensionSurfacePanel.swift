@@ -1230,8 +1230,10 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
 
 /// An extension placement's strip of pills and, while one is expanded, its
 /// drawer. Above the composer the strip also carries the chat's own leading
-/// pills (review comments, now playing) and trailing notification chip.
+/// pills (review comments, now playing) and trailing notification chip. Its strip scrolls
+/// edge to edge with the pills inset `edgeInset`, so a cut pill reads as more to scroll.
 final class ExtensionSurfacePanelView: UIView {
+    static let edgeInset: CGFloat = 16
     struct Content {
         var surface: ExtensionSurfaceState
         var messageQueue: MessageQueueSurfaceConfiguration?
@@ -1260,6 +1262,7 @@ final class ExtensionSurfacePanelView: UIView {
     private var trailingViews: [UIView] = []
     private var pills: [String: ExtensionSurfaceStripPill] = [:]
     private var drawer: ExtensionSurfaceDrawerView?
+    private let drawerSlot = UIStackView() // The drawer, inset `edgeInset`.
     private var expandedEntryID: String?
     private var lastCollapseRequestID: Int?
     private var lastContent: Content?
@@ -1284,6 +1287,10 @@ final class ExtensionSurfacePanelView: UIView {
         stripRow.translatesAutoresizingMaskIntoConstraints = false
         stripScroll.addSubview(stripRow)
         stack.addArrangedSubview(stripScroll)
+        drawerSlot.isLayoutMarginsRelativeArrangement = true
+        drawerSlot.directionalLayoutMargins = .init(top: 0, leading: Self.edgeInset, bottom: 0, trailing: Self.edgeInset)
+        drawerSlot.isHidden = true
+        stack.addArrangedSubview(drawerSlot)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -1291,8 +1298,8 @@ final class ExtensionSurfacePanelView: UIView {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stripRow.topAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.topAnchor),
             stripRow.bottomAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.bottomAnchor),
-            stripRow.leadingAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.leadingAnchor),
-            stripRow.trailingAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.trailingAnchor),
+            stripRow.leadingAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.leadingAnchor, constant: Self.edgeInset),
+            stripRow.trailingAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.trailingAnchor, constant: -Self.edgeInset),
             stripScroll.frameLayoutGuide.heightAnchor.constraint(equalTo: stripRow.heightAnchor),
         ])
         // A split resized or a device turned: the pills' summary-only form follows the width.
@@ -1385,7 +1392,8 @@ final class ExtensionSurfacePanelView: UIView {
                 drawer?.removeFromSuperview()
                 let next = ExtensionSurfaceDrawerView(entry: active, placement: placement, actions: actions)
                 next.onCollapse = { [weak self] in self?.setExpanded(nil) }
-                stack.addArrangedSubview(next)
+                drawerSlot.addArrangedSubview(next)
+                drawerSlot.isHidden = false
                 drawer = next
             }
             drawer?.actions = actions
@@ -1398,6 +1406,7 @@ final class ExtensionSurfacePanelView: UIView {
             )
         } else if let drawer {
             drawer.removeFromSuperview()
+            drawerSlot.isHidden = true
             self.drawer = nil
         }
     }

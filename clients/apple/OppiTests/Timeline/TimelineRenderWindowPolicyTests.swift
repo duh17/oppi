@@ -105,7 +105,7 @@ struct ChatTimelineRowColumnTests {
         let host = try await makeSeededHost()
         defer { host.hide() }
         let timeline = host.timeline
-        let fullColumn = timeline.bounds.width - 2 * Self.margin
+        let fullColumn = Self.columnWidth(in: timeline.bounds.width)
 
         var rowWidths: Set<CGFloat> = []
         timeline.didCaptureAnchorForTesting = { [weak timeline] in
@@ -121,7 +121,7 @@ struct ChatTimelineRowColumnTests {
         host.window.layoutIfNeeded()
         for cell in timeline.visibleCells { rowWidths.insert(cell.bounds.width) }
 
-        let narrowedColumn = timeline.bounds.width - 2 * Self.margin
+        let narrowedColumn = Self.columnWidth(in: timeline.bounds.width)
         #expect(narrowedColumn < fullColumn, "the timeline must narrow beside the panel")
         #expect(
             rowWidths.isSubset(of: [fullColumn, narrowedColumn]),
@@ -131,30 +131,56 @@ struct ChatTimelineRowColumnTests {
         #expect(timeline.visibleCells.allSatisfy { $0.bounds.width == narrowedColumn })
     }
 
-    /// A vertical rail on one edge (the Duo's control rail) is safe area on that
-    /// side only: rows keep their margin inside it and the usual margin on the
-    /// other side, and come back to full width when it goes.
-    @Test("rows stay clear of a side rail on either edge")
-    func rowsStayClearOfASideRail() async throws {
+    /// Rows keep the margin on a narrow timeline and stop at the readable width
+    /// on a wide one, centred, so a reply on an iPad in landscape keeps a
+    /// reading measure.
+    private static func columnWidth(in timelineWidth: CGFloat) -> CGFloat {
+        min(timelineWidth - 2 * margin, ReadableContentWidth.column)
+    }
+
+    /// The column centred in the timeline between `left` and `right` window insets.
+    private static func centredColumn(left: CGFloat, right: CGFloat) -> ClosedRange<CGFloat> {
+        let available = window.width - left - right
+        let width = columnWidth(in: available)
+        let minX = left + ((available - width) / 2).rounded(.down)
+        return minX...(minX + width)
+    }
+
+    /// A wide chat caps its rows at the readable width, centred, and a
+    /// vertical rail on one edge (the Duo's control rail) is safe area on that
+    /// side only: the column centres in what is left and comes back when it goes.
+    @Test("rows centre in a readable column clear of a side rail on either edge")
+    func rowsCentreInAReadableColumnClearOfASideRail() async throws {
         let host = try await makeSeededHost()
         defer { host.hide() }
         let rail: CGFloat = 83
 
-        func rowSpans() -> Set<ClosedRange<CGFloat>> {
+        /// The rows' spans, after checking the footer (composer and strip) spans the same
+        /// column plus its margins, so the bottom stack lines up with the replies.
+        func rowSpans(sourceLocation: SourceLocation = #_sourceLocation) -> Set<ClosedRange<CGFloat>> {
             host.window.layoutIfNeeded()
-            return Set(host.timeline.visibleCells.map {
+            let spans = Set(host.timeline.visibleCells.map {
                 let frame = $0.convert($0.bounds, to: host.window)
                 return frame.minX...frame.maxX
             })
+            let footer = host.chat.footerStack.convert(host.chat.footerStack.bounds, to: host.window)
+            if let row = spans.first {
+                #expect(abs(footer.minX + Self.margin - row.lowerBound) <= 1, "footer \(footer) vs rows \(row)", sourceLocation: sourceLocation)
+                #expect(abs(footer.maxX - Self.margin - row.upperBound) <= 1, "footer \(footer) vs rows \(row)", sourceLocation: sourceLocation)
+            }
+            return spans
         }
 
-        #expect(rowSpans() == [Self.margin...(Self.window.width - Self.margin)])
+        // The window is wide enough that the cap, not the margin, sets the column.
+        try #require(Self.window.width - 2 * Self.margin - 2 * rail > ReadableContentWidth.column)
+        #expect(rowSpans() == [Self.centredColumn(left: 0, right: 0)])
+        #expect(host.timeline.visibleCells.allSatisfy { $0.bounds.width == ReadableContentWidth.column })
         host.navigation.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: rail, bottom: 0, right: 0)
-        #expect(rowSpans() == [(rail + Self.margin)...(Self.window.width - Self.margin)])
+        #expect(rowSpans() == [Self.centredColumn(left: rail, right: 0)])
         host.navigation.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: rail)
-        #expect(rowSpans() == [Self.margin...(Self.window.width - rail - Self.margin)])
+        #expect(rowSpans() == [Self.centredColumn(left: 0, right: rail)])
         host.navigation.additionalSafeAreaInsets = .zero
-        #expect(rowSpans() == [Self.margin...(Self.window.width - Self.margin)])
+        #expect(rowSpans() == [Self.centredColumn(left: 0, right: 0)])
     }
 
     // MARK: - Fixture

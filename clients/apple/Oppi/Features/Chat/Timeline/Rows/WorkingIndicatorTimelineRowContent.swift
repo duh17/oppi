@@ -15,7 +15,8 @@ struct WorkingIndicatorTimelineRowConfiguration: UIContentConfiguration {
     }
 }
 
-/// Working indicator row: [10pt leading][20x20 spinner][6pt gap]["Working..." label]
+/// Working indicator row: [20x20 spinner][6pt gap]["Working..." label], starting
+/// at the row's leading edge like every other row's content.
 /// Supports Metal orbs, braille dots, and Game of Life via Settings.
 final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
     private static let defaultCustomInterval: TimeInterval = 0.08
@@ -118,6 +119,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         indicatorContainer.addSubview(customIndicatorLabel)
 
         workingLabel.text = "Working..."
+        workingLabel.accessibilityIdentifier = "chat.timeline.working.text"
         workingLabel.font = .preferredFont(forTextStyle: .callout)
         customIndicatorLabel.font = AppFont.monoLarge
         customIndicatorLabel.textAlignment = .center
@@ -126,8 +128,8 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         workingLabel.numberOfLines = 0
 
         let spinnerConstraints: [NSLayoutConstraint] = [
-            stackView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            stackView.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
+            stackView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stackView.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
             stackView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             stackView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
 
@@ -186,7 +188,9 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         customIndicatorLabel.isHidden = !showsCustomIndicator
         indicatorContainer.isHidden = hidesIndicator
         customIndicatorLabel.textColor = providerColor
-        workingLabel.textColor = palette.ui.comment.withAlphaComponent(0.6)
+        // Secondary text at full strength: an extension's status line has to be
+        // readable (4.5:1 on `bg`), not a faint hint.
+        workingLabel.textColor = palette.ui.fgDim
 
         configureCustomIndicator(
             frames: showsCustomIndicator ? customFrames : nil,

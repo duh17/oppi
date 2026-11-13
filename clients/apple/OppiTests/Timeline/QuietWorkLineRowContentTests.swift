@@ -111,14 +111,36 @@ struct QuietWorkLineRowContentTests {
         #expect(summaryHasLiveBlink(view) == false)
     }
 
+    /// The Chat pill is one control: blinking "Working" beside the steady
+    /// "11s · 1 step" split it in two. Live work pulses only the glyph, and
+    /// the verb and counts share one font and colour.
+    @Test func liveConversationPillPulsesOnlyItsGlyph() throws {
+        let view = attachedRow(
+            for: makeWorkLine(buckets: [.init(kind: .terminal, count: 1)], isLive: true),
+            chromeStyle: .conversation
+        )
+        #expect(summaryHasLiveBlink(view) == false)
+        #expect(view.isGlyphPulsingForTesting == !UIAccessibility.isReduceMotionEnabled)
+        let summary = try #require(summaryLabel(in: view))
+        let detail = try #require(durationLabel(in: view))
+        #expect(detail.text?.contains("1 step") == true)
+        #expect(summary.attributedText?.string == "Working")
+        #expect(summary.font == detail.font)
+        let summaryColor = summary.attributedText?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
+        #expect(summaryColor == detail.textColor)
+    }
+
     private func expectLiveSummaryBlink(on workLine: QuietTimelineWorkLine) throws {
         let view = attachedRow(for: workLine)
         #expect(summaryHasLiveBlink(view) == !UIAccessibility.isReduceMotionEnabled)
     }
 
-    private func attachedRow(for workLine: QuietTimelineWorkLine) -> QuietWorkLineTimelineRowContentView {
+    private func attachedRow(
+        for workLine: QuietTimelineWorkLine,
+        chromeStyle: ChatTimelineChromeStyle = .standard
+    ) -> QuietWorkLineTimelineRowContentView {
         let view = QuietWorkLineTimelineRowContentView(
-            configuration: QuietWorkLineTimelineRowConfiguration(workLine: workLine)
+            configuration: QuietWorkLineTimelineRowConfiguration(workLine: workLine, chromeStyle: chromeStyle)
         )
         let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(view)

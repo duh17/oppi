@@ -32,10 +32,23 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
     /// left were the wrong width, and with no column left at all UIKit trapped
     /// in a self-sizing loop. Bounds are set first, so the width is right in
     /// every pass.
+    ///
+    /// A wide timeline (iPad landscape, a wide pane) caps the column at the
+    /// app's readable width and centres it, so prose keeps a reading measure;
+    /// the timeline itself stays full-bleed, and a table wider than the
+    /// column scrolls in place or opens full screen.
     static func rowColumn(boundsWidth: CGFloat) -> (x: CGFloat, width: CGFloat) {
         let section = sectionInsets
-        return (section.leading, max(boundsWidth - section.leading - section.trailing, 0))
+        let span = min(boundsWidth, widestColumnSpan)
+        let width = max(span - section.leading - section.trailing, 0)
+        let x = max(section.leading, ((boundsWidth - width) / 2).rounded(.down))
+        return (x, width)
     }
+
+    /// The widest the row column and its side insets reach. The chat's footer
+    /// (composer and pill strip) caps at it too and centres, so the bottom
+    /// stack lines up with the rows on a wide screen.
+    static let widestColumnSpan = ReadableContentWidth.column + sectionInsets.leading + sectionInsets.trailing
 
     private struct CachedHeight {
         var width: CGFloat

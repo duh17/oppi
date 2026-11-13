@@ -92,7 +92,7 @@ Two optional tokens change how chat rows look. Omit either, or set `""`, for the
 
 Built-in themes set their contrast automatically, like Pi's system theme ([Earendil](https://earendil.com/posts/system-theme/)). Custom themes are used exactly as written, so check these rules yourself:
 
-- Text on a fill must reach **4.5:1**. That covers user text on `userMessageBg`, and assistant text on `assistantMessageBg` (or on `bg` when that fill is empty).
+- Text on a fill must reach **4.5:1**. That covers user text on `userMessageBg`, assistant text on `bg` and on `assistantMessageBg` when you set it, and inline code (`mdCode`) on `bg` and `bgHighlight`.
 - Keep `userMessageBg` visibly apart from `bg`, and from `assistantMessageBg` when you set it, so your prompts stand out.
 - Keep `userMessageAccent` at least **3:1** against `bg`.
 - Assistant rows recede. Leave `assistantMessageBg` unset unless you want a wash, and keep it close to `bg`.
@@ -101,7 +101,7 @@ iOS **Increase Contrast** uses a stronger built-in user fill plus a 1.5 pt borde
 
 ## Tokens
 
-Your prompts are a card filled with `userMessageBg`. Assistant replies always span the full width.
+Your prompts are a card filled with `userMessageBg`. Assistant replies always span the full width. In the **Chat** style they are plain text on `bg`, so your prompts are the only filled surface.
 
 | Group | Key | Paints |
 | --- | --- | --- |
@@ -121,7 +121,7 @@ Your prompts are a card filled with `userMessageBg`. Assistant replies always sp
 | | `thinkingText` | Thinking-block body |
 | User and assistant | `userMessageBg` | User card fill (the only elevated chat card) |
 | | `userMessageText` | User card text |
-| | `assistantMessageBg` | Optional assistant fill. Omit or empty: no fill |
+| | `assistantMessageBg` | Optional assistant fill in the **Full** and **Compact** styles. Omit or empty: no fill |
 | | `userMessageAccent` | Optional 3 pt strip on the leading edge of the user card. Omit or empty: no strip |
 | Tool state | `toolPendingBg` / `toolSuccessBg` / `toolErrorBg` | Tool row while running, after success, after failure |
 | | `toolTitle` | Tool name |

@@ -43,6 +43,7 @@ struct ChatTimelineConfiguration {
     let sessionId: String
     let serverId: String?
     let workspaceId: String?
+    /// The session's saved Agent, for the empty timeline's icon (`ChatEmptyStateView`).
     let agentId: String?
     let agentIcon: IconChoice?
     /// The launch snapshot of the session that sent an agent message, looked up by
@@ -394,8 +395,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         set { context.workspaceId = newValue }
     }
 
-    var agentId: String? { context.agentId }
-    var agentIcon: IconChoice? { context.agentIcon }
     /// The sending session's launch snapshot, resolved by chat composition.
     var senderLaunch: (@MainActor (String) -> SessionLaunchMetadata?)? { context.senderLaunch }
     var chromeStyle: ChatTimelineChromeStyle { context.chromeStyle }
@@ -613,6 +612,9 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     /// The apply's `ChatTimelineConfiguration.liveRowIDs`, set before rows are built.
     var liveRowIDs: Set<String> = []
     var lastDistanceFromBottom: CGFloat = 0
+    /// The bottom inset grew while a scroll animation ran, so the tail is owed a settle when it
+    /// ends (`scrollViewDidEndScrollingAnimation`).
+    var owesBottomInsetSettle = false
     private var lastBusyAmbientScrollReconcileNs: UInt64 = 0
     let toolOutputLoader = ExpandedToolOutputLoader()
     let preparationRunway = ChatTimelinePreparationRunway()
@@ -1202,12 +1204,20 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             // the last message and the input bar.
             let delta = configuration.bottomOverlap - oldBottom
             if delta > 0, scrollController?.isCurrentlyNearBottom ?? true {
-                TimelineOffsetController.apply(
-                    targetOffsetY: collectionView.contentOffset.y + delta,
-                    reason: .bottomInsetGrowth,
-                    collectionView: collectionView,
-                    scrollController: scrollController
-                )
+                // A send scrolls to the bottom while the strip above the composer
+                // appears (a queued message's pill): mid-animation the offset
+                // cannot move, and the animation ends at the old bottom with the
+                // tail under the strip. Settle once it ends instead.
+                if collectionView.isScrollAnimating {
+                    owesBottomInsetSettle = true
+                } else {
+                    TimelineOffsetController.apply(
+                        targetOffsetY: collectionView.contentOffset.y + delta,
+                        reason: .bottomInsetGrowth,
+                        collectionView: collectionView,
+                        scrollController: scrollController
+                    )
+                }
             }
         }
 

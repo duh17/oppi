@@ -86,6 +86,23 @@ struct WorkingIndicatorTimelineRowContentTests {
         #expect(indicatorLabel.text == "B")
     }
 
+    /// The working row shares the 16 pt leading edge of every other row (the
+    /// row column starts there) and its status text reads on the chat
+    /// background, whatever the extension writes in it.
+    @Test(arguments: [ThemeID.dark, .light])
+    func workingRowStartsAtTheRowEdgeAndReadsOnTheBackground(themeID: ThemeID) throws {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+        ThemeRuntimeState.setThemeID(themeID)
+        let view = makeView(workingState: ExtensionWorkingState(message: "Walking the maze · 4s", indicator: nil))
+
+        let spinner = try #require(timelineFirstView(ofType: WorkingSpinnerUIView.self, in: view))
+        let label = try #require(firstVisibleLabel(withText: "Walking the maze · 4s", in: view))
+        #expect(spinner.convert(spinner.bounds, to: view).minX < 0.5)
+        let color = try #require(label.textColor)
+        #expect(wcagContrast(color, themeID.palette.bg) >= 4.5)
+    }
+
     private func makeView(workingState: ExtensionWorkingState?) -> UIView {
         let surface = SessionExtensionSurface()
         surface.replace(with: ExtensionSurfaceState(working: workingState))

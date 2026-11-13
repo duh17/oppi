@@ -33,7 +33,13 @@ import UIKit
 /// `CHAT_ROUTES_LONG_FILE=1` serves a long file with wide lines;
 /// `CHAT_ROUTES_LONG_FILE=<n>` serves n lines of wrapping code.
 /// `CHAT_ROUTES_PANE_RESIZE=1` adds the live divider resize readout
-/// (`PaneResizeReadout`). The
+/// (`PaneResizeReadout`).
+/// `CHAT_ROUTES_TRACE_FILE=<path>` appends the trace events in that file (a JSON array, the
+/// `trace` of `oppi session trace --json`) after the fixture rows, so the chat shows a real session.
+/// `CHAT_ROUTES_THEME_FILE=<path>` imports that theme JSON and shows the chat in it.
+/// `CHAT_ROUTES_CHAT_STYLE=chat|full|compact` picks the Chat style.
+/// `CHAT_ROUTES_QUEUE=followup` queues one follow-up; the `chatRoutes.queueFollowUp` control queues
+/// one later, as a busy-time send does (the chat never connects, so the composer cannot send). The
 /// `chatRoutes.narrowWindow` control makes the window compact, as Split View does.
 /// `chatRoutes.createdSessions` counts the new sessions the stub received.
 /// Leading controls open the timeline's commit and file viewers through the
@@ -51,6 +57,8 @@ final class ChatRoutesPreviewController: PreviewRootController {
     private let navigation: SceneNavigation
     /// The chat's own timeline, which the harness keeps seeded (`keepTimelineSeeded`).
     private let reducer: TimelineReducer
+    /// The chat's scroll owner, for `chatRoutes.queueFollowUp`.
+    private let scrollController: ChatScrollController
     private let landingProbe = ChatRoutesPreviewController.probeLabel("chatRoutes.landing")
     private let createdSessionsProbe = ChatRoutesPreviewController.probeLabel("chatRoutes.createdSessions")
     private let surfaceActionsProbe = ChatRoutesPreviewController.probeLabel("chatRoutes.surfaceActions")
@@ -61,14 +69,26 @@ final class ChatRoutesPreviewController: PreviewRootController {
         ? PaneResizeReadout() : nil
 
     init(root: AppRootEnvironment, topBar: ChatTopBarLayout) {
-        if ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" {
+        let environment = ProcessInfo.processInfo.environment
+        if environment["SCREENSHOT_COLOR_SCHEME"] == "light" {
             root.themeStore.mode = .manual
             root.themeStore.manualThemeID = .light
         }
-        ScreenshotVolatileDefaults.apply([
+        if let path = environment["CHAT_ROUTES_THEME_FILE"],
+           let data = FileManager.default.contents(atPath: path),
+           let theme = try? JSONDecoder().decode(RemoteTheme.self, from: data) {
+            CustomThemeStore.save(theme)
+            root.themeStore.mode = .manual
+            root.themeStore.manualThemeID = .custom(theme.name)
+        }
+        var defaults: [String: Any] = [
             AppPreferences.ChatTopBar.orderKey: topBar.storedOrder,
             AppPreferences.ChatTopBar.shownKey: topBar.storedShown,
-        ])
+        ]
+        if let style = environment["CHAT_ROUTES_CHAT_STYLE"] {
+            defaults[AppPreferences.ChatDisplay.styleKey] = style
+        }
+        ScreenshotVolatileDefaults.apply(defaults)
         let connection = ChatRoutesFixture.connection
         let navigation = SceneNavigation()
         let chat = ChatViewController(
@@ -81,6 +101,7 @@ final class ChatRoutesPreviewController: PreviewRootController {
         self.connection = connection
         self.navigation = navigation
         reducer = chat.reducer
+        scrollController = chat.scrollController
         super.init(
             root: root,
             themeStore: root.themeStore,
@@ -131,6 +152,19 @@ final class ChatRoutesPreviewController: PreviewRootController {
                 ChatRoutesFixture.openFromTimeline(
                     .workspaceFile(UserMessagePathPill(kind: .repoFile, path: ChatRoutesFixture.changedPath))
                 )
+            },
+            // What a busy-time send does to the chat (`ChatActionHandler.sendPrompt`): the chat
+            // scrolls to its bottom, and the queue pill lands while that scroll is still moving.
+            control("chatRoutes.queueFollowUp") { [scrollController] in
+                scrollController.requestScrollToBottom()
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(120))
+                    ChatRoutesFixture.queue(
+                        "When the table work lands, rerun the iPad captures.",
+                        as: .followUp,
+                        on: ChatRoutesFixture.connection
+                    )
+                }
             },
         ])
         controls.axis = .vertical
@@ -329,6 +363,7 @@ enum ChatRoutesFixture {
     /// gets a new connection and local state, and the probes start empty.
     @MainActor static func resetForTesting() {
         built = nil
+        stubQueue = .empty
         lastArrival = ""
         ChatRoutesStubRecord.shared.createdSessions = 0
         ChatRoutesStubRecord.shared.surfaceActions = []
@@ -381,6 +416,15 @@ enum ChatRoutesFixture {
     /// far taller than the screen, so the drawer has to keep its own controls
     /// reachable. Reseeded like Share, since the connect loop clears the queue.
     @MainActor static func seedQueueIfNeeded(on connection: ServerConnection) {
+        if environment["CHAT_ROUTES_QUEUE"] == "followup", stubQueue.followUp.isEmpty {
+            queue("When the table work lands, rerun the iPad captures.", as: .followUp, on: connection)
+        }
+        if !stubQueue.steering.isEmpty || !stubQueue.followUp.isEmpty {
+            if connection.messageQueueStore.queue(for: sessionId) != stubQueue {
+                connection.messageQueueStore.apply(stubQueue, for: sessionId)
+            }
+            return
+        }
         guard environment["CHAT_ROUTES_QUEUE"] == "long",
               connection.messageQueueStore.queue(for: sessionId).steering.isEmpty else { return }
         let rows = (1...40).map { "| `routes/step-\($0).ts:\($0 * 10)` | Route step \($0) | Keep |" }
@@ -394,6 +438,22 @@ enum ChatRoutesFixture {
             ),
             for: sessionId
         )
+    }
+
+    /// What the stub server's queue holds (`CHAT_ROUTES_QUEUE=followup`, `chatRoutes.queueFollowUp`);
+    /// the reseed loop keeps the chat's queue on it.
+    @MainActor private static var stubQueue = MessageQueueState.empty
+
+    /// Adds a message to the stub server's queue and reports the queue, as the server does once
+    /// it holds a busy-time send.
+    @MainActor static func queue(_ text: String, as behavior: StreamingBehavior, on connection: ServerConnection) {
+        let item = MessageQueueItem(id: "routes-queued-\(stubQueue.version + 1)", message: text, createdAt: 0)
+        stubQueue.version += 1
+        switch behavior {
+        case .steer: stubQueue.steering.append(item)
+        case .followUp: stubQueue.followUp.append(item)
+        }
+        connection.messageQueueStore.apply(stubQueue, for: sessionId)
     }
 
     /// `CHAT_ROUTES_SURFACE=tall`: a table card of 14 rows, then an Actions card, in one
@@ -661,6 +721,11 @@ enum ChatRoutesFixture {
         ))
         if let turns = environment["CHAT_ROUTES_LONG_TURNS"].flatMap(Int.init) {
             events += longSessionEvents(turns: turns)
+        }
+        if let path = environment["CHAT_ROUTES_TRACE_FILE"],
+           let data = FileManager.default.contents(atPath: path),
+           let trace = try? JSONDecoder().decode([TraceEvent].self, from: data) {
+            events += trace
         }
         // `CHAT_ROUTES_WEB_LINK=<url>`: a reply linking a page (a UI test's own server).
         if let link = environment["CHAT_ROUTES_WEB_LINK"] {

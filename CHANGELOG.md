@@ -86,6 +86,10 @@ The file reader gets Org folding and badges, heading links, Outline and Find, ta
 
 ### Changed
 
+- **Client:** In the **Chat** style, replies are plain text across the full width instead of a filled card, so your messages are the only filled bubbles. Replies no longer show an icon in any style; the top bar already shows the session's. More space above each of your messages and each card from another session groups the chat into exchanges.
+- **Client:** The busy row under a running turn starts at the same edge as the rest of the chat, and its status text is easier to read. In the **Chat** style, the **Working** pill no longer blinks its label; only its icon pulses while work runs, and not at all with Reduce Motion.
+- **Client:** The row of pills above the composer scrolls all the way to the chat's edges, so a pill cut off at the edge reads as more to scroll. The Message Queue pill names only what is queued, such as "1 follow-up" instead of "0 steering • 1 follow-up".
+- **Client:** On a wide screen, such as an iPad in landscape, the chat keeps its messages, the composer, and the pills above it in one centered column about 760 points wide instead of running lines across the whole window. Wide tables still scroll sideways or open full screen.
 - **Client:** The "Dictation stopped" notice and the message queue error have a **Dismiss** button and close on their own after 6 to 12 seconds, longer for longer messages. Touching a notice holds it. With VoiceOver or Switch Control on, both stay until you dismiss them. Extension notify chips use the same timing.
 - **Client/Server:** **Server Settings → Model Providers** shows the providers as soon as the server answers, and their usage fills in after. The server keeps each provider's usage for 60 seconds and waits at most 4 seconds for a slow provider, whose row then says its usage is still loading. `oppi quota` and `oppi models` use the same cache. See [Provider quotas](docs/provider-quotas.md#where-to-look).
 - **Client:** On a wide window, Markdown and Org files read in a centered column about 75 characters wide. Tables and code blocks can be wider.
@@ -102,6 +106,7 @@ The file reader gets Org folding and badges, heading links, Outline and Find, ta
 
 ### Fixed
 
+- **Client:** Sending a message to a busy session no longer leaves the bottom of the chat, such as the busy row, hidden behind the pills above the composer when the queue pill appears as the chat scrolls down.
 - **Server:** A schedule that sends into an existing session with Delivery on Automatic no longer fails with "Prompt requires an idle session" when that session is mid-turn: it queues a follow-up after the turn, and sends a prompt when the session is idle.
 - **Server:** In durable sessions, `read` scales images down to 1568 px on the long edge and re-encodes them, so a session that reads many photos sends far smaller requests. Images over 2000 px are no longer refused.
 - **Client:** With App Lock on and no device passcode, Oppi opened unlocked. It now stays locked and says to set a passcode.

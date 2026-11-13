@@ -154,19 +154,17 @@ struct ThemePaletteBuiltinTests {
         }
     }
 
-    /// Auto contrast: the user bubble stands apart from both the background
-    /// and the reply card, the card lifts off the background, and inline code
-    /// and table headers (`bgHighlight`) still show on the card.
+    /// Auto contrast: replies sit on the background, the user bubble stands
+    /// apart from it, and inline code and table headers (`bgHighlight`) show
+    /// on it with readable code text.
     @Test func builtInChatSurfacesMeetAutoContrastLevels() {
         for themeID in ThemeID.builtins {
             let palette = themeID.palette
-            let card = ChatTimelineChromeStyle.conversation.assistantFill(from: palette, themeID: themeID)
             let checks: [(String, CGFloat, Double)] = [
-                ("assistant text on card", wcagContrast(palette.fg, card), ThemeContrast.Level.text),
-                ("card vs bg", wcagContrast(card, palette.bg), ThemeContrast.Level.cardLift),
-                ("user bubble vs card", wcagContrast(palette.userMessageBg, card), ThemeContrast.Level.bubble),
+                ("assistant text on bg", wcagContrast(palette.fg, palette.bg), ThemeContrast.Level.text),
                 ("user bubble vs bg", wcagContrast(palette.userMessageBg, palette.bg), ThemeContrast.Level.bubble),
-                ("bgHighlight vs card", wcagContrast(palette.bgHighlight, card), ThemeContrast.Level.embedded),
+                ("bgHighlight vs bg", wcagContrast(palette.bgHighlight, palette.bg), ThemeContrast.Level.embedded),
+                ("inline code on bg", wcagContrast(palette.mdCode, palette.bg), ThemeContrast.Level.text),
                 ("inline code on bgHighlight", wcagContrast(palette.mdCode, palette.bgHighlight), ThemeContrast.Level.text),
             ]
             for (name, ratio, level) in checks {
@@ -273,7 +271,8 @@ private func opaqueFill(_ color: ThemeColor) -> ThemeColor? {
     TimelineSpeakerChrome.resolvedAlpha(of: color) < 0.02 ? nil : color
 }
 
-private func wcagContrast(_ foreground: ThemeColor, _ background: ThemeColor) -> CGFloat {
+/// WCAG 2 contrast ratio of two opaque colours.
+func wcagContrast(_ foreground: ThemeColor, _ background: ThemeColor) -> CGFloat {
     let a = relativeLuminance(foreground)
     let b = relativeLuminance(background)
     return (max(a, b) + 0.05) / (min(a, b) + 0.05)

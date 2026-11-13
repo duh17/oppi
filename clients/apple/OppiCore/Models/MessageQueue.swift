@@ -155,8 +155,13 @@ enum MessageQueueAttachmentPresentation {
         return (photos, files)
     }
 
+    /// What the queue holds, naming only the kinds it has: "1 follow-up",
+    /// "2 steering • 3 follow-ups".
     static func countSubtitle(steeringCount: Int, followUpCount: Int) -> String {
-        "\(steeringCount) steering • \(followUpCount) follow-up"
+        var parts: [String] = []
+        if steeringCount > 0 { parts.append("\(steeringCount) steering") }
+        if followUpCount > 0 { parts.append("\(followUpCount) \(followUpCount == 1 ? "follow-up" : "follow-ups")") }
+        return parts.isEmpty ? "Empty" : parts.joined(separator: " • ")
     }
 
     static func mediaHint(photoCount: Int, fileCount: Int) -> String? {

@@ -110,40 +110,6 @@ struct AssistantTimelineRowContentViewTests {
         #expect(await fetchCounter.recordedIDs() == [assetId])
     }
 
-    @MainActor
-    @Test func fetchedGenmojiReplacesFallbackInChatUIKitBadge() async throws {
-        let expectedImage = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { context in
-            UIColor.systemPink.setFill()
-            context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
-        }
-        let cache = IconAssetCache(
-            fetch: { _ in Data([1, 2, 3]) },
-            decode: { _, _ in (expectedImage, NSObject()) }
-        )
-        let assetId = "ia_" + String(repeating: "A", count: 43)
-        let view = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
-            text: "Loaded icon",
-            isStreaming: false,
-            canFork: false,
-            onFork: nil,
-            sessionId: "session-1",
-            agentId: "agent-1",
-            agentIcon: .genmoji(assetId: assetId, contentDescription: "Pink icon"),
-            iconAssetCache: cache
-        ))
-        let badge = try #require(timelineFirstView(ofType: SessionGridBadgeView.self, in: view))
-        let imageView = try #require(badge.subviews.compactMap { $0 as? UIImageView }.first)
-        #expect(!showsPinkArtwork(imageView.image))
-
-        for _ in 0..<50 where !showsPinkArtwork(imageView.image) {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-
-        #expect(showsPinkArtwork(imageView.image))
-        #expect(imageView.transform.a > 1.1)
-        #expect(imageView.transform.d > 1.1)
-    }
-
     /// Whether the badge draws the pink artwork the cache decodes, by colour:
     /// `EntityIcon` composites the artwork into the badge's box.
     private func showsPinkArtwork(_ image: UIImage?) -> Bool {
@@ -174,21 +140,6 @@ struct AssistantTimelineRowContentViewTests {
             b: CGFloat(pixels[2]) / 255,
             a: CGFloat(pixels[3]) / 255
         )
-    }
-
-    @MainActor
-    @Test func ordinaryAssistantBadgeKeepsTheUnscaledPiIdentity() throws {
-        let view = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
-            text: "Ordinary assistant",
-            isStreaming: false,
-            canFork: false,
-            onFork: nil,
-            sessionId: "session-ordinary"
-        ))
-        let badge = try #require(timelineFirstView(ofType: SessionGridBadgeView.self, in: view))
-        let imageView = try #require(badge.subviews.compactMap { $0 as? UIImageView }.first)
-
-        #expect(imageView.transform == .identity)
     }
 
     @MainActor
@@ -246,7 +197,6 @@ struct AssistantTimelineRowContentViewTests {
             isStreaming: false,
             canFork: false,
             onFork: nil,
-            sessionId: "session-source",
             resourceAccess: MarkdownResourceAccess(
                 identity: .init(
                     serverID: "server-1",
@@ -844,15 +794,15 @@ struct AssistantTimelineRowContentViewTests {
 
     @MainActor
     @Test(arguments: [ChatTimelineChromeStyle.standard, .conversation])
-    func assistantMarkdownHangsUnderAvatar(style: ChatTimelineChromeStyle) throws {
+    func assistantReplyLinesShareOneLeadingEdge(style: ChatTimelineChromeStyle) throws {
         let text = """
-        First line beside the avatar should clear the badge.
+        The first paragraph of a reply wraps over several lines on a phone, and every one of those lines starts where the next paragraph starts.
 
-        Second paragraph and later blocks reclaim the avatar column so tables can use full bubble width.
+        Second paragraph and later blocks use the same full width.
 
         | Feature | Detail |
         | --- | --- |
-        | Layout | Hang under avatar |
+        | Layout | One leading edge |
         | Tables | Wrap to fit two columns |
         """
         let view = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
@@ -867,19 +817,16 @@ struct AssistantTimelineRowContentViewTests {
         view.layoutIfNeeded()
 
         let markdown = try #require(timelineFirstView(ofType: AssistantMarkdownContentView.self, in: view))
-        let badge = try #require(timelineFirstView(ofType: SessionGridBadgeView.self, in: view))
-
         let padding = style.assistantBubble.padding
-        // The badge and the content share the bubble's coordinate space.
-        let markdownFrame = markdown.convert(markdown.bounds, to: badge.superview)
+        let markdownFrame = markdown.convert(markdown.bounds, to: view)
         #expect(abs(markdownFrame.minX - padding.leading) < 0.5)
         #expect(abs(view.bounds.width - markdownFrame.maxX - padding.trailing) < 0.5)
-        // The avatar shows, sits in the content inset, and is level with line 1.
-        #expect(!badge.isHidden)
-        #expect(abs(badge.frame.minX - markdownFrame.minX) < 0.5)
-        #expect(abs(badge.frame.minY - markdownFrame.minY - AssistantTimelineRowContentView.avatarTopOffset) < 0.5)
-
-        // First prose text view should reserve the avatar column via exclusion path.
+        // Conversation prose starts at the row's own edge, level with the work
+        // pill and the cards.
+        if style == .conversation { #expect(markdownFrame.minX < 0.5) }
+        // No icon in the row and nothing carved out of the first lines: every
+        // wrapped line of the first paragraph starts at the paragraph's edge.
+        #expect(timelineFirstView(ofType: SessionGridBadgeView.self, in: view) == nil)
         let proseViews = timelineAllTextViews(in: markdown).filter { textView in
             // Table/code cells are nested deeper than the root markdown stack.
             textView.superview is UIStackView
@@ -887,11 +834,15 @@ struct AssistantTimelineRowContentViewTests {
                 && !(textView.superview?.superview is NativeCodeBlockView)
         }
         let firstProse = try #require(proseViews.first)
-        #expect(!firstProse.textContainer.exclusionPaths.isEmpty)
-
-        let exclusion = try #require(firstProse.textContainer.exclusionPaths.first?.bounds)
-        #expect(exclusion.width >= AssistantTimelineRowContentView.avatarContentClearance - 0.5)
-        #expect(exclusion.height >= AssistantTimelineRowContentView.avatarSize - 0.5)
+        #expect(firstProse.textContainer.exclusionPaths.isEmpty)
+        let layout = firstProse.layoutManager
+        let glyphs = layout.glyphRange(for: firstProse.textContainer)
+        var lineStarts: [CGFloat] = []
+        layout.enumerateLineFragments(forGlyphRange: glyphs) { _, usedRect, _, _, _ in
+            lineStarts.append(usedRect.minX)
+        }
+        #expect(lineStarts.count >= 3)
+        #expect(lineStarts.allSatisfy { abs($0 - (lineStarts.first ?? 0)) < 0.5 })
     }
 
     @MainActor

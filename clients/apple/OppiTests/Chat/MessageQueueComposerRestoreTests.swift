@@ -228,7 +228,14 @@ struct MessageQueueAttachmentPresentationTests {
                 followUpCount: 0,
                 photoCount: 0,
                 fileCount: 0
-            ) == "1 steering • 0 follow-up"
+            ) == "1 steering"
+        )
+        #expect(
+            MessageQueueAttachmentPresentation.countSubtitle(steeringCount: 0, followUpCount: 1) == "1 follow-up"
+        )
+        #expect(
+            MessageQueueAttachmentPresentation.countSubtitle(steeringCount: 2, followUpCount: 3)
+                == "2 steering • 3 follow-ups"
         )
         #expect(
             MessageQueueAttachmentPresentation.widgetSubtitle(

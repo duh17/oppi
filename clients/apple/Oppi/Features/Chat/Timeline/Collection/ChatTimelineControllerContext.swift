@@ -5,8 +5,6 @@ final class ChatTimelineControllerContext {
     var sessionId = ""
     var serverId: String?
     var workspaceId: String?
-    var agentId: String?
-    var agentIcon: IconChoice?
     /// The sending session's launch snapshot, by session id: read when an agent
     /// message row is built, so the card header can draw the sender's identity.
     var senderLaunch: (@MainActor (String) -> SessionLaunchMetadata?)?
@@ -40,12 +38,11 @@ final class ChatTimelineControllerContext {
             || routeScope != configuration.routeScope
     }
 
-    /// What every assistant row shows besides its message: the agent's icon and the speaker.
+    /// What every assistant row shows besides its message: the speaker.
     func didChangeAssistantPresentation(
         for configuration: ChatTimelineConfiguration
     ) -> Bool {
-        agentId != configuration.agentId || agentIcon != configuration.agentIcon
-            || readAloudAvailable != configuration.readAloudAvailable
+        readAloudAvailable != configuration.readAloudAvailable
     }
 
     /// Chrome changes row geometry, so cached heights are stale with it.
@@ -57,8 +54,6 @@ final class ChatTimelineControllerContext {
         sessionId = configuration.sessionId
         serverId = configuration.serverId
         workspaceId = configuration.workspaceId
-        agentId = configuration.agentId
-        agentIcon = configuration.agentIcon
         senderLaunch = configuration.senderLaunch
         readAloudAvailable = configuration.readAloudAvailable
         chromeStyle = configuration.chromeStyle

@@ -222,8 +222,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private let imageStrip = UIScrollView()
     private let imageStack = UIStackView()
 
-    /// The identity mark's size: the assistant row's avatar (`avatarSize`), so one
-    /// session reads the same in its own reply and in a card it sent to another.
+    /// The sender's identity mark beside its name in the card header.
     static let agentCardIconSize: CGFloat = 18
     private static let thumbnailSize: CGFloat = 80
     private static let thumbnailCornerRadius: CGFloat = TimelineBubbleStyle.thumbnailCornerRadius

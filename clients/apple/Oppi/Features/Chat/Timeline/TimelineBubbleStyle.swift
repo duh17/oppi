@@ -42,8 +42,8 @@ enum TimelineBubbleStyle {
 enum ChatTimelineChromeStyle: Equatable {
     /// Coding transcript: full-width user card and unboxed assistant prose.
     case standard
-    /// Messaging layout: trailing user bubble, assistant card with the hanging
-    /// avatar, and work folded into a hugging "Worked · N steps" pill.
+    /// Messaging layout: trailing user bubble, assistant replies as plain prose
+    /// on the background, and work folded into a hugging "Worked · N steps" pill.
     case conversation
 
     /// Chat uses the messaging layout; Full and Compact keep the transcript.
@@ -68,10 +68,13 @@ enum ChatTimelineChromeStyle: Equatable {
         }
     }
 
-    /// Assistant reply. Both styles span the row and hang the avatar beside
-    /// the first lines; the conversation card adds a fill. The
-    /// trailing, tinted user bubble already says who is speaking, and a
-    /// trailing gutter here starved tables and code blocks on phones.
+    /// Assistant reply. Both styles span the row with no avatar: one
+    /// assistant per session, and the bar already shows its icon. The
+    /// transcript keeps the user card's inset so both speakers' text lines up
+    /// and an optional theme fill has room; conversation prose starts at the
+    /// row's own edge, level with the pill and cards, since the trailing user
+    /// bubble already says who is speaking. A trailing gutter here starved
+    /// tables and code blocks on phones.
     var assistantBubble: TimelineChromeSurface {
         switch self {
         case .standard:
@@ -80,10 +83,7 @@ enum ChatTimelineChromeStyle: Equatable {
                 padding: NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 6)
             )
         case .conversation:
-            TimelineChromeSurface(
-                shape: .roundedRect(radius: Self.conversationCornerRadius, curve: .continuous),
-                padding: NSDirectionalEdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 14)
-            )
+            TimelineChromeSurface(shape: .roundedRect(radius: 0, curve: .circular), padding: .zero)
         }
     }
 
@@ -114,31 +114,22 @@ enum ChatTimelineChromeStyle: Equatable {
         }
     }
 
-    /// Conversation cards keep the theme's assistant fill when it has one.
-    /// Built-ins leave that clear and get their contrast-solved card; custom
-    /// themes without one lift the card onto `bgHighlight`.
-    func assistantFill(
-        from palette: ThemePalette,
-        themeID: ThemeID = ThemeRuntimeState.currentThemeID()
-    ) -> UIColor {
-        let themed = TimelineSpeakerChrome.assistantFill(from: palette)
+    /// The transcript keeps the theme's optional assistant fill. Conversation
+    /// replies sit on the background, as in ChatGPT and Claude, so the user
+    /// bubble is the only fill in every theme: a reply card (`bgHighlight` for
+    /// custom themes) outweighed the user bubble and hid inline code and
+    /// table headers.
+    func assistantFill(from palette: ThemePalette) -> UIColor {
         switch self {
-        case .standard: return themed
-        case .conversation:
-            guard themed == .clear else { return themed }
-            // Like ChatGPT and Claude, the reply sits on a quiet sheet one
-            // small step off `bg` and the user bubble is the strongest fill
-            // (`ThemeContrast`). A `bgHighlight` card read as a second user
-            // bubble in Light and hid inline code and table headers.
-            let card = themeID.chatSurfaces?.assistantCard ?? palette.bgHighlight
-            return card
+        case .standard: TimelineSpeakerChrome.assistantFill(from: palette)
+        case .conversation: .clear
         }
     }
 
     /// Work row colors. Standard strips use translucent accent fills to stay
     /// in the tool-row family (`userMessageBg` is opaque in shipped themes,
     /// so matching it read as a second user bubble). The conversation pill
-    /// is neutral beside the assistant card; only live work tints it.
+    /// is neutral beside the reply prose; only live work tints it.
     func workLineColors(
         for workLine: QuietTimelineWorkLine,
         isHighlighted: Bool,
@@ -187,7 +178,7 @@ enum TimelineChromeShape: Equatable {
 }
 
 /// Shape and spacing of one row surface: the user bubble, the assistant
-/// card, or the work strip/pill.
+/// reply, or the work strip/pill.
 struct TimelineChromeSurface: Equatable {
     let shape: TimelineChromeShape
     /// Content inset inside the surface.
@@ -262,9 +253,11 @@ enum TimelineSpeakerChrome {
     static let accentBarWidth: CGFloat = 3
     static let increasedContrastBorderWidth: CGFloat = 1.5
     /// Extra space above a user row so each exchange groups (8 pt layout gap
-    /// + 8 pt = 16 pt before a user row). Applied as the user cell's own top
-    /// margin so cached-height layout and scroll anchoring stay unchanged.
-    static let userTurnSpacingAbove: CGFloat = 8
+    /// + 14 pt = 22 pt before a user row, against 8 pt between rows inside a
+    /// turn). With replies drawn as bare prose, this gap is what separates one
+    /// exchange from the next. Applied as the user cell's own top margin so
+    /// cached-height layout and scroll anchoring stay unchanged.
+    static let userTurnSpacingAbove: CGFloat = 14
     /// Spacing inside the user bubble stack. UIStackView applies this only
     /// between visible arranged subviews, so a Differentiate Without Color
     /// caption adds it when text, badges, or path pills are also showing.

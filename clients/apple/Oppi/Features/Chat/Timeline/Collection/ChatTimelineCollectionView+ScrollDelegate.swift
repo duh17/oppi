@@ -8,6 +8,8 @@ extension ChatTimelineController {
         scrollController?.setUserInteracting(true)
         lastObservedContentOffsetY = scrollView.contentOffset.y
         earlierRowsRequestMark = nil
+        // The finger owns the viewport now; an owed bottom settle would yank it.
+        owesBottomInsetSettle = false
 
         guard let collectionView = scrollView as? UICollectionView else { return }
         // A real drag owns follow state immediately. Sample the live geometry
@@ -38,6 +40,19 @@ extension ChatTimelineController {
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         scrollController?.setUserInteracting(false)
+    }
+
+    /// The bottom inset grew while this animation ran (`owesBottomInsetSettle`), and the
+    /// animation stopped at the old bottom: a timeline still on its tail settles to the new one,
+    /// so the last row ends above the footer instead of under its strip. UIKit still reports
+    /// the scroll as animating inside this callback, so the settle waits one turn.
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+        guard owesBottomInsetSettle, let collectionView = scrollView as? UICollectionView else { return }
+        owesBottomInsetSettle = false
+        DispatchQueue.main.async { [weak self, weak collectionView] in
+            guard let self, let collectionView, self.scrollController?.isCurrentlyNearBottom ?? true else { return }
+            self.pinAttachedTail(collectionView, toExactBottom: true)
+        }
     }
 
     /// A status-bar tap is a programmatic scroll, so the drag path never sees

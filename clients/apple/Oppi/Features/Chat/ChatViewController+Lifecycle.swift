@@ -43,6 +43,10 @@ extension ChatViewController {
         footerTopLimit.priority = .defaultHigh - 1
         let timelineTrailing = collectionView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
         self.timelineTrailing = timelineTrailing
+        // The footer follows the timeline's reading column: the chat's width up to
+        // `widestColumnSpan`, centred, so the composer and strip line up with the rows.
+        let footerFill = footerStack.widthAnchor.constraint(equalTo: view.safeAreaLayoutGuide.widthAnchor)
+        footerFill.priority = .defaultHigh
 
         NSLayoutConstraint.activate([
             footerTopLimit,
@@ -56,8 +60,10 @@ extension ChatViewController {
             collectionView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             timelineTrailing,
             collectionView.bottomAnchor.constraint(equalTo: contentBottomGuide.bottomAnchor),
-            footerStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            footerStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            footerFill,
+            footerStack.widthAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.widthAnchor),
+            footerStack.widthAnchor.constraint(lessThanOrEqualToConstant: ChatTimelineCachedHeightLayout.widestColumnSpan),
+            footerStack.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
             footerStack.bottomAnchor.constraint(equalTo: contentBottomGuide.bottomAnchor),
             footerBacking.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             footerBacking.trailingAnchor.constraint(equalTo: view.trailingAnchor),

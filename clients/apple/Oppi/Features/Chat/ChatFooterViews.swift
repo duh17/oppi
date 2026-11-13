@@ -110,16 +110,18 @@ extension ChatViewController {
     }
 }
 
-/// A view inset 16pt from the chat's safe edges, as the footer rows are.
+/// A view inset 16pt from the chat's safe edges, as the footer rows are. An
+/// extension panel passes `side: 0`: it spans the chat and insets its own pills
+/// (`ExtensionSurfacePanelView.edgeInset`) so its strip scrolls edge to edge.
 @MainActor
-private func footerInset(_ view: UIView, top: CGFloat = 0, box: UIView = UIView()) -> UIView {
+private func footerInset(_ view: UIView, top: CGFloat = 0, side: CGFloat = 16, box: UIView = UIView()) -> UIView {
     view.translatesAutoresizingMaskIntoConstraints = false
     box.addSubview(view)
     NSLayoutConstraint.activate([
         view.topAnchor.constraint(equalTo: box.topAnchor, constant: top),
         view.bottomAnchor.constraint(equalTo: box.bottomAnchor),
-        view.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 16),
-        view.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -16),
+        view.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: side),
+        view.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -side),
     ])
     return box
 }
@@ -143,7 +145,7 @@ final class ChatFooterAboveView: UIView {
     private let notifyDrawer = ExtensionNotifyDrawerView()
     private let noticeStack = UIStackView()
     private var shownNotices: Notices?
-    private lazy var panelRow = footerInset(panel, box: ExtensionStripPillHitBandView())
+    private lazy var panelRow = footerInset(panel, side: 0, box: ExtensionStripPillHitBandView())
     private lazy var reviewDrawerRow = footerInset(reviewDrawer)
     private lazy var nowPlayingDrawerRow = footerInset(nowPlayingDrawer)
     private lazy var notifyDrawerRow = footerInset(notifyDrawer)
@@ -493,7 +495,7 @@ final class ChatFooterBelowView: UIView {
         self.chat = chat
         panel = ExtensionSurfacePanelView(placement: .belowEditor, actions: chat.extensionDrawerActions())
         super.init(frame: .zero)
-        let row = footerInset(panel, top: 8, box: ExtensionStripPillHitBandView())
+        let row = footerInset(panel, top: 8, side: 0, box: ExtensionStripPillHitBandView())
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
         NSLayoutConstraint.activate([

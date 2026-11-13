@@ -79,7 +79,10 @@ final class UIValidateTests: XCTestCase {
         }
         for (index, identifier) in taps.enumerated() {
             let point = identifier.split(separator: ":").compactMap { Double($0) }
-            if point.count == 2 {
+            if identifier.hasPrefix("wait:"), let seconds = Double(identifier.dropFirst("wait:".count)) {
+                // Holds the screen, so a screen recording shows each state.
+                Thread.sleep(forTimeInterval: seconds)
+            } else if point.count == 2 {
                 app.coordinate(withNormalizedOffset: CGVector(dx: point[0], dy: point[1])).tap()
             } else if identifier.hasPrefix("scrollto:") {
                 // Drag without momentum until a row deep in a lazy list sits mid-screen.
@@ -103,10 +106,19 @@ final class UIValidateTests: XCTestCase {
             } else {
                 let doubleTap = identifier.hasPrefix("doubletap:")
                 let swipeUp = identifier.hasPrefix("swipeup:")
-                let targetID = (doubleTap || swipeUp) ? String(identifier.dropFirst(identifier.firstIndex(of: ":").map { identifier.distance(from: identifier.startIndex, to: $0) + 1 } ?? 0)) : identifier
+                let swipeDown = identifier.hasPrefix("swipedown:")
+                let targetID = (doubleTap || swipeUp || swipeDown) ? String(identifier.dropFirst(identifier.firstIndex(of: ":").map { identifier.distance(from: identifier.startIndex, to: $0) + 1 } ?? 0)) : identifier
                 let target = app.descendants(matching: .any).matching(identifier: targetID).firstMatch
                 XCTAssertTrue(target.waitUntilExists(timeout: 8), "Missing action: \(identifier)")
-                if doubleTap { target.doubleTap() } else if swipeUp { target.swipeUp() } else { target.tap() }
+                if doubleTap {
+                    target.doubleTap()
+                } else if swipeUp {
+                    target.swipeUp()
+                } else if swipeDown {
+                    target.swipeDown()
+                } else {
+                    target.tap()
+                }
             }
             _ = try app.snapshot() // Wait for the resulting UI state to settle.
             try XCUIScreen.main.screenshot().pngRepresentation.write(to: outputDir.appendingPathComponent("step-\(index + 1).png"))

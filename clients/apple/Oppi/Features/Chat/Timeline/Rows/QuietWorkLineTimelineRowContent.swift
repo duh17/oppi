@@ -47,11 +47,15 @@ struct QuietWorkLineTimelineRowConfiguration: UIContentConfiguration {
 ///
 /// Conversation chrome instead draws a leading pill that hugs
 /// "Worked 9s \u{00B7} 2 steps \u{203A}"; the chevron turns down while expanded.
+/// The pill's text never animates: while work runs, only its leading glyph
+/// pulses, so the verb and the live counts read as one control.
 final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     private static let liveBlinkAnimationKey = "oppi.quietWork.liveBlink"
 
     private let chipView = TimelineChromeSurfaceView()
     private let button = UIButton(type: .system)
+    /// The pill's terminal or thinking glyph, before its text.
+    private let glyphView = UIImageView()
     private let summaryLabel = UILabel()
     private let durationLabel = UILabel()
     private let chevronView = UIImageView()
@@ -61,6 +65,8 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     private var conversationStackedConstraints: [NSLayoutConstraint] = []
     private var stackedBottomWithDetail: NSLayoutConstraint?
     private var stackedBottomWithoutDetail: NSLayoutConstraint?
+    /// Centres the glyph on the summary's first line; the constant follows the font.
+    private var glyphCenterOnFirstLine: NSLayoutConstraint?
     /// The constraint set in force; `applyChromeLayout` swaps sets only when this changes.
     private var appliedLayout: ChromeLayout?
     private var currentConfiguration: QuietWorkLineTimelineRowConfiguration
@@ -140,8 +146,15 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         chevronView.setContentHuggingPriority(.required, for: .horizontal)
         chevronView.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        glyphView.translatesAutoresizingMaskIntoConstraints = false
+        glyphView.isUserInteractionEnabled = false
+        glyphView.contentMode = .center
+        glyphView.setContentHuggingPriority(.required, for: .horizontal)
+        glyphView.setContentCompressionResistancePriority(.required, for: .horizontal)
+
         addSubview(chipView)
         addSubview(button)
+        addSubview(glyphView)
         addSubview(summaryLabel)
         addSubview(durationLabel)
         addSubview(chevronView)
@@ -180,15 +193,24 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
             durationLabel.leadingAnchor.constraint(greaterThanOrEqualTo: summaryLabel.trailingAnchor, constant: 8),
             durationLabel.trailingAnchor.constraint(equalTo: chipView.trailingAnchor, constant: -strip.padding.trailing),
         ]
+        // The pill's glyph sits where its text used to start, and the text follows it.
+        let glyphCenter = glyphView.centerYAnchor.constraint(equalTo: summaryLabel.firstBaselineAnchor)
+        glyphCenterOnFirstLine = glyphCenter
+        func glyphLeads(inset: CGFloat) -> [NSLayoutConstraint] {
+            [
+                glyphView.leadingAnchor.constraint(equalTo: chipView.leadingAnchor, constant: inset),
+                summaryLabel.leadingAnchor.constraint(equalTo: glyphView.trailingAnchor, constant: Self.glyphTextGap),
+                glyphCenter,
+            ]
+        }
         let pill = ChatTimelineChromeStyle.conversation.workLine
         let pillEdges = [
             chipView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pill.margins.leading),
             chipView.topAnchor.constraint(equalTo: topAnchor, constant: pill.margins.top),
             chipView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pill.margins.bottom),
         ]
-        conversationConstraints = pillEdges + contained + centered + [
+        conversationConstraints = pillEdges + contained + centered + glyphLeads(inset: pill.padding.leading) + [
             chipView.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -pill.margins.trailing),
-            summaryLabel.leadingAnchor.constraint(equalTo: chipView.leadingAnchor, constant: pill.padding.leading),
             durationLabel.leadingAnchor.constraint(equalTo: summaryLabel.trailingAnchor, constant: 5),
             chevronView.leadingAnchor.constraint(equalTo: durationLabel.trailingAnchor, constant: 6),
             chevronView.trailingAnchor.constraint(equalTo: chipView.trailingAnchor, constant: -pill.padding.trailing),
@@ -197,7 +219,6 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         // the chip spans the row, since neither line fits beside the other.
         let stackedPadding = Self.stackedHorizontalPadding
         let stackedText = [
-            summaryLabel.leadingAnchor.constraint(equalTo: chipView.leadingAnchor, constant: stackedPadding),
             summaryLabel.topAnchor.constraint(equalTo: chipView.topAnchor, constant: Self.stackedVerticalPadding),
             durationLabel.leadingAnchor.constraint(equalTo: summaryLabel.leadingAnchor),
             durationLabel.topAnchor.constraint(equalTo: summaryLabel.bottomAnchor, constant: 2),
@@ -207,10 +228,11 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         stackedBottomWithDetail = durationLabel.bottomAnchor.constraint(equalTo: chipView.bottomAnchor, constant: -Self.stackedVerticalPadding)
         stackedBottomWithoutDetail = summaryLabel.bottomAnchor.constraint(equalTo: chipView.bottomAnchor, constant: -Self.stackedVerticalPadding)
         standardStackedConstraints = stripEdges + stackedText + [
+            summaryLabel.leadingAnchor.constraint(equalTo: chipView.leadingAnchor, constant: stackedPadding),
             summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: chipView.trailingAnchor, constant: -stackedPadding),
             durationLabel.trailingAnchor.constraint(lessThanOrEqualTo: chipView.trailingAnchor, constant: -stackedPadding),
         ]
-        conversationStackedConstraints = pillEdges + stackedText + [
+        conversationStackedConstraints = pillEdges + stackedText + glyphLeads(inset: stackedPadding) + [
             chipView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pill.margins.trailing),
             chevronView.trailingAnchor.constraint(equalTo: chipView.trailingAnchor, constant: -stackedPadding),
             summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevronView.leadingAnchor, constant: -6),
@@ -228,6 +250,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     ).pointSize
 
     private static let stackedCornerRadius: CGFloat = 18
+    private static let glyphTextGap: CGFloat = 6
     private static let textVerticalInset: CGFloat = 6
     private static let stackedHorizontalPadding: CGFloat = 18
     private static let stackedVerticalPadding: CGFloat = 10
@@ -273,6 +296,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         }
         syncStackedBottom()
         chevronView.isHidden = !isConversation
+        glyphView.isHidden = !isConversation
         // Standard strips truncate a long bucket summary; the pill's text is
         // short and must stay whole. At accessibility sizes both wrap instead.
         summaryLabel.adjustsFontSizeToFitWidth = !isConversation && !isStacked
@@ -283,6 +307,10 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         if summaryLabel.font != font {
             summaryLabel.font = font
             lastSummaryIdentity = nil
+            glyphView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
+                font: .systemFont(ofSize: (font.pointSize * 0.8).rounded(), weight: .semibold)
+            )
+            glyphCenterOnFirstLine?.constant = -font.capHeight / 2
         }
     }
 
@@ -321,6 +349,11 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
                 systemName: configuration.workLine.isExpanded ? "chevron.down" : "chevron.right"
             )
             chevronView.tintColor = colors.foreground
+            let glyph = configuration.workLine.isThinkingOnly ? "brain" : "apple.terminal"
+            if glyphView.image != UIImage(systemName: glyph) {
+                glyphView.image = UIImage(systemName: glyph)
+            }
+            glyphView.tintColor = colors.foreground
         }
         durationLabel.textColor = colors.foreground
         durationLabel.font = summaryLabel.font
@@ -436,20 +469,40 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         updateLiveBlinkAnimation()
     }
 
+    /// Live work's one activity cue. The strip blinks its summary; the pill
+    /// pulses only its glyph, since blinking the verb beside the steady counts
+    /// split the pill in two. Reduce Motion stills both.
     private func updateLiveBlinkAnimation() {
-        let shouldBlink = window != nil
+        let isLive = window != nil
             && currentConfiguration.workLine.isLive
             && !UIAccessibility.isReduceMotionEnabled
-        if shouldBlink {
+        let isPill = currentConfiguration.chromeStyle == .conversation
+        if isLive, !isPill {
             if summaryLabel.layer.animation(forKey: Self.liveBlinkAnimationKey) == nil,
                let animation = Self.liveBlinkAnimation(reduceMotion: false) {
                 summaryLabel.layer.add(animation, forKey: Self.liveBlinkAnimationKey)
             }
-            return
+        } else {
+            summaryLabel.layer.removeAnimation(forKey: Self.liveBlinkAnimationKey)
+            summaryLabel.layer.opacity = 1
         }
-        summaryLabel.layer.removeAnimation(forKey: Self.liveBlinkAnimationKey)
-        summaryLabel.layer.opacity = 1
+        if isLive, isPill {
+            if !isGlyphPulsing {
+                glyphView.addSymbolEffect(.pulse, options: .repeat(.continuous))
+                isGlyphPulsing = true
+            }
+        } else if isGlyphPulsing {
+            glyphView.removeAllSymbolEffects(animated: false)
+            isGlyphPulsing = false
+        }
     }
+
+    /// The glyph's pulse is running; `UIImageView` cannot say so itself.
+    private var isGlyphPulsing = false
+
+    #if DEBUG
+        var isGlyphPulsingForTesting: Bool { isGlyphPulsing }
+    #endif
 
     private struct SummaryIdentity: Equatable {
         let themeID: ThemeID
@@ -462,35 +515,18 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         let buckets: [QuietWorkBucket]
     }
 
-    /// Terminal glyph plus the pill verb. The detail (`9s \u{00B7} 2 steps`)
-    /// lives in the duration label so the live tick never rebuilds this.
+    /// The pill verb. The glyph is `glyphView`, and the detail
+    /// (`9s \u{00B7} 2 steps`) lives in the duration label so the live tick
+    /// never rebuilds this.
     private static func conversationTitle(
         for workLine: QuietTimelineWorkLine,
         foreground: UIColor,
         font: UIFont
     ) -> NSAttributedString {
-        let result = NSMutableAttributedString()
-        let symbol = workLine.isThinkingOnly ? "brain" : "apple.terminal"
-        if let image = UIImage(
-            systemName: symbol,
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
-        )?.withTintColor(foreground, renderingMode: .alwaysOriginal) {
-            let attachment = NSTextAttachment(image: image)
-            let height = image.size.height
-            attachment.bounds = CGRect(
-                x: 0,
-                y: (font.capHeight - height) / 2,
-                width: image.size.width,
-                height: height
-            )
-            result.append(NSAttributedString(attachment: attachment))
-            result.append(NSAttributedString(string: "  ", attributes: [.font: font]))
-        }
-        result.append(NSAttributedString(
+        NSAttributedString(
             string: workLine.conversationTitle,
             attributes: [.font: font, .foregroundColor: foreground]
-        ))
-        return result
+        )
     }
 
     private static func iconSummary(

@@ -128,7 +128,6 @@ struct AssistantMarkdownLayoutTests {
                     isStreaming: false,
                     canFork: false,
                     onFork: nil,
-                    sessionId: "assistant-png-detached-relayout",
                     resourceAccess: MarkdownResourceAccess(
                         identity: .init(
                             workspaceID: "ws-png",
@@ -147,8 +146,7 @@ struct AssistantMarkdownLayoutTests {
                     text: "This row must move down after detached image render.",
                     isStreaming: false,
                     canFork: false,
-                    onFork: nil,
-                    sessionId: "assistant-png-detached-relayout"
+                    onFork: nil
                 )
             ),
         ]
@@ -243,7 +241,6 @@ struct AssistantMarkdownLayoutTests {
                     isStreaming: false,
                     canFork: false,
                     onFork: nil,
-                    sessionId: "assistant-svg-async-relayout",
                     resourceAccess: MarkdownResourceAccess(
                         identity: .init(
                             workspaceID: "ws-svg",
@@ -262,8 +259,7 @@ struct AssistantMarkdownLayoutTests {
                     text: "This row must move down after image render.",
                     isStreaming: false,
                     canFork: false,
-                    onFork: nil,
-                    sessionId: "assistant-svg-async-relayout"
+                    onFork: nil
                 )
             ),
         ]
@@ -1314,17 +1310,15 @@ struct AssistantMarkdownLayoutTests {
         ))
         let rowSize = fittedTimelineSize(for: row, width: rowWidth)
 
-        // The standalone markdown must replicate the row's internal markdown
-        // exactly — same width AND the avatar exclusion path (leadingHang) — or the
-        // two measurements diverge (~6.5pt/section) and the comparison is meaningless.
+        // The standalone markdown must replicate the row's internal markdown at
+        // the same width, or the two measurements diverge and the comparison is
+        // meaningless.
         let markdownView = AssistantMarkdownContentView()
         markdownView.apply(configuration: .make(
             content: markdown,
             isStreaming: false,
             themeID: .dark
         ))
-        markdownView.leadingHangClearance = AssistantTimelineRowContentView.avatarContentClearance
-        markdownView.leadingHangHeight = AssistantTimelineRowContentView.avatarHangHeight
         let markdownSize = fittedTimelineSize(for: markdownView, width: contentWidth)
 
         #expect(markdownSize.height > 10_000, "Fixture must exceed the old 10k height cap, got \(markdownSize.height)")
@@ -1462,32 +1456,6 @@ struct AssistantMarkdownLayoutTests {
         // into adjacent cells.
         #expect(cell.contentView.clipsToBounds == true,
                 "Cell contentView.clipsToBounds must be true to prevent overflow during estimated-height layout")
-    }
-
-    /// Non-text first blocks (audio/video/image/code/table) must sit below the
-    /// avatar with extra air, not the ~2pt text-exclusion hang height alone.
-    @Test func nonTextFirstBlockHangsBelowAvatarWithExtraTop() throws {
-        let row = AssistantTimelineRowContentView(configuration: .init(
-            text: """
-            ```swift
-            print("hang")
-            ```
-            """,
-            isStreaming: false,
-            canFork: false,
-            onFork: nil
-        ))
-        _ = fittedTimelineSize(for: row, width: 370)
-
-        let markdown = try #require(timelineFirstView(ofType: AssistantMarkdownContentView.self, in: row))
-        let stack = try #require(markdown.subviews.compactMap { $0 as? UIStackView }.first)
-        #expect(timelineFirstView(ofType: NativeCodeBlockView.self, in: markdown) != nil)
-        #expect(stack.isLayoutMarginsRelativeArrangement)
-        #expect(
-            stack.layoutMargins.top == AssistantTimelineRowContentView.avatarBlockHangHeight,
-            "Block-first hang must be avatarHangHeight + extra, got \(stack.layoutMargins.top) hang=\(AssistantTimelineRowContentView.avatarHangHeight)"
-        )
-        #expect(stack.layoutMargins.top > AssistantTimelineRowContentView.avatarHangHeight)
     }
 
     /// Consecutive audio embeds once collapsed to 0pt cards drawn on top of

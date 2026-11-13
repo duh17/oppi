@@ -502,8 +502,12 @@ struct ReadMarkdownExpandOverlapTests {
         settleTimelineLayout(collectionView, passes: 2)
 
         #expect(coordinator.currentIDs.contains(fixture.readID))
+        // The Read row can be in the first screen of rows, and a cell scrolled
+        // away lingers (hidden) for a run-loop turn on iOS 27.
         #expect(
-            collectionView.cellForItem(at: fixture.readIP) == nil,
+            await waitForMainActorCondition(timeout: .seconds(1)) {
+                collectionView.cellForItem(at: fixture.readIP) == nil
+            },
             "The valid Read identity must be offscreen for the missing-cell regression"
         )
         let sourceCell = try #require(

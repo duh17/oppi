@@ -17,12 +17,6 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let canFork: Bool
     let onFork: (() -> Void)?
     let itemID: String?
-    /// Session ID for the grid badge icon.
-    let sessionId: String
-    /// Immutable saved-Agent presentation snapshot for this session.
-    let agentId: String?
-    let agentIcon: IconChoice?
-    let iconAssetCache: IconAssetCache?
     /// Shared interaction context for π text-selection actions.
     let interactionContext: TimelineInteractionContext?
     /// Bound source identity and resource providers for this row's Markdown, built
@@ -52,10 +46,6 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         canFork: Bool,
         onFork: (() -> Void)?,
         itemID: String? = nil,
-        sessionId: String = "",
-        agentId: String? = nil,
-        agentIcon: IconChoice? = nil,
-        iconAssetCache: IconAssetCache? = nil,
         interactionContext: TimelineInteractionContext? = nil,
         resourceAccess: MarkdownResourceAccess = .empty,
         preparedBlocks: [MarkdownBlock]? = nil,
@@ -70,10 +60,6 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.canFork = canFork
         self.onFork = onFork
         self.itemID = itemID
-        self.sessionId = sessionId
-        self.agentId = agentId
-        self.agentIcon = agentIcon
-        self.iconAssetCache = iconAssetCache
         self.interactionContext = interactionContext
         self.resourceAccess = resourceAccess
         self.preparedBlocks = preparedBlocks
@@ -99,33 +85,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
     /// exceed 10k points on phone-width layouts.
     private static let maxValidHeight: CGFloat = 1_000_000
 
-    /// Avatar geometry for the hanging content layout, shared by both chrome
-    /// styles. Content uses the full bubble width
-    /// (`ChatTimelineChromeStyle.assistantBubble`); the avatar only reserves
-    /// space on the first text lines (via exclusion path), then later
-    /// lines/blocks run under it. It is pinned to the markdown's top-leading
-    /// corner, so it follows each style's card padding and stays level with
-    /// the first text line.
-    static let avatarSize: CGFloat = 18
-    /// Avatar drop below the markdown top, aligning it with line 1.
-    static let avatarTopOffset: CGFloat = 2
-    static let avatarContentGap: CGFloat = 8
-    static var avatarContentClearance: CGFloat { avatarSize + avatarContentGap }
-    /// Exclusion height relative to markdown top so line 1 clears the badge.
-    /// That band sits only ~2pt below the 18pt avatar; block-first content needs
-    /// extra air so media is not flush under the badge.
-    static var avatarHangHeight: CGFloat {
-        max(avatarSize, avatarTopOffset + avatarSize + 2)
-    }
-    /// Extra top margin when the first markdown segment is a block (audio,
-    /// video, image, code, table) so it hangs below the avatar band.
-    static let avatarBlockHangExtraTop: CGFloat = 10
-    static var avatarBlockHangHeight: CGFloat {
-        avatarHangHeight + avatarBlockHangExtraTop
-    }
-
     private let bubbleContainer = TimelineChromeSurfaceView()
-    private let iconBadge = SessionGridBadgeView()
     private let markdownView = AssistantMarkdownContentView()
     private let actionBar = AssistantMessageActionBar()
     private let contentStack = UIStackView()
@@ -215,15 +175,6 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         bubbleContainer.translatesAutoresizingMaskIntoConstraints = false
         bubbleContainer.clipsToBounds = true
 
-        iconBadge.translatesAutoresizingMaskIntoConstraints = false
-        // Decorative: on a one-line reply the speaker target reaches up beside it.
-        iconBadge.isUserInteractionEnabled = false
-        iconBadge.setContentCompressionResistancePriority(.required, for: .horizontal)
-        iconBadge.setContentHuggingPriority(.required, for: .horizontal)
-
-        markdownView.leadingHangClearance = Self.avatarContentClearance
-        markdownView.leadingHangHeight = Self.avatarHangHeight
-
         // Markdown, then the action bar; a hidden bar takes no space.
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.axis = .vertical
@@ -234,7 +185,6 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         actionBar.onToggleSpeech = { [weak self] in self?.currentConfiguration.speech?.toggle?() }
 
         addSubview(bubbleContainer)
-        bubbleContainer.addSubview(iconBadge)
         bubbleContainer.addSubview(contentStack)
 
         // Constants come from the chrome style in applyChromeGeometry.
@@ -243,25 +193,10 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         self.bubbleEdges = bubbleEdges
         self.markdownEdges = markdownEdges
         NSLayoutConstraint.activate(bubbleEdges.all + markdownEdges.all)
-
-        NSLayoutConstraint.activate([
-            // Avatar stays top-leading. Markdown is full-bleed inside the bubble
-            // so multi-line prose, tables, and code reclaim the avatar column
-            // after the first line.
-            iconBadge.widthAnchor.constraint(equalToConstant: Self.avatarSize),
-            iconBadge.heightAnchor.constraint(equalToConstant: Self.avatarSize),
-            iconBadge.leadingAnchor.constraint(equalTo: markdownView.leadingAnchor),
-            iconBadge.topAnchor.constraint(
-                equalTo: markdownView.topAnchor,
-                constant: Self.avatarTopOffset
-            ),
-        ])
-
-        bubbleContainer.bringSubviewToFront(iconBadge)
     }
 
-    /// Both styles hang the avatar beside the first lines of full-width
-    /// prose; conversation rows also paint the reply as a full-width card.
+    /// The style's inset: the transcript's padded surface or conversation's
+    /// bare prose (`ChatTimelineChromeStyle.assistantBubble`).
     private func applyChromeGeometry(_ style: ChatTimelineChromeStyle) {
         guard appliedChromeStyle != style else { return }
         appliedChromeStyle = style
@@ -283,13 +218,6 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
 
         let palette = ThemeRuntimeState.currentPalette()
         applyChromeGeometry(configuration.chromeStyle)
-        iconBadge.configure(
-            sessionId: configuration.sessionId,
-            agentId: configuration.agentId,
-            agentIcon: configuration.agentIcon,
-            iconAssetCache: configuration.iconAssetCache,
-            agentVisualScale: ChatAgentIconStyle.compactVisualScale
-        )
         bubbleContainer.backgroundColor = configuration.chromeStyle.assistantFill(from: palette)
         actionBar.apply(
             itemID: configuration.itemID,

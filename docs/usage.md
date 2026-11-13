@@ -127,7 +127,9 @@ With the server's read aloud configured, a finished assistant reply has a speake
 
 - **Full** (default): every tool call and thinking block.
 - **Compact**: each turn's tool calls and thinking fold into one strip you tap to expand, showing **Icons** or **Words**.
-- **Chat**: a messaging layout with trailing bubbles for your messages, cards for replies, and a **Worked 9s · 2 steps** pill per turn.
+- **Chat**: a messaging layout with trailing bubbles for your messages, replies as plain text across the full width, and a **Worked 9s · 2 steps** pill per turn.
+
+Replies show no icon in any style; the session's icon is in the top bar.
 
 **Settings → Chat → Top Bar** chooses which buttons a chat's top bar shows and their order: **Files**, **Git**, **Outline**, **Context** (the usage ring), and **Terminal**. The default shows only Context; the rest sit in the **…** menu, which always stays and has **Customize Top Bar…**. That opens the same list as a sheet over the chat, so the bar changes as you switch buttons on and off; **Reset to Default** shows once the bar differs from the default. When the bar is too narrow for every button you chose (an iPhone, or a narrow pane), it keeps the first ones in your order and moves the rest into the **…** menu, so the title keeps its room. A pane you are resizing changes its bar when you stop dragging. A button the chat cannot use is not shown: no Files, Git, or Terminal without a workspace folder, no Git outside a Git repository (or with Git status off), no Outline for an empty timeline, and no Terminal for a sandbox or relative-folder workspace. **Terminal** opens a login shell in the session's folder ([Open Terminal here](ssh-terminal.md#open-terminal-here)).
 

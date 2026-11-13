@@ -430,7 +430,6 @@ struct MarkdownInlineVideoTests {
             isStreaming: false,
             canFork: false,
             onFork: nil,
-            sessionId: "session-a",
             resourceAccess: MarkdownResourceAccess(
                 identity: .init(
                     serverID: "server-a",

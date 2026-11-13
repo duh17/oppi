@@ -2,8 +2,6 @@ import Foundation
 
 /// Chat surfaces solved for a built-in theme (`ThemeID.chatSurfaces`).
 struct ThemeChatSurfaces: Sendable {
-    /// Conversation-layout assistant card.
-    let assistantCard: ThemeColor
     /// User bubble when Increase Contrast is on.
     let strongUserBubble: ThemeColor
 }
@@ -15,11 +13,10 @@ struct ThemeChatSurfaces: Sendable {
 /// Contrast is mostly lightness, so every color keeps its OKLCH hue and
 /// chroma from the seed palette (chroma only shrinks to stay inside sRGB) and
 /// the solver picks its lightness from WCAG 2 contrast rules:
-/// 1. Surfaces first, landing exactly on their level. The assistant card
-///    lifts one small step off `bg`; the user bubble sits a bigger step toward
-///    the ink from both `bg` and the card, so the two speakers always read
-///    apart; `bgHighlight` (inline code, table headers, the work pill) keeps
-///    showing on the card.
+/// 1. Surfaces first, landing exactly on their level. Assistant replies sit on
+///    `bg` itself; the user bubble sits a step toward the ink from it, so the
+///    two speakers always read apart; `bgHighlight` (inline code, table
+///    headers, the work pill) keeps showing on `bg`.
 /// 2. Text and accents then move only as far as their rule needs on every
 ///    surface they are drawn on, so hand-tuned colors that already pass keep
 ///    their exact value.
@@ -28,13 +25,11 @@ struct ThemeChatSurfaces: Sendable {
 enum ThemeContrast {
     /// Minimum WCAG 2 contrast ratios.
     enum Level {
-        /// Assistant card against `bg`: reads as a sheet, not a box.
-        static let cardLift: Double = 1.07
-        /// `bgHighlight` against the card and `bg`.
+        /// `bgHighlight` against `bg`.
         static let embedded: Double = 1.12
-        /// User bubble against `bg` and the assistant card.
+        /// User bubble against `bg`.
         static let bubble: Double = 1.6
-        /// Increase Contrast user bubble against `bg` and the card.
+        /// Increase Contrast user bubble against `bg`.
         static let strongBubble: Double = 2.2
         /// Body text and accents used as text (WCAG AA).
         static let text: Double = 4.5
@@ -57,17 +52,16 @@ enum ThemeContrast {
         let ink: Direction = isDark ? .lighter : .darker
         let bg = SRGB(seed.bg)
 
-        let card = solve(SRGB(seed.bgHighlight), on: [bg], level: Level.cardLift, toward: .lighter)
-        let bgHighlight = adjust(seed.bgHighlight, on: [bg, card], level: Level.embedded, toward: ink)
-        let userBubble = solve(SRGB(seed.userMessageBg), on: [bg, card], level: Level.bubble, toward: ink)
-        let strongBubble = solve(SRGB(seed.userMessageBg), on: [bg, card], level: Level.strongBubble, toward: ink)
+        let bgHighlight = adjust(seed.bgHighlight, on: [bg], level: Level.embedded, toward: ink)
+        let userBubble = solve(SRGB(seed.userMessageBg), on: [bg], level: Level.bubble, toward: ink)
+        let strongBubble = solve(SRGB(seed.userMessageBg), on: [bg], level: Level.strongBubble, toward: ink)
 
         let highlight = SRGB(bgHighlight)
         let codeBlock = SRGB(seed.bgDark)
         let toolPanels = [seed.toolPendingBg, seed.toolSuccessBg, seed.toolErrorBg].map {
             SRGB($0).composited(over: bg)
         }
-        let prose = [bg, card, highlight] + toolPanels
+        let prose = [bg, highlight] + toolPanels
 
         // Text and accents move only as far as their rule needs on every surface
         // they are drawn on, so hand-tuned colors that already pass keep their
@@ -78,20 +72,20 @@ enum ThemeContrast {
         let toolTitle = adjust(seed.toolTitle, on: prose, level: Level.text, toward: ink)
         let toolOutput = adjust(seed.toolOutput, on: prose, level: Level.text, toward: ink)
         let fg = adjust(seed.fg, on: prose + [codeBlock], level: Level.text, toward: ink)
-        let blue = adjust(seed.blue, on: [bg, card], level: Level.text, toward: ink)
-        let cyan = adjust(seed.cyan, on: [bg, card], level: Level.text, toward: ink)
-        let green = adjust(seed.green, on: [bg, card], level: Level.text, toward: ink)
-        let orange = adjust(seed.orange, on: [bg, card], level: Level.text, toward: ink)
-        let purple = adjust(seed.purple, on: [bg, card], level: Level.text, toward: ink)
-        let red = adjust(seed.red, on: [bg, card], level: Level.text, toward: ink)
-        let yellow = adjust(seed.yellow, on: [bg, card], level: Level.text, toward: ink)
-        let mdHeading = adjust(seed.mdHeading, on: [bg, card], level: Level.text, toward: ink)
-        let mdLink = adjust(seed.mdLink, on: [bg, card], level: Level.text, toward: ink)
-        let mdLinkUrl = adjust(seed.mdLinkUrl, on: [bg, card], level: Level.text, toward: ink)
-        let mdCodeBlock = adjust(seed.mdCodeBlock, on: [bg, card], level: Level.text, toward: ink)
-        let mdQuote = adjust(seed.mdQuote, on: [bg, card], level: Level.text, toward: ink)
-        let mdListBullet = adjust(seed.mdListBullet, on: [bg, card], level: Level.text, toward: ink)
-        let mdCode = adjust(seed.mdCode, on: [bg, card, highlight], level: Level.text, toward: ink)
+        let blue = adjust(seed.blue, on: [bg], level: Level.text, toward: ink)
+        let cyan = adjust(seed.cyan, on: [bg], level: Level.text, toward: ink)
+        let green = adjust(seed.green, on: [bg], level: Level.text, toward: ink)
+        let orange = adjust(seed.orange, on: [bg], level: Level.text, toward: ink)
+        let purple = adjust(seed.purple, on: [bg], level: Level.text, toward: ink)
+        let red = adjust(seed.red, on: [bg], level: Level.text, toward: ink)
+        let yellow = adjust(seed.yellow, on: [bg], level: Level.text, toward: ink)
+        let mdHeading = adjust(seed.mdHeading, on: [bg], level: Level.text, toward: ink)
+        let mdLink = adjust(seed.mdLink, on: [bg], level: Level.text, toward: ink)
+        let mdLinkUrl = adjust(seed.mdLinkUrl, on: [bg], level: Level.text, toward: ink)
+        let mdCodeBlock = adjust(seed.mdCodeBlock, on: [bg], level: Level.text, toward: ink)
+        let mdQuote = adjust(seed.mdQuote, on: [bg], level: Level.text, toward: ink)
+        let mdListBullet = adjust(seed.mdListBullet, on: [bg], level: Level.text, toward: ink)
+        let mdCode = adjust(seed.mdCode, on: [bg, highlight], level: Level.text, toward: ink)
         let syntaxComment = adjust(seed.syntaxComment, on: [codeBlock], level: Level.text, toward: ink)
         let syntaxKeyword = adjust(seed.syntaxKeyword, on: [codeBlock], level: Level.text, toward: ink)
         let syntaxFunction = adjust(seed.syntaxFunction, on: [codeBlock], level: Level.text, toward: ink)
@@ -160,7 +154,7 @@ enum ThemeContrast {
                 thinkingHigh: seed.thinkingHigh,
                 thinkingXhigh: seed.thinkingXhigh,
             ),
-            surfaces: ThemeChatSurfaces(assistantCard: card.color, strongUserBubble: strongBubble.color)
+            surfaces: ThemeChatSurfaces(strongUserBubble: strongBubble.color)
         )
     }
 

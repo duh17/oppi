@@ -780,6 +780,45 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// Queueing a follow-up during a busy turn: the send scrolls the chat to its bottom, and the
+    /// queue pill brings the strip up above the composer while that scroll still moves
+    /// (`chatRoutes.queueFollowUp`). The working row must end above the strip once it settles;
+    /// the inset growth used to be dropped mid-scroll, leaving the row under the pills.
+    func testQueuedFollowUpKeepsTheWorkingRowAboveTheStrip() {
+        launch(environment: [
+            "CHAT_ROUTES_STATUS": "busy",
+            "CHAT_ROUTES_LONG_TURNS": "30",
+            "CHAT_ROUTES_REVIEW_COMMENT": "none",
+        ])
+        let working = app.staticTexts["chat.timeline.working.text"]
+        XCTAssertTrue(working.waitUntilExists(timeout: 10), "A busy session shows the working row")
+        let strip = app.descendants(matching: .any)["extension-strip-aboveEditor-pill-message-queue"]
+        XCTAssertFalse(strip.exists, "Nothing is queued yet, so no strip shows")
+
+        // A little above the tail, so the send's scroll to the bottom moves.
+        let timeline = app.collectionViews["chat.timeline"]
+        timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+            .press(
+                forDuration: 0.1,
+                thenDragTo: timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75)),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.3
+            )
+        hold()
+        app.buttons["chatRoutes.queueFollowUp"].tap()
+        XCTAssertTrue(strip.waitUntilExists(timeout: 10), "The queued follow-up shows the queue pill")
+        XCTAssertTrue(waitFor(strip.label.contains("1 follow-up") || (strip.value as? String)?.contains("1 follow-up") == true),
+                      "The queue pill names only the follow-up: \(strip.label) \(strip.value as? String ?? "")")
+        hold(for: 2)
+        attachScreenshot("queued-follow-up-working-row")
+        XCTAssertTrue(working.exists, "The working row stays while the turn runs")
+        XCTAssertLessThanOrEqual(
+            working.frame.maxY, strip.frame.minY + 0.5,
+            "The working row (\(working.frame)) must end above the strip (\(strip.frame))"
+        )
+        assertRunning()
+    }
+
     /// A surface drawer taller than the space above the composer keeps its own height inside that
     /// space and scrolls: the Actions card at its foot is reachable, and its button reaches the
     /// socket. The session's activity clock ticks under the open drawer, as a busy session's does,
