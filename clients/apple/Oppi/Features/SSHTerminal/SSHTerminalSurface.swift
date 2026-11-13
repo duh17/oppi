@@ -69,6 +69,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// The user sent the keyboard away with its hide key or a tap: the screen
     /// stops asking for it.
     var keyboardDismissed: () -> Void = {}
+    /// The grid took or gave up the keyboard, so its accessory came or went
+    /// (`SSHTerminalKeyboardBar.carriesBar`).
+    var keyboardOwnershipChanged: () -> Void = {}
+    /// Back on the keyboard bar.
+    var goBack: () -> Void = {}
     var paintedChangeCount = -1
     /// Rebuilt when `AppFont` rebuilds (Code Font or Code Text Size change);
     /// a new cell size resizes the remote terminal on the next layout.
@@ -800,7 +805,9 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         // Hide shortcut-bar items such as Write with Siri, which insert text.
         inputAssistantItem.leadingBarButtonGroups = []
         inputAssistantItem.trailingBarButtonGroups = []
-        return super.becomeFirstResponder()
+        let became = super.becomeFirstResponder()
+        if became { keyboardOwnershipChanged() }
+        return became
     }
 
     /// The viewport cell drawn under `point`, including a history scroll that
@@ -922,7 +929,9 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         _ = trackpadArrows.takePending()
         keyRepeater.stop()
         keyStrip?.stopRepeating()
-        return super.resignFirstResponder()
+        let resigned = super.resignFirstResponder()
+        if resigned { keyboardOwnershipChanged() }
+        return resigned
     }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
@@ -1732,6 +1741,12 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         keyStrip?.setPasswordFill(host: host)
     }
 
+    /// The bottom bar's buttons on the keyboard bar while it carries them
+    /// (`SSHTerminalKeyStripView.showBar`); an empty content leaves the keys.
+    func showKeyboardBar(_ content: SSHTerminalKeyStripView.BarContent, buttons: SSHTerminalBarButtons) {
+        keyStrip?.showBar(content, buttons: buttons)
+    }
+
     func setKeyActions(_ actions: [SSHTerminalKeyAction]) {
         keyActions = actions
         keyStrip?.setProgramActions(actions)
@@ -1769,7 +1784,8 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
                     self.keyboardDismissed()
                     _ = self.resignFirstResponder()
                 },
-                fillPassword: { [weak self] in self?.fillPassword() }
+                fillPassword: { [weak self] in self?.fillPassword() },
+                goBack: { [weak self] in self?.goBack() }
             )
         )
         strip.setPasswordFill(host: passwordFillHost)

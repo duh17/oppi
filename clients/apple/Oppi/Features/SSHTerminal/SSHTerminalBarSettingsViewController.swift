@@ -142,7 +142,8 @@ final class SSHTerminalBarSettingsViewController: BarCustomizeViewController<
         case (false, false): String(localized: "Switch Terminal shows when more than one terminal is open.")
         }
         let program = String(localized: "Program Shortcuts shows the keys of the program in front, and a custom key shows only for the program you pick.")
-        return [base, multiplexers, program].compactMap { $0 }.joined(separator: " ")
+        let keyboard = String(localized: "With the terminal keyboard up, the same buttons ride on the keyboard bar, without the ones it already has.")
+        return [base, multiplexers, program, keyboard].compactMap { $0 }.joined(separator: " ")
     }
 
     // MARK: - Extra sections

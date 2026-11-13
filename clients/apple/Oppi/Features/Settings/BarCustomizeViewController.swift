@@ -135,7 +135,8 @@ class BarCustomizeViewController<Action: BarLayoutAction, Extra: Hashable & Send
     /// screen is covered at any height, so its sheet opens full (`large`).
     func presentSheet(
         from presenter: UIViewController,
-        detents: [UISheetPresentationController.Detent] = [.medium(), .large()]
+        detents: [UISheetPresentationController.Detent] = [.medium(), .large()],
+        onDismiss: (() -> Void)? = nil
     ) {
         let done = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak self] _ in
             guard let self else { return }
@@ -143,7 +144,7 @@ class BarCustomizeViewController<Action: BarLayoutAction, Extra: Hashable & Send
         })
         done.accessibilityIdentifier = "barCustomize.done"
         navigationItem.rightBarButtonItem = done
-        Router.present(self, presentation: .sheet.detents(detents).inNavigation(), from: presenter)
+        Router.present(self, presentation: .sheet.detents(detents).inNavigation(), from: presenter, onDismiss: onDismiss)
     }
 
     var layout: BarLayout<Action> { surface.layout() }

@@ -343,3 +343,103 @@ struct SSHTerminalBarPillTests {
         #expect(host.hitTest(inside, with: nil).map { $0.isDescendant(of: paste) } == true, "on Paste is Paste")
     }
 }
+
+/// The keyboard bar's second surface: the bar's buttons on the terminal
+/// keyboard's accessory, in a real window at iPad mini and iPhone widths.
+@Suite("SSH terminal keyboard bar surface")
+@MainActor
+struct SSHTerminalKeyboardBarSurfaceTests {
+    private final class Record {
+        var performed: [SSHTerminalBarSlot] = []
+        var backs = 0
+    }
+
+    private func find(_ root: UIView, _ id: String) -> UIView? {
+        if root.accessibilityIdentifier == id, !root.isHidden { return root }
+        for child in root.subviews where !child.isHidden {
+            if let match = find(child, id) { return match }
+        }
+        return nil
+    }
+
+    @Test(arguments: [(CGFloat(744), true), (CGFloat(393), false)])
+    func theBarRidesTheSecondRowAndEveryButtonReachesTheScreensOwner(width: CGFloat, showsBack: Bool) throws {
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: width, height: 800))
+        let root = UIViewController()
+        window.rootViewController = root
+        window.isHidden = false
+        defer { hideTestWindow(window) }
+        let record = Record()
+        let strip = SSHTerminalKeyStripView(handlers: .init(goBack: { record.backs += 1 }))
+        strip.apply(colors: .placeholder, foreground: .label, background: .black)
+        strip.translatesAutoresizingMaskIntoConstraints = false
+        root.view.addSubview(strip)
+        NSLayoutConstraint.activate([
+            strip.leadingAnchor.constraint(equalTo: root.view.leadingAnchor),
+            strip.trailingAnchor.constraint(equalTo: root.view.trailingAnchor),
+            strip.bottomAnchor.constraint(equalTo: root.view.bottomAnchor),
+        ])
+        let buttons = SSHTerminalBarButtons()
+        buttons.perform = { record.performed.append($0) }
+        let eof = SSHTerminalCustomKey(name: "EOF", control: true, key: "d", showFor: .all)
+        let slots: [SSHTerminalBarSlot] = [
+            .init(content: .action(.dictate)), .init(content: .action(.attach)),
+            .init(content: .action(.interrupt)), .init(content: .customKey(eof)),
+        ]
+        strip.showBar(.init(slots: slots, showsMore: true, showsBack: showsBack), buttons: buttons)
+        root.view.layoutIfNeeded()
+
+        let ids = slots.map(\.accessibilityIdentifier) + ["sshTerminal.more"]
+        let escape = try #require(find(strip, "sshTerminal.escape"))
+        let hide = try #require(find(strip, "sshTerminal.hideKeyboard"))
+        for id in ids {
+            let button = try #require(find(strip, id), "\(id) is on the keyboard bar")
+            let frame = button.convert(button.bounds, to: strip)
+            if id != "sshTerminal.more" {
+                #expect(frame.minY >= escape.convert(escape.bounds, to: strip).maxY, "\(id) rides the second row")
+                #expect(frame.maxX <= hide.convert(hide.bounds, to: strip).minX, "\(id) sits left of the dock")
+            }
+            // A 44 pt touch around the button's centre reaches it.
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            for dx: CGFloat in [-21.5, 0, 21.5] {
+                for dy: CGFloat in [-21.5, 0, 21.5] {
+                    let hit = strip.hitTest(CGPoint(x: center.x + dx, y: center.y + dy), with: nil)
+                    #expect(hit === button, "\(id) at \(dx), \(dy)")
+                }
+            }
+        }
+        // … sits in the dock above ⌄.
+        let moreFrame = buttons.more.convert(buttons.more.bounds, to: strip)
+        #expect(moreFrame.maxY <= hide.convert(hide.bounds, to: strip).minY)
+        // The group keeps the list's order.
+        let xs = try slots.map { try #require(find(strip, $0.accessibilityIdentifier)).convert(CGPoint.zero, to: strip).x }
+        #expect(xs == xs.sorted())
+        // …and is right-aligned against the dock, whatever the width.
+        let last = try #require(find(strip, slots[slots.count - 1].accessibilityIdentifier))
+        #expect(hide.convert(hide.bounds, to: strip).minX - last.convert(last.bounds, to: strip).maxX < 16)
+
+        // A tap reaches the owner with the slot it stands for; Back reaches its own.
+        for slot in slots where slot.content != .action(.attach) {
+            let control = try #require(find(strip, slot.accessibilityIdentifier) as? UIControl)
+            control.sendActions(for: .touchUpInside)
+            #expect(record.performed.last == slot)
+        }
+        #expect(record.performed.count == 3)
+        if showsBack {
+            let back = try #require(find(strip, "sshTerminal.back") as? UIControl)
+            back.sendActions(for: .touchUpInside)
+            #expect(record.backs == 1)
+        } else {
+            #expect(find(strip, "sshTerminal.back") == nil, "compact width has no Back dock")
+        }
+
+        // Handing the bar back to the pill leaves the keys alone.
+        strip.showBar(.init(), buttons: buttons)
+        root.view.layoutIfNeeded()
+        for id in ids + ["sshTerminal.back"] {
+            #expect(find(strip, id) == nil, "\(id) leaves with the bar")
+        }
+        #expect(find(strip, "sshTerminal.escape") != nil)
+        #expect(find(strip, "sshTerminal.hideKeyboard") != nil)
+    }
+}

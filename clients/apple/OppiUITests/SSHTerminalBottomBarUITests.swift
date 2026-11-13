@@ -312,6 +312,71 @@ final class SSHTerminalBottomBarUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// With the terminal keyboard up, the bar rides the keyboard bar under the
+    /// same identifiers: Attach and … are in reach, Customize Bar… opens from
+    /// there and the keyboard comes back after it, a custom key made there sends
+    /// from the keyboard bar, and after ⌄ the same ids are on the pill.
+    func testWithTheKeyboardUpTheKeyboardBarCarriesTheBar() {
+        launch(screen: "ssh-terminal")
+        let typeInTerminal = app.buttons["sshTerminal.bar.keyboard"]
+        XCTAssertTrue(typeInTerminal.waitUntilExists(timeout: 10))
+        typeInTerminal.tap()
+        let hide = app.buttons["sshTerminal.hideKeyboard"]
+        XCTAssertTrue(hide.waitUntilExists(timeout: 5), "The terminal keyboard did not come up")
+        let escape = app.buttons["sshTerminal.escape"]
+        let attach = app.buttons["sshTerminal.bar.attach"]
+        let more = app.buttons["sshTerminal.more"]
+        XCTAssertTrue(attach.waitUntilExists(timeout: 5), "Attach must ride the keyboard bar")
+        XCTAssertTrue(attach.isHittable)
+        XCTAssertGreaterThan(attach.frame.minY, escape.frame.maxY, "Attach sits in the keyboard bar's second row")
+        XCTAssertTrue(more.isHittable)
+        XCTAssertLessThan(more.frame.midY, hide.frame.midY, "… sits above ⌄")
+        XCTAssertEqual(more.frame.midX, hide.frame.midX, accuracy: 2, "… shares ⌄'s dock")
+        XCTAssertFalse(app.buttons["sshTerminal.bar.keyboard"].exists, "Type in Terminal is not repeated on the keyboard")
+        let back = app.buttons["sshTerminal.back"]
+        if app.windows.firstMatch.horizontalSizeClass == .regular {
+            XCTAssertTrue(back.isHittable, "Back has a dock on regular width")
+            XCTAssertGreaterThan(back.frame.minY, escape.frame.minY - 50, "Back is in the keyboard bar")
+        } else {
+            XCTAssertFalse(back.exists, "Compact width has no Back on the keyboard bar")
+        }
+        attachScreenshot("keyboard-bar")
+
+        // Customize Bar… from the keyboard bar's …; the keyboard comes back after it.
+        openBottomBarSettings()
+        addEOFKey()
+        closeBottomBarSettings()
+        XCTAssertTrue(hide.waitUntilExists(timeout: 5), "The keyboard must come back after Customize")
+        // iPad mini has room for it; an iPhone's two slots go to Dictate and
+        // Attach, so it is in the keyboard bar's … menu, two taps away.
+        let sent = app.staticTexts["sshTerminal.preview.sent"]
+        if app.windows.firstMatch.horizontalSizeClass == .regular {
+            XCTAssertTrue(waitFor(self.customButtons.count == 1), "The new key must be on the keyboard bar")
+            let eof = customButtons.element(boundBy: 0)
+            XCTAssertGreaterThan(eof.frame.minY, escape.frame.maxY)
+            eof.tap()
+        } else {
+            XCTAssertEqual(customButtons.count, 0, "No room for the key on a phone's keyboard bar")
+            more.tap()
+            let item = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "sshTerminal.menu.custom.")).firstMatch
+            XCTAssertTrue(item.waitUntilExists(timeout: 5), "The key is in the keyboard bar's … menu")
+            item.tap()
+        }
+        XCTAssertTrue(waitFor(sent.label.hasSuffix("04")), "EOF on the keyboard bar must send ^D: \(sent.label)")
+        XCTAssertTrue(hide.exists, "Sending a key keeps the keyboard up")
+        attachScreenshot("keyboard-bar-with-key")
+
+        // Keyboard down: the same ids answer on the pill.
+        hide.tap()
+        XCTAssertTrue(hide.waitUntilGone(timeout: 5))
+        XCTAssertFalse(escape.exists, "The keyboard bar went with the keyboard")
+        XCTAssertTrue(waitFor(attach.isHittable), "Attach is on the pill again")
+        XCTAssertTrue(app.buttons["sshTerminal.bar.keyboard"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(more.isHittable)
+        XCTAssertTrue(back.isHittable)
+        assertRunning()
+    }
+
     private func assertRunning(file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertEqual(app.state, .runningForeground, "The app must still be running", file: file, line: line)
     }

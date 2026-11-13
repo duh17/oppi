@@ -750,3 +750,97 @@ struct SSHTerminalRexControlTests {
         #expect(store.rexPanel == settings, "Reset to Default is for the bar's list")
     }
 }
+
+@Suite("SSH terminal keyboard bar")
+struct SSHTerminalKeyboardBarTests {
+    private let eof = SSHTerminalCustomKey(name: "EOF", control: true, key: "d", showFor: .all)
+
+    /// Every built-in button and Program Shortcuts on, in the default order.
+    private var everythingOn: SSHTerminalBarLayout {
+        SSHTerminalBarItem.allCases.reduce(SSHTerminalBarLayout.defaultValue) { $0.setting($1, shown: true) }
+    }
+
+    @Test func theKeyboardBarKeepsTheListsOrderAndLeavesOutWhatTheKeyboardHas() throws {
+        let pi = try #require(SSHTerminalKeymap.profile(for: "pi"))
+        let terminal = offer(program: "pi", shortcuts: SSHTerminalKeymap.actions(for: pi, userFile: nil))
+        let placement = terminal.placement(layout: everythingOn, capacity: 20, surface: .keyboardBar)
+        #expect(actions(of: placement.bar) == [.dictate, .attach, .interrupt, .browseFiles, .herdr, .rex, .switcher])
+        let left = placement.bar + placement.menu
+        for item in SSHTerminalBarSurface.repeatedOnKeyboard {
+            #expect(!left.contains { $0.item == item }, "\(item.rawValue) is on the keyboard already")
+        }
+        // Turned off, they are still not offered in its … menu.
+        let off = SSHTerminalBarSurface.repeatedOnKeyboard.reduce(everythingOn) { $0.setting($1, shown: false) }
+        let offPlacement = terminal.placement(layout: off, capacity: 20, surface: .keyboardBar)
+        #expect(!(offPlacement.bar + offPlacement.menu).contains { SSHTerminalBarSurface.repeatedOnKeyboard.contains($0.item) })
+        // The pill keeps them.
+        let pill = terminal.placement(layout: everythingOn, capacity: 30)
+        #expect(pill.bar.contains { $0.item == .action(.keyboard) } && pill.bar.contains { $0.item == .programShortcuts })
+    }
+
+    @Test func overflowLeavesFromTheEndAndATurnedOffCustomKeyIsInTheMenu() {
+        let layout = SSHTerminalBarLayout.defaultValue
+            .adding(.customKey(eof.id), shown: true)
+            .setting(.action(.browseFiles), shown: true)
+        let crowded = offer(customKeys: [eof]).placement(layout: layout, capacity: 2, surface: .keyboardBar)
+        #expect(actions(of: crowded.bar) == [.dictate, .attach])
+        #expect(crowded.menu.map(\.item) == [.action(.browseFiles), .action(.herdr), .action(.rex), .action(.switcher), .customKey(eof.id)])
+
+        let keyOff = offer(customKeys: [eof])
+            .placement(layout: layout.setting(.customKey(eof.id), shown: false), capacity: 20, surface: .keyboardBar)
+        #expect(!keyOff.bar.contains { $0.item == .customKey(eof.id) })
+        #expect(keyOff.menu.contains { $0.item == .customKey(eof.id) })
+    }
+
+    @Test func capacityLeavesTheDocksAndTheProgramRowTheirRoom() {
+        func slots(_ width: CGFloat, back: Bool) -> Int {
+            SSHTerminalKeyboardBar.capacity(width: width, safeInsets: .zero, showsBack: back)
+        }
+        // Compact widths have no Back dock.
+        #expect(slots(320, back: false) == 0)
+        #expect(slots(375, back: false) == 1)
+        #expect(slots(393, back: false) == 2)
+        // iPad mini portrait and landscape, with Back.
+        #expect(slots(744, back: true) == 8)
+        #expect(slots(1133, back: true) == 17)
+        // A landscape notch's insets come off the width.
+        #expect(SSHTerminalKeyboardBar.capacity(
+            width: 852, safeInsets: UIEdgeInsets(top: 0, left: 59, bottom: 0, right: 59), showsBack: false
+        ) == 9)
+    }
+
+    @Test func exactlyOneSurfaceCarriesTheBar() {
+        for shown in [false, true] {
+            for connected in [false, true] {
+                let keyboardBar = SSHTerminalKeyboardBar.carriesBar(accessoryShown: shown, connected: connected)
+                #expect(keyboardBar == (shown && connected), "accessory \(shown), connected \(connected)")
+            }
+        }
+    }
+
+    @Test func aRunningTakePinsDictateFirstEvenWithNoRoom() {
+        // Dictate turned off and so only in the menu, or with no room for it.
+        let off = SSHTerminalBarLayout.defaultValue.setting(.action(.dictate), shown: false)
+        for surface in [SSHTerminalBarSurface.keyboardBar, .bottomBar] {
+            let idle = offer().placement(layout: off, capacity: 0, surface: surface)
+            #expect(idle.bar.isEmpty)
+            let taking = offer().placement(layout: off, capacity: 0, surface: surface, dictating: true)
+            #expect(actions(of: taking.bar) == [.dictate])
+            #expect(!actions(of: taking.menu).contains(.dictate))
+        }
+        // With room, the take goes first and the last button leaves for the menu.
+        let pinned = offer().placement(layout: off, capacity: 2, surface: .keyboardBar, dictating: true)
+        #expect(actions(of: pinned.bar) == [.dictate, .attach])
+        #expect(actions(of: pinned.menu).first == .browseFiles)
+    }
+
+    @Test func secureInputTakesDictateAwayUnlessATakeIsRunning() {
+        #expect(SSHTerminalBarOffer.canDictate(available: true, secureInput: false, dictating: false))
+        #expect(!SSHTerminalBarOffer.canDictate(available: true, secureInput: true, dictating: false))
+        #expect(!SSHTerminalBarOffer.canDictate(available: false, secureInput: false, dictating: false))
+        #expect(SSHTerminalBarOffer.canDictate(available: true, secureInput: true, dictating: true))
+        let secure = offer(canDictate: SSHTerminalBarOffer.canDictate(available: true, secureInput: true, dictating: false))
+        let placement = secure.placement(layout: .defaultValue, capacity: 8, surface: .keyboardBar)
+        #expect(!actions(of: placement.bar + placement.menu).contains(.dictate))
+    }
+}

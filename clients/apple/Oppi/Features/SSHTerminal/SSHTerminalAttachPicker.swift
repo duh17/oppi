@@ -17,6 +17,10 @@ final class SSHTerminalAttachPicker: NSObject, PHPickerViewControllerDelegate,
     var deliver: ([PendingAttachment]) -> Void = { _ in }
     /// A pick that could not be read.
     var failed: (String) -> Void = { _ in }
+    /// A picker is about to cover the terminal, and has closed again (picked
+    /// or cancelled), so the screen can put its keyboard away and back.
+    var willPresent: () -> Void = {}
+    var closed: () -> Void = {}
 
     func menu() -> UIMenu {
         ComposerAttachmentPickers.menu(identifierPrefix: "sshTerminal.attach") { [weak self] item in
@@ -31,7 +35,13 @@ final class SSHTerminalAttachPicker: NSObject, PHPickerViewControllerDelegate,
     }
 
     private func present(_ controller: UIViewController) {
+        willPresent()
         presenter?.present(controller, animated: true)
+    }
+
+    /// Dismisses `picker`, then tells the screen it closed.
+    private func close(_ picker: UIViewController) {
+        picker.dismiss(animated: true) { [weak self] in self?.closed() }
     }
 
     private func presentFileImporter() {
@@ -47,8 +57,10 @@ final class SSHTerminalAttachPicker: NSObject, PHPickerViewControllerDelegate,
             background: .blank,
             onAddToChat: { [weak self] attachment, _ in
                 self?.deliver([attachment])
+                self?.closed()
                 return self != nil
-            }
+            },
+            onCancel: { [weak self] in self?.closed() }
         )
         controller.modalPresentationStyle = .overFullScreen
         present(controller)
@@ -60,7 +72,7 @@ final class SSHTerminalAttachPicker: NSObject, PHPickerViewControllerDelegate,
     private var send: ([PendingAttachment]) -> Void { { [weak self] in self?.deliver($0) } }
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-        picker.dismiss(animated: true)
+        close(picker)
         guard !results.isEmpty else { return }
         ComposerShared.importPhotoLibraryProviders(
             results.map(\.itemProvider),
@@ -76,16 +88,21 @@ final class SSHTerminalAttachPicker: NSObject, PHPickerViewControllerDelegate,
         _ picker: UIImagePickerController,
         didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
     ) {
-        picker.dismiss(animated: true)
+        close(picker)
         guard let image = info[.originalImage] as? UIImage else { return }
         ComposerShared.addCapturedImage(image, getAttachments: none, setAttachments: send, shouldAccept: { true })
     }
 
     func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-        picker.dismiss(animated: true)
+        close(picker)
+    }
+
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        closed()
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        closed()
         ComposerShared.loadSelectedFiles(
             .success(urls),
             getAttachments: none,

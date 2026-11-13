@@ -7,13 +7,6 @@ import UIKit
 /// pane switcher has a pill of its own. The bar ends at the keyboard layout
 /// guide, and the grid ends above it, so it never covers a terminal row.
 enum SSHTerminalFloatingControls {
-    /// The bar steps aside while a docked keyboard is up (typing) and comes
-    /// back when it goes down. A broken connection keeps it: Back and
-    /// Reconnect must stay in reach.
-    static func visible(keyboardUp: Bool, connected: Bool) -> Bool {
-        !keyboardUp || !connected
-    }
-
     /// Rows the grid leaves free for the bottom bar. Only with the keyboard
     /// down: with a docked keyboard up the bar is gone, and when a broken
     /// connection brings it back it floats over the grid's bottom rows instead
@@ -85,6 +78,41 @@ enum SSHTerminalBottomBar {
         let item = SSHTerminalGlassPill.itemWidth
         let room = roomWidth(width: width, safeInsets: safeInsets, rexPanesShown: rexPanesShown)
         return BarCapacity.slots(width: room, fixed: CGFloat(fixedItems) * item, slotWidth: item)
+    }
+}
+
+/// The bar's second surface: while a docked keyboard is up, the terminal
+/// keyboard's accessory carries the bar's buttons as a right-aligned group in
+/// its second row, … in its trailing dock above ⌄, and Back in a leading
+/// dock on regular width. The accessory keeps its 92 pt, so moving the bar
+/// there never resizes the remote shell.
+enum SSHTerminalKeyboardBar {
+    /// Width of each dock: a 44 pt key with its margins and gap.
+    static let dockWidth: CGFloat = 52
+    /// What the program row always keeps for Paste and about two of the
+    /// program's keys; the group takes only what it draws, so the program
+    /// keys keep the rest and scroll as before.
+    static let programRowReserve: CGFloat = 250
+
+    /// Exactly one surface carries the bar: the accessory while it is on
+    /// screen (the grid holds the keyboard) and the connection is good, else
+    /// the floating pill. The accessory is on screen whenever the grid is
+    /// first responder: above a docked keyboard, and also at the bottom edge
+    /// under a floating iPad keyboard, where it covers the pill, so the rule
+    /// is the accessory's presence, not a docked keyboard. A broken connection
+    /// brings back the pill with Back and Reconnect, and the accessory drops
+    /// to its keys.
+    static func carriesBar(accessoryShown: Bool, connected: Bool) -> Bool {
+        accessoryShown && connected
+    }
+
+    /// How many bar buttons the accessory's second row takes: whole 44 pt
+    /// slots of what the docks and the program row's reserve leave.
+    static func capacity(width: CGFloat, safeInsets: UIEdgeInsets, showsBack: Bool) -> Int {
+        BarCapacity.slots(
+            width: width - safeInsets.left - safeInsets.right,
+            fixed: dockWidth + (showsBack ? dockWidth : 0) + programRowReserve
+        )
     }
 }
 

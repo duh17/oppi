@@ -7,7 +7,28 @@ import UniformTypeIdentifiers
 /// from the keys that scroll. Esc, the Ctrl/Alt latches, Tab, and arrows are on
 /// top, then Paste and program actions. The dock holds hide, so a phone-width
 /// bar can always reach it.
+///
+/// While it carries the bottom bar (`SSHTerminalKeyboardBar.carriesBar`) it
+/// also draws the bar: the screen's buttons as a right-aligned group at the end
+/// of the second row, which the program keys scroll under, … in the dock above
+/// ⌄, and Back in a leading dock on regular width. The screen hands it what to
+/// draw (`BarContent`) and the buttons (`SSHTerminalBarButtons`); the strip only
+/// lays them out and forwards Back.
 final class SSHTerminalKeyStripView: UIView {
+    /// The bar this strip carries now; empty while the pill carries it.
+    struct BarContent {
+        var slots: [SSHTerminalBarSlot] = []
+        /// The Rex control and the status symbol, after the slots, when room is left.
+        var extras: [UIView] = []
+        /// … in the dock. False while the pill carries the bar.
+        var showsMore = false
+        /// Back in the leading dock (regular width only).
+        var showsBack = false
+        /// The orange dot: on Back when it shows, else on ….
+        var attentionPending = false
+        var attentionColor: UIColor = .systemOrange
+    }
+
     struct Handlers {
         var sendStrokes: ([SSHTerminalKeyStroke]) -> Void = { _ in }
         var sendKey: (GhosttyKey) -> Void = { _ in }
@@ -17,6 +38,7 @@ final class SSHTerminalKeyStripView: UIView {
         var pasteTarget: UIPasteConfigurationSupporting?
         var hideKeyboard: () -> Void = {}
         var fillPassword: () -> Void = {}
+        var goBack: () -> Void = {}
     }
 
     var handlers: Handlers
@@ -28,6 +50,10 @@ final class SSHTerminalKeyStripView: UIView {
 
     private let glass = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
     private let fill = UIView()
+    /// Holds the scroller; its mask cuts out the bar group's corner, so the
+    /// program keys scroll under the group instead of showing through it.
+    private let scrollClip = UIView()
+    private let scrollClipMask = CAShapeLayer()
     private let scroll = SSHTerminalKeyScrollView()
     private let rows = UIStackView()
     private let keys = UIStackView()
@@ -35,6 +61,22 @@ final class SSHTerminalKeyStripView: UIView {
     private let programRow = UIStackView()
     private let trailing = UIStackView()
     private let dock = UIView()
+    /// The bar's buttons, right-aligned at the end of the second row.
+    private let group = SSHTerminalKeyBarGroup()
+    /// The end of the program row, as wide as the group, so its last key can
+    /// scroll clear of it.
+    private let programTail = UIView()
+    /// … above ⌄, in a cell as tall as a key.
+    private let moreCell = SSHTerminalKeyBarGroup()
+    private let moreDot = SSHTerminalAttentionDot()
+    private let leadingDock = UIView()
+    private let back = SSHTerminalKeyButton()
+    private let backDot = SSHTerminalAttentionDot()
+    private var scrollAfterBack: NSLayoutConstraint?
+    private var scrollAtEdge: NSLayoutConstraint?
+    private var programTailWidth: NSLayoutConstraint?
+    private weak var barButtons: SSHTerminalBarButtons?
+    private(set) var barContent = BarContent()
     private var modifierButtons: [(button: UIButton, modifier: GhosttyMods, label: String)] = []
     private var arrowButtons: [SSHTerminalArrowButton] = []
     private var pasteControl: UIPasteControl?
@@ -80,6 +122,8 @@ final class SSHTerminalKeyStripView: UIView {
         fill.backgroundColor = background.withAlphaComponent(0.55)
         backgroundColor = .clear
         dock.backgroundColor = colors.fg.withAlphaComponent(0.1)
+        leadingDock.backgroundColor = dock.backgroundColor
+        back.apply(title: nil, systemImage: "chevron.backward", colors: colors)
         guard signature != appliedSignature else {
             showModifiers()
             return
@@ -87,6 +131,63 @@ final class SSHTerminalKeyStripView: UIView {
         appliedSignature = signature
         rebuild()
         showModifiers()
+    }
+
+    /// Draws the bar `content` with `buttons` (the screen's keyboard-bar set),
+    /// or nothing but the keys for an empty content. Buttons are kept by the
+    /// set between passes, so this only moves views when the slots change.
+    func showBar(_ content: BarContent, buttons: SSHTerminalBarButtons) {
+        if barButtons !== buttons {
+            barButtons = buttons
+            buttons.more.removeFromSuperview()
+            moreCell.addSubview(buttons.more)
+            NSLayoutConstraint.activate([
+                buttons.more.centerXAnchor.constraint(equalTo: moreCell.centerXAnchor),
+                buttons.more.centerYAnchor.constraint(equalTo: moreCell.centerYAnchor),
+            ])
+            moreDot.pin(to: buttons.more)
+        }
+        let views = content.slots.map(buttons.view(for:)) + content.extras
+        buttons.keepOnly(content.slots)
+        if group.arrangedSubviews.count != views.count || !zip(group.arrangedSubviews, views).allSatisfy({ $0 === $1 }) {
+            group.arrangedSubviews.forEach { $0.removeFromSuperview() }
+            views.forEach(group.addArrangedSubview)
+        }
+        buttons.refresh()
+        barContent = content
+        group.isHidden = views.isEmpty
+        moreCell.isHidden = !content.showsMore
+        leadingDock.isHidden = !content.showsBack
+        scrollAtEdge?.isActive = !content.showsBack
+        scrollAfterBack?.isActive = content.showsBack
+        for dot in [backDot, moreDot] { dot.apply(color: content.attentionColor, border: barBackground) }
+        backDot.isHidden = !(content.showsBack && content.attentionPending)
+        back.accessibilityValue = content.attentionPending ? "Attention pending" : nil
+        let dotOnMore = content.showsMore && !content.showsBack && content.attentionPending
+        moreDot.isHidden = !dotOnMore
+        buttons.more.accessibilityValue = dotOnMore ? "Attention pending" : nil
+        setNeedsLayout()
+    }
+
+    /// VoiceOver: Back, the keys row by row, the bar group, then … and ⌄.
+    /// Only what shows: a listed hidden view would still be read.
+    override var accessibilityElements: [Any]? {
+        get { [leadingDock, scrollClip, group, trailing].filter { !$0.isHidden } }
+        set { _ = newValue }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Cut the group's corner out of the scroller, with the row's gap.
+        let path = UIBezierPath(rect: scrollClip.bounds)
+        if !group.isHidden, group.bounds.width > 0 {
+            let frame = group.convert(group.bounds, to: scrollClip)
+            path.append(UIBezierPath(rect: CGRect(
+                x: frame.minX - 4, y: frame.minY, width: scrollClip.bounds.maxX - frame.minX + 4, height: frame.height
+            )))
+        }
+        scrollClipMask.frame = scrollClip.bounds
+        scrollClipMask.path = path.cgPath
     }
 
     func setProgramActions(_ actions: [SSHTerminalKeyAction]) {
@@ -165,17 +266,40 @@ final class SSHTerminalKeyStripView: UIView {
         dock.isUserInteractionEnabled = false
         dock.layer.cornerRadius = 20
         dock.layer.cornerCurve = .continuous
+        leadingDock.layer.cornerRadius = 20
+        leadingDock.layer.cornerCurve = .continuous
+        scrollClipMask.fillRule = .evenOdd
+        scrollClip.layer.mask = scrollClipMask
+        group.axis = .horizontal
+        group.alignment = .center
+        group.spacing = 0
+        group.isHidden = true
+        group.setContentHuggingPriority(.required, for: .horizontal)
+        moreCell.isHidden = true
+        leadingDock.isHidden = true
+        back.apply(title: nil, systemImage: "chevron.backward", colors: colors)
+        back.accessibilityIdentifier = "sshTerminal.back"
+        back.accessibilityLabel = "Back"
+        back.addAction(UIAction { [weak self] _ in self?.handlers.goBack() }, for: .touchUpInside)
+        backDot.pin(to: back)
 
-        for view in [glass, fill, scroll, dock, trailing] {
+        for view in [glass, fill, scrollClip, scroll, dock, trailing, group, programTail, leadingDock, back, moreCell] {
             view.translatesAutoresizingMaskIntoConstraints = false
         }
         rows.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glass)
         addSubview(fill)
-        addSubview(scroll)
+        addSubview(scrollClip)
+        scrollClip.addSubview(scroll)
         scroll.addSubview(rows)
         addSubview(dock)
         addSubview(trailing)
+        addSubview(group)
+        addSubview(leadingDock)
+        leadingDock.addSubview(back)
+        let atEdge = scrollClip.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4)
+        scrollAtEdge = atEdge
+        scrollAfterBack = scrollClip.leadingAnchor.constraint(equalTo: leadingDock.trailingAnchor, constant: 4)
 
         NSLayoutConstraint.activate([
             glass.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -186,10 +310,24 @@ final class SSHTerminalKeyStripView: UIView {
             fill.trailingAnchor.constraint(equalTo: trailingAnchor),
             fill.topAnchor.constraint(equalTo: topAnchor),
             fill.bottomAnchor.constraint(equalTo: bottomAnchor),
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            scroll.topAnchor.constraint(equalTo: topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
-            trailing.leadingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: 4),
+            atEdge,
+            scrollClip.topAnchor.constraint(equalTo: topAnchor),
+            scrollClip.bottomAnchor.constraint(equalTo: bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: scrollClip.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: scrollClip.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: scrollClip.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: scrollClip.bottomAnchor),
+            trailing.leadingAnchor.constraint(equalTo: scrollClip.trailingAnchor, constant: 4),
+            leadingDock.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            leadingDock.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            leadingDock.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+            leadingDock.widthAnchor.constraint(equalToConstant: SSHTerminalKeyboardBar.dockWidth - 4),
+            back.centerXAnchor.constraint(equalTo: leadingDock.centerXAnchor),
+            back.centerYAnchor.constraint(equalTo: leadingDock.centerYAnchor),
+            group.trailingAnchor.constraint(equalTo: scrollClip.trailingAnchor),
+            group.bottomAnchor.constraint(equalTo: bottomAnchor),
+            group.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.5),
+            moreCell.widthAnchor.constraint(equalToConstant: SSHTerminalGlassPill.itemWidth),
             trailing.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             trailing.topAnchor.constraint(equalTo: topAnchor),
             trailing.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -264,6 +402,11 @@ final class SSHTerminalKeyStripView: UIView {
                 self?.handlers.sendStrokes(action.strokes)
             }
         }
+        // The tail is made again with the row, so its width follows the group anew.
+        programRow.addArrangedSubview(programTail)
+        programTailWidth = programTail.widthAnchor.constraint(equalTo: group.widthAnchor)
+        programTailWidth?.isActive = true
+        trailing.addArrangedSubview(moreCell)
         addKey(
             title: "⌄",
             id: "sshTerminal.hideKeyboard",
@@ -370,6 +513,52 @@ final class SSHTerminalKeyStripView: UIView {
         paste.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         row.addArrangedSubview(paste)
         pasteControl = paste
+    }
+}
+
+/// The keyboard bar's button group and the dock's … cell. Their buttons are
+/// the pill's 44 × 36 pt glyphs; the cell is a 46 pt row, and a touch anywhere
+/// in it goes to the nearest button's column, so every target is 44 pt.
+final class SSHTerminalKeyBarGroup: UIStackView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard !isHidden, isUserInteractionEnabled, bounds.contains(point) else { return nil }
+        if let hit = super.hitTest(point, with: event), hit !== self { return hit }
+        let buttons = (arrangedSubviews.isEmpty ? subviews : arrangedSubviews).filter { !$0.isHidden && $0.isUserInteractionEnabled }
+        return buttons.min {
+            abs(convert($0.center, from: $0.superview).x - point.x) < abs(convert($1.center, from: $1.superview).x - point.x)
+        }
+    }
+}
+
+/// The orange attention dot on the keyboard bar's Back or ….
+final class SSHTerminalAttentionDot: UIView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        isUserInteractionEnabled = false
+        isAccessibilityElement = false
+        isHidden = true
+        layer.cornerRadius = 5
+        layer.borderWidth = 1.5
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func pin(to button: UIView) {
+        removeFromSuperview()
+        button.addSubview(self)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 10),
+            heightAnchor.constraint(equalToConstant: 10),
+            centerXAnchor.constraint(equalTo: button.centerXAnchor, constant: 11),
+            centerYAnchor.constraint(equalTo: button.centerYAnchor, constant: -11),
+        ])
+    }
+
+    func apply(color: UIColor, border: UIColor) {
+        backgroundColor = color
+        layer.borderColor = border.cgColor
     }
 }
 

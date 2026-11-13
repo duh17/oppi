@@ -1,34 +1,22 @@
 import UIKit
 import UniformTypeIdentifiers
 
-/// The bottom bar's one centred glass pill: the program-status symbol (while a
-/// program has reported), the buttons the layout draws (`SSHTerminalBarPlacement.bar`:
-/// Type in Terminal, Dictate, Attach, keys, Paste, Browse Files Here, the
-/// multiplexers' overviews, the switcher, Program Shortcuts, and custom keys),
-/// in the layout's order, then
-/// the … menu, which is always last. It sits centred between Back and the Rex
-/// pane switcher's pill, so a button added or taken away grows or shrinks it the
-/// same distance each way.
+/// The bar's buttons for one surface: the floating pill and the keyboard
+/// bar each own one set, made the same way, so a slot looks, speaks, and acts
+/// the same on both and carries the same identifier
+/// (`SSHTerminalBarSlot.accessibilityIdentifier`). Only one surface is on
+/// screen and in the accessibility tree at a time.
 ///
 /// Every button runs `perform`, so a tap, VoiceOver activation, and the …
-/// menu item for the same slot do the same thing. Paste is the system paste
-/// control, which reads the clipboard without the Allow Paste alert. Its
-/// target is this pill, not the grid: with the grid as its target, a tap made
-/// the grid first responder, which raised the keyboard (and resized the
-/// shell) for a paste that needs none, and an image did not arrive. The pill
-/// cannot become first responder, so the items arrive here with the keyboard
-/// down and go on to the grid through `deliverPaste`.
-///
-/// Buttons are kept between passes and shown or hidden inside one animation
-/// block, so the stack grows or shrinks smoothly instead of rebuilding.
-final class SSHTerminalBarPill: SSHTerminalGlassPill {
-    static let changeDuration: TimeInterval = 0.25
-
+/// menu item for the same slot do the same thing. Attach, the switcher, and …
+/// show their menus as the primary action; the screen installs those menus.
+/// Paste is the system paste control, whose items go to `pasteTarget`.
+@MainActor
+final class SSHTerminalBarButtons {
     var perform: (SSHTerminalBarSlot) -> Void = { _ in }
-    /// What the paste control's items are handed to: the grid's paste.
-    var deliverPaste: ([NSItemProvider]) -> Void = { _ in }
+    /// The paste control's target (`UIPasteControl.target`).
+    weak var pasteTarget: UIPasteConfigurationSupporting?
 
-    let status: SSHTerminalStatusGlyphButton
     /// One button per multiplexer overview (`SSHTerminalBarAction.overviews`).
     let overviews: [SSHTerminalBarAction: SSHTerminalPillButton]
     /// Opens a menu of every open terminal.
@@ -47,15 +35,12 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
     let dictate = SSHTerminalDictateButton()
     let more = SSHTerminalPillButton(systemName: "ellipsis", label: "More", identifier: "sshTerminal.more")
 
-    /// The buttons the pill draws now, in order.
-    private(set) var slots: [SSHTerminalBarSlot] = []
     private var made: [String: (slot: SSHTerminalBarSlot, view: UIView)] = [:]
     private var tint: UIColor = .label
     private var pasteBackground: UIColor = .black
     private var keysEnabled = true
 
-    init(status: SSHTerminalStatusGlyphButton) {
-        self.status = status
+    init() {
         overviews = Dictionary(uniqueKeysWithValues: SSHTerminalBarAction.overviews.map { action in
             (action, SSHTerminalPillButton(
                 image: action.image(configuration: SSHTerminalPillButton.symbolConfiguration),
@@ -63,11 +48,6 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
                 identifier: action.accessibilityIdentifier
             ))
         })
-        super.init(frame: .zero)
-        // What the grid takes: text, or an image it saves on the host.
-        pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [
-            UTType.plainText.identifier, UTType.image.identifier,
-        ])
         more.showsMenuAsPrimaryAction = true
         switcher.showsMenuAsPrimaryAction = true
         attach.showsMenuAsPrimaryAction = true
@@ -77,19 +57,15 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
             }, for: .touchUpInside)
         }
         dictate.onTap = { [weak self] in self?.perform(SSHTerminalBarSlot(content: .action(.dictate))) }
-        let fixed: [UIView] = [status, switcher, attach, dictate, more]
-            + SSHTerminalBarAction.overviews.compactMap { overviews[$0] }
-        for view in fixed {
-            view.isHidden = view !== more
-            stack.addArrangedSubview(view)
-        }
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
+    /// The buttons kept for the life of the set, whether drawn or not.
+    var persistent: [UIView] {
+        [switcher, attach, dictate, more] + SSHTerminalBarAction.overviews.compactMap { overviews[$0] }
+    }
 
-    override func paste(itemProviders: [NSItemProvider]) {
-        deliverPaste(itemProviders)
+    func isPersistent(_ view: UIView) -> Bool {
+        persistent.contains { $0 === view }
     }
 
     func button(for action: SSHTerminalBarAction) -> SSHTerminalPillButton? {
@@ -100,14 +76,10 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
         }
     }
 
-    /// The button a bar slot draws, made once and kept while the slot stays
+    /// The view a bar slot draws, made once and kept while the slot stays
     /// the same. A slot whose content changed (a custom key renamed, a
-    /// shortcut rebound) is a new button.
-    func button(for slot: SSHTerminalBarSlot) -> UIButton? {
-        view(for: slot) as? UIButton
-    }
-
-    private func view(for slot: SSHTerminalBarSlot) -> UIView {
+    /// shortcut rebound) is a new button, so its semantics start fresh.
+    func view(for slot: SSHTerminalBarSlot) -> UIView {
         if case .action(let action) = slot.content {
             if action == .dictate { return dictate }
             if let persistent = button(for: action) { return persistent }
@@ -116,6 +88,12 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
         let view = makeView(for: slot)
         made[slot.id] = (slot, view)
         return view
+    }
+
+    /// Forgets what is no longer drawn; a slot that returns is made again.
+    func keepOnly(_ slots: [SSHTerminalBarSlot]) {
+        let keep = Set(slots.map(\.id))
+        made = made.filter { keep.contains($0.key) }
     }
 
     private func makeView(for slot: SSHTerminalBarSlot) -> UIView {
@@ -141,68 +119,6 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
         return button
     }
 
-    /// Draws `next` between the status symbol (when `showsStatus`) and …. A
-    /// change is one animation block: buttons that come grow in and the pill
-    /// widens from its centre, buttons that go shrink out; `animated` false
-    /// (Reduce Motion, or no window yet) makes the same change at once.
-    func show(_ next: [SSHTerminalBarSlot], showsStatus: Bool, animated: Bool) {
-        slots = next
-        let wanted: [UIView] = (showsStatus ? [status] : []) + next.map(view(for:)) + [more]
-        let wantedIDs = Set(wanted.map(ObjectIdentifier.init))
-        let incoming = wanted.filter { $0.isHidden || $0.superview !== stack }
-        let outgoing = stack.arrangedSubviews.filter { !$0.isHidden && !wantedIDs.contains(ObjectIdentifier($0)) }
-        // Forget what is no longer drawn; a slot that returns is made again.
-        let keep = Set(next.map(\.id))
-        made = made.filter { keep.contains($0.key) }
-        // Order the stack before the animation, so only appearing and
-        // disappearing animate. Views leaving are hidden, so their place does
-        // not matter; the incoming start hidden, so they have no size yet.
-        for view in incoming {
-            view.alpha = 0
-            view.isHidden = true
-        }
-        // Nothing to move when the views on show are already these, in order:
-        // this runs on every pass, and re-adding them would rebuild the stack.
-        let onShow = stack.arrangedSubviews.filter { !$0.isHidden }
-        if incoming.isEmpty, outgoing.isEmpty, onShow.count == wanted.count, zip(onShow, wanted).allSatisfy({ $0 === $1 }) {
-            refreshButtons()
-            return
-        }
-        for view in wanted { stack.addArrangedSubview(view) }
-        let change = {
-            for view in incoming {
-                view.isHidden = false
-                view.alpha = 1
-            }
-            for view in outgoing {
-                view.isHidden = true
-                view.alpha = 0
-            }
-            self.superview?.layoutIfNeeded()
-        }
-        let settle = {
-            // Only what is still unwanted: a later pass may have brought one back.
-            for view in outgoing where view.isHidden && !self.isPersistent(view) {
-                view.removeFromSuperview()
-            }
-        }
-        if animated, !incoming.isEmpty || !outgoing.isEmpty, window != nil {
-            UIView.animate(
-                withDuration: Self.changeDuration, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut],
-                animations: change, completion: { _ in settle() }
-            )
-        } else {
-            change()
-            settle()
-        }
-        refreshButtons()
-    }
-
-    private func isPersistent(_ view: UIView) -> Bool {
-        view === status || view === more || view === switcher || view === attach || view === dictate
-            || overviews.values.contains { $0 === view }
-    }
-
     /// `waiting` holds each available multiplexer's count of panes that need
     /// you; one it does not name has not answered. Keys dim while there is no
     /// connection to send them on. `background` is the terminal's: the paste
@@ -214,15 +130,16 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
         openTerminals: Int,
         tint: UIColor,
         background: UIColor,
-        keysEnabled: Bool
+        keysEnabled: Bool,
+        traits: UITraitCollection
     ) {
         // Compared resolved: a theme color is a new dynamic UIColor every pass.
         func same(_ one: UIColor, _ two: UIColor) -> Bool {
-            one.resolvedColor(with: traitCollection) == two.resolvedColor(with: traitCollection)
+            one.resolvedColor(with: traits) == two.resolvedColor(with: traits)
         }
         if !same(tint, self.tint) || !same(background, pasteBackground) {
             // The paste control takes its colors only when it is made: the
-            // next `show` makes it again.
+            // next `view(for:)` makes it again.
             made["action.paste"] = nil
         }
         self.tint = tint
@@ -242,11 +159,11 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
         more.apply(tint: tint)
         attach.apply(tint: tint)
         dictate.apply(tint: tint)
-        refreshButtons()
+        refresh()
     }
 
-    /// The state every button carries, for the buttons there are now.
-    private func refreshButtons() {
+    /// The state every made button carries.
+    func refresh() {
         for (_, entry) in made {
             guard let button = entry.view as? SSHTerminalPillButton else { continue }
             button.apply(tint: tint)
@@ -262,7 +179,7 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
         style.baseBackgroundColor = pasteBackground
         let paste = UIPasteControl(configuration: style)
         paste.translatesAutoresizingMaskIntoConstraints = false
-        paste.target = self
+        paste.target = pasteTarget
         paste.accessibilityIdentifier = SSHTerminalBarAction.paste.accessibilityIdentifier
         let width = paste.widthAnchor.constraint(equalToConstant: SSHTerminalGlassPill.itemWidth)
         width.priority = .required - 1
@@ -271,6 +188,137 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
             paste.heightAnchor.constraint(equalToConstant: SSHTerminalGlassPill.height),
         ])
         return paste
+    }
+}
+
+/// The bottom bar's one centred glass pill: the program-status symbol (while a
+/// program has reported), the buttons the layout draws (`SSHTerminalBarPlacement.bar`:
+/// Type in Terminal, Dictate, Attach, keys, Paste, Browse Files Here, the
+/// multiplexers' overviews, the switcher, Program Shortcuts, and custom keys),
+/// in the layout's order, then
+/// the … menu, which is always last. It sits centred between Back and the Rex
+/// pane switcher's pill, so a button added or taken away grows or shrinks it the
+/// same distance each way. Its buttons are a `SSHTerminalBarButtons` set.
+///
+/// Paste's target is this pill, not the grid: with the grid as its target, a
+/// tap made the grid first responder, which raised the keyboard (and resized
+/// the shell) for a paste that needs none, and an image did not arrive. The
+/// pill cannot become first responder, so the items arrive here with the
+/// keyboard down and go on to the grid through `deliverPaste`.
+///
+/// Buttons are kept between passes and shown or hidden inside one animation
+/// block, so the stack grows or shrinks smoothly instead of rebuilding.
+final class SSHTerminalBarPill: SSHTerminalGlassPill {
+    static let changeDuration: TimeInterval = 0.25
+
+    /// What the paste control's items are handed to: the grid's paste.
+    var deliverPaste: ([NSItemProvider]) -> Void = { _ in }
+
+    let status: SSHTerminalStatusGlyphButton
+    let buttons = SSHTerminalBarButtons()
+    var more: SSHTerminalPillButton { buttons.more }
+
+    /// The buttons the pill draws now, in order.
+    private(set) var slots: [SSHTerminalBarSlot] = []
+
+    init(status: SSHTerminalStatusGlyphButton) {
+        self.status = status
+        super.init(frame: .zero)
+        // What the grid takes: text, or an image it saves on the host.
+        pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [
+            UTType.plainText.identifier, UTType.image.identifier,
+        ])
+        buttons.pasteTarget = self
+        for view in [status] + buttons.persistent {
+            view.isHidden = view !== more
+            stack.addArrangedSubview(view)
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func paste(itemProviders: [NSItemProvider]) {
+        deliverPaste(itemProviders)
+    }
+
+    func button(for action: SSHTerminalBarAction) -> SSHTerminalPillButton? {
+        buttons.button(for: action)
+    }
+
+    /// The button a bar slot draws (`SSHTerminalBarButtons.view(for:)`).
+    func button(for slot: SSHTerminalBarSlot) -> UIButton? {
+        buttons.view(for: slot) as? UIButton
+    }
+
+    /// Draws `next` between the status symbol (when `showsStatus`) and …. A
+    /// change is one animation block: buttons that come grow in and the pill
+    /// widens from its centre, buttons that go shrink out; `animated` false
+    /// (Reduce Motion, or no window yet) makes the same change at once.
+    func show(_ next: [SSHTerminalBarSlot], showsStatus: Bool, animated: Bool) {
+        slots = next
+        let wanted: [UIView] = (showsStatus ? [status] : []) + next.map(buttons.view(for:)) + [more]
+        let wantedIDs = Set(wanted.map(ObjectIdentifier.init))
+        let incoming = wanted.filter { $0.isHidden || $0.superview !== stack }
+        let outgoing = stack.arrangedSubviews.filter { !$0.isHidden && !wantedIDs.contains(ObjectIdentifier($0)) }
+        buttons.keepOnly(next)
+        // Order the stack before the animation, so only appearing and
+        // disappearing animate. Views leaving are hidden, so their place does
+        // not matter; the incoming start hidden, so they have no size yet.
+        for view in incoming {
+            view.alpha = 0
+            view.isHidden = true
+        }
+        // Nothing to move when the views on show are already these, in order:
+        // this runs on every pass, and re-adding them would rebuild the stack.
+        let onShow = stack.arrangedSubviews.filter { !$0.isHidden }
+        if incoming.isEmpty, outgoing.isEmpty, onShow.count == wanted.count, zip(onShow, wanted).allSatisfy({ $0 === $1 }) {
+            buttons.refresh()
+            return
+        }
+        for view in wanted { stack.addArrangedSubview(view) }
+        let change = {
+            for view in incoming {
+                view.isHidden = false
+                view.alpha = 1
+            }
+            for view in outgoing {
+                view.isHidden = true
+                view.alpha = 0
+            }
+            self.superview?.layoutIfNeeded()
+        }
+        let settle = {
+            // Only what is still unwanted: a later pass may have brought one back.
+            for view in outgoing where view.isHidden && view !== self.status && !self.buttons.isPersistent(view) {
+                view.removeFromSuperview()
+            }
+        }
+        if animated, !incoming.isEmpty || !outgoing.isEmpty, window != nil {
+            UIView.animate(
+                withDuration: Self.changeDuration, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut],
+                animations: change, completion: { _ in settle() }
+            )
+        } else {
+            change()
+            settle()
+        }
+        buttons.refresh()
+    }
+
+    /// The pill's colors and button state (`SSHTerminalBarButtons.apply`).
+    func apply(
+        themeID: ThemeID,
+        waiting: [SSHTerminalBarAction: Int],
+        openTerminals: Int,
+        tint: UIColor,
+        background: UIColor,
+        keysEnabled: Bool
+    ) {
+        buttons.apply(
+            themeID: themeID, waiting: waiting, openTerminals: openTerminals, tint: tint,
+            background: background, keysEnabled: keysEnabled, traits: traitCollection
+        )
     }
 }
 

@@ -59,6 +59,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private lazy var barPill = SSHTerminalBarPill(status: statusGlyph)
     /// A Rex pane's one Rex control, bottom trailing.
     private let rexPill = SSHTerminalRexPanesPill()
+    /// The bar's buttons on the keyboard bar (`SSHTerminalKeyStripView.showBar`),
+    /// and the Rex control and status symbol there, which take its leftover room.
+    private let keyboardBarButtons = SSHTerminalBarButtons()
+    private let keyboardBarRexPanes = SSHTerminalRexPanesButton()
+    private let keyboardBarStatus = SSHTerminalStatusGlyphButton()
     private let barStore: SSHTerminalBarStore
     private lazy var barLayout = barStore.layout
     private lazy var barCustomKeys = barStore.customKeys
@@ -66,6 +71,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// What the bar drew on the last pass. The … menu offers its `menu`,
     /// so the menu opened now matches the bar on screen.
     private var barPlacement = SSHTerminalBarPlacement(bar: [], menu: [])
+    /// The same for the keyboard bar, whose … menu offers this one's `menu`.
+    private var keyboardBarPlacement = SSHTerminalBarPlacement(bar: [], menu: [])
     private var barLayoutObserver: NSObjectProtocol?
     /// The width and side insets the pill's capacity was last worked out for.
     private var barFit = SSHTerminalBarFit()
@@ -249,6 +256,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         isOnScreen = true
+        // Back from a screen the keyboard bar opened: its keyboard returns.
+        setNeedsUpdateProperties()
         backSwipe?.uninstall()
         backSwipe = SSHTerminalBackSwipe(navigation: navigationController)
         // Remote clipboard writes apply only while this screen is in front.
@@ -434,10 +443,12 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         updateBanners(connecting: connecting, connected: connected, networkChanged: networkChanged, themeID: chromeID)
         updateNotice(themeID: chromeID)
         updateCopyAndLive(themeID: chromeID)
-        barPill.dictate.apply(
-            presentation: dictationShown,
-            colors: ComposerThemeColors(palette: chromeID.palette, terminal: terminalColors)
-        )
+        for buttons in [barPill.buttons, keyboardBarButtons] {
+            buttons.dictate.apply(
+                presentation: dictationShown,
+                colors: ComposerThemeColors(palette: chromeID.palette, terminal: terminalColors)
+            )
+        }
         takeTerminalKeyboard()
         updatePasswordFill(connected: connected)
         if let gridView {
@@ -465,7 +476,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         topStack.translatesAutoresizingMaskIntoConstraints = false
 
         backPill.button.addAction(UIAction { [weak self] _ in self?.goBack() }, for: .touchUpInside)
-        barPill.perform = { [weak self] slot in self?.perform(slot) }
+        barPill.buttons.perform = { [weak self] slot in self?.perform(slot) }
+        keyboardBarButtons.perform = { [weak self] slot in self?.perform(slot) }
         barPill.deliverPaste = { [weak self] items in self?.gridView?.paste(itemProviders: items) }
         dictation.type = { [weak self] text in self?.gridView?.typeDictation(text) }
         dictation.startFailed = { [weak self] message in
@@ -475,7 +487,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         attachPicker.draftStore = { [weak self] in self.flatMap { AppRootEnvironment.near($0)?.composerDraftStore } }
         attachPicker.deliver = { [weak self] attachments in self?.attach(attachments) }
         attachPicker.failed = { [weak self] message in self?.presentPasteFailure(message) }
-        barPill.attach.menu = attachPicker.menu()
+        attachPicker.willPresent = { [weak self] in self?.leaveKeyboardForSheet() }
+        attachPicker.closed = { [weak self] in self?.sheetClosed() }
+        barPill.buttons.attach.menu = attachPicker.menu()
+        keyboardBarButtons.attach.menu = barPill.buttons.attach.menu
         connectionBanner.onReconnect = { [weak self] in self?.reconnect() }
         noticeCard.onDismiss = { [weak self] key in
             self?.attention.dismiss(key)
@@ -486,6 +501,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         backToLive.accessibilityLabel = "Back to Live"
         backToLive.onTap = { [weak self] in self?.gridView?.backToLive() }
         statusGlyph.onOpen = { [weak self] in self?.showStatusDetail() }
+        keyboardBarStatus.onOpen = { [weak self] in self?.showStatusDetail() }
 
         connectionBanner.isHidden = true
         inputBanner.isHidden = true
@@ -570,12 +586,14 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         // The minimap's cells, the switcher's menu, and the swipe all show a
         // pane through `showPane`.
         rexMinimap.select = { [weak self] block in self?.showPane(block) }
-        rexPill.button.addAction(UIAction { [weak self] _ in self?.showRexPanel() }, for: .touchUpInside)
-        rexPill.button.installMenu(
-            state: { [weak self] in self?.channel.rex?.state },
-            select: { [weak self] block in self?.showPane(block) },
-            newPane: { [weak self] in self?.gridView?.createPane() }
-        )
+        for button in [rexPill.button, keyboardBarRexPanes] {
+            button.addAction(UIAction { [weak self] _ in self?.showRexPanel() }, for: .touchUpInside)
+            button.installMenu(
+                state: { [weak self] in self?.channel.rex?.state },
+                select: { [weak self] block in self?.showPane(block) },
+                newPane: { [weak self] in self?.gridView?.createPane() }
+            )
+        }
         gridClip.translatesAutoresizingMaskIntoConstraints = false
         gridClip.clipsToBounds = true
         view.addSubview(gridClip)
@@ -644,6 +662,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         )
         grid.translatesAutoresizingMaskIntoConstraints = false
         grid.keyboardDismissed = { [weak self] in self?.keyboardWasHidden() }
+        grid.keyboardOwnershipChanged = { [weak self] in self?.keyboardOwnershipChanged() }
+        grid.goBack = { [weak self] in self?.goBack() }
         grid.secureInputChanged = { [weak self] in self?.secureInputChanged($0) }
         grid.fillPassword = { [weak self] in self?.fillPassword() }
         grid.pasteImage = { [weak self] in self?.pasteImage($0) }
@@ -763,7 +783,15 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         barPill.more.menu = UIMenu(
             title: header,
             children: [UIDeferredMenuElement.uncached { [weak self] completion in
-                completion(self?.overflowElements() ?? [])
+                guard let self else { return completion([]) }
+                completion(self.overflowElements(offering: self.barPlacement.menu))
+            }]
+        )
+        keyboardBarButtons.more.menu = UIMenu(
+            title: header,
+            children: [UIDeferredMenuElement.uncached { [weak self] completion in
+                guard let self else { return completion([]) }
+                completion(self.overflowElements(offering: self.keyboardBarPlacement.menu))
             }]
         )
     }
@@ -771,8 +799,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// The switcher's menu is built when it opens, so it lists the terminals
     /// open then, with the one on screen checked. Installed once.
     private func installSwitcherMenu() {
-        guard barPill.switcher.menu == nil else { return }
-        barPill.switcher.menu = UIMenu(children: [switcherElements()])
+        guard barPill.buttons.switcher.menu == nil else { return }
+        barPill.buttons.switcher.menu = UIMenu(children: [switcherElements()])
+        keyboardBarButtons.switcher.menu = barPill.buttons.switcher.menu
     }
 
     /// The open terminals, resolved when the menu opens. The switcher button and
@@ -793,11 +822,12 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     }
 
     /// The … menu: the bar's actions that have no button now (turned off, or
-    /// no room), in the layout's order, then the host's commands, then
+    /// no room) on the surface it serves (`offering`, that placement's
+    /// `menu`), in the layout's order, then the host's commands, then
     /// Customize Bar. Inline groups draw the separators.
-    private func overflowElements() -> [UIMenuElement] {
+    private func overflowElements(offering: [SSHTerminalBarSlot]) -> [UIMenuElement] {
         var groups: [UIMenuElement] = []
-        let hidden = barPlacement.menu.map(menuElement(for:))
+        let hidden = offering.map(menuElement(for:))
         if !hidden.isEmpty { groups.append(UIMenu(options: .displayInline, children: hidden)) }
         var items: [UIMenuElement] = []
         if channel.connected, let route = channel.rex?.route {
@@ -876,8 +906,12 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             canBrowseFiles: !channel.workingDirectory.isEmpty && pairedServer != nil,
             // Dictation needs the paired server (its engine setting and
             // dictionary) and the microphone, which a Live Voice call holds.
-            canDictate: serverConnection() != nil
-                && ComposerShared.dictation(dictation.manager, near: viewIfLoaded) != nil,
+            canDictate: SSHTerminalBarOffer.canDictate(
+                available: serverConnection() != nil
+                    && ComposerShared.dictation(dictation.manager, near: viewIfLoaded) != nil,
+                secureInput: secureEntryActive,
+                dictating: dictating
+            ),
             // Attachments are saved on the host over SSH, which a Rex reached
             // over Tailscale alone does not have.
             canAttach: channel.sideCommandsUnavailable == nil,
@@ -894,6 +928,22 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     }
 
     private var canSendKeys: Bool { channel.connected && !channel.inputClosed }
+
+    /// This terminal's take is starting, listening, or finishing: Dictate is
+    /// pinned to the bar that shows, so the take always has a visible stop.
+    private var dictating: Bool {
+        let shown = dictation.presentation
+        return shown.isRecording || shown.isPreparing || shown.isProcessing
+    }
+
+    /// The keyboard bar is on screen: above a docked keyboard (the grid is the
+    /// screen's only text input), or at the bottom edge under a floating one,
+    /// which `keyboardUp` does not count, while the grid holds the keyboard.
+    private var accessoryShown: Bool { keyboardUp || gridView?.isFirstResponder == true }
+
+    private var keyboardBarCarriesBar: Bool {
+        SSHTerminalKeyboardBar.carriesBar(accessoryShown: accessoryShown, connected: channel.connected)
+    }
 
     private func serverConnection() -> ServerConnection? {
         dictationConnection ?? AppRootEnvironment.near(self)?.windowConnectionOrStandIn
@@ -949,7 +999,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// Customize for the bottom bar (Settings > Terminal > Bottom Bar), as a
     /// sheet over the terminal.
     private func customizeBar() {
-        SSHTerminalBarSettingsViewController(context: barContext).presentSheet(from: self, detents: [.large()])
+        leaveKeyboardForSheet()
+        SSHTerminalBarSettingsViewController(context: barContext).presentSheet(
+            from: self, detents: [.large()], onDismiss: { [weak self] in self?.sheetClosed() }
+        )
     }
 
     private func updateFloatingControls(themeID: ThemeID) {
@@ -987,7 +1040,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                 }
             }
         }
-        barPlacement = barOffer(openTerminals: openTerminals).placement(
+        let offer = barOffer(openTerminals: openTerminals)
+        let background = lastTerminalColors?.background.map(UIColor.init) ?? themeID.palette.ui.bg
+        barPlacement = offer.placement(
             layout: barLayout,
             capacity: SSHTerminalBottomBar.capacity(
                 width: view.bounds.width,
@@ -995,14 +1050,15 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                 rexPanesShown: rexPanesShown,
                 // The status symbol, when a program has reported, and ….
                 fixedItems: (showsStatus ? 1 : 0) + 1
-            )
+            ),
+            dictating: dictating
         )
         barPill.apply(
             themeID: themeID,
             waiting: overviewsWaiting,
             openTerminals: openTerminals,
             tint: tint,
-            background: lastTerminalColors?.background.map(UIColor.init) ?? themeID.palette.ui.bg,
+            background: background,
             keysEnabled: canSendKeys
         )
         barPill.show(barPlacement.bar, showsStatus: showsStatus, animated: animates)
@@ -1013,6 +1069,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         )
         if rexPanesShown, headline != nil || progress != nil { attention.glyphFrame.rect = rexPill.button.glyphFrame.rect }
         backPill.apply(themeID: themeID, attentionPending: attentionPending(), foreground: lastTerminalColors?.foreground.map(UIColor.init))
+        updateKeyboardBar(
+            offer: offer, themeID: themeID, tint: tint, background: background, openTerminals: openTerminals,
+            showsStatus: showsStatus, rexStatus: rexPillStatus(headline: headline, progress: progress)
+        )
         updateRexPanes(themeID: themeID)
         installMenu(
             title: SSHTerminalMenuHeader.name(
@@ -1022,6 +1082,74 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             folder: channel.workingDirectory
         )
         applyControlsVisibility(animation: .init(duration: 0.2, options: [.curveEaseInOut, .beginFromCurrentState]))
+    }
+
+    /// The keyboard bar's share of the pass: while it carries the bar, the
+    /// same offer and layout placed at its capacity, without what the keyboard
+    /// already has; then the Rex control and the status symbol in what room is
+    /// left (they never displace a chosen button). Otherwise it is keys only.
+    private func updateKeyboardBar(
+        offer: SSHTerminalBarOffer,
+        themeID: ThemeID,
+        tint: UIColor,
+        background: UIColor,
+        openTerminals: Int,
+        showsStatus: Bool,
+        rexStatus: SSHTerminalRexPillStatus
+    ) {
+        guard let gridView else { return }
+        guard keyboardBarCarriesBar else {
+            keyboardBarPlacement = SSHTerminalBarPlacement(bar: [], menu: [])
+            gridView.showKeyboardBar(.init(), buttons: keyboardBarButtons)
+            return
+        }
+        // Back has a dock of its own on regular width; on compact the edge
+        // swipe and VoiceOver's scrub go back, and its dot moves to ….
+        let showsBack = AdaptiveWidth.isWide(traitCollection)
+        let capacity = SSHTerminalKeyboardBar.capacity(
+            width: view.bounds.width, safeInsets: view.safeAreaInsets, showsBack: showsBack
+        )
+        keyboardBarPlacement = offer.placement(
+            layout: barLayout, capacity: capacity, surface: .keyboardBar, dictating: dictating
+        )
+        keyboardBarButtons.apply(
+            themeID: themeID, waiting: overviewsWaiting, openTerminals: openTerminals, tint: tint,
+            background: background, keysEnabled: canSendKeys, traits: traitCollection
+        )
+        var room = capacity - keyboardBarPlacement.bar.count
+        var extras: [UIView] = []
+        if let state = channel.rex?.state, room > 0 {
+            keyboardBarRexPanes.apply(state: state, tint: tint, status: rexStatus, themeID: themeID, reduceMotion: reduceMotion)
+            extras.append(keyboardBarRexPanes)
+            room -= 1
+            if rexStatus.headline != nil || rexStatus.progress != nil {
+                attention.glyphFrame.rect = keyboardBarRexPanes.glyphFrame.rect
+            }
+        }
+        if showsStatus, room > 0 {
+            let rollup = programRollup
+            keyboardBarStatus.apply(
+                status: rollup?.headline,
+                summary: rollup?.summaryText ?? "",
+                themeID: themeID,
+                reduceMotion: reduceMotion,
+                root: channel.programStatus.root.map { .init(state: $0.state, revision: $0.revision) },
+                progress: channel.progress.report
+            )
+            extras.append(keyboardBarStatus)
+            attention.glyphFrame.rect = keyboardBarStatus.glyphFrame.rect
+        }
+        gridView.showKeyboardBar(
+            .init(
+                slots: keyboardBarPlacement.bar,
+                extras: extras,
+                showsMore: true,
+                showsBack: showsBack,
+                attentionPending: attentionPending(),
+                attentionColor: themeID.palette.ui.orange
+            ),
+            buttons: keyboardBarButtons
+        )
     }
 
     /// Puts the pane the session shows on the grid, unless a slide is running
@@ -1117,7 +1245,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// the accessibility tree, and gives its rows back to the grid; edge-swipe
     /// back still works.
     private func applyControlsVisibility(animation: SSHTerminalKeyboard.Animation?) {
-        let visible = SSHTerminalFloatingControls.visible(keyboardUp: keyboardUp, connected: channel.connected)
+        let visible = !keyboardBarCarriesBar
         // Geometry is idempotent and must apply even when the bar's visibility
         // does not change: the keyboard alone moves the reserve.
         applyBottomBarGeometry(visible: visible)
@@ -1194,9 +1322,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         // The reserve depends on the keyboard, and the bar's visibility may not
         // change with it (a broken connection keeps the bar), so size the grid
         // here too: it lands in the one resize this change already sends.
-        applyBottomBarGeometry(
-            visible: SSHTerminalFloatingControls.visible(keyboardUp: keyboardUp, connected: channel.connected)
-        )
+        applyBottomBarGeometry(visible: !keyboardBarCarriesBar)
         applyControlsVisibility(animation: SSHTerminalKeyboard.animation(duration: max(duration, 0.2), curve: curve))
         guard isOnScreen, !isLeaving, let gridView else { return }
         keyboardTransition &+= 1
@@ -1399,6 +1525,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     }
 
     private func takeTerminalKeyboard() {
+        if keyboardReturnsWhenUncovered, isUncovered {
+            keyboardReturnsWhenUncovered = false
+            wantsTerminalKeyboard = true
+        }
         guard wantsTerminalKeyboard, let grid = gridView, grid.window != nil else { return }
         if !grid.isFirstResponder { _ = grid.becomeFirstResponder() }
         if grid.isFirstResponder { wantsTerminalKeyboard = false }
@@ -1406,6 +1536,40 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     private func keyboardWasHidden() {
         wantsTerminalKeyboard = false
+    }
+
+    /// The grid took or gave up the keyboard: the bar moves to the surface
+    /// that shows now, in the next pass.
+    private func keyboardOwnershipChanged() {
+        applyControlsVisibility(animation: .init(duration: 0.2, options: [.curveEaseInOut, .beginFromCurrentState]))
+        setNeedsUpdateProperties()
+    }
+
+    /// A sheet or screen opened from the keyboard bar covers the terminal:
+    /// the keyboard goes down so it does not sit over the sheet, and comes
+    /// back once nothing covers the terminal (`takeTerminalKeyboard`). UIKit
+    /// does not bring back a responder the screen resigned itself.
+    private var keyboardReturnsWhenUncovered = false
+
+    private func leaveKeyboardForSheet() {
+        guard let grid = gridView, grid.isFirstResponder else { return }
+        keyboardReturnsWhenUncovered = true
+        _ = grid.resignFirstResponder()
+    }
+
+    /// Nothing presented over the terminal and nothing pushed above it.
+    private var isUncovered: Bool {
+        isOnScreen && presentedViewController == nil && navigationController.map { $0.topViewController === self } ?? true
+    }
+
+    /// A sheet opened from the bar closed. Asks again once its dismissal has
+    /// finished, since a picker reports before it has gone.
+    private func sheetClosed() {
+        if let coordinator = presentedViewController?.transitionCoordinator {
+            coordinator.animate(alongsideTransition: nil) { [weak self] _ in self?.setNeedsUpdateProperties() }
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.setNeedsUpdateProperties() }
+        }
     }
 
     /// A password prompt appeared or ended: Fill Password follows it.
@@ -1544,6 +1708,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private func showOverview(_ action: SSHTerminalBarAction) {
         guard !presentingOverview, let source = overview(action) else { return }
         presentingOverview = true
+        leaveKeyboardForSheet()
         source.watching = true
         // A Rex pane opens here, in a terminal of its own over the same host.
         rex.openPane = { [weak self] pane in self?.openRexPane(pane) }
@@ -1560,6 +1725,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             onDismiss: { [weak self] in
                 self?.presentingOverview = false
                 source.watching = false
+                self?.sheetClosed()
             }
         )
     }
@@ -1571,6 +1737,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private func showRexPanel() {
         guard !presentingOverview, let model = channel.rex else { return }
         presentingOverview = true
+        leaveKeyboardForSheet()
         let sessionID = model.sessionID
         let monitor = rex
         monitor.watching = true
@@ -1601,6 +1768,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             onDismiss: { [weak self] in
                 self?.presentingOverview = false
                 monitor.watching = false
+                self?.sheetClosed()
             }
         )
     }
@@ -1631,7 +1799,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             ),
             presentation: .popover.keepsPopoverInCompactWidth(),
             from: self,
-            sourceView: statusGlyph,
+            sourceView: keyboardBarCarriesBar ? keyboardBarStatus : statusGlyph,
             onDismiss: { [weak self] in self?.presentingStatusDetail = false }
         )
     }
@@ -1787,6 +1955,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         let trimmedHome = home.hasSuffix("/") && home.count > 1 ? String(home.dropLast()) : home
         var relative = folder == trimmedHome ? "" : String(folder.dropFirst(trimmedHome.count + 1))
         if !relative.isEmpty, !relative.hasSuffix("/") { relative += "/" }
+        leaveKeyboardForSheet()
         Router.push(
             FileBrowserViewController(
                 root: root,

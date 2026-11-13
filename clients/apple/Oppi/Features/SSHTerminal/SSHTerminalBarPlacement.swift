@@ -276,6 +276,23 @@ struct SSHTerminalBarSlot: BarSlot, Equatable, Identifiable {
 /// What the bottom bar draws, in one pill, and what the … menu offers.
 typealias SSHTerminalBarPlacement = BarPlacement<SSHTerminalBarSlot>
 
+/// Where the bar's buttons are drawn: the floating pill over the grid, or the
+/// terminal keyboard's accessory while a docked keyboard is up
+/// (`SSHTerminalKeyboardBar.carriesBar`). One layout, one order, one shown
+/// set; only what the surface already has is left out.
+enum SSHTerminalBarSurface: Equatable {
+    case bottomBar
+    case keyboardBar
+
+    /// What the keyboard bar's fixed keys (Esc, Tab, ↑, ↓, Paste, the
+    /// program's keys, ⌄) and the keyboard itself (Return) already have.
+    /// They are neither drawn nor offered in its … menu.
+    static let repeatedOnKeyboard: Set<SSHTerminalBarItem> = [
+        .action(.keyboard), .action(.escape), .action(.tab), .action(.up), .action(.down), .action(.enter),
+        .action(.paste), .programShortcuts,
+    ]
+}
+
 /// What the bar offers this terminal now, and the one place that decides it:
 /// the built-in buttons this screen can use (its multiplexer, the hosts it
 /// reaches, how many terminals are open), the custom keys that show for the
@@ -319,6 +336,14 @@ struct SSHTerminalBarOffer: Equatable {
         self.shortcuts = shortcuts
     }
 
+    /// Whether Dictate is offered: a paired server and a free microphone
+    /// (`available`), and not while a password prompt has secure entry on, so
+    /// dictation never hears a password. A take already running keeps its
+    /// button, so it can always be stopped.
+    static func canDictate(available: Bool, secureInput: Bool, dictating: Bool) -> Bool {
+        dictating || (available && !secureInput)
+    }
+
     /// The list items this terminal can offer: what `BarLayout` filters by.
     var items: Set<SSHTerminalBarItem> {
         var items = Set(actions.map(SSHTerminalBarItem.action))
@@ -339,7 +364,24 @@ struct SSHTerminalBarOffer: Equatable {
     /// and the … menu's: everything that overflowed, and every turned-off
     /// button that has no other home (`BarLayout.placement`). A button the
     /// terminal cannot offer is in neither.
-    func placement(layout: SSHTerminalBarLayout, capacity: Int) -> SSHTerminalBarPlacement {
-        layout.placement(available: items, capacity: capacity, slots: slots(for:))
+    ///
+    /// The keyboard bar leaves out what the keyboard already has
+    /// (`SSHTerminalBarSurface.repeatedOnKeyboard`). A running take
+    /// (`dictating`) is drawn first, even with no room for anything, so the
+    /// take always has a visible stop; the rest keep their order after it.
+    func placement(
+        layout: SSHTerminalBarLayout,
+        capacity: Int,
+        surface: SSHTerminalBarSurface = .bottomBar,
+        dictating: Bool = false
+    ) -> SSHTerminalBarPlacement {
+        var available = items
+        if surface == .keyboardBar { available.subtract(SSHTerminalBarSurface.repeatedOnKeyboard) }
+        let dictate = SSHTerminalBarItem.action(.dictate)
+        guard dictating, available.contains(dictate) else {
+            return layout.placement(available: available, capacity: capacity, slots: slots(for:))
+        }
+        let pinned = SSHTerminalBarLayout(order: [dictate] + layout.order, shown: layout.shown.union([dictate]))
+        return pinned.placement(available: available, capacity: max(capacity, 1), slots: slots(for:))
     }
 }
