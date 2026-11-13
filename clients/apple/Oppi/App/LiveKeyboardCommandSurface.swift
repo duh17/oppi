@@ -146,6 +146,34 @@ final class LiveKeyboardCommandSurface {
                 available: { $0.panes.cellLayout.leaves.count > 1 },
                 body: { $0.equaliseSizes() }
             )
+        case .focusPane(let direction):
+            run = paneAction(
+                yieldsToEditor: false,
+                available: { $0.neighbour(of: $0.focusedCell, toward: direction) != nil },
+                body: { $0.focusPane(toward: direction) }
+            )
+        case .focusPaneNumber(let number):
+            run = paneAction(
+                yieldsToEditor: false,
+                available: { $0.panes.cellLayout.leaves.count >= max(number, 2) },
+                body: { $0.focusPane(number: number) }
+            )
+        case .movePane(let direction):
+            run = paneAction(
+                yieldsToEditor: false,
+                available: { $0.canMove($0.focusedCell, toward: direction) },
+                body: { $0.move($0.focusedCell, toward: direction) }
+            )
+        case .undoPanes:
+            let action = paneHost?.panes.undoAction
+            run = paneAction(yieldsToEditor: false, available: { $0.panes.undoAction != nil }, body: { $0.undoPanes() })
+            if let action { title = String(localized: "Undo \(action)") }
+        case .moveDivider(let direction):
+            run = paneAction(
+                yieldsToEditor: false,
+                available: { $0.canMoveDivider(toward: direction) },
+                body: { $0.moveDivider(toward: direction) }
+            )
         }
         return run.map { KeyboardCommand.Resolved(title: title, run: $0) }
     }

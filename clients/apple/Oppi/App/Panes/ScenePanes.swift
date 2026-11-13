@@ -34,6 +34,8 @@ final class ScenePanes {
     /// companion settled at, in this window or (restored) before relaunch.
     @ObservationIgnored private var rememberedShare: Double?
     @ObservationIgnored private var nextLeafNumber = 1
+    /// One sheet at a time across the window's panes.
+    @ObservationIgnored let sheets = PaneSheetArbiter()
 
     @ObservationIgnored private var sceneIdentifier: String?
     @ObservationIgnored private var store = PaneTreeStore()
@@ -379,14 +381,53 @@ final class ScenePanes {
     /// not close.
     func close(_ id: PaneID) {
         guard id != routedLeafID, tree.leaf(id)?.attachedTo == nil else { return }
-        changeCells { try $0.close(id) }
+        undoable(Self.closeAction) { try $0.close(id) }
     }
 
     /// Every split leaf closes; the routed leaf and its companion stay.
     func resetPanes() {
-        changeCells { cells in
+        undoable(Self.resetAction) { cells in
             try cells.leaves.map(\.id).filter { $0 != routedLeafID }.reduce(cells) { try $0.close($1) }
         }
+    }
+
+    // MARK: Undo
+
+    /// A change Undo can take back: its name ("Close Pane") and the cells
+    /// before it. The chat's panel is not part of it: Undo leaves the panel
+    /// as it is now (build plan §1.7).
+    struct UndoStep: Equatable {
+        let action: String
+        let cells: PaneLayout
+    }
+
+    static let undoDepth = 5
+    static let closeAction = String(localized: "Close Pane")
+    static let moveAction = String(localized: "Move Pane")
+    static let resetAction = String(localized: "Reset Panes")
+
+    /// Newest last, at most `undoDepth`. Not saved: a relaunch starts empty.
+    private(set) var undoSteps: [UndoStep] = []
+
+    /// What Undo would take back now ("Close Pane"), nil with nothing to undo.
+    var undoAction: String? { undoSteps.last?.action }
+
+    /// Runs `change` on the cells and keeps the cells before it for Undo,
+    /// when it changed anything.
+    private func undoable(_ action: String, _ change: (PaneLayout) throws -> PaneLayout) {
+        let before = cellLayout
+        guard changeCells(change), cellLayout != before else { return }
+        undoSteps.append(UndoStep(action: action, cells: before))
+        if undoSteps.count > Self.undoDepth { undoSteps.removeFirst() }
+    }
+
+    /// Puts the cells back as they were before the newest step. A pane it
+    /// brings back shows what it showed, from its link, not its scroll
+    /// position. False with nothing to undo.
+    @discardableResult
+    func undo() -> Bool {
+        guard let step = undoSteps.popLast() else { return false }
+        return changeCells { _ in step.cells }
     }
 
     /// Zooms a cell to the whole window; nil restores. A zoom of the routed
@@ -415,12 +456,12 @@ final class ScenePanes {
 
     /// Moves `id` to `edge` of `target`.
     func move(_ id: PaneID, to target: PaneID, edge: PaneEdge) {
-        changeCells { try $0.move(id, to: target, edge: edge) }
+        undoable(Self.moveAction) { try $0.move(id, to: target, edge: edge) }
     }
 
     /// Trades the places of two cells; sizes stay with the places.
     func swap(_ first: PaneID, _ second: PaneID) {
-        changeCells { try $0.swap(first, second) }
+        undoable(Self.moveAction) { try $0.swap(first, second) }
     }
 
     /// Focuses a cell: the routed leaf, or a split leaf.

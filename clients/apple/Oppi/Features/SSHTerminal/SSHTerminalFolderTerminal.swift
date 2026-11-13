@@ -240,25 +240,29 @@ enum SSHTerminalFolderEntry {
         from presenter: UIViewController,
         missingReason: SSHTerminalFolderFailure = .noFolder
     ) -> Bool {
-        guard target.isUsable else {
+        guard let screen = screen(for: target) else {
             present(target, failure: missingReason, from: presenter)
             return true
         }
+        Router.push(screen, from: presenter)
+        return true
+    }
+
+    /// The screen that opens `target`: its folder terminal on the saved host
+    /// that serves its server, or Add Host for that server. Nil when the
+    /// target has no folder to open.
+    static func screen(for target: SSHTerminalFolderTarget) -> UIViewController? {
+        guard target.isUsable else { return nil }
         let profiles = SSHTerminalProfileStore().load()
         if let profile = SSHTerminalHostMatch.bestMatch(in: profiles, serverHost: target.serverHost) {
             // The folder screen decides from this host's Run on Connect command
             // whether the folder opens in its multiplexer or in a terminal of
             // its own.
-            Router.push(SSHTerminalFolderViewController(profile: profile, target: target), from: presenter)
-        } else {
-            // Add Host, with the server's host filled in and nothing invented
-            // for the username. Saving it continues into the folder terminal.
-            Router.push(
-                SSHTerminalSetupViewController(profileID: nil, host: target.serverHost, folderTerminal: target),
-                from: presenter
-            )
+            return SSHTerminalFolderViewController(profile: profile, target: target)
         }
-        return true
+        // Add Host, with the server's host filled in and nothing invented
+        // for the username. Saving it continues into the folder terminal.
+        return SSHTerminalSetupViewController(profileID: nil, host: target.serverHost, folderTerminal: target)
     }
 
     /// Configures `session` to open `target` on `profile`.

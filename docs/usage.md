@@ -104,7 +104,7 @@ On iPad (and in any Stage Manager window wide enough), **Files**, **Git**, **Out
 
 A workspace's **Files** screen works the same way on iPad: the folder list and the open file are two panes, each with its own bar. The list's bar has Back (up a folder) and **View Options**; the file's bar has its own actions and Close. On the iPad mini in portrait there is room for one: the file covers the list until you close it. ⇧⌘L collapses the list to the slim edge and brings it back.
 
-Panes you split (⌘D, or the pane menu) collapse the same way: drag a divider past a pane and it becomes a narrow strip; tap the strip to bring the pane back. On iPhone, or in an iPad window too narrow for two panes, one pane shows at a time and a chip under its bar says which ("Files · 2 of 3"): tap it for the list of panes, or swipe it for the next or previous one.
+Panes you split (⌘D, or the pane menu) collapse the same way: drag a divider past a pane and it becomes a narrow strip; tap the strip to bring the pane back. After you close, move, or reset panes, **Undo** appears at the bottom of the window for a few seconds; the pane menu and **View → Panes** keep it for the last five changes. Only one sheet shows at a time across panes: a sheet another pane opens waits until the first one closes, and that pane's grip shows an orange dot meanwhile. On iPhone, or in an iPad window too narrow for two panes, one pane shows at a time and a chip under its bar says which ("Files · 2 of 3"): tap it for the list of panes, or swipe it for the next or previous one.
 
 ## Voice
 
@@ -144,6 +144,12 @@ With a hardware keyboard, these commands are in the iPad menu bar and in the lis
 | ⌘L | Focus Composer (in the code editor, ⌘L is Go to Line) |
 | ⇧⌘] and ⇧⌘[ | Next and previous session in All Sessions (Your Turn and Working) |
 | ⌘F | **Edit → Find**: in a Markdown or Org file reader, opens [Find](document-viewers.md#outline-and-find) for the file; elsewhere, starts the search on the screen in front |
+| ⌘D and ⇧⌘D | Split the focused pane to the right or down (**View → Panes**) |
+| ⌥⌘ arrows | Focus the pane to the left, right, above, or below |
+| ⌃⌘1 to ⌃⌘8 | Focus the first to eighth pane |
+| ⌥⇧⌘ arrows | Move the focused pane left, right, up, or down |
+| ⌃⌘ arrows | Move the divider beside the focused pane; hold to keep moving it |
+| ⌃⌘= | Give every pane an equal share |
 
 The [code editor](document-viewers.md#editing-workspace-files) and the [terminal](ssh-terminal.md#hardware-keyboard) have their own keys.
 

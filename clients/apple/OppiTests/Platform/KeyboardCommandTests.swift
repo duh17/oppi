@@ -33,7 +33,7 @@ struct KeyboardCommandTests {
 
     @Test("No app key shadows the editor's or the terminal's, except the one the app yields")
     func keysAreDistinct() throws {
-        let app = KeyboardCommand.all.map { chord($0.key.input, $0.key.modifiers) }
+        let app = KeyboardCommand.all.compactMap { $0.key.map { chord($0.input, $0.modifiers) } }
         #expect(Set(app).count == app.count)
 
         let terminal = SSHTerminalHardwareShortcut.allCases.map { chord($0.input, .command) }
@@ -54,7 +54,7 @@ struct KeyboardCommandTests {
     @Test("A menu item's property list names its command")
     func menuItemsRoundTrip() {
         for command in KeyboardCommand.all {
-            let item = command.makeKeyCommand(action: #selector(UIResponder.becomeFirstResponder))
+            let item = command.makeMenuCommand(action: #selector(UIResponder.becomeFirstResponder))
             #expect(item.propertyList as? String == command.id)
             #expect(KeyboardCommand(id: item.propertyList as? String ?? "") == command)
         }

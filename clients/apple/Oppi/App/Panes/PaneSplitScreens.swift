@@ -81,12 +81,7 @@ enum PaneSplitScreens {
         if let root, let (workspace, host) = PaneEntries.workspace(workspaceId, serverId: serverId, coordinator: root.coordinator),
            let folder = SSHTerminalFolderTarget.workspace(workspace) {
             let target = SSHTerminalFolderTarget(serverHost: host, folder: folder, label: workspace.name)
-            if target.isUsable {
-                if let profile = SSHTerminalHostMatch.bestMatch(in: SSHTerminalProfileStore().load(), serverHost: host) {
-                    return SSHTerminalFolderViewController(profile: profile, target: target)
-                }
-                return SSHTerminalSetupViewController(profileID: nil, host: host, folderTerminal: target)
-            }
+            if let screen = SSHTerminalFolderEntry.screen(for: target) { return screen }
         }
         let list = SSHTerminalHostListViewController(showsSidebarToggle: false)
         if let root { list.traitOverrides.appRootEnvironment = root }

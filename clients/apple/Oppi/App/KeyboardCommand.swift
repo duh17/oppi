@@ -28,17 +28,34 @@ enum KeyboardCommand: Hashable, Sendable {
     case splitDown
     case zoomPane
     case equaliseSizes
+    /// The pane beside the focused one, physically (arrows do not mirror).
+    case focusPane(PaneDirection)
+    /// The pane at this place in tree order, 1 to 8 (the leaf cap).
+    case focusPaneNumber(Int)
+    case movePane(PaneDirection)
+    /// The divider on the focused pane's edge, 32 pt a press; held, it repeats.
+    case moveDivider(PaneDirection)
+    /// Undo the newest Close Pane, Move Pane or Reset Panes. No key: ⌘Z and
+    /// the three-finger swipe stay with text undo (build plan §1.7).
+    case undoPanes
+
+    /// View ▸ Panes, in menu order and sections: split and size, focus by
+    /// direction, focus by number, move, and the divider.
+    static let paneSections: [[Self]] = [
+        [.undoPanes],
+        [.splitRight, .splitDown, .zoomPane, .equaliseSizes],
+        PaneDirection.allCases.map(Self.focusPane),
+        (1...PaneLayout.maximumLeaves).map(Self.focusPaneNumber),
+        PaneDirection.allCases.map(Self.movePane),
+        PaneDirection.allCases.map(Self.moveDivider),
+    ]
 
     /// Every command, in menu order.
     static let all: [Self] = [
         .newSession, .settings, .close, .toggleSidebar, .toggleFileTree,
         .pane(.files), .pane(.git), .pane(.outline), .pane(.context),
         .stop, .focusComposer, .nextSession, .previousSession,
-        .splitRight, .splitDown, .zoomPane, .equaliseSizes,
-    ]
-
-    /// View ▸ Panes, in menu order.
-    static let paneCommands: [Self] = [.splitRight, .splitDown, .zoomPane, .equaliseSizes]
+    ] + paneSections.flatMap { $0 }
 
     /// The chat panes the Option-Command digits open, in digit order.
     static let panes: [ChatTopBarAction] = [.files, .git, .outline, .context]
@@ -60,6 +77,11 @@ enum KeyboardCommand: Hashable, Sendable {
         case .splitDown: "splitDown"
         case .zoomPane: "zoomPane"
         case .equaliseSizes: "equaliseSizes"
+        case .focusPane(let direction): "focusPane.\(direction)"
+        case .focusPaneNumber(let number): "focusPane.\(number)"
+        case .movePane(let direction): "movePane.\(direction)"
+        case .moveDivider(let direction): "moveDivider.\(direction)"
+        case .undoPanes: "undoPanes"
         }
     }
 
@@ -86,11 +108,17 @@ enum KeyboardCommand: Hashable, Sendable {
         case .splitDown: String(localized: "Split Down")
         case .zoomPane: String(localized: "Zoom Pane")
         case .equaliseSizes: String(localized: "Equalise Sizes")
+        case .focusPane(let direction): String(localized: "Focus Pane \(direction.title)")
+        case .focusPaneNumber(let number): String(localized: "Focus Pane \(number)")
+        case .movePane(let direction): String(localized: "Move Pane \(direction.title)")
+        case .moveDivider(let direction): String(localized: "Move Divider \(direction.title)")
+        case .undoPanes: String(localized: "Undo")
         }
     }
 
-    /// The key and its modifiers, as `UIKeyCommand` takes them.
-    var key: (input: String, modifiers: UIKeyModifierFlags) {
+    /// The key and its modifiers, as `UIKeyCommand` takes them; nil for a
+    /// menu item with no key.
+    var key: (input: String, modifiers: UIKeyModifierFlags)? {
         switch self {
         case .newSession: ("n", .command)
         case .settings: (",", .command)
@@ -107,19 +135,32 @@ enum KeyboardCommand: Hashable, Sendable {
         case .splitDown: ("d", [.command, .shift])
         case .zoomPane: ("\r", [.command, .shift])
         case .equaliseSizes: ("=", [.control, .command])
+        case .focusPane(let direction): (direction.arrowInput, [.alternate, .command])
+        case .focusPaneNumber(let number): ("\(number)", [.control, .command])
+        case .movePane(let direction): (direction.arrowInput, [.alternate, .shift, .command])
+        case .moveDivider(let direction): (direction.arrowInput, [.control, .command])
+        case .undoPanes: nil
         }
     }
 
     /// The menu item. All commands share one selector; `propertyList` says which.
     @MainActor
-    func makeKeyCommand(action: Selector) -> UIKeyCommand {
-        UIKeyCommand(
+    func makeMenuCommand(action: Selector) -> UICommand {
+        guard let key else { return UICommand(title: title, action: action, propertyList: id) }
+        let command = UIKeyCommand(
             title: title,
             action: action,
             input: key.input,
             modifierFlags: key.modifiers,
             propertyList: id
         )
+        if PaneDirection.allCases.contains(where: { $0.arrowInput == key.input }) {
+            // Pane arrows act physically, and win over text input and the
+            // focus system, which would otherwise take arrows first.
+            command.allowsAutomaticMirroring = false
+            command.wantsPriorityOverSystemBehavior = true
+        }
+        return command
     }
 
     /// A command that is available now: the title for the state it would

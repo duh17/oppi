@@ -32,7 +32,7 @@ struct PaneSplitDrag {
 }
 
 /// A direction a pane moves or a split opens toward.
-enum PaneDirection: CaseIterable {
+enum PaneDirection: CaseIterable, Hashable, Sendable {
     case left, right, up, down
 
     var edge: PaneEdge {
@@ -50,6 +50,16 @@ enum PaneDirection: CaseIterable {
         case .right: String(localized: "Right")
         case .up: String(localized: "Up")
         case .down: String(localized: "Down")
+        }
+    }
+
+    /// The arrow key toward this direction, as `UIKeyCommand` takes it.
+    var arrowInput: String {
+        switch self {
+        case .left: UIKeyCommand.inputLeftArrow
+        case .right: UIKeyCommand.inputRightArrow
+        case .up: UIKeyCommand.inputUpArrow
+        case .down: UIKeyCommand.inputDownArrow
         }
     }
 }
@@ -79,10 +89,17 @@ extension PaneHostController {
         // A compact window shows one pane at a time, the focused one, and the
         // chip lists the rest (build plan §1.5). The tree is unchanged.
         if showsChip(cells) { cells.zoomed = cells.focus }
-        let presentation = PanePresentation.resolve(
+        // The split view's sidebar floats over the host's leading edge and
+        // reaches it as the leading safe area: several panes fit and sit
+        // beside it, never under it. One pane fills the host, as before, and
+        // keeps its content clear of the sidebar through its own safe area.
+        let sideInsets = cells.leaves.count > 1 && cells.zoomed == nil
+            ? (leading: view.safeAreaInsets.left, trailing: view.safeAreaInsets.right)
+            : (leading: 0, trailing: 0)
+        var presentation = PanePresentation.resolve(
             cells,
             size: view.bounds.size,
-            sidebarWidth: 0,
+            sidebarWidth: sideInsets.leading + sideInsets.trailing,
             keyboardHeight: 0,
             firstResponderLeaf: nil,
             minimumSize: { [panes] leaf in
@@ -92,6 +109,7 @@ extension PaneHostController {
             },
             liveCap: PlatformCapabilities.livePaneLimit
         )
+        presentation.frames = presentation.frames.mapValues { $0.offsetBy(dx: sideInsets.leading, dy: 0) }
         cellPresentation = presentation
         // A collapsed routed leaf is its strip: the primary and its companion park.
         let routedCollapsed = cells.collapsed[panes.routedLeafID] != nil
@@ -119,6 +137,7 @@ extension PaneHostController {
         layoutDividers(presentation)
         layoutGrips(presentation)
         layoutStrips(presentation)
+        layoutUndoToast()
     }
 
     /// The leaves a cell holds that have a frame, unioned.
@@ -300,6 +319,7 @@ extension PaneHostController {
             controller.interfaceStyle = { root?.themeStore.userInterfaceStyle ?? .unspecified }
             controller.view.backgroundColor = root?.themeStore.backgroundColor ?? .systemBackground
             controller.view.accessibilityIdentifier = "pane.leaf.\(leaf.id.raw)"
+            controller.view.focusGroupIdentifier = "pane.\(leaf.id.raw)"
             addChild(controller)
             view.insertSubview(controller.view, belowSubview: cover)
             controller.didMove(toParent: self)
@@ -308,7 +328,8 @@ extension PaneHostController {
     }
 
     private func makeScreen(_ entry: PaneStackEntry, leaf id: PaneID) -> UIViewController {
-        PaneSplitScreens.make(entry, root: AppRootEnvironment.near(self), actions: PaneSplitScreens.Actions(
+        if let screen = openingScreens.removeValue(forKey: id) { return screen }
+        return PaneSplitScreens.make(entry, root: AppRootEnvironment.near(self), actions: PaneSplitScreens.Actions(
             show: { [weak self] entry in
                 self?.panes.show(entry, in: id)
                 self?.focus(cell: id)
@@ -356,7 +377,8 @@ extension PaneHostController {
                 position: (order.firstIndex(of: id) ?? 0) + 1,
                 count: order.count,
                 isFocused: cells.focus == id && order.count > 1,
-                isZoomed: zoomed == id
+                isZoomed: zoomed == id,
+                hasWaitingSheet: panes.sheets.waitingOwners.contains(id)
             ))
             let top = gripTop(ofCell: id, in: frame)
             let size = zoomed == id ? PaneGripView.capsuleSize : PaneGripView.size
@@ -400,6 +422,74 @@ extension PaneHostController {
         leaf.view.layoutIfNeeded()
         guard let screen = frontScreen(ofCell: id), let slot = PaneStripSlot.slot(in: screen) else { return floor }
         return max(floor, slot.convert(slot.bounds, to: view).minY)
+    }
+
+    // MARK: VoiceOver
+
+    /// The "Panes" rotor: each shown pane's grip in tree order (its strip
+    /// when collapsed, the chip on a compact window), so VoiceOver moves
+    /// pane to pane and lands on the control that names the pane. Empty
+    /// with one pane.
+    func makePanesRotor() -> UIAccessibilityCustomRotor {
+        UIAccessibilityCustomRotor(name: String(localized: "Panes")) { [weak self] predicate in
+            guard let self else { return nil }
+            let targets = self.panesRotorTargets()
+            let current = predicate.currentItem.targetElement as? UIView
+            let index = current.flatMap { current in targets.firstIndex { $0 === current } }
+            let next = switch predicate.searchDirection {
+            case .next: index.map { $0 + 1 } ?? 0
+            case .previous: index.map { $0 - 1 } ?? targets.count - 1
+            @unknown default: -1
+            }
+            guard targets.indices.contains(next) else { return nil }
+            return UIAccessibilityCustomRotorItemResult(targetElement: targets[next], targetRange: nil)
+        }
+    }
+
+    func panesRotorTargets() -> [UIView] {
+        let cells = panes.cellLayout
+        guard cells.leaves.count > 1 else { return [] }
+        if showsChip(cells) { return chip.isHidden ? [] : [chip] }
+        return cells.leaves.map(\.id).compactMap { id in
+            if let strip = strips[id] { return strip }
+            guard let grip = grips[id], !grip.isHidden else { return nil }
+            return grip
+        }
+    }
+
+    // MARK: Undo
+
+    func makeUndoToast() -> PaneUndoToast {
+        let toast = PaneUndoToast()
+        toast.addAction(UIAction { [weak self] _ in self?.undoPanes() }, for: .primaryActionTriggered)
+        view.addSubview(toast)
+        return toast
+    }
+
+    /// Centred at the foot of the window, clear of a chat's composer.
+    private func layoutUndoToast() {
+        guard !undoToast.isHidden else { return }
+        let size = undoToast.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        let bottom = view.bounds.maxY - view.safeAreaInsets.bottom - 76
+        undoToast.frame = CGRect(x: view.bounds.midX - size.width / 2, y: bottom - size.height, width: size.width, height: size.height)
+        view.bringSubviewToFront(undoToast)
+    }
+
+    /// Offers Undo for the change just made.
+    private func offerUndo() {
+        guard let action = panes.undoAction else { return }
+        undoToast.show(action: action)
+        view.setNeedsLayout()
+    }
+
+    /// Takes back the newest Close Pane, Move Pane or Reset Panes.
+    func undoPanes() {
+        undoToast.hide()
+        guard panes.undo() else { return }
+        syncSplitLeaves()
+        relayoutCells()
+        updateVisibility()
+        announceLayoutChange()
     }
 
     // MARK: Chip
@@ -524,7 +614,15 @@ extension PaneHostController {
         let cells = panes.cellLayout
         let isZoomed = cells.zoomed == id
         let isSplitLeaf = id != panes.routedLeafID
-        var items: [PaneMenuItem] = [
+        var items: [PaneMenuItem] = []
+        if let action = panes.undoAction {
+            items.append(PaneMenuItem(
+                title: String(localized: "Undo \(action)"), symbol: "arrow.uturn.backward",
+                actionName: String(localized: "Undo \(action)"), identifier: "pane.menu.undo",
+                run: { [weak self] in self?.undoPanes() }
+            ))
+        }
+        items += [
             PaneMenuItem(
                 title: isZoomed ? String(localized: "Restore") : String(localized: "Zoom"),
                 symbol: isZoomed ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
@@ -563,7 +661,7 @@ extension PaneHostController {
             PaneMenuItem(
                 title: direction.title, symbol: "arrow.\(direction == .up ? "up" : direction == .down ? "down" : direction == .left ? "left" : "right")",
                 actionName: String(localized: "Move \(direction.title)"), identifier: "pane.menu.move.\(direction)",
-                isEnabled: !isZoomed && neighbour(of: id, toward: direction) != nil,
+                isEnabled: canMove(id, toward: direction),
                 run: { [weak self] in self?.move(id, toward: direction) }
             )
         }
@@ -616,12 +714,12 @@ extension PaneHostController {
         return nil
     }
 
-    /// Split Right and Split Down for the pane holding `screen`, for that
-    /// screen's own … menu: with one pane there is no grip yet, so this is
-    /// the first split's touch path.
+    /// Split Right, Split Down and Undo for the pane holding `screen`, for
+    /// that screen's own … menu: with one pane there is no grip, so this is
+    /// the first split's touch path, and Undo's after the last pane closed.
     func splitItems(for screen: UIViewController) -> [PaneMenuItem] {
         guard canSplit, let cell = cell(holding: screen) else { return [] }
-        let splits: Set<String> = ["pane.menu.splitRight", "pane.menu.splitDown"]
+        let splits: Set<String> = ["pane.menu.undo", "pane.menu.splitRight", "pane.menu.splitDown"]
         return menuItems(for: cell).filter { splits.contains($0.identifier) }
     }
 
@@ -656,6 +754,19 @@ extension PaneHostController {
         announceLayoutChange()
     }
 
+    /// Opens `screen` in a new pane to the right of `id`, focused, with
+    /// `entry` as what the pane shows. False when the window cannot split.
+    @discardableResult
+    func split(_ id: PaneID, showing entry: PaneStackEntry, screen: UIViewController) -> Bool {
+        guard canSplit, let made = panes.split(id, edge: .right, showing: entry) else { return false }
+        openingScreens[made] = screen
+        syncSplitLeaves()
+        openingScreens[made] = nil
+        focus(cell: made)
+        announceLayoutChange()
+        return true
+    }
+
     /// Zooms `id` to the whole window; nil restores every pane.
     func zoom(_ id: PaneID?) {
         panes.zoom(id)
@@ -669,6 +780,7 @@ extension PaneHostController {
         syncSplitLeaves()
         relayoutCells()
         updateVisibility()
+        offerUndo()
         announceLayoutChange()
     }
 
@@ -677,6 +789,7 @@ extension PaneHostController {
         syncSplitLeaves()
         relayoutCells()
         updateVisibility()
+        offerUndo()
         announceLayoutChange()
     }
 
@@ -689,6 +802,7 @@ extension PaneHostController {
     func move(_ id: PaneID, to target: PaneID, edge: PaneEdge) {
         panes.move(id, to: target, edge: edge)
         relayoutCells()
+        offerUndo()
         announceLayoutChange()
     }
 
@@ -696,6 +810,7 @@ extension PaneHostController {
     func swap(_ id: PaneID, with target: PaneID) {
         panes.swap(id, target)
         relayoutCells()
+        offerUndo()
         announceLayoutChange()
     }
 
@@ -703,6 +818,66 @@ extension PaneHostController {
     func equaliseSizes() {
         panes.equaliseCells()
         relayoutCells()
+    }
+
+    /// Focuses the pane beside the focused one (⌥⌘ arrows).
+    func focusPane(toward direction: PaneDirection) {
+        guard let target = neighbour(of: focusedCell, toward: direction) else { return }
+        focus(cell: target)
+        UIAccessibility.post(notification: .screenChanged, argument: nil)
+    }
+
+    /// Focuses the pane at `number` in tree order (⌃⌘1–8).
+    func focusPane(number: Int) {
+        let order = panes.cellLayout.leaves.map(\.id)
+        guard order.indices.contains(number - 1) else { return }
+        focus(cell: order[number - 1])
+        UIAccessibility.post(notification: .screenChanged, argument: nil)
+    }
+
+    /// Whether `id` can move toward `direction`: a wide window, no zoom, and
+    /// a pane there to move beside.
+    func canMove(_ id: PaneID, toward direction: PaneDirection) -> Bool {
+        AdaptiveWidth.isWide(traitCollection) && panes.cellLayout.zoomed == nil
+            && neighbour(of: id, toward: direction) != nil
+    }
+
+    /// The divider ⌃⌘ arrows move: on the focused pane's trailing edge along
+    /// the arrow's axis, else its leading edge, in the nearest split of that
+    /// axis. Nil on a compact window, behind a zoom, or with no split there.
+    private func dividerToMove(toward direction: PaneDirection) -> PaneSplitDividerView.Place? {
+        let cells = panes.cellLayout
+        guard AdaptiveWidth.isWide(traitCollection), cells.zoomed == nil,
+              let path = cells.root.path(of: cells.focus) else { return nil }
+        let axis = direction.edge.axis
+        for depth in stride(from: path.count - 1, through: 0, by: -1) {
+            let splitPath = Array(path.prefix(depth))
+            guard case .split(let splitAxis, let children, _)? = cells.root.node(at: splitPath), splitAxis == axis else { continue }
+            let index = path[depth]
+            return PaneSplitDividerView.Place(path: splitPath, index: index < children.count - 1 ? index : index - 1, axis: axis)
+        }
+        return nil
+    }
+
+    /// Whether ⌃⌘ arrows move a divider now: a split's, or the companion's
+    /// beside the chat (left and right).
+    func canMoveDivider(toward direction: PaneDirection) -> Bool {
+        if dividerToMove(toward: direction) != nil { return true }
+        return direction.edge.axis == .row && canStepCompanion
+    }
+
+    /// Moves that divider 32 pt toward the arrow, as VoiceOver's step does.
+    func moveDivider(toward direction: PaneDirection) {
+        let step = PaneDividerView.accessibilityStep
+        let delta = direction == .left || direction == .up ? -step : step
+        guard let place = dividerToMove(toward: direction) else {
+            // The companion's width grows as its divider moves toward the chat.
+            if direction.edge.axis == .row { stepCompanion(by: -delta) }
+            return
+        }
+        splitDragBegan(place)
+        splitDragChanged(delta)
+        splitDragEnded()
     }
 
     /// Focuses a cell, bringing it out of overflow or behind a zoom.

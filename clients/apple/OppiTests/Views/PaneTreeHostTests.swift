@@ -295,4 +295,125 @@ struct PaneTreeHostTests {
         host.act {}
         #expect(host.screen.leaf.fillsWindow == nil, "no room beside: full by the fit rule, only Close ends it")
     }
+
+    /// The pane chords' operations: focus moves by direction and by number,
+    /// a pane moves beside its neighbour, and the divider on the focused
+    /// pane's edge steps 32 pt toward the arrow; none of them has a target on
+    /// a compact window.
+    @Test func paneChordsFocusMoveAndStepTheDivider() throws {
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer { host.hide() }
+        let routed = host.scenePanes.routedLeafID
+        host.act { host.panes.split(axis: .row) }
+        let split = try #require(host.scenePanes.splitLeaves.first?.id)
+
+        host.act { host.panes.focusPane(toward: .right) }
+        #expect(host.panes.focusedLeaf == .split(split))
+        #expect(!host.panes.canMoveDivider(toward: .up), "no column split to move")
+        host.act { host.panes.focusPane(number: 1) }
+        #expect(host.panes.focusedLeaf == .primary)
+
+        let before = host.screenWidth
+        host.act { host.panes.moveDivider(toward: .right) }
+        #expect(host.screenWidth == before + PaneDividerView.accessibilityStep, "the chat's trailing divider moved right")
+        host.act { host.panes.focusPane(toward: .right) }
+        host.act { host.panes.moveDivider(toward: .left) }
+        #expect(host.screenWidth == before, "the launcher's leading divider moved back left")
+
+        #expect(host.panes.canMove(split, toward: .left))
+        host.act { host.panes.move(split, toward: .left) }
+        #expect(try #require(leafView(host, split)).frame.minX == 0, "the pane moved to the chat's left")
+        #expect(host.panes.cellFrame(routed)?.minX ?? 0 > 0)
+
+        host.window.traitOverrides.horizontalSizeClass = .compact
+        host.resize(width: 390)
+        host.act {}
+        #expect(!host.panes.canMove(split, toward: .right))
+        #expect(!host.panes.canMoveDivider(toward: .left))
+    }
+
+    /// With the chat's companion beside it and no split, ⌃⌘ left and right
+    /// step the companion's divider.
+    @Test func dividerChordsStepTheCompanion() throws {
+        let host = PaneTestHost(width: 1133, height: 744)
+        defer { host.hide() }
+        host.showPanel(minWidth: 390, idealWidth: 520, maxWidth: 820)
+        let width = try #require(host.companionWidth)
+        #expect(host.panes.canMoveDivider(toward: .left))
+        #expect(!host.panes.canMoveDivider(toward: .down))
+        host.act { host.panes.moveDivider(toward: .left) }
+        #expect(host.companionWidth == width + PaneDividerView.accessibilityStep, "the divider moved toward the chat")
+    }
+
+    /// A4: the "Panes" rotor steps through the panes' grips in tree order,
+    /// a collapsed pane by its strip, and each pane is its own focus group
+    /// for Tab and Full Keyboard Access.
+    @Test func thePanesRotorStepsThroughThePanesInTreeOrder() throws {
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer { host.hide() }
+        let rotor = try #require(host.panes.view.accessibilityCustomRotors?.first { $0.name == "Panes" })
+        func step(from current: UIView?, _ direction: UIAccessibilityCustomRotor.Direction) -> UIView? {
+            let predicate = UIAccessibilityCustomRotorSearchPredicate()
+            predicate.currentItem = UIAccessibilityCustomRotorItemResult(targetElement: current ?? NSObject(), targetRange: nil)
+            predicate.searchDirection = direction
+            return rotor.itemSearchBlock(predicate)?.targetElement as? UIView
+        }
+        #expect(step(from: nil, .next) == nil, "one pane: nothing to step to")
+
+        let routed = host.scenePanes.routedLeafID
+        host.act { host.panes.split(axis: .row) }
+        let split = try #require(host.scenePanes.splitLeaves.first?.id)
+        let first = try #require(step(from: nil, .next))
+        #expect(first === (try grip(host, routed)))
+        let second = try #require(step(from: first, .next))
+        #expect(second === (try grip(host, split)))
+        #expect(step(from: second, .next) == nil)
+        #expect(step(from: second, .previous) === first)
+
+        host.act { host.panes.collapse(split) }
+        #expect(step(from: first, .next)?.accessibilityIdentifier == "pane.strip.\(split.raw)")
+
+        #expect(host.panes.primary.view.focusGroupIdentifier == "pane.\(routed.raw)")
+        #expect(leafView(host, split)?.focusGroupIdentifier == "pane.\(split.raw)")
+    }
+
+    /// §1.7: Close Pane, Move Pane and Reset Panes can be undone. The toast
+    /// offers it at once and the grip menu after; Undo brings the panes
+    /// back with the same ids and content, newest step first, five deep.
+    @Test func undoTakesBackCloseMoveAndReset() throws {
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer { host.hide() }
+        let routed = host.scenePanes.routedLeafID
+        #expect(!host.scenePanes.undo(), "nothing to undo yet")
+        host.act { host.panes.split(axis: .row) }
+        let first = try #require(host.scenePanes.splitLeaves.first?.id)
+        host.act { host.panes.split(first, axis: .column) }
+        let second = try #require(host.scenePanes.splitLeaves.map(\.id).first { $0 != first })
+        let split = host.scenePanes.tree
+
+        host.act { host.panes.closePane(second) }
+        #expect(host.scenePanes.undoAction == "Close Pane")
+        let toast = try #require(host.panes.view.subviews.lazy.compactMap { $0 as? PaneUndoToast }.first)
+        #expect(!toast.isHidden && toast.configuration?.title == "Undo Close Pane")
+        #expect(host.panes.menuItems(for: routed).first?.identifier == "pane.menu.undo")
+        host.act { toast.sendActions(for: .primaryActionTriggered) }
+        #expect(host.scenePanes.tree == split, "Undo brought the closed pane back where it was")
+        #expect(leafView(host, second)?.isHidden == false)
+        #expect(toast.isHidden)
+        #expect(host.scenePanes.undoAction == nil)
+
+        host.act { host.panes.move(first, toward: .left) }
+        #expect(host.scenePanes.undoAction == "Move Pane")
+        host.act { host.panes.resetPanes() }
+        #expect(host.scenePanes.splitLeaves.isEmpty)
+        #expect(host.panes.splitItems(for: host.screen).first?.identifier == "pane.menu.undo",
+                "one pane: the screen's own menu offers Undo")
+        host.act { host.panes.undoPanes() }
+        #expect(Set(host.scenePanes.splitLeaves.map(\.id)) == [first, second], "Reset taken back")
+        host.act { host.panes.undoPanes() }
+        #expect(host.scenePanes.tree == split, "then the move")
+
+        for _ in 0..<(ScenePanes.undoDepth + 2) { host.act { host.panes.swap(first, with: second) } }
+        #expect(host.scenePanes.undoSteps.count == ScenePanes.undoDepth)
+    }
 }

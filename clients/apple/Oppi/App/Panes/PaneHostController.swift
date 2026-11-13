@@ -116,8 +116,13 @@ final class PaneHostController: UIViewController {
     var splitDividers: [PaneSplitDividerView] = []
     var grips: [PaneID: PaneGripView] = [:]
     var strips: [PaneID: PaneStripView] = [:]
+    /// Screens a split leaf shows first, built by whoever opened it (the
+    /// chat's terminal), taken when the leaf mounts.
+    var openingScreens: [PaneID: UIViewController] = [:]
     /// The pane chip a compact window shows in place of the grips.
     lazy var chip = makeChip()
+    /// The toast that offers Undo after a pane change.
+    lazy var undoToast = makeUndoToast()
     var splitDrag: PaneSplitDrag?
     /// Where each cell sits after the last layout pass.
     var cellPresentation: PanePresentation?
@@ -272,6 +277,9 @@ final class PaneHostController: UIViewController {
         divider.onRestoreRequested = { [weak self] in self?.restoreFromFull() }
         divider.onCloseRequested = { [weak self] in self?.companion?.owner?.dividerRequestedClose() }
         installDropInteraction()
+        // Tab and Full Keyboard Access move between panes as groups.
+        primary.view.focusGroupIdentifier = "pane.\(panes.routedLeafID.raw)"
+        view.accessibilityCustomRotors = [makePanesRotor()]
         for name in [UITextField.textDidBeginEditingNotification, UITextView.textDidBeginEditingNotification] {
             NotificationCenter.default.addObserver(
                 self, selector: #selector(inputBeganEditing(_:)), name: name, object: nil
@@ -286,6 +294,8 @@ final class PaneHostController: UIViewController {
         // Reading the tree here re-runs this when a split, close, focus or
         // weight changes it.
         _ = panes.tree
+        // And a sheet waiting its turn, for its pane's grip.
+        _ = panes.sheets.waitingOwners
         syncSplitLeaves()
         view.setNeedsLayout()
     }
@@ -409,6 +419,7 @@ final class PaneHostController: UIViewController {
         let restored = panes.takeRestoredCompanionState()
         panes.setCompanionZoomed(opening ? restored.zoomed : zoomedWhenParked)
         applyFitRule()
+        controller.view.focusGroupIdentifier = "pane.\(panes.routedLeafID.raw).companion"
         if controller.parent !== self {
             addChild(controller)
             view.insertSubview(controller.view, belowSubview: divider)
@@ -718,6 +729,20 @@ final class PaneHostController: UIViewController {
         focus(inCompanion ? .companion : .primary)
     }
 
+    /// The focus system (Tab, Full Keyboard Access) moved into a leaf: pane
+    /// focus follows, as it does for a touch.
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        guard let next = context.nextFocusedView, next.isDescendant(of: view) else { return }
+        if let (id, _) = splitLeaves.first(where: { next.isDescendant(of: $0.value.controller.view) }) {
+            focus(cell: id)
+        } else if let companion, next.isDescendant(of: companion.controller.view) {
+            focus(.companion)
+        } else if next.isDescendant(of: primary.view) {
+            focus(.primary)
+        }
+    }
+
     /// The companion takes focus, as a touch in it does: its owner asked
     /// (a tap on the pill of the panel it shows).
     func focusCompanion() {
@@ -852,6 +877,18 @@ final class PaneHostController: UIViewController {
         if settleAnimator == nil, !isClosing {
             resizeHold.finish()
         }
+    }
+
+    /// Whether the companion's divider can step: a companion beside its
+    /// leaf, not full.
+    var canStepCompanion: Bool {
+        companion != nil && policy?.fitsBeside == true && !isFull && !isClosing
+    }
+
+    /// Steps the companion's width, as VoiceOver's increment does.
+    func stepCompanion(by delta: CGFloat) {
+        guard canStepCompanion else { return }
+        step(by: delta)
     }
 
     private func step(by delta: CGFloat) {

@@ -57,6 +57,8 @@ final class PaneGripView: UIView {
         var count: Int
         var isFocused: Bool
         var isZoomed: Bool
+        /// A sheet this pane asked for waits behind another pane's.
+        var hasWaitingSheet = false
     }
 
     static let size = CGSize(width: 56, height: 22)
@@ -68,6 +70,7 @@ final class PaneGripView: UIView {
     var onRestore: @MainActor () -> Void = {}
 
     private let mark = UIView()
+    private let waitingDot = UIView()
     private let capsule = UILabel()
     private let menuButton = UIButton(type: .custom)
     private(set) var shown = Shown(title: "", position: 1, count: 1, isFocused: false, isZoomed: false)
@@ -79,6 +82,10 @@ final class PaneGripView: UIView {
         mark.isUserInteractionEnabled = false
         mark.layer.cornerRadius = 2.5
         addSubview(mark)
+        waitingDot.isUserInteractionEnabled = false
+        waitingDot.backgroundColor = .systemOrange
+        waitingDot.layer.cornerRadius = 3
+        addSubview(waitingDot)
         capsule.isUserInteractionEnabled = false
         capsule.font = .preferredFont(forTextStyle: .caption1)
         capsule.adjustsFontForContentSizeCategory = true
@@ -127,14 +134,18 @@ final class PaneGripView: UIView {
 
     private func apply() {
         mark.isHidden = shown.isZoomed
+        waitingDot.isHidden = !shown.hasWaitingSheet
         capsule.isHidden = !shown.isZoomed
         capsule.text = String(localized: "\(shown.position) of \(shown.count)")
         mark.backgroundColor = shown.isFocused ? tintColor : .tertiaryLabel
         let place = String(localized: "\(shown.position) of \(shown.count)")
         accessibilityLabel = String(localized: "Pane, \(shown.title), \(place)")
-        accessibilityValue = shown.isZoomed
+        let state = shown.isZoomed
             ? String(localized: "Zoomed")
             : shown.isFocused ? String(localized: "Focused") : nil
+        accessibilityValue = shown.hasWaitingSheet
+            ? [state, String(localized: "Sheet waiting")].compactMap { $0 }.joined(separator: ", ")
+            : state
         accessibilityHint = shown.isZoomed ? String(localized: "Restores the other panes.") : nil
         largeContentTitle = shown.isZoomed ? place : shown.title
         largeContentImage = UIImage(systemName: "rectangle.split.2x1")
@@ -153,6 +164,7 @@ final class PaneGripView: UIView {
             x: (bounds.width - markSize.width) / 2, y: (bounds.height - markSize.height) / 2,
             width: markSize.width, height: markSize.height
         )
+        waitingDot.frame = CGRect(x: mark.frame.maxX + 4, y: (bounds.height - 6) / 2, width: 6, height: 6)
         capsule.frame = bounds
         menuButton.frame = bounds
     }
@@ -503,5 +515,56 @@ final class PaneStripSlot: UIView {
 
     override var center: CGPoint {
         didSet { if center != oldValue { onMove() } }
+    }
+}
+
+/// The toast after a pane change Undo can take back: "Undo Close Pane" at
+/// the foot of the window for a few seconds. A tap undoes the change; the
+/// grip menu and View ▸ Panes offer the same Undo after it goes.
+final class PaneUndoToast: UIButton {
+    static let lifetime: Duration = .seconds(6)
+    private var hiding: Task<Void, Never>?
+
+    init() {
+        var configuration = UIButton.Configuration.filled()
+        configuration.cornerStyle = .capsule
+        configuration.baseBackgroundColor = .secondarySystemBackground
+        configuration.baseForegroundColor = .label
+        configuration.image = UIImage(systemName: "arrow.uturn.backward")
+        configuration.imagePadding = 6
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = .preferredFont(forTextStyle: .subheadline)
+            return attributes
+        }
+        super.init(frame: .zero)
+        self.configuration = configuration
+        accessibilityIdentifier = "pane.undo"
+        isHidden = true
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.18
+        layer.shadowRadius = 8
+        layer.shadowOffset = CGSize(width: 0, height: 2)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    /// Shows "Undo `action`" until the lifetime passes or `hide()`.
+    func show(action: String) {
+        configuration?.title = String(localized: "Undo \(action)")
+        isHidden = false
+        hiding?.cancel()
+        hiding = Task { [weak self] in
+            try? await Task.sleep(for: Self.lifetime)
+            guard !Task.isCancelled else { return }
+            self?.hide()
+        }
+    }
+
+    func hide() {
+        hiding?.cancel()
+        hiding = nil
+        isHidden = true
     }
 }

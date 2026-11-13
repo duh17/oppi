@@ -11,7 +11,7 @@ enum KeyboardCommandMenu {
     static let panesMenuID = UIMenu.Identifier("\(AppIdentifiers.subsystem).menu.panes")
 
     static func build(into builder: any UIMenuBuilder, action: Selector) {
-        func item(_ command: KeyboardCommand) -> UIKeyCommand { command.makeKeyCommand(action: action) }
+        func item(_ command: KeyboardCommand) -> UICommand { command.makeMenuCommand(action: action) }
         func inline(_ commands: [KeyboardCommand], identifier: UIMenu.Identifier? = nil) -> UIMenu {
             UIMenu(identifier: identifier, options: .displayInline, children: commands.map(item))
         }
@@ -38,7 +38,10 @@ enum KeyboardCommandMenu {
         }
         builder.insertChild(inline(KeyboardCommand.panes.map(KeyboardCommand.pane)), atStartOfMenu: .view)
         builder.insertChild(
-            UIMenu(title: String(localized: "Panes"), identifier: panesMenuID, children: KeyboardCommand.paneCommands.map(item)),
+            UIMenu(
+                title: String(localized: "Panes"), identifier: panesMenuID,
+                children: KeyboardCommand.paneSections.map { inline($0) }
+            ),
             atEndOfMenu: .view
         )
 

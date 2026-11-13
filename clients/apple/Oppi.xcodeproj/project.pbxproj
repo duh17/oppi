@@ -769,6 +769,7 @@
 		547A95690AFC7838C20098F1 /* NavigationSwipeGesturePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6698289848C2AE90BD46FBA3 /* NavigationSwipeGesturePolicyTests.swift */; };
 		54A4300E8B7B061CF7542A45 /* ScheduleCalendarHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86AB38E652906F788C2BEBDE /* ScheduleCalendarHeaderView.swift */; };
 		54DA3561FCC6D84F38C04ED9 /* ToolOutputSidecar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5D599D59063ADF624DDFA8 /* ToolOutputSidecar.swift */; };
+		552C57B8800A38551A2C641A /* PaneSheetArbiter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73B5F90E26F80840C063CC14 /* PaneSheetArbiter.swift */; };
 		556426D55362B08E73730F7F /* WorkspaceExtensionsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C255F570C7EE296DBD9D61B4 /* WorkspaceExtensionsViewController.swift */; };
 		55A2B884E1915CCA5566515C /* PairingDeviceName.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AB4594A6D4B80B2F368AA3B /* PairingDeviceName.swift */; };
 		55A81500DB2F33987494AA41 /* SettingsGeneralPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F1D9C8E95E2A29ABB4286A2 /* SettingsGeneralPage.swift */; };
@@ -1056,6 +1057,7 @@
 		757DD7ACCBA80E777C105933 /* SSHTerminalOverview.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBC3A2B1971F7600D88E6FBD /* SSHTerminalOverview.swift */; };
 		758C08508CB020E89D3EECBC /* MermaidSemanticSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE47E8A25BF3AB9D9C7D62F3 /* MermaidSemanticSource.swift */; };
 		758DBF0626EB89AB5FB60E14 /* TreeSitterGo in Frameworks */ = {isa = PBXBuildFile; productRef = 415C941F6AE40E33F497F438 /* TreeSitterGo */; };
+		75A1E32EE5C31567AB45E164 /* PaneSheetArbiterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB098D47895521AFC05786A0 /* PaneSheetArbiterTests.swift */; };
 		75C0655BE8B42A0D3A718842 /* ReaderFindSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 484DDEDB4C0264C7228B3B0D /* ReaderFindSession.swift */; };
 		760BD9CF00A254DF1A8CD351 /* APIClient+SessionSearching.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE34744C5E5872BA3FCD38FD /* APIClient+SessionSearching.swift */; };
 		7635EA4DE100388D891EF02E /* ScheduleDetailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7377C33A76C1763F0B7CD42 /* ScheduleDetailViewController.swift */; };
@@ -3345,6 +3347,7 @@
 		735427461D96ABAD8B7A183B /* FullScreenReviewCommentHarnessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenReviewCommentHarnessView.swift; sourceTree = "<group>"; };
 		7365EA735B73F9C53A8773B5 /* FocusedSessionConnectionPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusedSessionConnectionPolicy.swift; sourceTree = "<group>"; };
 		73A66AC7CDDBAA955BBAD5D9 /* InsetLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsetLabel.swift; sourceTree = "<group>"; };
+		73B5F90E26F80840C063CC14 /* PaneSheetArbiter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneSheetArbiter.swift; sourceTree = "<group>"; };
 		73B7A43BDA142A5D7EA96CD8 /* SSHTerminalScreenshotPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalScreenshotPreview.swift; sourceTree = "<group>"; };
 		73ED892A469E9A0B69B65869 /* BookTableOfContentsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookTableOfContentsViewController.swift; sourceTree = "<group>"; };
 		73FE6F41598E29518D9FE65A /* TableCopyAndOpenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCopyAndOpenTests.swift; sourceTree = "<group>"; };
@@ -4496,6 +4499,7 @@
 		FA4ABC7C06CA7707A966A3E3 /* AskCardExpanded.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskCardExpanded.swift; sourceTree = "<group>"; };
 		FA88EE6DBA94DBB723AA7980 /* PiToolsEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiToolsEditor.swift; sourceTree = "<group>"; };
 		FAC87BE0E2DF86F69B80DEF2 /* AppRootViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootViewController.swift; sourceTree = "<group>"; };
+		FB098D47895521AFC05786A0 /* PaneSheetArbiterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneSheetArbiterTests.swift; sourceTree = "<group>"; };
 		FB5EAC5E774FC2253E65FFA8 /* TelemetryEventUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryEventUploader.swift; sourceTree = "<group>"; };
 		FB6D7C919217473EB3F5F9CC /* HTMLDOMElementPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTMLDOMElementPicker.swift; sourceTree = "<group>"; };
 		FB85228F0059CE79D0E72963 /* PushNotificationOpening.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotificationOpening.swift; sourceTree = "<group>"; };
@@ -6230,6 +6234,7 @@
 				AE2833AC228E5F64CE54E22F /* PaneLauncherViewController.swift */,
 				2CFD37071D5E20FD06F413BC /* PaneLeafStateViewController.swift */,
 				8B85351186F4EC3ED9E963F5 /* PaneResizeHold.swift */,
+				73B5F90E26F80840C063CC14 /* PaneSheetArbiter.swift */,
 				961330E4EE72E6506B45C430 /* PaneSplitScreens.swift */,
 				FA07D64F5E280B22E1C03756 /* PaneTreeChrome.swift */,
 				434B15093A91490280EC5300 /* PaneTreeStore.swift */,
@@ -7531,6 +7536,7 @@
 				FC2A6E03B240FC886742950E /* PaneLinkCodecTests.swift */,
 				567F5960B33FF8A908BA143C /* PanePresentationTests.swift */,
 				A1182A8208A4847BA4A09C01 /* PaneRestorationTests.swift */,
+				FB098D47895521AFC05786A0 /* PaneSheetArbiterTests.swift */,
 				F532E2E4D03BACBF87C28098 /* PaneSplitTests.swift */,
 			);
 			path = Panes;
@@ -9065,6 +9071,7 @@
 				565EBE4781F45ABF0DE78255 /* PaneLiveResizeTimelineTests.swift in Sources */,
 				960EA63EFD374B39962A6241 /* PanePresentationTests.swift in Sources */,
 				38FF874424F1B52C872FB2E9 /* PaneRestorationTests.swift in Sources */,
+				75A1E32EE5C31567AB45E164 /* PaneSheetArbiterTests.swift in Sources */,
 				3794AA4B739688DB743A227E /* PaneSplitTests.swift in Sources */,
 				89D529DBF34466D73BBE6F3E /* PaneTestHost.swift in Sources */,
 				BA4396EF92B14BFF57F56F16 /* PaneTreeHostTests.swift in Sources */,
@@ -10077,6 +10084,7 @@
 				211868F298283BAD979834F4 /* PaneResizeMeter.swift in Sources */,
 				FB4A055F35CCEF9A75B43EA4 /* PaneResizeReadout.swift in Sources */,
 				A8746AE211EDFCBE1C173029 /* PaneRestoreHarness.swift in Sources */,
+				552C57B8800A38551A2C641A /* PaneSheetArbiter.swift in Sources */,
 				056602D433C2E454FEDEE9EC /* PaneSplitScreens.swift in Sources */,
 				DE04491B2B458ACD493B78CE /* PaneTreeChrome.swift in Sources */,
 				28D3A5859F9029773AEA7E54 /* PaneTreeStore.swift in Sources */,

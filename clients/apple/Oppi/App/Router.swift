@@ -315,6 +315,21 @@ enum Router {
             // nothing left to dismiss it.
             presenter.view.window?.endEditing(true)
         }
+        // A pane of a window with several: one sheet at a time across them.
+        if let host = PaneHostController.containing(presenter), host.panes.cellLayout.leaves.count > 1,
+           let owner = host.cell(holding: presenter) {
+            let arbiter = host.panes.sheets
+            container.onDismissed = {
+                onDismiss?()
+                arbiter.sheetDidDismiss()
+            }
+            arbiter.request(owner: owner, container: container, onCancel: onDismiss) { [weak presenter] in
+                guard let presenter, presenter.view.window != nil else { return false }
+                topPresenter(from: presenter).present(container, animated: true)
+                return true
+            }
+            return
+        }
         topPresenter(from: presenter).present(container, animated: true)
     }
 
@@ -378,6 +393,8 @@ enum Router {
     /// Dismisses the presented `container` and everything above it, ending
     /// an active search first (see `endSearch(in:then:)`).
     static func dismiss(_ container: UIViewController) {
+        // A pane's sheet still waiting its turn leaves the line instead.
+        if PaneSheetArbiter.cancel(container) { return }
         guard let presenting = container.presentingViewController else { return }
         endSearch(in: container) {
             presenting.dismiss(animated: true)

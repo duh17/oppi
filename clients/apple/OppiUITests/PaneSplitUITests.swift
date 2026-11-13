@@ -265,6 +265,113 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         attachScreenCapture("sessions-search-after-scroll")
     }
 
+    /// Landscape on the iPad mini with the sidebar shown: the sidebar floats
+    /// over the split view's detail column, so the panes sit beside it. The
+    /// leading pane's grip and search are never under the sidebar, and the
+    /// search takes a tap.
+    func testPanesSitBesideTheSidebarInLandscape() throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("The sidebar sits beside the panes on the iPad mini in landscape")
+        }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
+        launchPreview(screen: "pane-restore", environment: ["PANE_RESTORE_SEED": "splits"], ready: nil)
+        let sidebar = app.descendants(matching: .any)["workspace.sidebar.scroll"]
+        XCTAssertTrue(sidebar.waitUntilExists(timeout: 10), "Landscape shows the sidebar")
+        let grip = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.' AND label ENDSWITH '1 of 3'")).firstMatch
+        XCTAssertTrue(grip.waitUntilExists(timeout: 10), "The leading pane shows its grip")
+        let search = app.searchFields["Search sessions"]
+        XCTAssertTrue(search.waitUntilExists(timeout: 10), "The leading pane is the Sessions screen")
+        hold()
+        attachScreenCapture("sidebar-beside-panes")
+        XCTAssertGreaterThanOrEqual(grip.frame.minX, sidebar.frame.maxX,
+                                    "The grip is under the sidebar: \(grip.frame), sidebar \(sidebar.frame)")
+        XCTAssertGreaterThanOrEqual(search.frame.minX, sidebar.frame.maxX,
+                                    "The search is under the sidebar: \(search.frame), sidebar \(sidebar.frame)")
+        search.tap()
+        XCTAssertTrue(waitFor((search.value(forKey: "hasKeyboardFocus") as? Bool) == true), "The search takes a tap")
+    }
+
+    /// H1: the pane chords from a hardware keyboard. ⌥⌘ arrows and ⌃⌘
+    /// digits move focus, ⌃⌘ arrows move the divider on the focused pane's
+    /// edge, and ⌥⇧⌘ arrows move the pane. ⇧⌘↩ (Zoom Pane) is left out: a
+    /// typed ⇧⌘↩ does not reach the app's menu command in the simulator, with
+    /// or without priority over system behaviour; the grip zooms meanwhile.
+    func testThePaneChordsFocusMoveResizeAndZoom() throws {
+        try openChatInLandscape()
+        app.typeKey("d", modifierFlags: .command)
+        let launcher = app.descendants(matching: .any)["pane.launcher"]
+        XCTAssertTrue(launcher.waitUntilExists(timeout: 5), "⌘D opened the launcher beside the chat")
+        let grips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.'"))
+        let chatGrip = grips.matching(NSPredicate(format: "label ENDSWITH '1 of 2'")).firstMatch
+        let launcherGrip = grips.matching(NSPredicate(format: "label ENDSWITH '2 of 2'")).firstMatch
+        let focused = { (grip: XCUIElement) in (grip.value as? String) == "Focused" }
+
+        app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [.option, .command])
+        XCTAssertTrue(waitFor(focused(launcherGrip)), "⌥⌘→ focused the pane on the right")
+        app.typeKey("1", modifierFlags: [.control, .command])
+        XCTAssertTrue(waitFor(focused(chatGrip)), "⌃⌘1 focused the first pane")
+
+        let before = launcher.frame.minX
+        app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [.control, .command])
+        XCTAssertTrue(waitFor(abs(launcher.frame.minX - (before + 32)) < 2),
+                      "⌃⌘→ moved the chat's divider 32 pt: \(before) → \(launcher.frame.minX)")
+
+        app.typeKey("2", modifierFlags: [.control, .command])
+        XCTAssertTrue(waitFor(focused(launcherGrip)))
+        app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [.option, .shift, .command])
+        let composer = app.descendants(matching: .any)["chat.input"]
+        XCTAssertTrue(waitFor(composer.frame.minX > launcher.frame.maxX - 1), "⌥⇧⌘← moved the pane to the chat's left")
+        attachScreenCapture("chords-moved")
+    }
+
+    /// §1.6 rule 5: on a wide window the chat bar's Terminal opens the folder
+    /// terminal in a pane beside the chat, focused, instead of over it. With
+    /// no saved SSH host its first step is Add Host.
+    func testTheChatBarsTerminalOpensBesideTheChat() throws {
+        try openChatInLandscape()
+        app.buttons["chat.toolbar.more"].tap()
+        let terminal = app.buttons["chat.toolbar.menu.terminal"]
+        XCTAssertTrue(terminal.waitUntilExists(timeout: 5), "The … menu offers Terminal")
+        terminal.tap()
+        let setup = app.descendants(matching: .any)["sshTerminal.setup.list"]
+        XCTAssertTrue(setup.waitUntilExists(timeout: 10), "The terminal's first step opened")
+        let composer = app.descendants(matching: .any)["chat.input"]
+        XCTAssertTrue(composer.isHittable, "The chat stays beside it")
+        XCTAssertGreaterThan(setup.frame.minX, composer.frame.maxX - 1, "The terminal is in a pane to the chat's right")
+        let grips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.'"))
+        XCTAssertEqual(grips.count, 2, "The terminal is a pane of its own")
+        let terminalGrip = grips.matching(NSPredicate(format: "label ENDSWITH '2 of 2'")).firstMatch
+        XCTAssertEqual(terminalGrip.value as? String, "Focused", "The new terminal pane has focus")
+        attachScreenCapture("terminal-beside-chat")
+    }
+
+    /// §1.7: a closed pane comes back with Undo, from the toast that offers
+    /// it, where it was and showing what it showed.
+    func testUndoBringsAClosedPaneBack() throws {
+        try openChatInLandscape()
+        app.typeKey("d", modifierFlags: .command)
+        let files = app.buttons["pane.launcher.files"]
+        XCTAssertTrue(files.waitUntilExists(timeout: 5), "⌘D opened the launcher")
+        files.tap()
+        let row = app.descendants(matching: .any)["fileBrowser.row.Route.md"]
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "Files fills the pane")
+        let frame = row.frame
+        let grips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.'"))
+        grips.matching(NSPredicate(format: "label ENDSWITH '2 of 2'")).firstMatch.tap()
+        app.buttons["Close Pane"].tap()
+        XCTAssertTrue(row.waitUntilGone(timeout: 5), "Close Pane closed Files")
+        let undo = app.buttons["pane.undo"]
+        XCTAssertTrue(undo.waitUntilExists(timeout: 5), "The toast offers Undo")
+        XCTAssertEqual(undo.label, "Undo Close Pane")
+        attachScreenCapture("undo-toast")
+        undo.tap()
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "Undo brought Files back")
+        XCTAssertEqual(row.frame.minX, frame.minX, accuracy: 2, "where it was")
+        XCTAssertTrue(undo.waitUntilGone(timeout: 5), "The toast goes with the undo")
+        attachScreenCapture("undo-restored")
+    }
+
     private func openChatInLandscape() throws {
         guard UIDevice.current.userInterfaceIdiom == .pad else {
             throw XCTSkip("Splits need a wide window; the iPad mini is the wide simulator")

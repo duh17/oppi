@@ -22,5 +22,13 @@
     "reason": "Flaked in 3 land gates in the full unit shards (visible anchor item and screen Y moved after a deferred pass; one run also timed out waiting for the reader's deferred work to settle) and passed on rerun. 15 isolated repetitions pass in 8 s, so it needs the shard's load; the gate log keeps only the assertion line, not the stage. Rework: make the stage name the failing assertion's stage and the reader's pending-work state, then reproduce under the shard.",
     "addedAt": "2026-11-08",
     "expires": "2026-12-07"
+  },
+  {
+    "id": "OppiUITests/PaneUITests/testComposerKeepsTheKeyboardWhileALinkOpensBeside",
+    "owner": "lead",
+    "backlog": "panes/composer-focus-link-opens-beside-flake",
+    "reason": "iPad only: failed and passed on rerun at three separate heads in the ui-ipad lane (rerun ledger). The failure is the first wait, \"The file link did not open a pane\": the reader's close button did not appear within 10 s after the link tap under shard load. Not yet reproduced alone; rework: wait for the pane to mount (the companion's divider) before looking for the reader's close, and record whether the tap reached the link.",
+    "addedAt": "2026-11-13",
+    "expires": "2026-12-13"
   }
 ]
