@@ -35,7 +35,7 @@ struct ToolCallFormattingTests {
         ])]
         #expect(ToolCallFormatting.askCollapsedTitle(args: args, details: nil, argsSummary: "") == "2 questions")
     }
-    @Test func askAnswerSummaryRendersOptionsWithSelectedLabelChecked() {
+    @Test func askAnswerSummaryMarksChosenOptionSelectedWithoutTaskListSyntax() {
         let details: JSONValue = .object([
             "questions": .array([.object([
                 "id": .string("scope"), "question": .string("Which scope should I use?"),
@@ -47,6 +47,38 @@ struct ToolCallFormattingTests {
             "answers": .object(["scope": .string("minimal_patch")]),
             "allIgnored": .bool(false),
         ])
-        #expect(ToolCallFormatting.askAnswerSummary(details: details) == "**Q:** Which scope should I use?\n- [x] Minimal patch — Smallest safe change\n- [ ] Full refactor")
+        // The chosen option is a filled radio in bold; no `- [x]`, which the timeline strikes through.
+        #expect(ToolCallFormatting.askAnswerSummary(details: details) == "**Q:** Which scope should I use?\n◉ **Minimal patch** — Smallest safe change\n○ Full refactor")
+    }
+
+    @Test func askAnswerSummaryMarksEveryChosenOptionOfAMultiSelect() {
+        let details: JSONValue = .object([
+            "questions": .array([.object([
+                "id": .string("checks"), "question": .string("Which checks?"), "multiSelect": .bool(true),
+                "options": .array([
+                    .object(["value": .string("lint"), "label": .string("Lint")]),
+                    .object(["value": .string("unit"), "label": .string("Unit tests")]),
+                    .object(["value": .string("e2e"), "label": .string("End-to-end")])
+                ])
+            ])]),
+            "answers": .object(["checks": .array([.string("lint"), .string("e2e")])]),
+            "allIgnored": .bool(false),
+        ])
+        #expect(ToolCallFormatting.askAnswerSummary(details: details) == "**Q:** Which checks?\n☑ **Lint**\n☐ Unit tests\n☑ **End-to-end**")
+    }
+
+    @Test func askAnswerSummaryShowsATypedAnswerAndSelectsNoOption() {
+        let details: JSONValue = .object([
+            "questions": .array([.object([
+                "id": .string("branch"), "question": .string("Where should this land?"),
+                "options": .array([
+                    .object(["value": .string("main"), "label": .string("main")]),
+                    .object(["value": .string("feature"), "label": .string("A feature branch")])
+                ])
+            ])]),
+            "answers": .object(["branch": .string("Open a draft PR instead")]),
+            "allIgnored": .bool(false),
+        ])
+        #expect(ToolCallFormatting.askAnswerSummary(details: details) == "**Q:** Where should this land?\n○ main\n○ A feature branch\n**A:** Open a draft PR instead")
     }
 }

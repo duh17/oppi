@@ -120,7 +120,7 @@ struct TimelineReducerAskTests {
             "answers": .object(["approach": .string("full_rewrite")]),
             "allIgnored": .bool(false),
         ])
-        #expect(TimelineReducer.formatAskAnswers(details: details) == "**Q:** Which approach?\n- [x] Full rewrite\n- [ ] Small patch")
+        #expect(TimelineReducer.formatAskAnswers(details: details) == "**Q:** Which approach?\n◉ **Full rewrite**\n○ Small patch")
     }
 
     @Test("formatAskAnswers with nil details returns empty")

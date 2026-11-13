@@ -114,6 +114,7 @@ enum DebugHarnessLaunch {
         case "pane-restore": return PaneRestorePreviewController()
         case "session-timeline": return SessionTimelinePreviewController(root: root)
         case "markdown-tables": return MarkdownTablesPreviewController(root: root)
+        case "ask-answer": return AskAnswerPreviewController(root: root)
         // The files, terminal, and audio family: the motion captures, the
         // terminal's three fixture connections, and the script reader.
         case "file-browser-motion": return FileBrowserMotionPreviewController(review: false)

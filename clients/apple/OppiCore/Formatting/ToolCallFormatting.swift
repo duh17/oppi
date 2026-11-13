@@ -156,6 +156,7 @@ enum ToolCallFormatting {
         let id: String
         let question: String
         let options: [AskOptionDisplay]
+        let multiSelect: Bool
 
         var displayQuestion: String {
             let text = singleLine(question)
@@ -211,7 +212,8 @@ enum ToolCallFormatting {
             return AskQuestionDisplay(
                 id: trimmedID,
                 question: question,
-                options: options
+                options: options,
+                multiSelect: object["multiSelect"]?.boolValue ?? false
             )
         }
     }
@@ -232,11 +234,22 @@ enum ToolCallFormatting {
         return true
     }
 
+    /// The question with every option on its own line. The chosen option leads with a
+    /// filled mark (radio for one choice, checkbox for several) and is bold; the others
+    /// lead with an empty mark. Not a Markdown task list: the timeline draws a checked
+    /// task as done work, struck through, which reads as a rejected answer.
     private static func askChecklistSection(question: AskQuestionDisplay, answer: JSONValue?) -> String {
         var lines: [String] = ["**Q:** \(markdownInline(question.displayQuestion))"]
         for option in question.options {
-            let checked = answer.map { isAskOptionSelected(option, answer: $0) } ?? false
-            var line = "- [\(checked ? "x" : " ")] \(markdownInline(option.label))"
+            let chosen = answer.map { isAskOptionSelected(option, answer: $0) } ?? false
+            let mark = switch (question.multiSelect, chosen) {
+            case (false, true): "◉"
+            case (false, false): "○"
+            case (true, true): "☑"
+            case (true, false): "☐"
+            }
+            let label = markdownInline(option.label)
+            var line = "\(mark) \(chosen ? "**\(label)**" : label)"
             if let description = option.description.map(singleLine), !description.isEmpty {
                 line += " — \(markdownInline(description))"
             }
