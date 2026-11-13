@@ -149,8 +149,18 @@ final class PaneHostController: UIViewController {
 
     /// The front screen of the focused leaf.
     var focusedScreen: UIViewController? {
-        let leaf = focusedLeafController
-        return (leaf as? UINavigationController)?.topViewController ?? leaf
+        Self.frontScreen(of: focusedLeafController)
+    }
+
+    /// The front screen of each leaf, the focused leaf's first.
+    var leafScreens: [UIViewController] {
+        let focused = focusedLeafController
+        let others = [primary, companion?.controller].compactMap { $0 }.filter { $0 !== focused }
+        return ([focused] + others).map(Self.frontScreen(of:))
+    }
+
+    private static func frontScreen(of leaf: UIViewController) -> UIViewController {
+        (leaf as? UINavigationController)?.topViewController ?? leaf
     }
 
     override var childForStatusBarStyle: UIViewController? { primary }

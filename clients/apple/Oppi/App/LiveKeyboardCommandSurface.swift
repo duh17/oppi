@@ -82,10 +82,15 @@ final class LiveKeyboardCommandSurface {
     /// The front screen's search: the one that is active, else the first.
     private var frontSearch: (search: UISearchController, screen: UIViewController)? {
         guard isInteractive else { return nil }
-        // Beside a companion, the focused leaf's search comes first.
+        // The window's panes come first, as they hold the focus: the focused leaf's
+        // screen, then the other leaf's (a Files panel beside a chat that has no
+        // search of its own, which `FrontScreens` does not reach: the panel's
+        // browser is a child it descends into). A drawer's or split view's sidebar
+        // search answers only when no pane has one.
         var screens = FrontScreens.screens(in: window)
-        if topPresented == nil, let focused = Router.focusedScreen(in: window) {
-            screens.insert(focused, at: 0)
+        if topPresented == nil {
+            screens.insert(contentsOf: Router.paneScreens(in: window), at: 0)
+            if let focused = Router.focusedScreen(in: window) { screens.insert(focused, at: 0) }
         }
         let searches = screens.compactMap { screen in
             ScreenSearchController.search(on: screen).map { (search: $0, screen: screen) }

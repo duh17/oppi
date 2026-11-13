@@ -437,6 +437,19 @@ enum Router {
         window.rootViewController.flatMap(front(of:))
     }
 
+    /// The front screen of each leaf of the pane host that holds `window`'s
+    /// focus, the focused leaf's first. The window's host wraps the shell and
+    /// the chat's own host sits inside it, so this follows the focused leaves
+    /// down to the innermost. Empty when the window has no panes.
+    static func paneScreens(in window: UIWindow) -> [UIViewController] {
+        guard let root = window.rootViewController,
+              var host = root as? PaneHostController ?? paneHost(under: root) else { return [] }
+        while let inner = host.focusedLeafController as? PaneHostController ?? paneHost(under: host.focusedLeafController) {
+            host = inner
+        }
+        return host.leafScreens
+    }
+
     /// The controller that presents for `view`: its own screen, or what its
     /// window already presents above that. Nil outside a window.
     static func presenter(near view: UIView) -> UIViewController? {

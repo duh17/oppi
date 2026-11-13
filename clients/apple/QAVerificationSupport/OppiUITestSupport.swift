@@ -181,10 +181,13 @@ extension XCUIApplication {
     /// pool or the window shrank during the run. The iPhone's window is compact by design.
     func requireNonCompactWindowOnPad(file: StaticString = #filePath, line: UInt = #line) {
         guard UIDevice.current.userInterfaceIdiom == .pad else { return }
-        let window = windows.firstMatch
+        // The app's window is the largest one: on the video viewer screen
+        // `firstMatch` resolved to a 0 x 0 window, not the app's.
+        let all = windows.allElementsBoundByIndex
+        let window = all.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height } ?? windows.firstMatch
         XCTAssertNotEqual(
             window.horizontalSizeClass, .compact,
-            "The iPad run opened the app in a compact window (\(window.frame.size)); its width-gated tests would skip or take the phone path. " +
+            "The iPad run opened the app in a compact window (\(window.frame.size) of \(all.map(\.frame))); its width-gated tests would skip or take the phone path. " +
                 "Run through sim-pool.sh, which resets the slot's remembered window before booting it",
             file: file,
             line: line
