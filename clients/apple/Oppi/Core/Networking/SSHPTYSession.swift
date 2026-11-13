@@ -68,8 +68,27 @@ struct SSHPTYConfiguration: Sendable {
     /// exec-with-TTY request as OpenSSH `RemoteCommand` + `RequestTTY yes`
     /// (`ssh -t host 'command'`). The session ends when the command exits.
     var command: String?
+    /// Environment requests sent after the PTY is granted and before the shell or
+    /// command starts. They name this terminal to the host: sshd accepts only
+    /// `LANG` and `LC_*`, so `LC_TERMINAL` is how a program learns it is in Oppi
+    /// (pi picks its image protocol from env). They ask for no reply, so a host
+    /// that refuses them changes nothing.
+    var environment = Self.terminalIdentity
     /// How long sign-in may take once the socket exists. Tests shorten it.
     var signInTimeout = SSHConnection.signInTimeout
+
+    static var terminalIdentity: [SSHEnvironmentVariable] {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        return [
+            SSHEnvironmentVariable(name: "LC_TERMINAL", value: "Oppi"),
+            SSHEnvironmentVariable(name: "LC_TERMINAL_VERSION", value: version),
+        ]
+    }
+}
+
+struct SSHEnvironmentVariable: Sendable, Equatable {
+    let name: String
+    let value: String
 }
 
 /// Owns one `SSHConnection` and exactly one interactive PTY child channel on
@@ -367,7 +386,7 @@ extension SSHPTYChannelHandler.Options {
             term: configuration.term, columns: configuration.columns, rows: configuration.rows,
             pixelWidth: configuration.pixelWidth, pixelHeight: configuration.pixelHeight,
             inboundFlow: configuration.inboundFlow, command: configuration.command,
-            requestsPTY: true
+            requestsPTY: true, environment: configuration.environment
         )
     }
 }
@@ -516,6 +535,7 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
         let inboundFlow: SSHPTYInboundFlow?
         let command: String?
         let requestsPTY: Bool
+        var environment: [SSHEnvironmentVariable] = []
     }
     private let configuration: Options
 
@@ -624,6 +644,14 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
             switch openingState {
             case .waitingForPTY:
                 openingState = .waitingForShell
+                // No reply is asked for, so a host that ignores or refuses one never
+                // reaches the shell reply below.
+                for variable in configuration.environment {
+                    context.triggerUserOutboundEvent(
+                        SSHChannelRequestEvent.EnvironmentRequest(wantReply: false, name: variable.name, value: variable.value),
+                        promise: nil
+                    )
+                }
                 let requestWrite = context.eventLoop.makePromise(of: Void.self)
                 requestWrite.futureResult.whenFailure { [ready] error in ready.fail(error) }
                 if let command = configuration.command {

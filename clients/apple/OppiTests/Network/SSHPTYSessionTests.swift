@@ -64,7 +64,7 @@ struct SSHPTYSessionTests {
                     username: "fixture", authentication: .password(credential), savedHostKey: SSHHostKey(openSSH: String(openSSHPublicKey: fixture.hostKey.publicKey))
                 ), socket: fixture.clientSocket, sink: { _ in })
                 #expect(credential == "fixture-correct")
-                #expect(fixture.channelRequests.prefix(2).elementsEqual(["pty", "shell"]))
+                #expect(fixture.channelRequests.filter { !$0.hasPrefix("env:") }.prefix(2).elementsEqual(["pty", "shell"]))
                 await session.cancel()
             } catch let error as SSHConnectionError {
                 #expect(credential == "fixture-wrong")
@@ -127,7 +127,7 @@ struct SSHPTYSessionTests {
 
         #expect(fixture.authRequests == 1)
         #expect(fixture.authKinds == ["publickey"])
-        #expect(fixture.channelRequests.prefix(2).elementsEqual(["pty", "shell"]))
+        #expect(fixture.channelRequests.filter { !$0.hasPrefix("env:") }.prefix(2).elementsEqual(["pty", "shell"]))
 
         try await session.resize(columns: 132, rows: 43, pixelWidth: 1200, pixelHeight: 800)
         try await fixture.windowChanged.futureResult.get()
@@ -135,12 +135,33 @@ struct SSHPTYSessionTests {
         await session.cancel()
     }
 
+    /// pi picks its image protocol from env, and sshd takes only `LANG`/`LC_*`: the
+    /// terminal names itself as `LC_TERMINAL` once the PTY is granted, ahead of the shell
+    /// or the startup command, and a host that ignores the requests changes nothing.
+    @Test func terminalNamesItselfWithEnvironmentRequestsBetweenThePTYAndTheShell() async throws {
+        let shell = try await SSHFixture.start()
+        let shellSession = try await shell.connect(sink: { _ in })
+        defer { shell.close() }
+        let requests = shell.channelRequests
+        #expect(requests.count == 4)
+        #expect(requests.first == "pty" && requests.last == "shell")
+        #expect(requests[1] == "env:LC_TERMINAL=Oppi")
+        #expect(requests[2].hasPrefix("env:LC_TERMINAL_VERSION=") && requests[2].count > "env:LC_TERMINAL_VERSION=".count)
+        await shellSession.cancel()
+
+        let command = try await SSHFixture.start()
+        let commandSession = try await command.connect(command: "herdr", sink: { _ in })
+        defer { command.close() }
+        #expect(command.channelRequests.map { $0.hasPrefix("env:") ? "env" : $0 } == ["pty", "env", "env", "exec:herdr"])
+        await commandSession.cancel()
+    }
+
     @Test func startupCommandReplacesTheShellAndSideCommandsUseTheirOwnChannel() async throws {
         let fixture = try await SSHFixture.start()
         let collector = EventCollector()
         let session = try await fixture.connect(command: "herdr", sink: collector.receive)
         defer { fixture.close() }
-        #expect(fixture.channelRequests.prefix(2).elementsEqual(["pty", "exec:herdr"]))
+        #expect(fixture.channelRequests.filter { !$0.hasPrefix("env:") }.prefix(2).elementsEqual(["pty", "exec:herdr"]))
 
         let result = try await session.run("herdr api snapshot")
         #expect(result == SSHExecResult(output: Data("ran herdr api snapshot".utf8), errorOutput: Data("warn".utf8), exitStatus: 3))
@@ -1097,6 +1118,9 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
                 sawPTY = true
                 context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
             }
+        case let env as SSHChannelRequestEvent.EnvironmentRequest:
+            // Asked without a reply, as sshd treats an env it does not accept.
+            state.channelRequests.withLock { $0.append("env:\(env.name)=\(env.value)") }
         case let exec as SSHChannelRequestEvent.ExecRequest:
             state.channelRequests.withLock { $0.append("exec:\(exec.command)") }
             context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
