@@ -411,12 +411,23 @@ struct SessionThreadStripViewTests {
     /// The Agents sit on the dot line while a member is active, where they have the whole width, and join
     /// the counts line once the thread settles, so the settled strip stays one line.
     @Test func theAgentsShareTheCountsLineOnlyWhileTheThreadIsSettled() {
-        func lines(_ children: [SessionStatusKind]) -> (agents: CGRect, counts: CGRect, dots: CGRect, view: UIView) {
+        struct Lines {
+            let agents: CGRect
+            let counts: CGRect
+            let dots: CGRect
+            let view: UIView
+        }
+        func lines(_ children: [SessionStatusKind]) -> Lines {
             let (view, _) = strip(children, agents: ["a", "b"])
             let agents = descendants(of: view, SessionThreadAgentClusterView.self)[0]
             let counts = descendants(of: view, SessionThreadSummaryLabel.self)[0]
             let dots = descendants(of: view, SessionThreadStatusDotsView.self)[0]
-            return (agents.convert(agents.bounds, to: view), counts.convert(counts.bounds, to: view), dots.convert(dots.bounds, to: view), view)
+            return Lines(
+                agents: agents.convert(agents.bounds, to: view),
+                counts: counts.convert(counts.bounds, to: view),
+                dots: dots.convert(dots.bounds, to: view),
+                view: view
+            )
         }
 
         let settled = lines([.stopped, .stopped])

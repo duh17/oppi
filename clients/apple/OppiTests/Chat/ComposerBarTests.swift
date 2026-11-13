@@ -1594,7 +1594,7 @@ struct ComposerBarTests {
         let scroll = try #require(descendant(in: controller.view, identifier: "chat.ask.scroll") as? UIScrollView)
         #expect(!scroll.isScrollEnabled)
         #expect(scroll.contentSize.height <= scroll.bounds.height + 0.5)
-        #expect(scroll.superview!.bounds.height < ExtensionNativeSurfaceLayout.expandedMaxHeight)
+        #expect(testUnwrap(scroll.superview).bounds.height < ExtensionNativeSurfaceLayout.expandedMaxHeight)
     }
 
     @Test("A new Ask after a scrolled one starts at its top in a slot sized for it")

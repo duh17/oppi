@@ -446,20 +446,27 @@ final class WorkspaceSettingsViewController: ListScreenController<
         }
     }
 
-    private func indexRow(_ item: Item) -> (title: String, systemImage: String, value: String?, identifier: String) {
+    private struct IndexRow {
+        let title: String
+        let systemImage: String
+        let value: String?
+        let identifier: String
+    }
+
+    private func indexRow(_ item: Item) -> IndexRow {
         switch item {
         case .instructions:
-            (String(localized: "Instructions"), "doc.text", model.instructionsSummary, "workspace.edit.instructions")
+            IndexRow(title: String(localized: "Instructions"), systemImage: "doc.text", value: model.instructionsSummary, identifier: "workspace.edit.instructions")
         case .skills:
-            (String(localized: "Skills"), "sparkles", model.skillsSummary, "workspace.edit.skills")
+            IndexRow(title: String(localized: "Skills"), systemImage: "sparkles", value: model.skillsSummary, identifier: "workspace.edit.skills")
         case .extensions:
-            (String(localized: "Extensions"), "puzzlepiece.extension", model.extensionsSummary, "workspace.edit.extensions")
+            IndexRow(title: String(localized: "Extensions"), systemImage: "puzzlepiece.extension", value: model.extensionsSummary, identifier: "workspace.edit.extensions")
         case .mcpServers:
-            (String(localized: "MCP Servers"), "network", model.mcpSummary, "workspace.edit.mcpServers")
+            IndexRow(title: String(localized: "MCP Servers"), systemImage: "network", value: model.mcpSummary, identifier: "workspace.edit.mcpServers")
         case .dictionary:
-            (String(localized: "Dictation Dictionary"), "text.book.closed", nil, "workspace.edit.dictionary")
+            IndexRow(title: String(localized: "Dictation Dictionary"), systemImage: "text.book.closed", value: nil, identifier: "workspace.edit.dictionary")
         default:
-            (String(localized: "Network Access"), "lock.shield", model.networkAccessSummary, "workspace.edit.networkAccess")
+            IndexRow(title: String(localized: "Network Access"), systemImage: "lock.shield", value: model.networkAccessSummary, identifier: "workspace.edit.networkAccess")
         }
     }
 

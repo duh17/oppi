@@ -234,7 +234,7 @@ struct ServerExtensionsViewControllerTests {
         // The reload changed the server's plugins: the list asks again and drops the stale note.
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             screen.view.layoutIfNeeded()
-            return screen.sections().first { $0.id == .notice } == nil
+            return !screen.sections().contains { $0.id == .notice }
         })
         #expect(screen.sections().first { $0.id == .reload }?.items.first == .reloadLine("loaded"))
         #expect(reload.isEnabled, "a finished reload can run again")

@@ -54,7 +54,7 @@ struct SessionThreadStoppedFoldRowTests {
                 ),
                 thread: nil, outsideRoot: nil, depth: 1, stoppedFold: fold
             )
-            snapshot.append(sessions: [entry], to: 0, item: { _ in index }) { _ in nil }
+            snapshot.append(sessions: [entry], to: 0, item: { _ in index }, content: { _ in nil })
         }
         list.apply(snapshot)
         window.layoutIfNeeded()

@@ -1302,6 +1302,7 @@ struct MarkdownInlineVideoTests {
         let size = CGSize(width: 640, height: 360)
 
         let request = Task { @MainActor in await store.image(for: source, maxPixelSize: size) }
+        // swiftlint:disable:next empty_count - the actor's count is a plain tally, not a collection
         for _ in 0..<40 where await counter.count == 0 { await Task.yield() }
         #expect(await counter.count == 1)
 

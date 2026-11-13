@@ -59,7 +59,7 @@ struct SettingsStyle {
     }
 
     private static func luminance(_ color: UIColor, isDark: Bool) -> CGFloat {
-        var (red, green, blue, alpha): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
         let traits = UITraitCollection(userInterfaceStyle: isDark ? .dark : .light)
         color.resolvedColor(with: traits).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
         func linear(_ value: CGFloat) -> CGFloat {

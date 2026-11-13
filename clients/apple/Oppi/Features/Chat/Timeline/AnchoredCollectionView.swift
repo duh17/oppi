@@ -15,8 +15,7 @@ import UIKit
 final class AnchoredCollectionView: UICollectionView {
     override init(frame: CGRect, collectionViewLayout layout: UICollectionViewLayout) {
         super.init(frame: frame, collectionViewLayout: layout)
-        registerForTraitChanges([UITraitAccessibilityContrast.self]) {
-            (view: Self, previous: UITraitCollection) in
+        registerForTraitChanges([UITraitAccessibilityContrast.self]) { (view: Self, previous: UITraitCollection) in
             guard previous.accessibilityContrast != view.traitCollection.accessibilityContrast else {
                 return
             }

@@ -6,7 +6,7 @@ import Testing
 @Suite("Rex over Tailscale", .serialized, .timeLimit(.minutes(1)))
 struct RexDirectTests {
     static let rexName = "rex.tail0000.ts.net"
-    static let rexURL = URL(string: "https://\(rexName)")!
+    static let rexURL = testUnwrap(URL(string: "https://\(rexName)"))
 
     static let rexHostID = "ae49134e-0000-4000-8000-000000000001"
 
@@ -30,7 +30,7 @@ struct RexDirectTests {
 
     static func store() -> RexDirectStore {
         let suite = "rex-direct-tests-\(UUID().uuidString)"
-        return RexDirectStore(defaults: UserDefaults(suiteName: suite)!)
+        return RexDirectStore(defaults: testDefaults(suite: suite))
     }
 
     /// A fake Rex on a byte stream: welcomes, answers `server.status`, and
@@ -130,10 +130,10 @@ struct RexDirectTests {
         let direct = FakeRex()
         let opened = Mutex<[URL]>([])
         func plan() -> RexRoutePlan {
-            RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }) { url, _, _, sink in
+            RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }, openDirect: { url, _, _, sink in
                 opened.withLock { $0.append(url) }
                 return direct.open(sink)
-            }
+            })
         }
 
         let (first, firstControl) = try await RexLink.connect(
@@ -155,12 +155,12 @@ struct RexDirectTests {
         #expect(try await Self.eventually { direct.host.requests.contains { $0.method == "server.status" } })
         #expect(store.url(for: host) == Self.rexURL, "the same Rex answered: the address stays")
         control.close()
-        #expect(RexLink.hostHeader(URL(string: "https://\(Self.rexName):8443")!) == "\(Self.rexName):8443")
+        #expect(RexLink.hostHeader(testUnwrap(URL(string: "https://\(Self.rexName):8443"))) == "\(Self.rexName):8443")
         #expect(RexLink.hostHeader(Self.rexURL) == Self.rexName)
 
         let impostor = FakeRex(status: Self.status(hostID: "another-rex"))
         let (_, impostorControl) = try await RexLink.connect(
-            plan: RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }) { _, _, _, sink in impostor.open(sink) },
+            plan: RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }, openDirect: { _, _, _, sink in impostor.open(sink) }),
             openStream: { _, _, _ in throw SSHConnectionError.notConnected }, run: nil
         )
         #expect(try await Self.eventually { store.url(for: host) == nil }, "another Rex at that name: the address goes")
@@ -189,14 +189,15 @@ struct RexDirectTests {
         // The production deadline is `RexRoutePlan.directTimeout`; a short one keeps the test fast.
         let deadline = Duration.milliseconds(400)
         let plan = RexRoutePlan(
-            host: host, store: store, tailnetUsable: { true }, isCurrent: { true }, directDeadline: deadline
-        ) { _, _, _, sink in
-            // A stream that ignores cancellation and arrives after the deadline.
-            await withCheckedContinuation { continuation in
-                DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(1500)) { continuation.resume() }
+            host: host, store: store, tailnetUsable: { true }, isCurrent: { true }, directDeadline: deadline,
+            openDirect: { _, _, _, sink in
+                // A stream that ignores cancellation and arrives after the deadline.
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(1500)) { continuation.resume() }
+                }
+                return late.open(sink)
             }
-            return late.open(sink)
-        }
+        )
         let bridge = FakeRex()
         let started = ContinuousClock.now
         let (link, control) = try await RexLink.connect(plan: plan, openStream: { _, _, sink in bridge.open(sink) }, run: nil)
@@ -216,10 +217,10 @@ struct RexDirectTests {
         let host = RexDirectHost(profile: Self.profile())
         store.apply(.available(url: Self.rexURL, hostID: Self.rexHostID), for: host)
         let attempts = Mutex(0)
-        let plan = RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }) { _, _, _, _ in
+        let plan = RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }, openDirect: { _, _, _, _ in
             attempts.withLock { $0 += 1 }
             throw RexWebSocketCodec.Failure.upgradeRefused("HTTP/1.1 403 Forbidden")
-        }
+        })
         let bridge = FakeRex()
         let (link, control) = try await RexLink.connect(plan: plan, openStream: { _, _, sink in bridge.open(sink) }, run: nil)
         #expect(link.route == .ssh)
@@ -244,9 +245,9 @@ struct RexDirectTests {
         let host = RexDirectHost(profile: Self.profile())
         let direct = FakeRex()
         let commands = Mutex<[String]>([])
-        let plan = RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }) { _, _, _, sink in
+        let plan = RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }, openDirect: { _, _, _, sink in
             direct.open(sink)
-        }
+        })
         // A host whose bridge is already gone: the exit status and the close reach the client
         // on its own first write, in the order SSH reports them, instead of from a task that
         // races that write.
@@ -273,7 +274,7 @@ struct RexDirectTests {
 
         // Without Tailscale serving, the host still has no way in.
         let off = Self.store()
-        let offPlan = RexRoutePlan(host: host, store: off, tailnetUsable: { true }, isCurrent: { true }) { _, _, _, sink in direct.open(sink) }
+        let offPlan = RexRoutePlan(host: host, store: off, tailnetUsable: { true }, isCurrent: { true }, openDirect: { _, _, _, sink in direct.open(sink) })
         await #expect(throws: RexClientError.bridgeMissing) {
             _ = try await RexLink.connect(
                 plan: offPlan,

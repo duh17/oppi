@@ -356,8 +356,7 @@ final class SSHTerminalStatusDetailController: UIViewController, RouterModalCont
             content.imageProperties.tintColor = self.themeID.palette.ui.comment
             cell.contentConfiguration = content
         }
-        let cell = UICollectionView.CellRegistration<SSHTerminalStatusDetailCell, SSHTerminalStatusRow> {
-            [weak self] cell, _, row in
+        let cell = UICollectionView.CellRegistration<SSHTerminalStatusDetailCell, SSHTerminalStatusRow> { [weak self] cell, _, row in
             guard let self else { return }
             var content = UIListContentConfiguration.subtitleCell()
             content.text = row.title

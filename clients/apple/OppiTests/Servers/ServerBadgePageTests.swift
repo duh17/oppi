@@ -24,7 +24,6 @@ struct ServerBadgePageTests {
         ))
     }
 
-
     /// An alert cannot present over a page that is still appearing.
     private func settled(_ page: UIViewController) async {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {

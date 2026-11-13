@@ -660,6 +660,7 @@ struct WorkspaceDetailsAndListTests {
         defer { window.isHidden = true; window.rootViewController = nil }
 
         // The page's first load reads the catalog.
+        // swiftlint:disable:next empty_count - TestReadCounter.count tallies reads, it is not a collection
         try await waitUntil { reads.count > 0 }
         // A connection that synced a moment ago skips an ordinary refresh for two
         // minutes: a pull is an ask, so it reads anyway.

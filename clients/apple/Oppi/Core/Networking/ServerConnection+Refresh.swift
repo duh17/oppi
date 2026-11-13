@@ -432,27 +432,29 @@ extension ServerConnection {
         let connectedAt = appEventStreamConnectedAt
         // Install the owner slot before the first await so a late external
         // failure during this pass can set the pending follow-up marker.
-        appEventListRepair.installOwner { repairEpoch in Task { @MainActor [weak self] in
-            guard let self else { return }
-            // Owner cleanup and pending consumption happen in one MainActor
-            // transition. No await may sit between the final level check and
-            // clearing the owner slot. Epoch guards a cancelled owner from
-            // clearing a newer repair installed after stream teardown.
-            defer { self.appEventListRepair.ownerFinished(epoch: repairEpoch) }
+        appEventListRepair.installOwner { repairEpoch in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                // Owner cleanup and pending consumption happen in one MainActor
+                // transition. No await may sit between the final level check and
+                // clearing the owner slot. Epoch guards a cancelled owner from
+                // clearing a newer repair installed after stream teardown.
+                defer { self.appEventListRepair.ownerFinished(epoch: repairEpoch) }
 
-            await self.refreshAfterAppEventConnection()
-            guard !Task.isCancelled,
-                  self.appEventStreamTransportState == .connected,
-                  self.appEventStreamConnectedAt == connectedAt else {
-                return
-            }
-
-            // Consume the one-follow-up budget before awaiting. Failures
-            // from this pass are repair-owned and cannot reschedule.
-            if self.appEventListRepair.takeFollowUp() {
                 await self.refreshAfterAppEventConnection()
+                guard !Task.isCancelled,
+                      self.appEventStreamTransportState == .connected,
+                      self.appEventStreamConnectedAt == connectedAt else {
+                    return
+                }
+
+                // Consume the one-follow-up budget before awaiting. Failures
+                // from this pass are repair-owned and cannot reschedule.
+                if self.appEventListRepair.takeFollowUp() {
+                    await self.refreshAfterAppEventConnection()
+                }
             }
-        } }
+        }
         await appEventListRepair.task?.value
 
         guard !Task.isCancelled,

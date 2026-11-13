@@ -23,17 +23,19 @@ struct AppLockCoverViewControllerTests {
         init(_ status: DeviceOwnerAuthentication.Availability) { self.status = status }
     }
 
+    private struct CoverRig {
+        let cover: AppLockCoverViewController
+        let service: AppLockService
+        let auth: Authenticator
+        let availability: Availability
+        let window: UIWindow
+    }
+
     private func makeCover(
         timeout: AppLockTimeout,
         outcomes: [DeviceOwnerAuthentication.Outcome] = [],
         available: Bool = true
-    ) throws -> (
-        cover: AppLockCoverViewController,
-        service: AppLockService,
-        auth: Authenticator,
-        availability: Availability,
-        window: UIWindow
-    ) {
+    ) throws -> CoverRig {
         let defaults = try #require(UserDefaults(suiteName: "AppLockCoverTests-\(UUID().uuidString)"))
         AppLockSettings.setTimeout(timeout, in: defaults)
         let auth = Authenticator(outcomes)
@@ -50,7 +52,7 @@ struct AppLockCoverViewControllerTests {
         window.rootViewController = cover
         window.isHidden = false
         cover.view.layoutIfNeeded()
-        return (cover, service, auth, availability, window)
+        return CoverRig(cover: cover, service: service, auth: auth, availability: availability, window: window)
     }
 
     private func find<T: UIView>(_ type: T.Type, id: String, in root: UIView) -> T? {
@@ -62,7 +64,11 @@ struct AppLockCoverViewControllerTests {
     }
 
     @Test func lockedCoverOffersUnlockAndRunsIt() async throws {
-        let (cover, service, auth, _, window) = try makeCover(timeout: .fiveMinutes, outcomes: [.success])
+        let rig = try makeCover(timeout: .fiveMinutes, outcomes: [.success])
+        let cover = rig.cover
+        let service = rig.service
+        let auth = rig.auth
+        let window = rig.window
         defer { hideTestWindow(window) }
         let button = try #require(find(UIButton.self, id: "appLock.unlock", in: cover.view))
         let status = try #require(find(UILabel.self, id: "appLock.status", in: cover.view))
@@ -81,7 +87,10 @@ struct AppLockCoverViewControllerTests {
     }
 
     @Test func aFailedAttemptSaysSoAndKeepsUnlockAvailable() async throws {
-        let (cover, service, _, _, window) = try makeCover(timeout: .fiveMinutes, outcomes: [.failed])
+        let rig = try makeCover(timeout: .fiveMinutes, outcomes: [.failed])
+        let cover = rig.cover
+        let service = rig.service
+        let window = rig.window
         defer { hideTestWindow(window) }
         let status = try #require(find(UILabel.self, id: "appLock.status", in: cover.view))
 
@@ -95,7 +104,10 @@ struct AppLockCoverViewControllerTests {
     }
 
     @Test func anObscuringCoverShowsOnlyTheAppIdentity() throws {
-        let (cover, service, _, _, window) = try makeCover(timeout: .off)
+        let rig = try makeCover(timeout: .off)
+        let cover = rig.cover
+        let service = rig.service
+        let window = rig.window
         defer { hideTestWindow(window) }
         let button = try #require(find(UIButton.self, id: "appLock.unlock", in: cover.view))
         let status = try #require(find(UILabel.self, id: "appLock.status", in: cover.view))
@@ -107,11 +119,16 @@ struct AppLockCoverViewControllerTests {
     }
 
     @Test func withoutADevicePasscodeTheCoverSaysToSetOneAndStaysLocked() async throws {
-        let (cover, service, auth, availability, window) = try makeCover(
+        let rig = try makeCover(
             timeout: .fiveMinutes,
             outcomes: [.success],
             available: false
         )
+        let cover = rig.cover
+        let service = rig.service
+        let auth = rig.auth
+        let availability = rig.availability
+        let window = rig.window
         defer { hideTestWindow(window) }
         let button = try #require(find(UIButton.self, id: "appLock.unlock", in: cover.view))
         let status = try #require(find(UILabel.self, id: "appLock.status", in: cover.view))

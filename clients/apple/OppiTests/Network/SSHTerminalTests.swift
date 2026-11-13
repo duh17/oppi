@@ -786,7 +786,7 @@ struct SSHTerminalTests {
             }
             return nil
         }
-        let claude = SSHTerminalKeymap.profile(for: "claude")!
+        let claude = testUnwrap(SSHTerminalKeymap.profile(for: "claude"))
         let accessory = SSHTerminalKeyStripView(handlers: .init())
         accessory.apply(
             actions: SSHTerminalKeymap.actions(for: claude, userFile: nil),
@@ -1677,7 +1677,6 @@ struct SSHTerminalTests {
         await rig.stop()
     }
 
-
     /// A screen follows the pane its session moves to with no slide of its own: a
     /// pane closed in Rex puts the neighbour on the grid, through the view
     /// controller's own wiring (`RexSessionModel.onShown` -> `presentShownPane`),
@@ -2476,13 +2475,13 @@ struct SSHTerminalTests {
         // and a folder that is not absolute leave the folder unknown.
         #expect(try await folder(snapshot: head + #"""
         "agents":[],"panes":[{"pane_id":"w1:p1","workspace_id":"w1"}]}}}
-        """#) == "")
+        """#).isEmpty)
         #expect(try await folder(snapshot: head + #"""
         "focused_pane_id":"w9:p9","agents":[],"panes":[{"pane_id":"w1:p1","cwd":"/srv/other"}]}}}
-        """#) == "")
+        """#).isEmpty)
         #expect(try await folder(snapshot: head + #"""
         "focused_pane_id":"w1:p1","agents":[],"panes":[{"pane_id":"w1:p1","cwd":"relative/dir"}]}}}
-        """#) == "")
+        """#).isEmpty)
 
         // A saved machine's panes are another host's: never this terminal's folder.
         #expect(try await folder(
@@ -2493,7 +2492,7 @@ struct SSHTerminalTests {
             machineSnapshot: head + #"""
             "focused_pane_id":"w1:p1","agents":[],"panes":[{"pane_id":"w1:p1","cwd":"/Users/alex/elsewhere"}]}}}
             """#
-        ) == "")
+        ).isEmpty)
     }
 
     @Test func keymapSpecsInEachSyntaxEncodeAsTerminalKeys() async throws {
@@ -2824,7 +2823,7 @@ struct SSHTerminalTests {
         _ = await waitForMainActorCondition(timeout: .seconds(10)) {
             nav.view.layoutIfNeeded()
             return grid.bounds.size == gridBefore
-                && resizes.sizes.count > 0
+                && !resizes.sizes.isEmpty
                 && channel.engine.geometry.rows == Int(grid.bounds.height / grid.cellSize.height)
         }
         #expect(grid.bounds.size == gridBefore)

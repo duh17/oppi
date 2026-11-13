@@ -18,16 +18,22 @@ struct PushDiscoveryTests {
     // MARK: - When it shows
 
     @Test func showsOnlyWhenDueAvailableAndNotYetOn() {
-        let cases: [(stage: PushDiscovery.Stage?, available: Bool, enabled: Bool, shows: Bool)] = [
-            (.ready, true, false, true),
+        struct Row {
+            let stage: PushDiscovery.Stage?
+            let available: Bool
+            let enabled: Bool
+            let shows: Bool
+        }
+        let cases = [
+            Row(stage: .ready, available: true, enabled: false, shows: true),
             // Nothing finished or asked yet.
-            (nil, true, false, false),
+            Row(stage: nil, available: true, enabled: false, shows: false),
             // Dismissed, or push on once: never again.
-            (.closed, true, false, false),
+            Row(stage: .closed, available: true, enabled: false, shows: false),
             // The server's operator turned push off, or this build or device cannot register.
-            (.ready, false, false, false),
+            Row(stage: .ready, available: false, enabled: false, shows: false),
             // Already on.
-            (.ready, true, true, false),
+            Row(stage: .ready, available: true, enabled: true, shows: false),
         ]
         for row in cases {
             #expect(
@@ -152,12 +158,31 @@ struct PushDiscoveryTests {
     /// A session that stops running because it ended, was stopped, or hit a fatal error is
     /// as much a first moment as one that settled; a session that was not running is not.
     @Test func aBackgroundSessionEndingStoppingOrFailingMakesTheCardDue() async throws {
-        let events: [(String, AppEventMessage, SessionStatus, SessionStatus)] = [
-            ("ended", .sessionEnded(sessionId: "background", workspaceId: "w1", emittedAt: 2, reason: "done"), .busy, .stopped),
-            ("stop confirmed", .stopConfirmed(sessionId: "background", workspaceId: "w1", emittedAt: 2, source: nil, reason: nil), .stopping, .ready),
-            ("error", .sessionError(sessionId: "background", workspaceId: "w1", emittedAt: 2, message: "boom", code: nil, fatal: true), .busy, .error),
+        struct Scenario {
+            let name: String
+            let event: AppEventMessage
+            let seedStatus: SessionStatus
+            let terminalStatus: SessionStatus
+        }
+        let events = [
+            Scenario(
+                name: "ended",
+                event: .sessionEnded(sessionId: "background", workspaceId: "w1", emittedAt: 2, reason: "done"),
+                seedStatus: .busy, terminalStatus: .stopped
+            ),
+            Scenario(
+                name: "stop confirmed",
+                event: .stopConfirmed(sessionId: "background", workspaceId: "w1", emittedAt: 2, source: nil, reason: nil),
+                seedStatus: .stopping, terminalStatus: .ready
+            ),
+            Scenario(
+                name: "error",
+                event: .sessionError(sessionId: "background", workspaceId: "w1", emittedAt: 2, message: "boom", code: nil, fatal: true),
+                seedStatus: .busy, terminalStatus: .error
+            ),
         ]
-        for (name, event, seedStatus, terminalStatus) in events {
+        for scenario in events {
+            let (name, event, seedStatus, terminalStatus) = (scenario.name, scenario.event, scenario.seedStatus, scenario.terminalStatus)
             let (conn, serverId) = try await makeConnection()
             defer { PushDiscovery.forget(serverId: serverId) }
             conn.sessionStore.switchServer(to: serverId)

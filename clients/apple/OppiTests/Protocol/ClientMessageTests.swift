@@ -281,7 +281,6 @@ struct ClientMessageTests {
         #expect(payload?["skills"] as? Bool == true)
     }
 
-
     @Test func encodesContinuousVoiceControlCommands() throws {
         let start = try decode(.voiceCallStart(clientCallId: "client-call-1", requestId: "voice-1"))
         #expect(start["type"] as? String == "voice_call_start")

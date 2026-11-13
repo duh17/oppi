@@ -48,7 +48,8 @@ extension ReaderTaskControl {
     /// The VoiceOver custom action that does what a tap does.
     var accessibilityActionName: String {
         switch kind {
-        case .fold(let isExpanded): isExpanded ? String(localized: "Collapse") : String(localized: "Expand")
+        case .fold(let isExpanded):
+            if isExpanded { String(localized: "Collapse") } else { String(localized: "Expand") }
         case .checkbox: String(localized: "Toggle")
         case .state: String(localized: "Change state")
         case .date: String(localized: "Change date")

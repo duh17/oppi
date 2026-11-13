@@ -65,8 +65,7 @@ final class WorkspaceShellController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitVerticalSizeClass.self]) {
-            (shell: Self, _: UITraitCollection) in
+        registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitVerticalSizeClass.self]) { (shell: Self, _: UITraitCollection) in
             shell.view.setNeedsLayout()
         }
         addChild(callStrip)

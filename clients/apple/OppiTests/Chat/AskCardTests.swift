@@ -245,7 +245,7 @@ struct AskCardTests {
             Details: PATCH /agents/KQdEFkKi \u{00B7} version 1
             """
         )
-        return request.askRequest!
+        return testUnwrap(request.askRequest)
     }
 
     private static func foldedCard(_ request: AskRequest, maxHeight: CGFloat, width: CGFloat = 342) -> (AskCardView, height: CGFloat) {
@@ -303,9 +303,9 @@ struct AskCardTests {
 
     @Test("A short message keeps its natural height")
     func shortMessageIsNotPadded() {
-        let request = ExtensionUIRequest(
+        let request = testUnwrap(ExtensionUIRequest(
             id: "short", sessionId: "session-1", method: "confirm", title: "Delete the draft?", message: "This cannot be undone."
-        ).askRequest!
+        ).askRequest)
         let (_, capped) = Self.foldedCard(request, maxHeight: ComposerInputMetrics.inlineAskCardMaxHeight)
         let (_, uncapped) = Self.foldedCard(request, maxHeight: .greatestFiniteMagnitude)
 

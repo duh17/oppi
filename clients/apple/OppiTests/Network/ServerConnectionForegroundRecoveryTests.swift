@@ -337,7 +337,7 @@ struct ServerConnectionForegroundRecoveryTests {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [VoiceCapabilityURLProtocol.self]
         conn.setAPIClientForTesting(APIClient(
-            baseURL: URL(string: "http://\(backend.host):7749")!,
+            baseURL: testUnwrap(URL(string: "http://\(backend.host):7749")),
             token: "sk_test",
             configuration: config
         ))
@@ -485,12 +485,12 @@ private final class VoiceCapabilityURLProtocol: URLProtocol, @unchecked Sendable
         }
         do {
             let (data, status) = try script.respond(to: url)
-            let response = HTTPURLResponse(
+            let response = testUnwrap(HTTPURLResponse(
                 url: url,
                 statusCode: status,
                 httpVersion: "HTTP/1.1",
                 headerFields: ["Content-Type": "application/json"]
-            )!
+            ))
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)

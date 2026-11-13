@@ -92,7 +92,7 @@ struct LiveActivityRelayContractTests {
 struct LiveActivitySettingsTests {
     private func defaults() -> UserDefaults {
         let name = "LiveActivitySettingsTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
+        let defaults = testDefaults(suite: name)
         defaults.removePersistentDomain(forName: name)
         return defaults
     }
@@ -187,7 +187,7 @@ struct LiveActivityRelayUploadTests {
 
     private static func defaults() -> UserDefaults {
         let name = "LiveActivityRelayUploadTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
+        let defaults = testDefaults(suite: name)
         defaults.removePersistentDomain(forName: name)
         return defaults
     }
@@ -296,7 +296,7 @@ struct LiveActivityDismissalTests {
 
     private func defaults() -> UserDefaults {
         let name = "LiveActivityDismissalTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
+        let defaults = testDefaults(suite: name)
         defaults.removePersistentDomain(forName: name)
         return defaults
     }

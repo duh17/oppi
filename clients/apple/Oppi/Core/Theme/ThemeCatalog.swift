@@ -249,7 +249,6 @@ enum ThemeID: Hashable, Codable, Sendable {
 /// Built-in palettes are seeds: `ThemeContrast.resolve` keeps each color's
 /// hue and chroma and moves its lightness until every contrast rule holds,
 /// and derives the chat surfaces (assistant card, user bubbles) from them.
-// swiftlint:disable function_body_length
 enum ThemePalettes {
     // Helper to build a token from a hex literal
     private static func c(_ hex: UInt32) -> ThemeColor {
@@ -531,7 +530,6 @@ enum ThemePalettes {
     static var night: ThemePalette { nightTheme.palette }
     static var light: ThemePalette { lightTheme.palette }
 }
-// swiftlint:enable function_body_length
 
 // MARK: - UIKit Palette
 

@@ -568,7 +568,6 @@ struct RexLivePanesTests {
         await rig.stop()
     }
 
-
     /// A grid in a window over the rig's channel, armed with the regime's own
     /// stepping, and wired the way the screen wires itself: the session announces
     /// the pane it shows, the grid paints it. That is the one owner under test.

@@ -13,6 +13,14 @@ extension AppScenePhase {
     }
 }
 
+/// The Git status and the counts the Git button and panel open with.
+private struct GitGlance {
+    let status: GitStatus
+    let changedFiles: Int
+    let added: Int
+    let removed: Int
+}
+
 extension ChatViewController {
     static func shouldPauseTimelinePresentation(for phase: AppPhase) -> Bool {
         phase == .inactive || phase == .background
@@ -211,7 +219,7 @@ extension ChatViewController {
 
     /// The Git status and the counts the panel opens with, scoped the way the
     /// panel scopes them (`ContextBarScoping`, This session).
-    private var gitGlance: (status: GitStatus, changedFiles: Int, added: Int, removed: Int)? {
+    private var gitGlance: GitGlance? {
         guard let gitStatus = loadedGitStatus, gitStatus.isGitRepo else { return nil }
         let session = session
         let changes = ContextBarScoping.displayedChanges(
@@ -222,7 +230,7 @@ extension ChatViewController {
             touchedPaths: sessionTouchedPaths,
             reportedTouchedCount: session?.changeStats?.filesChanged ?? 0
         )
-        return (gitStatus, changes.fileCount, changes.addedLines, changes.removedLines)
+        return GitGlance(status: gitStatus, changedFiles: changes.fileCount, added: changes.addedLines, removed: changes.removedLines)
     }
 
     /// The Files panel (UIKit), as a sheet or in the attached leaf. It

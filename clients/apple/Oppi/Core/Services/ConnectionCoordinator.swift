@@ -179,9 +179,10 @@ final class ConnectionCoordinator {
     /// suite of their own.
     @ObservationIgnored lazy var deviceSettings: SettingsStore = .liveDevice()
     /// Makes a server's settings store. The app's makes one over the paired
-    /// server's connection; tests replace it to point at a fake route.
-    @ObservationIgnored lazy var makeServerSettings: (String) -> SettingsStore = { [unowned self] serverId in
-        .live(serverId: serverId, coordinator: self)
+    /// server's connection; tests replace it to point at a fake route. It is handed
+    /// the coordinator rather than capturing it, so the stored closure holds no cycle.
+    @ObservationIgnored var makeServerSettings: (ConnectionCoordinator, String) -> SettingsStore = { coordinator, serverId in
+        .live(serverId: serverId, coordinator: coordinator)
     }
     @ObservationIgnored private var serverSettings: [String: SettingsStore] = [:]
 
@@ -198,7 +199,7 @@ final class ConnectionCoordinator {
     /// uncached store on every call.
     func settings(for serverId: String) -> SettingsStore {
         if let store = serverSettings[serverId] { return store }
-        let store = makeServerSettings(serverId)
+        let store = makeServerSettings(self, serverId)
         if serverStore.server(for: serverId) != nil { serverSettings[serverId] = store }
         return store
     }

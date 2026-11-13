@@ -698,13 +698,25 @@ extension SettingsKitTests {
     }
 
     /// The Style row's title and control frames in the cell's space, and the cell's size.
-    private static func segmentedRowFrames(in page: ListScreenController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (title: CGRect, control: CGRect, cellWidth: CGFloat, cellHeight: CGFloat) {
+    private struct SegmentedRowFrames {
+        let title: CGRect
+        let control: CGRect
+        let cellWidth: CGFloat
+        let cellHeight: CGFloat
+    }
+
+    private static func segmentedRowFrames(in page: ListScreenController<KitRowsPage.Section, KitRowsPage.Row>) throws -> SegmentedRowFrames {
         page.view.layoutIfNeeded()
         let indexPath = try #require(page.indexPath(for: .segmented))
         let cell = try #require(page.collectionView.cellForItem(at: indexPath))
         let title = try #require(Self.labels(in: cell).first { $0.text == "Style" })
         let control = try #require(Self.views(of: UISegmentedControl.self, in: cell).first)
-        return (title.convert(title.bounds, to: cell), control.convert(control.bounds, to: cell), cell.bounds.width, cell.bounds.height)
+        return SegmentedRowFrames(
+            title: title.convert(title.bounds, to: cell),
+            control: control.convert(control.bounds, to: cell),
+            cellWidth: cell.bounds.width,
+            cellHeight: cell.bounds.height
+        )
     }
 
     /// The preview pill's frame and the frames of the text drawn on it, in the cell's space.
@@ -860,7 +872,6 @@ private final class KitRowsPage: ListScreenController<KitRowsPage.Section, KitRo
             cell.contentConfiguration = content
         }
     }
-
 
 }
 

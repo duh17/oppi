@@ -234,10 +234,10 @@ struct PushEnvelopeTests {
         var sets: [URLFileProtection] = []
         var access: CrossProcessFileLock.FileClasses {
             CrossProcessFileLock.FileClasses(
-                read: { [unowned self] url in self.classes[url.path] },
-                set: { [unowned self] protection, url in
-                    self.sets.append(protection)
-                    self.classes[url.path] = protection
+                read: { [weak self] url in self?.classes[url.path] },
+                set: { [weak self] protection, url in
+                    self?.sets.append(protection)
+                    self?.classes[url.path] = protection
                 }
             )
         }

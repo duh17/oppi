@@ -167,7 +167,7 @@ final class DeviceResourceSampler {
         return seconds(usage.ru_utime) + seconds(usage.ru_stime)
     }
 
-    private nonisolated static func seconds(_ time: timeval) -> Double {
+    nonisolated private static func seconds(_ time: timeval) -> Double {
         Double(time.tv_sec) + Double(time.tv_usec) / 1_000_000
     }
 

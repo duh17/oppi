@@ -2037,7 +2037,7 @@ private final class OpenerHarness {
     ) async {
         let recorder = LinkRecorder()
         self.recorder = recorder
-        let lockDefaults = UserDefaults(suiteName: "AppOpenerTests-lock-\(UUID().uuidString)")!
+        let lockDefaults = testDefaults(suite: "AppOpenerTests-lock-\(UUID().uuidString)")
         AppLockSettings.setTimeout(appLockTimeout, in: lockDefaults)
         let authenticator = StubAuthenticator(outcomes: authOutcomes)
         self.authenticator = authenticator
@@ -2050,7 +2050,7 @@ private final class OpenerHarness {
             didTurnOn: {}
         )
         self.appLock = appLock
-        let scopedDefaults = UserDefaults(suiteName: "AppOpenerTests-scoped-\(UUID().uuidString)")!
+        let scopedDefaults = testDefaults(suite: "AppOpenerTests-scoped-\(UUID().uuidString)")
         scopedLock = ScopedLockService(defaults: scopedDefaults, appLock: appLock, didLock: { _ in })
 
         // The Keychain may hold servers other suites paired; this fixture's
@@ -2070,7 +2070,7 @@ private final class OpenerHarness {
             saveDelay: .seconds(60)
         )
         intentTrigger = IntentSessionOpenTrigger(
-            defaults: UserDefaults(suiteName: "AppOpenerTests-intent-\(UUID().uuidString)")!,
+            defaults: testDefaults(suite: "AppOpenerTests-intent-\(UUID().uuidString)"),
             promptFileURL: FileManager.default.temporaryDirectory
                 .appending(path: "AppOpenerTests-prompt-\(UUID().uuidString).json")
         )

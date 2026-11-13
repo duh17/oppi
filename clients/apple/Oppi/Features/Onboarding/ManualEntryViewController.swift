@@ -155,11 +155,12 @@ final class ManualEntryViewController: ListScreenController<ManualEntryViewContr
             keyboard: .URL,
             textColor: SettingsStyle.current.title,
             returnKey: .go,
-            onReturn: { [weak self] in self?.connect() }
-        ) { [weak self] in
-            self?.linkText = $0
-            self?.setNeedsUpdateProperties()
-        }
+            onReturn: { [weak self] in self?.connect() },
+            onChange: { [weak self] in
+                self?.linkText = $0
+                self?.setNeedsUpdateProperties()
+            }
+        )
         cell.textField.accessibilityLabel = String(localized: "Pairing Link")
     }
 

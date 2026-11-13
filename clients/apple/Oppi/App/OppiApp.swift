@@ -72,8 +72,6 @@ struct ForegroundReconnectGate {
     }
 }
 
-
-
 /// A `[[link]]` that matched more than one resource; the user picks one.
 struct LaunchRefreshTelemetryOutcome: Equatable, Sendable {
     let overall: String
@@ -495,7 +493,6 @@ final class OppiApp {
         await reconnectOnLaunch()
 #endif
     }
-
 
     @MainActor
     private func recordDiagnosticContext(

@@ -93,7 +93,7 @@ enum SSHPreflightClient {
                     }
                     if changed { await progress(state) }
                 }
-                let exitStatus = try await group.next() ?? nil
+                let exitStatus = try await group.next().flatMap { $0 }
                 if case .failure(let failure) = state.verdict(exitStatus: exitStatus) { throw failure }
             }
             let report = try await probe(on: connection)

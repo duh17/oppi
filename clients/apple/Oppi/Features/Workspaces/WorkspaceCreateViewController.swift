@@ -584,8 +584,9 @@ final class WorkspaceCreateViewController: ListScreenController<
                 returnKey: goesToFolder ? .next : .done,
                 onReturn: { [weak self] in
                     if goesToFolder { self?.focusFolderField() } else { self?.view.endEditing(true) }
-                }
-            ) { [weak self] in self?.model.name = $0 }
+                },
+                onChange: { [weak self] in self?.model.name = $0 }
+            )
             cell.textField.accessibilityLabel = "Name"
         case .folderField:
             cell.configure(
@@ -597,8 +598,9 @@ final class WorkspaceCreateViewController: ListScreenController<
                 textColor: fg,
                 labelColor: fg,
                 returnKey: .done,
-                onReturn: { [weak self] in self?.view.endEditing(true) }
-            ) { [weak self] in self?.model.setHostMount($0) }
+                onReturn: { [weak self] in self?.view.endEditing(true) },
+                onChange: { [weak self] in self?.model.setHostMount($0) }
+            )
             cell.textField.accessibilityLabel = "Folder"
         case .description:
             cell.configure(
@@ -609,8 +611,9 @@ final class WorkspaceCreateViewController: ListScreenController<
                 autocorrection: .default,
                 textColor: fg,
                 returnKey: .done,
-                onReturn: { [weak self] in self?.view.endEditing(true) }
-            ) { [weak self] in self?.model.description = $0 }
+                onReturn: { [weak self] in self?.view.endEditing(true) },
+                onChange: { [weak self] in self?.model.description = $0 }
+            )
             cell.textField.accessibilityLabel = "Description"
         default:
             break

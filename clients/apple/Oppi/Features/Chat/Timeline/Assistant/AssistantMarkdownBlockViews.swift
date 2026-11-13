@@ -858,8 +858,8 @@ final class NativeTableBlockView: UIView {
     private lazy var chrome = TableChrome(
         card: cardView,
         scrollView: scrollView,
-        open: { [unowned self] in openFullScreen() },
-        copy: { [unowned self] in copyTable($0) }
+        open: { [weak self] in self?.openFullScreen() },
+        copy: { [weak self] in self?.copyTable($0) }
     )
 
     /// Stored for long-press copy — rebuilt as markdown table text.
@@ -989,7 +989,7 @@ final class NativeTableBlockView: UIView {
             scrollView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor),
         ])
-        chrome.install { [unowned self] in updateOverflowCue() }
+        chrome.install { [weak self] in self?.updateOverflowCue() }
         NSLayoutConstraint.activate(tableLabelContentConstraints)
     }
 

@@ -87,9 +87,9 @@ struct ScheduleCalendarModelTests {
     }
 
     private func model(_ server: Server, _ clock: TestClock) -> ScheduleCalendarModel {
-        ScheduleCalendarModel(calendar: Self.calendar, clock: { clock.now }) { from, to in
+        ScheduleCalendarModel(calendar: Self.calendar, clock: { clock.now }, fetch: { from, to in
             try await server.fetch(from: from, to: to)
-        }
+        })
     }
 
     /// Runs the main actor until `condition` holds: the model's load is a task on it.

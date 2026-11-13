@@ -80,7 +80,7 @@ final class SSHTerminalColorLoader {
         }
     }
 
-    private nonisolated static func themeFile(_ name: String, run: Run) async -> ThemeRead {
+    nonisolated private static func themeFile(_ name: String, run: Run) async -> ThemeRead {
         guard SSHTerminalGhosttyConfig.isReadableThemeName(name) else { return .missing }
         guard let result = try? await run(SSHTerminalGhosttyRemote.themeCommand(name)) else { return .failed }
         guard result.exitStatus == 0 else { return .missing }

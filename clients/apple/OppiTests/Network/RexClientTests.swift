@@ -244,7 +244,7 @@ struct RexClientProtocolTests {
 /// and Rex's `resize` message, whose `owner` is that throwaway session's
 /// creating client.
 private let compressedRexUpgrade = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nSec-Websocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-Websocket-Extensions: permessage-deflate; client_no_context_takeover; server_no_context_takeover\r\nSec-Websocket-Protocol: rex.data.terminal.v1\r\nUpgrade: websocket\r\nDate: Sat, 31 Oct 2026 04:23:36 GMT\r\n\r\n"
-private let compressedRexFrames = Data(base64Encoded: [
+private let compressedRexFrames = testUnwrap(Data(base64Encoded: [
     "giCBw97L232PR69/SVNt+1weDAAAAGDqAAB+DALyMEiHUMJ+A7V8k89r3eUSh5/37bn3hru4cLOwQiu230UFSeD745yTc06hq0LF",
     "RVqIiy6kQ5OemMChDWloa0WIq4HgQiGgbgqKSHeDQRE1lqI0FOkigjKSlYuAUKH6H4wQ09YidJ7FvMPnmc0Lc+ql0zOvzEyfSSQ+",
     "OADvzlbjZ3iWx3UQOA2QKIGUUgIYo1VwAfhHfwotgNgvUtrnueeP3puf//ybhT+2Vt766NbG+tdrt764c3drfn7+p+mZL79/+dc7",
@@ -259,7 +259,7 @@ private let compressedRexFrames = Data(base64Encoded: [
     "t8W/gQ//v3ZuL9yb4MRvMycOyfLwWnW80yvrbq9bVv1+u1vW7bJbH3+jWHl9aVgMiuXh5cXrw2KimLs0ulwMeuVEsXzp6uViULcn",
     "irnhaCRXFy+sLMjStWLQmyjmhqORLAwXX1tYkaVrxaDqThSXrl4cLheDYm60OLy4Miir81W/bOrJpn2+mpzq1fXk+U6/nKw6852m",
     "KeeaqlcWbx569U8A",
-].joined())!
+].joined()))
 
 @Suite("Rex WebSocket compression")
 struct RexWebSocketCompressionTests {

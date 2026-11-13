@@ -501,7 +501,7 @@ final class RexFakeSession: Sendable {
     }
 
     fileprivate func nextDataHost() -> RexFakeDataHost {
-        let host = RexFakeDataHost { [weak self] ticket in self?.state.withLock { $0.tickets[ticket] } ?? nil }
+        let host = RexFakeDataHost { [weak self] ticket in self?.state.withLock { $0.tickets[ticket] } }
         state.withLock { $0.served.append(host) }
         return host
     }

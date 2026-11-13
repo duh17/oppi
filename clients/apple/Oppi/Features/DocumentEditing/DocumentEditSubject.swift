@@ -14,32 +14,35 @@ struct FileEditReadContext: Equatable {
     }
 }
 
+/// A file the reader browsed. `source` says where it comes from,
+/// `fileKind` is what the reader renders it as, and `skillFile` names a
+/// host file that is one of an editable Skill's own files. The reader that
+/// builds the subject sets `skillFile` only for the file it was opened for,
+/// and `ServerSkillFilePresentation.editable` decides whether that Skill is
+/// editable at all. A session-touched file's identity is the workspace file
+/// its session path names; `worktreeId` is the session's checkout.
+/// `context` is the session the file was reached from, if any.
+struct DocumentEditFile: Equatable {
+    let serverId: String?
+    let source: FileBrowserContentSource
+    let workspaceId: String
+    let worktreeId: String?
+    let path: String
+    let skillFile: SkillFileEditTarget?
+    let fileKind: FileKind
+    let context: FileEditReadContext
+}
+
 /// What a reader shows under one edit entry. A file opens our editor through
 /// `/files/current`; an Agent's prompt and a Schedule's prompt open it through
 /// their own record.
 enum DocumentEditSubject: Equatable {
-    /// A file the reader browsed. `source` says where it comes from,
-    /// `fileKind` is what the reader renders it as, and `skillFile` names a
-    /// host file that is one of an editable Skill's own files. The reader that
-    /// builds the subject sets `skillFile` only for the file it was opened for,
-    /// and `ServerSkillFilePresentation.editable` decides whether that Skill is
-    /// editable at all. A session-touched file's identity is the workspace file
-    /// its session path names; `worktreeId` is the session's checkout.
-    /// `context` is the session the file was reached from, if any.
+    /// A file the reader browsed.
     ///
     /// On a server with `fileEditOrigins` the identity is not the reader's to
     /// choose: the owner reads at `resolutionLocation` and edits through the
     /// origin the server names for the canonical file.
-    case file(
-        serverId: String?,
-        source: FileBrowserContentSource,
-        workspaceId: String,
-        worktreeId: String?,
-        path: String,
-        skillFile: SkillFileEditTarget?,
-        fileKind: FileKind,
-        context: FileEditReadContext = FileEditReadContext()
-    )
+    case file(DocumentEditFile)
     /// An Agent's custom prompt (`instructions.text`), edited in place. The
     /// server comes from the owner, since the record id alone does not name it.
     case agentInstructions(agentId: String)
@@ -59,6 +62,22 @@ enum DocumentEditSubject: Equatable {
 }
 
 extension DocumentEditSubject {
+    static func file(
+        serverId: String?,
+        source: FileBrowserContentSource,
+        workspaceId: String,
+        worktreeId: String?,
+        path: String,
+        skillFile: SkillFileEditTarget?,
+        fileKind: FileKind,
+        context: FileEditReadContext = FileEditReadContext()
+    ) -> Self {
+        .file(DocumentEditFile(
+            serverId: serverId, source: source, workspaceId: workspaceId, worktreeId: worktreeId,
+            path: path, skillFile: skillFile, fileKind: fileKind, context: context
+        ))
+    }
+
     /// Where the owner asks the server who edits this file: the origin and path
     /// the reader read it through. A link followed from a session reads in that
     /// session's context; a host path otherwise reads as a host file (relative to
@@ -66,8 +85,10 @@ extension DocumentEditSubject {
     /// prompt and a snapshot, which have no file.
     func resolutionLocation(serverId: String?) -> FileEditLocation? {
         switch self {
-        case let .file(fileServerId, source, workspaceId, worktreeId, path, skillFile, _, context):
-            guard let fileServerId, !fileServerId.isEmpty, !path.isEmpty else { return nil }
+        case .file(let file):
+            let (source, workspaceId, worktreeId, path, skillFile, context) =
+                (file.source, file.workspaceId, file.worktreeId, file.path, file.skillFile, file.context)
+            guard let fileServerId = file.serverId, !fileServerId.isEmpty, !path.isEmpty else { return nil }
             let origin: APIClient.CurrentFileOrigin
             var readPath = path
             switch source {
@@ -107,8 +128,10 @@ extension DocumentEditSubject {
     /// draft reopens under.
     func editIdentity(serverId: String?) -> WorkspaceFileEditIdentity? {
         switch self {
-        case let .file(fileServerId, source, workspaceId, worktreeId, path, skillFile, _, _):
-            guard let fileServerId, !fileServerId.isEmpty else { return nil }
+        case .file(let file):
+            let (source, workspaceId, worktreeId, path, skillFile) =
+                (file.source, file.workspaceId, file.worktreeId, file.path, file.skillFile)
+            guard let fileServerId = file.serverId, !fileServerId.isEmpty else { return nil }
             switch source {
             case .workspaceFile:
                 guard !workspaceId.isEmpty else { return nil }
@@ -169,7 +192,7 @@ extension DocumentEditSubject {
     /// prompt is Markdown, as the reader shows it.
     var fileKind: FileKind? {
         switch self {
-        case .file(_, _, _, _, _, _, let fileKind, _): fileKind
+        case .file(let file): file.fileKind
         case .agentInstructions, .schedulePrompt: .markdown
         case .piFile(let path, _): FileKind.detect(from: path)
         case .snapshot: nil

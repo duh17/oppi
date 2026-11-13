@@ -20,10 +20,17 @@ struct SpinnerReduceMotionTests {
         let braille = BrailleSpinnerUIView()
         let life = GameOfLifeUIView(gridSize: 6)
 
-        for (name, view, ticking, freeze) in [
-            ("braille", braille as UIView, { braille.isTicking }, { braille.isFrozen = $0 }),
-            ("life", life as UIView, { life.isTicking }, { life.isFrozen = $0 }),
-        ] as [(String, UIView, () -> Bool, (Bool) -> Void)] {
+        struct Spinner {
+            let name: String
+            let view: UIView
+            let ticking: () -> Bool
+            let freeze: (Bool) -> Void
+        }
+        for spinner in [
+            Spinner(name: "braille", view: braille, ticking: { braille.isTicking }, freeze: { braille.isFrozen = $0 }),
+            Spinner(name: "life", view: life, ticking: { life.isTicking }, freeze: { life.isFrozen = $0 }),
+        ] {
+            let (name, view, ticking, freeze) = (spinner.name, spinner.view, spinner.ticking, spinner.freeze)
             window.addSubview(view)
             #expect(ticking(), "\(name) ticks in a window")
             freeze(true)

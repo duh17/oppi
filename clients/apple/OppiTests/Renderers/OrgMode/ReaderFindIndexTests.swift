@@ -121,6 +121,6 @@ struct ReaderFindIndexTests {
         #expect(cursor.index == 1)
         var none = ReaderFindCursor(count: 0)
         none.step(forward: true)
-        #expect(none.count == 0 && none.index == 0)
+        #expect(none == ReaderFindCursor(count: 0))
     }
 }

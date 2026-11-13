@@ -8,15 +8,21 @@ import UIKit
 @MainActor
 struct SSHTerminalTouchTests {
     @Test func altScrollIsAltScreenWithoutMouseWhenMode1007IsOn() {
-        let cases: [(alt: Bool, mouse: Bool, mode: Bool, expected: SSHTerminalScrollAction)] = [
-            (false, false, false, .history),
-            (false, false, true, .history),
-            (false, true, false, .mouseWheel),
-            (false, true, true, .mouseWheel),
-            (true, false, false, .history),
-            (true, false, true, .alternateKeys),
-            (true, true, false, .mouseWheel),
-            (true, true, true, .mouseWheel),
+        struct Row {
+            let alt: Bool
+            let mouse: Bool
+            let mode: Bool
+            let expected: SSHTerminalScrollAction
+        }
+        let cases = [
+            Row(alt: false, mouse: false, mode: false, expected: .history),
+            Row(alt: false, mouse: false, mode: true, expected: .history),
+            Row(alt: false, mouse: true, mode: false, expected: .mouseWheel),
+            Row(alt: false, mouse: true, mode: true, expected: .mouseWheel),
+            Row(alt: true, mouse: false, mode: false, expected: .history),
+            Row(alt: true, mouse: false, mode: true, expected: .alternateKeys),
+            Row(alt: true, mouse: true, mode: false, expected: .mouseWheel),
+            Row(alt: true, mouse: true, mode: true, expected: .mouseWheel),
         ]
         for item in cases {
             #expect(

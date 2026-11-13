@@ -195,7 +195,7 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
             config.backgroundColor = .clear
             config.showsSeparators = separators
             if separators {
-                config.itemSeparatorHandler = { indexPath, separator in
+                config.itemSeparatorHandler = { _, separator in
                     var separator = separator
                     separator.topSeparatorVisibility = .hidden
                     separator.bottomSeparatorInsets.leading = 42

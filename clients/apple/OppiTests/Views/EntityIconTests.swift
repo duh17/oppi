@@ -200,29 +200,29 @@ struct EntityIconTests {
         image.pngData() ?? Data()
     }
 
-    private func averageColour(_ image: UIImage) -> (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat)? {
+    private func averageColour(_ image: UIImage) -> AverageColour? {
         let grid = pixelGrid(image)
         guard !grid.pixels.isEmpty else { return nil }
         let count = CGFloat(grid.pixels.count)
-        return (
-            grid.pixels.reduce(0) { $0 + CGFloat($1.0) } / count / 255,
-            grid.pixels.reduce(0) { $0 + CGFloat($1.1) } / count / 255,
-            grid.pixels.reduce(0) { $0 + CGFloat($1.2) } / count / 255,
-            grid.pixels.reduce(0) { $0 + CGFloat($1.3) } / count / 255
+        return AverageColour(
+            r: grid.pixels.reduce(0) { $0 + CGFloat($1.r) } / count / 255,
+            g: grid.pixels.reduce(0) { $0 + CGFloat($1.g) } / count / 255,
+            b: grid.pixels.reduce(0) { $0 + CGFloat($1.b) } / count / 255,
+            a: grid.pixels.reduce(0) { $0 + CGFloat($1.a) } / count / 255
         )
     }
 
     /// The most orange pixel in the bottom-trailing quadrant: the sandbox mark's
     /// fill, whatever the theme's exact orange is.
-    private func warmestPixel(in image: UIImage) -> (UInt8, UInt8, UInt8, UInt8)? {
+    private func warmestPixel(in image: UIImage) -> RGBAPixel? {
         let grid = pixelGrid(image)
-        var best: (UInt8, UInt8, UInt8, UInt8)?
+        var best: RGBAPixel?
         var bestWarmth = 40
         for y in (grid.height / 2)..<grid.height {
             for x in (grid.width / 2)..<grid.width {
                 let pixel = grid.pixels[y * grid.width + x]
-                guard pixel.3 > 200 else { continue }
-                let warmth = Int(pixel.0) - Int(pixel.2)
+                guard pixel.a > 200 else { continue }
+                let warmth = Int(pixel.r) - Int(pixel.b)
                 if warmth > bestWarmth {
                     bestWarmth = warmth
                     best = pixel
@@ -235,7 +235,7 @@ struct EntityIconTests {
     /// The bounding box of the pixels close to `pixel`, in image points.
     private func inBlob(
         _ image: UIImage,
-        near pixel: (UInt8, UInt8, UInt8, UInt8),
+        near pixel: RGBAPixel,
         tolerance: Int
     ) -> CGRect? {
         let grid = pixelGrid(image)
@@ -244,10 +244,10 @@ struct EntityIconTests {
         var maxX = -1
         var maxY = -1
         for (index, other) in grid.pixels.enumerated() {
-            guard other.3 > 200,
-                  abs(Int(other.0) - Int(pixel.0)) < tolerance,
-                  abs(Int(other.1) - Int(pixel.1)) < tolerance,
-                  abs(Int(other.2) - Int(pixel.2)) < tolerance else { continue }
+            guard other.a > 200,
+                  abs(Int(other.r) - Int(pixel.r)) < tolerance,
+                  abs(Int(other.g) - Int(pixel.g)) < tolerance,
+                  abs(Int(other.b) - Int(pixel.b)) < tolerance else { continue }
             let x = index % grid.width
             let y = index / grid.width
             minX = min(minX, x)
@@ -266,8 +266,15 @@ struct EntityIconTests {
 
     /// Pixels and their own dimensions: the CGImage's, never the point size times a
     /// scale, which can round to a different count.
+    private struct RGBAPixel {
+        let r: UInt8
+        let g: UInt8
+        let b: UInt8
+        let a: UInt8
+    }
+
     private struct PixelGrid {
-        let pixels: [(UInt8, UInt8, UInt8, UInt8)]
+        let pixels: [RGBAPixel]
         let width: Int
         let height: Int
         let scale: CGFloat
@@ -297,7 +304,7 @@ struct EntityIconTests {
             return PixelGrid(pixels: [], width: width, height: height, scale: image.scale)
         }
         let pixels = stride(from: 0, to: bytes.count, by: 4).map { offset in
-            (bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3])
+            RGBAPixel(r: bytes[offset], g: bytes[offset + 1], b: bytes[offset + 2], a: bytes[offset + 3])
         }
         return PixelGrid(pixels: pixels, width: width, height: height, scale: image.scale)
     }

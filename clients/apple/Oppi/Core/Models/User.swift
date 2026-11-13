@@ -257,4 +257,3 @@ private struct InvitePayloadV3: Decodable {
     let tlsCertFingerprint: String?
     let fingerprint: String?
 }
-

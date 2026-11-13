@@ -79,7 +79,8 @@ enum ChatTopBarAction: String, CaseIterable, Identifiable, Hashable {
     /// the panel they open.
     func menuTitle(filesOpen: Bool) -> String {
         switch self {
-        case .files: filesOpen ? String(localized: "Close Files") : String(localized: "Open Files")
+        case .files:
+            if filesOpen { String(localized: "Close Files") } else { String(localized: "Open Files") }
         case .git, .outline, .context, .terminal: label
         }
     }

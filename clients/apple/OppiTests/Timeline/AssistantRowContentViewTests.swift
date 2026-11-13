@@ -151,7 +151,7 @@ struct AssistantTimelineRowContentViewTests {
         return average.a > 0.5 && average.r > 0.6 && average.g < 0.45 && average.b > 0.3
     }
 
-    private func averageColour(_ image: UIImage) -> (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat)? {
+    private func averageColour(_ image: UIImage) -> AverageColour? {
         var pixels = [UInt8](repeating: 0, count: 4)
         let drawn = pixels.withUnsafeMutableBytes { storage -> Bool in
             guard let context = CGContext(
@@ -168,11 +168,11 @@ struct AssistantTimelineRowContentViewTests {
             return true
         }
         guard drawn else { return nil }
-        return (
-            CGFloat(pixels[0]) / 255,
-            CGFloat(pixels[1]) / 255,
-            CGFloat(pixels[2]) / 255,
-            CGFloat(pixels[3]) / 255
+        return AverageColour(
+            r: CGFloat(pixels[0]) / 255,
+            g: CGFloat(pixels[1]) / 255,
+            b: CGFloat(pixels[2]) / 255,
+            a: CGFloat(pixels[3]) / 255
         )
     }
 

@@ -152,7 +152,7 @@ struct SSHTerminalFloatingPillTests {
             window.isHidden = true
             window.rootViewController = nil
         }
-        let host = root.view!
+        let host = testUnwrap(root.view)
         host.addSubview(back)
         host.addSubview(pill)
         NSLayoutConstraint.activate([
@@ -208,7 +208,7 @@ struct SSHTerminalFloatingPillTests {
             window.isHidden = true
             window.rootViewController = nil
         }
-        let host = root.view!
+        let host = testUnwrap(root.view)
         let back = SSHTerminalBackPill()
         let pill = SSHTerminalBarPill(status: SSHTerminalStatusGlyphButton())
         pill.draw([.herdr], showsStatus: true, waiting: [.herdr: 0])
@@ -251,7 +251,7 @@ struct SSHTerminalFloatingPillTests {
             window.isHidden = true
             window.rootViewController = nil
         }
-        let host = root.view!
+        let host = testUnwrap(root.view)
         let bar = SSHTerminalPassthroughView()
         bar.translatesAutoresizingMaskIntoConstraints = false
         let back = SSHTerminalBackPill()
@@ -323,7 +323,7 @@ struct SSHTerminalBarPillTests {
             window.isHidden = true
             window.rootViewController = nil
         }
-        let host = root.view!
+        let host = testUnwrap(root.view)
         let pill = SSHTerminalBarPill(status: SSHTerminalStatusGlyphButton())
         pill.draw([.keyboard, .paste])
         host.addSubview(pill)
@@ -343,4 +343,3 @@ struct SSHTerminalBarPillTests {
         #expect(host.hitTest(inside, with: nil).map { $0.isDescendant(of: paste) } == true, "on Paste is Paste")
     }
 }
-

@@ -159,7 +159,6 @@ struct InvitePairingGateTests {
     }
 }
 
-
 @Suite("Session deep-link session resolution")
 struct SessionDeepLinkSessionResolutionTests {
     @Test func fetchServerIdsPrefersActiveThenAskOwners() {

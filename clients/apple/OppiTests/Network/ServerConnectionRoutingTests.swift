@@ -133,7 +133,7 @@ struct ServerConnectionRoutingTests {
             sessionId: "background"
         )
 
-        let settled = conn.sessionStore.session(id: "background")!
+        let settled = testUnwrap(conn.sessionStore.session(id: "background"))
         #expect(SessionStatusKind.resolve(session: settled, seenAt: conn.sessionStore.seenAt(for: "background")) == .done)
 
         conn.sessionStore.activeSessionId = "background"
@@ -149,7 +149,7 @@ struct ServerConnectionRoutingTests {
         pipe.handle(.state(session: makeTestSession(id: "focused", status: .busy, messageCount: 2, firstMessage: "go")), sessionId: "focused")
         pipe.handle(.state(session: makeTestSession(id: "focused", status: .ready, messageCount: 2, firstMessage: "go")), sessionId: "focused")
 
-        let settled = conn.sessionStore.session(id: "focused")!
+        let settled = testUnwrap(conn.sessionStore.session(id: "focused"))
         #expect(SessionStatusKind.resolve(session: settled, seenAt: conn.sessionStore.seenAt(for: "focused")) == .idle)
 
         conn._setActiveSessionIdForTesting(nil)

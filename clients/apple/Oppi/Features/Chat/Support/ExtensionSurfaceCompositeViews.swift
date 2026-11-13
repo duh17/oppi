@@ -161,20 +161,22 @@ private enum ExtensionSurfaceCompositeState {
 /// layout. Cards are kept per section id, so a patch updates a card instead of replacing the
 /// drawer the person is reading.
 final class ExtensionSurfaceCompositesView: UIView {
+    private struct DrawnInputs: Equatable {
+        let surface: ExtensionUISurface
+        let pending: ExtensionSurfacePendingAction?
+        let themeID: ThemeID
+        let sendsActions: Bool
+        let opensText: Bool
+        let sizeCategory: UIContentSizeCategory
+    }
+
     private let stack = UIStackView()
     private var cards: [String: UIView] = [:]
     private var kinds: [String: String] = [:]
     /// What the cards were last drawn from. The drawer is applied again for anything its footer
     /// repaints for (a followed child's tail streams ten times a second), and a card redraws by
     /// replacing its controls: a touch already down on one would never end.
-    private var drawn: (
-        surface: ExtensionUISurface,
-        pending: ExtensionSurfacePendingAction?,
-        themeID: ThemeID,
-        sendsActions: Bool,
-        opensText: Bool,
-        sizeCategory: UIContentSizeCategory
-    )?
+    private var drawn: DrawnInputs?
     /// The last inputs, to draw again when the text size changes: some blocks measure their
     /// layout when drawn.
     private var latest: (surface: ExtensionUISurface, pending: ExtensionSurfacePendingAction?, themeID: ThemeID)?
@@ -220,10 +222,12 @@ final class ExtensionSurfaceCompositesView: UIView {
         let sendsActions = onAction != nil
         let opensText = openText != nil
         let sizeCategory = traitCollection.preferredContentSizeCategory
-        if let drawn, drawn.surface == surface, drawn.pending == pending, drawn.themeID == themeID,
-           drawn.sendsActions == sendsActions, drawn.opensText == opensText,
-           drawn.sizeCategory == sizeCategory { return }
-        drawn = (surface, pending, themeID, sendsActions, opensText, sizeCategory)
+        let inputs = DrawnInputs(
+            surface: surface, pending: pending, themeID: themeID,
+            sendsActions: sendsActions, opensText: opensText, sizeCategory: sizeCategory
+        )
+        if drawn == inputs { return }
+        drawn = inputs
         // The cards send through this view, so an unchanged card still reaches the latest host.
         let context = ExtensionSurfaceCompositeContext(
             themeID: themeID,

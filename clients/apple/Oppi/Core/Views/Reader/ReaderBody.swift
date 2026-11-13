@@ -88,21 +88,21 @@ extension ReaderBody {
 
     var onImmersiveChromeChange: ((Bool) -> Void)? {
         get { nil }
-        set {}
+        set { _ = newValue }
     }
 
     var contentSurface: ReaderContentSurface? { nil }
 
     var onContentSurfaceChange: ((ReaderContentSurface?) -> Void)? {
         get { nil }
-        set {}
+        set { _ = newValue }
     }
 
     var hasOutline: Bool { false }
 
     var onOutlineChange: (() -> Void)? {
         get { nil }
-        set {}
+        set { _ = newValue }
     }
 
     func presentOutline(from host: UIViewController, sourceItem: UIBarButtonItem) {}

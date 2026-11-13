@@ -582,14 +582,14 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         case .outdent: codeEditor(textView, perform: "outdent")
         case .comment: toggleComment()
         case .find: textView.findInteraction?.presentFindNavigator(showingReplace: false)
-        case .undo: modal ? handleVim(.char("u")) : textView.undoManager?.undo()
-        case .redo: modal ? handleVim(.ctrl("r")) : textView.undoManager?.redo()
-        case .left: modal ? handleVim(.left) : moveCaret(.left)
-        case .right: modal ? handleVim(.right) : moveCaret(.right)
-        case .up: modal ? handleVim(.up) : moveCaret(.up)
-        case .down: modal ? handleVim(.down) : moveCaret(.down)
-        case .lineStart: modal ? handleVim(.char("^")) : moveToLineEdge(end: false)
-        case .lineEnd: modal ? handleVim(.char("$")) : moveToLineEdge(end: true)
+        case .undo: if modal { handleVim(.char("u")) } else { textView.undoManager?.undo() }
+        case .redo: if modal { handleVim(.ctrl("r")) } else { textView.undoManager?.redo() }
+        case .left: if modal { handleVim(.left) } else { moveCaret(.left) }
+        case .right: if modal { handleVim(.right) } else { moveCaret(.right) }
+        case .up: if modal { handleVim(.up) } else { moveCaret(.up) }
+        case .down: if modal { handleVim(.down) } else { moveCaret(.down) }
+        case .lineStart: if modal { handleVim(.char("^")) } else { moveToLineEdge(end: false) }
+        case .lineEnd: if modal { handleVim(.char("$")) } else { moveToLineEdge(end: true) }
         case .symbol(let text): textView.insertText(text)
         }
     }

@@ -291,9 +291,9 @@ private final class CallApp {
 
     init() {
         let microphone = microphone
-        center = LiveVoiceCallCenter { [unowned self] in
+        center = LiveVoiceCallCenter { [weak self] in
             let channel = FakeLiveVoiceCallChannel()
-            channels.append(channel)
+            self?.channels.append(channel)
             return LiveVoiceCallController(
                 channel: channel,
                 audio: FakeLiveVoiceAudioOwner(),

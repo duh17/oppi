@@ -107,8 +107,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         super.init(frame: .zero)
         accessibilityIdentifier = "tool.notebook.cell"
         build()
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) {
-            (view: Self, previous: UITraitCollection) in
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: Self, previous: UITraitCollection) in
             guard previous.preferredContentSizeCategory
                 != view.traitCollection.preferredContentSizeCategory else { return }
             view.fittedHeightByWidth.removeAll()

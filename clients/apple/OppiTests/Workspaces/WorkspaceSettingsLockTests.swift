@@ -118,6 +118,7 @@ struct WorkspaceSettingsLockTests {
 
         #expect(screen.model.error == nil, "a locked workspace must not reach the delete request")
         #expect(!screen.model.isDeleting)
+        // swiftlint:disable:next empty_count - Leaves.count tallies leave events, not a collection
         #expect(screen.leaves.count == 0)
     }
 
@@ -142,6 +143,7 @@ struct WorkspaceSettingsLockTests {
             WorkspaceSessionNavTarget(serverId: Self.serverId, sessionId: "s1", routeScope: .control)
         )
 
+        // swiftlint:disable:next empty_count - Leaves.count tallies leave events, not a collection
         #expect(screen.leaves.count == 0, "a locked workspace must stay put and open nothing")
     }
 

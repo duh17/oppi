@@ -794,7 +794,7 @@ final class IncognitoRouteWatch {
 /// shows in no list. A failed delete leaves it on the server, and the next
 /// list sync shows it again.
 @MainActor
-struct IncognitoSessionEnd: Sendable {
+struct IncognitoSessionEnd {
     let sessionId: String
     let serverId: String?
     let scope: SessionRouteScope?

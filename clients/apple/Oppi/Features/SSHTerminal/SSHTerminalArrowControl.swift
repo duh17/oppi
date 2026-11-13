@@ -136,4 +136,3 @@ final class SSHTerminalArrowButton: UIButton {
         }
     }
 }
-

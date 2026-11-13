@@ -337,7 +337,7 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             add(.truncated, .truncated(truncated), to: .more, key: AnyHashable(truncated))
         }
 
-        let changed = inputs.compactMap { id, key in rowInputs[id].map { $0 != key ? id : nil } ?? nil }
+        let changed = inputs.compactMap { id, key in rowInputs[id].flatMap { $0 != key ? id : nil } }
         snapshot.reconfigureItems(changed.filter { snapshot.indexOfItem($0) != nil })
         self.rows = rows
         rowInputs = inputs

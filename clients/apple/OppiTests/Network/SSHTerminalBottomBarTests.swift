@@ -30,7 +30,7 @@ private func actions(of slots: [SSHTerminalBarSlot]) -> [SSHTerminalBarAction] {
 
 private func isolatedDefaults() -> UserDefaults {
     let name = "SSHTerminalBottomBarTests.\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: name)!
+    let defaults = testDefaults(suite: name)
     defaults.removePersistentDomain(forName: name)
     return defaults
 }

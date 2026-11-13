@@ -196,8 +196,9 @@ final class WorkspaceDetailsViewController: ListScreenController<
             identifier: "workspace.edit.name",
             autocapitalization: .sentences,
             returnKey: .next,
-            onReturn: { [weak self] in self?.focus(.description) }
-        ) { [weak self] in self?.model.setName($0) }
+            onReturn: { [weak self] in self?.focus(.description) },
+            onChange: { [weak self] in self?.model.setName($0) }
+        )
     }
 
     /// Description and folder wrap instead of clipping: a long description or a
@@ -217,8 +218,9 @@ final class WorkspaceDetailsViewController: ListScreenController<
                 text: model.draft.description,
                 identifier: "workspace.edit.description",
                 label: String(localized: "Description"),
-                onReturn: { [weak self] in self?.focus(.folder) }
-            ) { [weak self] in self?.model.setDescription($0) }
+                onReturn: { [weak self] in self?.focus(.folder) },
+                onChange: { [weak self] in self?.model.setDescription($0) }
+            )
         } else {
             // The section header names it: the field carries no label of its own.
             cell.configure(

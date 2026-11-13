@@ -453,7 +453,14 @@ struct ExtensionSurfaceCompositeViewsTests {
     }
 
     /// A chat in a scene window with one strip surface above its composer, and that strip's pill.
-    private func chatWithStripPill(_ sessionId: String) async throws -> (ChatViewController, UIWindow, UIControl, () -> Void) {
+    private struct StripPillChat {
+        let chat: ChatViewController
+        let window: UIWindow
+        let pill: UIControl
+        let teardown: () -> Void
+    }
+
+    private func chatWithStripPill(_ sessionId: String) async throws -> StripPillChat {
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
         let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: SceneNavigation())
@@ -475,11 +482,14 @@ struct ExtensionSurfaceCompositeViewsTests {
             return control(id, in: chat.view).map { isShown($0, in: chat.view) } ?? false
         }
         let pill = testUnwrap(control(id, in: chat.view) as? UIControl)
-        return (chat, window, pill, teardown)
+        return StripPillChat(chat: chat, window: window, pill: pill, teardown: teardown)
     }
 
     @Test func aStripPillTakesTouchesAcrossA44ptBandThoughItsRowDrawsShorter() async throws {
-        let (_, window, pill, teardown) = try await chatWithStripPill("strip-hit-band")
+        let strip = try await chatWithStripPill("strip-hit-band")
+        let window = strip.window
+        let pill = strip.pill
+        let teardown = strip.teardown
         defer { teardown() }
         let frame = pill.convert(pill.bounds, to: window)
         let row = testUnwrap(pill.superview)
@@ -493,7 +503,11 @@ struct ExtensionSurfaceCompositeViewsTests {
     }
 
     @Test func aTouchOnTheComposerTextJustBelowTheStripReachesTheText() async throws {
-        let (chat, window, pill, teardown) = try await chatWithStripPill("strip-hit-composer")
+        let strip = try await chatWithStripPill("strip-hit-composer")
+        let chat = strip.chat
+        let window = strip.window
+        let pill = strip.pill
+        let teardown = strip.teardown
         defer { teardown() }
         let pillFrame = pill.convert(pill.bounds, to: window)
         let textView = chat.composer.bar.textView

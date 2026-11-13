@@ -420,8 +420,9 @@ final class SSHPreflightViewController: ListScreenController<
                 text: password, placeholder: String(localized: "Password"),
                 identifier: "sshPreflight.password", isSecure: true, contentType: .password,
                 textColor: fg, enabled: !isBusy, returnKey: .go,
-                onReturn: { [weak self] in self?.check() }
-            ) { [weak self] in self?.password = $0 }
+                onReturn: { [weak self] in self?.check() },
+                onChange: { [weak self] in self?.password = $0 }
+            )
         default:
             break
         }

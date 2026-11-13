@@ -64,7 +64,7 @@ struct AISharingConsent {
             let requested = modelId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !requested.isEmpty else {
                 let defaults = catalog.filter(\.isDefault)
-                return servingProvider(defaults.isEmpty ? catalog : defaults) ?? nil
+                return servingProvider(defaults.isEmpty ? catalog : defaults).flatMap { $0 }
             }
             // A full id names its provider. Only when none matches is it read as a short id,
             // which is how the server resolves it too.

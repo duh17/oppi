@@ -48,7 +48,7 @@ struct ServerMetricsEnableTests {
     /// The app's stores over fake routes: `live`'s write side effect included, which
     /// is what keeps the connection's cached flag in step with the store.
     private static func useStores(on coordinator: ConnectionCoordinator, transport: @escaping (String) -> FakeSettingsTransport) {
-        coordinator.makeServerSettings = { [unowned coordinator] id in
+        coordinator.makeServerSettings = { coordinator, id in
             SettingsStore(
                 serverId: id,
                 server: ServerAdapter { _ in transport(id) },

@@ -409,12 +409,13 @@ struct OffscreenTimelineSettleTests {
     private func firstReadRowID(in windowed: WindowedTimelineHarness) -> String? {
         let collectionView = windowed.collectionView
         let readingTop = collectionView.contentOffset.y + collectionView.adjustedContentInset.top
-        return windowed.coordinator.currentIDs.enumerated().first { index, _ in
+        let ids = windowed.coordinator.currentIDs
+        return ids.indices.first { index in
             guard let attributes = collectionView.layoutAttributesForItem(at: IndexPath(item: index, section: 0)) else {
                 return false
             }
             return attributes.frame.maxY > readingTop
-        }?.element
+        }.map { ids[$0] }
     }
 
     private func screenY(of itemID: String, in windowed: WindowedTimelineHarness) -> CGFloat? {

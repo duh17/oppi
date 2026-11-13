@@ -2,8 +2,6 @@ import Testing
 import Foundation
 @testable import Oppi
 
-// swiftlint:disable force_unwrapping
-
 @Suite("ServerConnection")
 @MainActor
 struct ServerConnectionTests {

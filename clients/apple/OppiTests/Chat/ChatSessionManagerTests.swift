@@ -2993,12 +2993,14 @@ struct ChatSessionManagerTests {
 
     /// A busy session's manager on a scripted 60-event trace, its latest 10 loaded,
     /// with an optimistic prompt and a streaming answer after them.
-    private func makeLivePagingHarness() async throws -> (
-        manager: ChatSessionManager,
-        history: ScriptedTraceHistory,
-        connection: ServerConnection,
-        liveIDs: [String]
-    ) {
+    private struct LivePagingHarness {
+        let manager: ChatSessionManager
+        let history: ScriptedTraceHistory
+        let connection: ServerConnection
+        let liveIDs: [String]
+    }
+
+    private func makeLivePagingHarness() async throws -> LivePagingHarness {
         let sessionId = "live-paging-\(UUID().uuidString)"
         let session = makeTestSession(id: sessionId, workspaceId: "w1", status: .busy)
         let history = ScriptedTraceHistory(session: session, events: (0..<60).map { index in
@@ -3030,11 +3032,14 @@ struct ChatSessionManagerTests {
             .textDelta(sessionId: sessionId, delta: "streaming"),
         ])
         let streamingID = try #require(manager.reducer.streamingAssistantID)
-        return (manager, history, connection, [promptID, streamingID])
+        return LivePagingHarness(manager: manager, history: history, connection: connection, liveIDs: [promptID, streamingID])
     }
 
     @Test func olderHistoryPageLoadsAfterLiveEventsAndKeepsLiveRows() async throws {
-        let (manager, _, connection, liveIDs) = try await makeLivePagingHarness()
+        let harness = try await makeLivePagingHarness()
+        let manager = harness.manager
+        let connection = harness.connection
+        let liveIDs = harness.liveIDs
         defer { manager.cleanup(); connection.disconnectStream() }
 
         #expect(manager.hasOlderTracePage)
@@ -3050,7 +3055,11 @@ struct ChatSessionManagerTests {
     }
 
     @Test func outlineJumpPagesBackContiguouslyAndKeepsTheBeginningReachable() async throws {
-        let (manager, history, connection, liveIDs) = try await makeLivePagingHarness()
+        let harness = try await makeLivePagingHarness()
+        let manager = harness.manager
+        let history = harness.history
+        let connection = harness.connection
+        let liveIDs = harness.liveIDs
         defer { manager.cleanup(); connection.disconnectStream() }
 
         // Several pages older than the loaded range (the server caps each page at 15).
@@ -3067,7 +3076,11 @@ struct ChatSessionManagerTests {
     }
 
     @Test func outlineJumpDuringAScrollLoadWaitsForThatPageAndLands() async throws {
-        let (manager, history, connection, liveIDs) = try await makeLivePagingHarness()
+        let harness = try await makeLivePagingHarness()
+        let manager = harness.manager
+        let history = harness.history
+        let connection = harness.connection
+        let liveIDs = harness.liveIDs
         defer { manager.cleanup(); connection.disconnectStream() }
 
         history.holdsNextOlderPage = true

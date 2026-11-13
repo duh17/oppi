@@ -12,7 +12,7 @@ final class BookTableOfContentsViewController: UIViewController {
         let level: Int
         /// Index in the book's reading order, or the heading's ordinal.
         let chapter: Int
-        /// An Org TODO state that leads the title, and whether it is a done one.
+        /// An Org task state that leads the title, and whether it is a done one.
         var keyword: String?
         var isDone = false
         /// Names this row for automation; rows share one identifier without it.

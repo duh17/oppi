@@ -1857,14 +1857,16 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             ).present(from: self, anchor: nil) { [weak self] in
                 guard let self, let text = self.pendingPaste else { return }
                 self.pendingPaste = nil
-                do { try self.channel.paste(text, confirmed: true) }
-                catch { self.presentPasteFailure("Paste was not sent. \(error.localizedDescription)") }
+                do { try self.channel.paste(text, confirmed: true) } catch {
+                    self.presentPasteFailure("Paste was not sent. \(error.localizedDescription)")
+                }
             } onCancel: { [weak self] in
                 self?.pendingPaste = nil
             }
         } else {
-            do { try channel.paste(text) }
-            catch { presentPasteFailure("Paste was not sent. \(error.localizedDescription)") }
+            do { try channel.paste(text) } catch {
+                presentPasteFailure("Paste was not sent. \(error.localizedDescription)")
+            }
         }
     }
 

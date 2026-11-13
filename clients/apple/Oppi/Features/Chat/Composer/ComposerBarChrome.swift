@@ -904,7 +904,6 @@ final class ComposerDictationFailureView: UIView {
         retryButton.accessibilityLabel = "Retry dictation"
         retryButton.addAction(UIAction { [weak self] _ in self?.onRetry?() }, for: .touchUpInside)
 
-
         // The X is centered on the title's first line, not the header's middle:
         // the title can wrap at large text sizes.
         let header = UIView()

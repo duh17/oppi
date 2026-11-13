@@ -545,6 +545,7 @@ struct TailnetNodeStartTests {
 
         await controller.restart()
         await waits.next()
+        // swiftlint:disable:next empty_count - NodeStartRecorder.count tallies starts, it is not a collection
         #expect(starts.count == 0)
         #expect(controller.state == .starting)
 

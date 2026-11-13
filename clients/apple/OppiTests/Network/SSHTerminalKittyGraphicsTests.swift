@@ -469,7 +469,7 @@ struct SSHTerminalKittyGraphicsTests {
         #expect(probe.attempts > 0, "the allocation is retried")
         #expect(probe.attempts <= 6, "the wait grows, so 40 frames make a handful of attempts")
         #expect(cache.uploadCount == 0)
-        #expect(cache.count == 0, "a refused allocation caches nothing")
+        #expect(cache.isEmpty, "a refused allocation caches nothing")
 
         // A retransmission is a new generation, so the wait starts over at once.
         let beforeRetransmit = probe.attempts
@@ -534,10 +534,10 @@ struct SSHTerminalKittyGraphicsTests {
             )
         }
         // 1:1 placement: destination y maps to the same source row.
-        func pixel(_ y: Int) -> (b: UInt8, g: UInt8, r: UInt8, a: UInt8) {
+        func pixel(_ y: Int) -> BGRAPixel {
             let x = width / 4
             let offset = (y * cellWidth * 4 + x) * 4
-            return (bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3])
+            return BGRAPixel(b: bytes[offset], g: bytes[offset + 1], r: bytes[offset + 2], a: bytes[offset + 3])
         }
         for (index, band) in bands.enumerated() {
             // Centre of the band, away from the linear filter's seam.
@@ -1042,9 +1042,12 @@ struct SSHTerminalKittyGraphicsTests {
     /// Deflate one row repeated `rows` times, feeding the same buffer so the
     /// fixture never holds the uncompressed picture in memory.
     private static func deflate(_ row: [UInt8], rows: Int) -> [UInt8] {
+        // The stream wants non-null pointers before its first call; the loops below replace them.
+        let placeholder = UnsafeMutablePointer<UInt8>.allocate(capacity: 1)
+        defer { placeholder.deallocate() }
         var stream = compression_stream(
-            dst_ptr: UnsafeMutablePointer<UInt8>(bitPattern: 1)!, dst_size: 0,
-            src_ptr: UnsafePointer<UInt8>(bitPattern: 1)!, src_size: 0, state: nil
+            dst_ptr: placeholder, dst_size: 0,
+            src_ptr: UnsafePointer(placeholder), src_size: 0, state: nil
         )
         guard compression_stream_init(&stream, COMPRESSION_STREAM_ENCODE, COMPRESSION_ZLIB)
             == COMPRESSION_STATUS_OK else { return [] }
@@ -1053,12 +1056,14 @@ struct SSHTerminalKittyGraphicsTests {
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         var status = COMPRESSION_STATUS_OK
         row.withUnsafeBufferPointer { source in
+            guard let sourceBase = source.baseAddress else { return }
             for _ in 0..<rows {
-                stream.src_ptr = source.baseAddress!
+                stream.src_ptr = sourceBase
                 stream.src_size = source.count
                 while true {
                     let produced = buffer.withUnsafeMutableBufferPointer { destination -> Int in
-                        stream.dst_ptr = destination.baseAddress!
+                        guard let destinationBase = destination.baseAddress else { return 0 }
+                        stream.dst_ptr = destinationBase
                         stream.dst_size = destination.count
                         status = compression_stream_process(&stream, 0)
                         return destination.count - stream.dst_size
@@ -1071,7 +1076,8 @@ struct SSHTerminalKittyGraphicsTests {
         status = COMPRESSION_STATUS_OK
         while status == COMPRESSION_STATUS_OK {
             let produced = buffer.withUnsafeMutableBufferPointer { destination -> Int in
-                stream.dst_ptr = destination.baseAddress!
+                guard let destinationBase = destination.baseAddress else { return 0 }
+                stream.dst_ptr = destinationBase
                 stream.dst_size = destination.count
                 status = compression_stream_process(
                     &stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue)

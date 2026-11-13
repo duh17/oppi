@@ -16,7 +16,6 @@ func terminalTestSettings(mode: SSHTerminalPageMode?, defaults: UserDefaults) ->
     return SettingsStore(serverId: nil, device: DeviceAdapter(defaults: defaults), server: ServerAdapter { _ in nil })
 }
 
-
 /// A page mounted in a window that has appeared: what it draws, by identifier, and its
 /// list. Shared by the Terminal page's suites.
 @MainActor
@@ -47,7 +46,6 @@ struct MountedPage<Page: UIViewController> {
     }
 }
 
-
 /// `height` makes room for a page longer than a phone: a row that is not on
 /// screen is not dequeued, so a test that reads one down a long form mounts it
 /// in a window tall enough to show it. `wrappingInNavigation` is for a page that
@@ -72,4 +70,3 @@ func mountPage<Page: UIViewController>(
     page.view.layoutIfNeeded()
     return MountedPage(window: window, page: page)
 }
-

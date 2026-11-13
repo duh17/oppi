@@ -94,8 +94,7 @@ struct QuickSessionWideBarTruncationTests {
     }
 
     private func widths(_ bar: QuickSessionWideBar, _ host: UIView, at width: CGFloat)
-        -> (workspace: CGFloat, worktree: CGFloat, engine: CGFloat)
-    {
+        -> (workspace: CGFloat, worktree: CGFloat, engine: CGFloat) {
         host.frame.size.width = width
         host.setNeedsLayout()
         host.layoutIfNeeded()
@@ -105,8 +104,7 @@ struct QuickSessionWideBarTruncationTests {
     /// The bar's natural width: every control, the two groups' padding, and
     /// the gap at its minimum.
     private func neededWidth(_ bar: QuickSessionWideBar, _ natural: (workspace: CGFloat, worktree: CGFloat, engine: CGFloat))
-        -> CGFloat
-    {
+        -> CGFloat {
         natural.workspace + natural.worktree + natural.engine + bar.incognito.bounds.width + 2 * 8 + 8
     }
 
@@ -162,8 +160,7 @@ struct QuickSessionWideBarTruncationTests {
 @MainActor
 struct QuickSessionWideBarTests {
     private func makeController(regular: Bool, onDismiss: @escaping () -> Void = {}) async throws
-        -> (QuickSessionViewController, UIWindow)
-    {
+        -> (QuickSessionViewController, UIWindow) {
         let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
         defer { routes.end() }
         let client = makeTestURLProtocolClient(host: "quick-session-wide.test")

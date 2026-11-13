@@ -29,7 +29,7 @@ struct ChatTopBarLayoutTests {
     /// buttons, including the old default bar someone saved by using the Top
     /// Bar page before the default changed.
     @Test func aSavedLayoutKeepsItsButtonsWhileAnUnsavedOneGetsTheNewDefault() {
-        let defaults = UserDefaults(suiteName: "ChatTopBarLayoutTests.\(UUID().uuidString)")!
+        let defaults = testDefaults(suite: "ChatTopBarLayoutTests.\(UUID().uuidString)")
         #expect(AppPreferences.ChatTopBar.layout(in: defaults).bar(available: everything) == [.context])
 
         defaults.set(["files", "git", "outline", "context", "terminal"], forKey: AppPreferences.ChatTopBar.orderKey)
@@ -55,7 +55,7 @@ struct ChatTopBarLayoutTests {
 
     @Test func everyButtonCanBeHiddenAndShownAgain() {
         #expect(allShown.bar(available: everything) == [.files, .git, .outline, .context, .terminal])
-        #expect(allShown.menu(available: everything) == [])
+        #expect(allShown.menu(available: everything).isEmpty)
 
         // Hiding one button moves it to the menu and leaves the bar's order.
         let withoutOutline = allShown.setting(.outline, shown: false)
@@ -69,9 +69,9 @@ struct ChatTopBarLayoutTests {
             .setting(.outline, shown: false)
             .setting(.context, shown: false)
             .setting(.terminal, shown: false)
-        #expect(none.bar(available: everything) == [])
+        #expect(none.bar(available: everything).isEmpty)
         #expect(none.menu(available: everything) == [.files, .git, .outline, .context, .terminal])
-        #expect(none.storedShown == [])
+        #expect(none.storedShown.isEmpty)
     }
 
     @Test func theOrderCarriesIntoTheBarAndTheMenu() {
@@ -100,7 +100,7 @@ struct ChatTopBarLayoutTests {
         #expect(allShown.bar(available: available) == [.outline, .context])
         // Nothing refills the empty places, and the menu never offers a button
         // that could only fail: Files, Git, and Terminal are simply absent.
-        #expect(allShown.menu(available: available) == [])
+        #expect(allShown.menu(available: available).isEmpty)
         // The stored layout is untouched, so the bar fills again in its places.
         #expect(allShown.bar(available: everything) == [.files, .git, .outline, .context, .terminal])
     }
@@ -163,7 +163,7 @@ struct ChatTopBarLayoutTests {
     }
 
     @Test func theLayoutIsStoredOnThisDeviceAndAnnouncesOneChange() {
-        let defaults = UserDefaults(suiteName: "ChatTopBarLayoutTests.\(UUID().uuidString)")!
+        let defaults = testDefaults(suite: "ChatTopBarLayoutTests.\(UUID().uuidString)")
         let layout = ChatTopBarLayout(
             order: [.terminal, .outline, .context, .git, .files],
             shown: [.terminal, .outline]
@@ -190,7 +190,7 @@ struct ChatTopBarLayoutTests {
         let none = layout.setting(.terminal, shown: false).setting(.outline, shown: false)
         AppPreferences.ChatTopBar.setLayout(none, in: defaults)
         #expect(AppPreferences.ChatTopBar.layout(in: defaults) == none)
-        #expect(defaults.stringArray(forKey: AppPreferences.ChatTopBar.shownKey) == [])
+        #expect(defaults.stringArray(forKey: AppPreferences.ChatTopBar.shownKey)?.isEmpty == true)
         #expect(announcements == 2)
     }
 
@@ -209,7 +209,7 @@ struct ChatTopBarLayoutTests {
             ChatTopBarLayout(storedOrder: ["context", "context", "files"], storedShown: [])
                 .order == [.context, .files, .git, .outline, .terminal]
         )
-        #expect(ChatTopBarLayout(storedOrder: [], storedShown: ["notAnAction"]).shown == [])
+        #expect(ChatTopBarLayout(storedOrder: [], storedShown: ["notAnAction"]).shown.isEmpty)
     }
 
     @Test func everyButtonKeepsItsStableIdentity() {

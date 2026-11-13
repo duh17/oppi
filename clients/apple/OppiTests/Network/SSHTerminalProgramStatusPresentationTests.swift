@@ -117,7 +117,7 @@ struct SSHTerminalProgramStatusPresentationTests {
         ))
         let notice = SSHTerminalProgramStatusPresentation.blockedNotice(store: store, isStopped: false)
         #expect(notice?.kind == .needsApproval)
-        #expect(notice?.recordID == "")
+        #expect(notice?.recordID.isEmpty == true)
         #expect(notice?.remoteText == "from Oppi Allow running rg?")
         #expect(notice?.remoteText.contains("\u{202e}") == false)
         #expect(SSHTerminalProgramStatusPresentation.hostCaption("evil\u{2028}from Oppi") == "evil from Oppi")
@@ -204,7 +204,7 @@ struct SSHTerminalProgramStatusPresentationTests {
 
     @Test func displayTextKeepsARunningLimitAcrossSeparatorsAndFormatCharacters() {
         let mixed = "ab\u{200b}c\u{2028}d\u{0001}e\u{2029}f"
-        #expect(SSHTerminalDisplayText.sanitized(mixed, limit: 0) == "")
+        #expect(SSHTerminalDisplayText.sanitized(mixed, limit: 0).isEmpty)
         #expect(SSHTerminalDisplayText.sanitized(mixed, limit: 5) == "abc d")
         #expect(SSHTerminalDisplayText.sanitized(mixed, limit: 6) == "abc de")
         #expect(SSHTerminalDisplayText.sanitized(mixed, limit: 7) == "abc de ")

@@ -164,7 +164,6 @@ extension AppOpener {
         return .finished
     }
 
-    
 // MARK: - Resource references
 
     func handleResourceReference(

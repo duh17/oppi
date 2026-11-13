@@ -1224,7 +1224,7 @@ struct SessionStoreSeenTrackingTests {
 struct SessionStoreSeenPersistenceTests {
     private func storage() -> SessionSeenLedgerStorage {
         let suite = "SessionStoreSeenPersistenceTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
+        let defaults = testDefaults(suite: suite)
         defaults.removePersistentDomain(forName: suite)
         return SessionSeenLedgerStorage(defaults: defaults)
     }

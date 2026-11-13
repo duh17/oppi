@@ -119,7 +119,7 @@ struct SSHTerminalPageModeTests {
         // The page reads its hosts through a `@Sendable` closure, and a `UserDefaults`
         // is not Sendable: it carries the suite's name, and makes the defaults in it.
         let profileStore: @Sendable () -> SSHTerminalProfileStore = {
-            SSHTerminalProfileStore(defaults: UserDefaults(suiteName: name)!, keychain: MemoryKeychain())
+            SSHTerminalProfileStore(defaults: testDefaults(suite: name), keychain: MemoryKeychain())
         }
 
         let first = try mountPage(SSHTerminalHostListViewController(

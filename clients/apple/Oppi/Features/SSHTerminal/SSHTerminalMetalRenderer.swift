@@ -362,6 +362,15 @@ final class SSHTerminalGlyphAtlas {
         return RasterizedGlyph(bytes: bytes, color: plan.color)
     }
 
+    /// What to draw for a cluster: the text and font to draw with, how the ink maps onto the
+    /// cell, and whether the result is a color glyph.
+    private struct DrawPlan {
+        let text: String
+        let font: UIFont
+        let fit: Fit
+        let color: Bool
+    }
+
     /// How a planned draw maps its ink onto the cell.
     private enum Fit {
         /// Draw at the cell origin and clip.
@@ -383,27 +392,27 @@ final class SSHTerminalGlyphAtlas {
     /// blocks, and CJK never constrain.
     private static func planDraw(
         text: String, font: UIFont, columns: Int
-    ) -> (text: String, font: UIFont, fit: Fit, color: Bool) {
+    ) -> DrawPlan {
         let bases = Array(text.unicodeScalars.filter { $0.value != 0xFE0E && $0.value != 0xFE0F })
         if !bases.isEmpty, bases.allSatisfy(NerdFontSymbols.isPrivateUse) {
             let powerline = bases.allSatisfy { (0xE0B0...0xE0D7).contains($0.value) }
-            return (text, font, powerline ? .stretch : .shrink, false)
+            return DrawPlan(text: text, font: font, fit: powerline ? .stretch : .shrink, color: false)
         }
         if sshTerminalFontCovers(font, text) {
-            return (text, font, .none, false)
+            return DrawPlan(text: text, font: font, fit: .none, color: false)
         }
         let emoji = resolvedFontLooksLikeColorEmoji(text: text, font: font)
-        guard emoji else { return (text, font, .none, false) }
+        guard emoji else { return DrawPlan(text: text, font: font, fit: .none, color: false) }
         let wantsEmoji = text.unicodeScalars.contains { $0.value == 0xFE0F }
         if columns == 1, bases.count == 1, !wantsEmoji {
             let base = String(bases[0])
             if let symbols = UIFont(name: "AppleSymbols", size: font.pointSize),
                sshTerminalFontCovers(symbols, base) {
-                return (base, symbols, .shrink, false)
+                return DrawPlan(text: base, font: symbols, fit: .shrink, color: false)
             }
-            return (base + "\u{FE0E}", font, .shrink, false)
+            return DrawPlan(text: base + "\u{FE0E}", font: font, fit: .shrink, color: false)
         }
-        return (text, font, .shrink, true)
+        return DrawPlan(text: text, font: font, fit: .shrink, color: true)
     }
 
     private static func resolvedFontLooksLikeColorEmoji(text: String, font: UIFont) -> Bool {
@@ -491,13 +500,11 @@ final class SSHTerminalGlyphAtlas {
         guard ok else { return nil }
         var minX = w, maxX = -1, minY = h, maxY = -1
         for y in 0..<h {
-            for x in 0..<w {
-                if bytes[(y * w + x) * 4 + 3] > 8 {
-                    minX = min(minX, x)
-                    maxX = max(maxX, x)
-                    minY = min(minY, y)
-                    maxY = max(maxY, y)
-                }
+            for x in 0..<w where bytes[(y * w + x) * 4 + 3] > 8 {
+                minX = min(minX, x)
+                maxX = max(maxX, x)
+                minY = min(minY, y)
+                maxY = max(maxY, y)
             }
         }
         guard maxX >= 0 else { return nil }
@@ -624,6 +631,7 @@ final class SSHTerminalKittyTextureCache {
     /// must skip an image, never leak one.
     private(set) var evictionCount = 0
     var count: Int { entries.count }
+    var isEmpty: Bool { entries.isEmpty }
 
     init(
         limit: Int = SSHTerminalKittyTextureCache.limitBytes,

@@ -891,7 +891,7 @@ struct SceneNavigationShellRoutingTests {
             Issue.record("file browser was not restored")
             return
         }
-        #expect(restored.path == "")
+        #expect(restored.path.isEmpty)
         #expect(restored.columnDirectoryPath == "src/")
         #expect(restored.columnSelectedFile == selected)
     }

@@ -245,7 +245,6 @@ enum ChatMountTelemetry {
     }
 }
 
-
 /// Phase durations of one session or thread link, from the tap to the route.
 /// `AppOpener` times each phase it runs before navigating and logs one
 /// `Link opened` breadcrumb when the route is set. A phase that did not run

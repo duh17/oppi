@@ -6,7 +6,7 @@ import Testing
 /// files, and how a theme file and the config's own values combine.
 @Suite("SSH terminal Ghostty theme")
 struct SSHTerminalGhosttyThemeTests {
-    private func rgb(_ hex: String) -> SSHTerminalRGB { SSHTerminalRGB(hex: hex)! }
+    private func rgb(_ hex: String) -> SSHTerminalRGB { testUnwrap(SSHTerminalRGB(hex: hex)) }
 
     // MARK: - Parser
 
@@ -298,7 +298,7 @@ struct SSHTerminalGhosttyThemeTests {
 
     @Test @MainActor func aCachedReadPaintsTheNextConnectAndFollowsTheChoice() async {
         let suite = "SSHTerminalGhosttyThemeTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
+        let defaults = testDefaults(suite: suite)
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = SSHTerminalColorStore(defaults: defaults)
         let id = UUID()

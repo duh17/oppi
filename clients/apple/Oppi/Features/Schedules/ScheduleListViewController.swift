@@ -285,10 +285,15 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
         guard case .schedule(let id) = item,
               let schedule = visibleSchedules.first(where: { $0.id == id }) else { return [] }
         let palette = palette
-        let (title, image, tint, change): (String, String, UIColor, SummaryMutation) = switch schedule.status {
-        case .active: ("Pause", "pause.fill", palette.ui.orange, .pause)
-        case .paused: ("Resume", "play.fill", palette.ui.green, .resume)
-        case .archived: ("Restore", "arrow.uturn.backward", palette.ui.blue, .restore)
+        let change: SummaryMutation = switch schedule.status {
+        case .active: .pause
+        case .paused: .resume
+        case .archived: .restore
+        }
+        let (title, image, tint): (String, String, UIColor) = switch change {
+        case .pause: ("Pause", "pause.fill", palette.ui.orange)
+        case .resume: ("Resume", "play.fill", palette.ui.green)
+        case .restore: ("Restore", "arrow.uturn.backward", palette.ui.blue)
         }
         return [ListRowAction(title: title, systemImage: image, tint: tint) { [weak self] done in
             self?.mutate(schedule, change)

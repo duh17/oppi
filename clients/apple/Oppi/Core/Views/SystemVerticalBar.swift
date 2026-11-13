@@ -52,8 +52,7 @@ enum SystemVerticalBar {
     ) {
         #if !targetEnvironment(macCatalyst)
         if #available(iOS 27.1, *) {
-            controller.registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) {
-                (controller: Controller, _: UITraitCollection) in
+            controller.registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (controller: Controller, _: UITraitCollection) in
                 handler(controller)
             }
         }

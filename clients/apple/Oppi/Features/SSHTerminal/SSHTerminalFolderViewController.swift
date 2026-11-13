@@ -24,8 +24,8 @@ final class SSHTerminalFolderViewController: UIViewController {
 
     /// What `stateView` is showing, for the accessibility value and for tests.
     enum ShownState: String {
-        case connecting = "connecting"
-        case failure = "failure"
+        case connecting
+        case failure
     }
 
     /// The terminal has been reached. From then on this connecting screen's job

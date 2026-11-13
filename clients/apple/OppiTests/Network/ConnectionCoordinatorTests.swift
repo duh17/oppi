@@ -128,10 +128,10 @@ private final class MetricsSettingsProtocol: URLProtocol, @unchecked Sendable {
     override func startLoading() {
         Self.paths.append(request.url?.path ?? "")
         let body = Data(#"{"enabled":\#(Self.enabled)}"#.utf8)
-        let response = HTTPURLResponse(
-            url: request.url!, statusCode: 200, httpVersion: nil,
+        let response = testUnwrap(HTTPURLResponse(
+            url: testUnwrap(request.url), statusCode: 200, httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
-        )!
+        ))
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: body)
         client?.urlProtocolDidFinishLoading(self)
@@ -2367,9 +2367,9 @@ struct DeviceCredentialRefreshSaverTests {
             isUnlocked = unlocked
             saver = DeviceCredentialRefreshSaver(
                 notificationCenter: center,
-                isProtectedDataAvailable: { [unowned self] in isUnlocked },
-                save: { [unowned self] serverId, expectedDeviceId, result in
-                    guard isUnlocked else { throw Locked() }
+                isProtectedDataAvailable: { [weak self] in self?.isUnlocked ?? false },
+                save: { [weak self] serverId, expectedDeviceId, result in
+                    guard let self, isUnlocked else { throw Locked() }
                     saves.append((serverId, expectedDeviceId, result))
                     return DeviceCredential(
                         deviceId: expectedDeviceId,
@@ -2378,7 +2378,7 @@ struct DeviceCredentialRefreshSaverTests {
                         refreshChallenge: nil
                     )
                 },
-                didFail: { [unowned self] serverId, _ in failures.append(serverId) }
+                didFail: { [weak self] serverId, _ in self?.failures.append(serverId) }
             )
         }
 
@@ -2387,8 +2387,8 @@ struct DeviceCredentialRefreshSaverTests {
                 serverId: serverId,
                 expectedDeviceId: deviceId,
                 result: DeviceAuthRefreshResult(accessToken: "at_\(n)", expiresAt: 1_000 + n, refreshChallenge: nil),
-                isCurrent: { [unowned self] in current },
-                didSave: { [unowned self] merged in applied.append(merged) }
+                isCurrent: { [weak self] in self?.current ?? false },
+                didSave: { [weak self] merged in self?.applied.append(merged) }
             )
         }
     }

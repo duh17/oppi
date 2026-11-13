@@ -58,7 +58,7 @@ struct SSHTerminalTextInputTests {
             shell.apply(actions)
             #expect(storage.selectedUTF16.lowerBound > 0)
         }
-        #expect(shell.line == "")
+        #expect(shell.line.isEmpty)
         #expect(storage.text == SSHTerminalTextInputStorage.filler)
     }
 

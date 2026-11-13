@@ -317,7 +317,7 @@ struct UserTimelineRowContentTests {
         #expect(header.accessibilityLabel == nil)
         #expect(header.accessibilityValue == nil)
         #expect(header.accessibilityCustomActions == nil)
-        #expect(header.accessibilityTraits == [])
+        #expect(header.accessibilityTraits.isEmpty)
         #expect(firstSubview(
             withAccessibilityIdentifier: "chat.agent-message.agent-1.preview",
             in: view
@@ -2197,7 +2197,7 @@ private func renderedPixel(of view: UIView, at point: CGPoint) -> UIColor? {
             height: 1,
             bitsPerComponent: 8,
             bytesPerRow: 4,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            space: testUnwrap(CGColorSpace(name: CGColorSpace.sRGB)),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return false }
         // Shift the image so the requested pixel lands on the 1x1 canvas.
@@ -2391,4 +2391,3 @@ private func composerInputText(in root: UIView) -> String? {
     }
     return input.accessibilityValue
 }
-

@@ -9,6 +9,14 @@ import UIKit
 /// roles.
 typealias ThemeColor = UIColor
 
+/// A token's straight sRGB components, each in 0...1.
+struct ThemeRGBComponents {
+    let red: Double
+    let green: Double
+    let blue: Double
+    let alpha: Double
+}
+
 extension UIColor {
     /// An sRGB token from components. The one constructor the shared theme
     /// files use, so `ThemePalettes`, `RemoteTheme`, and `ThemeContrast` build
@@ -27,10 +35,10 @@ extension UIColor {
 
     /// The token's straight sRGB components, for the contrast solvers. Nil when
     /// the color cannot be read in sRGB.
-    func themeRGBComponents() -> (red: Double, green: Double, blue: Double, alpha: Double)? {
+    func themeRGBComponents() -> ThemeRGBComponents? {
         var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
         guard getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return nil }
-        return (Double(red), Double(green), Double(blue), Double(alpha))
+        return ThemeRGBComponents(red: Double(red), green: Double(green), blue: Double(blue), alpha: Double(alpha))
     }
 
     /// The token's CGColor; a theme token is always an sRGB value.

@@ -189,7 +189,7 @@ final class WorkspaceSidebarViewController: UIViewController {
     /// The disclosure and SSH flags changed in Settings or
     /// elsewhere in the app, as `AppStorage` reacted before.
     /// Posted on whichever thread wrote the default.
-    @objc private nonisolated func defaultsDidChange() {
+    @objc nonisolated private func defaultsDidChange() {
         Task { @MainActor [weak self] in
             guard let self, Defaults.read() != lastDefaults else { return }
             setNeedsUpdateProperties()

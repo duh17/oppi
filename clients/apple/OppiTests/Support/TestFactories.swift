@@ -60,7 +60,7 @@ func makeTestAppRoot(
 ) -> AppRootEnvironment {
     let coordinator = coordinator ?? ConnectionCoordinator(serverStore: ServerStore())
     if let settings { coordinator.deviceSettings = settings }
-    if let serverSettings { coordinator.makeServerSettings = serverSettings }
+    if let serverSettings { coordinator.makeServerSettings = { _, id in serverSettings(id) } }
     return AppRootEnvironment(
         coordinator: coordinator,
         navigation: SceneNavigation(),
@@ -504,4 +504,28 @@ func forgetSharedScopedLockFlags() {
     for serverId in Set(locks.flags.map(\.serverId)) {
         locks.forgetServer(serverId)
     }
+}
+
+/// The average colour of a rendered image, each channel in 0...1.
+struct AverageColour {
+    let r: CGFloat
+    let g: CGFloat
+    let b: CGFloat
+    let a: CGFloat
+}
+
+/// One 8-bit pixel read back from a render, in the byte order a BGRA bitmap stores it.
+struct BGRAPixel {
+    let b: UInt8
+    let g: UInt8
+    let r: UInt8
+    let a: UInt8
+}
+
+/// A `UserDefaults` suite for one test, so it cannot leak into the app's own.
+func testDefaults(suite: String) -> UserDefaults {
+    guard let defaults = UserDefaults(suiteName: suite) else {
+        preconditionFailure("UserDefaults suite \(suite) is unavailable")
+    }
+    return defaults
 }

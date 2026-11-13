@@ -111,10 +111,18 @@ struct OrgParser: DocumentParser, Sendable {
     /// unclosed opener as text; running it to the section's end instead keeps
     /// a file cut off mid-block (truncated tool output) readable as the code
     /// it was, while a headline still ends it. `next` is the line after it.
-    private static func block(in lines: Lines, at start: Int) -> (name: Substring, parameters: Substring, bodyEnd: Int, next: Int)? {
+    private static func block(in lines: Lines, at start: Int) -> BlockSpan? {
         guard let opener = blockOpener(stripped(lines[start])) else { return nil }
         let end = closingLine(in: lines, after: start, endMarker: "#+END_" + opener.name.uppercased())
-        return (opener.name, opener.parameters, end.sectionEnd, end.closer.map { $0 + 1 } ?? end.sectionEnd)
+        return BlockSpan(name: opener.name, parameters: opener.parameters, bodyEnd: end.sectionEnd, next: end.closer.map { $0 + 1 } ?? end.sectionEnd)
+    }
+
+    /// A `#+begin_NAME` block's name and parameters, the line its body ends before, and the line after it.
+    private struct BlockSpan {
+        let name: Substring
+        let parameters: Substring
+        let bodyEnd: Int
+        let next: Int
     }
 
     nonisolated func parse(_ source: String) -> [OrgBlock] {

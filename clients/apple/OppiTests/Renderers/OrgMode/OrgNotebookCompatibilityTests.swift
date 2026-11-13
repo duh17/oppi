@@ -168,8 +168,8 @@ struct OrgNotebookCompatibilityTests {
     static let clock: OrgBadges.Clock = {
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "en_US")
-        calendar.timeZone = TimeZone(identifier: "UTC")!
-        let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 6, hour: 12))!
+        calendar.timeZone = testUnwrap(TimeZone(identifier: "UTC"))
+        let now = testUnwrap(calendar.date(from: DateComponents(year: 2026, month: 11, day: 6, hour: 12)))
         return OrgBadges.Clock(now: now, calendar: calendar)
     }()
 
@@ -484,4 +484,3 @@ struct OrgNotebookCompatibilityTests {
         #expect(attachments.map(\.style.isCapsule) == [false, false, false, true, false])
     }
 }
-

@@ -123,8 +123,7 @@ final class SessionInboxMessageCapsule: UIControl {
         accessibilityTraits = .button
         accessibilityLabel = String(localized: "Start Quick Session")
         accessibilityIdentifier = "workspace.quickSession.start"
-        registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitPreferredContentSizeCategory.self]) {
-            (capsule: Self, _: UITraitCollection) in
+        registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitPreferredContentSizeCategory.self]) { (capsule: Self, _: UITraitCollection) in
             capsule.updateMicImage()
             capsule.invalidateIntrinsicContentSize()
         }

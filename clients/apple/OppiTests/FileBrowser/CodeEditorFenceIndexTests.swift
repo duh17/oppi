@@ -245,7 +245,7 @@ struct CodeEditorFenceIndexTests {
         // Delete a closing fence far below: every line after it flips.
         let target = (unrelated.text as NSString).range(of: "```\n- item", range: NSRange(location: 400, length: 200))
         let broken = apply(&index, to: unrelated.text, replacing: NSRange(location: target.location, length: 3), with: "")
-        #expect(broken.stale != nil && NSMaxRange(broken.stale!) >= broken.text.utf16.count - 12, "stale \(String(describing: broken.stale))")
+        #expect(broken.stale.map { NSMaxRange($0) >= broken.text.utf16.count - 12 } == true, "stale \(String(describing: broken.stale))")
         var fresh = CodeEditorFenceIndex()
         #expect(insideLines(broken.text, index: &index) == insideLines(broken.text, index: &fresh))
     }

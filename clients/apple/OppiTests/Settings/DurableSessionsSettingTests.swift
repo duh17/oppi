@@ -36,7 +36,7 @@ struct DurableSessionsSettingTests {
         let deviceStore = SettingsStore(serverId: nil, device: DeviceAdapter(defaults: defaults), server: ServerAdapter { _ in nil })
         let root = try await makeTestAppRoot(readyServerId: serverId, apiClient: client, settings: deviceStore)
         let coordinator = root.coordinator
-        coordinator.makeServerSettings = { [unowned coordinator] id in
+        coordinator.makeServerSettings = { coordinator, id in
             SettingsStore(
                 serverId: id,
                 server: ServerAdapter { _ in transport },

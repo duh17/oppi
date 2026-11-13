@@ -228,7 +228,13 @@ struct CodeEditorWrapAndGutterTests {
         // The divider runs down the right edge.
         let inkWidth = width - 8
         var runs: [Ink] = []
-        var current: (top: Int, bottom: Int, minX: Int, maxX: Int)?
+        struct Extent {
+            let top: Int
+            let bottom: Int
+            let minX: Int
+            let maxX: Int
+        }
+        var current: Extent?
         func close() {
             guard let run = current else { return }
             runs.append(Ink(
@@ -247,9 +253,9 @@ struct CodeEditorWrapAndGutterTests {
             if maxX < 0 {
                 close()
             } else if let run = current {
-                current = (run.top, y, min(run.minX, minX), max(run.maxX, maxX))
+                current = Extent(top: run.top, bottom: y, minX: min(run.minX, minX), maxX: max(run.maxX, maxX))
             } else {
-                current = (y, y, minX, maxX)
+                current = Extent(top: y, bottom: y, minX: minX, maxX: maxX)
             }
         }
         close()
@@ -608,6 +614,7 @@ struct CodeEditorWrapAndGutterTests {
         ) { _ in edits.count += 1 }
         defer { NotificationCenter.default.removeObserver(observer) }
         styler.wrapWidth = 800          // wide again before the wait ends
+        // swiftlint:disable:next empty_count - EditCounter.count tallies edits, it is not a collection
         for _ in 0..<60 where edits.count == 0 { try await Task.sleep(for: .milliseconds(50)) }
         try await Task.sleep(for: .milliseconds(100))
         #expect(edits.count == 1, "the paragraph built under the narrow cap was invalidated once (\(edits.count) edits)")
@@ -660,6 +667,7 @@ struct CodeEditorWrapAndGutterTests {
         }
         textView.setContentOffset(CGPoint(x: 0, y: textView.contentSize.height - textView.bounds.height), animated: false)
         window.layoutIfNeeded()
+        // swiftlint:disable:next empty_count - EditCounter.count tallies edits, it is not a collection
         #expect(edits.count == 0, "scrolling edited the text storage \(edits.count) times from inside the scroll callbacks")
         var aligned = false
         for _ in 0..<40 where !aligned {

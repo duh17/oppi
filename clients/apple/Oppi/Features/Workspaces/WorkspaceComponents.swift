@@ -340,17 +340,25 @@ final class WorkspaceSidebarRowContentView: UIView, UIContentView {
         }
     }
 
+    /// One glyph and its text in a `metricLine`.
+    struct Metric {
+        let symbol: String
+        let text: String
+        let color: UIColor
+        let small: Bool
+    }
+
     /// Changes, ahead, and behind.
     private static func gitText(_ summary: WorkspaceSidebarGitSummary, colors: ComposerThemeColors) -> NSAttributedString {
-        var metrics: [(symbol: String, text: String, color: UIColor, small: Bool)] = []
+        var metrics: [Metric] = []
         if summary.changedCount > 0 {
-            metrics.append(("circle.fill", "\(SessionFormatting.compactCount(summary.changedCount)) changes", colors.orange, true))
+            metrics.append(Metric(symbol: "circle.fill", text: "\(SessionFormatting.compactCount(summary.changedCount)) changes", color: colors.orange, small: true))
         }
         if summary.aheadCount > 0 {
-            metrics.append(("arrow.up", SessionFormatting.compactCount(summary.aheadCount), colors.blue, false))
+            metrics.append(Metric(symbol: "arrow.up", text: SessionFormatting.compactCount(summary.aheadCount), color: colors.blue, small: false))
         }
         if summary.behindCount > 0 {
-            metrics.append(("arrow.down", SessionFormatting.compactCount(summary.behindCount), colors.orange, false))
+            metrics.append(Metric(symbol: "arrow.down", text: SessionFormatting.compactCount(summary.behindCount), color: colors.orange, small: false))
         }
         return metricLine(metrics, weight: .medium, itemSpacing: 9, glyphSpacing: 3)
     }
@@ -358,7 +366,7 @@ final class WorkspaceSidebarRowContentView: UIView, UIContentView {
     /// Each metric a small glyph and its text (`SessionRowText.symbolAndText`),
     /// `itemSpacing` apart.
     static func metricLine(
-        _ metrics: [(symbol: String, text: String, color: UIColor, small: Bool)],
+        _ metrics: [Metric],
         weight: UIFont.Weight,
         itemSpacing: CGFloat,
         glyphSpacing: CGFloat
@@ -409,9 +417,9 @@ final class WorkspaceSidebarStatusView: UIStackView {
         attention.isHidden = status.attentionCount == 0
         if status.attentionCount > 0 {
             attention.attributedText = WorkspaceSidebarRowContentView.metricLine(
-                [(
-                    "exclamationmark.triangle.fill", SessionFormatting.compactCount(status.attentionCount),
-                    status.errorCount > 0 ? colors.red : colors.orange, true
+                [WorkspaceSidebarRowContentView.Metric(
+                    symbol: "exclamationmark.triangle.fill", text: SessionFormatting.compactCount(status.attentionCount),
+                    color: status.errorCount > 0 ? colors.red : colors.orange, small: true
                 )],
                 weight: .semibold, itemSpacing: 0, glyphSpacing: 2
             )
@@ -425,7 +433,7 @@ final class WorkspaceSidebarStatusView: UIStackView {
         done.isHidden = !status.showsDone
         if status.showsDone {
             done.attributedText = WorkspaceSidebarRowContentView.metricLine(
-                [("checkmark", SessionFormatting.compactCount(status.doneCount), colors.green, true)],
+                [WorkspaceSidebarRowContentView.Metric(symbol: "checkmark", text: SessionFormatting.compactCount(status.doneCount), color: colors.green, small: true)],
                 weight: .semibold, itemSpacing: 0, glyphSpacing: 2
             )
         }

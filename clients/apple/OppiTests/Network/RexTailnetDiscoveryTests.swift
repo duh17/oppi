@@ -6,7 +6,7 @@ import Testing
 @Suite("Finding Rex on the tailnet", .serialized, .timeLimit(.minutes(1)))
 @MainActor
 struct RexTailnetDiscoveryTests {
-    static let rex = RexTailnetHost(dnsName: "rex.tail0000.ts.net")!
+    static let rex = testUnwrap(RexTailnetHost(dnsName: "rex.tail0000.ts.net"))
     static let rexBody = Data("WebSocket protocol violation: Connection header \"\" does not contain Upgrade\n".utf8)
 
     static func peer(_ name: String, dns: String, os: String? = "macOS", online: Bool = true) -> TailnetPeer {
@@ -14,7 +14,7 @@ struct RexTailnetDiscoveryTests {
     }
 
     static func store() -> RexDirectStore {
-        RexDirectStore(defaults: UserDefaults(suiteName: "rex-tailnet-tests-\(UUID().uuidString)")!)
+        RexDirectStore(defaults: testDefaults(suite: "rex-tailnet-tests-\(UUID().uuidString)"))
     }
 
     // MARK: - Probe
@@ -76,7 +76,7 @@ struct RexTailnetDiscoveryTests {
         let me = "oppi-ios.tail0000.ts.net"
         await discovery.discover(peers: peers, selfDNSName: me)
         #expect(Set(probed.withLock { $0 }) == ["rex.tail0000.ts.net", "web.tail0000.ts.net", "mac-mini.tail0000.ts.net"])
-        #expect(discovery.found(among: peers, selfDNSName: me) == [RexTailnetHost(dnsName: "rex.tail0000.ts.net", name: "rex")!])
+        #expect(discovery.found(among: peers, selfDNSName: me) == [testUnwrap(RexTailnetHost(dnsName: "rex.tail0000.ts.net", name: "rex"))])
 
         await discovery.discover(peers: peers, selfDNSName: me)
         #expect(probed.withLock { $0.count } == 3, "nothing is asked twice in a visit")
@@ -109,7 +109,7 @@ struct RexTailnetDiscoveryTests {
         }
         let store = Self.store()
         store.saveTailnetHost(Self.rex)
-        store.saveTailnetHost(RexTailnetHost(dnsName: Self.rex.dnsName, name: "Studio")!)
+        store.saveTailnetHost(testUnwrap(RexTailnetHost(dnsName: Self.rex.dnsName, name: "Studio")))
         #expect(store.tailnetHosts().map(\.name) == ["Studio"], "the same name twice is one Rex")
         store.forgetTailnetHost(dnsName: Self.rex.dnsName)
         #expect(store.tailnetHosts().isEmpty)

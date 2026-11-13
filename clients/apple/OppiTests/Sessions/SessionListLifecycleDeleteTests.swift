@@ -27,12 +27,12 @@ struct SessionListLifecycleDeleteTests {
     private func response(status: Int, json: String) -> (Data, HTTPURLResponse) {
         (
             Data(json.utf8),
-            HTTPURLResponse(
-                url: URL(string: "http://localhost:7749")!,
+            testUnwrap(HTTPURLResponse(
+                url: testUnwrap(URL(string: "http://localhost:7749")),
                 statusCode: status,
                 httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"]
-            )!
+            ))
         )
     }
 
@@ -50,11 +50,11 @@ struct SessionListLifecycleDeleteTests {
         await drafts.load()
         let session = makeTestSession(id: sessionId, workspaceId: workspaceId)
         connection.sessionStore.upsert(session)
-        let key = ComposerDraftKey(
+        let key = testUnwrap(ComposerDraftKey(
             serverID: serverId,
             workspaceID: SessionRouteScope.workspace(workspaceId).composerDraftScopeID,
             sessionID: sessionId
-        )!
+        ))
         drafts.setDraft(ComposerDraftPayload(text: "unsent words", repoPointers: []), for: key)
         await TimelineCache.shared.saveTrace(sessionId, serverId: serverId, events: [
             TraceEvent(

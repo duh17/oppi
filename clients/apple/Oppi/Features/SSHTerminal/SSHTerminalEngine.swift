@@ -308,10 +308,7 @@ final class SSHTerminalEngine {
     /// so a resize keeps this width until the snapshot is complete.
     private var restoringColumns: Int?
     /// The last `setColors`, applied again to a terminal `beginRestore` brings in.
-    private var defaultColors: (
-        foreground: GhosttyColorRgb, background: GhosttyColorRgb, dark: Bool,
-        palette: [UInt8: GhosttyColorRgb], cursor: GhosttyColorRgb?
-    )?
+    private var defaultColors: Colors?
 
     init(geometry: SSHTerminalGeometry = .init(), sink: @escaping (Data) -> Void) throws {
         self.geometry = geometry
@@ -419,8 +416,7 @@ final class SSHTerminalEngine {
         restoringColumns = Int(columns)
         configureTerminal(restored: true)
         if let colors = defaultColors {
-            setColors(foreground: colors.foreground, background: colors.background, dark: colors.dark,
-                      palette: colors.palette, cursor: colors.cursor)
+            setColors(colors)
         }
         // What the program reported lived in the terminal that was dropped,
         // and the snapshot carries none of it: a pane swapped in must not show
@@ -613,7 +609,7 @@ final class SSHTerminalEngine {
     func setColors(_ colors: Colors) {
         self.dark = colors.dark
         let palette = colors.palette
-        defaultColors = (colors.foreground, colors.background, colors.dark, palette, colors.cursor)
+        defaultColors = colors
         defer {
             notePictureChange()
             forceFullRebuild = true

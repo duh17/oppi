@@ -61,7 +61,7 @@ private struct IsolatedProfiles {
 
     var make: @Sendable () -> SSHTerminalProfileStore {
         { [suite, keychain] in
-            SSHTerminalProfileStore(defaults: UserDefaults(suiteName: suite)!, keychain: keychain)
+            SSHTerminalProfileStore(defaults: testDefaults(suite: suite), keychain: keychain)
         }
     }
 }
@@ -568,7 +568,7 @@ struct SSHTerminalSwitcherTests {
 
     // MARK: Host colors follow the terminal shown
 
-    private func rgb(_ hex: String) -> SSHTerminalRGB { SSHTerminalRGB(hex: hex)! }
+    private func rgb(_ hex: String) -> SSHTerminalRGB { testUnwrap(SSHTerminalRGB(hex: hex)) }
 
     /// What a past connect to `id` left behind, for the appearance the app has now.
     private func seedColors(_ id: UUID, background: String) {

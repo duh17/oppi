@@ -33,8 +33,8 @@ final class TelemetryCapture: @unchecked Sendable {
     func runSync<T>(_ body: () throws -> T) rethrows -> T {
         try Telemetry.$_observerForTesting.withValue({ [self] payload in
             lock.withLock { recorded.append(payload) }
-        }) {
+        }, operation: {
             try body()
-        }
+        })
     }
 }

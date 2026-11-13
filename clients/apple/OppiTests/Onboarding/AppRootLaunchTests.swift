@@ -13,7 +13,11 @@ struct AppRootLaunchTests {
     /// it. A red control means the empty stack is the test host's, not the app's.
     @Test("the shell the launch resolved to mounts its session list with no cover")
     func launchWithoutWhatsNewMountsTheInbox() async throws {
-        let (root, app, window, expectsSplit) = try showRoot()
+        let shown = try showRoot()
+        let root = shown.root
+        let app = shown.app
+        let window = shown.window
+        let expectsSplit = shown.expectsSplit
         defer { hide(window) }
 
         app.root.navigation.app.revealPairedServerShell()
@@ -33,7 +37,11 @@ struct AppRootLaunchTests {
     /// cover is up while the launch resolves.
     @Test("the shell the launch resolved to shows once What's New is dismissed")
     func whatsNewDismissalRevealsTheShell() async throws {
-        let (root, app, window, expectsSplit) = try showRoot()
+        let shown = try showRoot()
+        let root = shown.root
+        let app = shown.app
+        let window = shown.window
+        let expectsSplit = shown.expectsSplit
         defer { hide(window) }
         #expect(
             root.children.contains { $0 is LaunchBackdropViewController },
@@ -74,7 +82,14 @@ struct AppRootLaunchTests {
 
     /// A paired launch that has not resolved yet, in a window, as
     /// `OppiApp.startApp()` leaves it before `revealPairedServerShell()`.
-    private func showRoot() throws -> (root: AppRootViewController, app: OppiApp, window: UIWindow, expectsSplit: Bool) {
+    private struct ShownRoot {
+        let root: AppRootViewController
+        let app: OppiApp
+        let window: UIWindow
+        let expectsSplit: Bool
+    }
+
+    private func showRoot() throws -> ShownRoot {
         let app = OppiApp()
         let server = try #require(PairedServer(from: ServerCredentials(
             host: "launch.root.test",
@@ -108,7 +123,7 @@ struct AppRootLaunchTests {
             verticalSizeClass: traits.verticalSizeClass,
             size: window.frame.size
         ) == .split
-        return (root, app, window, expectsSplit)
+        return ShownRoot(root: root, app: app, window: window, expectsSplit: expectsSplit)
     }
 
     /// The classes of the children the root installed.

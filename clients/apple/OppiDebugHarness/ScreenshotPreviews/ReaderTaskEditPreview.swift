@@ -69,7 +69,7 @@ enum ReaderTaskEditFixture {
     """
 
     /// A long notebook-style file for heading navigation: a title, drawers with
-    /// IDs, four levels, TODO states, and links to its own headings.
+    /// IDs, four levels, task states, and links to its own headings.
     static var handbookSeed: String {
         func section(_ n: Int) -> String {
             (1...3).map { "Paragraph \($0) of section \(n): notes, decisions and the occasional link, long enough to fill a phone screen with prose." }

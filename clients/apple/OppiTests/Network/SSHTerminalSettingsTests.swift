@@ -254,7 +254,6 @@ struct SSHTerminalSettingsTests {
         #expect(page.page.items(in: .names).isEmpty)
     }
 
-
     private func mountSettings(
         profileStore: (@Sendable () -> SSHTerminalProfileStore)? = nil,
         experiments: @escaping @MainActor () -> SSHTerminalExperimentAccess = { .all }
@@ -476,8 +475,8 @@ struct SSHTerminalSetupPageTests {
         var offered: [String]?
         let page = try mountPage(
             SSHTerminalColorPickerViewController(
-                selected: .oppi, hostSummary: "Paper", readThemes: { offered }
-            ) { _ in },
+                selected: .oppi, hostSummary: "Paper", readThemes: { offered }, onSelect: { _ in }
+            ),
             height: Self.tall
         )
         defer { hideTestWindow(page.window) }

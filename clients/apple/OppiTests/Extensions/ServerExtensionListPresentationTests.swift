@@ -403,7 +403,7 @@ struct ServerExtensionListPresentationTests {
         let sections = page.sections()
         #expect(sections.map(\.id).prefix(3) == [.summary, .status, .serverDefault], "status first")
         #expect(sections.first { $0.id == .plugin("Hooks") }?.items == [.pluginLine("Hooks", "pi.tool: beforeTool")])
-        #expect(sections.first { $0.id == .plugin("Prompt Sections") } != nil)
+        #expect(sections.contains { $0.id == .plugin("Prompt Sections") })
         let toggle = try #require(Self.switchWithIdentifier("server.extension.enabled", in: page.view))
         #expect(toggle.isOn)
         #expect(!toggle.isEnabled, "a required built-in cannot be turned off")
@@ -525,4 +525,3 @@ final class ExtensionDetailAnswers: @unchecked Sendable {
         return try mockJSONResponse(encoding: detail, for: request)
     }
 }
-

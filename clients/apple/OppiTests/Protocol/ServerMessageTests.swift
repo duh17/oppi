@@ -884,7 +884,7 @@ struct ServerMessageTests {
         #expect(truncated == true)
         #expect(rows[0][0].displayText == "apples")
         #expect(rows[0][1].displayText == "12")
-        #expect(rows[2][0].displayText == "")
+        #expect(rows[2][0].displayText.isEmpty)
         guard case .chart(_, let kind, let title, let labels, let series, _) = blocks[1] else {
             Issue.record("Expected chart block")
             return

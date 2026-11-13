@@ -178,6 +178,7 @@ struct DocumentEditOwnerTests {
         )
 
         #expect(await owner.read() == .ownRead, "no capability: the reader loads the file its own way")
+        // swiftlint:disable:next empty_count - ReadSpy.count tallies reads, it is not a collection
         #expect(spy.count == 0, "a server that does not edit the file gets no tagged read")
         #expect(identifiers(owner).isEmpty, "no pencil without the capability")
         #expect(owner.menuActions.map { ($0 as? UIAction)?.accessibilityIdentifier } == ["controlFile.editInSession"])
@@ -234,7 +235,7 @@ struct DocumentEditOwnerTests {
         let result = await owner.read()
         #expect(result == .bytes(WorkspaceFileDiskSnapshot(bytes: Data(), etag: nil, creatable: true), draftText: nil))
         owner.beginEditing()
-        #expect(owner.session?.currentText == "")
+        #expect(owner.session?.currentText.isEmpty == true)
     }
 
     @Test func binaryBytesLeaveNoPencil() async {
@@ -529,6 +530,7 @@ struct DocumentEditOwnerTests {
         #expect(await fromTree.read() == .bytes(snapshot, draftText: nil))
         #expect(fromTree.identity == canonical)
         #expect(fromTree.session === session, "one file, one writer")
+        // swiftlint:disable:next empty_count - ReadSpy.count tallies reads, it is not a collection
         #expect(spy.count == 0, "the resolving read is the editor's base; nothing reads twice")
         // The link read in its session's context, so a sandbox session's link is
         // judged inside that sandbox; the tree read through its workspace.
@@ -563,6 +565,7 @@ struct DocumentEditOwnerTests {
 
         #expect(await owner.read() == .ownRead)
         #expect(owner.barItems.isEmpty)
+        // swiftlint:disable:next empty_count - ReadSpy.count tallies reads, it is not a collection
         #expect(spy.count == 0)
     }
 
@@ -720,6 +723,7 @@ struct DocumentEditOwnerTests {
         owner.endEditing()
 
         #expect(await eventually { finished == 1 }, "the reader hears the editor closed")
+        // swiftlint:disable:next empty_count - WriteCount.count tallies writes, it is not a collection
         #expect(writes.count == 0, "Done with Auto-Save off writes nothing")
         #expect(session.hasUnconfirmedChanges, "the edits are still the person's to save")
         #expect(session.status == .pending)

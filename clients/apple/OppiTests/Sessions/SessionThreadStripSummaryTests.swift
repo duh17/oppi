@@ -81,6 +81,7 @@ struct SessionThreadStripSummaryTests {
     func everyBucketAddsUpToTheChildren(kinds: [SessionStatusKind]) {
         let result = summary(kinds)
         #expect(result.counts.reduce(0) { $0 + $1.count } == kinds.count)
+        // swiftlint:disable:next empty_count - Count.count is a child tally, not a collection
         #expect(result.counts.allSatisfy { $0.count > 0 })
     }
 

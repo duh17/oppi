@@ -544,7 +544,6 @@ final class AudioPlaybackTransportView: UIView {
         }
     }
 
-
     private func sleepMenu() -> UIMenu {
         deferredMenu { player in
             var items: [UIMenuElement] = AudioSleepTimer.minuteOptions.map { minutes in

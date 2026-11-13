@@ -35,7 +35,6 @@ enum ServerNotificationsSection {
         }
     }
 
-
     /// The relay registers App Store and TestFlight builds only when App Attest vouches for
     /// them; development builds and Simulator may register without it.
     static var relayRefusesThisDevice: Bool {

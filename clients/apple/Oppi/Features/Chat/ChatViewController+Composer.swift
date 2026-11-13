@@ -760,7 +760,6 @@ extension ChatViewController {
         )
     }
 
-
     // swiftlint:disable:next function_body_length
     func sendPrompt(
         draftClearance: ChatComposerDraftController.SubmissionDraftClearance = .afterSuccess

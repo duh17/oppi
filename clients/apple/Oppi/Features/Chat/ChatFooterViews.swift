@@ -752,7 +752,6 @@ final class ChatTitleView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-
     override func updateProperties() {
         super.updateProperties()
         guard let chat else { return }

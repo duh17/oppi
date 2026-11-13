@@ -494,7 +494,7 @@ final class CallKitLiveVoiceTelephony: NSObject, LiveVoiceTelephony, CXProviderD
         #endif
     }
 
-    private override init() {
+    override private init() {
         provider = CXProvider(configuration: Self.configuration())
         super.init()
         provider.setDelegate(self, queue: .main)
@@ -595,7 +595,7 @@ final class CallKitLiveVoiceTelephony: NSObject, LiveVoiceTelephony, CXProviderD
         }
     }
 
-    private nonisolated func complete(_ action: CXAction, _ systemAction: LiveVoiceSystemAction) {
+    nonisolated private func complete(_ action: CXAction, _ systemAction: LiveVoiceSystemAction) {
         let performed = MainActor.assumeIsolated { events?.perform(systemAction) == true }
         if performed {
             action.fulfill()

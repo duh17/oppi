@@ -90,7 +90,7 @@ struct SSHTerminalMetalTests {
         let nerd = NerdFontSymbols.font(size: font.pointSize) ?? font
 
         #expect(!fontCovers(font, record), "primary code font must not cover U+23FA")
-        #expect(!NerdFontSymbols.isPrivateUse(Unicode.Scalar(0x23FA)!), "U+23FA is not PUA")
+        #expect(!NerdFontSymbols.isPrivateUse("\u{23FA}"), "U+23FA is not PUA")
         #expect(fontCovers(font, "M"), "M is a covered code-font glyph")
 
         let fallback = resolvedRunFont(text: record, font: font)
@@ -131,6 +131,7 @@ struct SSHTerminalMetalTests {
         try writeShot(shot, name: "grid-record-glyph.png")
 
         let ink = try #require(recordInk)
+        // swiftlint:disable:next empty_count - AtlasInk.count is a pixel tally, not a collection
         #expect(ink.count > 0, "U+23FA must have ink")
         #expect(ink.minX > 0, "U+23FA ink must not sit on the left clip edge (\(ink))")
         #expect(ink.maxX < recordBytes.width - 1, "U+23FA ink must not sit on the right clip edge (\(ink))")
@@ -183,7 +184,7 @@ struct SSHTerminalMetalTests {
             let ink = try #require(atlasInk(product.bytes, width: product.width, height: product.height))
             #expect(
                 ink.minX == 0 && ink.maxX == product.width - 1 && ink.minY == 0 && ink.maxY == product.height - 1,
-                "Powerline \(separator.unicodeScalars.first!) must fill the cell \(ink)"
+                "Powerline \(separator) must fill the cell \(ink)"
             )
         }
 
@@ -216,6 +217,7 @@ struct SSHTerminalMetalTests {
         #expect(recordInk.minY > 0 && recordInk.maxY < recordBytes.height - 1)
 
         let selectedInk = try #require(atlasInk(selectedBytes.bytes, width: selectedBytes.width, height: selectedBytes.height))
+        // swiftlint:disable:next empty_count - AtlasInk.count is a pixel tally, not a collection
         #expect(selectedInk.count > 0, "U+23FA U+FE0F must have ink")
         #expect(
             selectedInk.minX > 0 && selectedInk.maxX < selectedBytes.width - 1,
@@ -227,6 +229,7 @@ struct SSHTerminalMetalTests {
         )
 
         let heartInk = try #require(atlasInk(heartBytes.bytes, width: heartBytes.width, height: heartBytes.height))
+        // swiftlint:disable:next empty_count - AtlasInk.count is a pixel tally, not a collection
         #expect(heartInk.count > 0, "❤️ must have ink")
         #expect(heartInk.maxX < heartBytes.width, "❤️ must stay inside the cell \(heartInk)")
         #expect(heartInk.maxY < heartBytes.height, "❤️ must stay inside the cell \(heartInk)")
@@ -764,23 +767,27 @@ struct SSHTerminalMetalTests {
         return best
     }
 
-    private func atlasInk(_ bytes: [UInt8], width: Int, height: Int) -> (
-        minX: Int, maxX: Int, minY: Int, maxY: Int, count: Int
-    )? {
+    private struct AtlasInk {
+        let minX: Int
+        let maxX: Int
+        let minY: Int
+        let maxY: Int
+        let count: Int
+    }
+
+    private func atlasInk(_ bytes: [UInt8], width: Int, height: Int) -> AtlasInk? {
         var minX = width, maxX = -1, minY = height, maxY = -1, count = 0
         for y in 0..<height {
-            for x in 0..<width {
-                if bytes[(y * width + x) * 4 + 3] > 8 {
-                    minX = min(minX, x)
-                    maxX = max(maxX, x)
-                    minY = min(minY, y)
-                    maxY = max(maxY, y)
-                    count += 1
-                }
+            for x in 0..<width where bytes[(y * width + x) * 4 + 3] > 8 {
+                minX = min(minX, x)
+                maxX = max(maxX, x)
+                minY = min(minY, y)
+                maxY = max(maxY, y)
+                count += 1
             }
         }
         if count == 0 { return nil }
-        return (minX, maxX, minY, maxY, count)
+        return AtlasInk(minX: minX, maxX: maxX, minY: minY, maxY: maxY, count: count)
     }
 
     private func styledFont(_ font: UIFont, italic: Bool) -> UIFont {
@@ -878,11 +885,11 @@ struct SSHTerminalMetalTests {
         let bytes: [UInt8]
         let cell: CGSize
 
-        func pixel(column: Int, row: Int, dx: CGFloat = 0.5, dy: CGFloat = 0.5) -> (b: UInt8, g: UInt8, r: UInt8, a: UInt8) {
+        func pixel(column: Int, row: Int, dx: CGFloat = 0.5, dy: CGFloat = 0.5) -> BGRAPixel {
             let x = min(width - 1, max(0, Int(CGFloat(column) * cell.width + dx * cell.width)))
             let y = min(height - 1, max(0, Int(CGFloat(row) * cell.height + dy * cell.height)))
             let offset = (y * width + x) * 4
-            return (bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3])
+            return BGRAPixel(b: bytes[offset], g: bytes[offset + 1], r: bytes[offset + 2], a: bytes[offset + 3])
         }
 
         func expectBackground(column: Int, row: Int, r: UInt8, g: UInt8, b: UInt8, slack: Int = 12) {

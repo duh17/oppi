@@ -12,10 +12,10 @@ private struct IsolatedHosts {
     private let keychain = MemoryKeychain()
 
     /// The same defaults, for the device settings the page reads (its mode).
-    var defaults: UserDefaults { UserDefaults(suiteName: suite)! }
+    var defaults: UserDefaults { testDefaults(suite: suite) }
 
     var store: @Sendable () -> SSHTerminalProfileStore {
-        { [suite, keychain] in SSHTerminalProfileStore(defaults: UserDefaults(suiteName: suite)!, keychain: keychain) }
+        { [suite, keychain] in SSHTerminalProfileStore(defaults: testDefaults(suite: suite), keychain: keychain) }
     }
 
     func save(_ profiles: [SSHTerminalProfile]) throws {
@@ -995,7 +995,8 @@ struct SSHTerminalRexSectionTests {
             .sorted { $0.frame.minY < $1.frame.minY }
             .compactMap { cell -> String? in
                 let id = (cell as? SSHTerminalRexListSessionCell).flatMap { self.rowElement($0)?.accessibilityIdentifier } ?? cell.accessibilityIdentifier
-                return id?.hasPrefix(prefix) == true ? String(id!.dropFirst(prefix.count)) : nil
+                guard let id, id.hasPrefix(prefix) else { return nil }
+                return String(id.dropFirst(prefix.count))
             }
     }
 

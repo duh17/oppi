@@ -164,7 +164,7 @@ struct CodeFontFamilyTests {
     @Test func nerdFontSymbolsAreBundled() {
         #expect(UIFont(name: NerdFontSymbols.postScriptName, size: 12) != nil)
         #expect(NerdFontSymbols.font(size: 13)?.pointSize == 13)
-        #expect(NerdFontSymbols.isPrivateUse(Unicode.Scalar(0xE0B0)!))
+        #expect(NerdFontSymbols.isPrivateUse("\u{E0B0}"))
         #expect(!NerdFontSymbols.isPrivateUse("A"))
         let base = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         #expect(NerdFontSymbols.withFallback(base).pointSize == 12)

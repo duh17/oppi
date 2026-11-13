@@ -105,8 +105,7 @@ final class NativeLatexBlockView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupViews()
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) {
-            (view: Self, previous: UITraitCollection) in
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: Self, previous: UITraitCollection) in
             guard previous.preferredContentSizeCategory
                     != view.traitCollection.preferredContentSizeCategory,
                   let currentCode = view.currentCode,

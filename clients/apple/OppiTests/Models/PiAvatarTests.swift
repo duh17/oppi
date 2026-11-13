@@ -38,8 +38,8 @@ struct PiAvatarTests {
     @Test("monochrome paints only the theme foreground; color paints several hues")
     func monochromeIsThemeForegroundAndColorIsNot() throws {
         let themeID = ThemeID.dark
-        var fg: (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
-        themeID.palette.ui.fg.getRed(&fg.0, green: &fg.1, blue: &fg.2, alpha: &fg.3)
+        var fgRed: CGFloat = 0, fgGreen: CGFloat = 0, fgBlue: CGFloat = 0, fgAlpha: CGFloat = 0
+        themeID.palette.ui.fg.getRed(&fgRed, green: &fgGreen, blue: &fgBlue, alpha: &fgAlpha)
 
         // Interior of each of the three brand-colored parts.
         let points: [(CGFloat, CGFloat)] = [(0.30, 0.12), (0.20, 0.90), (0.90, 0.90)]
@@ -48,7 +48,7 @@ struct PiAvatarTests {
         for (x, y) in points {
             let p = try #require(pixel(in: mono, normalizedX: x, normalizedY: y))
             #expect(p.alpha > 0.99)
-            #expect(abs(p.red - fg.0) < 0.02 && abs(p.green - fg.1) < 0.02 && abs(p.blue - fg.2) < 0.02)
+            #expect(abs(p.red - fgRed) < 0.02 && abs(p.green - fgGreen) < 0.02 && abs(p.blue - fgBlue) < 0.02)
         }
 
         let color = PiAvatarRenderer.render(size: 400, style: .color, themeID: themeID)

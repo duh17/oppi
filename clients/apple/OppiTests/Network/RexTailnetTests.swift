@@ -8,7 +8,7 @@ import UIKit
 @Suite("Rex on the tailnet without SSH", .serialized, .timeLimit(.minutes(1)))
 @MainActor
 struct RexTailnetTests {
-    static let rex = RexTailnetHost(dnsName: "rex.tail0000.ts.net")!
+    static let rex = testUnwrap(RexTailnetHost(dnsName: "rex.tail0000.ts.net"))
 
     static func peer(_ name: String, dns: String, os: String? = "macOS", online: Bool = true) -> TailnetPeer {
         TailnetPeer(id: name, hostName: name, dnsName: dns, os: os, tailscaleIPs: ["100.64.0.1"], isOnline: online)
@@ -16,11 +16,11 @@ struct RexTailnetTests {
 
     /// The device defaults a test's page reads its mode from.
     static func deviceDefaults() -> UserDefaults {
-        UserDefaults(suiteName: "rex-tailnet-tests-device-\(UUID().uuidString)")!
+        testDefaults(suite: "rex-tailnet-tests-device-\(UUID().uuidString)")
     }
 
     static func store() -> RexDirectStore {
-        RexDirectStore(defaults: UserDefaults(suiteName: "rex-tailnet-tests-\(UUID().uuidString)")!)
+        RexDirectStore(defaults: testDefaults(suite: "rex-tailnet-tests-\(UUID().uuidString)"))
     }
 
     private final class MemoryKeychain: SSHCredentialStoring {
@@ -36,7 +36,7 @@ struct RexTailnetTests {
     private static func profiles() -> @Sendable () -> SSHTerminalProfileStore {
         let suite = "rex-tailnet-tests-profiles-\(UUID().uuidString)"
         let keychain = MemoryKeychain()
-        return { SSHTerminalProfileStore(defaults: UserDefaults(suiteName: suite)!, keychain: keychain) }
+        return { SSHTerminalProfileStore(defaults: testDefaults(suite: suite), keychain: keychain) }
     }
 
     private static func registry() -> SSHTerminalRegistry {
@@ -61,15 +61,15 @@ struct RexTailnetTests {
     /// any spelling) is left to that host's section: one section, one link.
     @Test func aRexKnownSeveralWaysIsListedOnce() async throws {
         let store = Self.store()
-        store.saveTailnetHost(RexTailnetHost(dnsName: Self.rex.dnsName, name: "Studio Rex")!)
+        store.saveTailnetHost(testUnwrap(RexTailnetHost(dnsName: Self.rex.dnsName, name: "Studio Rex")))
         let discovery = RexTailnetDiscovery { $0.hasPrefix("rex.") || $0.hasPrefix("box.") ? .rex : .notRex }
         let peers = [Self.peer("rex", dns: Self.rex.dnsName), Self.peer("box", dns: "box.tail0000.ts.net")]
         let me = "oppi-ios.tail0000.ts.net"
         await discovery.discover(peers: peers, selfDNSName: me)
         let reach = RexTailnetReach.peers
-        let section = RexTailnetSection(store: store, discovery: discovery, reach: { reach }) {
+        let section = RexTailnetSection(store: store, discovery: discovery, reach: { reach }, makeFollower: {
             RexTailnetFollower(host: $0, monitor: RexMonitor(tailnet: $0, openDirect: Self.refusing))
-        }
+        })
         section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: false)
         #expect(section.entries.map(\.dnsName) == [Self.rex.dnsName, "box.tail0000.ts.net"])
         #expect(section.listedFollowers.map(\.host.name) == ["Studio Rex", "box"])
@@ -204,10 +204,9 @@ struct RexTailnetTests {
     @Test func aRexAddedByNameIsListedInTheSameUpdate() throws {
         let store = Self.store()
         let section = RexTailnetSection(
-            store: store, discovery: RexTailnetDiscovery { _ in .unreachable }, reach: { .systemOnly }
-        ) {
-            RexTailnetFollower(host: $0, monitor: RexMonitor(tailnet: $0, openDirect: Self.refusing))
-        }
+            store: store, discovery: RexTailnetDiscovery { _ in .unreachable }, reach: { .systemOnly },
+            makeFollower: { RexTailnetFollower(host: $0, monitor: RexMonitor(tailnet: $0, openDirect: Self.refusing)) }
+        )
         let list = SSHTerminalHostListViewController(
             profileStore: Self.profiles(), tailnetRex: section, startsTailnet: {},
             settings: terminalTestSettings(mode: .rex, defaults: Self.deviceDefaults())
@@ -263,15 +262,16 @@ struct RexTailnetTests {
         store.saveTailnetHost(Self.rex)
         var made: RexTailnetFollower?
         let section = RexTailnetSection(
-            store: store, discovery: RexTailnetDiscovery { _ in .unreachable }, reach: { .systemOnly }
-        ) { host in
-            let follower = RexTailnetFollower(
-                host: host,
-                monitor: RexMonitor(tailnet: host, openDirect: rexes.openDirect, publishDelay: .milliseconds(20))
-            )
-            made = follower
-            return follower
-        }
+            store: store, discovery: RexTailnetDiscovery { _ in .unreachable }, reach: { .systemOnly },
+            makeFollower: { host in
+                let follower = RexTailnetFollower(
+                    host: host,
+                    monitor: RexMonitor(tailnet: host, openDirect: rexes.openDirect, publishDelay: .milliseconds(20))
+                )
+                made = follower
+                return follower
+            }
+        )
         let list = SSHTerminalHostListViewController(
             profileStore: Self.profiles(), tailnetRex: section, startsTailnet: {},
             settings: terminalTestSettings(mode: .rex, defaults: Self.deviceDefaults())

@@ -15,7 +15,7 @@ struct MarkdownTableStreamingGateTests {
             [
                 [.text("r\(row)")],
                 [.text("v\(row)")],
-                [.text("Long explanatory note for row \(row) that keeps going past the readable clamp so it wraps"),],
+                [.text("Long explanatory note for row \(row) that keeps going past the readable clamp so it wraps")],
             ]
         }
     }

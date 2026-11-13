@@ -275,7 +275,7 @@ struct PushSendPermissionTests {
             } else {
                 status = 404
             }
-            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            let response = testUnwrap(HTTPURLResponse(url: testUnwrap(request.url), statusCode: status, httpVersion: nil, headerFields: nil))
             return (try JSONSerialization.data(withJSONObject: body), response)
         }
 
@@ -315,7 +315,7 @@ struct PushSendPermissionTests {
     }
 
     private let backend = Backend()
-    private let relay = URL(string: "https://relay-\(UUID().uuidString.lowercased()).example")!
+    private let relay = testUnwrap(URL(string: "https://relay-\(UUID().uuidString.lowercased()).example"))
     private let configuration: URLSessionConfiguration = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [BackendProtocol.self]
@@ -476,7 +476,7 @@ struct PushSendPermissionTests {
             try await connect()
             // The Live Activity upload finds that the relay forgot the registration.
             let defaultsName = "PushSendPermissionTests.\(UUID().uuidString)"
-            let defaults = UserDefaults(suiteName: defaultsName)!
+            let defaults = testDefaults(suite: defaultsName)
             defer { defaults.removePersistentDomain(forName: defaultsName) }
             let relay = relay
             let configuration = configuration
@@ -529,7 +529,7 @@ struct PushSendPermissionTests {
             try storeRelayRegistration("r_A", appAttestKeyId: "k_lost")
             try PushSendTokenStore.save(.init(sendToken: "osp1.r_A.p_0.secret", deviceId: "d_phone"), serverId: serverId)
             let defaultsName = "PushSendPermissionTests.\(UUID().uuidString)"
-            let defaults = UserDefaults(suiteName: defaultsName)!
+            let defaults = testDefaults(suite: defaultsName)
             defer { defaults.removePersistentDomain(forName: defaultsName) }
             let relay = relay
             let client = relayClient()
@@ -790,8 +790,9 @@ struct PushSendPermissionTests {
         var isSupported: Bool { true }
         func generateKey() async throws -> String {
             lock.withLock {
-                _generated.append("k_\(_generated.count + 1)")
-                return _generated.last!
+                let key = "k_\(_generated.count + 1)"
+                _generated.append(key)
+                return key
             }
         }
         func attestKey(_ keyId: String, clientDataHash: Data) async throws -> Data {

@@ -33,10 +33,10 @@ private final class UploaderURLProtocol: URLProtocol, @unchecked Sendable {
             return (Self.seen.count, Self.handler)
         }
         let (status, json) = handler?(index) ?? (500, "")
-        let response = HTTPURLResponse(
-            url: request.url!, statusCode: status, httpVersion: nil,
+        let response = testUnwrap(HTTPURLResponse(
+            url: testUnwrap(request.url), statusCode: status, httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
-        )!
+        ))
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data(json.utf8))
         client?.urlProtocolDidFinishLoading(self)

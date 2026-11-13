@@ -157,7 +157,7 @@ struct DictationDictionaryModelTests {
         server.failWritesFor = []
         await model.deleteWorkspacePhrases()
         #expect(model.workspaceDraft.isEmpty)
-        #expect(model.workspace?.phrases == [])
+        #expect(model.workspace?.phrases.isEmpty == true)
         #expect(server.writes.map(\.workspaceId) == ["w1"], "the All Workspaces list is untouched")
         #expect(model.notice == nil)
     }

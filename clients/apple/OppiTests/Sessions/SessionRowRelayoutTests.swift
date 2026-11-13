@@ -94,7 +94,7 @@ struct SessionRowRelayoutTests {
 
         var snapshot = SessionListCollection<Int, Int, Int, Int>.Snapshot()
         snapshot.appendSection(0)
-        snapshot.append(sessions: [rowContent.entry], to: 0, item: { _ in 0 }) { _ in rowContent }
+        snapshot.append(sessions: [rowContent.entry], to: 0, item: { _ in 0 }, content: { _ in rowContent })
         list.apply(snapshot)
         window.layoutIfNeeded()
         RunLoop.current.run(until: Date().addingTimeInterval(0.1))
@@ -328,7 +328,13 @@ struct SessionRowRelayoutTests {
 
         /// The first row's frame, the pinned preview's frame, and the list's own,
         /// all in the page's coordinates.
-        func laidOut() -> (row: CGRect, preview: CGRect, list: CGRect, previewIsAbove: Bool)? {
+        struct Layout {
+            let row: CGRect
+            let preview: CGRect
+            let list: CGRect
+            let previewIsAbove: Bool
+        }
+        func laidOut() -> Layout? {
             page.view.layoutIfNeeded()
             guard let box = Self.firstView(identified: "sessionRows.preview", in: page.view),
                   let pane = box.superview,
@@ -337,11 +343,11 @@ struct SessionRowRelayoutTests {
             let subviews = page.view.subviews
             let paneIndex = subviews.firstIndex(of: pane) ?? -1
             let listIndex = subviews.firstIndex(of: page.collectionView) ?? .max
-            return (
-                cell.convert(cell.bounds, to: page.view),
-                pane.convert(pane.bounds, to: page.view),
-                page.collectionView.frame,
-                paneIndex > listIndex
+            return Layout(
+                row: cell.convert(cell.bounds, to: page.view),
+                preview: pane.convert(pane.bounds, to: page.view),
+                list: page.collectionView.frame,
+                previewIsAbove: paneIndex > listIndex
             )
         }
 

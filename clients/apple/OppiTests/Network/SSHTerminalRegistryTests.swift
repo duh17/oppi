@@ -21,15 +21,21 @@ struct SSHTerminalRegistryTests {
             )
         }
 
+        struct OpenTerminal {
+            let channel: SSHTerminalChannel
+            let queue: SSHTerminalEventQueue
+            let connection: FakeConnection
+            let profile: SSHTerminalProfile
+        }
+
         /// A live terminal for a saved host, with its byte queue.
-        func open(_ profile: SSHTerminalProfile = SSHTerminalProfile(host: "one.ts.net", username: "alice"))
-            throws -> (channel: SSHTerminalChannel, queue: SSHTerminalEventQueue, connection: FakeConnection, profile: SSHTerminalProfile) {
+        func open(_ profile: SSHTerminalProfile = SSHTerminalProfile(host: "one.ts.net", username: "alice")) throws -> OpenTerminal {
             let channel = try SSHTerminalChannel()
             let connection = FakeConnection()
             let queue = SSHTerminalEventQueue()
             channel.opened(connection)
             registry.adopt(channel, profile: profile, queue: queue)
-            return (channel, queue, connection, profile)
+            return OpenTerminal(channel: channel, queue: queue, connection: connection, profile: profile)
         }
     }
 

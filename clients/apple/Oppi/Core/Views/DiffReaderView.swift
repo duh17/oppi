@@ -466,7 +466,7 @@ final class DiffReaderView: UIView {
     /// scrolling went, so device smoothness is measurable from telemetry.
     private func reportSession() {
         guard let index, let openMilliseconds else { return }
-        let scroll = scrollSampler.stats()
+        let scroll = scrollSampler.counter
         Telemetry.record(
             AppDiffReaderSession(
                 openMs: openMilliseconds.rounded(),
@@ -476,7 +476,7 @@ final class DiffReaderView: UIView {
                 scrollFrames: scroll.frames,
                 hitches: scroll.hitches,
                 hitchRatio: scroll.hitchRatio,
-                worstFrameMs: scroll.worstFrameMs
+                worstFrameMs: scroll.worstFrameMilliseconds
             )
         )
         ClientLog.info("DiffReader", "Diff reader session")
@@ -828,7 +828,8 @@ private final class DiffReaderRowTintView: UIView {
 @MainActor
 private final class DiffReaderScrollSampler: NSObject {
     private var link: CADisplayLink?
-    private var counter = FrameHitchCounter()
+    /// Frames and hitches since the last reset. `hitchRatio` is hitch time over scroll time.
+    private(set) var counter = FrameHitchCounter()
 
     func start() {
         guard link == nil else { return }
@@ -845,11 +846,6 @@ private final class DiffReaderScrollSampler: NSObject {
 
     func reset() {
         counter.resetCounts()
-    }
-
-    /// Frames and hitches since the last reset. `hitchRatio` is hitch time over scroll time.
-    func stats() -> (frames: Int, hitches: Int, hitchRatio: Double, worstFrameMs: Double) {
-        (counter.frames, counter.hitches, counter.hitchRatio, counter.worstFrameMilliseconds)
     }
 
     @objc private func tick(_ link: CADisplayLink) {

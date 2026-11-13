@@ -986,7 +986,7 @@ final class RexMonitor: SSHTerminalOverviewSource {
 
     /// A terminal block's title, folder, and status records. A call that
     /// fails (the block closed, an older Rex) leaves its field out.
-    private nonisolated static func details(of block: String, in session: String, _ control: RexControl) async -> RexBlockDetails {
+    nonisolated private static func details(of block: String, in session: String, _ control: RexControl) async -> RexBlockDetails {
         func call(_ method: String) async -> Data? {
             try? await control.call("com.superlogical.terminal." + method, [
                 "session_id": session, "block_id": block, "args": [String: Any](),

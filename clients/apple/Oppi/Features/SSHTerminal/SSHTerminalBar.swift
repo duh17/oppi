@@ -174,4 +174,3 @@ enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
         return spec.flatMap { SSHTerminalKeymap.parse($0, syntax: .plus) } ?? []
     }
 }
-

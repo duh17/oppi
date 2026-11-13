@@ -8,7 +8,7 @@ struct TerminalDeepLinkTests {
     private static let block = "block:01a1987c-6abd-76c6-9f91-ab50f8808d8c"
 
     private func link(_ string: String) -> Result<TerminalDeepLink, TerminalDeepLinkError>? {
-        TerminalOpen(url: URL(string: string)!)?.link
+        TerminalOpen(url: testUnwrap(URL(string: string)))?.link
     }
 
     @Test func parsesRexIdsWithColonsEncodedOrNot() {
@@ -21,7 +21,7 @@ struct TerminalDeepLinkTests {
     }
 
     @Test func requestsFromAppOpenRequestKeepTheSourceServer() {
-        let url = URL(string: "oppi://terminal/rex?session=\(Self.session)&block=\(Self.block)")!
+        let url = testUnwrap(URL(string: "oppi://terminal/rex?session=\(Self.session)&block=\(Self.block)"))
         guard case .terminal(let open) = AppOpenRequest(url: url, origin: .inAppHyperlink, sourceServerID: "srv") else {
             Issue.record("not a terminal request")
             return
