@@ -219,7 +219,8 @@ struct QuietTimelineWorkLine: Equatable, Identifiable {
 /// Projects the complete reducer timeline for Compact turns without deleting
 /// or rewriting reducer rows. Tools and thinking fold together, including a
 /// finished thinking-only strip so the thought does not vanish after settle.
-/// Each strip keeps a durable interval clock. The Working row stays separate.
+/// Each strip keeps a durable interval clock. While the turn runs, the live
+/// strip is drawn as the working row (`ChatTimelineApplyPlan.workingRowLine`).
 /// Ask cards and non-tool errors stay visible.
 struct QuietTimelineProjection: Equatable {
     let rows: [TimelineDisplayRow]
@@ -345,9 +346,11 @@ struct QuietTimelineProjection: Equatable {
                return false
            }),
            case .quietWork(let workLine) = rows[workIndex] {
-            // Only the final row can be live. A visible interruption after a
+            // Only the final group can be live: its header last, or followed only
+            // by its own steps while expanded. A visible interruption after a
             // folded group must never inherit the current turn's clock.
-            if workIndex == rows.index(before: rows.endIndex) {
+            let followingRows = rows.count - 1 - workIndex
+            if followingRows == (workLine.isExpanded ? workLine.sourceItemIDs.count : 0) {
                 rows[workIndex] = .quietWork(
                     QuietTimelineWorkLine(
                         id: workLine.id,

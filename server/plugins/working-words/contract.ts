@@ -17,10 +17,10 @@ export const WORKING_WORDS_TASK = "oppi.working-words";
 /** Name of the durable extension; the server starts its ticker only while it is enabled. */
 export const WORKING_WORDS_EXTENSION = "working-words";
 
-// `run` survives restart so elapsed time keeps counting from the real start.
+// The conversation's ticker task. Owners written before the message dropped its clock also
+// hold a `run` (its id and start), which nothing reads now.
 export const WordsOwner = defineDoc<{
   task?: TaskId;
-  run?: { id: string; startedAt: number };
 }>({
   kind: "oppi.working-words-owner",
   version: 1,
@@ -28,7 +28,7 @@ export const WordsOwner = defineDoc<{
   history: "latest",
   fork: "initial",
   initial: () => ({}),
-  // Written at the start and end of every run; a base bounds its replay.
+  // Written when the task is created or repaired; a base bounds its replay.
   checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 

@@ -1,10 +1,11 @@
 import { defineTask, LiveDoc, type LiveState } from "@earendil-works/pi-durable";
 import { defineExtension, defineFacet, DurableUI, Extensions, type UINotification } from "oppi/v1";
-import { WORKING_WORDS_EXTENSION, WORKING_WORDS_TASK, WordsOwner } from "./contract.js";
+import { WORKING_WORDS_EXTENSION, WORKING_WORDS_TASK } from "./contract.js";
 
 // Durable port of the global `working-message` Pi extension: an activity
-// phrase plus elapsed time while busy, chosen deterministically per run.
-// No status, no custom indicator frames, no model call.
+// phrase while busy, chosen deterministically per run. It carries no clock: the
+// client's working row shows the turn's time itself, so the message changes only
+// when the activity does. No status, no custom indicator frames, no model call.
 
 export type Activity =
   | "thinking"
@@ -31,7 +32,6 @@ export const PHRASES: Record<Activity, string[]> = {
   checking: ["Tapping the wheels", "Scanning for smoke", "Closing the loop", "Walking it back"],
 };
 
-const TICK_MS = 1_000;
 /**
  * How long one watch invocation runs. pi-durable keeps the registry snapshot an invocation was
  * reserved with until it ends, and with it every extension installed then, also after it is
@@ -53,26 +53,6 @@ function hashText(text: string): number {
 export function pickPhrase(activity: Activity, turn: string | number): string {
   const options = PHRASES[activity];
   return options[hashText(`${activity}:${turn}`) % options.length] ?? options[0] ?? "";
-}
-
-export function formatElapsed(ms: number): string | undefined {
-  if (ms < 1000) return undefined;
-  const totalSec = Math.floor(ms / 1000);
-  const hours = Math.floor(totalSec / 3600);
-  const minutes = Math.floor((totalSec % 3600) / 60);
-  const seconds = totalSec % 60;
-  if (hours > 0) {
-    return minutes > 0 ? `${hours}h ${String(minutes).padStart(2, "0")}m` : `${hours}h`;
-  }
-  if (minutes > 0) {
-    return seconds > 0 ? `${minutes}m ${String(seconds).padStart(2, "0")}s` : `${minutes}m`;
-  }
-  return `${seconds}s`;
-}
-
-export function workingLine(phrase: string, elapsedMs: number): string {
-  const elapsed = formatElapsed(elapsedMs);
-  return elapsed ? `${phrase} · ${elapsed}` : phrase;
 }
 
 export function classifyTool(toolName: string): Activity {
@@ -181,18 +161,10 @@ const Words = defineTask<null, { phase: "watch" }, null>({
           const published = view;
           const ending = Date.now() >= invocationEnds;
           await runtime.commit(async (tx) => {
-            const owner = await tx.doc(WordsOwner, runtime.conversationId);
-            let message: string | undefined;
-            if (published.run === undefined) {
-              delete owner.run;
-            } else {
-              if (owner.run?.id !== published.run)
-                owner.run = { id: published.run, startedAt: Date.now() };
-              message = workingLine(
-                pickPhrase(published.activity, published.run),
-                Date.now() - owner.run.startedAt,
-              );
-            }
+            const message =
+              published.run === undefined
+                ? undefined
+                : pickPhrase(published.activity, published.run);
             const ui = await tx.doc(DurableUI, runtime.conversationId);
             const put = (slot: string, value: Omit<UINotification, "id">): void => {
               const next = {
@@ -234,13 +206,11 @@ const Words = defineTask<null, { phase: "watch" }, null>({
             };
             wake = finish;
             runtime.signal.addEventListener("abort", abort, { once: true });
+            // Nothing to publish until the activity or run changes (`wake`) or this
+            // invocation ends.
             if (runtime.signal.aborted) abort();
             else if (published !== view) finish();
-            else
-              timer = setTimeout(
-                finish,
-                view.run !== undefined ? TICK_MS : Math.max(0, invocationEnds - Date.now()),
-              );
+            else timer = setTimeout(finish, Math.max(0, invocationEnds - Date.now()));
           });
         }
       } finally {

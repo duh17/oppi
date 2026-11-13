@@ -5,7 +5,24 @@ struct ChatTimelineApplyPlan {
     let nextIDs: [String]
     let nextItemByID: [String: ChatItem]
     let nextWorkLineByID: [String: QuietTimelineWorkLine]
+    /// The live work line drawn as the working row (`workingRowLine`); nil when
+    /// the working row stands alone or does not show.
+    let workingRowLineID: String?
     let removedIDs: Set<String>
+
+    /// While the turn runs, its live folded work and the working indicator are
+    /// one row: the work line's row draws the spinner and the extension's
+    /// working text with the turn's time and steps after them, and keeps the
+    /// line's tap. Nil when no work is folded yet (the indicator row stands
+    /// alone) or the extension hid the working indicator (the line keeps its
+    /// own pill or strip). The projection makes at most one line live.
+    static func workingRowLine(in rows: [TimelineDisplayRow], showsWorkingIndicator: Bool) -> QuietTimelineWorkLine? {
+        guard showsWorkingIndicator else { return nil }
+        for row in rows.reversed() {
+            if case .quietWork(let line) = row { return line.isLive ? line : nil }
+        }
+        return nil
+    }
 
     static func build(
         items: [ChatItem],
@@ -67,7 +84,8 @@ struct ChatTimelineApplyPlan {
             }
         }
 
-        if showsWorkingIndicator ?? isBusy {
+        let workingRowLine = workingRowLine(in: rows, showsWorkingIndicator: showsWorkingIndicator ?? isBusy)
+        if showsWorkingIndicator ?? isBusy, workingRowLine == nil {
             nextIDs.append(ChatTimelineController.workingIndicatorID)
         }
 
@@ -75,6 +93,7 @@ struct ChatTimelineApplyPlan {
             nextIDs: nextIDs,
             nextItemByID: itemByID,
             nextWorkLineByID: workLineByID,
+            workingRowLineID: workingRowLine?.id,
             removedIDs: []
         )
     }
@@ -84,6 +103,7 @@ struct ChatTimelineApplyPlan {
             nextIDs: nextIDs,
             nextItemByID: nextItemByID,
             nextWorkLineByID: nextWorkLineByID,
+            workingRowLineID: workingRowLineID,
             removedIDs: Set(currentIDs).subtracting(nextIDs)
         )
     }

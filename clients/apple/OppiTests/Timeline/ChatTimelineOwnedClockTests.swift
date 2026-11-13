@@ -590,6 +590,81 @@ struct ChatTimelineOwnedClockTests {
         #expect(!windowed.coordinator.currentIDs.contains("tool-1"))
     }
 
+    /// A running turn is one row in every folding style: the working row carries
+    /// the turn's folded work, its tap opens the steps under it as the work
+    /// line's own control does, and when the turn ends the same row becomes the
+    /// Worked pill (or strip).
+    @Test(arguments: [ChatTimelineChromeStyle.conversation, .standard])
+    func runningTurnIsOneRowThatOpensItsStepsAndSettlesIntoItsPill(chromeStyle: ChatTimelineChromeStyle) async throws {
+        let manager = ChatSessionManager(sessionId: "owned-working-row")
+        let windowed = makeWindowedTimelineHarness(sessionId: "owned-working-row")
+        bindSessionStatus(.busy, sessionManager: manager, connection: windowed.connection)
+        defer {
+            windowed.window.isHidden = true
+            manager.cleanup()
+        }
+        windowed.reducer.processBatch([
+            .agentStart(sessionId: "owned-working-row"),
+            .toolStart(sessionId: "owned-working-row", toolEventId: "tool-1", tool: "bash", args: ["command": "make"]),
+        ])
+        let configuration = makeTimelineConfiguration(
+            items: [],
+            sessionId: windowed.sessionId,
+            reducer: windowed.reducer,
+            toolOutputStore: windowed.reducer.toolOutputStore,
+            toolArgsStore: windowed.reducer.toolArgsStore,
+            toolSegmentStore: windowed.reducer.toolSegmentStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer,
+            ownsTimelineProjection: true,
+            quietModeEnabled: true,
+            chromeStyle: chromeStyle,
+            sessionManager: manager
+        )
+        windowed.coordinator.updateHostChrome(configuration: configuration, to: windowed.collectionView)
+
+        let coordinator = windowed.coordinator
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            coordinator.currentIDs.contains { $0.hasPrefix("quiet-work-line:") }
+        })
+        let lineID = try #require(coordinator.currentIDs.first { $0.hasPrefix("quiet-work-line:") })
+        #expect(!coordinator.currentIDs.contains(ChatTimelineController.workingIndicatorID))
+
+        func cell() throws -> UICollectionViewCell {
+            let index = try #require(coordinator.currentIDs.firstIndex(of: lineID))
+            return try configuredTimelineCell(in: windowed.collectionView, item: index)
+        }
+        func isWorkingRow() throws -> Bool {
+            try timelineFirstView(ofType: WorkingIndicatorTimelineRowContentView.self, in: cell()) != nil
+        }
+        func control() throws -> UIButton {
+            try #require(timelineAllViews(in: cell()).compactMap { $0 as? UIButton }.first {
+                $0.accessibilityIdentifier == lineID && !$0.isHidden
+            })
+        }
+        #expect(try isWorkingRow())
+        #expect(try control().accessibilityValue == "Working, Collapsed")
+
+        try control().sendActions(for: .primaryActionTriggered)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            coordinator.currentIDs.contains("tool-1")
+        }, "the row's tap did not open the turn's steps")
+        #expect(!coordinator.currentIDs.contains(ChatTimelineController.workingIndicatorID))
+        #expect(try isWorkingRow())
+        #expect(try control().accessibilityValue == "Working, Expanded")
+
+        bindSessionStatus(.ready, sessionManager: manager, connection: windowed.connection)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            !coordinator.ownedQuietSettledEndsForTesting.isEmpty
+        }, "the ended turn never settled its work")
+        windowed.collectionView.layoutIfNeeded()
+        #expect(try !isWorkingRow(), "the ended turn's row still draws as the working row")
+        #expect(try timelineFirstView(ofType: QuietWorkLineTimelineRowContentView.self, in: cell()) != nil)
+        #expect(!coordinator.currentIDs.contains(ChatTimelineController.workingIndicatorID))
+        #expect(try control().accessibilityValue == "Expanded")
+    }
+
     @Test func ownedShowEarlierExpandsControllerRenderWindow() async {
         let windowed = makeWindowedTimelineHarness(sessionId: "owned-window")
         let events = (0..<90).map { index in

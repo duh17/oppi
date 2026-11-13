@@ -114,6 +114,71 @@ struct WorkingIndicatorVisibilityTests {
         #expect(!plan.nextIDs.contains(workingID))
     }
 
+    // MARK: - One row for the running turn
+
+    private func workLine(live: Bool, expanded: Bool = false) -> QuietTimelineWorkLine {
+        QuietTimelineWorkLine(
+            id: "quiet-work-line:tool-1",
+            turnID: "tool-1",
+            sourceItemIDs: ["tool-1"],
+            buckets: [QuietWorkBucket(kind: .terminal, count: 1)],
+            displayStyle: .icons,
+            isExpanded: expanded,
+            isLive: live,
+            liveStartedAt: Date(timeIntervalSince1970: 0)
+        )
+    }
+
+    private func toolRow() -> TimelineDisplayRow {
+        .item(.toolCall(id: "tool-1", tool: "bash", argsSummary: "run", outputPreview: "", outputByteCount: 0, isError: false, isDone: false))
+    }
+
+    /// The running turn's folded work is the working row: the indicator does
+    /// not draw a second row under it, collapsed or with its steps open.
+    @Test(arguments: [false, true])
+    func liveWorkLineIsTheWorkingRow(expanded: Bool) {
+        let line = workLine(live: true, expanded: expanded)
+        let rows: [TimelineDisplayRow] = [.quietWork(line)] + (expanded ? [toolRow()] : [])
+        let plan = ChatTimelineApplyPlan.build(rows: rows, hiddenCount: 0, isBusy: true, streamingAssistantID: nil)
+        #expect(!plan.nextIDs.contains(workingID))
+        #expect(plan.workingRowLineID == line.id)
+    }
+
+    /// Before any work folds (or once a reply follows it), the indicator stands alone.
+    @Test func indicatorStandsAloneWithoutLiveWork() {
+        let reply = TimelineDisplayRow.item(.assistantMessage(id: "a1", text: "Done", timestamp: Date()))
+        let plan = ChatTimelineApplyPlan.build(
+            rows: [.quietWork(workLine(live: false)), reply],
+            hiddenCount: 0,
+            isBusy: true,
+            streamingAssistantID: nil
+        )
+        #expect(plan.nextIDs.last == workingID)
+        #expect(plan.workingRowLineID == nil)
+    }
+
+    /// The turn ends: the line is history (its Worked pill or strip) and no working row shows.
+    @Test func endedTurnLeavesTheWorkLineAndNoWorkingRow() {
+        let line = workLine(live: false)
+        let plan = ChatTimelineApplyPlan.build(rows: [.quietWork(line)], hiddenCount: 0, isBusy: false, streamingAssistantID: nil)
+        #expect(plan.nextIDs == [line.id])
+        #expect(plan.workingRowLineID == nil)
+    }
+
+    /// An extension that hides the working indicator keeps the live line as its own pill or strip.
+    @Test func hiddenWorkingIndicatorLeavesTheLiveLineAlone() {
+        let line = workLine(live: true)
+        let plan = ChatTimelineApplyPlan.build(
+            rows: [.quietWork(line)],
+            hiddenCount: 0,
+            isBusy: true,
+            showsWorkingIndicator: false,
+            streamingAssistantID: nil
+        )
+        #expect(plan.nextIDs == [line.id])
+        #expect(plan.workingRowLineID == nil)
+    }
+
     // MARK: - Transition scenarios (the flicker cases)
 
     @Test func indicatorPersistsDuringStreaming() {

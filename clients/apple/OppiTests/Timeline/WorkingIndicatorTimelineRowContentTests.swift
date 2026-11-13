@@ -94,23 +94,58 @@ struct WorkingIndicatorTimelineRowContentTests {
         let originalThemeID = ThemeRuntimeState.currentThemeID()
         defer { ThemeRuntimeState.setThemeID(originalThemeID) }
         ThemeRuntimeState.setThemeID(themeID)
-        let view = makeView(workingState: ExtensionWorkingState(message: "Walking the maze · 4s", indicator: nil))
-
-        let spinner = try #require(timelineFirstView(ofType: WorkingSpinnerUIView.self, in: view))
-        let label = try #require(firstVisibleLabel(withText: "Walking the maze · 4s", in: view))
-        #expect(spinner.convert(spinner.bounds, to: view).minX < 0.5)
-        let color = try #require(label.textColor)
-        #expect(wcagContrast(color, themeID.palette.bg) >= 4.5)
+        // Alone, and carrying the turn's work at its trailing end: the spinner
+        // and the text keep the leading edge either way.
+        let work = WorkingRowWork(
+            workLine: QuietTimelineWorkLine(
+                id: "quiet-work-line:t", turnID: "t", sourceItemIDs: ["t"],
+                buckets: [QuietWorkBucket(kind: .terminal, count: 1)], displayStyle: .icons,
+                isExpanded: false, isLive: true, liveStartedAt: Date()
+            ),
+            chromeStyle: .conversation,
+            onTap: {}
+        )
+        for work in [nil, work] {
+            let view = makeView(
+                workingState: ExtensionWorkingState(message: "Walking the maze · 4s", indicator: nil),
+                work: work
+            )
+            let spinner = try #require(timelineFirstView(ofType: WorkingSpinnerUIView.self, in: view))
+            let label = try #require(firstVisibleLabel(withText: "Walking the maze · 4s", in: view))
+            #expect(spinner.convert(spinner.bounds, to: view).minX < 0.5)
+            #expect(abs(label.convert(label.bounds, to: view).minX - 26) < 0.5)
+            let color = try #require(label.textColor)
+            #expect(wcagContrast(color, themeID.palette.bg) >= 4.5)
+        }
     }
 
-    private func makeView(workingState: ExtensionWorkingState?) -> UIView {
+    /// With no folded work to carry, the row still shows the turn's time, counted from
+    /// its prompt, after the extension's text.
+    @Test func aloneTheRowShowsTheTurnsTime() throws {
+        let surface = SessionExtensionSurface()
+        surface.replace(with: ExtensionSurfaceState(working: ExtensionWorkingState(message: "Putting it in words", indicator: nil)))
+        let configuration = WorkingIndicatorTimelineRowConfiguration(
+            modelId: nil,
+            surface: surface,
+            turnStartedAt: Date().addingTimeInterval(-65)
+        )
+        let view = configuration.makeContentView() as UIView
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 44)
+        view.layoutIfNeeded()
+
+        let texts = visibleLabelTexts(in: view)
+        #expect(texts.contains("Putting it in words"))
+        #expect(texts.contains { $0.hasPrefix("1m ") }, "no turn time in \(texts)")
+    }
+
+    private func makeView(workingState: ExtensionWorkingState?, work: WorkingRowWork? = nil) -> UIView {
         let surface = SessionExtensionSurface()
         surface.replace(with: ExtensionSurfaceState(working: workingState))
-        return makeView(surface: surface)
+        return makeView(surface: surface, work: work)
     }
 
-    private func makeView(surface: SessionExtensionSurface) -> UIView {
-        let configuration = WorkingIndicatorTimelineRowConfiguration(modelId: nil, surface: surface)
+    private func makeView(surface: SessionExtensionSurface, work: WorkingRowWork? = nil) -> UIView {
+        let configuration = WorkingIndicatorTimelineRowConfiguration(modelId: nil, surface: surface, work: work)
         let contentView = configuration.makeContentView()
         let view = contentView as UIView
         view.frame = CGRect(x: 0, y: 0, width: 320, height: 44)

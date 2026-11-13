@@ -21,11 +21,9 @@ struct QuietTimelineScrollTests {
 
         items.append(.thinking(id: "think-1", preview: "plan", hasMore: false, isDone: false))
         applyQuiet(items, to: windowed, isBusy: true, streamingID: assistantID)
-        expectAttachedTail(
-            windowed,
-            mustContain: ["quiet-work-line:think-1", ChatTimelineController.workingIndicatorID],
-            label: "live work strip insert"
-        )
+        // The live strip is the working row, the timeline's tail.
+        expectAttachedTail(windowed, mustContain: ["quiet-work-line:think-1"], label: "live work strip insert")
+        #expect(windowed.coordinator.currentIDs.last == "quiet-work-line:think-1")
 
         var previousOffsetY = windowed.collectionView.contentOffset.y
         for round in 1...8 {
@@ -53,11 +51,8 @@ struct QuietTimelineScrollTests {
             isDone: false
         ))
         applyQuiet(items, to: windowed, isBusy: true, streamingID: assistantID)
-        expectAttachedTail(
-            windowed,
-            mustContain: ["quiet-work-line:think-1", ChatTimelineController.workingIndicatorID],
-            label: "quiet tool fold"
-        )
+        expectAttachedTail(windowed, mustContain: ["quiet-work-line:think-1"], label: "quiet tool fold")
+        #expect(windowed.coordinator.currentIDs.last == "quiet-work-line:think-1")
         #expect(windowed.collectionView.contentOffset.y >= previousOffsetY - 4)
     }
 

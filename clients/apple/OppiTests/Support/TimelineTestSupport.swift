@@ -527,6 +527,7 @@ func makeTimelineConfiguration(
     ownsTimelineProjection: Bool = false,
     quietModeEnabled: Bool = false,
     workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons,
+    chromeStyle: ChatTimelineChromeStyle = .standard,
     sessionManager: ChatSessionManager? = nil,
     hasOlderServerPage: Bool = false,
     openDestination: ChatTimelineOpenDestination? = nil,
@@ -572,6 +573,7 @@ func makeTimelineConfiguration(
         ownsTimelineProjection: ownsTimelineProjection,
         quietModeEnabled: quietModeEnabled,
         workStripStyle: workStripStyle,
+        chromeStyle: chromeStyle,
         sessionManager: sessionManager
     )
     configuration.liveRowIDs = liveRowIDs

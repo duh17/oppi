@@ -394,6 +394,22 @@ struct QuietTimelineProjectionTests {
         #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 2_007)) == "run 1 command · 4s")
     }
 
+    /// Opening the running turn's steps lists them under its row; the turn is
+    /// still running, so the line stays live (and keeps its clock), not "Worked".
+    @Test func expandedTrailingGroupStaysLiveWhileBusy() throws {
+        let items: [ChatItem] = [
+            .userMessage(id: "u1", text: "First", timestamp: Date(timeIntervalSince1970: 2_003)),
+            .thinking(id: "think-1", preview: "plan", hasMore: false, isDone: true),
+            .toolCall(id: "bash-1", tool: "bash", argsSummary: "run", outputPreview: "", outputByteCount: 0, isError: false, isDone: false),
+        ]
+        let projection = projectFixture(items: items, isQuiet: true, isBusy: true, expandedTurnIDs: ["think-1"])
+
+        let line = try #require(workLines(in: projection).last)
+        #expect(line.isExpanded)
+        #expect(line.isLive)
+        #expect(projection.rows.map(\.id).suffix(2) == ["think-1", "bash-1"])
+    }
+
     @Test func busyVisibleInterruptionDoesNotRelightPreviousStrip() throws {
         let projection = projectFixture(
             items: [

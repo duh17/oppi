@@ -9,12 +9,7 @@ import type {
 } from "@earendil-works/pi-durable";
 import { DurableUIProjection } from "../src/durable-ui-projection.js";
 import { requestUI, type UIRequest, type UIState } from "../src/durable-ui.js";
-import {
-  deriveView,
-  DurableWorkingWords,
-  pickPhrase,
-  workingLine,
-} from "../plugins/working-words/server.js";
+import { deriveView, DurableWorkingWords, pickPhrase } from "../plugins/working-words/server.js";
 import type { SessionBackendEvent } from "../src/pi-events.js";
 
 const empty = (): UIState => ({ requests: {}, notifications: {} });
@@ -300,11 +295,70 @@ describe("durable working words activity", () => {
     ).toEqual({ run: "7", activity: "thinking" });
   });
 
-  it("formats a per-run phrase with elapsed time", () => {
-    expect(pickPhrase("running", "7")).toBe(pickPhrase("running", "7"));
-    expect(workingLine("Your move", 999)).toBe("Your move");
-    expect(workingLine("Your move", 12_400)).toBe("Your move · 12s");
-    expect(workingLine("Your move", 125_000)).toBe("Your move · 2m 05s");
-    expect(workingLine("Your move", 3_660_000)).toBe("Your move · 1h 01m");
+  // The client's working row shows the turn's time, so the message carries none and is
+  // written again only when the run's activity changes, never once a second.
+  it("publishes the run's phrase with no clock, only when its activity changes", async () => {
+    vi.useFakeTimers();
+    try {
+      const definition = DurableWorkingWords.tasks![0]!.definition as TaskDefinition<
+        null,
+        { phase: "watch" },
+        null,
+        object
+      >;
+      const controller = new AbortController();
+      let notify!: (value: unknown) => Promise<void>;
+      const ui = empty();
+      const frames: Array<string | undefined> = [];
+      const runtime = {
+        conversationId,
+        signal: controller.signal,
+        now: () => Date.now(),
+        watchDoc: async () => ({
+          value: { run },
+          start: (listener: typeof notify) => {
+            notify = listener;
+          },
+          stop: async () => {},
+        }),
+        commit: async (fn: (tx: unknown) => unknown) => {
+          await fn({ doc: async () => ui });
+          frames.push(ui.notifications["working:message"]?.message);
+        },
+      };
+      const outcome = definition.phases
+        .watch(
+          { state: { checkpoint: { phase: "watch" } } } as Parameters<
+            typeof definition.phases.watch
+          >[0],
+          runtime as unknown as Parameters<typeof definition.phases.watch>[1],
+          context,
+        )
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(frames).toEqual([pickPhrase("thinking", "7")]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(frames).toHaveLength(1);
+
+      await notify({
+        kind: "value",
+        value: { run, tools: [{ callId: "a", name: "bash", status: "running" }] },
+        ops: [],
+        retired: false,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(frames).toEqual([pickPhrase("thinking", "7"), pickPhrase("running", "7")]);
+
+      const reason = new Error("stop");
+      controller.abort(reason);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await outcome).toBe(reason);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

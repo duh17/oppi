@@ -47,11 +47,12 @@ struct QuietWorkLineTimelineRowConfiguration: UIContentConfiguration {
 ///
 /// Conversation chrome instead draws a leading pill that hugs
 /// "Worked 9s \u{00B7} 2 steps \u{203A}"; the chevron turns down while expanded.
-/// The pill's text never animates: while work runs, only its leading glyph
-/// pulses, so the verb and the live counts read as one control.
+///
+/// While the turn runs, its live line is drawn by the working row instead
+/// (`ChatTimelineApplyPlan.workingRowLine`), whose spinner is the one moving
+/// part. This row draws live work only when an extension hid the working
+/// indicator, and then nothing in it moves but the ticking time.
 final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
-    private static let liveBlinkAnimationKey = "oppi.quietWork.liveBlink"
-
     private let chipView = TimelineChromeSurfaceView()
     private let button = UIButton(type: .system)
     /// The pill's terminal or thinking glyph, before its text.
@@ -85,14 +86,12 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     required init?(coder: NSCoder) { nil }
 
     deinit {
-        NotificationCenter.default.removeObserver(self)
         durationTimer?.invalidate()
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
         updateDurationTimer()
-        updateLiveBlinkAnimation()
     }
 
     var configuration: UIContentConfiguration {
@@ -126,13 +125,6 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         durationLabel.font = summaryLabel.font
         durationLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         durationLabel.setContentHuggingPriority(.required, for: .horizontal)
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(reduceMotionStatusDidChange),
-            name: UIAccessibility.reduceMotionStatusDidChangeNotification,
-            object: nil
-        )
 
         button.addAction(UIAction { [weak self] _ in
             self?.currentConfiguration.onTap()
@@ -367,7 +359,6 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         button.isAccessibilityElement = true
         isAccessibilityElement = false
         updateDurationTimer()
-        updateLiveBlinkAnimation()
     }
 
     static func accessibilitySummary(
@@ -397,8 +388,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         )
     }
 
-    /// Duration ticks must not rewrite the summary. Rebuilding attributed text
-    /// or restarting the blink is what made live Thinking… go still.
+    /// Duration ticks must not rewrite the summary's attributed text.
     private func refreshSummaryIfNeeded() {
         let workLine = currentConfiguration.workLine
         let colors = currentConfiguration.chromeStyle.workLineColors(
@@ -453,57 +443,6 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         }
     }
 
-    static func liveBlinkAnimation(reduceMotion: Bool) -> CAAnimation? {
-        guard !reduceMotion else { return nil }
-        let animation = CABasicAnimation(keyPath: "opacity")
-        animation.fromValue = 1
-        animation.toValue = 0.35
-        animation.duration = 0.7
-        animation.autoreverses = true
-        animation.repeatCount = .infinity
-        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        return animation
-    }
-
-    @objc private func reduceMotionStatusDidChange() {
-        updateLiveBlinkAnimation()
-    }
-
-    /// Live work's one activity cue. The strip blinks its summary; the pill
-    /// pulses only its glyph, since blinking the verb beside the steady counts
-    /// split the pill in two. Reduce Motion stills both.
-    private func updateLiveBlinkAnimation() {
-        let isLive = window != nil
-            && currentConfiguration.workLine.isLive
-            && !UIAccessibility.isReduceMotionEnabled
-        let isPill = currentConfiguration.chromeStyle == .conversation
-        if isLive, !isPill {
-            if summaryLabel.layer.animation(forKey: Self.liveBlinkAnimationKey) == nil,
-               let animation = Self.liveBlinkAnimation(reduceMotion: false) {
-                summaryLabel.layer.add(animation, forKey: Self.liveBlinkAnimationKey)
-            }
-        } else {
-            summaryLabel.layer.removeAnimation(forKey: Self.liveBlinkAnimationKey)
-            summaryLabel.layer.opacity = 1
-        }
-        if isLive, isPill {
-            if !isGlyphPulsing {
-                glyphView.addSymbolEffect(.pulse, options: .repeat(.continuous))
-                isGlyphPulsing = true
-            }
-        } else if isGlyphPulsing {
-            glyphView.removeAllSymbolEffects(animated: false)
-            isGlyphPulsing = false
-        }
-    }
-
-    /// The glyph's pulse is running; `UIImageView` cannot say so itself.
-    private var isGlyphPulsing = false
-
-    #if DEBUG
-        var isGlyphPulsingForTesting: Bool { isGlyphPulsing }
-    #endif
-
     private struct SummaryIdentity: Equatable {
         let themeID: ThemeID
         let style: AppPreferences.ChatDisplay.WorkStripStyle
@@ -529,7 +468,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         )
     }
 
-    private static func iconSummary(
+    static func iconSummary(
         for workLine: QuietTimelineWorkLine,
         foreground: UIColor,
         font: UIFont

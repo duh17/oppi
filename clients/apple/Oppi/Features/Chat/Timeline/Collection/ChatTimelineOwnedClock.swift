@@ -164,10 +164,9 @@ extension ChatTimelineController {
         let renderedItemIDs = Set(reducer.items.suffix(ownedClock.renderWindow).map(\.id))
         var visibleRows = projection.rows(forRenderedItemIDs: renderedItemIDs)
         let bottomItemID: String? = {
-            if config.showsWorkingIndicator {
-                return Self.workingIndicatorID
-            }
-            return visibleRows.last?.id
+            let standalone = config.showsWorkingIndicator
+                && ChatTimelineApplyPlan.workingRowLine(in: visibleRows, showsWorkingIndicator: true) == nil
+            return standalone ? Self.workingIndicatorID : visibleRows.last?.id
         }()
 
         consumeOwnedInitialScrollIfNeeded(

@@ -497,14 +497,24 @@ extension ChatTimelineController {
                 return
             }
 
-            cell.contentConfiguration = QuietWorkLineTimelineRowConfiguration(
-                workLine: workLine,
-                chromeStyle: self.chromeStyle,
-                onTap: { [weak self, weak collectionView] in
-                    guard let self, let collectionView else { return }
-                    self.toggleQuietWorkLine(workLine, in: collectionView)
-                }
-            )
+            let onTap = { [weak self, weak collectionView] in
+                guard let self, let collectionView else { return }
+                self.toggleQuietWorkLine(workLine, in: collectionView)
+            }
+            if itemID == self.currentWorkingRowLineID {
+                // The running turn: one row for the indicator and its work.
+                cell.contentConfiguration = WorkingIndicatorTimelineRowConfiguration(
+                    modelId: self.currentModel,
+                    surface: self.currentExtensionSurface,
+                    work: WorkingRowWork(workLine: workLine, chromeStyle: self.chromeStyle, onTap: onTap)
+                )
+            } else {
+                cell.contentConfiguration = QuietWorkLineTimelineRowConfiguration(
+                    workLine: workLine,
+                    chromeStyle: self.chromeStyle,
+                    onTap: onTap
+                )
+            }
             cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
             cell.contentView.clipsToBounds = true
             ChatTimelinePerf.recordCellConfigure(
@@ -548,9 +558,18 @@ extension ChatTimelineController {
             }
 
             let modelId = self.currentModel
+            // The turn's clock, from the prompt that started it: the newest user or
+            // agent message (a steer restarts it).
+            let turnStartedAt = self.reducer?.items.last { item in
+                switch item {
+                case .userMessage, .agentMessage: true
+                default: false
+                }
+            }?.timestamp
             cell.contentConfiguration = WorkingIndicatorTimelineRowConfiguration(
                 modelId: modelId,
-                surface: self.currentExtensionSurface
+                surface: self.currentExtensionSurface,
+                turnStartedAt: turnStartedAt
             )
             cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
             cell.contentView.clipsToBounds = true

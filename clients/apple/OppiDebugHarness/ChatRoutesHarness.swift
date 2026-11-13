@@ -39,7 +39,9 @@ import UIKit
 /// `CHAT_ROUTES_THEME_FILE=<path>` imports that theme JSON and shows the chat in it.
 /// `CHAT_ROUTES_CHAT_STYLE=chat|full|compact` picks the Chat style.
 /// `CHAT_ROUTES_QUEUE=followup` queues one follow-up; the `chatRoutes.queueFollowUp` control queues
-/// one later, as a busy-time send does (the chat never connects, so the composer cannot send). The
+/// one later, as a busy-time send does (the chat never connects, so the composer cannot send).
+/// `CHAT_ROUTES_LIVE_WORK=1` ends the timeline on a running tool call (with `CHAT_ROUTES_STATUS=busy`,
+/// a turn in progress); the `chatRoutes.endTurn` control ends the turn. The
 /// `chatRoutes.narrowWindow` control makes the window compact, as Split View does.
 /// `chatRoutes.createdSessions` counts the new sessions the stub received.
 /// Leading controls open the timeline's commit and file viewers through the
@@ -165,6 +167,12 @@ final class ChatRoutesPreviewController: PreviewRootController {
                         on: ChatRoutesFixture.connection
                     )
                 }
+            },
+            control("chatRoutes.endTurn") {
+                let connection = ChatRoutesFixture.connection
+                _ = connection.sessionStore.upsert(
+                    ChatRoutesFixture.session(id: ChatRoutesFixture.sessionId, status: .ready)
+                )
             },
         ])
         controls.axis = .vertical
@@ -731,7 +739,35 @@ enum ChatRoutesFixture {
         if let link = environment["CHAT_ROUTES_WEB_LINK"] {
             events.append(traceEvent(id: "chat-routes-web-link", type: .assistant, text: "The preview is up: [Open the preview](\(link))."))
         }
+        if environment["CHAT_ROUTES_LIVE_WORK"] == "1" {
+            events += liveWorkEvents
+        }
         reducer.loadSession(events)
+    }
+
+    /// `CHAT_ROUTES_LIVE_WORK=1`: a prompt, then thinking and a tool call with no result yet.
+    static let liveToolCallID = "chat-routes-live-tool"
+    /// The prompt is a few seconds old at launch, so the turn's clock reads like a live one.
+    private static var liveWorkEvents: [TraceEvent] {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let stamp = { (secondsAgo: TimeInterval) in formatter.string(from: Date().addingTimeInterval(-secondsAgo)) }
+        return [
+            TraceEvent(id: "chat-routes-live-user", type: .user, timestamp: stamp(8), text: "Rerun the route checks."),
+            TraceEvent(
+                id: "chat-routes-live-thinking",
+                type: .thinking,
+                timestamp: stamp(7),
+                thinking: "Run the route checks before answering."
+            ),
+            TraceEvent(
+                id: liveToolCallID,
+                type: .toolCall,
+                timestamp: stamp(6),
+                tool: "bash",
+                args: ["command": .string("npm run check:routes")]
+            ),
+        ]
     }
 
     /// `CHAT_ROUTES_LONG_TURNS=N`: N agent turns of thinking, a bash call

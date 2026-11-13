@@ -574,6 +574,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     private(set) var currentFullTimelineItemIDs: [String] = []
     var currentItemByID: [String: ChatItem] = [:]
     var currentWorkLineByID: [String: QuietTimelineWorkLine] = [:]
+    /// The live work line drawn as the working row (`ChatTimelineApplyPlan.workingRowLine`).
+    var currentWorkingRowLineID: String?
     private var previousWorkLineByID: [String: QuietTimelineWorkLine] = [:]
     var currentChildTailByID: [String: ConversationChildTail] = [:]
     private var previousChildTailByID: [String: ConversationChildTail] = [:]
@@ -1493,6 +1495,12 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         currentItemByID = applyPlan.nextItemByID
 
         var forceReconfigureIDs = Array(toolArgsChangedIDs)
+        // A line that starts or stops being the working row keeps its ID; redraw it.
+        if currentWorkingRowLineID != applyPlan.workingRowLineID {
+            forceReconfigureIDs += [currentWorkingRowLineID, applyPlan.workingRowLineID]
+                .compactMap { $0 }.filter { applyPlan.nextWorkLineByID[$0] != nil }
+            currentWorkingRowLineID = applyPlan.workingRowLineID
+        }
         if assistantPresentationChanged {
             forceReconfigureIDs.append(contentsOf:
                 TimelineSnapshotApplier.assistantPresentationItemIDs(

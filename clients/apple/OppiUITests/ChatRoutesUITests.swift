@@ -785,12 +785,28 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     /// (`chatRoutes.queueFollowUp`). The working row must end above the strip once it settles;
     /// the inset growth used to be dropped mid-scroll, leaving the row under the pills.
     func testQueuedFollowUpKeepsTheWorkingRowAboveTheStrip() {
-        launch(environment: [
+        runQueuedFollowUpKeepsTheWorkingRowAboveTheStrip(environment: [:]) {
+            self.app.staticTexts["chat.timeline.working.text"]
+        }
+    }
+
+    /// The same in Chat style, whose working row also carries the turn's folded work.
+    func testQueuedFollowUpKeepsTheChatWorkingRowAboveTheStrip() {
+        runQueuedFollowUpKeepsTheWorkingRowAboveTheStrip(
+            environment: ["CHAT_ROUTES_CHAT_STYLE": "chat", "CHAT_ROUTES_LIVE_WORK": "1"]
+        ) { self.workingRow }
+    }
+
+    private func runQueuedFollowUpKeepsTheWorkingRowAboveTheStrip(
+        environment: [String: String],
+        workingRow: () -> XCUIElement
+    ) {
+        launch(environment: environment.merging([
             "CHAT_ROUTES_STATUS": "busy",
             "CHAT_ROUTES_LONG_TURNS": "30",
             "CHAT_ROUTES_REVIEW_COMMENT": "none",
-        ])
-        let working = app.staticTexts["chat.timeline.working.text"]
+        ]) { $1 })
+        let working = workingRow()
         XCTAssertTrue(working.waitUntilExists(timeout: 10), "A busy session shows the working row")
         let strip = app.descendants(matching: .any)["extension-strip-aboveEditor-pill-message-queue"]
         XCTAssertFalse(strip.exists, "Nothing is queued yet, so no strip shows")
@@ -817,6 +833,46 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             "The working row (\(working.frame)) must end above the strip (\(strip.frame))"
         )
         assertRunning()
+    }
+
+    /// In Chat style a running turn is one row: the working row carries the turn's folded work
+    /// (one control, its spinner and the turn's time and steps on one line). Its tap opens the
+    /// steps under it, and when the turn ends the same control is the Worked pill.
+    func testRunningTurnIsOneRowThatOpensItsStepsAndEndsAsTheWorkedPill() {
+        launch(environment: [
+            "CHAT_ROUTES_STATUS": "busy",
+            "CHAT_ROUTES_LIVE_WORK": "1",
+            "CHAT_ROUTES_CHAT_STYLE": "chat",
+            "CHAT_ROUTES_REVIEW_COMMENT": "none",
+        ])
+        let row = workingRow
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "The running turn shows its working row")
+        XCTAssertEqual(row.value as? String, "Working, Collapsed")
+        XCTAssertTrue(row.label.contains("1 step"), "The row carries the turn's steps: \(row.label)")
+        XCTAssertFalse(
+            app.staticTexts["chat.timeline.working.text"].exists,
+            "No second working row under the turn's work"
+        )
+        attachScreenshot("running-turn-one-row")
+
+        row.tap()
+        XCTAssertTrue(waitFor((row.value as? String) == "Working, Expanded"), "The tap opens the turn's steps")
+        let step = app.cells["chat.timeline.row.chat-routes-live-tool"]
+        XCTAssertTrue(step.waitUntilExists(timeout: 5), "The running tool call shows under the row")
+        XCTAssertGreaterThanOrEqual(step.frame.minY, row.frame.maxY - 1, "The steps open under the row")
+        XCTAssertFalse(app.staticTexts["chat.timeline.working.text"].exists, "Still one working row")
+        attachScreenshot("running-turn-steps-open")
+
+        app.buttons["chatRoutes.endTurn"].tap()
+        XCTAssertTrue(waitFor((row.value as? String) == "Expanded"), "The ended turn's row is the work pill")
+        XCTAssertTrue(row.label.hasPrefix("Worked"), "The ended turn reads Worked: \(row.label)")
+        attachScreenshot("running-turn-ended")
+        assertRunning()
+    }
+
+    /// The running turn's one row (Chat style): the work line's own control.
+    private var workingRow: XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'quiet-work-line:'")).firstMatch
     }
 
     /// A surface drawer taller than the space above the composer keeps its own height inside that

@@ -865,7 +865,8 @@ describe("server durable managed runtime", () => {
     const request = observed.next((m) => m.type === "extension_ui_request" && m.method === "ask");
     await f.manager.sendPrompt(f.session.id, "Hold a working turn");
     await request;
-    const asking = /^(Waiting on you|Your move|Need a nod|Holding for you)( · \d+s)?$/;
+    // The phrase alone: the app's working row shows the turn's time.
+    const asking = /^(Waiting on you|Your move|Need a nod|Holding for you)$/;
     // Matches the classic working-message extension: an activity phrase, no
     // status pill, and Pi's default indicator (earlier slots are cleared).
     const working = await observed.next(
@@ -887,14 +888,6 @@ describe("server durable managed runtime", () => {
     const indicator = notifications.find((m) => m.method === "setWorkingIndicator");
     expect(indicator).toBeDefined();
     expect((indicator as { workingIndicator?: unknown }).workingIndicator).toBeUndefined();
-    const elapsed = await observed.next(
-      (m) =>
-        m.type === "extension_ui_notification" &&
-        m.method === "setWorkingMessage" &&
-        typeof m.message === "string" &&
-        / · \d+s$/.test(m.message),
-    );
-    expect((elapsed as { message: string }).message).toMatch(asking);
     const widget = observed.next(
       (m) => m.type === "extension_ui_notification" && m.widgetKey === "arbitrary-widget",
     );
