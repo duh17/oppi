@@ -73,7 +73,7 @@ final class ScheduleCalendarModel {
     #endif
 
     /// The agenda for drawing, with the app's live copy of followed sessions.
-    func agenda(live: [String: ScheduleCalendarAgenda.SessionFacts]) -> ScheduleCalendarAgenda? {
+    func agenda(live: [String: Session]) -> ScheduleCalendarAgenda? {
         guard var response else { return nil }
         response.entries += startingEntries
         return ScheduleCalendarAgenda(response: response, live: live)

@@ -57,6 +57,7 @@ describe("schedule calendar", () => {
       listSchedules: () => store.listSchedules(),
       listRunsCreatedBetween: (from, to) => store.listRunsCreatedBetween(from, to),
       getSession: (id) => sessions.get(id),
+      listSessions: () => [...sessions.values()],
       agentDefaultModel: (agentId) => (agentId === "agent-1" ? "anthropic/agent-model" : undefined),
     };
   });
@@ -248,6 +249,127 @@ describe("schedule calendar", () => {
     expect(calendar.schedules).toEqual([
       expect.objectContaining({ id: digest.id, name: "Digest", status: "active" }),
     ]);
+  });
+
+  describe("descendants", () => {
+    const ranAt = Date.parse("2026-11-11T03:30:00Z");
+    const from = Date.parse("2026-11-11T00:00:00Z");
+
+    function child(id: string, parent: string, createdAt: number, extra: Partial<Session> = {}) {
+      sessions.set(
+        id,
+        session({ id, createdAt, cost: 1, launch: { parentSessionId: parent }, ...extra }),
+      );
+    }
+
+    function runSession(calendar: ReturnType<typeof buildScheduleCalendar>, runSessionId: string) {
+      return calendar.entries.find((entry) => entry.run?.session?.id === runSessionId)?.run
+        ?.session;
+    }
+
+    it("lists children and grandchildren oldest first, as list rows, beside the session's own cost", async () => {
+      const nightly = cron("30 3 * * *", "UTC", 0, "Night shift");
+      await completeRun(nightly.id, `cron:${ranAt}`, ranAt, "sess-night");
+      sessions.set("sess-night", session({ id: "sess-night", cost: 13.22 }));
+      child("kid-b", "sess-night", ranAt + 2_000, {
+        cost: 2.5,
+        launch: { parentSessionId: "sess-night", agentId: "reviewer" },
+      });
+      child("kid-a", "sess-night", ranAt + 1_000);
+      child("grandkid", "kid-a", ranAt + 3_000);
+      child("stranger", "someone-else", ranAt + 4_000);
+
+      const night = runSession(
+        buildScheduleCalendar(sources, { from, to: from + DAY, now: from + 8 * HOUR }),
+        "sess-night",
+      );
+
+      expect(night?.cost).toBe(13.22);
+      expect(night?.descendants?.map((summary) => summary.id)).toEqual([
+        "kid-a",
+        "kid-b",
+        "grandkid",
+      ]);
+      expect(night?.descendants?.[1]).toMatchObject({
+        id: "kid-b",
+        cost: 2.5,
+        agentId: "reviewer",
+        parentSessionId: "sess-night",
+      });
+    });
+
+    it("leaves out a descendant that is another run's session, with everything under it", async () => {
+      const nightly = cron("30 3 * * *", "UTC", 0, "Night shift");
+      await completeRun(nightly.id, `cron:${ranAt}`, ranAt, "sess-night");
+      sessions.set("sess-night", session({ id: "sess-night", cost: 5 }));
+      child("kid", "sess-night", ranAt + 1_000);
+      child("scheduled-kid", "sess-night", ranAt + 2_000, {
+        launch: {
+          parentSessionId: "sess-night",
+          schedule: { scheduleId: "other", runId: "run-other", slotKey: "manual:x" },
+        },
+      });
+      child("under-scheduled", "scheduled-kid", ranAt + 3_000);
+
+      const night = runSession(
+        buildScheduleCalendar(sources, { from, to: from + DAY, now: from + 8 * HOUR }),
+        "sess-night",
+      );
+
+      expect(night?.descendants?.map((summary) => summary.id)).toEqual(["kid"]);
+    });
+
+    it("lists each descendant once through a parent cycle, and none for a session without children", async () => {
+      const nightly = cron("30 3 * * *", "UTC", 0, "Night shift");
+      await completeRun(nightly.id, `cron:${ranAt}`, ranAt, "sess-night");
+      sessions.set("sess-night", session({ id: "sess-night" }));
+      child("loop-a", "sess-night", ranAt + 1_000);
+      child("loop-b", "loop-a", ranAt + 2_000);
+      // A broken record pointing back up the tree.
+      sessions.set(
+        "sess-night",
+        session({ id: "sess-night", launch: { parentSessionId: "loop-b" } }),
+      );
+      const digest = cron("0 7 * * *", "UTC", 0, "Digest");
+      const digestAt = Date.parse("2026-11-11T07:00:00Z");
+      await completeRun(digest.id, `cron:${digestAt}`, digestAt, "sess-digest");
+      sessions.set("sess-digest", session({ id: "sess-digest" }));
+
+      const calendar = buildScheduleCalendar(sources, { from, to: from + DAY, now: from + 8 * HOUR });
+
+      expect(runSession(calendar, "sess-night")?.descendants?.map((summary) => summary.id)).toEqual([
+        "loop-a",
+        "loop-b",
+      ]);
+      expect(runSession(calendar, "sess-digest")).not.toHaveProperty("descendants");
+    });
+
+    it("gives a run sent into an existing session none of that session's children", async () => {
+      const target = store.createSchedule(
+        {
+          name: "Nudge",
+          trigger: { type: "cron", expression: "30 3 * * *", timeZone: "UTC" },
+          action: {
+            type: "existing_session",
+            workspaceId: "ws-1",
+            sessionId: "sess-long",
+            prompt: "go on",
+          },
+        },
+        0,
+      );
+      await completeRun(target.id, `cron:${ranAt}`, ranAt, "sess-long");
+      sessions.set("sess-long", session({ id: "sess-long" }));
+      child("old-kid", "sess-long", ranAt - DAY);
+
+      const long = runSession(
+        buildScheduleCalendar(sources, { from, to: from + DAY, now: from + 8 * HOUR }),
+        "sess-long",
+      );
+
+      expect(long).toBeDefined();
+      expect(long).not.toHaveProperty("descendants");
+    });
   });
 
   it("keeps a slot that just came due until the runner records its run, then lists the run once", async () => {

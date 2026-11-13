@@ -102,6 +102,39 @@ struct ScheduleCalendarPreviewWorld {
         let minutes: Double
         let cost: Double
         var manual = false
+        /// The sessions the run's session launched, oldest first.
+        var subagents: [Subagent] = []
+    }
+
+    /// A session a run launched: its saved Agent, what it cost, and whether it still works.
+    struct Subagent {
+        let agentId: String
+        let emoji: String
+        let name: String
+        let cost: Double
+        var working = false
+    }
+
+    /// A Night shift's crew as a real night launches it: workers (🛠), night agents (🌙), and
+    /// scouts (🔎), `working` of the first ones still going, costing `total` between them.
+    private static func crew(workers: Int, night: Int, scouts: Int, working: Int = 0, total: Double) -> [Subagent] {
+        let roles = [("worker", "🛠", "Fix", workers), ("night-agent", "🌙", "Triage", night), ("scout", "🔎", "Scout", scouts)]
+        let topics = ["flaky scroll test", "sidebar regressions", "push relay retries", "timeline jump", "composer focus", "iPad split width"]
+        var crew: [Subagent] = []
+        for (agentId, emoji, verb, count) in roles {
+            for index in 0..<count {
+                crew.append(Subagent(agentId: agentId, emoji: emoji, name: "\(verb): \(topics[(crew.count + index) % topics.count])", cost: 0))
+            }
+        }
+        // Uneven costs, as real runs are, that add up to `total`.
+        let weights = crew.indices.map { 1 + Double(($0 * 7) % 5) }
+        let sum = weights.reduce(0, +)
+        return crew.enumerated().map { index, member in
+            Subagent(
+                agentId: member.agentId, emoji: member.emoji, name: member.name,
+                cost: (total * weights[index] / sum * 100).rounded() / 100, working: index < working
+            )
+        }
     }
 
     let now: Date
@@ -148,8 +181,8 @@ struct ScheduleCalendarPreviewWorld {
             return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: day) ?? day
         }
         var runs: [Run] = []
-        func run(_ schedule: Schedule, _ daysAgo: Int, _ hour: Int, _ minute: Int, _ outcome: Run.Outcome, _ minutes: Double, _ cost: Double, manual: Bool = false) {
-            runs.append(Run(schedule: schedule, at: at(daysAgo, hour, minute), outcome: outcome, minutes: minutes, cost: cost, manual: manual))
+        func run(_ schedule: Schedule, _ daysAgo: Int, _ hour: Int, _ minute: Int, _ outcome: Run.Outcome, _ minutes: Double, _ cost: Double, manual: Bool = false, subagents: [Subagent] = []) {
+            runs.append(Run(schedule: schedule, at: at(daysAgo, hour, minute), outcome: outcome, minutes: minutes, cost: cost, manual: manual, subagents: subagents))
         }
         // Earlier days: every scheduled run, done, at the real costs; one failed digest.
         let pastCosts: [String: [Double]] = [
@@ -170,15 +203,21 @@ struct ScheduleCalendarPreviewWorld {
                     let costs = pastCosts[schedule.id] ?? [0.1]
                     let cost = costs[(daysAgo * 2 + index) % costs.count]
                     let failed = schedule.id == digest.id && daysAgo == 2
-                    run(schedule, daysAgo, time.0, time.1, failed ? .failed : .done, pastMinutes[schedule.id] ?? 2, cost)
+                    // A Night shift launches its crew; the night's dream sends a scout or two.
+                    let crew: [Subagent] = switch schedule.id {
+                    case night.id: Self.crew(workers: 12, night: 10, scouts: 4, total: 37.57 + Double(daysAgo % 3) * 4.2)
+                    case dream.id: Self.crew(workers: 0, night: 0, scouts: 1 + daysAgo % 2, total: 0.86)
+                    default: []
+                    }
+                    run(schedule, daysAgo, time.0, time.1, failed ? .failed : .done, pastMinutes[schedule.id] ?? 2, cost, subagents: crew)
                 }
             }
         }
         // Today, by 8:42.
         run(kypu, 0, 0, 5, .done, 0.5, 0.01)
         run(journal, 0, 0, 15, .done, 0.5, 0.02)
-        run(dream, 0, 3, 0, .done, 5, 2.51)
-        run(night, 0, 3, 30, .running, 0, 4.88)
+        run(dream, 0, 3, 0, .done, 5, 2.51, subagents: Self.crew(workers: 0, night: 0, scouts: 2, total: 1.12))
+        run(night, 0, 3, 30, .running, 0, 4.88, subagents: Self.crew(workers: 6, night: 5, scouts: 3, working: 2, total: 21.36))
         run(mirror, 0, 6, 0, .done, 2, 1.18)
         run(testFlight, 0, 6, 0, .done, 0.6, 0.01)
         if calendar.component(.weekday, from: today) == 2 { run(deps, 0, 6, 0, .done, 9, 1.44) }
@@ -205,8 +244,34 @@ struct ScheduleCalendarPreviewWorld {
 
     private static func runId(_ run: Run) -> String { "run-\(run.schedule.id)-\(ms(run.at))" }
     private static func sessionId(_ run: Run) -> String { "sess-\(run.schedule.id)-\(ms(run.at))" }
+    private static func subagentId(_ run: Run, _ index: Int) -> String { "\(sessionId(run))-sub\(index)" }
 
-    /// Each run's session, as the app's session list holds it.
+    /// A subagent's session: launched a few minutes apart after its run, each done within
+    /// the hour unless it still works.
+    private func subagentSession(_ run: Run, _ index: Int) -> Session {
+        let member = run.subagents[index]
+        let created = run.at.addingTimeInterval(Double(index + 1) * 9 * 60)
+        let settled = min(now, created.addingTimeInterval(Double(14 + (index * 11) % 40) * 60))
+        return Session(
+            id: Self.subagentId(run, index),
+            workspaceId: run.schedule.workspaceId,
+            name: member.name,
+            status: member.working ? .busy : .stopped,
+            createdAt: created,
+            lastActivity: member.working ? now : settled,
+            programStatus: member.working
+                ? ProgramStatus(state: .working, since: now.addingTimeInterval(-90))
+                : ProgramStatus(state: .done, since: settled),
+            model: member.agentId == "scout" ? Self.sonnet : Self.opus,
+            messageCount: 24,
+            tokens: TokenUsage(input: 180_000, output: 9_000),
+            cost: member.cost,
+            launch: SessionLaunchMetadata(agentId: member.agentId, agentIcon: .emoji(member.emoji)),
+            parentSessionId: Self.sessionId(run)
+        )
+    }
+
+    /// Each run's session and the subagents it launched, as the app's session list holds them.
     var sessions: [Session] {
         runs.map { run in
             let program = programStatus(run)
@@ -224,7 +289,7 @@ struct ScheduleCalendarPreviewWorld {
                 tokens: TokenUsage(input: 40_000, output: 6_000),
                 cost: run.cost
             )
-        }
+        } + runs.flatMap { run in run.subagents.indices.map { subagentSession(run, $0) } }
     }
 
     private func programStatus(_ run: Run) -> ProgramStatus {
@@ -296,6 +361,23 @@ struct ScheduleCalendarPreviewWorld {
                 "programStatus": programBody, "cost": run.cost, "model": run.schedule.model,
             ]
             if run.outcome == .done || run.outcome == .failed { session["settledAt"] = Self.ms(program.since) }
+            if !run.subagents.isEmpty {
+                session["descendants"] = run.subagents.indices.map { index -> [String: Any] in
+                    let sub = subagentSession(run, index)
+                    let program = sub.programStatus ?? ProgramStatus(state: .done, since: sub.lastActivity)
+                    return [
+                        "id": sub.id, "workspaceId": run.schedule.workspaceId, "name": sub.name ?? "",
+                        "status": sub.status.rawValue, "createdAt": Self.ms(sub.createdAt),
+                        "lastActivity": Self.ms(sub.lastActivity),
+                        "programStatus": ["state": program.state.rawValue, "since": Self.ms(program.since)],
+                        "model": sub.model ?? "", "messageCount": sub.messageCount,
+                        "tokens": ["input": sub.tokens.input, "output": sub.tokens.output], "cost": sub.cost,
+                        "agentId": run.subagents[index].agentId,
+                        "agentIcon": ["kind": "emoji", "value": run.subagents[index].emoji],
+                        "parentSessionId": Self.sessionId(run),
+                    ]
+                }
+            }
             entries.append([
                 "scheduleId": run.schedule.id, "slotKey": "cron:\(Self.ms(run.at))", "at": Self.ms(run.at),
                 "run": [

@@ -217,9 +217,79 @@ enum ScheduleCalendarRowViews {
         let column = ControlRowViews.stack([time, period, filler], spacing: 0, alignment: .trailing)
         time.alpha = context.showsTime ? 1 : 0
         period.alpha = context.showsTime ? 1 : 0
-        let width = ("12:00" as NSString).size(withAttributes: [.font: UIFont.scaled(.subheadline, .medium)]).width.rounded(.up) + 2
-        column.widthAnchor.constraint(equalToConstant: width).isActive = true
+        column.widthAnchor.constraint(equalToConstant: timeColumnWidth).isActive = true
         return column
+    }
+
+    private static var timeColumnWidth: CGFloat {
+        ("12:00" as NSString).size(withAttributes: [.font: UIFont.scaled(.subheadline, .medium)]).width.rounded(.up) + 2
+    }
+
+    // MARK: - Subagents
+
+    /// The strip under a run that launched subagents, built from the session list's thread strip
+    /// parts: a dot per active subagent (working, needs you, error), "26 subagents · $37.57", the
+    /// Agents (🛠×12 🌙×10 🔎×4), and a chevron. It starts under the run's rail, past the time
+    /// column and the rail. The dots get their own line, with the Agents, only while one is active.
+    static func subagents(
+        _ subagents: ScheduleCalendarAgenda.Subagents,
+        summary: SessionThreadStripSummary,
+        style: SessionRowStyle,
+        context: ScheduleCalendarRowContext
+    ) -> UIView {
+        let colors = style.colors
+        let strip = UIView()
+        strip.backgroundColor = colors.bgHighlight.withAlphaComponent(0.45)
+        strip.layer.cornerRadius = 8
+        strip.layer.cornerCurve = .continuous
+        strip.isUserInteractionEnabled = false
+
+        let statusRow = SessionThreadStatusRow()
+        let footer = SessionThreadCountsLine()
+        statusRow.dots.apply(summary.dots, hiddenCount: summary.hiddenDotCount, style: style)
+        statusRow.agents.apply(
+            SessionThreadAgentGroup.groups(subagents.sessions), maxGroups: 3, colors: colors,
+            iconAssetCache: context.assetCache
+        )
+        if !summary.isActive {
+            statusRow.isHidden = true
+            footer.insertArrangedSubview(statusRow.agents, at: footer.arrangedSubviews.count - 1)
+        }
+        footer.summary.setCounts(subagentCount(subagents.sessions.count), note: nil)
+        footer.summary.textColor = colors.comment
+        let cost = subagents.cost
+        footer.cost.text = cost > 0 ? SessionFormatting.costString(cost) : nil
+        footer.cost.isHidden = cost <= 0
+        footer.cost.textColor = colors.comment
+        footer.chevron.tintColor = colors.comment
+        // Tighter than the session list's strip, which spans the whole row: this one starts
+        // under the rail and still keeps three Agents on a phone.
+        footer.spacing = 5
+
+        let lines = ControlRowViews.stack([statusRow, footer], spacing: 4)
+        lines.translatesAutoresizingMaskIntoConstraints = false
+        strip.addSubview(lines)
+        NSLayoutConstraint.activate([
+            lines.topAnchor.constraint(equalTo: strip.topAnchor, constant: 5),
+            lines.bottomAnchor.constraint(equalTo: strip.bottomAnchor, constant: -5),
+            lines.leadingAnchor.constraint(equalTo: strip.leadingAnchor, constant: 6),
+            lines.trailingAnchor.constraint(equalTo: strip.trailingAnchor, constant: -6),
+            statusRow.widthAnchor.constraint(equalTo: lines.widthAnchor),
+            footer.widthAnchor.constraint(equalTo: lines.widthAnchor),
+        ])
+
+        // Under the run's rail, so the strip hangs off the run and a phone's row keeps room for
+        // three Agents. At accessibility sizes the row has no time column.
+        let indent = UIView()
+        indent.widthAnchor.constraint(
+            equalToConstant: context.isAccessibilitySize ? 0 : timeColumnWidth + 10
+        ).isActive = true
+        return ControlRowViews.stack([indent, strip], axis: .horizontal, spacing: 0, alignment: .fill)
+    }
+
+    /// "26 subagents".
+    static func subagentCount(_ count: Int) -> String {
+        count == 1 ? String(localized: "1 subagent") : String(localized: "\(count) subagents")
     }
 
     /// The 4 pt outcome rail: solid for a run, dashed for an occurrence still to come.

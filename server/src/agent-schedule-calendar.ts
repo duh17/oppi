@@ -13,7 +13,8 @@ import {
   type AgentScheduleStatus,
   type AgentScheduleTrigger,
 } from "./agent-schedules.js";
-import type { ProgramStatus, Session } from "./types.js";
+import { buildSessionSummary } from "./session-summary.js";
+import type { ProgramStatus, Session, SessionSummary } from "./types.js";
 
 /** The longest range one calendar request may ask for: two months and change. */
 export const SCHEDULE_CALENDAR_MAX_RANGE_MS = 62 * 86_400_000;
@@ -81,7 +82,7 @@ export interface ScheduleCalendarRun {
 
 /**
  * The run's session as it is now. `cost` and `programStatus` cover the whole session, so they
- * include any later human follow-up in it.
+ * include any later human follow-up in it; `cost` is the session's own, without `descendants`.
  */
 export interface ScheduleCalendarSession {
   id: string;
@@ -92,12 +93,21 @@ export interface ScheduleCalendarSession {
   model?: string;
   /** When the session last settled (its done, error, or idle program status began). */
   settledAt?: number;
+  /**
+   * The sessions this one launched, theirs, and so on, oldest first, as the session list's rows
+   * carry them. A descendant that is itself a scheduled run's session is left out with everything
+   * under it: its own run counts it. Absent when there are none, and for a run sent into an
+   * existing session (that session's children are not the run's).
+   */
+  descendants?: SessionSummary[];
 }
 
 export interface ScheduleCalendarSources {
   listSchedules(): AgentSchedule[];
   listRunsCreatedBetween(from: number, to: number): AgentScheduleRun[];
   getSession(sessionId: string): Session | undefined;
+  /** Every stored session: the calendar finds each run's descendants among them. */
+  listSessions(): Session[];
   agentDefaultModel(agentId: string): string | undefined;
 }
 
@@ -131,6 +141,7 @@ export function buildScheduleCalendar(
   const named = new Map<string, ScheduleCalendarSchedule>();
   const entries: ScheduleCalendarEntry[] = [];
   const takenSlots = new Set<string>();
+  const descendants = descendantFinder(sources);
 
   for (const run of sources.listRunsCreatedBetween(from, to)) {
     const schedule = schedules.get(run.scheduleId);
@@ -141,7 +152,7 @@ export function buildScheduleCalendar(
       scheduleId: run.scheduleId,
       slotKey: run.slotKey,
       at: slotTime(run),
-      run: calendarRun(run, sources),
+      run: calendarRun(run, sources, descendants),
     });
   }
 
@@ -250,9 +261,15 @@ function calendarSchedule(
   };
 }
 
-function calendarRun(run: AgentScheduleRun, sources: ScheduleCalendarSources): ScheduleCalendarRun {
+function calendarRun(
+  run: AgentScheduleRun,
+  sources: ScheduleCalendarSources,
+  descendants: (sessionId: string) => Session[],
+): ScheduleCalendarRun {
   const summary = runSummary(run);
   const session = summary.sessionId ? sources.getSession(summary.sessionId) : undefined;
+  const launched =
+    session && run.actionSnapshot.type === "new_session" ? descendants(session.id) : [];
   return {
     id: run.id,
     kind: run.kind,
@@ -262,11 +279,45 @@ function calendarRun(run: AgentScheduleRun, sources: ScheduleCalendarSources): S
     ...(run.completedAt === undefined ? {} : { completedAt: run.completedAt }),
     ...(run.error === undefined ? {} : { error: run.error }),
     ...(summary.promptDispatch ? { promptDispatch: summary.promptDispatch } : {}),
-    ...(session ? { session: calendarSession(session) } : {}),
+    ...(session ? { session: calendarSession(session, launched) } : {}),
   };
 }
 
-function calendarSession(session: Session): ScheduleCalendarSession {
+/**
+ * `sessionId`'s descendants by `launch.parentSessionId`, oldest first. The walk does not enter a
+ * session a schedule launched (`launch.schedule`): that session is another run's, and its row
+ * counts it and its own descendants. Each session is listed once, so a parent cycle ends the walk.
+ * The parent index is built on the first call, so a range without sessions reads none.
+ */
+function descendantFinder(sources: ScheduleCalendarSources): (sessionId: string) => Session[] {
+  let childrenByParent: Map<string, Session[]> | undefined;
+  return (sessionId) => {
+    if (!childrenByParent) {
+      childrenByParent = new Map();
+      for (const session of sources.listSessions()) {
+        const parentId = session.launch?.parentSessionId;
+        if (!parentId) continue;
+        const siblings = childrenByParent.get(parentId);
+        if (siblings) siblings.push(session);
+        else childrenByParent.set(parentId, [session]);
+      }
+    }
+    const found: Session[] = [];
+    const seen = new Set([sessionId]);
+    const queue = [sessionId];
+    for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+      for (const child of childrenByParent.get(next) ?? []) {
+        if (child.launch?.schedule || seen.has(child.id)) continue;
+        seen.add(child.id);
+        found.push(child);
+        queue.push(child.id);
+      }
+    }
+    return found.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  };
+}
+
+function calendarSession(session: Session, descendants: Session[]): ScheduleCalendarSession {
   const program = session.programStatus;
   const settled =
     program && (program.state === "done" || program.state === "error" || program.state === "idle");
@@ -278,5 +329,6 @@ function calendarSession(session: Session): ScheduleCalendarSession {
     cost: session.cost,
     ...(session.model ? { model: session.model } : {}),
     ...(settled ? { settledAt: program.since } : {}),
+    ...(descendants.length > 0 ? { descendants: descendants.map(buildSessionSummary) } : {}),
   };
 }

@@ -68,6 +68,45 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("menu")
     }
 
+    /// A Night shift's subagents: a strip under the run counts them with live dots while some
+    /// work, folds into the overnight row's total once the night is done, and opens the run's
+    /// thread in All Sessions.
+    func testRunSubagentsStripCountsThemAndOpensTheRunsThread() {
+        launch()
+        openSchedules()
+
+        // Today opens at now; tonight's running Night shift is above it.
+        let list = app.collectionViews["schedules.calendar.list"]
+        let tonight = subagentsStrip(of: "u1C2kXLz")
+        for _ in 0..<4 where !(tonight.exists && tonight.isHittable) { list.swipeDown() }
+        XCTAssertTrue(waitFor(tonight.exists && tonight.isHittable, timeout: 10), "The running Night shift has its subagents strip")
+        XCTAssertTrue(tonight.label.hasPrefix("14 subagents"), "The strip counts the run's subagents: \(tonight.label)")
+        XCTAssertTrue(tonight.label.contains("2 working"), "The strip says how many still work: \(tonight.label)")
+        attachScreenshot("today-night")
+
+        // Yesterday's night is done: its four runs fold into one row, and opening it shows
+        // the Night shift with all 26 of its subagents.
+        let calendar = Calendar.current
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: Date()) ?? Date()
+        let parts = calendar.dateComponents([.year, .month, .day], from: yesterday)
+        let key = String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+        app.descendants(matching: .any)["schedules.calendar.day.\(key)"].tap()
+        let cluster = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH 'schedules.calendar.cluster.'")).firstMatch
+        XCTAssertTrue(cluster.waitUntilExists(timeout: 10), "Yesterday's clean night folds into one row")
+        XCTAssertTrue(cluster.label.contains("4 runs, all done"), "The night's four runs fold: \(cluster.label)")
+        cluster.tap()
+        let lastNight = subagentsStrip(of: "u1C2kXLz")
+        XCTAssertTrue(lastNight.waitUntilExists(timeout: 10), "The opened night shows the Night shift's subagents")
+        XCTAssertTrue(lastNight.label.hasPrefix("26 subagents, 26 stopped"), "A finished night's subagents are all stopped: \(lastNight.label)")
+        attachScreenshot("yesterday-overnight")
+
+        lastNight.tap()
+        let thread = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'thread.nav.sess-u1C2kXLz-'")).firstMatch
+        XCTAssertTrue(thread.waitUntilExists(timeout: 10), "The strip opens the run's thread in All Sessions")
+        attachScreenshot("thread")
+        assertRunning()
+    }
+
     /// The iPad mini turned to landscape keeps the day's summary and runs in view.
     func testCalendarFollowsTheIPadIntoLandscape() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Landscape is the iPad mini's")
@@ -124,6 +163,10 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
 
     private func pastRun(named name: String) -> XCUIElement {
         app.cells.matching(NSPredicate(format: "identifier BEGINSWITH 'schedules.calendar.entry.' AND label BEGINSWITH %@", name)).firstMatch
+    }
+
+    private func subagentsStrip(of scheduleId: String) -> XCUIElement {
+        app.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "schedules.calendar.subagents.\(scheduleId).")).firstMatch
     }
 
     /// A popover menu's actions are buttons whose whole label is the title.

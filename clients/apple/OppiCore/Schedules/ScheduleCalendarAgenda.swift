@@ -105,6 +105,19 @@ struct ScheduleCalendarAgenda: Sendable {
         var cost: Double
     }
 
+    /// The sessions a run's session launched, and theirs: the server's list, each patched with
+    /// the app's live copy. Equal lists hash alike by their ids.
+    struct Subagents: Hashable, Sendable {
+        let sessions: [Session]
+
+        var isEmpty: Bool { sessions.isEmpty }
+        var cost: Double { sessions.reduce(0) { $0 + $1.cost } }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(sessions.map(\.id))
+        }
+    }
+
     /// One run or upcoming occurrence, ready to draw.
     struct Item: Hashable, Sendable, Identifiable {
         /// `<scheduleId>.<slotKey>`: unique within one answer.
@@ -119,9 +132,12 @@ struct ScheduleCalendarAgenda: Sendable {
         let sessionId: String?
         let workspaceId: String
         let model: String?
-        /// The run's session's cost; nil before a session exists, and for a run sent into an
-        /// existing session (that session's cost is not this run's).
+        /// What the run cost: its session's cost and its subagents'. Nil before a session
+        /// exists, and for a run sent into an existing session (that session's cost is not
+        /// this run's). Every total (a night cluster, the day) adds these.
         let cost: Double?
+        /// What the run's session launched; empty for a run sent into an existing session.
+        let subagents: Subagents
         /// When the run's work began: the run's start, else its creation.
         let startedAt: Date?
         /// When the run's own session last settled.
@@ -192,9 +208,10 @@ struct ScheduleCalendarAgenda: Sendable {
     let items: [Item]
     let schedules: [String: ScheduleCalendarSchedule]
 
-    /// `live` patches the sessions the app follows (running and blocked changes arrive there
-    /// before the next fetch).
-    init(response: ScheduleCalendarResponse, live: [String: SessionFacts] = [:]) {
+    /// `live` is the app's copy of the sessions the answer names, runs' sessions and their
+    /// subagents alike: running and blocked changes arrive there before the next fetch, so
+    /// it wins over the answer.
+    init(response: ScheduleCalendarResponse, live: [String: Session] = [:]) {
         let schedules = Dictionary(response.schedules.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         self.schedules = schedules
         var seen = Set<String>()
@@ -206,7 +223,12 @@ struct ScheduleCalendarAgenda: Sendable {
             }
             let existing = schedule.action.type == .existingSession
             // An existing session's facts cover everything sent into it, not this run.
-            let session = existing ? nil : run?.session.flatMap { live[$0.id] } ?? served
+            let session = existing ? nil : run?.session.flatMap { served in
+                live[served.id].map { SessionFacts(status: $0.status, programStatus: $0.programStatus, cost: $0.cost) }
+            } ?? served
+            let subagents = Subagents(sessions: existing ? [] : (run?.session?.descendants ?? []).map {
+                live[$0.id] ?? $0
+            })
             let outcome = ScheduleCalendarOutcome.resolve(run: run, session: session, sendsIntoExistingSession: existing)
             return Item(
                 id: entry.key,
@@ -220,7 +242,8 @@ struct ScheduleCalendarAgenda: Sendable {
                 sessionId: run?.session?.id,
                 workspaceId: run?.session?.workspaceId ?? schedule.action.workspaceId,
                 model: run?.session?.model ?? schedule.model,
-                cost: session?.cost,
+                cost: session.map { $0.cost + subagents.cost },
+                subagents: subagents,
                 startedAt: run.map { $0.startedAt ?? $0.createdAt },
                 settledAt: existing ? nil : run?.session?.settledAt,
                 runError: run?.status == .failed ? run?.error : nil,

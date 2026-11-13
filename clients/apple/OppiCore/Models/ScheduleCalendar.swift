@@ -56,7 +56,8 @@ struct ScheduleCalendarRun: Sendable, Equatable {
 }
 
 /// The run's session as the server holds it now. `cost` and `programStatus` cover the whole
-/// session, any later follow-up in it included.
+/// session, any later follow-up in it included; `cost` is the session's own, without its
+/// descendants'.
 struct ScheduleCalendarSession: Sendable, Equatable {
     var id: String
     var workspaceId: String?
@@ -66,6 +67,10 @@ struct ScheduleCalendarSession: Sendable, Equatable {
     var model: String?
     /// When the session last settled (its done, error, or idle program status began).
     var settledAt: Date?
+    /// The sessions it launched, theirs, and so on, oldest first, as session list rows. The
+    /// server leaves out a descendant that is another scheduled run's session, with everything
+    /// under it, and sends none for a run sent into an existing session.
+    var descendants: [Session] = []
 }
 
 // MARK: - Coding
@@ -133,7 +138,7 @@ extension ScheduleCalendarRun: Decodable {
 
 extension ScheduleCalendarSession: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case id, workspaceId, status, programStatus, cost, model, settledAt
+        case id, workspaceId, status, programStatus, cost, model, settledAt, descendants
     }
 
     init(from decoder: Decoder) throws {
@@ -145,6 +150,7 @@ extension ScheduleCalendarSession: Decodable {
         cost = try c.decode(Double.self, forKey: .cost)
         model = try c.decodeIfPresent(String.self, forKey: .model)
         settledAt = try c.decodeMillisecondsIfPresent(.settledAt)
+        descendants = try c.decodeIfPresent([SessionSummary].self, forKey: .descendants)?.map(\.session) ?? []
     }
 }
 

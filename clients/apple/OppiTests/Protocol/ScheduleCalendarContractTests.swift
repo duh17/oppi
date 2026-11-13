@@ -46,6 +46,17 @@ struct ScheduleCalendarContractTests {
         #expect(session.programStatus?.kind == .question)
         #expect(session.cost == 0.58)
         #expect(session.settledAt == nil)
+        #expect(session.descendants.isEmpty)
+
+        // The night run's subagents arrive as list rows: the Agent, the parent edge, the cost.
+        let night = try #require(entries.first { $0.run?.id == "run-night" }?.run?.session)
+        #expect(night.descendants.map(\.id) == ["sess-night-worker", "sess-night-scout"])
+        let scout = try #require(night.descendants.last)
+        #expect(scout.parentSessionId == "sess-night-worker")
+        #expect(scout.launch?.agentId == "scout")
+        #expect(scout.launch?.agentIcon == .emoji("🔎"))
+        #expect(scout.programStatus?.state == .working)
+        #expect(scout.cost == 0.74)
 
         let failed = try #require(entries.first { $0.run?.id == "run-mirror" }?.run)
         #expect(failed.status == .failed)

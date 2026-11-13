@@ -18,7 +18,7 @@ export const SCHEDULE_CALENDAR_SNAPSHOT_FILE = resolvePath.join(
 );
 
 export const SCHEDULE_CALENDAR_FIXTURE_DESCRIPTION =
-  "One GET /schedules/calendar answer: past runs joined to their sessions (done, failed, needs you, running, a run that never started, a manual run, a prompt sent into an existing session) and upcoming occurrences (no run). Built by server/tests/schedule-calendar-fixtures.ts; server/tests/schedule-calendar-fixtures.test.ts fails when the committed bytes differ, and Apple ScheduleCalendarContractTests decodes it.";
+  "One GET /schedules/calendar answer: past runs joined to their sessions (done, failed, needs you, running with a child and a grandchild, a run that never started, a manual run, a prompt sent into an existing session) and upcoming occurrences (no run). Built by server/tests/schedule-calendar-fixtures.ts; server/tests/schedule-calendar-fixtures.test.ts fails when the committed bytes differ, and Apple ScheduleCalendarContractTests decodes it.";
 
 const t = (iso: string): number => Date.parse(iso);
 const zone = "America/Los_Angeles";
@@ -147,6 +147,40 @@ export function buildScheduleCalendarExample(): ScheduleCalendarResponse {
             programStatus: { state: "working", since: t("2026-11-11T16:40:00Z") },
             cost: 4.88,
             model: "anthropic/claude-opus-5-5",
+            descendants: [
+              {
+                id: "sess-night-worker",
+                workspaceId: "oppi",
+                name: "Fix flaky scroll test",
+                status: "stopped",
+                createdAt: t("2026-11-11T11:42:00Z"),
+                lastActivity: t("2026-11-11T12:20:00Z"),
+                programStatus: { state: "done", since: t("2026-11-11T12:20:00Z") },
+                model: "anthropic/claude-opus-5-5",
+                messageCount: 38,
+                tokens: { input: 412_000, output: 18_400, cacheRead: 2_100_000, cacheWrite: 96_000 },
+                cost: 3.1,
+                agentId: "worker",
+                agentIcon: { kind: "emoji", value: "🛠" },
+                parentSessionId: "sess-night",
+              },
+              {
+                id: "sess-night-scout",
+                workspaceId: "oppi",
+                name: "Scout: sidebar regressions",
+                status: "busy",
+                createdAt: t("2026-11-11T16:20:00Z"),
+                lastActivity: t("2026-11-11T16:41:00Z"),
+                programStatus: { state: "working", since: t("2026-11-11T16:20:05Z") },
+                model: "anthropic/claude-sonnet-5-5",
+                messageCount: 12,
+                tokens: { input: 96_000, output: 4_100, cacheRead: 310_000, cacheWrite: 22_000 },
+                cost: 0.74,
+                agentId: "scout",
+                agentIcon: { kind: "emoji", value: "🔎" },
+                parentSessionId: "sess-night-worker",
+              },
+            ],
           },
         },
       },

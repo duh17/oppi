@@ -19,6 +19,14 @@ struct ScheduleCalendarAgendaTests {
         return try JSONDecoder().decode(Fixture.self, from: ProtocolFixtures.data("schedule-calendar.json")).body
     }
 
+    /// The app's live copy of session `id`, as the session store holds it.
+    private static func live(_ id: String, _ status: SessionStatus, _ programStatus: ProgramStatus, cost: Double) -> Session {
+        Session(
+            id: id, status: status, createdAt: programStatus.since, lastActivity: programStatus.since,
+            programStatus: programStatus, messageCount: 4, tokens: TokenUsage(input: 0, output: 0), cost: cost
+        )
+    }
+
     private static func date(_ iso: String) -> Date {
         ISO8601DateFormatter().date(from: iso) ?? .distantPast
     }
@@ -132,8 +140,8 @@ struct ScheduleCalendarAgendaTests {
                 promptDispatch: "delivered", session: session
             )
         ))
-        let live = ScheduleCalendarAgenda.SessionFacts(
-            status: .ready, programStatus: ProgramStatus(state: .blocked, kind: .question, since: response.now), cost: 41
+        let live = Self.live(
+            "sess-hawaii", .ready, ProgramStatus(state: .blocked, kind: .question, since: response.now), cost: 41
         )
         let agenda = ScheduleCalendarAgenda(response: response, live: ["sess-hawaii": live])
         let sent = try #require(agenda.items.first { $0.runId == "run-hawaii" })
@@ -202,7 +210,7 @@ struct ScheduleCalendarAgendaTests {
         #expect(agenda.truncatedSchedules(on: day(-1), now: response.now, calendar: calendar).isEmpty, "A past day is whole")
     }
 
-    @Test("the day sums each outcome and each run's cost")
+    @Test("the day sums each outcome and each run's cost, its subagents' included")
     func summary() throws {
         let response = try Self.response()
         let agenda = ScheduleCalendarAgenda(response: response)
@@ -212,7 +220,8 @@ struct ScheduleCalendarAgendaTests {
         #expect(summary.failed == 2, "Failed and didn't start")
         #expect(summary.needsYou == 1)
         #expect(summary.upcoming == 3, "The two at 9:00 and Nanny's 5 PM, which is tomorrow in UTC but today here")
-        #expect(abs(summary.cost - (0.42 + 4.88 + 1.65 + 0.58)) < 0.001)
+        // The night run's $4.88 plus its child's $3.10 and grandchild's $0.74.
+        #expect(abs(summary.cost - (0.42 + 4.88 + 3.10 + 0.74 + 1.65 + 0.58)) < 0.001)
 
         let health = agenda.health(on: response.now, calendar: Self.calendar)
         #expect(health.hasFailure && health.needsYou && health.ran && health.hasUpcoming)
@@ -221,15 +230,77 @@ struct ScheduleCalendarAgendaTests {
     @Test("the app's live session overrides the answer's outcome and cost")
     func liveSessionWins() throws {
         let response = try Self.response()
-        let blocked = ScheduleCalendarAgenda.SessionFacts(
-            status: .ready,
-            programStatus: ProgramStatus(state: .blocked, kind: .permission, since: response.now),
-            cost: 5.10
+        let blocked = Self.live(
+            "sess-night", .ready, ProgramStatus(state: .blocked, kind: .permission, since: response.now), cost: 5.10
         )
         let agenda = ScheduleCalendarAgenda(response: response, live: ["sess-night": blocked])
         let night = try #require(agenda.items.first { $0.runId == "run-night" })
         #expect(night.outcome == .needsYou(.needsApproval))
-        #expect(night.cost == 5.10)
+        #expect(abs((night.cost ?? 0) - (5.10 + 3.10 + 0.74)) < 0.001)
+    }
+
+    @Test("a run costs its session plus every subagent under it, and the live copy patches a subagent too")
+    func runCostsItsSubagents() throws {
+        let response = try Self.response()
+        let night = try #require(ScheduleCalendarAgenda(response: response).items.first { $0.runId == "run-night" })
+        #expect(night.subagents.sessions.map(\.id) == ["sess-night-worker", "sess-night-scout"], "Child and grandchild")
+        #expect(abs((night.cost ?? 0) - (4.88 + 3.10 + 0.74)) < 0.001)
+        #expect(abs(night.subagents.cost - (3.10 + 0.74)) < 0.001)
+        #expect(ScheduleCalendarAgenda(response: response).items.first { $0.runId == "run-kypu" }?.subagents.isEmpty == true)
+
+        // The scout settles and spends more before the next fetch.
+        let settled = Self.live("sess-night-scout", .stopped, ProgramStatus(state: .done, since: response.now), cost: 1.20)
+        let live = try #require(ScheduleCalendarAgenda(response: response, live: ["sess-night-scout": settled])
+            .items.first { $0.runId == "run-night" })
+        #expect(abs((live.cost ?? 0) - (4.88 + 3.10 + 1.20)) < 0.001)
+        #expect(live.subagents.sessions.last?.status == .stopped)
+        let strip = SessionThreadStripSummary(descendants: live.subagents.sessions) { SessionListPresentation.classify($0) }
+        #expect(!strip.isActive, "No subagent works any more, so the strip draws no dots")
+        #expect(strip.text == "2 stopped")
+    }
+
+    @Test("a night cluster adds its runs' subagents; a send into an existing session gets none")
+    func clusterAndSendsCountSubagentsOnce() throws {
+        var response = try Self.response()
+        let journal = Self.date("2026-11-11T08:15:00Z")
+        let child = try #require(response.entries.first { $0.run?.id == "run-night" }?.run?.session?.descendants.first)
+        response.schedules.append(ScheduleCalendarSchedule(
+            id: "journal1", name: "Daily life journal", status: .active,
+            trigger: .cron(expression: "15 0 * * *", timeZone: "America/Los_Angeles"),
+            action: AgentScheduleActionSummary(type: .newSession, workspaceId: "notes", promptChars: 10),
+            upcomingTruncated: false
+        ))
+        response.entries.append(ScheduleCalendarEntry(
+            scheduleId: "journal1", slotKey: "cron:x", at: journal,
+            run: ScheduleCalendarRun(
+                id: "run-journal", kind: .due, status: .completed, createdAt: journal,
+                session: ScheduleCalendarSession(
+                    id: "sess-journal", status: .stopped,
+                    programStatus: ProgramStatus(state: .done, since: journal.addingTimeInterval(120)), cost: 0.3,
+                    descendants: [child]
+                )
+            )
+        ))
+        // Yesterday's send into a session whose children the server would not list; one the
+        // app decoded anyway still costs the send nothing.
+        let sentAt = Self.date("2026-11-10T17:00:00Z")
+        response.entries.append(ScheduleCalendarEntry(
+            scheduleId: "hawaii01", slotKey: "manual:yesterday", at: sentAt,
+            run: ScheduleCalendarRun(
+                id: "run-hawaii", kind: .manual, status: .completed, createdAt: sentAt, promptDispatch: "delivered",
+                session: ScheduleCalendarSession(id: "sess-hawaii", status: .busy, cost: 40, descendants: [child])
+            )
+        ))
+        let agenda = ScheduleCalendarAgenda(response: response)
+
+        guard case .cluster(let cluster) = agenda.rows(on: response.now, now: response.now, calendar: Self.calendar).night.first else {
+            Issue.record("The night opens with its cluster")
+            return
+        }
+        #expect(abs(cluster.totalCost - (0.42 + 0.3 + 3.10)) < 0.001)
+        let sent = try #require(agenda.items.first { $0.runId == "run-hawaii" })
+        #expect(sent.cost == nil && sent.subagents.isEmpty)
+        #expect(agenda.summary(on: sentAt, calendar: Self.calendar).cost == 0)
     }
 
     @Test("countdowns and durations in their written and spoken forms")

@@ -79,8 +79,13 @@ struct SessionThreadStripSummary: Equatable, Sendable {
     /// `classify` is the list's classification of a member, so the stopped count is the thread's stopped
     /// fold's count and nothing here depends on this device's seen state.
     init(rollup: SessionThreadRollup, classify: (Session) -> SessionListClassification) {
+        self.init(descendants: rollup.descendants, classify: classify)
+    }
+
+    /// The same summary for members listed without their root: a scheduled run's subagents.
+    init(descendants: some Sequence<Session>, classify: (Session) -> SessionListClassification) {
         var countByBucket: [Bucket: Int] = [:]
-        for member in rollup.descendants {
+        for member in descendants {
             // `settledKind` is the strip's one rule for what a member reads: stopped with no section, idle
             // for a settled outcome.
             countByBucket[Bucket(classify(member).settledKind), default: 0] += 1

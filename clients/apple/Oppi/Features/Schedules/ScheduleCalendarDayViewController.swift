@@ -5,7 +5,8 @@ import UIKit
 /// run by start time with its outcome, the now line, and countdowns to what runs next.
 ///
 /// Tapping a past or running run opens its session; tapping an occurrence still to come
-/// opens its schedule. A long press offers Run Now, Pause Schedule, Show Schedule, and
+/// opens its schedule. A run that launched subagents has their strip under it, which opens
+/// the run's thread in All Sessions. A long press offers Run Now, Pause Schedule, Show Schedule, and
 /// Last Run's Session, and VoiceOver offers the same as custom actions.
 ///
 /// The container (`SchedulesViewController`) owns the model, the composer, and the bar.
@@ -19,6 +20,8 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         case band
         case cluster(String)
         case entry(String)
+        /// The subagents strip under the entry with this id.
+        case subagents(String)
         case now
         /// "More runs not shown": the server listed only part of a dense schedule's runs.
         case truncated
@@ -30,6 +33,7 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         case band
         case cluster(ScheduleCalendarAgenda.Cluster)
         case entry(ScheduleCalendarAgenda.Item, showsTime: Bool, isNext: Bool)
+        case subagents(ScheduleCalendarAgenda.Item, SessionThreadStripSummary)
         case now(Date)
         case truncated([String])
     }
@@ -216,12 +220,15 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
 
     /// The app's live copy of the sessions the answer names: running and blocked changes
     /// reach it through the app event stream before the next fetch.
-    private func liveSessions(for response: ScheduleCalendarResponse?) -> [String: ScheduleCalendarAgenda.SessionFacts] {
-        let followed = Set(response?.entries.compactMap { $0.run?.session?.id } ?? [])
+    private func liveSessions(for response: ScheduleCalendarResponse?) -> [String: Session] {
+        let followed = Set(response?.entries.flatMap { entry -> [String] in
+            guard let session = entry.run?.session else { return [] }
+            return [session.id] + session.descendants.map(\.id)
+        } ?? [])
         guard !followed.isEmpty else { return [:] }
-        var live: [String: ScheduleCalendarAgenda.SessionFacts] = [:]
+        var live: [String: Session] = [:]
         for session in connection.sessionStore.listProjectionSessions where followed.contains(session.id) {
-            live[session.id] = .init(status: session.status, programStatus: session.programStatus, cost: session.cost)
+            live[session.id] = session
         }
         return live
     }
@@ -254,6 +261,13 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         isAccessibilitySize: Bool
     ) -> Bool {
         var snapshot = NSDiffableDataSourceSnapshot<Section, ID>()
+        let sessionStore = connection.sessionStore
+        // The list's own classification of a subagent, pending asks included, as its thread strip reads it.
+        let classify: (Session) -> SessionListClassification = { session in
+            SessionListPresentation.classify(
+                session, attention: SessionListAttentionCounts(askCount: sessionStore.listPendingAskCount(for: session.id))
+            )
+        }
         var rows: [ID: RowData] = [:]
         var inputs: [ID: AnyHashable] = [:]
         let palette = palette
@@ -293,6 +307,12 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
                             AnyHashable(item), AnyHashable(showsTime), AnyHashable(isNext),
                             AnyHashable(ticking ? now : .distantPast),
                         ]))
+                        if item.sessionId != nil, !item.subagents.isEmpty {
+                            let summary = SessionThreadStripSummary(descendants: item.subagents.sessions, classify: classify)
+                            add(.subagents(item.id), .subagents(item, summary), to: section, key: AnyHashable([
+                                AnyHashable(item.subagents), AnyHashable(summary.dots), AnyHashable(summary.text),
+                            ]))
+                        }
                     case .cluster(let cluster):
                         previousTime = cluster.items.first?.at
                         add(.cluster(cluster.id), .cluster(cluster), to: section, key: AnyHashable(cluster))
@@ -505,6 +525,17 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
                     }
                 }
             }
+        case .subagents(let item, let summary):
+            let context = context(for: item)
+            let style = SessionRowStyle.for(root.themeStore.activeThemeID)
+            cell.contentConfiguration = ControlViewContent(insets: .init(top: 0, leading: 0, bottom: 6, trailing: 0)) {
+                ScheduleCalendarRowViews.subagents(item.subagents, summary: summary, style: style, context: context)
+            }
+            cell.isAccessibilityElement = true
+            cell.accessibilityTraits = .button
+            cell.accessibilityLabel = Self.spokenSubagents(item.subagents, summary: summary)
+            cell.accessibilityHint = String(localized: "Shows the run's sessions")
+            cell.accessibilityIdentifier = "schedules.calendar.subagents.\(item.id)"
         case .now(let date):
             let calendar = calendar
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 2, leading: 0, bottom: 2, trailing: 0), followsLayoutMargins: false) {
@@ -551,6 +582,13 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         }
         if let workspace = context.workspace { parts.append(String(localized: "\(workspace.name) workspace")) }
         if let model = item.model { parts.append(ScheduleCalendarRowViews.modelName(model)) }
+        return parts.joined(separator: ", ")
+    }
+
+    /// "26 subagents, 2 working · 24 stopped, $37.57".
+    private static func spokenSubagents(_ subagents: ScheduleCalendarAgenda.Subagents, summary: SessionThreadStripSummary) -> String {
+        var parts = [ScheduleCalendarRowViews.subagentCount(subagents.sessions.count), summary.text]
+        if subagents.cost > 0 { parts.append(SessionFormatting.costString(subagents.cost)) }
         return parts.joined(separator: ", ")
     }
 
@@ -602,7 +640,7 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
 
     func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         switch dataSource.itemIdentifier(for: indexPath) {
-        case .entry, .cluster: true
+        case .entry, .cluster, .subagents: true
         default: false
         }
     }
@@ -622,9 +660,19 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             } else {
                 openSchedule(item.scheduleId)
             }
+        case .subagents(let item, _):
+            openThread(of: item)
         default:
             break
         }
+    }
+
+    /// All Sessions with the run's thread open. A run's session is its thread's root: a
+    /// schedule launches it with no parent.
+    private func openThread(of item: ScheduleCalendarAgenda.Item) {
+        guard let sessionId = item.sessionId,
+              let serverId = connection.workspaceStore.activeServerId else { return }
+        root.navigation.showThread(serverId: serverId, rootId: sessionId)
     }
 
     private func openSession(of item: ScheduleCalendarAgenda.Item) {

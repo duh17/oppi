@@ -1,4 +1,4 @@
-import type { ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
   ScheduleCalendarRangeError,
@@ -273,7 +273,7 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     // Before the member route: `calendar` is not a schedule id or name.
     if (path === "/schedules/calendar") {
       if (method !== "GET") return false;
-      handleCalendar(url, res);
+      handleCalendar(url, req, res);
       return true;
     }
 
@@ -319,7 +319,7 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     return false;
   };
 
-  function handleCalendar(url: URL, res: ServerResponse): void {
+  function handleCalendar(url: URL, req: IncomingMessage, res: ServerResponse): void {
     let range: { from: number; to: number };
     try {
       range = parseScheduleCalendarRange(url);
@@ -330,13 +330,16 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
     const schedules = getSchedules();
     const agents = ctx.storage.getAgentDefinitionStore();
-    helpers.json(
+    // Compressed: each run carries its descendants' summaries, dozens for a night's run.
+    helpers.compressedJson(
+      req,
       res,
       buildScheduleCalendar(
         {
           listSchedules: () => schedules.listSchedules(),
           listRunsCreatedBetween: (from, to) => schedules.listRunsCreatedBetween(from, to),
           getSession: (sessionId) => ctx.storage.getSession(sessionId),
+          listSessions: () => ctx.storage.listSessions(),
           agentDefaultModel: (agentId) =>
             agents.getAgent(agentId)?.definition.sessionDefaults?.model,
         },

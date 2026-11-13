@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "One GET /schedules/calendar answer: past runs joined to their sessions (done, failed, needs you, running, a run that never started, a manual run, a prompt sent into an existing session) and upcoming occurrences (no run). Built by server/tests/schedule-calendar-fixtures.ts; server/tests/schedule-calendar-fixtures.test.ts fails when the committed bytes differ, and Apple ScheduleCalendarContractTests decodes it.",
+    "description": "One GET /schedules/calendar answer: past runs joined to their sessions (done, failed, needs you, running with a child and a grandchild, a run that never started, a manual run, a prompt sent into an existing session) and upcoming occurrences (no run). Built by server/tests/schedule-calendar-fixtures.ts; server/tests/schedule-calendar-fixtures.test.ts fails when the committed bytes differ, and Apple ScheduleCalendarContractTests decodes it.",
     "source": "server/src/agent-schedule-calendar.ts"
   },
   "body": {
@@ -187,7 +187,63 @@
               "since": 1794415200000
             },
             "cost": 4.88,
-            "model": "anthropic/claude-opus-5-5"
+            "model": "anthropic/claude-opus-5-5",
+            "descendants": [
+              {
+                "id": "sess-night-worker",
+                "workspaceId": "oppi",
+                "name": "Fix flaky scroll test",
+                "status": "stopped",
+                "createdAt": 1794397320000,
+                "lastActivity": 1794399600000,
+                "programStatus": {
+                  "state": "done",
+                  "since": 1794399600000
+                },
+                "model": "anthropic/claude-opus-5-5",
+                "messageCount": 38,
+                "tokens": {
+                  "input": 412000,
+                  "output": 18400,
+                  "cacheRead": 2100000,
+                  "cacheWrite": 96000
+                },
+                "cost": 3.1,
+                "agentId": "worker",
+                "agentIcon": {
+                  "kind": "emoji",
+                  "value": "🛠"
+                },
+                "parentSessionId": "sess-night"
+              },
+              {
+                "id": "sess-night-scout",
+                "workspaceId": "oppi",
+                "name": "Scout: sidebar regressions",
+                "status": "busy",
+                "createdAt": 1794414000000,
+                "lastActivity": 1794415260000,
+                "programStatus": {
+                  "state": "working",
+                  "since": 1794414005000
+                },
+                "model": "anthropic/claude-sonnet-5-5",
+                "messageCount": 12,
+                "tokens": {
+                  "input": 96000,
+                  "output": 4100,
+                  "cacheRead": 310000,
+                  "cacheWrite": 22000
+                },
+                "cost": 0.74,
+                "agentId": "scout",
+                "agentIcon": {
+                  "kind": "emoji",
+                  "value": "🔎"
+                },
+                "parentSessionId": "sess-night-worker"
+              }
+            ]
           }
         }
       },
