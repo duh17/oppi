@@ -974,6 +974,121 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// Opening a drawer grows the strip up over the timeline: the composer keeps the exact frame it
+    /// has collapsed, the drawer spans the same column (never a narrower one sized to its content),
+    /// and the timeline does not move, at its bottom or not: the drawer covers rows, never pushes
+    /// them. Closing it leaves the composer where it was. Modes: a native widget (Subagents) and a
+    /// composable surface (Background jobs); idle, and busy (steer composer) with a queued
+    /// follow-up's pill beside the widget's; with the keyboard up; the chat's full width and the
+    /// wide window's centred column (iPad landscape).
+    func testOpeningAWidgetDrawerKeepsTheComposerWidth() {
+        launch(environment: ["CHAT_ROUTES_SURFACE": "subagents", "CHAT_ROUTES_REVIEW_COMMENT": "none"])
+        assertDrawerKeepsTheComposer(surface: "subagents", shot: "subagents")
+    }
+
+    func testOpeningAWidgetDrawerKeepsTheComposerWidthWide() {
+        launchWide(environment: ["CHAT_ROUTES_SURFACE": "subagents", "CHAT_ROUTES_REVIEW_COMMENT": "none"])
+        assertDrawerKeepsTheComposer(surface: "subagents", shot: "subagents-wide")
+    }
+
+    func testOpeningASurfaceDrawerKeepsTheComposerWidthWide() {
+        launchWide(environment: ["CHAT_ROUTES_SURFACE": "jobs", "CHAT_ROUTES_REVIEW_COMMENT": "none"])
+        assertDrawerKeepsTheComposer(surface: "surface-background_2djobs", shot: "jobs-wide")
+    }
+
+    func testOpeningAWidgetDrawerWhileBusyWithAQueuedFollowUpCoversTheTimeline() {
+        launch(environment: Self.busyWithQueue)
+        assertDrawerKeepsTheComposer(surface: "subagents", shot: "subagents-busy-queue", queued: true)
+    }
+
+    func testOpeningAWidgetDrawerWhileBusyWithAQueuedFollowUpCoversTheTimelineWide() {
+        launchWide(environment: Self.busyWithQueue)
+        assertDrawerKeepsTheComposer(surface: "subagents", shot: "subagents-busy-queue-wide", queued: true)
+    }
+
+    func testOpeningAWidgetDrawerWithTheKeyboardUpKeepsTheComposerWidth() {
+        launch(environment: Self.busyWithQueue)
+        assertDrawerKeepsTheComposer(surface: "subagents", shot: "subagents-busy-keyboard", queued: true, keyboard: true)
+    }
+
+    /// A running turn in Chat style, a long timeline, and one queued follow-up beside the widget.
+    private static let busyWithQueue = [
+        "CHAT_ROUTES_SURFACE": "subagents", "CHAT_ROUTES_REVIEW_COMMENT": "none",
+        "CHAT_ROUTES_STATUS": "busy", "CHAT_ROUTES_LIVE_WORK": "1", "CHAT_ROUTES_CHAT_STYLE": "chat",
+        "CHAT_ROUTES_LONG_TURNS": "30", "CHAT_ROUTES_QUEUE": "followup",
+    ]
+
+    /// `surface` is the end of the pill's and drawer's identifiers.
+    private func assertDrawerKeepsTheComposer(surface: String, shot: String, queued: Bool = false, keyboard: Bool = false) {
+        func element(_ kind: String) -> XCUIElement {
+            app.descendants(matching: .any).matching(NSPredicate(
+                format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+                "extension-strip-aboveEditor-\(kind)-", surface
+            )).firstMatch
+        }
+        // The screen, not the app's own screenshot, which comes out cut and turned in landscape.
+        func shoot(_ name: String) {
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        let pill = element("pill")
+        XCTAssertTrue(pill.waitUntilExists(timeout: 10), "The surface shows its pill")
+        let composer = app.descendants(matching: .any)["chat.input"]
+        XCTAssertTrue(composer.waitUntilExists(timeout: 10))
+        if queued {
+            let queue = app.descendants(matching: .any)["extension-strip-aboveEditor-pill-message-queue"]
+            XCTAssertTrue(queue.waitUntilExists(timeout: 10), "The queued follow-up shows its pill")
+            // A pill past the edge (a phone) is reached by scrolling the strip, never cut for good.
+            // An iPad's strip holds both pills as they are.
+            let strip = app.scrollViews["extension-strip-aboveEditor-collapsed"]
+            if strip.frame.width < 700, queue.frame.maxX > strip.frame.maxX {
+                strip.swipeLeft()
+                hold()
+            }
+            XCTAssertLessThanOrEqual(queue.frame.maxX, strip.frame.maxX, "The queue pill is whole: \(queue.frame) in \(strip.frame)")
+        }
+        if keyboard {
+            composer.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitUntilExists(timeout: 5), "The keyboard comes up")
+        }
+        hold()
+        let collapsed = composer.frame
+        // The lowest row on screen: it stays put while the drawer opens and closes.
+        let timeline = app.collectionViews["chat.timeline"]
+        let row = timeline.cells.allElementsBoundByIndex
+            .filter { $0.frame.minY < collapsed.minY && $0.frame.height > 0 }
+            .max { $0.frame.minY < $1.frame.minY }
+        let rowFrame = row?.frame
+        shoot("\(shot)-collapsed")
+
+        pill.tap()
+        let drawer = element("drawer")
+        XCTAssertTrue(drawer.waitUntilExists(timeout: 5), "Tapping the pill opens its drawer")
+        hold()
+        shoot("\(shot)-expanded")
+        XCTAssertEqual(composer.frame.minX, collapsed.minX, accuracy: 0.5, "The composer must not move: \(composer.frame) vs \(collapsed)")
+        XCTAssertEqual(composer.frame.width, collapsed.width, accuracy: 0.5, "The composer must keep its width: \(composer.frame) vs \(collapsed)")
+        XCTAssertGreaterThan(
+            drawer.frame.width, collapsed.width,
+            "The drawer spans the composer's column, not its content's width: \(drawer.frame) vs \(collapsed)"
+        )
+        XCTAssertLessThanOrEqual(drawer.frame.maxY, composer.frame.minY, "The drawer grows up from the composer")
+        if !keyboard, let row, let rowFrame {
+            XCTAssertEqual(row.frame.minY, rowFrame.minY, accuracy: 0.5, "The drawer covers the timeline, never pushes it: \(row.frame) vs \(rowFrame)")
+        }
+
+        app.buttons["extension-strip-aboveEditor-drawer-collapse"].tap()
+        XCTAssertTrue(drawer.waitUntilGone(timeout: 5), "Collapse closes the drawer")
+        hold()
+        XCTAssertEqual(composer.frame.width, collapsed.width, accuracy: 0.5, "Closing keeps the composer's width")
+        if !keyboard, let row, let rowFrame {
+            XCTAssertEqual(row.frame.minY, rowFrame.minY, accuracy: 0.5, "Closing leaves the timeline where it was")
+        }
+        assertRunning()
+    }
+
     /// A job card whose output block outgrows the drawer's cap: the drawer scrolls under a finger
     /// that starts on the output, the block's expand control opens its text in the reader, and the
     /// drawer's own full-screen button opens every card with its Stop button in reach.

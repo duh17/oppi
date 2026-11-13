@@ -31,6 +31,13 @@ extension ChatViewController {
         footerBacking.isHidden = true
         view.addSubview(footerBacking)
         view.addSubview(footerStack)
+        // The timeline's bottom edge effect reaches up behind the whole footer (the strip, an open
+        // drawer, the composer), so rows scrolled under it fade out instead of reading through the
+        // glass of the composer and between the strip's pills.
+        let footerEdge = UIScrollEdgeElementContainerInteraction()
+        footerEdge.scrollView = collectionView
+        footerEdge.edge = .bottom
+        footerStack.addInteraction(footerEdge)
 
         // A drawer grows the footer up from the composer. The footer stops short of the bar, and
         // a drawer's scrolling body (`CappedScrollView`, whose hug is 249) gives the height up.
@@ -44,9 +51,12 @@ extension ChatViewController {
         let timelineTrailing = collectionView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
         self.timelineTrailing = timelineTrailing
         // The footer follows the timeline's reading column: the chat's width up to
-        // `widestColumnSpan`, centred, so the composer and strip line up with the rows.
-        let footerFill = footerStack.widthAnchor.constraint(equalTo: view.safeAreaLayoutGuide.widthAnchor)
-        footerFill.priority = .defaultHigh
+        // `widestColumnSpan`, centred, so the composer and strip line up with the rows. Required and
+        // set from the chat's width (`viewWillLayoutSubviews`), never from what the footer holds: under a
+        // breakable "fill the chat" constraint an open drawer's content could win and narrow the strip
+        // and composer to the drawer's own width. A drawer grows up over the timeline, never in.
+        let footerWidth = footerStack.widthAnchor.constraint(equalToConstant: 0)
+        self.footerWidth = footerWidth
 
         NSLayoutConstraint.activate([
             footerTopLimit,
@@ -60,9 +70,7 @@ extension ChatViewController {
             collectionView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             timelineTrailing,
             collectionView.bottomAnchor.constraint(equalTo: contentBottomGuide.bottomAnchor),
-            footerFill,
-            footerStack.widthAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.widthAnchor),
-            footerStack.widthAnchor.constraint(lessThanOrEqualToConstant: ChatTimelineCachedHeightLayout.widestColumnSpan),
+            footerWidth,
             footerStack.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
             footerStack.bottomAnchor.constraint(equalTo: contentBottomGuide.bottomAnchor),
             footerBacking.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -110,9 +118,11 @@ extension ChatViewController {
         footerStack.addArrangedSubview(above)
         footerStack.addArrangedSubview(composer.view)
         footerBacking.topAnchor.constraint(equalTo: composer.view.centerYAnchor).isActive = true
-        footerStack.addArrangedSubview(ChatFooterBelowView(chat: self))
+        let below = ChatFooterBelowView(chat: self)
+        footerStack.addArrangedSubview(below)
         footerStack.addArrangedSubview(ChatStoppedFooterView(chat: self))
         footerAbove = above
+        footerBelow = below
 
         barItems.titleControl.install(ChatTitleView(chat: self))
 
@@ -230,6 +240,12 @@ extension ChatViewController {
         handleDisappear()
     }
 
+    override func viewWillLayoutSubviews() {
+        super.viewWillLayoutSubviews()
+        let chatWidth = view.bounds.inset(by: view.safeAreaInsets).width
+        footerWidth?.constant = max(0, min(chatWidth, ChatTimelineCachedHeightLayout.widestColumnSpan))
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         guard let timelineView else { return }
@@ -244,7 +260,13 @@ extension ChatViewController {
             headerFrame: view.convert(headerFrame, to: nil)
         )
         updateFooterBacking()
-        let bottom = footerStack.frame.height
+        // The timeline's bottom inset is the footer without its open drawers: a drawer covers the
+        // rows under it instead of pushing them up, so opening one never moves the timeline (and
+        // never moves it only when it sits at the bottom, as a growing inset would). The drawers'
+        // frames are read after the footer lays out.
+        footerStack.layoutIfNeeded()
+        let drawers = (footerAbove?.openDrawerHeight ?? 0) + (footerBelow?.openDrawerHeight ?? 0)
+        let bottom = max(0, footerStack.frame.height - drawers)
         let width = timelineView.bounds.width
         if abs(top - timelineTopOverlap) > 0.5 || abs(bottom - footerHeight) > 0.5 || abs(width - timelineWidth) > 0.5 {
             timelineTopOverlap = top

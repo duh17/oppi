@@ -638,8 +638,7 @@ private extension ExtensionSurfacePlacementGroup {
 private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
     private let marker = UIImageView()
     private let dot = UIView()
-    /// The tone dot's place while the surface's most urgent row is running: the app's static
-    /// working icon.
+    /// The tone dot's place while the surface's most urgent row is running: the app's static working icon.
     private let workingMark = WorkingMarkView(textStyle: .caption1)
     /// The facts the surface composed for its pill, drawn in place of the header-derived title.
     private let content = ExtensionSurfacePillContentView()
@@ -672,8 +671,7 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
         set { super.accessibilityValue = newValue }
     }
 
-    /// Set while the surface's pill sends its own action, where a tap would otherwise open the
-    /// drawer.
+    /// Set while the surface's pill sends its own action, where a tap would otherwise open the drawer.
     private var onPillAction: (() -> Void)?
 
     override init(frame: CGRect) {
@@ -1264,6 +1262,8 @@ final class ExtensionSurfacePanelView: UIView {
     private var drawer: ExtensionSurfaceDrawerView?
     private let drawerSlot = UIStackView() // The drawer, inset `edgeInset`.
     private var expandedEntryID: String?
+    /// The open drawer and the gap above it, in this panel's laid-out height; 0 while collapsed.
+    var openDrawerHeight: CGFloat { drawerSlot.isHidden ? 0 : drawerSlot.frame.height + stack.spacing }
     private var lastCollapseRequestID: Int?
     private var lastContent: Content?
 

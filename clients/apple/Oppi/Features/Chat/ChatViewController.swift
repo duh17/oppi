@@ -141,6 +141,8 @@ final class ChatViewController: UIViewController {
     /// The strip's pill bands reach past the footer's edges, over the timeline (see
     /// `ExtensionStripPillHitBand`); the composer still wins inside its own bounds.
     let footerStack: UIStackView = ExtensionStripPillHitBandStackView()
+    /// The footer's width: the chat's reading column, set on every layout pass.
+    var footerWidth: NSLayoutConstraint?
     /// The chat's background fading in under the composer, shown only while
     /// the chat's pane stops short of the window's bottom (a pane above
     /// another): there is no home-indicator strip there, so the transcript
@@ -156,6 +158,7 @@ final class ChatViewController: UIViewController {
     )
     /// Set once the footer rows, title, and jump hint are installed.
     var footerAbove: ChatFooterAboveView?
+    var footerBelow: ChatFooterBelowView?
     let canvasAnchor = ComposerCanvasDestinationAnchorController()
     lazy var attachedLeaf = AttachedLeafController(screen: self)
     /// Modals the chat presents; each is one router presentation slot.

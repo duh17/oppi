@@ -22,7 +22,7 @@ import UIKit
 /// `CHAT_ROUTES_SURFACE=panel` publishes a surface placed as a panel, with pane hints (the shape
 /// of `protocol/surfaces/panel-hints.json`), whose pill opens its pane with no drawer.
 /// `CHAT_ROUTES_NATIVE_WIDGET_FILE=<path>` publishes a version 1 native widget read from that file
-/// (`ChatRoutesNativeWidget`).
+/// (`ChatRoutesNativeWidget`); `CHAT_ROUTES_SURFACE=subagents` publishes the Subagents widget.
 /// `CHAT_ROUTES_SURFACE_FILE=<path>[,<path>...]` publishes the
 /// surface JSON in those files instead (a server's rendered `ExtensionUISurface`, so a panel is shown
 /// as the phone receives it). `CHAT_ROUTES_REVIEW_COMMENT=none` stages no review comment, leaving
@@ -467,9 +467,16 @@ enum ChatRoutesFixture {
     /// `CHAT_ROUTES_SURFACE=tall`: a table card of 14 rows, then an Actions card, in one
     /// surface above the composer. Reseeded like Share, since the connect loop clears surfaces.
     @MainActor static func seedSurfaceIfNeeded(on connection: ServerConnection) {
-        if let path = environment["CHAT_ROUTES_NATIVE_WIDGET_FILE"] {
+        let widget: [ExtensionUINotification]? = if let path = environment["CHAT_ROUTES_NATIVE_WIDGET_FILE"] {
+            ChatRoutesNativeWidget.notifications(path: path)
+        } else if environment["CHAT_ROUTES_SURFACE"] == "subagents" {
+            ChatRoutesNativeWidget.notifications(data: ChatRoutesNativeWidget.subagentsJSON)
+        } else {
+            nil
+        }
+        if let widget {
             guard connection.extensionSurfaces.surface(for: sessionId).state.nativeSurfaces.isEmpty else { return }
-            for notification in ChatRoutesNativeWidget.notifications(path: path) {
+            for notification in widget {
                 connection.extensionSurfaces.apply(notification, sessionId: sessionId)
             }
             return

@@ -145,6 +145,13 @@ final class ChatFooterAboveView: UIView {
     private let notifyDrawer = ExtensionNotifyDrawerView()
     private let noticeStack = UIStackView()
     private var shownNotices: Notices?
+    /// What open drawers add to this view's height. A drawer grows up over the timeline, so the
+    /// timeline's bottom inset leaves it out. Read after layout.
+    var openDrawerHeight: CGFloat {
+        [reviewDrawerRow, nowPlayingDrawerRow, notifyDrawerRow].reduce(panel.openDrawerHeight) { sum, row in
+            row.isHidden ? sum : sum + row.frame.height + stack.spacing
+        }
+    }
     private lazy var panelRow = footerInset(panel, side: 0, box: ExtensionStripPillHitBandView())
     private lazy var reviewDrawerRow = footerInset(reviewDrawer)
     private lazy var nowPlayingDrawerRow = footerInset(nowPlayingDrawer)
@@ -490,6 +497,8 @@ final class ChatNowPlayingDrawerView: ExtensionDrawerPanelView {
 final class ChatFooterBelowView: UIView {
     weak var chat: ChatViewController?
     private let panel: ExtensionSurfacePanelView
+    /// The open drawer's share of this view's height (`ChatFooterAboveView.openDrawerHeight`).
+    var openDrawerHeight: CGFloat { panel.openDrawerHeight }
 
     init(chat: ChatViewController) {
         self.chat = chat
