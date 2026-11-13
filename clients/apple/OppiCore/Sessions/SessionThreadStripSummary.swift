@@ -1,7 +1,6 @@
 import Foundation
 
-/// What a thread strip says about the states of its members: the status line (a dot for each member that
-/// needs the person or is in error, then one working mark for the working ones) and the counts line.
+/// What a thread strip says about the states of its members: the live dots and the counts line.
 ///
 /// Counts and dots cover the members other than the root, as the strip's status counts always did: the
 /// root row above the strip already shows its own status.
@@ -45,9 +44,8 @@ struct SessionThreadStripSummary: Equatable, Sendable {
             }
         }
 
-        /// Active members (working, needing the person, or in error) are drawn on the status line: a dot,
-        /// or the working mark. Settled ones are only counted.
-        var isDrawn: Bool {
+        /// Active members (working, needing the person, or in error) get a dot. Settled ones are only counted.
+        var showsDot: Bool {
             switch self {
             case .working, .needsYou, .error: true
             case .idle, .stopped: false
@@ -73,12 +71,10 @@ struct SessionThreadStripSummary: Equatable, Sendable {
 
     /// One entry per non-empty state: working, needs you, error, idle, stopped.
     let counts: [Count]
-    /// One entry per member that needs the person or is in error, most urgent first, at most `maxDots`.
+    /// One entry per active member, most urgent first (needs you, error, working), at most `maxDots`.
     let dots: [Bucket]
-    /// Those members past `maxDots`.
+    /// Active members past `maxDots`.
     let hiddenDotCount: Int
-    /// Working members: the strip draws one working mark for all of them, with this count beside it.
-    let workingCount: Int
 
     /// `classify` is the list's classification of a member, so the stopped count is the thread's stopped
     /// fold's count and nothing here depends on this device's seen state.
@@ -92,29 +88,28 @@ struct SessionThreadStripSummary: Equatable, Sendable {
         counts = Bucket.allCases.compactMap { bucket in
             countByBucket[bucket].map { Count(bucket: bucket, count: $0) }
         }
-        let marked = [Bucket.needsYou, .error].flatMap { bucket in
+        let active = [Bucket.needsYou, .error, .working].flatMap { bucket in
             Array(repeating: bucket, count: countByBucket[bucket] ?? 0)
         }
-        dots = Array(marked.prefix(Self.maxDots))
-        hiddenDotCount = marked.count - dots.count
-        workingCount = countByBucket[.working] ?? 0
+        dots = Array(active.prefix(Self.maxDots))
+        hiddenDotCount = active.count - dots.count
     }
 
-    /// Whether a member is working, needing the person, or in error: the strip draws its status line, and
-    /// keeps the Agents beside it, only then. A blocked member is always active, so the blocked line and
-    /// the status line appear and disappear together.
-    var isActive: Bool { !dots.isEmpty || workingCount > 0 }
+    /// Whether a member is working, needing the person, or in error: the strip draws its dots, and keeps
+    /// the Agents beside them, only then. A blocked member is always active, so the blocked line and the
+    /// dot line appear and disappear together.
+    var isActive: Bool { !dots.isEmpty }
 
     /// "3 working · 1 needs you · 137 stopped".
     var text: String {
         counts.map(\.text).joined(separator: " · ")
     }
 
-    /// The counts the status line does not already draw: idle and stopped, in bucket order ("1 idle · 102
-    /// stopped"). Working, needs you, and error are what the working mark and the dots say, so the drawn line
-    /// leaves them out instead of repeating them in words. A settled thread draws no status line and
+    /// The counts the dots do not already draw: idle and stopped, in bucket order ("1 idle · 102
+    /// stopped"). Working, needs you, and error are what the dots and their "+N" say, so the drawn line
+    /// leaves them to the dots instead of repeating them in words. A settled thread draws no dots and
     /// counts nothing else, so this is its whole counts line.
     var quietText: String {
-        counts.filter { !$0.bucket.isDrawn }.map(\.text).joined(separator: " · ")
+        counts.filter { !$0.bucket.showsDot }.map(\.text).joined(separator: " · ")
     }
 }

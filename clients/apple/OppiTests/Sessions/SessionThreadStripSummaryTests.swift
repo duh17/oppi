@@ -154,53 +154,51 @@ struct SessionThreadStripSummaryTests {
         }
     }
 
-    @Test func theRootIsInNeitherTheCountsNorTheStatusLine() {
+    @Test func theRootIsInNeitherTheCountsNorTheDots() {
         let working = summary(root: .working, [.stopped, .done])
         #expect(working.text == "1 idle · 1 stopped")
         #expect(working.dots.isEmpty)
-        #expect(working.workingCount == 0)
-        #expect(!working.isActive)
 
         let blocked = summary(root: .needsApproval, [.working])
         #expect(blocked.text == "1 working")
-        #expect(blocked.dots.isEmpty)
-        #expect(blocked.workingCount == 1)
-        #expect(blocked.isActive, "A working child alone makes the thread active")
+        #expect(blocked.dots == [.working])
     }
 
-    /// Members that need the person or are in error get a dot each, most urgent first; working members are
-    /// counted for the one spinner instead.
-    @Test func blockedAndErrorMembersGetDotsAndWorkingOnesAreCounted() {
+    @Test func onlyActiveMembersGetDotsMostUrgentFirst() {
         let result = summary([.working, .stopped, .done, .error, .idle, .question, .working, .signIn])
 
-        #expect(result.dots == [.needsYou, .needsYou, .error])
+        #expect(result.dots == [.needsYou, .needsYou, .error, .working, .working])
         #expect(result.hiddenDotCount == 0)
-        #expect(result.workingCount == 2)
     }
 
     @Test func dotsStopAtTheCapAndCountTheRest() {
-        let result = summary(repeated(.error, 20) + [.question] + repeated(.working, 7) + repeated(.stopped, 50))
+        let result = summary(repeated(.working, 20) + [.question] + repeated(.stopped, 50))
 
         #expect(result.dots.count == SessionThreadStripSummary.maxDots)
         #expect(result.dots.first == .needsYou, "A member that needs you stays in view under the cap")
         #expect(result.hiddenDotCount == 21 - SessionThreadStripSummary.maxDots)
-        #expect(result.workingCount == 7, "Working members never take a dot, so the cap never hides them")
-        #expect(result.text == "7 working · 1 needs you · 20 errors · 50 stopped")
+        #expect(result.text == "20 working · 1 needs you · 50 stopped")
     }
 
     @Test func exactlyTheCapLeavesNothingHidden() {
-        let result = summary(repeated(.error, SessionThreadStripSummary.maxDots))
+        let result = summary(repeated(.working, SessionThreadStripSummary.maxDots))
 
         #expect(result.dots.count == SessionThreadStripSummary.maxDots)
         #expect(result.hiddenDotCount == 0)
     }
 
-    @Test func aThreadWhoseMembersAllStoppedHasCountsAndNoStatusLine() {
+    @Test func aThreadWhoseMembersAllStoppedHasCountsAndNoDots() {
         let result = summary(repeated(.stopped, 4) + [.idle])
 
         #expect(result.text == "1 idle · 4 stopped")
         #expect(result.dots.isEmpty)
         #expect(result.hiddenDotCount == 0)
-        #expect(result.workingCount == 0)
+    }
+
+    @Test func aThreadWhoseMembersAreAllActiveHasADotEachAndNoOtherCounts() {
+        let result = summary(repeated(.working, 3) + [.error])
+
+        #expect(result.text == "3 working · 1 error")
+        #expect(result.dots == [.error, .working, .working, .working])
     }
 }

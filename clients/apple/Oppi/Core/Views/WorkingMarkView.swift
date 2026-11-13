@@ -1,7 +1,7 @@
 import UIKit
 
 /// The static "agent is working" icon for every surface outside the chat
-/// timeline: Thread strips, the workspace sidebar, extension panels (activity
+/// timeline: the workspace sidebar, extension panels (activity
 /// rows, a widget pill, `working` surface icons), notebook calls, the
 /// terminal's program status, and schedules. Only the chat timeline animates
 /// working: the focused chat's working row and its jump-to-bottom button keep

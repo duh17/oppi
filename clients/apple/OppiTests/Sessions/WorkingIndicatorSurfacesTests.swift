@@ -4,7 +4,8 @@ import UIKit
 
 /// Outside the chat timeline, working is static: a session row says "Working" in blue where other states put
 /// their word, and small icon slots draw the app's one working icon (`WorkingMarkView`) in the accent blue.
-/// Nothing outside the timeline draws an orb or another animated spinner.
+/// A thread strip is the exception: it pulses one dot per working child. Nothing outside the timeline draws an
+/// orb or another animated spinner.
 @MainActor
 @Suite("Working indicator surfaces")
 struct WorkingIndicatorSurfacesTests {
@@ -87,48 +88,6 @@ struct WorkingIndicatorSurfacesTests {
         }
         #expect(descendants(of: row, WorkingMarkView.self).isEmpty, "A session row draws no working icon")
         #expect(animatedViews(in: row).isEmpty, "A session row draws no animated spinner")
-    }
-
-    /// The thread strip draws one working icon for its working members, "×N" only when more than one works,
-    /// and keeps its dots for the members that need the person or are in error.
-    @Test func theThreadStripDrawsOneMarkForItsWorkingMembers() throws {
-        let style = SessionRowStyle.for(.dark)
-        let view = SessionThreadStatusMarksView()
-        let mark = try #require(descendants(of: view, WorkingMarkView.self).first)
-        func dots() -> [CALayer] { (view.layer.sublayers ?? []).filter { $0.delegate == nil && !$0.isHidden } }
-        func count() -> String? {
-            descendants(of: view, UILabel.self).first { !$0.isHidden && $0.text?.hasPrefix("×") == true }?.text
-        }
-
-        view.apply([.needsYou, .error], hiddenCount: 0, working: 3, style: style)
-        #expect(dots().map { $0.backgroundColor.map(UIColor.init(cgColor:)) } == [style.tint(.needsApproval), style.tint(.error)])
-        #expect(!mark.isHidden && mark.image != nil)
-        #expect(count() == "×3")
-
-        view.apply([], hiddenCount: 0, working: 1, style: style)
-        #expect(dots().isEmpty)
-        #expect(!mark.isHidden)
-        #expect(count() == nil, "One working member draws the mark alone")
-
-        view.apply([.needsYou], hiddenCount: 0, working: 0, style: style)
-        #expect(dots().count == 1)
-        #expect(mark.isHidden, "No working member, no mark")
-        #expect(count() == nil)
-        #expect(animatedViews(in: view).isEmpty, "A Thread strip draws no animated spinner")
-    }
-
-    /// The strip's status line keeps one height whether or not it draws the mark, so the list below never
-    /// jumps as members start and stop working.
-    @Test func theStatusLineKeepsItsHeightWithAndWithoutTheMark() {
-        let style = SessionRowStyle.for(.dark)
-        let view = SessionThreadStatusMarksView()
-        view.apply([.error], hiddenCount: 0, working: 0, style: style)
-        let still = view.intrinsicContentSize
-        view.apply([.error], hiddenCount: 4, working: 5, style: style)
-        let working = view.intrinsicContentSize
-
-        #expect(still.height == working.height)
-        #expect(working.width > still.width)
     }
 
     /// The icon is its text line's height and grows with a live text-size change, so it keeps its place
