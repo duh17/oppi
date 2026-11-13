@@ -1281,11 +1281,9 @@ struct SchedulePresentationTests {
         let twiceDaily = AgentScheduleTrigger.cron(expression: "0 9,17 * * *", timeZone: "America/Los_Angeles")
         let weekly = AgentScheduleTrigger.cron(expression: "30 9 * * 1", timeZone: "America/Los_Angeles")
 
-        #expect(daily.scheduleScreenCadence == "DAILY")
         #expect(daily.scheduleScreenTiming(locale: Locale(identifier: "en_US")).contains("Every day · 8:00"))
         #expect(twiceDaily.scheduleScreenTiming(locale: Locale(identifier: "en_US")).contains("9:00"))
         #expect(twiceDaily.scheduleScreenTiming(locale: Locale(identifier: "en_US")).contains("5:00"))
-        #expect(weekly.scheduleScreenCadence == "WEEKLY")
         #expect(weekly.scheduleScreenTiming(locale: Locale(identifier: "en_US")).contains("Mondays · 9:30"))
     }
 
@@ -1293,9 +1291,8 @@ struct SchedulePresentationTests {
         let custom = AgentScheduleTrigger.cron(expression: "0 8 1 * *", timeZone: "UTC")
         let interval = AgentScheduleTrigger.every(intervalMs: 7_200_000, timeZone: "UTC")
 
-        #expect(custom.scheduleScreenCadence == "CUSTOM")
-        #expect(custom.scheduleScreenTiming(locale: Locale(identifier: "en_US")) == "Custom schedule")
-        #expect(interval.scheduleScreenCadence == "REPEATS")
+        #expect(custom.scheduleScreenTiming(locale: Locale(identifier: "en_US"))
+            .replacingOccurrences(of: "\u{202F}", with: " ") == "Monthly on the 1st · 8:00 AM")
         #expect(interval.scheduleScreenTiming(locale: Locale(identifier: "en_US")) == "Every 2h")
     }
 
@@ -1406,7 +1403,7 @@ struct NativeScheduleEditingTests {
         var draft = ScheduleTriggerDraft(trigger: custom)
 
         draft.cadence = .daily
-        #expect(draft.makeTrigger()?.scheduleScreenCadence == "DAILY")
+        #expect(draft.makeTrigger()?.scheduleScreenDays(locale: Locale(identifier: "en_US")) == "Every day")
 
         draft.cadence = .custom
         #expect(draft.makeTrigger() == custom)

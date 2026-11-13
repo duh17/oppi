@@ -2,7 +2,11 @@ import UIKit
 
 /// The Day agenda's header: the month title, then the week strip (seven days with one
 /// health mark each; swipe to page weeks) or, at accessibility text sizes, a
-/// `‹ Wed 11 Today ›` day stepper.
+/// `‹ Wed 11 Today ›` day stepper. Under Month (`showsWeekStrip` false) the title is the
+/// selected day's date and there is no strip: the month above picks the day.
+///
+/// The title is a button when `onTitleTap` is set: the Day's month title opens Month, and
+/// Month's day title opens the Day.
 @MainActor
 final class ScheduleCalendarHeaderView: UIView {
     struct Content: Equatable {
@@ -16,6 +20,13 @@ final class ScheduleCalendarHeaderView: UIView {
     var onSelect: ((Date) -> Void)?
     /// Moves the selection by this many days: ±7 pages a week, ±1 steps a day.
     var onStep: ((Int) -> Void)?
+    /// Tapping the title: nil leaves it plain text.
+    var onTitleTap: (() -> Void)? {
+        didSet { titleLabel.onActivate = onTitleTap }
+    }
+    /// What the title's button does, spoken as its hint.
+    var titleHint: String?
+    let showsWeekStrip: Bool
     /// How far the header's content sits in from its sides, so it starts and ends on the
     /// rows' edges.
     var edgeInsets: (left: CGFloat, right: CGFloat) = (16, 16) {
@@ -28,7 +39,7 @@ final class ScheduleCalendarHeaderView: UIView {
     private var leftInset: NSLayoutConstraint?
     private var rightInset: NSLayoutConstraint?
 
-    private let titleLabel = UILabel()
+    private let titleLabel = TitleLabel()
     private let strip = UIStackView()
     private let days = (0..<7).map { _ in DayButton() }
     private let stepper = UIStackView()
@@ -40,8 +51,10 @@ final class ScheduleCalendarHeaderView: UIView {
     /// The day's one-line summary, under the strip so it stays in view while the day scrolls.
     private let summary = UIView()
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
+    init(showsWeekStrip: Bool = true) {
+        self.showsWeekStrip = showsWeekStrip
+        super.init(frame: .zero)
+        titleLabel.accessibilityIdentifier = showsWeekStrip ? "schedules.calendar.monthTitle" : "schedules.calendar.dayTitle"
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.numberOfLines = 0
         titleLabel.accessibilityTraits = .header
@@ -143,23 +156,49 @@ final class ScheduleCalendarHeaderView: UIView {
     @objc private func previousWeek() { onStep?(-7) }
 
     func apply(_ content: Content, calendar: Calendar, palette: ThemePalette) {
-        let month = content.selected.formatted(.dateTime.month(.wide))
-        let year = content.selected.formatted(.dateTime.year())
-        let title = NSMutableAttributedString(string: month, attributes: [
-            .font: UIFont.scaled(.largeTitle, .bold), .foregroundColor: palette.ui.fg,
-        ])
-        if !content.isAccessibilitySize {
-            title.append(NSAttributedString(string: " \(year)", attributes: [
-                .font: UIFont.scaled(.title2), .foregroundColor: palette.ui.fgDim,
-            ]))
+        let isToday = calendar.isDate(content.selected, inSameDayAs: content.today)
+        let title: NSMutableAttributedString
+        if showsWeekStrip {
+            let month = content.selected.formatted(.dateTime.month(.wide))
+            let year = content.selected.formatted(.dateTime.year())
+            title = NSMutableAttributedString(string: month, attributes: [
+                .font: UIFont.scaled(.largeTitle, .bold), .foregroundColor: palette.ui.fg,
+            ])
+            if !content.isAccessibilitySize {
+                title.append(NSAttributedString(string: " \(year)", attributes: [
+                    .font: UIFont.scaled(.title2), .foregroundColor: palette.ui.fgDim,
+                ]))
+            }
+            titleLabel.accessibilityLabel = "\(month) \(year)"
+        } else {
+            let date = content.selected.formatted(.dateTime.weekday(.wide).month(.wide).day())
+            title = NSMutableAttributedString(string: date, attributes: [
+                .font: UIFont.scaled(.title2, .bold), .foregroundColor: palette.ui.fg,
+            ])
+            if isToday {
+                title.append(NSAttributedString(string: "  \(String(localized: "Today"))", attributes: [
+                    .font: UIFont.scaled(.subheadline, .semibold), .foregroundColor: palette.ui.blue,
+                ]))
+            }
+            titleLabel.accessibilityLabel = [date, isToday ? String(localized: "Today") : nil].compactMap { $0 }.joined(separator: ", ")
+        }
+        if onTitleTap != nil, let font = title.attribute(.font, at: 0, effectiveRange: nil) as? UIFont,
+           let chevron = UIImage(
+               systemName: showsWeekStrip ? "chevron.down" : "chevron.forward",
+               withConfiguration: UIImage.SymbolConfiguration(font: font.withSize(font.pointSize * 0.5)).applying(UIImage.SymbolConfiguration(weight: .bold))
+           )?.withTintColor(palette.ui.blue, renderingMode: .alwaysOriginal) {
+            title.append(NSAttributedString(string: " ", attributes: [.font: font]))
+            title.append(NSAttributedString(attachment: NSTextAttachment(image: chevron)))
         }
         titleLabel.attributedText = title
-        titleLabel.accessibilityLabel = "\(month) \(year)"
+        titleLabel.accessibilityTraits = onTitleTap == nil ? .header : [.header, .button]
+        titleLabel.accessibilityHint = onTitleTap == nil ? nil : titleHint
+        titleLabel.isUserInteractionEnabled = onTitleTap != nil
 
         // Accessibility sizes keep only the stepper, which names the month itself, so the
         // day's runs keep the screen.
         titleLabel.isHidden = content.isAccessibilitySize
-        strip.isHidden = content.isAccessibilitySize
+        strip.isHidden = content.isAccessibilitySize || !showsWeekStrip
         stepper.isHidden = !content.isAccessibilitySize
         divider.backgroundColor = palette.ui.comment.withAlphaComponent(0.35)
 
@@ -182,7 +221,6 @@ final class ScheduleCalendarHeaderView: UIView {
             ]
         }
 
-        let isToday = calendar.isDate(content.selected, inSameDayAs: content.today)
         stepperTitle.text = content.selected.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
         stepperTitle.textColor = palette.ui.fg
         stepperSubtitle.text = isToday ? String(localized: "Today") : content.selected.formatted(.dateTime.month(.abbreviated))
@@ -195,6 +233,28 @@ final class ScheduleCalendarHeaderView: UIView {
             button.configuration?.baseForegroundColor = palette.ui.fg
             button.configuration?.baseBackgroundColor = palette.ui.fg.withAlphaComponent(0.07)
         }
+    }
+}
+
+/// The header's title: a button when it has somewhere to go, for touch and VoiceOver alike.
+@MainActor
+private final class TitleLabel: UILabel {
+    var onActivate: (() -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    @objc private func tapped() { onActivate?() }
+
+    override func accessibilityActivate() -> Bool {
+        guard let onActivate else { return false }
+        onActivate()
+        return true
     }
 }
 

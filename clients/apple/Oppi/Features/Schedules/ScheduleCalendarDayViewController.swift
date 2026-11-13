@@ -7,11 +7,15 @@ import UIKit
 /// Tapping a past or running run opens its session; tapping an occurrence still to come
 /// opens its schedule. A run that launched subagents has their strip under it, which opens
 /// the run's thread in All Sessions. A long press offers Run Now, Pause Schedule, Show Schedule, and
-/// Last Run's Session, and VoiceOver offers the same as custom actions.
+/// Last Run's Session, and VoiceOver offers the same as custom actions (`ScheduleCalendarActions`).
+/// A horizontal swipe across the day pages to the next or previous day, and the week strip
+/// follows.
+///
+/// Month embeds it with `showsWeekStrip` false: the selected day's title, summary, and runs.
 ///
 /// The container (`SchedulesViewController`) owns the model, the composer, and the bar.
 @MainActor
-final class ScheduleCalendarDayViewController: UIViewController, UICollectionViewDelegate {
+final class ScheduleCalendarDayViewController: UIViewController, UICollectionViewDelegate, UIGestureRecognizerDelegate {
     enum Section: Hashable { case summary, night, day, more }
 
     enum ID: Hashable {
@@ -41,11 +45,18 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
     let model: ScheduleCalendarModel
     private let root: AppRootEnvironment
     private let connection: ServerConnection
-    /// A change the person asked for failed; the container's composer says why.
-    private let reportError: (String?) -> Void
-    private let openSchedule: (String) -> Void
+    private let actions: ScheduleCalendarActions
+    private let agents: ScheduleAgentDirectory
+    /// Tapping the header's title: the Day's month title opens Month; Month's day title
+    /// opens the Day. Nil leaves the title plain.
+    var onTitleTap: (() -> Void)? {
+        get { header.onTitleTap }
+        set { header.onTitleTap = newValue; setNeedsUpdateProperties() }
+    }
 
-    private let header = ScheduleCalendarHeaderView()
+    private let header: ScheduleCalendarHeaderView
+    /// The horizontal swipe that pages days.
+    private let dayPan = UIPanGestureRecognizer()
     private(set) lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
     private lazy var dataSource = makeDataSource()
     private let stateView = UIContentUnavailableView(loadState: .loading(nil))
@@ -53,8 +64,8 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
     private var rowInputs: [ID: AnyHashable] = [:]
     private var summaryKey: AnyHashable?
     private var agenda: ScheduleCalendarAgenda?
-    private var workspaces: [String: ScheduleCalendarWorkspaceBadge] = [:]
-    private var minuteTimer: Timer?
+    private var badges = ScheduleRowBadges(workspaces: [], agents: [])
+    private let ticker = ScheduleCalendarMinuteTicker()
     /// The day the list last scrolled to on its own, so a redraw never moves it again.
     private var scrolledDay: String?
 
@@ -62,14 +73,17 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         root: AppRootEnvironment,
         connection: ServerConnection,
         model: ScheduleCalendarModel,
-        reportError: @escaping (String?) -> Void,
-        openSchedule: @escaping (String) -> Void
+        actions: ScheduleCalendarActions,
+        agents: ScheduleAgentDirectory,
+        showsWeekStrip: Bool = true
     ) {
         self.root = root
         self.connection = connection
         self.model = model
-        self.reportError = reportError
-        self.openSchedule = openSchedule
+        self.actions = actions
+        self.agents = agents
+        header = ScheduleCalendarHeaderView(showsWeekStrip: showsWeekStrip)
+        header.titleHint = showsWeekStrip ? String(localized: "Shows the month") : String(localized: "Shows the day with its week")
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -83,7 +97,8 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.accessibilityIdentifier = "schedules.calendar"
+        view.accessibilityIdentifier = header.showsWeekStrip ? "schedules.calendar" : "schedules.calendar.monthAgenda"
+        actions.presenter = self
         header.translatesAutoresizingMaskIntoConstraints = false
         header.onSelect = { [weak self] day in self?.model.select(day) }
         header.onStep = { [weak self] days in self?.model.step(days: days) }
@@ -103,6 +118,9 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             }
         }, for: .valueChanged)
         collectionView.refreshControl = refresh
+        dayPan.addTarget(self, action: #selector(handleDayPan(_:)))
+        dayPan.delegate = self
+        collectionView.addGestureRecognizer(dayPan)
         stateView.translatesAutoresizingMaskIntoConstraints = false
         stateView.accessibilityIdentifier = "schedules.calendar.state"
         // It fills the list's region; it never sizes the header above it.
@@ -129,7 +147,7 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
         model.appear()
-        startMinuteTimer()
+        ticker.start(model)
     }
 
     override func viewDidLayoutSubviews() {
@@ -158,23 +176,7 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        minuteTimer?.invalidate()
-        minuteTimer = nil
-    }
-
-    /// One timer, on each minute boundary: countdowns, running times, and the now line.
-    private func startMinuteTimer() {
-        minuteTimer?.invalidate()
-        // The boundary of the model's minute, which a screenshot preview may shift.
-        let now = model.now
-        let next = (now.timeIntervalSinceReferenceDate / 60).rounded(.down) * 60 + 60
-        let fire = Date().addingTimeInterval(next - now.timeIntervalSinceReferenceDate)
-        let timer = Timer(fire: fire, interval: 60, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.model.tick() }
-        }
-        timer.tolerance = 1
-        RunLoop.main.add(timer, forMode: .common)
-        minuteTimer = timer
+        ticker.stop()
     }
 
     // MARK: - Drawing
@@ -190,10 +192,8 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         let failure = model.failure
         let isLoaded = response != nil && model.isSelectedDayLoaded
         let isAccessibilitySize = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
-        let live = liveSessions(for: response)
-        workspaces = Dictionary(connection.workspaceStore.workspaces.map {
-            ($0.id, ScheduleCalendarWorkspaceBadge(name: $0.name, icon: $0.icon, sandbox: $0.runtime == .sandbox))
-        }, uniquingKeysWith: { first, _ in first })
+        let live = Self.liveSessions(for: response, sessionStore: connection.sessionStore)
+        badges = ScheduleRowBadges(workspaces: connection.workspaceStore.workspaces, agents: agents.agents)
         _ = EntityIcon.loadGeneration
 
         view.backgroundColor = palette.ui.bg
@@ -220,14 +220,14 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
 
     /// The app's live copy of the sessions the answer names: running and blocked changes
     /// reach it through the app event stream before the next fetch.
-    private func liveSessions(for response: ScheduleCalendarResponse?) -> [String: Session] {
+    static func liveSessions(for response: ScheduleCalendarResponse?, sessionStore: SessionStore) -> [String: Session] {
         let followed = Set(response?.entries.flatMap { entry -> [String] in
             guard let session = entry.run?.session else { return [] }
             return [session.id] + session.descendants.map(\.id)
         } ?? [])
         guard !followed.isEmpty else { return [:] }
         var live: [String: Session] = [:]
-        for session in connection.sessionStore.listProjectionSessions where followed.contains(session.id) {
+        for session in sessionStore.listProjectionSessions where followed.contains(session.id) {
             live[session.id] = session
         }
         return live
@@ -452,7 +452,7 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             palette: palette,
             now: model.now,
             calendar: calendar,
-            workspace: item.flatMap { workspaces[$0.workspaceId] },
+            badge: item.flatMap { badges.badge(workspaceId: $0.workspaceId, agentId: $0.agentId) },
             assetCache: connection.iconAssetCache,
             isAccessibilitySize: traitCollection.preferredContentSizeCategory.isAccessibilityCategory,
             showsTime: showsTime,
@@ -487,9 +487,9 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             cell.accessibilityLabel = String(localized: "Overnight, \(range)")
         case .cluster(let cluster):
             let context = context(for: nil)
-            let icons = Self.unique(cluster.items.compactMap { workspaces[$0.workspaceId] })
+            let icons = Self.unique(cluster.items.compactMap { badges.badge(workspaceId: $0.workspaceId, agentId: $0.agentId) })
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 8, leading: 0, bottom: 8, trailing: 0)) {
-                ScheduleCalendarRowViews.cluster(cluster, workspaces: icons, context: context)
+                ScheduleCalendarRowViews.cluster(cluster, badges: icons, context: context)
             }
             cell.isAccessibilityElement = true
             cell.accessibilityTraits = .button
@@ -518,12 +518,7 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             // the row was drawn offers no Pause.
             cell.accessibilityCustomActionsBlock = { [weak self] in
                 guard let self, case .entry(let item, _, _) = rows[id] else { return [] }
-                return menuActions(for: item).map { action in
-                    UIAccessibilityCustomAction(name: action.title) { _ in
-                        action.perform()
-                        return true
-                    }
-                }
+                return actions.accessibilityActions(for: item, agenda: agenda)
             }
         case .subagents(let item, let summary):
             let context = context(for: item)
@@ -580,7 +575,7 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             if let reason = ScheduleCalendarRowViews.failureReason(item) { parts.append(reason) }
             if item.outcome.isNeedsYou, let question = item.sessionMessage { parts.append(question) }
         }
-        if let workspace = context.workspace { parts.append(String(localized: "\(workspace.name) workspace")) }
+        if let badge = context.badge { parts.append(badge.spoken) }
         if let model = item.model { parts.append(ScheduleCalendarRowViews.modelName(model)) }
         return parts.joined(separator: ", ")
     }
@@ -625,8 +620,8 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         return formatter.string(from: start, to: end)
     }
 
-    private static func unique(_ badges: [ScheduleCalendarWorkspaceBadge]) -> [ScheduleCalendarWorkspaceBadge] {
-        var seen = Set<ScheduleCalendarWorkspaceBadge>()
+    private static func unique(_ badges: [ScheduleRowBadge]) -> [ScheduleRowBadge] {
+        var seen = Set<ScheduleRowBadge>()
         return badges.filter { seen.insert($0).inserted }
     }
 
@@ -655,71 +650,12 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
                 model.expandedClusters.insert(cluster.id)
             }
         case .entry(let item, _, _):
-            if item.sessionId != nil {
-                openSession(of: item)
-            } else {
-                openSchedule(item.scheduleId)
-            }
+            actions.open(item)
         case .subagents(let item, _):
-            openThread(of: item)
+            actions.openThread(of: item)
         default:
             break
         }
-    }
-
-    /// All Sessions with the run's thread open. A run's session is its thread's root: a
-    /// schedule launches it with no parent.
-    private func openThread(of item: ScheduleCalendarAgenda.Item) {
-        guard let sessionId = item.sessionId,
-              let serverId = connection.workspaceStore.activeServerId else { return }
-        root.navigation.showThread(serverId: serverId, rootId: sessionId)
-    }
-
-    private func openSession(of item: ScheduleCalendarAgenda.Item) {
-        guard let sessionId = item.sessionId,
-              let serverId = connection.workspaceStore.activeServerId else { return }
-        root.navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: item.workspaceId)
-        )
-    }
-
-    private struct MenuAction {
-        let title: String
-        let symbol: String
-        let identifier: String
-        let perform: () -> Void
-    }
-
-    /// The long-press menu, and VoiceOver's custom actions. Only what the server can do:
-    /// an unavailable action is left out, never dimmed.
-    private func menuActions(for item: ScheduleCalendarAgenda.Item) -> [MenuAction] {
-        let schedule = agenda?.schedules[item.scheduleId]
-        let scheduleId = item.scheduleId
-        var actions: [MenuAction] = []
-        if item.sessionId != nil {
-            actions.append(MenuAction(title: String(localized: "Open Session"), symbol: "bubble.left", identifier: "openSession") { [weak self] in
-                self?.openSession(of: item)
-            })
-        }
-        if schedule?.status != .archived {
-            actions.append(MenuAction(title: String(localized: "Run Now"), symbol: "play.fill", identifier: "runNow") { [weak self] in
-                self?.runNow(scheduleId)
-            })
-        }
-        if schedule?.status == .active {
-            actions.append(MenuAction(title: String(localized: "Pause Schedule"), symbol: "pause.fill", identifier: "pause") { [weak self] in
-                self?.pause(scheduleId)
-            })
-        }
-        actions.append(MenuAction(title: String(localized: "Show Schedule"), symbol: "info.circle", identifier: "showSchedule") { [weak self] in
-            self?.openSchedule(scheduleId)
-        })
-        if item.sessionId == nil, let last = agenda?.lastSession(of: scheduleId, before: model.now) {
-            actions.append(MenuAction(title: String(localized: "Last Run's Session"), symbol: "bubble.left", identifier: "lastSession") { [weak self] in
-                self?.openSession(of: last)
-            })
-        }
-        return actions
     }
 
     func collectionView(
@@ -730,15 +666,12 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         guard indexPaths.count == 1,
               let id = dataSource.itemIdentifier(for: indexPaths[0]),
               case .entry(let item, _, _) = rows[id] else { return nil }
-        let preview = previewController(for: item)
-        return UIContextMenuConfiguration(identifier: item.id as NSString, previewProvider: { preview }) { [weak self] _ in
-            guard let self else { return nil }
-            return UIMenu(children: menuActions(for: item).map { action in
-                let element = UIAction(title: action.title, image: UIImage(systemName: action.symbol)) { _ in action.perform() }
-                element.accessibilityIdentifier = "schedules.calendar.menu.\(action.identifier)"
-                return element
-            })
-        }
+        return actions.contextMenu(
+            for: item,
+            agenda: { [weak self] in self?.agenda },
+            badge: badges.badge(workspaceId: item.workspaceId, agentId: item.agentId),
+            width: view.bounds.width
+        )
     }
 
     func collectionView(
@@ -751,117 +684,83 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         animator.addCompletion { [weak self] in self?.activate(.entry(id)) }
     }
 
-    /// The menu's preview: timing, workspace and model, the last seven outcomes, and the
-    /// average cost.
-    private func previewController(for item: ScheduleCalendarAgenda.Item) -> UIViewController {
-        let palette = palette
-        let context = context(for: item)
-        let schedule = agenda?.schedules[item.scheduleId]
-        let recent = agenda?.recentOutcomes(of: item.scheduleId, before: model.now) ?? []
-        let costs = agenda?.items.filter { $0.scheduleId == item.scheduleId && $0.outcome.isPast }.compactMap(\.cost) ?? []
-        let controller = UIViewController()
-        controller.view.backgroundColor = palette.ui.bgDark
+    // MARK: - Day paging
 
-        let title = ControlRowViews.label(item.name, style: .headline, color: palette.ui.fg)
-        var head: [UIView] = [title, ControlRowViews.spacer()]
-        if item.outcome == .upcoming {
-            let countdown = ControlRowViews.label(
-                ScheduleCalendarText.countdown(to: item.at, now: model.now, calendar: calendar),
-                style: .subheadline, weight: .semibold, color: palette.ui.blue, lines: 1
-            )
-            countdown.setContentHuggingPriority(.required, for: .horizontal)
-            head.append(countdown)
-        }
-        // Each line is one line, truncating, so the preview's height is the same at any
-        // width: an iPad shows it narrower than it was measured, and wrapped text ran
-        // under the outcomes.
-        title.numberOfLines = 1
-        title.lineBreakMode = .byTruncatingTail
-        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        var lines: [UIView] = [ControlRowViews.stack(head, axis: .horizontal, spacing: 8, alignment: .firstBaseline)]
-        var place: [String] = []
-        if let workspace = context.workspace { place.append(workspace.name) }
-        if let model = schedule?.model ?? item.model { place.append(ScheduleCalendarRowViews.modelName(model)) }
-        for detail in [schedule?.trigger.scheduleScreenTiming(), place.isEmpty ? nil : place.joined(separator: " · ")] {
-            guard let detail else { continue }
-            let label = ControlRowViews.label(detail, style: .subheadline, color: palette.ui.fgDim, lines: 1)
-            label.lineBreakMode = .byTruncatingTail
-            lines.append(label)
-        }
-        if !recent.isEmpty {
-            let glyphs = recent.map { ScheduleCalendarRowViews.glyph(.init($0, palette: palette), palette: palette, textStyle: .subheadline) }
-            let caption = ControlRowViews.label(String(localized: "Last \(recent.count) runs"), style: .footnote, color: palette.ui.fgDim, lines: 1)
-            caption.setContentCompressionResistancePriority(.required, for: .horizontal)
-            var row: [UIView] = [caption]
-            row += glyphs
-            row.append(ControlRowViews.spacer())
-            if !costs.isEmpty {
-                row.append(ControlRowViews.label(
-                    String(localized: "avg \(SessionFormatting.costString(costs.reduce(0, +) / Double(costs.count)))"),
-                    style: .footnote, color: palette.ui.fgDim, lines: 1
-                ))
-            }
-            lines.append(ControlRowViews.stack(row, axis: .horizontal, spacing: 4, alignment: .center))
-        }
-        let stack = ControlRowViews.stack(lines, spacing: 8)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        controller.view.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor, constant: 18),
-            stack.trailingAnchor.constraint(equalTo: controller.view.trailingAnchor, constant: -18),
-            stack.topAnchor.constraint(equalTo: controller.view.topAnchor, constant: 14),
-            stack.bottomAnchor.constraint(equalTo: controller.view.bottomAnchor, constant: -14),
-        ])
-        // Narrow enough to sit beside its menu on an iPad mini: a wider preview is shrunk
-        // to fit, height with it, and a line is squeezed out.
-        let width = min(view.bounds.width - 32, 340)
-        let height = controller.view.systemLayoutSizeFitting(
-            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        ).height
-        controller.preferredContentSize = CGSize(width: width, height: height)
-        return controller
+    /// A horizontal drag only, from anywhere but the leading edge, where the drawer opens:
+    /// a vertical one scrolls the day.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard gestureRecognizer === dayPan else { return true }
+        let x = touch.location(in: view).x
+        return x > Self.edgeExclusion && x < view.bounds.width - Self.edgeExclusion
     }
 
-    /// The detail page's Run Now: consent, then one run; Starting shows at now meanwhile.
-    private func runNow(_ scheduleId: String) {
-        guard let apiClient = connection.apiClient else { return }
-        let modelId = agenda?.schedules[scheduleId]?.model
-        let connection = connection
-        Task { [weak self] in
-            var starting: String?
-            do {
-                _ = try await ScheduleRunNow.run(
-                    scheduleId,
-                    modelId: modelId,
-                    apiClient: apiClient,
-                    connection: connection,
-                    from: self
-                ) {
-                    starting = self?.model.insertStarting(scheduleId: scheduleId)
-                }
-                guard let self, let starting else { return }
-                model.startingAccepted(starting)
-                reportError(nil)
-            } catch {
-                if let starting { self?.model.removeStarting(starting) }
-                self?.reportError(error.localizedDescription)
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === dayPan else { return true }
+        let velocity = dayPan.velocity(in: view)
+        return abs(velocity.x) > abs(velocity.y) * 1.5
+    }
+
+    /// The drawer's edge drag (`WorkspaceShellController`) and the back swipe keep their
+    /// edges.
+    private static let edgeExclusion: CGFloat = 32
+
+    /// The day follows the finger; let go past a third of the width (or with a flick) and it
+    /// slides off while the next or previous day slides in, and the week strip follows. The
+    /// day can be any day: a new week loads like a tap on the strip's next week does.
+    @objc private func handleDayPan(_ pan: UIPanGestureRecognizer) {
+        let width = max(1, view.bounds.width)
+        let translation = pan.translation(in: view).x
+        switch pan.state {
+        case .changed:
+            setPageOffset(translation)
+        case .ended:
+            let velocity = pan.velocity(in: view).x
+            let flicked = abs(velocity) > 600 && velocity.sign == translation.sign
+            guard abs(translation) > width / 3 || flicked else {
+                settlePage(animated: true)
+                return
             }
+            pageDay(by: translation < 0 ? 1 : -1)
+        case .cancelled, .failed:
+            settlePage(animated: true)
+        default:
+            break
         }
     }
 
-    /// Its future runs leave once the server has paused it, not before.
-    private func pause(_ scheduleId: String) {
-        guard let apiClient = connection.apiClient else { return }
-        Task { [weak self] in
-            do {
-                _ = try await apiClient.pauseAgentSchedule(scheduleId)
-                self?.model.reload()
-                self?.reportError(nil)
-            } catch {
-                self?.reportError(error.localizedDescription)
-            }
+    private func setPageOffset(_ x: CGFloat) {
+        let transform = CGAffineTransform(translationX: x, y: 0)
+        collectionView.transform = transform
+        stateView.transform = transform
+    }
+
+    private func settlePage(animated: Bool) {
+        guard animated, !UIAccessibility.isReduceMotionEnabled else {
+            setPageOffset(0)
+            return
+        }
+        UIView.animate(springDuration: 0.3, bounce: 0.1) { self.setPageOffset(0) }
+    }
+
+    /// Slides the shown day off toward the drag, selects the next one, and slides it in from
+    /// the other side. Reduce Motion swaps the day in place.
+    private func pageDay(by days: Int) {
+        let width = view.bounds.width
+        guard !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
+            setPageOffset(0)
+            model.step(days: days)
+            return
+        }
+        let out = days > 0 ? -width : width
+        UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseIn, .beginFromCurrentState]) {
+            self.setPageOffset(out)
+        } completion: { _ in
+            self.model.step(days: days)
+            // The new day's rows are drawn before it slides in.
+            self.updatePropertiesIfNeeded()
+            self.collectionView.layoutIfNeeded()
+            self.setPageOffset(-out)
+            UIView.animate(springDuration: 0.32, bounce: 0.08) { self.setPageOffset(0) }
         }
     }
 }

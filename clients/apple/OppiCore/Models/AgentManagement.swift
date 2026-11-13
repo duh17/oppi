@@ -424,20 +424,29 @@ enum AgentScheduleTrigger: Sendable, Hashable {
         return "\(seconds)s"
     }
 
-    var scheduleScreenCadence: String {
+    /// How often it runs, without times: "One time", "Every 15m", "Weekdays", "Mondays".
+    func scheduleScreenDays(locale: Locale = .current) -> String {
         switch self {
         case .at:
-            return "ONE TIME"
-        case .every:
-            return "REPEATS"
-        case .cron(let expression, _):
-            let fields = Self.normalizedCronFields(expression)
-            if Self.dailyCronTimes(fields) != nil { return "DAILY" }
-            if Self.weeklyCronTime(fields) != nil { return "WEEKLY" }
-            return "CUSTOM"
+            return String(localized: "One time")
+        case .every(let intervalMs, _):
+            return "Every \(Self.intervalSummary(intervalMs))"
+        case .cron:
+            return cronDescription(locale: locale)?.days ?? String(localized: "Custom schedule")
         }
     }
 
+    /// It runs on most days (at least five a week): a routine that a month view leaves
+    /// unmarked, where a one-time or weekly run is an occasion.
+    var runsMostDays: Bool {
+        switch self {
+        case .at: false
+        case .every(let intervalMs, _): intervalMs <= 86_400_000
+        case .cron: cronDescription(locale: .current)?.runsMostDays ?? false
+        }
+    }
+
+    /// "Weekdays · 8:30 AM", "Every day · 9:00 AM & 5:00 PM", "Nov 11, 9:00 AM", "Every 2h".
     func scheduleScreenTiming(locale: Locale = .current) -> String {
         switch self {
         case .at(let date, let timeZone):
@@ -448,28 +457,16 @@ enum AgentScheduleTrigger: Sendable, Hashable {
             return formatter.string(from: date)
         case .every(let intervalMs, _):
             return "Every \(Self.intervalSummary(intervalMs))"
-        case .cron(let expression, let timeZone):
-            let fields = Self.normalizedCronFields(expression)
-            let formatter = DateFormatter()
-            formatter.locale = locale
-            formatter.timeZone = TimeZone(identifier: timeZone) ?? .current
-            formatter.setLocalizedDateFormatFromTemplate("hm")
-
-            if let times = Self.dailyCronTimes(fields) {
-                let formattedTimes = times.compactMap { time in
-                    Self.timeOnlyDate(hour: time.hour, minute: time.minute, timeZone: formatter.timeZone)
-                        .map(formatter.string(from:))
-                }
-                if formattedTimes.count == times.count {
-                    return "Every day · \(formattedTimes.joined(separator: " & "))"
-                }
-            }
-            if let weekly = Self.weeklyCronTime(fields),
-               let date = Self.timeOnlyDate(hour: weekly.hour, minute: weekly.minute, timeZone: formatter.timeZone) {
-                return "\(weekly.day) · \(formatter.string(from: date))"
-            }
-            return "Custom schedule"
+        case .cron:
+            return cronDescription(locale: locale)?.text ?? String(localized: "Custom schedule")
         }
+    }
+
+    private func cronDescription(locale: Locale) -> ScheduleCronDescription? {
+        guard case .cron(let expression, let timeZone) = self else { return nil }
+        return ScheduleCronDescription(
+            expression: expression, timeZone: TimeZone(identifier: timeZone) ?? .current, locale: locale
+        )
     }
 
     /// Human timing for schedule detail. Never surfaces cron expressions.
@@ -500,56 +497,6 @@ enum AgentScheduleTrigger: Sendable, Hashable {
         return nil
     }
 
-    private static func normalizedCronFields(_ expression: String) -> [String] {
-        let fields = expression.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        return fields.count == 6 ? Array(fields.dropFirst()) : fields
-    }
-
-    private static func dailyCronTimes(_ fields: [String]) -> [(hour: Int, minute: Int)]? {
-        guard fields.count == 5,
-              fields[2] == "*", fields[3] == "*", fields[4] == "*",
-              let minute = Int(fields[0]), (0...59).contains(minute) else { return nil }
-        let hours = fields[1].split(separator: ",").compactMap { Int($0) }
-        guard !hours.isEmpty,
-              hours.count == fields[1].split(separator: ",").count,
-              hours.allSatisfy({ (0...23).contains($0) }) else { return nil }
-        return hours.map { (hour: $0, minute: minute) }
-    }
-
-    private static func weeklyCronTime(_ fields: [String]) -> (day: String, hour: Int, minute: Int)? {
-        guard fields.count == 5,
-              fields[2] == "*", fields[3] == "*",
-              let rawDay = Int(fields[4]),
-              let day = weekdayName(rawDay),
-              let time = cronHourMinute(fields) else { return nil }
-        return (day, time.hour, time.minute)
-    }
-
-    private static func cronHourMinute(_ fields: [String]) -> (hour: Int, minute: Int)? {
-        guard fields.count >= 2,
-              let minute = Int(fields[0]), (0...59).contains(minute),
-              let hour = Int(fields[1]), (0...23).contains(hour) else { return nil }
-        return (hour, minute)
-    }
-
-    private static func weekdayName(_ rawValue: Int) -> String? {
-        switch rawValue == 7 ? 0 : rawValue {
-        case 0: return "Sundays"
-        case 1: return "Mondays"
-        case 2: return "Tuesdays"
-        case 3: return "Wednesdays"
-        case 4: return "Thursdays"
-        case 5: return "Fridays"
-        case 6: return "Saturdays"
-        default: return nil
-        }
-    }
-
-    private static func timeOnlyDate(hour: Int, minute: Int, timeZone: TimeZone) -> Date? {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        return calendar.date(from: DateComponents(year: 2001, month: 1, day: 1, hour: hour, minute: minute))
-    }
 }
 
 extension AgentScheduleTrigger: Codable {

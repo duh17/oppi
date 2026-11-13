@@ -91,6 +91,8 @@ struct ScheduleCalendarPreviewWorld {
         /// Hours and minutes it is due on a day, by weekday (1 = Sunday).
         let times: (Int) -> [(Int, Int)]
         var existingSessionId: String? = nil
+        /// The saved Agent it launches, from `agents`.
+        var agentId: String? = nil
     }
 
     /// One past run: when, how it ended, how long, what it cost.
@@ -165,7 +167,10 @@ struct ScheduleCalendarPreviewWorld {
         let testFlight = Schedule(id: "lkTKXni0", name: "Daily TestFlight + push relay report", workspaceId: "oppi", model: Self.haiku, trigger: cron("0 6 * * *"), times: daily(6, 0))
         let digest = Schedule(id: "pSo7hh0o", name: "Daily personalized HN + X digest", workspaceId: "chaosdonkey", model: Self.opus, trigger: cron("0 7 * * *"), times: daily(7, 0))
         let review = Schedule(id: "nr-5e72v", name: "Night shift: weekly review", workspaceId: "oppi", model: Self.opus, trigger: cron("0 8 * * 0"), times: { $0 == 1 ? [(8, 0)] : [] })
-        let jobs = Schedule(id: "6xbwGEM4", name: "Weekday job hunt", workspaceId: "jobsearch", model: Self.sonnet, trigger: cron("30 8 * * 1-5"), times: { (2...6).contains($0) ? [(8, 30)] : [] })
+        let jobs = Schedule(
+            id: "6xbwGEM4", name: "Weekday job hunt", workspaceId: "jobsearch", model: Self.sonnet, trigger: cron("30 8 * * 1-5"),
+            times: { (2...6).contains($0) ? [(8, 30)] : [] }, agentId: "job-scout"
+        )
         let hawaii = Schedule(
             id: "GETGZreb", name: "Clear Hawaii no-install override", workspaceId: "oppi", model: Self.opus,
             trigger: ["type": "at", "at": Self.ms(hawaiiAt), "timeZone": zone],
@@ -315,6 +320,7 @@ struct ScheduleCalendarPreviewWorld {
             "promptChars": 400,
         ]
         if let sessionId = schedule.existingSessionId { action["sessionId"] = sessionId }
+        if let agentId = schedule.agentId { action["agentId"] = agentId }
         return [
             "id": schedule.id, "name": schedule.name, "status": "active", "trigger": schedule.trigger,
             "action": action, "version": 3, "createdAt": Self.ms(now) - 86_400_000 * 60, "updatedAt": Self.ms(now) - 86_400_000,
@@ -344,6 +350,15 @@ struct ScheduleCalendarPreviewWorld {
                 "promptDispatch": "delivered",
             ]
         }]
+    }
+
+    /// `GET /agents`: the saved Agent the job hunt launches.
+    func agentsBody() -> [String: Any] {
+        let stamp = Self.ms(now) - 86_400_000 * 30
+        return ["agents": [[
+            "id": "job-scout", "name": "Job scout", "icon": ["kind": "emoji", "value": "🧭"],
+            "status": "active", "version": 2, "createdAt": stamp, "updatedAt": stamp,
+        ]]]
     }
 
     /// `GET /schedules/calendar`: runs in the range with their sessions, then what is
@@ -431,7 +446,7 @@ final class ScheduleCalendarFixtureURLProtocol: URLProtocol {
             case ("GET", 2, "schedules", "calendar"): body = world.calendarBody(from: value("from"), to: value("to"))
             case ("GET", 2, "schedules", _): body = world.scheduleBody(parts[1])
             case ("GET", 3, "schedules", "runs"): body = world.runsBody(parts[1])
-            case ("GET", 1, "agents", _): body = ["agents": [] as [Any]]
+            case ("GET", 1, "agents", _): body = world.agentsBody()
             default: body = nil
             }
         }

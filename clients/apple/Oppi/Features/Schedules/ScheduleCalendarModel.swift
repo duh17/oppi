@@ -16,6 +16,18 @@ import Observation
 @MainActor
 @Observable
 final class ScheduleCalendarModel {
+    /// How much around the selected day the shown view needs: Day and Week need its week
+    /// (and the one before, for the menu's last seven outcomes); Month needs its month.
+    enum Span: Equatable {
+        case week
+        case month
+    }
+
+    /// Set by the container for the view it shows; a wider span loads what it adds.
+    var span: Span = .week {
+        didSet { if span != oldValue { loadIfNeeded() } }
+    }
+
     /// The server's answer. Nil until the first load lands.
     private(set) var response: ScheduleCalendarResponse?
     private(set) var isLoading = false
@@ -102,6 +114,22 @@ final class ScheduleCalendarModel {
     }
 
     func showToday() { select(now) }
+
+    /// Moves to the month `months` away: today when it is in that month, else its first day.
+    func step(months: Int) {
+        guard let start = calendar.dateInterval(of: .month, for: selectedDay)?.start,
+              let month = calendar.date(byAdding: .month, value: months, to: start) else { return }
+        showMonth(containing: month)
+    }
+
+    /// Shows `day`'s month with today selected when it is in it, else the month's first day.
+    func showMonth(containing day: Date) {
+        if calendar.isDate(day, equalTo: now, toGranularity: .month) {
+            select(now)
+        } else if let first = calendar.dateInterval(of: .month, for: day)?.start {
+            select(first)
+        }
+    }
 
     /// The selected week and the one before it (the menu's last seven outcomes), unless
     /// already loaded.
@@ -217,10 +245,51 @@ final class ScheduleCalendarModel {
         reload()
     }
 
+    /// The span's weeks, and the week before them. A month's six weeks and one more stay
+    /// within the server's 62 days.
     private var wantedRange: DateInterval? {
-        guard let weekStart = week.first,
-              let from = calendar.date(byAdding: .day, value: -7, to: weekStart),
-              let to = calendar.date(byAdding: .day, value: 7, to: weekStart) else { return nil }
+        let first: Date?
+        let last: Date?
+        switch span {
+        case .week:
+            first = week.first
+            last = week.first
+        case .month:
+            let month = calendar.dateInterval(of: .month, for: selectedDay)
+            first = month.flatMap { calendar.dateInterval(of: .weekOfYear, for: $0.start)?.start }
+            last = month.flatMap { calendar.date(byAdding: .day, value: -1, to: $0.end) }
+                .flatMap { calendar.dateInterval(of: .weekOfYear, for: $0)?.start }
+        }
+        guard let first, let last,
+              let from = calendar.date(byAdding: .day, value: -7, to: first),
+              let to = calendar.date(byAdding: .day, value: 7, to: last) else { return nil }
         return DateInterval(start: from, end: to)
+    }
+}
+
+/// One timer for a calendar view on screen, on each minute boundary of the model's clock:
+/// countdowns, running times, and the now line. The view starts it when it appears and
+/// stops it when it leaves.
+@MainActor
+final class ScheduleCalendarMinuteTicker {
+    private var timer: Timer?
+
+    func start(_ model: ScheduleCalendarModel) {
+        timer?.invalidate()
+        // The boundary of the model's minute, which a screenshot preview may shift.
+        let now = model.now
+        let next = (now.timeIntervalSinceReferenceDate / 60).rounded(.down) * 60 + 60
+        let fire = Date().addingTimeInterval(next - now.timeIntervalSinceReferenceDate)
+        let timer = Timer(fire: fire, interval: 60, repeats: true) { [weak model] _ in
+            MainActor.assumeIsolated { model?.tick() }
+        }
+        timer.tolerance = 1
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
     }
 }

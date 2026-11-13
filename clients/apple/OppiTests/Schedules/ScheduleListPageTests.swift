@@ -43,7 +43,7 @@ struct ScheduleListPageTests {
         })
         defer { routes.end() }
         let root = try await makeRoot()
-        let screen = ScheduleListViewController(root: root)
+        let screen = ScheduleListViewController(root: root, agents: ScheduleAgentDirectory())
         let window = try show(screen)
         defer { window.isHidden = true; window.rootViewController = nil }
 
@@ -70,7 +70,7 @@ struct ScheduleListPageTests {
         })
         defer { routes.end() }
         let root = try await makeRoot()
-        let screen = ScheduleListViewController(root: root)
+        let screen = ScheduleListViewController(root: root, agents: ScheduleAgentDirectory())
         let window = try show(screen)
         defer { window.isHidden = true; window.rootViewController = nil }
 

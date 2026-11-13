@@ -50,7 +50,7 @@ struct ServerListRepeatedIdTests {
         let serverId = "sha256:repeat-sch-\(UUID().uuidString)"
         let root = try await makeTestAppRoot(readyServerId: serverId, apiClient: RepeatedScheduleURLProtocol.makeClient())
 
-        let controller = ScheduleListViewController(root: root)
+        let controller = ScheduleListViewController(root: root, agents: ScheduleAgentDirectory())
         let window = try makeWindow(controller)
         defer { tearDown(window) }
 

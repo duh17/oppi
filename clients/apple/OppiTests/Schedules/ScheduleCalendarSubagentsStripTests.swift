@@ -12,7 +12,7 @@ struct ScheduleCalendarSubagentsStripTests {
     private var context: ScheduleCalendarRowContext {
         ScheduleCalendarRowContext(
             palette: ThemeID.dark.palette, now: Date(timeIntervalSince1970: 3_000), calendar: .current,
-            workspace: nil, assetCache: nil, isAccessibilitySize: false, showsTime: true, isNext: false, isWide: false
+            badge: nil, assetCache: nil, isAccessibilitySize: false, showsTime: true, isNext: false, isWide: false
         )
     }
 

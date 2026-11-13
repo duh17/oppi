@@ -131,6 +131,8 @@ struct ScheduleCalendarAgenda: Sendable {
         let runKind: AgentScheduleRunKind?
         let sessionId: String?
         let workspaceId: String
+        /// The saved Agent the schedule launches, if any.
+        let agentId: String?
         let model: String?
         /// What the run cost: its session's cost and its subagents'. Nil before a session
         /// exists, and for a run sent into an existing session (that session's cost is not
@@ -241,6 +243,7 @@ struct ScheduleCalendarAgenda: Sendable {
                 runKind: run?.kind,
                 sessionId: run?.session?.id,
                 workspaceId: run?.session?.workspaceId ?? schedule.action.workspaceId,
+                agentId: schedule.action.agentId,
                 model: run?.session?.model ?? schedule.model,
                 cost: session.map { $0.cost + subagents.cost },
                 subagents: subagents,
@@ -371,6 +374,31 @@ struct ScheduleCalendarAgenda: Sendable {
         return health
     }
 
+    /// A day's mark in Month, where ten daily routines make every day look alike, so it
+    /// shows only the exceptions.
+    enum MonthMark: Hashable, Sendable {
+        /// Something ran: how it went and what it cost.
+        case ran(hasFailure: Bool, needsYou: Bool, cost: Double)
+        /// Still to come, and something that does not run most days falls on it: a weekly
+        /// review, a monthly check, a one-time run.
+        case occasion
+    }
+
+    /// `day`'s Month mark; nil for a day with nothing worth marking.
+    func monthMark(on day: Date, calendar: Calendar) -> MonthMark? {
+        let items = items(on: day, calendar: calendar)
+        let ran = items.filter(\.outcome.isPast)
+        if !ran.isEmpty {
+            return .ran(
+                hasFailure: ran.contains { $0.outcome.isFailure },
+                needsYou: ran.contains { $0.outcome.isNeedsYou },
+                cost: ran.compactMap(\.cost).reduce(0, +)
+            )
+        }
+        let occasion = items.contains { $0.outcome == .upcoming && !$0.trigger.runsMostDays }
+        return occasion ? .occasion : nil
+    }
+
     /// The schedule's latest outcomes before `now`, oldest first: the menu preview's row.
     func recentOutcomes(of scheduleId: String, before now: Date, limit: Int = 7) -> [ScheduleCalendarOutcome] {
         Array(items.filter { $0.scheduleId == scheduleId && $0.outcome.isPast && $0.at <= now }
@@ -397,7 +425,8 @@ struct ScheduleCalendarAgenda: Sendable {
 
 /// Times the calendar writes: countdowns, durations, and their spoken forms.
 enum ScheduleCalendarText {
-    /// "in 18m", "in 2h 05m"; a day or more away, the weekday and time ("Thu 7:00 AM").
+    /// "in 18m", "in 2h 05m"; a day or more away, the weekday and time ("Thu 7:00 AM");
+    /// a week or more, the date ("Dec 1").
     static func countdown(to date: Date, now: Date, calendar: Calendar, locale: Locale = .current) -> String {
         let minutes = max(0, Int(ceil(date.timeIntervalSince(now) / 60)))
         if minutes < 1 { return String(localized: "now") }
@@ -405,11 +434,34 @@ enum ScheduleCalendarText {
         if minutes < 24 * 60 {
             return String(localized: "in \(minutes / 60)h \(String(format: "%02d", minutes % 60))m")
         }
+        return format(date, template: minutes < 6 * 24 * 60 ? "EEEjmm" : "MMMd", calendar: calendar, locale: locale)
+    }
+
+    /// When a run comes next, under a heading that already names its day: "in 18m" within
+    /// the hour, the time today or tomorrow ("5:00 PM"), the weekday and time within the
+    /// week ("Thu 7:00 AM"), else the date ("Dec 1").
+    static func nextRun(_ date: Date, now: Date, calendar: Calendar, locale: Locale = .current) -> String {
+        if date.timeIntervalSince(now) < 3_600 { return countdown(to: date, now: now, calendar: calendar, locale: locale) }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: date)).day ?? 0
+        if days <= 1 { return format(date, template: "jmm", calendar: calendar, locale: locale) }
+        return format(date, template: days < 7 ? "EEEjmm" : "MMMd", calendar: calendar, locale: locale)
+    }
+
+    /// When a run ran, as short as its distance allows: "7:00 AM" today, "Yesterday",
+    /// "Mon" within the week, else "Nov 3".
+    static func past(_ date: Date, now: Date, calendar: Calendar, locale: Locale = .current) -> String {
+        if calendar.isDate(date, inSameDayAs: now) { return format(date, template: "jmm", calendar: calendar, locale: locale) }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
+        if days == 1 { return String(localized: "Yesterday") }
+        return format(date, template: days < 7 ? "EEE" : "MMMd", calendar: calendar, locale: locale)
+    }
+
+    private static func format(_ date: Date, template: String, calendar: Calendar, locale: Locale) -> String {
         let formatter = DateFormatter()
         formatter.locale = locale
         formatter.calendar = calendar
         formatter.timeZone = calendar.timeZone
-        formatter.setLocalizedDateFormatFromTemplate("EEEhmm")
+        formatter.setLocalizedDateFormatFromTemplate(template)
         return formatter.string(from: date)
     }
 

@@ -49,11 +49,46 @@ struct ScheduleCalendarOutcomeStyle {
     }
 }
 
-/// The workspace a row's chip names.
-struct ScheduleCalendarWorkspaceBadge: Hashable {
+/// Who runs a schedule, as its rows name it: the saved Agent it launches, else its workspace.
+/// The calendar's rows and the list's share it, so both say the same.
+struct ScheduleRowBadge: Hashable {
     let name: String
     let icon: IconChoice?
+    let isAgent: Bool
     let sandbox: Bool
+
+    /// "oppi workspace", "Night crew Agent".
+    var spoken: String {
+        isAgent ? String(localized: "\(name) Agent") : String(localized: "\(name) workspace")
+    }
+
+    @MainActor
+    func iconView(size: CGFloat, frameSize: CGFloat, assetCache: IconAssetCache?) -> IconChoiceUIView {
+        let view = IconChoiceUIView(size: size, frameSize: frameSize)
+        view.apply(.choice(icon, purpose: isAgent ? .agent : .workspace, sandbox: sandbox), assetCache: assetCache)
+        return view
+    }
+}
+
+/// The badges a screen can name: its connection's workspaces and the saved Agents it knows.
+@MainActor
+struct ScheduleRowBadges {
+    private let workspaces: [String: ScheduleRowBadge]
+    private let agents: [String: ScheduleRowBadge]
+
+    init(workspaces: [Workspace], agents: [AgentDefinitionSummary]) {
+        self.workspaces = Dictionary(workspaces.map {
+            ($0.id, ScheduleRowBadge(name: $0.name, icon: $0.icon, isAgent: false, sandbox: $0.runtime == .sandbox))
+        }, uniquingKeysWith: { first, _ in first })
+        self.agents = Dictionary(agents.map {
+            ($0.id, ScheduleRowBadge(name: $0.name, icon: $0.icon, isAgent: true, sandbox: false))
+        }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// The Agent when the schedule launches one this screen knows, else the workspace.
+    func badge(workspaceId: String, agentId: String?) -> ScheduleRowBadge? {
+        agentId.flatMap { agents[$0] } ?? workspaces[workspaceId]
+    }
 }
 
 /// What a row draws besides its item: the context only the screen knows.
@@ -62,7 +97,7 @@ struct ScheduleCalendarRowContext {
     let palette: ThemePalette
     let now: Date
     let calendar: Calendar
-    let workspace: ScheduleCalendarWorkspaceBadge?
+    let badge: ScheduleRowBadge?
     let assetCache: IconAssetCache?
     /// Accessibility text sizes stack the row.
     let isAccessibilitySize: Bool
@@ -70,7 +105,7 @@ struct ScheduleCalendarRowContext {
     let showsTime: Bool
     /// The next occurrence's countdown is bold.
     let isNext: Bool
-    /// Regular width names the workspace in a row's chip; compact width shows only its icon.
+    /// Regular width names the badge in a row's chip; compact width shows only its icon.
     let isWide: Bool
 }
 
@@ -95,7 +130,10 @@ enum ScheduleCalendarRowViews {
         let status = statusLine(item, context: context)
         status.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         var secondLine: [UIView] = [status, ControlRowViews.spacer()]
-        if let chip = chip(item, context: context, includesName: context.isWide, includesModel: true) {
+        if let chip = chip(
+            badge: context.badge, model: item.model, palette: palette, assetCache: context.assetCache,
+            includesName: context.isWide, includesModel: true
+        ) {
             secondLine.append(chip)
         }
 
@@ -138,10 +176,8 @@ enum ScheduleCalendarRowViews {
         let palette = context.palette
         let style = ScheduleCalendarOutcomeStyle(item.outcome, palette: palette)
         var line: [UIView] = []
-        if let workspace = context.workspace {
-            let icon = IconChoiceUIView(size: 15, frameSize: 20)
-            icon.apply(.choice(workspace.icon, purpose: .workspace, sandbox: workspace.sandbox), assetCache: context.assetCache)
-            line.append(icon)
+        if let badge = context.badge {
+            line.append(badge.iconView(size: 15, frameSize: 20, assetCache: context.assetCache))
         }
         let title = ControlRowViews.label(item.name, style: .body, color: palette.ui.fgDim, lines: 1)
         title.lineBreakMode = .byTruncatingTail
@@ -178,7 +214,10 @@ enum ScheduleCalendarRowViews {
             lines.append(ControlRowViews.stack([trailing, ControlRowViews.spacer()], axis: .horizontal, spacing: 0, alignment: .center))
         }
         // The model leaves the chip at these sizes; the row still says it.
-        if let chip = chip(item, context: context, includesName: true, includesModel: false) {
+        if let chip = chip(
+            badge: context.badge, model: item.model, palette: palette, assetCache: context.assetCache,
+            includesName: true, includesModel: false
+        ) {
             lines.append(ControlRowViews.stack([chip, ControlRowViews.spacer()], axis: .horizontal, spacing: 0, alignment: .center))
         }
         let body = ControlRowViews.stack(lines, spacing: 6)
@@ -367,38 +406,34 @@ enum ScheduleCalendarRowViews {
     }
 
     static func upcomingDescription(_ item: ScheduleCalendarAgenda.Item) -> String {
-        let cadence: String = switch item.trigger {
-        case .at: String(localized: "One time")
-        case .every(let intervalMs, _): String(localized: "Every \(AgentScheduleTrigger.intervalSummary(intervalMs))")
-        case .cron: item.trigger.scheduleScreenCadence.capitalized
-        }
+        let cadence = item.trigger.scheduleScreenDays()
         return item.sendsIntoExistingSession
             ? String(localized: "\(cadence) · into an existing session")
             : cadence
     }
 
-    /// One capsule: the workspace's icon and (when `includesName`) name, then the model.
-    /// The workspace name truncates before the model. VoiceOver says both either way.
-    private static func chip(
-        _ item: ScheduleCalendarAgenda.Item,
-        context: ScheduleCalendarRowContext,
+    /// One capsule: the Agent's or workspace's icon and (when `includesName`) name, then the
+    /// model. The name truncates before the model. VoiceOver says both either way. The
+    /// calendar's rows and the list's draw it alike.
+    static func chip(
+        badge: ScheduleRowBadge?,
+        model: String?,
+        palette: ThemePalette,
+        assetCache: IconAssetCache?,
         includesName: Bool,
         includesModel: Bool
     ) -> UIView? {
-        let palette = context.palette
         var parts: [UIView] = []
-        if let workspace = context.workspace {
-            let icon = IconChoiceUIView(size: 12, frameSize: 15)
-            icon.apply(.choice(workspace.icon, purpose: .workspace, sandbox: workspace.sandbox), assetCache: context.assetCache)
-            parts.append(icon)
+        if let badge {
+            parts.append(badge.iconView(size: 12, frameSize: 15, assetCache: assetCache))
             if includesName {
-                let name = ControlRowViews.label(workspace.name, style: .caption1, color: palette.ui.fgDim, lines: 1)
+                let name = ControlRowViews.label(badge.name, style: .caption1, color: palette.ui.fgDim, lines: 1)
                 name.lineBreakMode = .byTruncatingTail
                 name.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
                 parts.append(name)
             }
         }
-        if includesModel, let model = item.model {
+        if includesModel, let model {
             if !parts.isEmpty {
                 parts.append(hugging(ControlRowViews.label("·", style: .caption1, color: palette.ui.comment, lines: 1)))
             }
@@ -432,7 +467,7 @@ enum ScheduleCalendarRowViews {
     /// "3 runs done 🫏📓📓 · $2.54 ⌄" with the runs' names under it.
     static func cluster(
         _ cluster: ScheduleCalendarAgenda.Cluster,
-        workspaces: [ScheduleCalendarWorkspaceBadge],
+        badges: [ScheduleRowBadge],
         context: ScheduleCalendarRowContext
     ) -> UIView {
         let palette = context.palette
@@ -445,10 +480,8 @@ enum ScheduleCalendarRowViews {
         )
         var head: [UIView] = [glyph(style, palette: palette, textStyle: .body), title]
         if !context.isAccessibilitySize {
-            for workspace in workspaces.prefix(4) {
-                let icon = IconChoiceUIView(size: 14, frameSize: 18)
-                icon.apply(.choice(workspace.icon, purpose: .workspace, sandbox: workspace.sandbox), assetCache: context.assetCache)
-                head.append(icon)
+            for badge in badges.prefix(4) {
+                head.append(badge.iconView(size: 14, frameSize: 18, assetCache: context.assetCache))
             }
         }
         head.append(ControlRowViews.spacer())
