@@ -210,9 +210,10 @@ extension ComposerBarController {
             self?.host?.removeRepoPointer(id: id)
             self?.applyChrome()
         }
-        failureView.connect(manager: { [weak self] in self?.host?.content.voiceInputManager }) { [weak self] in
-            self?.handleMicTap()
-        }
+        failureView.connect(
+            manager: { [weak self] in self?.host?.content.voiceInputManager },
+            retry: { [weak self] in self?.handleMicTap() }
+        )
     }
 
     private func embedStrip(_ view: UIView, in wrapper: UIView, top: CGFloat, bottom: CGFloat) {

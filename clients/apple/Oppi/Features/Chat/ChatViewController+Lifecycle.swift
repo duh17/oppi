@@ -398,24 +398,15 @@ extension ChatViewController {
     // MARK: - Lifecycle actions
 
     private func handleAppear() {
-        // A stack/split shell swap remounts this chat: pick up the reading
-        // position the same chat had in the other shell before history lands.
-        mountedPresentation = appNavigation.workspaceNavigationPresentation
         isRouteManaged = appNavigation.routeContainsSession(sessionId)
         takeRestoredPaneState()
         incognitoRouteWatch?.cancel()
         incognitoRouteWatch = nil
-        let shellSwapRemount = ChatScrollShellSwapHandoff.shared.chatDidAppear(
-            sessionId: sessionId,
-            controller: scrollController,
-            presentation: mountedPresentation
-        )
         logMountTelemetry(
             "Chat appeared",
             metadata: ChatMountTelemetry.appearMetadata(
                 sessionId: sessionId,
-                shellSwapRemount: shellSwapRemount,
-                presentation: mountedPresentation.telemetryLabel
+                presentation: appNavigation.workspaceNavigationPresentation.telemetryLabel
             )
         )
 
@@ -531,24 +522,16 @@ extension ChatViewController {
         sessionEntryTask?.cancel()
         sessionEntryTask = nil
         cancelSessionTouchedListLoad()
-        let shellSwapRemount = mountedPresentation != appNavigation.workspaceNavigationPresentation
         logMountTelemetry(
             "Chat disappeared",
             metadata: ChatMountTelemetry.disappearMetadata(
                 sessionId: sessionId,
-                shellSwapRemount: shellSwapRemount,
-                presentation: mountedPresentation.telemetryLabel
+                presentation: appNavigation.workspaceNavigationPresentation.telemetryLabel
             )
         )
         // Freeze the viewport before cleanup can publish an empty timeline
         // and make collection geometry look tail-attached during the push.
         scrollController.suspendForNavigation()
-        ChatScrollShellSwapHandoff.shared.chatDidDisappear(
-            sessionId: sessionId,
-            controller: scrollController,
-            mountedPresentation: mountedPresentation,
-            currentPresentation: appNavigation.workspaceNavigationPresentation
-        )
         let incognitoEnd = isRouteManaged && session?.ephemeral == true
             ? IncognitoSessionEnd(
                 sessionId: sessionId,

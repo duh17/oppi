@@ -894,13 +894,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     /// The folder as its own file-browser route above this one.
     private func pushDirectory(path: String) {
-        let target = navTarget(path: path)
-        switch navigation.workspaceNavigationPresentation {
-        case .stack:
-            navigation.pushWorkspaceFileBrowser(target)
-        case .split:
-            navigation.pushSplitDetailFileBrowser(target)
-        }
+        navigation.pushWorkspaceFileBrowser(navTarget(path: path))
     }
 
     private func showDirectoryInPlace(_ mutation: FileBrowserTreeNavigationMutation) {
@@ -933,16 +927,9 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             ))
             return
         }
-        switch navigation.workspaceNavigationPresentation {
-        case .stack:
-            let depth = navigation.workspaceStackRouteElements.count
-            guard depth >= popCount else { return }
-            navigation.popWorkspaceStack(toDepth: depth - popCount)
-        case .split:
-            let depth = navigation.splitDetailPathElements.count
-            guard depth >= popCount else { return }
-            navigation.popSplitDetail(toDepth: depth - popCount)
-        }
+        let depth = navigation.shownStackDepth
+        guard depth >= popCount else { return }
+        navigation.popShownStack(toDepth: depth - popCount)
     }
 
     private func breadcrumbPath(for depth: Int) -> String {

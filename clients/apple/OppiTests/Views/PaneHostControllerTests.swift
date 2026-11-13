@@ -27,9 +27,9 @@ struct PaneHostControllerTests {
         let host = PaneTestHost(width: 744, height: 1133)
         defer { host.hide() }
         host.showPanel(minWidth: 320, idealWidth: 400, maxWidth: 640)
-        #expect(host.panes.companionWidthForTesting == 368)
+        #expect(host.companionWidth == 368)
         #expect(abs(host.screenWidth - (744 - 368)) < 0.5)
-        #expect(!host.panes.isFullForTesting)
+        #expect(!host.scenePanes.isCompanionZoomed)
     }
 
     /// R4: a push over the owner parks its companion at once; the view stays
@@ -40,7 +40,7 @@ struct PaneHostControllerTests {
         defer { host.hide() }
         let companion = PaneCompanionScreen()
         host.showPanel(makeScreen: { companion })
-        let container = try #require(host.screen.leaf.containerForTesting as? UINavigationController)
+        let container = try #require(host.companion as? UINavigationController)
         let pushedInside = PaneCompanionScreen()
         container.pushViewController(pushedInside, animated: false)
         host.window.layoutIfNeeded()
@@ -64,30 +64,34 @@ struct PaneHostControllerTests {
 
         stack.popViewController(animated: false)
         host.window.layoutIfNeeded()
-        #expect(host.screen.leaf.containerForTesting === container, "the same leaf came back")
+        #expect(host.companion === container, "the same leaf came back")
         #expect(container.topViewController === pushedInside, "at its stack top")
         #expect(pushedInside.visibilities.last == .visible(focused: false))
         #expect(container.view.window != nil)
         #expect(host.screenWidth < 1000)
     }
 
-    /// R4 and the fit rule: a window too narrow for both minimums covers the
-    /// leaf with its companion; widening puts both back side by side.
-    @Test func aNarrowingWindowCoversTheLeafAndWideningRestoresIt() throws {
+    /// R4 and the fit rule (build plan §1.3): a window too narrow for both
+    /// minimums zooms the companion over its leaf, offering only Close; once
+    /// the window fits both again the zoom ends and the companion is back
+    /// beside its leaf at the share it had, as a rotation back does.
+    @Test func aNarrowingWindowZoomsTheCompanionAndWideningPutsItBackAtItsWidth() throws {
         let host = PaneTestHost(width: 1000)
         defer { host.hide() }
         let companion = PaneCompanionScreen()
         host.showPanel(minWidth: 320, idealWidth: 400, maxWidth: 640, makeScreen: { companion })
+        host.drag(by: -50)
+        #expect(host.companionWidth == 450)
         #expect(host.screen.visibilities.last == .visible(focused: true))
 
         host.resize(width: 600)
-        #expect(host.panes.companionWidthForTesting == 600 - PaneWidthPolicy.fullWindowGrabEdge)
+        #expect(host.companionWidth == 600 - PaneWidthPolicy.fullWindowGrabEdge)
         #expect(host.screen.visibilities.last == .covered)
         #expect(companion.visibilities.last == .visible(focused: false))
         #expect(host.panes.focusedScreen === companion, "Find acts in the only leaf showing")
 
         // The divider offers only what it can do: close, not "show chat".
-        let divider = host.panes.dividerForTesting
+        let divider = host.divider
         #expect(divider.mode == .noRoomBeside)
         #expect(divider.accessibilityCustomActions?.map(\.name) == [String(localized: "Close Panel")])
         var closed = false
@@ -96,11 +100,14 @@ struct PaneHostControllerTests {
         _ = close.actionHandler?(close)
         #expect(closed)
 
+        #expect(host.scenePanes.isCompanionZoomed, "the fit is the tree's zoom of the companion")
+        #expect(host.scenePanes.companionZoomIsFit)
+
         host.resize(width: 1000)
-        #expect(host.panes.companionWidthForTesting == 400)
+        #expect(host.companionWidth == 450, "back beside at the share it had")
         #expect(host.screen.visibilities.last == .visible(focused: true))
-        #expect(!host.panes.isFullForTesting, "full was the fit, not the person's choice")
-        #expect(host.panes.dividerForTesting.mode == .beside)
+        #expect(!host.scenePanes.isCompanionZoomed)
+        #expect(host.divider.mode == .beside)
         #expect(host.panes.focusedScreen === host.screen)
     }
 
@@ -111,18 +118,17 @@ struct PaneHostControllerTests {
         defer { host.hide() }
         host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 500)
         host.drag(by: -100) // settles at 400 of 1000
-        let divider = host.panes.dividerForTesting
+        let divider = host.divider
         divider.onBegan?()
         divider.onChanged?(-80)
-        #expect(host.panes.companionWidthForTesting == 480)
+        #expect(host.companionWidth == 480)
 
         host.resize(width: 800)
-        #expect(host.panes.companionWidthForTesting == 320, "0.4 of the new width")
+        #expect(host.companionWidth == 320, "0.4 of the new width")
         divider.onChanged?(-200)
-        divider.onEnded?(-200, 0)
-        host.settle()
-        #expect(host.panes.companionWidthForTesting == 320, "the cancelled drag moves nothing")
-        #expect(host.panes.restingFractionForTesting == 0.4)
+        host.act { divider.onEnded?(-200, 0) }
+        #expect(host.companionWidth == 320, "the cancelled drag moves nothing")
+        #expect(abs((host.scenePanes.companionShare ?? 0) - 0.4) < 1e-9)
     }
 
     /// P1: a memory warning reduces two parked leaves to what rebuilds them;
@@ -140,23 +146,20 @@ struct PaneHostControllerTests {
         let second = PaneLeafScreen()
         stack.pushViewController(second, animated: false)
         host.window.layoutIfNeeded()
-        second.showPanel(root: host.root, minWidth: 320, idealWidth: 400, maxWidth: 640, makeScreen: make)
-        host.settle()
+        host.act { second.showPanel(root: host.root, minWidth: 320, idealWidth: 400, maxWidth: 640, makeScreen: make) }
         stack.pushViewController(UIViewController(), animated: false)
         host.window.layoutIfNeeded()
         #expect(builds == 2)
-        #expect(host.screen.leaf.containerForTesting != nil)
-        #expect(second.leaf.containerForTesting != nil)
+        #expect(host.panes.children.count == 3, "both leaves parked in the host")
 
         NotificationCenter.default.post(name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
-        #expect(host.screen.leaf.containerForTesting == nil)
-        #expect(second.leaf.containerForTesting == nil)
+        #expect(host.panes.children == [host.panes.primary], "both parked leaves gave their screens back")
 
         stack.popViewController(animated: false)
         host.window.layoutIfNeeded()
         #expect(builds == 3, "the returning owner's leaf is rebuilt")
-        #expect(second.leaf.mountedScreenForTesting is PaneCompanionScreen)
-        #expect(host.panes.companionWidthForTesting == 400)
+        #expect(second.leaf.mountedScreen is PaneCompanionScreen)
+        #expect(host.companionWidth == 400)
     }
 
     /// K1: the composer's field leaves the companion alone (no layout pass,
@@ -195,8 +198,7 @@ struct PaneHostControllerTests {
 
         beginEditing(companion.field)
         #expect(!host.screen.followsKeyboard)
-        host.screen.hidePanel()
-        host.settle()
+        host.act { host.screen.hidePanel() }
         #expect(host.screen.followsKeyboard, "closing the companion gives the keyboard back")
         #expect(host.panes.focusedLeaf == .primary)
     }

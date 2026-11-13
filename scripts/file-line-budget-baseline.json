@@ -1,10 +1,5 @@
 {
   "files": {
-    "clients/apple/Oppi/App/AppNavigation.swift": {
-      "budget": 1700,
-      "owner": "QS1 quick-session handoff",
-      "reason": "Scoped locks and the quick-session handoff sit beside navigation state; the handoff moves out later."
-    },
     "clients/apple/Oppi/Core/Networking/APIClient.swift": {
       "budget": 3200,
       "owner": "API1-API3 transport and endpoint split",

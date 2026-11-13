@@ -184,42 +184,38 @@ struct PaneDividerPhysicsTests {
         let host = PaneTestHost(width: 1000)
         defer { host.hide() }
         host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 500)
-        let panes = host.panes
-        #expect(panes.companionWidthForTesting == 300, "opens at its own ideal width with nothing remembered")
+        #expect(host.companionWidth == 300, "opens at its own ideal width with nothing remembered")
 
         host.drag(by: -50) // dragging toward the leaf widens the companion
-        #expect(panes.companionWidthForTesting == 350)
-        #expect(host.scenePanes.companionFraction == 0.35)
+        #expect(host.companionWidth == 350)
+        #expect(abs((host.scenePanes.companionShare ?? 0) - 0.35) < 1e-9)
 
         // Past the maximum, short of the expand threshold: the companion
         // follows the finger over the leaf, then settles back at the
         // maximum rather than opening further.
-        let divider = panes.dividerForTesting
+        let divider = host.divider
         divider.onBegan?()
         divider.onChanged?(-170)
-        #expect(panes.companionWidthForTesting == 520)
-        divider.onEnded?(-170, 0)
-        host.settle()
-        #expect(panes.companionWidthForTesting == 500)
+        #expect(host.companionWidth == 520)
+        host.act { divider.onEnded?(-170, 0) }
+        #expect(host.companionWidth == 500)
 
         // Below the minimum, short of the close threshold: resists, then
         // settles back at the minimum rather than closing.
         divider.onBegan?()
         divider.onChanged?(350)
-        let resisted = try #require(panes.companionWidthForTesting)
+        let resisted = try #require(host.companionWidth)
         #expect(resisted < 200)
         #expect(resisted > 100)
-        divider.onEnded?(350, 0)
-        host.settle()
-        #expect(panes.companionWidthForTesting == 200)
+        host.act { divider.onEnded?(350, 0) }
+        #expect(host.companionWidth == 200)
     }
 
     @Test func theLeafBesideKeepsItsMinimumAndIsCoveredRatherThanSqueezedAtFull() throws {
         let host = PaneTestHost(width: 1000)
         defer { host.hide() }
         host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 900)
-        let panes = host.panes
-        let divider = panes.dividerForTesting
+        let divider = host.divider
         let beside = PaneWidthPolicy.screenMinimumWidth + PanePresentation.dividerThickness
         let full = 1000 - PaneWidthPolicy.fullWindowGrabEdge
 
@@ -228,9 +224,9 @@ struct PaneDividerPhysicsTests {
         divider.onBegan?()
         divider.onChanged?(-(1000 - beside - 300))
         host.window.layoutIfNeeded()
-        #expect(panes.companionWidthForTesting == 1000 - beside)
+        #expect(host.companionWidth == 1000 - beside)
         #expect(host.screenWidth == beside)
-        #expect(panes.coverForTesting.alpha == 0)
+        #expect(host.cover.alpha == 0)
         let layoutsAtMaximum = host.screen.layoutCount
 
         // On toward full, short of the threshold: the companion slides
@@ -238,24 +234,23 @@ struct PaneDividerPhysicsTests {
         // fades under it.
         divider.onChanged?(-(1000 - beside - 300) - 100)
         host.window.layoutIfNeeded()
-        #expect(panes.companionWidthForTesting == 1000 - beside + 100)
+        #expect(host.companionWidth == 1000 - beside + 100)
         #expect(host.screenWidth == beside)
         #expect(host.screen.layoutCount == layoutsAtMaximum)
-        #expect(panes.coverForTesting.alpha > 0 && panes.coverForTesting.alpha < 1)
+        #expect(host.cover.alpha > 0 && host.cover.alpha < 1)
 
         // Past the threshold: full is the window but its grab edge, the
         // leaf covered there, and VoiceOver kept in the companion.
         divider.onChanged?(-800)
-        divider.onEnded?(-800, 0)
-        host.settle()
+        host.act { divider.onEnded?(-800, 0) }
         host.window.layoutIfNeeded()
-        #expect(panes.isFullForTesting)
-        #expect(panes.companionWidthForTesting == full)
+        #expect(host.scenePanes.isCompanionZoomed)
+        #expect(host.companionWidth == full)
         #expect(host.screenWidth == beside)
         #expect(host.screen.layoutCount == layoutsAtMaximum)
-        #expect(panes.coverForTesting.alpha == 1)
-        #expect(panes.coverForTesting.frame.maxX <= PaneWidthPolicy.fullWindowGrabEdge)
-        #expect(panes.primary.view.accessibilityElementsHidden)
+        #expect(host.cover.alpha == 1)
+        #expect(host.cover.frame.maxX <= PaneWidthPolicy.fullWindowGrabEdge)
+        #expect(host.panes.primary.view.accessibilityElementsHidden)
         #expect(divider.frame.minX == 0, "the whole grab edge drags the companion back")
     }
 
@@ -263,48 +258,45 @@ struct PaneDividerPhysicsTests {
         let host = PaneTestHost(width: 1000)
         defer { host.hide() }
         host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 500)
-        let panes = host.panes
 
         // Settle an ordinary width to remember first.
         host.drag(by: -200)
-        #expect(panes.companionWidthForTesting == 500)
-        #expect(panes.isFullForTesting == false)
+        #expect(host.companionWidth == 500)
+        #expect(host.scenePanes.isCompanionZoomed == false)
 
         // Past the expand threshold: commits to full, the leaf covered.
         host.drag(by: -400)
-        #expect(panes.isFullForTesting == true)
-        #expect(panes.companionWidthForTesting == 1000 - PaneWidthPolicy.fullWindowGrabEdge)
+        #expect(host.scenePanes.isCompanionZoomed == true)
+        #expect(host.companionWidth == 1000 - PaneWidthPolicy.fullWindowGrabEdge)
 
         // A grab at full picks the companion up where it is, with no jump.
-        let divider = panes.dividerForTesting
+        let divider = host.divider
         divider.onBegan?()
         divider.onChanged?(0)
-        #expect(panes.companionWidthForTesting == 1000 - PaneWidthPolicy.fullWindowGrabEdge)
+        #expect(host.companionWidth == 1000 - PaneWidthPolicy.fullWindowGrabEdge)
 
         // Dragging back out of full and releasing mid-range returns to
         // the remembered width (500), not wherever the drag stopped.
         divider.onChanged?(600)
-        divider.onEnded?(600, 0)
-        host.settle()
-        #expect(panes.isFullForTesting == false)
-        #expect(panes.companionWidthForTesting == 500)
+        host.act { divider.onEnded?(600, 0) }
+        #expect(host.scenePanes.isCompanionZoomed == false)
+        #expect(host.companionWidth == 500)
     }
 
     @Test func aGrabWhileOpeningPicksTheCompanionUpWhereItIsDrawn() throws {
         let host = PaneTestHost(width: 1000)
         defer { host.hide() }
         host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 500, settles: false)
-        let panes = host.panes
-        let divider = panes.dividerForTesting
+        let divider = host.divider
         // Let the open draw part of the way.
         RunLoop.main.run(until: Date().addingTimeInterval(0.08))
         divider.onBegan?()
-        let drawn = try #require(panes.companionWidthForTesting)
-        let companion = try #require(panes.companionForTesting)
+        let drawn = try #require(host.companionWidth)
+        let companion = try #require(host.companion)
         #expect(drawn < 300, "the open was still under way")
         #expect(abs(drawn - companion.view.frame.width) < 0.5, "the width is read back from the drawn companion, not the open's target")
         divider.onChanged?(0)
-        let picked = try #require(panes.companionWidthForTesting)
+        let picked = try #require(host.companionWidth)
         #expect(abs(picked - drawn) < 0.5)
     }
 
@@ -313,32 +305,27 @@ struct PaneDividerPhysicsTests {
         let host = PaneTestHost(width: 1000)
         defer { host.hide() }
         host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 500)
-        let panes = host.panes
-        let divider = panes.dividerForTesting
+        let divider = host.divider
         #expect(divider.isAccessibilityElement)
         #expect(divider.accessibilityTraits.contains(.adjustable))
         #expect(divider.accessibilityIdentifier == "pane.divider.0")
         #expect(divider.accessibilityValue == String(localized: "300 points"))
 
-        divider.accessibilityIncrement()
-        host.settle()
-        #expect(panes.companionWidthForTesting == 300 + PaneDividerView.accessibilityStep)
+        host.act { divider.accessibilityIncrement() }
+        #expect(host.companionWidth == 300 + PaneDividerView.accessibilityStep)
         #expect(divider.accessibilityValue == String(localized: "\(Int(300 + PaneDividerView.accessibilityStep)) points"))
 
         for _ in 0..<20 {
-            divider.accessibilityDecrement()
-            host.settle()
+            host.act { divider.accessibilityDecrement() }
         }
-        #expect(panes.companionWidthForTesting == 200, "never steps below the companion's own minimum")
+        #expect(host.companionWidth == 200, "never steps below the companion's own minimum")
 
-        divider.onExpandRequested?()
-        host.settle()
-        #expect(panes.isFullForTesting == true)
+        host.act { divider.onExpandRequested?() }
+        #expect(host.scenePanes.isCompanionZoomed == true)
         #expect(divider.accessibilityValue == String(localized: "Full window"))
-        divider.onRestoreRequested?()
-        host.settle()
-        #expect(panes.isFullForTesting == false)
-        #expect(panes.companionWidthForTesting == 200)
+        host.act { divider.onRestoreRequested?() }
+        #expect(host.scenePanes.isCompanionZoomed == false)
+        #expect(host.companionWidth == 200)
     }
 
     @Test func draggingPastTheCloseThresholdDismissesLikeItsOwnDoneControl() throws {
@@ -352,18 +339,20 @@ struct PaneDividerPhysicsTests {
         #expect(dismissed)
     }
 
-    @Test func aGrabWhileClosingCannotStrandTheCompanionHalfRemoved() throws {
+    @Test func aGrabWhileClosingCannotStrandTheCompanionHalfRemoved() async throws {
         let host = PaneTestHost(width: 1000)
         defer { host.hide() }
         host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 500)
-        let panes = host.panes
-        let divider = panes.dividerForTesting
+        let divider = host.divider
         host.screen.hidePanel()
         divider.onBegan?()
         divider.onChanged?(-100)
         divider.onEnded?(-100, 0)
-        host.settle()
-        #expect(panes.companionForTesting == nil, "the close ran to its end and took the companion off")
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) { host.companion == nil },
+            "the close ran to its end and took the companion off"
+        )
+        host.window.layoutIfNeeded()
         #expect(host.screenWidth == 1000)
     }
 
@@ -381,15 +370,15 @@ struct PaneDividerPhysicsTests {
         stack.pushViewController(UIViewController(), animated: false)
         host.window.layoutIfNeeded()
         #expect(closedRan, "the close completed instead of stopping in place")
-        #expect(host.panes.companionForTesting == nil)
+        #expect(host.companion == nil)
 
         stack.popViewController(animated: false)
         host.window.layoutIfNeeded()
         host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 500)
-        #expect(host.screen.leaf.mountedScreenForTesting != nil, "a panel opens again")
-        #expect(host.panes.dividerForTesting.isUserInteractionEnabled)
+        #expect(host.screen.leaf.mountedScreen != nil, "a panel opens again")
+        #expect(host.divider.isUserInteractionEnabled)
         host.drag(by: -50)
-        #expect(host.panes.companionWidthForTesting == 350)
+        #expect(host.companionWidth == 350)
     }
 
     /// The window's `ScenePanes` keeps the share for every host it mounts
@@ -398,7 +387,7 @@ struct PaneDividerPhysicsTests {
         let firstHost = PaneTestHost(width: 1000)
         firstHost.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 900)
         firstHost.drag(by: -100) // settles at 400 of 1000: a 0.4 fraction
-        #expect(firstHost.panes.companionWidthForTesting == 400)
+        #expect(firstHost.companionWidth == 400)
         firstHost.hide()
 
         // A second, unrelated companion, in a differently sized window,
@@ -407,6 +396,6 @@ struct PaneDividerPhysicsTests {
         let secondHost = PaneTestHost(width: 800, scenePanes: firstHost.scenePanes)
         defer { secondHost.hide() }
         secondHost.showPanel(minWidth: 200, idealWidth: 260, maxWidth: 700)
-        #expect(secondHost.panes.companionWidthForTesting == 320, "0.4 of the second window's 800pt width")
+        #expect(secondHost.companionWidth == 320, "0.4 of the second window's 800pt width")
     }
 }

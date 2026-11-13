@@ -43,6 +43,60 @@ final class PaneRestoreUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("restore-after-relaunch")
     }
 
+    /// Rotating the iPad mini changes the shell (split in landscape, stack in
+    /// portrait) and nothing else: Outline stays open beside the chat, the
+    /// chat is the same screen (its composer keeps the typed text and the
+    /// keyboard), and back in landscape the pane has the width it had.
+    func testRotationKeepsThePanesTheirWidthAndTheComposer() throws {
+        // On iPhone, panels are sheets in either orientation (build plan §1.5).
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("Panes sit beside the chat on the iPad mini only")
+        }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
+        launchPreview(screen: "pane-restore", environment: [:], ready: nil)
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10), "The shell came up")
+        let row = app.descendants(matching: .any)[sessionRow]
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "The fixture session is listed")
+        row.tap()
+        let outlineButton = app.buttons["chat.toolbar.outline"]
+        XCTAssertTrue(outlineButton.waitUntilExists(timeout: 10), "The chat opened")
+        outlineButton.tap()
+        let divider = app.descendants(matching: .any)["pane.divider.0"]
+        XCTAssertTrue(divider.waitUntilExists(timeout: 5), "Outline opened beside the chat")
+        let outlineClose = app.buttons["chat.outline.close"]
+        XCTAssertTrue(outlineClose.waitUntilExists(timeout: 5), "Outline is the pane beside")
+        let input = app.descendants(matching: .any)["chat.input"]
+        XCTAssertTrue(input.waitUntilExists(timeout: 5), "Composer input missing")
+        input.tap()
+        input.typeText("typed before ")
+        hold()
+        let window = app.windows.firstMatch
+        let landscapeShare = (window.frame.maxX - divider.frame.midX) / window.frame.width
+        attachScreenCapture("rotation-landscape-before")
+
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(waitFor(window.frame.height > window.frame.width), "The window turned to portrait")
+        hold()
+        XCTAssertTrue(outlineClose.waitUntilExists(timeout: 5), "Outline is still open in portrait")
+        XCTAssertTrue(divider.exists, "The pane is still beside the chat, or zoomed over it")
+        attachScreenCapture("rotation-portrait")
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(waitFor(window.frame.width > window.frame.height), "The window turned back to landscape")
+        hold()
+        XCTAssertTrue(outlineClose.waitUntilExists(timeout: 5), "Outline is still open back in landscape")
+        let share = (window.frame.maxX - divider.frame.midX) / window.frame.width
+        XCTAssertEqual(share, landscapeShare, accuracy: 0.01, "The pane came back at the width it had")
+        // `typeText` fails unless the composer still has the keyboard.
+        input.typeText("and after")
+        XCTAssertTrue(
+            waitFor(((input.value as? String) ?? "").contains("typed before and after")),
+            "The composer kept its text and the keyboard: \(input.value ?? "nil")"
+        )
+        attachScreenCapture("rotation-landscape-after")
+    }
+
     /// X1–X4: a tree whose stack holds an offline server's session, an
     /// unpaired server's, a deleted session and a deleted file shows each
     /// leaf's state, and Close Pane steps down through them.
@@ -68,6 +122,15 @@ final class PaneRestoreUITests: XCTestCase, PreviewUITestCase {
         XCUIDevice.shared.orientation = .portrait
         launchPreview(screen: "pane-restore", environment: environment, ready: nil)
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10), "The shell came up")
+    }
+
+    /// The screen's capture, not the app's: in landscape `app.screenshot()`
+    /// draws the iPad's interface sideways into a clipped portrait canvas.
+    private func attachScreenCapture(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func expectState(_ identifier: String, text: String, shot: String) {

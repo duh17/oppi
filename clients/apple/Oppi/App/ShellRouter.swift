@@ -1,9 +1,9 @@
 import UIKit
 
 // The workspace shell's stacks. `AppNavigation` is the single source of truth
-// for which screens are open: the compact stack (`workspaceStackRouteElements`),
-// the split detail column (`splitDetailTarget` and `splitDetailPathElements`),
-// and the split selection. The shell controllers (`WorkspaceShellController.swift`)
+// for which screens are open: one stack (`workspaceStackRouteElements`), which
+// the compact shell shows whole and the split shell shows as its sidebar
+// selection and detail column (`SplitDetailColumn`). The shell controllers (`WorkspaceShellController.swift`)
 // read that state in `updateProperties()` and give each stack the routes it
 // shows. `ShellNavigationController` turns routes into hosted screens, and
 // when the user leaves one (Back, swipe, a screen's own `finish()` or
@@ -47,7 +47,7 @@ enum ShellRoute: Hashable {
         }
     }
 
-    /// A screen pushed onto the compact stack.
+    /// A screen of the window's stack.
     init(_ element: WorkspaceStackRouteElement) {
         switch element {
         case .workspace(let target): self = .workspace(target)
@@ -66,37 +66,6 @@ enum ShellRoute: Hashable {
         }
     }
 
-    /// A screen pushed onto the split detail column.
-    init(_ element: WorkspaceSplitDetailPathElement) {
-        switch element {
-        case .session(let target): self = .session(target)
-        case .fileBrowser(let target): self = .fileBrowser(target)
-        case .linkedFile(let target): self = .linkedFile(target)
-        case .chatReader(let target): self = .chatReader(target)
-        case .serverResourceDetail(let target): self = .serverResourceDetail(target)
-        case .serverSkillBrowser(let target): self = .serverSkillBrowser(target)
-        case .serverSkillFile(let target): self = .serverSkillFile(target)
-        case .serverDetails(let target): self = .serverDetails(target)
-        case .modelProviders(let target): self = .modelProviders(target)
-        case .paneEntry(let entry): self = .paneEntry(entry)
-        }
-    }
-
-    /// The split detail column's root: the selected detail, else the selected
-    /// workspace's sessions, else All Sessions.
-    static func splitDetailRoot(
-        target: WorkspaceSplitDetailTarget?,
-        selectedWorkspace: WorkspaceNavTarget?
-    ) -> Self {
-        switch target {
-        case .session(let target): .session(target)
-        case .fileBrowser(let target): .fileBrowser(target)
-        case .linkedFile(let target): .linkedFile(target)
-        case .workspaceConfiguration(let target): .workspaceConfiguration(target)
-        case .utility(let target): .utility(target)
-        case nil: selectedWorkspace.map(Self.workspace) ?? .inbox
-        }
-    }
 }
 
 /// Where a route's screen sits, for the chrome the shell adds to it.
@@ -126,7 +95,11 @@ protocol RoutedScreenStack: UINavigationController {
 final class ShellNavigationController: UINavigationController, UINavigationControllerDelegate,
     RouterRootClosing, RoutedScreenStack {
     private let root: AppRootEnvironment
-    private let rootPlacement: ShellRoutePlacement
+    /// Where the root screen sits: it changes when the window's one routed
+    /// stack moves between the compact and split shells.
+    private var rootPlacement: ShellRoutePlacement
+    /// The placement the stack's screens were last given.
+    private var shownRootPlacement: ShellRoutePlacement
     /// The user left routed screens; the argument is how many routes, root
     /// included, are still on the stack.
     var onRoutesPopped: ((Int) -> Void)?
@@ -146,6 +119,7 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
     init(root: AppRootEnvironment, rootPlacement: ShellRoutePlacement) {
         self.root = root
         self.rootPlacement = rootPlacement
+        shownRootPlacement = rootPlacement
         super.init(nibName: nil, bundle: nil)
         delegate = self
     }
@@ -165,9 +139,12 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         view.backgroundColor = root.themeStore.backgroundColor
     }
 
-    func setRoutes(_ routes: [ShellRoute]) {
+    /// Shows `routes`, the first as the root at `rootPlacement` (the
+    /// placement it was made with when nil).
+    func setRoutes(_ routes: [ShellRoute], rootPlacement: ShellRoutePlacement? = nil) {
         precondition(!routes.isEmpty, "A shell stack needs a root route")
         self.routes = routes
+        if let rootPlacement { self.rootPlacement = rootPlacement }
         // A push, a pop, or the interactive back swipe of this stack ends in
         // `didShow`, which applies the routes then; leave those to it so a
         // pending pop is not raced.
@@ -189,7 +166,7 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
 
     /// Applies the routes a transition deferred, if they are still owed.
     private func applyPendingRoutes() {
-        guard routes != shownRoutes else { return }
+        guard routes != shownRoutes || rootPlacement != shownRootPlacement else { return }
         applyRoutes()
     }
 
@@ -213,21 +190,17 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
 
     private func applyRoutes() {
         let current = routedScreens
+        let placementChanged = rootPlacement != shownRootPlacement
         var kept = 0
         while kept < min(current.count, routes.count),
               current[kept].route.screenIdentity == routes[kept].screenIdentity {
             kept += 1
         }
-        for index in 0..<kept where current[index].route != routes[index] {
-            routeByScreen[ObjectIdentifier(current[index].screen)] = routes[index]
-            ShellRouteScreens.update(
-                current[index].screen,
-                route: routes[index],
-                placement: placement(at: index),
-                openSidebar: openSidebar
-            )
+        for index in 0..<kept where current[index].route != routes[index] || (index == 0 && placementChanged) {
+            reuse(current[index].screen, as: index)
         }
         shownRoutes = routes
+        shownRootPlacement = rootPlacement
         guard kept < current.count || kept < routes.count else { return }
 
         var stack: [UIViewController]
@@ -239,7 +212,26 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         } else {
             stack = []
         }
+        // A screen whose route moved within the stack is the same screen: the
+        // window's routed stack changing shells (a rotation on the iPad mini)
+        // puts the chat above All Sessions, or at the split detail's root,
+        // and the chat, its composer, typed text and dictation carry on. The
+        // pages it pushed itself come along when it stays on top.
+        var movable: [AnyHashable: (screen: UIViewController, pages: [UIViewController])] = [:]
+        for (offset, entry) in current.enumerated().dropFirst(kept) {
+            guard movable[entry.route.screenIdentity] == nil,
+                  let start = viewControllers.firstIndex(of: entry.screen) else { continue }
+            let end = current.dropFirst(offset + 1).first.flatMap { viewControllers.firstIndex(of: $0.screen) }
+                ?? viewControllers.endIndex
+            movable[entry.route.screenIdentity] = (entry.screen, Array(viewControllers[(start + 1)..<end]))
+        }
         for index in kept..<routes.count {
+            if let moved = movable.removeValue(forKey: routes[index].screenIdentity) {
+                reuse(moved.screen, as: index)
+                stack.append(moved.screen)
+                if index == routes.count - 1 { stack.append(contentsOf: moved.pages) }
+                continue
+            }
             let screen = ShellRouteScreens.make(
                 routes[index],
                 placement: placement(at: index),
@@ -252,8 +244,16 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
             stack.append(screen)
         }
         forgetScreens(notIn: stack)
+        guard stack != viewControllers else { return }
         // A new root replaces the column, as selecting another detail does.
-        setViewControllers(stack, animated: kept > 0 && viewIfLoaded?.window != nil)
+        setViewControllers(stack, animated: kept > 0 && !placementChanged && viewIfLoaded?.window != nil)
+    }
+
+    /// Gives a kept screen the route and placement it has now.
+    private func reuse(_ screen: UIViewController, as index: Int) {
+        routeByScreen[ObjectIdentifier(screen)] = routes[index]
+        ShellRouteScreens.update(screen, route: routes[index], placement: placement(at: index), openSidebar: openSidebar)
+        screen.navigationItem.backButtonDisplayMode = .minimal
     }
 
     private func forgetScreens(notIn stack: [UIViewController]) {
@@ -305,7 +305,7 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
             routes = remaining
             onRoutesPopped?(remaining.count)
         }
-        if routes != shownRoutes {
+        if routes != shownRoutes || rootPlacement != shownRootPlacement {
             applyRoutes()
         }
         PaneHostController.containing(self)?.leafDidShowScreen()

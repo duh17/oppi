@@ -506,7 +506,7 @@ final class WorkspaceDetailViewController: UIViewController {
             searchText: search.searchText,
             isSearchPresented: search.isSearchPresented,
             stackCount: navigation.workspaceStackRouteElements.count,
-            splitDetailTarget: navigation.splitDetailTarget,
+            detailReplacesList: navigation.sessionListCover.detailReplacesList,
             pollingKey: currentPollingKey
         )
         if contentIsLive, pollingKey != current.pollingKey {
@@ -525,7 +525,7 @@ final class WorkspaceDetailViewController: UIViewController {
         if previous.isSearchPresented != current.isSearchPresented {
             applySearchNavigation(.searchPresentationChanged(current.isSearchPresented))
         }
-        if previous.stackCount != current.stackCount || previous.splitDetailTarget != current.splitDetailTarget {
+        if previous.stackCount != current.stackCount || previous.detailReplacesList != current.detailReplacesList {
             applySearchNavigation(.coverageChanged(isCovered: isSearchListCoveredByDestination))
         }
     }
@@ -556,13 +556,13 @@ final class WorkspaceDetailViewController: UIViewController {
         guard phase == .content, isSearchListCoveredByDestination else { return }
         applySearchNavigation(.coverageChanged(isCovered: true))
         observed?.stackCount = navigation.workspaceStackRouteElements.count
-        observed?.splitDetailTarget = navigation.splitDetailTarget
+        observed?.detailReplacesList = navigation.sessionListCover.detailReplacesList
     }
 
     private var isSearchListCoveredByDestination: Bool {
         SessionListSearchNavigationPersistence.isWorkspaceListCovered(
-            stackDepth: navigation.workspaceStackRouteElements.count,
-            splitDetailReplacesList: navigation.splitDetailTarget != nil
+            stackDepth: navigation.sessionListCover.stackDepth,
+            splitDetailReplacesList: navigation.sessionListCover.detailReplacesList
         )
     }
 
@@ -718,7 +718,7 @@ extension WorkspaceDetailViewController {
         var searchText: String
         var isSearchPresented: Bool
         var stackCount: Int
-        var splitDetailTarget: WorkspaceSplitDetailTarget?
+        var detailReplacesList: Bool
         var pollingKey: String
     }
 

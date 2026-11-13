@@ -48,6 +48,11 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
     private struct CachedHeights {
         var latest: CachedHeight
         var previous: CachedHeight?
+        /// The row's content changed since `latest` was measured (a
+        /// reconfigure, maybe while the chat was covered or held): layout
+        /// still draws it at `latest` as its best guess, but no cell takes
+        /// it without measuring (`unmeasuredHeight`).
+        var isStale = false
 
         func height(atWidth width: CGFloat) -> CGFloat? {
             if abs(latest.width - width) <= 0.5 { return latest.height }
@@ -66,6 +71,7 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
         /// A measurement at `width`. Another height at the latest width means
         /// the content changed, so the other width's height is stale too.
         mutating func record(_ height: CGFloat, atWidth width: CGFloat) {
+            isStale = false
             if abs(latest.width - width) <= 0.5 {
                 if abs(latest.height - height) > ChatTimelineCachedHeightLayout.heightMatchTolerance { previous = nil }
                 latest.height = height
@@ -109,6 +115,19 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
         guard !itemIDs.isEmpty else { return }
         for itemID in itemIDs {
             cachedHeightByItemID.removeValue(forKey: itemID)
+        }
+    }
+
+    /// These rows were reconfigured: what they show may have changed, so
+    /// the heights they have are guesses. The height at another width goes;
+    /// the latest stays for layout until the row measures again. Without
+    /// this a row changed while the chat was covered by a full pane (and so
+    /// not measured) came back, after the pane closed, at the height it had
+    /// at that width before: a collapsed tool row at its expanded height.
+    func contentDidChange(for itemIDs: [String]) {
+        for itemID in itemIDs {
+            cachedHeightByItemID[itemID]?.previous = nil
+            cachedHeightByItemID[itemID]?.isStale = true
         }
     }
 
@@ -159,8 +178,9 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
     func unmeasuredHeight(at indexPath: IndexPath, width: CGFloat) -> CGFloat? {
         guard indexPath.section == 0, let itemID = itemIdentifier(at: indexPath.item),
               !liveTailItemIDs.contains(itemID) else { return nil }
-        guard isReflowingWidth || isHeldForLiveResize else { return nil }
-        return cachedHeightByItemID[itemID]?.height(atWidth: width)
+        guard isReflowingWidth || isHeldForLiveResize,
+              let cached = cachedHeightByItemID[itemID], !cached.isStale else { return nil }
+        return cached.height(atWidth: width)
     }
 
     #if DEBUG
@@ -234,6 +254,10 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
         if let itemID = itemIdentifier(at: index),
            let cached = cachedHeightByItemID[itemID]?.height(atWidth: width),
            abs(resolved - cached) <= Self.heightMatchTolerance {
+            // Measured again at the height it has: no longer a guess.
+            if cachedHeightByItemID[itemID]?.isStale == true {
+                _ = resolvedHeight(at: index, width: width, preferredHeight: preferredHeight, store: true)
+            }
             return false
         }
         if abs(resolved - originalAttributes.size.height) <= Self.heightMatchTolerance {

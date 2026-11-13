@@ -64,7 +64,7 @@ struct WorkspaceMediaOverlayNavigationTests {
         navigation.setWorkspaceNavigationPresentation(.split)
 
         #expect(navigation.workspaceNavigationPresentation == .split)
-        #expect(navigation.splitDetailTarget == .session(
+        #expect(navigation.splitDetailColumn.root == .session(
             WorkspaceSessionNavTarget(
                 serverId: "server-b",
                 sessionId: "chat-1",
@@ -158,7 +158,6 @@ struct WorkspaceMediaOverlayNavigationTests {
         #expect(navigation.endMediaOverlay(currentServerId: "server-a") == "server-b")
         #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.selectedWorkspaceFilter == nil)
-        #expect(navigation.splitSelectedWorkspace == nil)
     }
 
     @Test func overlayAfterSplitAllSessionsSessionDoesNotInsertWorkspaceLayer() {
@@ -175,20 +174,17 @@ struct WorkspaceMediaOverlayNavigationTests {
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.openWorkspaceSession(session, workspace: workspace)
 
-        #expect(navigation.splitSelectedWorkspace == nil)
         #expect(navigation.selectedWorkspaceFilter == nil)
-        #expect(navigation.splitDetailTarget == .session(session))
+        #expect(navigation.splitDetailColumn.root == .session(session))
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
-        navigation.splitSelectedWorkspace = workspace
         navigation.selectedWorkspaceFilter = workspace
-        navigation.splitDetailTarget = nil
+        navigation.workspaceStackRouteElements = [.workspace(workspace)]
 
         let restoreServer = navigation.endMediaOverlay(currentServerId: "server-a")
         #expect(restoreServer == "server-b")
-        #expect(navigation.splitSelectedWorkspace == nil)
         #expect(navigation.selectedWorkspaceFilter == nil)
-        #expect(navigation.splitDetailTarget == .session(session))
+        #expect(navigation.splitDetailColumn.root == .session(session))
     }
 
     @Test func overlayRestoresLostVisitedWorkspaceChatRoute() {
@@ -234,7 +230,6 @@ struct WorkspaceMediaOverlayNavigationTests {
 
         #expect(navigation.workspaceNavigationPresentation == .stack)
         #expect(navigation.workspaceStackRouteElements.count == 1)
-        #expect(navigation.splitDetailTarget == nil)
 
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
         #expect(navigation.workspaceNavigationPresentation == .stack)
@@ -275,7 +270,7 @@ struct WorkspaceMediaOverlayNavigationTests {
         navigation.beginMediaOverlay(activeServerId: "server-b")
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
 
-        navigation.popWorkspaceStack(toDepth: 0)
+        navigation.popShownStack(toDepth: 0)
         #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.workspaceStackDiagnosticContext == .inboxAll)
     }
@@ -297,7 +292,7 @@ struct WorkspaceMediaOverlayNavigationTests {
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         // Back pops the chat before AVKit's end callback arrives.
-        navigation.popWorkspaceStack(toDepth: 1)
+        navigation.popShownStack(toDepth: 1)
 
         #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "workspace_inbox_filtered")
@@ -318,17 +313,17 @@ struct WorkspaceMediaOverlayNavigationTests {
         )
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.openWorkspaceSession(session)
-        #expect(navigation.splitDetailTarget == .session(session))
+        #expect(navigation.splitDetailColumn.root == .session(session))
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         // The split detail root's Back closes the chat column; it is a root
         // close, not a pushed path pop.
         navigation.showSessionInboxInSplit()
-        #expect(navigation.splitDetailTarget == nil)
+        #expect(navigation.splitDetailColumn.rootIndex == nil)
         #expect(!navigation.isMediaOverlayActive)
 
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
-        #expect(navigation.splitDetailTarget == nil)
+        #expect(navigation.splitDetailColumn.rootIndex == nil)
     }
 
     @Test func userBackFromPushedSplitDetailDuringFullscreenEndsTheOverlayAndStands() {
@@ -346,17 +341,17 @@ struct WorkspaceMediaOverlayNavigationTests {
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.openWorkspaceSession(root)
         navigation.openReferencedSession(pushed)
-        #expect(navigation.splitDetailPathElements.count == 1)
+        #expect(navigation.splitDetailColumn.pushed.count == 1)
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
-        navigation.popSplitDetail(toDepth: 0)
+        navigation.popShownStack(toDepth: 0)
 
-        #expect(navigation.splitDetailPathElements.isEmpty)
-        #expect(navigation.splitDetailTarget == .session(root))
+        #expect(navigation.splitDetailColumn.pushed.isEmpty)
+        #expect(navigation.splitDetailColumn.root == .session(root))
         #expect(!navigation.isMediaOverlayActive)
 
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
-        #expect(navigation.splitDetailPathElements.isEmpty)
+        #expect(navigation.splitDetailColumn.pushed.isEmpty)
     }
 
     @Test func ipadSidebarWorkspaceOpenDuringFullscreenEndsTheOverlayAndStands() {
@@ -379,9 +374,9 @@ struct WorkspaceMediaOverlayNavigationTests {
         navigation.openWorkspace(workspace)
 
         #expect(!navigation.isMediaOverlayActive)
-        #expect(navigation.splitDetailTarget == nil)
+        #expect(navigation.splitDetailColumn.rootIndex == nil)
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
-        #expect(navigation.splitDetailTarget == nil)
+        #expect(navigation.splitDetailColumn.rootIndex == nil)
     }
 
     @Test func ipadAllSessionsDuringFullscreenEndsTheOverlayAndStands() {
@@ -404,9 +399,9 @@ struct WorkspaceMediaOverlayNavigationTests {
         navigation.showAllWorkspaceSessions()
 
         #expect(!navigation.isMediaOverlayActive)
-        #expect(navigation.splitDetailTarget == nil)
+        #expect(navigation.splitDetailColumn.rootIndex == nil)
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
-        #expect(navigation.splitDetailTarget == nil)
+        #expect(navigation.splitDetailColumn.rootIndex == nil)
     }
 
     @Test func ipadInboxSessionOpenDuringFullscreenEndsTheOverlayAndStands() {
@@ -434,9 +429,9 @@ struct WorkspaceMediaOverlayNavigationTests {
         navigation.openWorkspaceSession(second, workspace: workspace)
 
         #expect(!navigation.isMediaOverlayActive)
-        #expect(navigation.splitDetailTarget == .session(second))
+        #expect(navigation.splitDetailColumn.root == .session(second))
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
-        #expect(navigation.splitDetailTarget == .session(second))
+        #expect(navigation.splitDetailColumn.root == .session(second))
     }
 
     @Test func anotherServersChatDuringFullscreenKeepsItsServerAfterTheLateEnd() {
@@ -462,7 +457,7 @@ struct WorkspaceMediaOverlayNavigationTests {
 
         // The late end must not put server-b back under server-a's chat.
         #expect(navigation.endMediaOverlay(currentServerId: "server-a") == nil)
-        #expect(navigation.splitDetailTarget == .session(otherServerChat))
+        #expect(navigation.splitDetailColumn.root == .session(otherServerChat))
     }
 
     // MARK: The app root's observer

@@ -8,7 +8,7 @@ import UIKit
 /// its own; what is gone shows its leaf state.
 @MainActor
 @Suite("Pane restoration", .serialized)
-struct PaneRestorationTests {
+struct PaneRestorationTests: PaneFixtureBuilding {
     private let serverId = "sha256:pane-restore"
     private let workspace = makeTestWorkspace(id: "ws-1", name: "Oppi")
 
@@ -54,10 +54,7 @@ struct PaneRestorationTests {
 
     /// Writes `navigation`'s tree for `scene` as the app does when it settles.
     private func save(_ panes: ScenePanes, _ navigation: AppNavigation, scene: String, store: PaneTreeStore) {
-        store.save(PaneLayoutArchive(
-            restorable: panes.layout(navigation: navigation, rootServerId: serverId),
-            companionFraction: panes.companionFraction.map(Double.init)
-        ), scene: scene)
+        store.save(PaneLayoutArchive(restorable: panes.layout(navigation: navigation, rootServerId: serverId)), scene: scene)
     }
 
     @Test func aRelaunchRestoresTheChatItsGitPanelWidthAndFocus() async throws {
@@ -65,19 +62,22 @@ struct PaneRestorationTests {
         let before = try await makeRoot(sessions: [session("s-1")])
         before.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
         let panes = before.navigation.panes
-        panes.companionDidChange(PaneStackEntry(serverId: serverId, route: .git(workspace: "ws-1", worktree: nil)), shown: true)
-        panes.companionFraction = 0.4
-        panes.focusDidChange(onCompanion: true)
+        panes.companionDidOpen(PaneStackEntry(serverId: serverId, route: .git(workspace: "ws-1", worktree: nil)))
+        panes.setCompanionShare(0.4)
+        panes.focusCompanion(true)
+        panes.setCompanionZoomed(true)
         save(panes, before.navigation, scene: "scene-a", store: store)
 
         let after = try await makeRoot(sessions: [session("s-1")])
         after.navigation.panes.connect(scene: "scene-a", store: store)
         after.navigation.panes.restore(navigation: after.navigation, coordinator: after.coordinator)
 
-        #expect(after.navigation.primaryStackElements == chatInWorkspace("s-1"))
+        #expect(after.navigation.workspaceStackRouteElements == chatInWorkspace("s-1"))
         #expect(after.navigation.panes.takePendingPanel(for: "s-1") == .git(workspace: "ws-1", worktree: nil))
-        #expect(abs((after.navigation.panes.companionFraction ?? 0) - 0.4) < 1e-9)
-        #expect(after.navigation.panes.takeRestoredCompanionFocus())
+        #expect(abs((after.navigation.panes.companionShare ?? 0) - 0.4) < 1e-9)
+        let restored = after.navigation.panes.takeRestoredCompanionState()
+        #expect(restored.focused)
+        #expect(restored.zoomed)
     }
 
     /// O1: relaunched offline, the chat is a leaf state until its server
@@ -86,7 +86,7 @@ struct PaneRestorationTests {
     @Test func aSaveBeforeTheChatShowsKeepsItsWaitingPanelAndPosition() async throws {
         let store = try makeStore()
         let chat = PaneLeaf(
-            id: ScenePanes.primaryLeafID, name: nil,
+            id: id("main"), name: nil,
             stack: [
                 PaneStackEntry(serverId: serverId, route: .sessions(workspace: nil)),
                 PaneStackEntry(serverId: serverId, route: .session("s-offline")),
@@ -94,7 +94,7 @@ struct PaneRestorationTests {
             attachedTo: nil, origin: .split
         )
         let panel = PaneStackEntry(serverId: serverId, route: .panel(session: "s-offline", id: "jobs"))
-        let side = PaneLeaf(id: ScenePanes.companionLeafID, name: nil, stack: [panel], attachedTo: chat.id, origin: .attached)
+        let side = PaneLeaf(id: id("side"), name: nil, stack: [panel], attachedTo: chat.id, origin: .attached)
         let scroll = PaneChatScroll(sessionId: "s-offline", itemId: "item-9", relativeY: 0.25)
         store.save(PaneLayoutArchive(
             restorable: PaneLayout(
@@ -108,7 +108,7 @@ struct PaneRestorationTests {
         let root = try await makeRoot(sessions: [])
         root.navigation.panes.connect(scene: "scene-offline", store: store)
         root.navigation.panes.restore(navigation: root.navigation, coordinator: root.coordinator)
-        #expect(root.navigation.primaryStackElements == [.paneEntry(PaneStackEntry(serverId: serverId, route: .session("s-offline")))])
+        #expect(root.navigation.workspaceStackRouteElements == [.paneEntry(PaneStackEntry(serverId: serverId, route: .session("s-offline")))])
         root.navigation.panes.flush()
 
         let saved = try #require(store.load(scene: "scene-offline"))
@@ -133,7 +133,7 @@ struct PaneRestorationTests {
 
         let config = try #require(screen.stateConfigurationForTesting)
         config.buttonProperties.primaryAction?.performWithSender(nil, target: nil)
-        #expect(root.navigation.primaryStackElements == [
+        #expect(root.navigation.workspaceStackRouteElements == [
             .session(WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-1", workspaceId: "ws-1")),
         ])
         #expect(root.navigation.panes.pendingPanel(for: "s-1") == entry.route)
@@ -147,7 +147,7 @@ struct PaneRestorationTests {
         let gone = PaneStackEntry(serverId: serverId, route: .session("s-gone"))
         let unpaired = PaneStackEntry(serverId: removedServer, route: .file(.host, path: "/srv/notes.md", line: nil))
         let leaf = PaneLeaf(
-            id: ScenePanes.primaryLeafID, name: nil,
+            id: id("main"), name: nil,
             stack: [PaneStackEntry(serverId: serverId, route: .sessions(workspace: nil)), gone, unpaired],
             attachedTo: nil, origin: .split
         )
@@ -157,7 +157,7 @@ struct PaneRestorationTests {
         root.navigation.panes.connect(scene: "scene-b", store: store)
         root.navigation.panes.restore(navigation: root.navigation, coordinator: root.coordinator)
 
-        #expect(root.navigation.primaryStackElements == [.paneEntry(gone), .paneEntry(unpaired)])
+        #expect(root.navigation.workspaceStackRouteElements == [.paneEntry(gone), .paneEntry(unpaired)])
         #expect(PaneEntries.state(of: unpaired, coordinator: root.coordinator) == .missing(.server))
         // The test server has no live transport, so its badge says offline:
         // a session it might still have waits on the server, never "missing".
@@ -181,7 +181,7 @@ struct PaneRestorationTests {
         #expect(screen.view.accessibilityIdentifier == "pane.state.missing.server")
 
         root.navigation.closePaneEntry(entry)
-        #expect(root.navigation.primaryStackElements.isEmpty)
+        #expect(root.navigation.workspaceStackRouteElements.isEmpty)
     }
 
     /// The leaf state turns into the content once the stores hold it (a
@@ -201,7 +201,7 @@ struct PaneRestorationTests {
         _ = try #require(root.coordinator.connection(for: serverId)).sessionStore.upsert(session("s-late"))
         screen.updatePropertiesIfNeeded()
         await Task.yield()
-        #expect(root.navigation.primaryStackElements == [
+        #expect(root.navigation.workspaceStackRouteElements == [
             .session(WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-late", workspaceId: "ws-1")),
         ])
     }
@@ -215,8 +215,8 @@ struct PaneRestorationTests {
         root.navigation.panes.restore(navigation: root.navigation, coordinator: root.coordinator)
         root.navigation.restorePrimaryStack(chatInWorkspace("s-incognito"))
         // Its extension panel goes with it.
-        root.navigation.panes.companionDidChange(
-            PaneStackEntry(serverId: serverId, route: .panel(session: "s-incognito", id: "jobs")), shown: true
+        root.navigation.panes.companionDidOpen(
+            PaneStackEntry(serverId: serverId, route: .panel(session: "s-incognito", id: "jobs"))
         )
         root.navigation.panes.flush()
         let saved = try #require(store.load(scene: "scene-c"))
@@ -225,14 +225,14 @@ struct PaneRestorationTests {
         let placeholder = PaneStackEntry(serverId: serverId, route: .session("s-1"))
         root.navigation.restorePrimaryStack([.paneEntry(placeholder)])
         root.navigation.removeSessionRoute(serverId: serverId, sessionId: "s-1")
-        #expect(root.navigation.primaryStackElements.isEmpty)
+        #expect(root.navigation.workspaceStackRouteElements.isEmpty)
     }
 
     @Test func eachSceneKeepsItsOwnTreeAndANewSceneStartsFromTheNewest() throws {
         let store = try makeStore()
         func layout(_ session: String) -> PaneLayoutArchive? {
             PaneLayoutArchive(restorable: PaneLayout(single: PaneLeaf(
-                id: ScenePanes.primaryLeafID, name: nil,
+                id: id("main"), name: nil,
                 stack: [PaneStackEntry(serverId: serverId, route: .session(session))],
                 attachedTo: nil, origin: .split
             )))
@@ -259,7 +259,7 @@ struct PaneRestorationTests {
         let after = try await makeRoot(sessions: [session("s-1")])
         after.navigation.panes.connect(scene: "scene-d", store: store)
         after.navigation.panes.restore(navigation: after.navigation, coordinator: after.coordinator)
-        #expect(after.navigation.primaryStackElements.isEmpty)
+        #expect(after.navigation.workspaceStackRouteElements.isEmpty)
         #expect(store.load(scene: "scene-d") == nil)
         #expect(!store.lastRestoreWasInterrupted(scene: "scene-d"))
     }
@@ -278,7 +278,7 @@ struct PaneRestorationTests {
         let after = try await makeRoot(sessions: [session("s-1"), session("s-2")])
         after.navigation.panes.connect(scene: "scene-other", store: store)
         after.navigation.panes.restore(navigation: after.navigation, coordinator: after.coordinator)
-        #expect(after.navigation.primaryStackElements == chatInWorkspace("s-2"))
+        #expect(after.navigation.workspaceStackRouteElements == chatInWorkspace("s-2"))
         #expect(store.lastRestoreWasInterrupted(scene: "scene-crashed"))
 
         store.discard(scenes: ["scene-crashed"])
@@ -311,13 +311,13 @@ struct PaneRestorationTests {
         after.navigation.panes.connect(scene: "scene-locked", store: store)
         after.navigation.panes.restore(navigation: after.navigation, coordinator: after.coordinator, appLock: appLock)
         let mountedWhileLocked = await waitForMainActorCondition(timeout: .milliseconds(300)) {
-            !after.navigation.primaryStackElements.isEmpty
+            !after.navigation.workspaceStackRouteElements.isEmpty
         }
         #expect(!mountedWhileLocked, "nothing mounts behind the cover")
 
         #expect(await appLock.unlock())
         let restored = await waitForMainActorCondition(timeout: .seconds(3)) {
-            after.navigation.primaryStackElements == chatInWorkspace("s-1")
+            after.navigation.workspaceStackRouteElements == chatInWorkspace("s-1")
         }
         #expect(restored, "the saved chat opens once unlocked")
     }
@@ -344,7 +344,7 @@ struct PaneRestorationTests {
 
         let opened = await waitForMainActorCondition(timeout: .seconds(3)) {
             screen.updatePropertiesIfNeeded()
-            return root.navigation.primaryStackElements == [
+            return root.navigation.workspaceStackRouteElements == [
                 .session(WorkspaceSessionNavTarget(serverId: "sha256:other", sessionId: "s-elsewhere", workspaceId: "ws-other")),
             ]
         }

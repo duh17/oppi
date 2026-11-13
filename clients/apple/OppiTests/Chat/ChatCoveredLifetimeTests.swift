@@ -63,7 +63,7 @@ struct ChatCoveredLifetimeTests {
         navigation.setWorkspaceNavigationPresentation(.stack)
         #expect(navigation.routeContainsSession("session-1"))
 
-        navigation.popWorkspaceStack(toDepth: 0)
+        navigation.popShownStack(toDepth: 0)
         #expect(!navigation.routeContainsSession("session-1"))
     }
 
@@ -109,7 +109,7 @@ struct ChatCoveredLifetimeTests {
         // The chat showed again before the route changed.
         watch.cancel()
 
-        navigation.popWorkspaceStack(toDepth: 0)
+        navigation.popShownStack(toDepth: 0)
         await Self.settle()
         #expect(store.sessions.contains { $0.id == "incognito" })
     }
@@ -134,7 +134,7 @@ struct ChatCoveredLifetimeTests {
         #expect(navigation.containsChatReader(first))
         #expect(navigation.containsChatReader(second))
 
-        navigation.popWorkspaceStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
+        navigation.popShownStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
         #expect(!navigation.containsChatReader(second))
         #expect(navigation.containsChatReader(first))
     }
@@ -205,7 +205,7 @@ struct ChatCoveredLifetimeTests {
         let second = store.store(ChatReaderPayload(content: .plainText(content: "two", filePath: "two.txt")))
         navigation.openChatReader(second)
 
-        navigation.popWorkspaceStack(toDepth: 0)
+        navigation.popShownStack(toDepth: 0)
 
         let third = store.store(
             ChatReaderPayload(content: .plainText(content: "three", filePath: "three.txt")),
@@ -229,7 +229,7 @@ struct ChatCoveredLifetimeTests {
         let second = store.store(ChatReaderPayload(content: .plainText(content: "two", filePath: "two.txt")))
         navigation.openChatReader(second)
 
-        navigation.popWorkspaceStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
+        navigation.popShownStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
 
         let third = store.store(
             ChatReaderPayload(content: .plainText(content: "three", filePath: "three.txt")),

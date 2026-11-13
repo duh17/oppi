@@ -15,7 +15,8 @@ enum TimelineSnapshotApplier {
         sessionId: String? = nil,
         themeChanged: Bool = false,
         isBusy: Bool = false,
-        forceReconfigureIDs: [String] = []
+        forceReconfigureIDs: [String] = [],
+        willReconfigure: ([String]) -> Void = { _ in }
     ) {
         // Fast path: when no previous items exist (cold start), skip change
         // detection entirely — everything is new.
@@ -57,6 +58,7 @@ enum TimelineSnapshotApplier {
             if let dataSource, !changedIDs.isEmpty {
                 // changedItemIDsForReconfigure validates streaming IDs
                 // against nextItemByID before including them.
+                willReconfigure(changedIDs)
                 var snapshot = dataSource.snapshot()
                 snapshot.reconfigureItems(changedIDs)
                 let applyToken = ChatTimelinePerf.beginCollectionApply(
@@ -99,6 +101,7 @@ enum TimelineSnapshotApplier {
         snapshot.appendItems(nextIDs)
 
         if !dedupedChangedIDs.isEmpty {
+            willReconfigure(dedupedChangedIDs)
             snapshot.reconfigureItems(dedupedChangedIDs)
         }
         let applyToken = ChatTimelinePerf.beginCollectionApply(
@@ -148,19 +151,22 @@ enum TimelineSnapshotApplier {
     }
 
     /// Reconfigures the rows still in the snapshot. Returns whether any were;
-    /// the caller owns the layout pass that sizes them.
+    /// the caller owns the layout pass that sizes them. `willReconfigure`
+    /// hears the rows first (the layout's `contentDidChange`).
     @discardableResult
     static func reconfigureItems(
         _ itemIDs: [String],
         dataSource: DataSource?,
         currentIDs: [String],
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        willReconfigure: ([String]) -> Void = { _ in }
     ) -> Bool {
         guard let dataSource else { return false }
 
         var snapshot = dataSource.snapshot()
         let existing = itemIDs.filter { snapshot.indexOfItem($0) != nil }
         guard !existing.isEmpty else { return false }
+        willReconfigure(existing)
 
         snapshot.reconfigureItems(existing)
 

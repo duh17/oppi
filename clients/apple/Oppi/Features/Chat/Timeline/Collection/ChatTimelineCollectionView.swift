@@ -1277,6 +1277,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                 }
             }
 
+            (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?.contentDidChange(for: reconfigureIDs)
             var snapshot = dataSource.snapshot()
             snapshot.reconfigureItems(reconfigureIDs)
             let applyToken = ChatTimelinePerf.beginCollectionApply(
@@ -1378,6 +1379,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                 }
             }
             if !reconfigureIDs.isEmpty, let dataSource {
+                (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?.contentDidChange(for: reconfigureIDs)
                 var snapshot = dataSource.snapshot()
                 snapshot.reconfigureItems(reconfigureIDs)
                 let applyToken = ChatTimelinePerf.beginCollectionApply(
@@ -1548,7 +1550,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             sessionId: configuration.sessionId,
             themeChanged: globalAppearanceChanged,
             isBusy: configuration.isBusy,
-            forceReconfigureIDs: forceReconfigureIDs
+            forceReconfigureIDs: forceReconfigureIDs,
+            willReconfigure: { (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?.contentDidChange(for: $0) }
         )
 
         previousItemByID = applyPlan.nextItemByID
@@ -2269,7 +2272,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             itemIDs,
             dataSource: dataSource,
             currentIDs: currentIDs,
-            sessionId: sessionId
+            sessionId: sessionId,
+            willReconfigure: { (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?.contentDidChange(for: $0) }
         ) else {
             return
         }

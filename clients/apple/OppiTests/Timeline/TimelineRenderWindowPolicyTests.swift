@@ -114,10 +114,10 @@ struct ChatTimelineRowColumnTests {
         defer { timeline.didCaptureAnchorForTesting = nil }
         host.chat.showPanel(panel)
         let opened = await waitForMainActorCondition(timeout: .seconds(3)) {
-            host.chat.attachedLeaf.mountedScreenForTesting != nil
+            host.chat.attachedLeaf.mountedScreen != nil
         }
         try #require(opened, "the panel never mounted")
-        host.chat.attachedLeaf.hostForTesting?.finishSettleForTesting()
+        settlePaneMotion(in: host.window)
         host.window.layoutIfNeeded()
         for cell in timeline.visibleCells { rowWidths.insert(cell.bounds.width) }
 

@@ -48,24 +48,42 @@ struct PaneTestHost {
         settles: Bool = true,
         makeScreen: @escaping () -> UIViewController = { UIViewController() }
     ) {
-        screen.showPanel(
-            root: root, minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth, makeScreen: makeScreen
-        )
-        if settles { settle() }
+        let show = {
+            screen.showPanel(
+                root: root, minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth, makeScreen: makeScreen
+            )
+        }
+        if settles { act(show) } else { show() }
+    }
+
+    /// Runs `body` with UIKit animations off, so the host's springs land
+    /// at once (`PaneHostController` honours `areAnimationsEnabled`).
+    func act(_ body: () -> Void) {
+        UIView.performWithoutAnimation(body)
+        window.layoutIfNeeded()
     }
 
     /// One whole drag of the divider, released with no velocity, landed.
     func drag(by translationX: CGFloat) {
-        let divider = panes.dividerForTesting
+        let divider = divider
         divider.onBegan?()
         divider.onChanged?(translationX)
-        divider.onEnded?(translationX, 0)
-        settle()
+        act { divider.onEnded?(translationX, 0) }
     }
 
     func settle() {
-        panes.finishSettleForTesting()
-        window.layoutIfNeeded()
+        settlePaneMotion(in: window)
+    }
+
+    var divider: PaneDividerView { panes.divider }
+    /// The companion's drawn width; nil with none shown.
+    var companionWidth: CGFloat? { panes.shownCompanion?.view.frame.width }
+    var companion: UIViewController? { panes.shownCompanion }
+    var cover: UIView {
+        guard let cover = panes.view.subviews.first(where: { $0.accessibilityIdentifier == "pane.cover" }) else {
+            preconditionFailure("The pane host has no cover")
+        }
+        return cover
     }
 
     func resize(width: CGFloat) {
@@ -77,6 +95,51 @@ struct PaneTestHost {
         window.isHidden = true
         window.rootViewController = nil
     }
+}
+
+/// Runs the main run loop until the window's pane host has no spring in
+/// flight (an open, snap or close moves its leaves' frames), then once more
+/// so completions run. Only the host's own children count: a caret's blink
+/// inside a leaf never ends.
+@MainActor
+func settlePaneMotion(in window: UIWindow, timeout: TimeInterval = 2) {
+    func animating() -> Bool {
+        let host = window.rootViewController.flatMap { root in
+            root as? PaneHostController ?? root.children.lazy.compactMap { $0 as? PaneHostController }.first
+        }
+        return host?.view.subviews.contains { !($0.layer.animationKeys() ?? []).isEmpty } ?? false
+    }
+    // A close starts after the leaf's search has ended, a turn later.
+    RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    let deadline = Date().addingTimeInterval(timeout)
+    while animating(), Date() < deadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+    window.layoutIfNeeded()
+}
+
+extension PaneHostController {
+    /// The host's divider, found as VoiceOver and UI tests find it.
+    var divider: PaneDividerView {
+        guard let divider = view.subviews.lazy.compactMap({ $0 as? PaneDividerView }).first else {
+            preconditionFailure("The pane host has no divider")
+        }
+        return divider
+    }
+
+    /// The companion on screen: the host's child beside its primary.
+    var shownCompanion: UIViewController? {
+        children.first { $0 !== primary && !$0.view.isHidden }
+    }
+}
+
+extension AttachedLeafController {
+    /// The panel's own screen while the leaf is mounted: the root of the
+    /// leaf's navigation controller.
+    var mountedScreen: UIViewController? { mountedStack?.first }
+    /// Every screen of the mounted leaf, root first.
+    var mountedStack: [UIViewController]? { frontScreen?.navigationController?.viewControllers }
 }
 
 /// A bare screen with an attached leaf, the way the chat and the review

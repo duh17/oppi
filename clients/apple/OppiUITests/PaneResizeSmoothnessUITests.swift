@@ -128,6 +128,67 @@ final class PaneResizeSmoothnessUITests: XCTestCase {
         }
     }
 
+    /// Where the chat's rows on screen sit (identifier to top edge), once they
+    /// have stopped moving.
+    private func restingRowTops() -> [String: CGFloat] {
+        let window = app.windows.firstMatch.frame
+        let rows = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat.timeline."))
+        func read() -> [String: CGFloat] {
+            var tops: [String: CGFloat] = [:]
+            for row in rows.allElementsBoundByIndex where row.exists {
+                let frame = row.frame
+                if frame.intersects(window), tops[row.identifier] == nil { tops[row.identifier] = frame.minY }
+            }
+            return tops
+        }
+        var last = read()
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            let now = read()
+            if now == last { break }
+            last = now
+        }
+        return last
+    }
+
+    /// A reader scrolled up in the chat, by finger, keeps the row they read
+    /// through a drag of the divider and the spring that lands it: the first
+    /// row read stays where it was and the rows under it wrap around it, so
+    /// one row on screen has not moved. A chat thrown to its tail, or to the
+    /// offset it had when the pane opened, keeps none.
+    func testDividerDragKeepsAScrolledUpReadersRow() throws {
+        try launch()
+        let window = app.windows.firstMatch
+        let tail = restingRowTops()
+        let finger = window.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.35))
+        for _ in 0..<3 {
+            finger.press(
+                forDuration: 0.05,
+                thenDragTo: finger.withOffset(CGVector(dx: 0, dy: window.frame.height * 0.4)),
+                withVelocity: 600,
+                thenHoldForDuration: 0.3
+            )
+        }
+        let before = restingRowTops()
+        XCTAssertFalse(before.isEmpty, "The chat shows no rows to read")
+        XCTAssertNotEqual(before, tail, "The chat did not scroll off its tail")
+
+        let measured = drag(by: -150)
+        let after = restingRowTops()
+        let moved = before.compactMap { identifier, top in after[identifier].map { abs($0 - top) } }
+        report(
+            "detached-reader",
+            "rows_before=\(before.count) rows_kept=\(moved.count) least_moved=\(moved.min() ?? .nan) reflows=\(measured.number("reflows"))"
+        )
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "detached-reader-after-drag"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        XCTAssertLessThanOrEqual(moved.min() ?? .infinity, 1, "The row read moved: \(before) then \(after)")
+    }
+
     /// The timeline's running row count once it has stopped changing: a
     /// rotation's layout is over.
     private func settledMeasuredRows() -> Double {

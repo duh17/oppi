@@ -143,11 +143,7 @@ final class LiveKeyboardCommandSurface {
 
     private func openSettings() -> (@MainActor () -> Void)? {
         guard isInteractive, topPresented == nil else { return nil }
-        let atSettings = switch navigation.workspaceNavigationPresentation {
-        case .stack: navigation.workspaceStackRouteElements.last == .utility(.appSettings)
-        case .split: navigation.splitDetailTarget == .utility(.appSettings) && navigation.splitDetailPathElements.isEmpty
-        }
-        guard !atSettings else { return nil }
+        guard navigation.workspaceStackRouteElements.last != .utility(.appSettings) else { return nil }
         return { [navigation, weak self] in
             navigation.openWorkspaceUtility(.appSettings)
             // The compact drawer covers the screen the command opened.

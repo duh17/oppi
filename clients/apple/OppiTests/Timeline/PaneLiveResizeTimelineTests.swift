@@ -17,7 +17,7 @@ struct PaneLiveResizeTimelineTests {
         defer { host.hide() }
         let timeline = host.timeline
         let startWidth = timeline.bounds.width
-        let column = try #require(host.chat.attachedLeaf.hostForTesting?.dividerForTesting)
+        let column = try #require(PaneHostController.hosting(host.chat)?.divider)
 
         let rebuildsBefore = ChatTimelinePerf.layoutRebuildCount
         let measuredBefore = ChatTimelinePerf.rowMeasureCount
@@ -57,7 +57,7 @@ struct PaneLiveResizeTimelineTests {
         try #require(!(host.chat.timeline.scrollController?.isCurrentlyNearBottom ?? true), "the timeline must be off its tail")
         let before = try #require(firstReadRow(timeline, controller: host.chat.timeline))
 
-        let column = try #require(host.chat.attachedLeaf.hostForTesting?.dividerForTesting)
+        let column = try #require(PaneHostController.hosting(host.chat)?.divider)
         column.onBegan?()
         column.onChanged?(-150)
         host.window.layoutIfNeeded()
@@ -123,8 +123,8 @@ struct PaneLiveResizeTimelineTests {
         try await Task.sleep(for: .milliseconds(30))
         let rebuilds = ChatTimelinePerf.layoutRebuildCount
         let measured = ChatTimelinePerf.rowMeasureCount
-        handle.onEnded?(translation, 0)
-        host.chat.attachedLeaf.hostForTesting?.finishSettleForTesting()
+        // Animations off: the release's spring lands at once.
+        UIView.performWithoutAnimation { handle.onEnded?(translation, 0) }
         host.window.layoutIfNeeded()
         return (ChatTimelinePerf.layoutRebuildCount - rebuilds, ChatTimelinePerf.rowMeasureCount - measured)
     }
@@ -211,13 +211,22 @@ struct PaneLiveResizeTimelineTests {
         if !seeded { host.hide() }
         try #require(seeded, "the timeline never showed its rows")
 
-        chat.showPanel(.outline)
+        // Animations off, and the leaf mounted here rather than on the chat's
+        // next property update, a turn later with animations back on: the
+        // open lands at once. A spring's completion never runs in this window,
+        // so the host would hold the open's animator for good, and the next
+        // grab would stop it, which puts back every value it animated, the
+        // timeline's offset at the open included.
+        UIView.performWithoutAnimation {
+            chat.showPanel(.outline)
+            chat.updateAttachedLeaf()
+        }
         let opened = await waitForMainActorCondition(timeout: .seconds(3)) {
-            chat.attachedLeaf.mountedScreenForTesting != nil
+            chat.attachedLeaf.mountedScreen != nil
         }
         if !opened { host.hide() }
         try #require(opened, "the panel never mounted")
-        chat.attachedLeaf.hostForTesting?.finishSettleForTesting()
+        settlePaneMotion(in: window)
         window.layoutIfNeeded()
         // Measured at this width, and on the tail.
         window.layoutIfNeeded()

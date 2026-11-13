@@ -72,7 +72,7 @@ final class PaneRestorePreviewController: PreviewRootController {
         }
         let workspace = ChatRoutesFixture.workspace.id
         return PaneLayoutArchive(restorable: PaneLayout(single: PaneLeaf(
-            id: ScenePanes.primaryLeafID, name: nil,
+            id: ScenePanes().routedLeafID, name: nil,
             stack: [
                 entry(serverId, .sessions(workspace: workspace)),
                 entry(serverId, .file(.workspace(id: workspace, worktree: nil), path: "Sources/\(ChatRoutesFixture.removedFileName)", line: nil)),

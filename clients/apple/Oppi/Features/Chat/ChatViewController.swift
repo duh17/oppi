@@ -179,9 +179,6 @@ final class ChatViewController: UIViewController {
     var timelineTopOverlap: CGFloat = 0
     var footerHeight: CGFloat = 0
     var timelineWidth: CGFloat = 0
-    /// The workspace shell this chat was mounted under, for the shell-swap
-    /// scroll handoff.
-    var mountedPresentation: WorkspaceNavigationPresentation = .stack
     var lastTimelineChrome: ChatTimelineChromeKey?
     var observed = ChatObservedValues()
     var sessionEntryTask: Task<Void, Never>?

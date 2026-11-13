@@ -462,8 +462,7 @@ final class SessionInboxViewController: UIViewController {
             isSearchPresented: navigation.inboxSessionSearch.isSearchPresented,
             coverage: currentCoverageKey,
             activeServerId: coordinator.activeServerId,
-            stackCount: navigation.workspaceStackRouteElements.count,
-            splitPathCount: navigation.splitDetailPathElements.count
+            stackCount: navigation.workspaceStackRouteElements.count
         )
         guard let previous = observed else {
             observed = current
@@ -486,9 +485,6 @@ final class SessionInboxViewController: UIViewController {
             startServerTask(for: current.activeServerId)
         }
         if current.stackCount < previous.stackCount {
-            Task { await loadProviderSetupState() }
-        }
-        if current.splitPathCount < previous.splitPathCount {
             Task { await loadProviderSetupState() }
         }
     }
@@ -537,7 +533,7 @@ final class SessionInboxViewController: UIViewController {
     }
 
     private var currentCoverageKey: String {
-        "\(navigation.workspaceStackRouteElements.count):\(navigation.workspaceNavigationPresentation):\(navigation.splitDetailTarget != nil)"
+        "\(navigation.workspaceStackRouteElements.count):\(navigation.workspaceNavigationPresentation):\(navigation.sessionListCover.detailReplacesList)"
     }
 
     /// A covered screen stops reacting, and no update pass is guaranteed
@@ -549,14 +545,13 @@ final class SessionInboxViewController: UIViewController {
         applySearchNavigation(.coverageChanged(isCovered: true))
         observed?.coverage = currentCoverageKey
         observed?.stackCount = navigation.workspaceStackRouteElements.count
-        observed?.splitPathCount = navigation.splitDetailPathElements.count
     }
 
     private var isSearchListCoveredByDestination: Bool {
         SessionListSearchNavigationPersistence.isInboxCovered(
             isSplitPresentation: navigation.workspaceNavigationPresentation == .split,
-            stackDepth: navigation.workspaceStackRouteElements.count,
-            splitDetailReplacesList: navigation.splitDetailTarget != nil
+            stackDepth: navigation.sessionListCover.stackDepth,
+            splitDetailReplacesList: navigation.sessionListCover.detailReplacesList
         )
     }
 
@@ -1186,7 +1181,6 @@ private extension SessionInboxViewController {
         var coverage: String
         var activeServerId: String?
         var stackCount: Int
-        var splitPathCount: Int
     }
 
     enum Section: Hashable {

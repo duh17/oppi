@@ -220,14 +220,8 @@ final class ChatRoutesPreviewController: PreviewRootController {
 
     /// The reader the chat last asked app navigation to open.
     private var openedChatReader: ChatReaderNavTarget? {
-        switch navigation.workspaceNavigationPresentation {
-        case .stack:
-            guard case .chatReader(let target)? = navigation.workspaceStackRouteElements.last else { return nil }
-            return target
-        case .split:
-            guard case .chatReader(let target)? = navigation.splitDetailPathElements.last else { return nil }
-            return target
-        }
+        guard case .chatReader(let target)? = navigation.workspaceStackRouteElements.last else { return nil }
+        return target
     }
 
     /// A 12-point control a test taps by identifier.

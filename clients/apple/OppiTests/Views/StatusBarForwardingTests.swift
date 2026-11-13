@@ -11,8 +11,10 @@ struct StatusBarForwardingTests {
     /// The session stack's front screen chooses the bar, through whatever
     /// containers (the pane host) sit between it and the drawer.
     @Test func theCompactDrawerFollowsItsSessionStack() throws {
-        let drawer = WorkspaceDrawerController(root: makeTestAppRoot())
+        let root = makeTestAppRoot()
+        let drawer = WorkspaceDrawerController(root: root)
         drawer.loadViewIfNeeded()
+        drawer.adopt(paneArea(root))
         let stack = try #require(shellStack(in: drawer))
         let front = StyledScreen()
         stack.setViewControllers([front], animated: false)
@@ -21,8 +23,10 @@ struct StatusBarForwardingTests {
     }
 
     @Test func theSplitFollowsItsDetailOnlyWhileTheSidebarIsHidden() throws {
-        let split = WorkspaceSplitController(root: makeTestAppRoot())
+        let root = makeTestAppRoot()
+        let split = WorkspaceSplitController(root: root)
         split.loadViewIfNeeded()
+        split.adopt(paneArea(root))
         // The detail column's own containers mount their children with their views.
         split.viewController(for: .secondary)?.loadViewIfNeeded()
         let detail = try #require(split.viewController(for: .secondary).flatMap(shellStack(in:)))
@@ -33,6 +37,12 @@ struct StatusBarForwardingTests {
         #expect(statusBarScreen(of: split) === front)
         split.splitViewController(split, willChangeTo: .oneBesideSecondary)
         #expect(split.childForStatusBarStyle == nil)
+    }
+
+    /// The window's pane area, as the shell makes it.
+    private func paneArea(_ root: AppRootEnvironment) -> WorkspacePaneArea {
+        let stack = ShellNavigationController(root: root, rootPlacement: .compactRoot)
+        return WorkspacePaneArea(stack: stack, host: PaneHostController(primary: stack))
     }
 
     /// The controller UIKit asks for the style: `childForStatusBarStyle` followed to its end.

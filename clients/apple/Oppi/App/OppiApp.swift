@@ -327,7 +327,6 @@ final class OppiApp {
         recordNavigationChanges("workspace_stack_depth") { navigation.workspaceStackRouteElements.count }
         recordNavigationChanges("stack_destination") { navigation.workspaceStackDiagnosticContext }
         recordNavigationChanges("split_destination") { navigation.visibleSplitDiagnosticContext }
-        recordNavigationChanges("split_detail_depth") { navigation.splitDetailPathElements.count }
     }
 
     private func recordNavigationChanges<Value: Equatable & Sendable>(

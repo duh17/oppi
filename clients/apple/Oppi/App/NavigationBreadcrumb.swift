@@ -212,13 +212,11 @@ enum ChatMountTelemetry {
 
     static func appearMetadata(
         sessionId: String,
-        shellSwapRemount: Bool,
         presentation: String,
         now: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) -> [String: String] {
         appearMetadata(
             sessionId: sessionId,
-            shellSwapRemount: shellSwapRemount,
             presentation: presentation,
             now: now,
             lastMountUptime: &lastMountUptime
@@ -227,14 +225,12 @@ enum ChatMountTelemetry {
 
     static func appearMetadata(
         sessionId: String,
-        shellSwapRemount: Bool,
         presentation: String,
         now: TimeInterval,
         lastMountUptime: inout [String: TimeInterval]
     ) -> [String: String] {
         var metadata: [String: String] = [
             "sessionId": sessionId,
-            "shellSwapRemount": shellSwapRemount ? "true" : "false",
             "presentation": presentation,
         ]
         if let previous = lastMountUptime[sessionId] {
@@ -245,17 +241,12 @@ enum ChatMountTelemetry {
         return metadata
     }
 
-    /// `shellSwapRemount` on disappear means this unmount is the outgoing side
-    /// of a shell swap: the chat left under a different presentation than it
-    /// mounted with. The incoming appear records whether that swap was adopted.
     static func disappearMetadata(
         sessionId: String,
-        shellSwapRemount: Bool,
         presentation: String
     ) -> [String: String] {
         [
             "sessionId": sessionId,
-            "shellSwapRemount": shellSwapRemount ? "true" : "false",
             "presentation": presentation,
         ]
     }

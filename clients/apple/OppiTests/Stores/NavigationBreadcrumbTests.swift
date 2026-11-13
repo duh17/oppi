@@ -137,22 +137,18 @@ struct NavigationBreadcrumbTests {
         var mounts: [String: TimeInterval] = [:]
         let first = ChatMountTelemetry.appearMetadata(
             sessionId: "session-1",
-            shellSwapRemount: false,
             presentation: "stack",
             now: 10,
             lastMountUptime: &mounts
         )
         let remount = ChatMountTelemetry.appearMetadata(
             sessionId: "session-1",
-            shellSwapRemount: true,
             presentation: "split",
             now: 12.25,
             lastMountUptime: &mounts
         )
 
         #expect(first["sincePreviousMountMs"] == nil)
-        #expect(first["shellSwapRemount"] == "false")
-        #expect(remount["shellSwapRemount"] == "true")
         #expect(remount["sincePreviousMountMs"] == "2250")
         #expect(remount["sessionId"] == "session-1")
     }

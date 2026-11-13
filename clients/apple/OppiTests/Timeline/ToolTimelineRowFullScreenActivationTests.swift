@@ -709,7 +709,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         }
         #expect(coveringKept, "covering disappear must not release a still-stacked payload")
 
-        host.navigation.popWorkspaceStack(toDepth: host.navigation.workspaceStackRouteElements.count - 1)
+        host.navigation.popShownStack(toDepth: host.navigation.workspaceStackRouteElements.count - 1)
         host.controller.view.setNeedsLayout()
         host.controller.view.layoutIfNeeded()
 
@@ -722,7 +722,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         }
         #expect(secondReleased, "true pop must release the popped payload and keep the stacked one")
 
-        host.navigation.popWorkspaceStack(toDepth: host.navigation.workspaceStackRouteElements.count - 1)
+        host.navigation.popShownStack(toDepth: host.navigation.workspaceStackRouteElements.count - 1)
         host.controller.view.setNeedsLayout()
         host.controller.view.layoutIfNeeded()
 

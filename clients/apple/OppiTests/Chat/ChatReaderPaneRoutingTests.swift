@@ -19,7 +19,7 @@ struct ChatReaderPaneRoutingTests {
         host.chat.openTimelineReader(.document(content: .fromText("hello", filePath: "notes.md")))
 
         let mounted = await waitForMainActorCondition(timeout: .seconds(3)) {
-            host.chat.attachedLeaf.mountedScreenForTesting is ChatReaderViewController
+            host.chat.attachedLeaf.mountedScreen is ChatReaderViewController
         }
         #expect(mounted, "the reader never mounted in the attached leaf")
         #expect(host.chat.model.readerTarget != nil)
@@ -43,7 +43,7 @@ struct ChatReaderPaneRoutingTests {
             Issue.record("Expected a pushed .chatReader route element")
         }
         #expect(host.chat.model.readerTarget == nil)
-        #expect(host.chat.attachedLeaf.mountedScreenForTesting == nil)
+        #expect(host.chat.attachedLeaf.mountedScreen == nil)
     }
 
     @Test("closing the reader beside the chat drops its stored payload")
@@ -53,7 +53,7 @@ struct ChatReaderPaneRoutingTests {
 
         host.chat.openTimelineReader(.document(content: .fromText("hello", filePath: "notes.md")))
         _ = await waitForMainActorCondition(timeout: .seconds(3)) {
-            host.chat.attachedLeaf.mountedScreenForTesting is ChatReaderViewController
+            host.chat.attachedLeaf.mountedScreen is ChatReaderViewController
         }
         let target = try #require(host.chat.model.readerTarget)
         #expect(host.appRoot.chatReaderPayloadStore.payload(for: target.id) != nil)
@@ -63,7 +63,7 @@ struct ChatReaderPaneRoutingTests {
         #expect(host.appRoot.chatReaderPayloadStore.payload(for: target.id) == nil)
 
         let detached = await waitForMainActorCondition(timeout: .seconds(3)) {
-            host.chat.attachedLeaf.mountedScreenForTesting == nil
+            host.chat.attachedLeaf.mountedScreen == nil
         }
         #expect(detached)
     }
@@ -75,14 +75,14 @@ struct ChatReaderPaneRoutingTests {
 
         host.chat.openTimelineReader(.document(content: .fromText("hello", filePath: "notes.md")))
         _ = await waitForMainActorCondition(timeout: .seconds(3)) {
-            host.chat.attachedLeaf.mountedScreenForTesting is ChatReaderViewController
+            host.chat.attachedLeaf.mountedScreen is ChatReaderViewController
         }
         let target = try #require(host.chat.model.readerTarget)
 
         host.window.traitOverrides.horizontalSizeClass = .compact
         let pushed = await waitForMainActorCondition(timeout: .seconds(3)) {
             host.appNavigation.containsChatReader(target)
-                && host.chat.attachedLeaf.mountedScreenForTesting == nil
+                && host.chat.attachedLeaf.mountedScreen == nil
         }
         #expect(pushed, "the reader neither left the attached leaf nor joined the shell's stack")
         #expect(host.chat.model.readerTarget == nil)
@@ -97,7 +97,7 @@ struct ChatReaderPaneRoutingTests {
         host.chat.showPanel(.share)
 
         let mounted = await waitForMainActorCondition(timeout: .seconds(3)) {
-            host.chat.attachedLeaf.mountedScreenForTesting is ShareSessionRedactionViewController
+            host.chat.attachedLeaf.mountedScreen is ShareSessionRedactionViewController
         }
         #expect(mounted, "Share never mounted in the attached leaf")
         #expect(host.chat.model.panel == .share)
@@ -107,7 +107,7 @@ struct ChatReaderPaneRoutingTests {
         // ends up with two panels fighting over who owns it.
         host.chat.showPanel(.files)
         let swapped = await waitForMainActorCondition(timeout: .seconds(3)) {
-            !(host.chat.attachedLeaf.mountedScreenForTesting is ShareSessionRedactionViewController)
+            !(host.chat.attachedLeaf.mountedScreen is ShareSessionRedactionViewController)
         }
         #expect(swapped)
         #expect(host.chat.model.panel == .files)
@@ -127,7 +127,7 @@ struct ChatReaderPaneRoutingTests {
     }
 
     private func mountedPanel(_ host: Host) -> ExtensionPanelViewController? {
-        host.chat.attachedLeaf.mountedScreenForTesting as? ExtensionPanelViewController
+        host.chat.attachedLeaf.mountedScreen as? ExtensionPanelViewController
     }
 
     @Test("a surface opens in its panel pane beside the chat, linked, and follows the session's snapshots")
@@ -147,7 +147,8 @@ struct ChatReaderPaneRoutingTests {
         #expect(panel.navigationItem.title == "Jobs")
         #expect(panel.navigationItem.subtitle == "1 running")
         #expect(host.chat.shownPanelSurfaceId == "jobs")
-        #expect(host.chat.attachedLeaf.mountedRouteForTesting == PaneStackEntry(
+        let tree = try #require(PaneHostController.hosting(host.chat)?.panes.tree)
+        #expect(tree.leaves.first { $0.origin == .attached }?.stack.last == PaneStackEntry(
             serverId: "sha256:reader-routing", route: .panel(session: host.chat.sessionId, id: "jobs")
         ), "the pane has a link, so the window restores it")
 
@@ -157,7 +158,7 @@ struct ChatReaderPaneRoutingTests {
         cover.modalPresentationStyle = .fullScreen
         host.chat.present(cover, animated: false)
         let parked = await waitForMainActorCondition(timeout: .seconds(3)) {
-            host.chat.attachedLeaf.mountedScreenForTesting == nil
+            host.chat.attachedLeaf.mountedScreen == nil
         }
         #expect(parked, "the pane stayed mounted under the cover")
         surfaces.apply(try jobsSurface(subtitle: "2 finished", revision: 8), sessionId: host.chat.sessionId)
@@ -240,7 +241,7 @@ struct ChatReaderPaneRoutingTests {
     }
 
     private func openedSha(_ host: Host) -> String? {
-        (host.chat.attachedLeaf.mountedScreenForTesting as? CommitDetailViewController)?.configuration.sha
+        (host.chat.attachedLeaf.mountedScreen as? CommitDetailViewController)?.configuration.sha
     }
 
     @Test("a timeline commit opens in the column at regular width, and a second open replaces it")
@@ -270,7 +271,7 @@ struct ChatReaderPaneRoutingTests {
         let sheet = await waitForMainActorCondition(timeout: .seconds(3)) {
             let presented = host.chat.presentedViewController as? RouterNavigationController
             return presented?.viewControllers.first is CommitDetailViewController
-                && host.chat.attachedLeaf.mountedScreenForTesting == nil
+                && host.chat.attachedLeaf.mountedScreen == nil
         }
         #expect(sheet, "the open commit pane was dropped instead of presented as the sheet")
         #expect(host.chat.model.panel == nil)

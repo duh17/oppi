@@ -216,7 +216,7 @@ final class WorkspaceSidebarViewController: UIViewController {
         let selectionTarget = navigation.selectedWorkspaceFilter
         func isUtilitySelected(_ target: WorkspaceUtilityNavTarget) -> Bool {
             navigation.workspaceNavigationPresentation == .split
-                && navigation.splitDetailTarget == .utility(target)
+                && navigation.splitDetailColumn.root == .utility(target)
         }
 
         for item in WorkspaceSidebarPrimaryUtilities.items {

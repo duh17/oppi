@@ -7,16 +7,38 @@ import UIKit
 // In both, the session stack is the primary leaf of a `PaneHostController`,
 // so a wide window shows a screen's attached leaf beside it; the sidebar is
 // never a pane (a tiled sidebar in landscape, a drawer over the panes in
-// portrait).
+// portrait). The stack and its host are the window's one pane area: a change
+// of layout (rotating the iPad mini flips split and stack) moves them, never
+// rebuilds them, so the chat, its composer, typed text, a dictation in
+// progress and the pane beside it carry on.
 
-/// Measures the window, mounts the stack or split layout `AppNavigation`
-/// converted its routes for, and covers everything while the active server
-/// is locked.
+/// A layout that shows the window's pane area.
+@MainActor
+protocol WorkspacePaneLayout: UIViewController {
+    /// Takes the pane area in, once the layout's view is in the window.
+    func adopt(_ area: WorkspacePaneArea)
+    /// Gives the pane area up, for the next layout to adopt.
+    func release(_ area: WorkspacePaneArea)
+}
+
+/// The window's routed stack and the pane host around it.
+@MainActor
+struct WorkspacePaneArea {
+    let stack: ShellNavigationController
+    let host: PaneHostController
+}
+
+/// Measures the window, mounts the stack or split layout that shows
+/// `AppNavigation`'s stack, and covers everything while the active server is
+/// locked.
 final class WorkspaceShellController: UIViewController {
     private let root: AppRootEnvironment
     private var navigation: AppNavigation { root.navigation }
-    private var layout: UIViewController?
+    private var layout: (any WorkspacePaneLayout)?
     private var layoutPresentation: WorkspaceNavigationPresentation?
+    /// Made with the first layout, kept across layouts, dropped under a lock
+    /// cover so nothing of a locked server stays mounted.
+    private var paneArea: WorkspacePaneArea?
     private var lockCover: UIViewController?
     private var lockedServerId: String?
     /// The last measured presentation. Nil until the first layout pass, so
@@ -131,8 +153,8 @@ final class WorkspaceShellController: UIViewController {
         updatePropertiesIfNeeded()
     }
 
-    /// Converts `AppNavigation`'s routes for the measured presentation in one
-    /// mutation; the matching layout mounts from the converted state.
+    /// Tells `AppNavigation` the measured presentation; the matching layout
+    /// mounts from it.
     private func applyPresentation(measured: Bool) {
         guard let presentation = measuredPresentation else { return }
         navigation.setWorkspaceNavigationPresentation(
@@ -148,7 +170,7 @@ final class WorkspaceShellController: UIViewController {
 
     private func mountLayout(for presentation: WorkspaceNavigationPresentation) {
         guard layout == nil || layoutPresentation != presentation else { return }
-        let next: UIViewController = switch presentation {
+        let next: any WorkspacePaneLayout = switch presentation {
         case .stack: WorkspaceDrawerController(root: root)
         case .split: WorkspaceSplitController(root: root)
         }
@@ -156,19 +178,51 @@ final class WorkspaceShellController: UIViewController {
         layoutPresentation = presentation
     }
 
-    private func replaceLayout(with next: UIViewController?) {
-        if let layout {
-            layout.willMove(toParent: nil)
-            layout.view.removeFromSuperview()
-            layout.removeFromParent()
+    private func makePaneArea() -> WorkspacePaneArea {
+        let stack = ShellNavigationController(root: root, rootPlacement: .compactRoot)
+        let navigation = navigation
+        stack.onRoutesPopped = { remaining in
+            navigation.popShownStack(toDepth: remaining - 1)
         }
+        // Only the split detail's root closes (`showSessionInboxInSplit`).
+        stack.onCloseRoot = {
+            navigation.showSessionInboxInSplit()
+        }
+        return WorkspacePaneArea(stack: stack, host: PaneHostController(primary: stack, panes: navigation.panes))
+    }
+
+    /// Shows `next` in place of the current layout. The pane area moves
+    /// across in one pass, the old layout giving it up and the new one taking
+    /// it, while the host keeps appearance from its screens
+    /// (`movesBetweenLayouts`): they are never told they disappeared.
+    private func replaceLayout(with next: (any WorkspacePaneLayout)?) {
+        let old = layout
         layout = next
-        guard let next else { return }
-        addChild(next)
-        next.view.frame = view.bounds
-        next.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        view.insertSubview(next.view, at: 0)
-        next.didMove(toParent: self)
+        if let next {
+            let moving = paneArea
+            let area = moving ?? makePaneArea()
+            paneArea = area
+            addChild(next)
+            next.view.frame = view.bounds
+            next.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            view.insertSubview(next.view, at: 0)
+            next.didMove(toParent: self)
+            let adopt = {
+                old?.release(area)
+                next.adopt(area)
+                next.updatePropertiesIfNeeded()
+                next.view.layoutIfNeeded()
+            }
+            // A new area appears as any screen does; one already on screen moves.
+            if moving != nil { area.host.movesBetweenLayouts(adopt) } else { adopt() }
+        } else {
+            paneArea = nil
+        }
+        if let old {
+            old.willMove(toParent: nil)
+            old.view.removeFromSuperview()
+            old.removeFromParent()
+        }
         view.setNeedsLayout()
         setNeedsStatusBarAppearanceUpdate()
     }
@@ -211,19 +265,17 @@ final class WorkspaceShellController: UIViewController {
 /// Regular width and height, landscape: the workspace list beside the
 /// detail column. `AppNavigation` picks the detail root and its pushes, and
 /// the sidebar's visibility.
-final class WorkspaceSplitController: UISplitViewController, UISplitViewControllerDelegate {
+final class WorkspaceSplitController: UISplitViewController, UISplitViewControllerDelegate, WorkspacePaneLayout {
     private let root: AppRootEnvironment
     private var navigation: AppNavigation { root.navigation }
     private let sidebarStack: ShellNavigationController
-    private let detailStack: ShellNavigationController
-    private let panes: PaneHostController
+    /// The window's pane area, in the detail column once adopted.
+    private var area: WorkspacePaneArea?
     private var appliedVisibility: SplitColumnVisibility?
 
     init(root: AppRootEnvironment) {
         self.root = root
         sidebarStack = ShellNavigationController(root: root, rootPlacement: .splitSidebar)
-        detailStack = ShellNavigationController(root: root, rootPlacement: .splitDetailRoot)
-        panes = PaneHostController(primary: detailStack, panes: root.navigation.panes)
         super.init(style: .doubleColumn)
         delegate = self
         preferredSplitBehavior = .tile
@@ -233,18 +285,27 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
         preferredPrimaryColumnWidth = 380
         maximumPrimaryColumnWidth = 460
         sidebarStack.setRoutes([.sidebar])
-        let navigation = root.navigation
-        detailStack.onRoutesPopped = { remaining in
-            navigation.popSplitDetail(toDepth: remaining - 1)
-        }
-        detailStack.onCloseRoot = {
-            navigation.showSessionInboxInSplit()
-        }
         setViewController(sidebarStack, for: .primary)
+    }
+
+    func adopt(_ area: WorkspacePaneArea) {
+        self.area = area
+        area.stack.openSidebar = nil
+        // As the drawer last drew it, maybe mid-slide.
+        area.host.view.isUserInteractionEnabled = true
+        area.host.view.layer.cornerRadius = 0
         // UIKit wraps a column's controller that is not a navigation
         // controller in one; its bar stays hidden (`PaneHostController`
         // hides the bar of a stack it is the root of).
-        setViewController(panes, for: .secondary)
+        setViewController(area.host, for: .secondary)
+        setNeedsUpdateProperties()
+    }
+
+    func release(_ area: WorkspacePaneArea) {
+        // Through the split: the column's wrapper otherwise keeps the host on
+        // its stack, and UIKit refuses it to another parent.
+        setViewController(UIViewController(), for: .secondary)
+        self.area = nil
     }
 
     @available(*, unavailable)
@@ -255,7 +316,7 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
     /// The detail column chooses the status bar only while it is the whole
     /// screen; with the sidebar showing, the bar sits over the app's own list.
     override var childForStatusBarStyle: UIViewController? {
-        shownDisplayMode == .secondaryOnly ? panes : nil
+        shownDisplayMode == .secondaryOnly ? area?.host : nil
     }
 
     /// The columns showing, as of the last change UIKit reported.
@@ -276,12 +337,7 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
         super.updateProperties()
         overrideUserInterfaceStyle = root.themeStore.userInterfaceStyle
         view.backgroundColor = root.themeStore.backgroundColor
-        detailStack.setRoutes(
-            [ShellRoute.splitDetailRoot(
-                target: navigation.splitDetailTarget,
-                selectedWorkspace: navigation.splitSelectedWorkspace
-            )] + navigation.splitDetailPathElements.map(ShellRoute.init)
-        )
+        area?.stack.setRoutes(navigation.splitDetailColumn.routes, rootPlacement: .splitDetailRoot)
         applyColumnVisibility(navigation.splitColumnVisibility)
     }
 
@@ -323,7 +379,7 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
 /// so they travel with the list as one surface. The reveal drag starts within
 /// `edgePanWidth` of the leading edge, only at the stack's root, so it never
 /// fights the interactive back swipe.
-final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDelegate {
+final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDelegate, WorkspacePaneLayout {
     private static let edgePanWidth: CGFloat = 32
     private static let foregroundCornerRadius: CGFloat = 40
     private static let foregroundShadowOpacity: Float = 0.14
@@ -332,12 +388,13 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
 
     private let root: AppRootEnvironment
     private var navigation: AppNavigation { root.navigation }
-    private let stack: ShellNavigationController
-    /// The stack's pane host: in a wide portrait window a screen's attached
-    /// leaf sits beside the stack, and the drawer slides over both.
-    private let panes: PaneHostController
+    /// The window's pane area, once adopted: in a wide portrait window a
+    /// screen's attached leaf sits beside the stack, and the drawer slides
+    /// over both.
+    private var area: WorkspacePaneArea?
+    private var stack: ShellNavigationController? { area?.stack }
     private let sidebar: UIViewController
-    /// Carries the shadow; `panes.view` inside it carries the rounded mask.
+    /// Carries the shadow; the pane host's view inside it carries the rounded mask.
     private let foreground = UIView()
     private let scrim = UIView()
     private let revealPan = UIPanGestureRecognizer()
@@ -351,17 +408,33 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
 
     init(root: AppRootEnvironment) {
         self.root = root
-        stack = ShellNavigationController(root: root, rootPlacement: .compactRoot)
-        panes = PaneHostController(primary: stack, panes: root.navigation.panes)
         let closeSidebar = DrawerAction()
         sidebar = ShellRouteScreens.drawerSidebar(root: root) { closeSidebar.perform?() }
         super.init(nibName: nil, bundle: nil)
         closeSidebar.perform = { [weak self] in self?.settle(open: false) }
-        let navigation = root.navigation
-        stack.onRoutesPopped = { remaining in
-            navigation.popWorkspaceStack(toDepth: remaining - 1)
-        }
-        stack.openSidebar = { [weak self] in self?.settle(open: true) }
+    }
+
+    func adopt(_ area: WorkspacePaneArea) {
+        self.area = area
+        area.stack.openSidebar = { [weak self] in self?.settle(open: true) }
+        let host = area.host
+        addChild(host)
+        foreground.addSubview(host.view)
+        host.view.layer.cornerCurve = .continuous
+        host.view.clipsToBounds = true
+        host.didMove(toParent: self)
+        view.setNeedsLayout()
+        setNeedsUpdateProperties()
+        setNeedsStatusBarAppearanceUpdate()
+    }
+
+    func release(_ area: WorkspacePaneArea) {
+        let host = area.host
+        host.willMove(toParent: nil)
+        host.view.removeFromSuperview()
+        host.removeFromParent()
+        area.stack.openSidebar = nil
+        self.area = nil
     }
 
     @available(*, unavailable)
@@ -371,7 +444,7 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
 
     /// The session stack in front of the drawer; the sidebar owns the status
     /// bar while the drawer is open over it.
-    override var childForStatusBarStyle: UIViewController? { isOpen ? nil : panes }
+    override var childForStatusBarStyle: UIViewController? { isOpen ? nil : area?.host }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -388,11 +461,6 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
         ]
 
         view.addSubview(foreground)
-        addChild(panes)
-        foreground.addSubview(panes.view)
-        panes.view.layer.cornerCurve = .continuous
-        panes.view.clipsToBounds = true
-        panes.didMove(toParent: self)
         foreground.layer.shadowColor = UIColor.black.cgColor
         foreground.layer.shadowOpacity = 0
 
@@ -423,7 +491,7 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
         // The corner cutouts the rounded foreground reveals show the theme,
         // never the bare window.
         view.backgroundColor = root.themeStore.backgroundColor
-        stack.setRoutes([.inbox] + navigation.workspaceStackRouteElements.map(ShellRoute.init))
+        stack?.setRoutes([.inbox] + navigation.workspaceStackRouteElements.map(ShellRoute.init), rootPlacement: .compactRoot)
     }
 
     override func accessibilityPerformEscape() -> Bool {
@@ -447,26 +515,27 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
         let progress = progress
         let offset = width * progress
         foreground.frame = bounds.offsetBy(dx: offset, dy: 0)
-        panes.view.frame = foreground.bounds
-        panes.view.layer.cornerRadius = Self.foregroundCornerRadius * progress
+        let host = area?.host.view
+        host?.frame = foreground.bounds
+        host?.layer.cornerRadius = Self.foregroundCornerRadius * progress
         foreground.layer.shadowOpacity = Self.foregroundShadowOpacity * Float(progress)
         foreground.layer.shadowRadius = Self.foregroundShadowRadius * progress
         foreground.layer.shadowOffset = CGSize(width: Self.foregroundShadowOffsetX * progress, height: 0)
         foreground.layer.shadowPath = UIBezierPath(
             roundedRect: foreground.bounds,
-            cornerRadius: panes.view.layer.cornerRadius
+            cornerRadius: Self.foregroundCornerRadius * progress
         ).cgPath
         scrim.frame = foreground.frame
         // Only while the sidebar intercepts (open or mid-drag), so it never
         // steals taps from the session surface.
         scrim.isHidden = !(isOpen || progress > 0)
         // No list scroll or indicator on the peeking sliver.
-        panes.view.isUserInteractionEnabled = progress == 0
+        host?.isUserInteractionEnabled = progress == 0
     }
 
     /// The drawer opens from the stack's root only (as the edge drag does) and
     /// closes from anywhere. Toggle Sidebar's availability and action.
-    var canToggleSidebar: Bool { isOpen || stack.viewControllers.count == 1 }
+    var canToggleSidebar: Bool { isOpen || stack?.viewControllers.count == 1 }
     var isSidebarOpen: Bool { isOpen }
 
     func toggleSidebar() {
@@ -535,7 +604,7 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
         guard gestureRecognizer === revealPan else { return true }
         // Armed at the stack root only, from the leading edge.
         return !isOpen
-            && stack.viewControllers.count == 1
+            && stack?.viewControllers.count == 1
             && touch.location(in: foreground).x <= Self.edgePanWidth
     }
 

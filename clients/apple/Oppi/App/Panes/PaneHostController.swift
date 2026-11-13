@@ -29,12 +29,13 @@ final class PaneHostController: UIViewController {
     enum Leaf: Equatable { case primary, companion }
 
     let primary: UIViewController
-    /// The window's pane state; nil in a harness or test host.
-    private let panes: ScenePanes?
+    /// The window's pane tree: the companion's share, zoom and focus live
+    /// there, the host only draws them. A harness host gets one of its own.
+    let panes: ScenePanes
     /// How long a parked companion's view stays in the hierarchy, hidden, so
     /// a quick return (a push and pop over its owner) does not rebuild it.
     let parkedViewLifetime: TimeInterval
-    private(set) var focusedLeaf: Leaf = .primary
+    var focusedLeaf: Leaf { companion != nil && panes.isCompanionFocused ? .companion : .primary }
 
     private struct Companion {
         let controller: UIViewController
@@ -59,17 +60,21 @@ final class PaneHostController: UIViewController {
     /// directly during a drag, and through an animator for every open,
     /// close, and snap.
     private var width: CGFloat = 0
-    /// The last settled ordinary width as a fraction of the host's width, so
-    /// it scales with rotation and window resizing. Nil until known.
-    private var restingFraction: CGFloat? {
-        didSet { panes?.companionFraction = restingFraction }
-    }
-    private var isFull = false
+    /// The last settled ordinary width as a fraction of the host's width (the
+    /// tree's weight), so it scales with rotation and window resizing. Nil
+    /// until known.
+    private var restingFraction: CGFloat? { panes.companionShare.map { CGFloat($0) } }
+    /// The person chose full: the tree's zoom of the companion, not the fit
+    /// rule's.
+    private var isFull: Bool { panes.isCompanionZoomed && !panes.companionZoomIsFit }
     private var isClosing = false
     private var lastBoundsWidth: CGFloat?
 
     /// The finger's raw target at the drag's start; nil outside a drag.
     private var dragStartWidth: CGFloat?
+    /// Whether the companion filled the window when its owner left, so it
+    /// returns as it was.
+    private var zoomedWhenParked = false
     private var dragZone: PaneSnapZone?
     private var settleAnimator: UIViewPropertyAnimator?
 
@@ -87,12 +92,11 @@ final class PaneHostController: UIViewController {
     /// not heard anything. A leaf's entry goes when the leaf leaves the host.
     private var reported: [ObjectIdentifier: (visibility: PaneVisibility, screens: NSHashTable<UIViewController>)] = [:]
 
-    init(primary: UIViewController, panes: ScenePanes? = nil, parkedViewLifetime: TimeInterval = 10) {
+    init(primary: UIViewController, panes: ScenePanes = ScenePanes(), parkedViewLifetime: TimeInterval = 10) {
         self.primary = primary
         self.panes = panes
         self.parkedViewLifetime = parkedViewLifetime
         super.init(nibName: nil, bundle: nil)
-        restingFraction = panes?.companionFraction
     }
 
     /// The host either of whose leaves holds `controller`.
@@ -137,6 +141,38 @@ final class PaneHostController: UIViewController {
 
     override var childForStatusBarStyle: UIViewController? { primary }
 
+    /// True while the shell moves the host into another layout.
+    private var isMovingBetweenLayouts = false
+
+    /// The leaves never leave the window while the shell moves the host
+    /// between its layouts, so they are not told they disappeared and
+    /// appeared: a chat that heard it ended its dictation and its stream.
+    override var shouldAutomaticallyForwardAppearanceMethods: Bool { !isMovingBetweenLayouts }
+
+    /// Runs the shell's move of the host to another layout (`body`), and
+    /// keeps appearance from reaching the leaves until that move has settled
+    /// (a navigation controller finishes showing its new root a turn later).
+    /// UIKit takes the host's view out of the window for the move, which
+    /// resigns the first responder; the field that had the keyboard (the
+    /// composer, mid-sentence) takes it back in the same turn.
+    func movesBetweenLayouts(_ body: () -> Void) {
+        let responder = Self.firstResponder(in: view)
+        isMovingBetweenLayouts = true
+        body()
+        if let responder, responder.window != nil, !responder.isFirstResponder {
+            responder.becomeFirstResponder()
+        }
+        DispatchQueue.main.async { [weak self] in self?.isMovingBetweenLayouts = false }
+    }
+
+    private static func firstResponder(in view: UIView) -> UIView? {
+        if view.isFirstResponder { return view }
+        for subview in view.subviews {
+            if let found = firstResponder(in: subview) { return found }
+        }
+        return nil
+    }
+
     override func didMove(toParent parent: UIViewController?) {
         super.didMove(toParent: parent)
         // The split view wraps its secondary column in a navigation
@@ -163,6 +199,7 @@ final class PaneHostController: UIViewController {
         hairline.backgroundColor = .separator
         hairline.isUserInteractionEnabled = false
         cover.isUserInteractionEnabled = false
+        cover.accessibilityIdentifier = "pane.cover"
         cover.alpha = 0
         cover.isHidden = true
         hairline.isHidden = true
@@ -244,14 +281,16 @@ final class PaneHostController: UIViewController {
             parked.remove(at: index)
         }
         companion = Companion(controller: controller, owner: owner, widths: widths, route: route)
-        panes?.companionDidChange(route, shown: true)
+        panes.companionDidOpen(route, drawnShare: drawnShare)
+        let restored = panes.takeRestoredCompanionState()
+        panes.setCompanionZoomed(opening ? restored.zoomed : zoomedWhenParked)
+        applyFitRule()
         if controller.parent !== self {
             addChild(controller)
             view.insertSubview(controller.view, belowSubview: divider)
             controller.didMove(toParent: self)
         }
         controller.view.isHidden = false
-        if opening { isFull = false }
         let target = restingWidth
         width = opening ? 0 : target
         view.setNeedsLayout()
@@ -259,7 +298,7 @@ final class PaneHostController: UIViewController {
         if opening {
             animateWidth(to: target, initialVelocity: 0)
         }
-        if panes?.takeRestoredCompanionFocus() == true {
+        if restored.focused {
             focus(.companion)
         }
         updateVisibility()
@@ -270,6 +309,7 @@ final class PaneHostController: UIViewController {
     func updateCompanionWidths(_ controller: UIViewController, _ widths: PaneCompanionWidths) {
         guard companion?.controller === controller, companion?.widths != widths else { return }
         companion?.widths = widths
+        applyFitRule()
         view.setNeedsLayout()
     }
 
@@ -287,7 +327,8 @@ final class PaneHostController: UIViewController {
         }
         removeChild(old)
         companion = Companion(controller: new, owner: current.owner, widths: widths, route: route)
-        panes?.companionDidChange(route, shown: true)
+        panes.companionDidOpen(route, drawnShare: drawnShare)
+        applyFitRule()
         addChild(new)
         view.insertSubview(new.view, belowSubview: divider)
         new.didMove(toParent: self)
@@ -308,6 +349,7 @@ final class PaneHostController: UIViewController {
         }
         guard companion?.controller === controller else { return }
         endMotion()
+        zoomedWhenParked = isFull
         companion = nil
         controller.view.isHidden = true
         let timer = Timer.scheduledTimer(withTimeInterval: parkedViewLifetime, repeats: false) { [weak self, weak controller] _ in
@@ -353,7 +395,6 @@ final class PaneHostController: UIViewController {
                 self.companion = nil
                 self.removeChild(controller)
             }
-            self.isFull = false
             self.isClosing = false
             self.divider.isUserInteractionEnabled = true
             self.companionLeft()
@@ -377,8 +418,7 @@ final class PaneHostController: UIViewController {
     /// The primary has the host to itself again.
     private func companionLeft() {
         width = 0
-        focusedLeaf = .primary
-        panes?.companionDidChange(nil, shown: false)
+        panes.companionDidClose()
         applyKeyboardFollowing(firstResponderIn: nil)
         view.setNeedsLayout()
         view.layoutIfNeeded()
@@ -412,10 +452,31 @@ final class PaneHostController: UIViewController {
         return rememberedWidth(policy: policy)
     }
 
-    /// The companion covers the primary: the person chose full, or the
-    /// companion does not fit beside it.
+    /// The companion's ordinary width as a share of the host, for the tree's
+    /// weight before a share was ever settled.
+    private var drawnShare: Double? {
+        guard let policy, policy.window > 0 else { return nil }
+        return Double(rememberedWidth(policy: policy) / policy.window)
+    }
+
+    /// The companion covers the primary: the person chose full, or it does
+    /// not fit beside it.
     private var showsFull: Bool {
         isFull || policy?.fitsBeside == false
+    }
+
+    /// The fit rule (build plan §1.3): a companion that does not fit beside
+    /// its leaf at both minimums shows full, as the tree's zoom of it, and
+    /// its divider offers only Close. When the window fits both again (a
+    /// rotation back, a wider window) the zoom ends and the companion returns
+    /// beside its leaf at the share it had; a full the person chose stays.
+    private func applyFitRule() {
+        guard companion != nil else { return }
+        if policy?.fitsBeside == false, !isFull {
+            panes.setCompanionZoomed(true, byFit: true)
+        } else if panes.companionZoomIsFit {
+            panes.setCompanionZoomed(false)
+        }
     }
 
     /// The remembered width in points: the last settled fraction against the
@@ -436,6 +497,7 @@ final class PaneHostController: UIViewController {
             divider.cancelDrag()
             resizeHold.finish()
         }
+        applyFitRule()
         guard settleAnimator == nil, companion != nil else { return }
         width = restingWidth
         updateVisibility()
@@ -500,8 +562,7 @@ final class PaneHostController: UIViewController {
 
     private func focus(_ leaf: Leaf) {
         guard focusedLeaf != leaf, leaf == .primary || companion != nil else { return }
-        focusedLeaf = leaf
-        panes?.focusDidChange(onCompanion: leaf == .companion)
+        panes.focusCompanion(leaf == .companion)
         updateVisibility()
     }
 
@@ -627,20 +688,19 @@ final class PaneHostController: UIViewController {
         guard !isClosing, let policy else { return }
         switch outcome {
         case .closed:
-            isFull = false
             // The owner closes the way its panel's own Close does, so its
             // model stays the one source of truth.
             companion?.owner?.dividerRequestedClose()
         case .full:
-            isFull = true
+            panes.setCompanionZoomed(true)
             animateWidth(to: policy.full, initialVelocity: initialVelocityPointsPerSecond)
         case .width where !policy.fitsBeside:
-            // No room beside: the companion stays full.
-            isFull = true
+            // No room beside: the companion stays full, by the fit rule.
+            panes.setCompanionZoomed(true, byFit: true)
             animateWidth(to: policy.full, initialVelocity: initialVelocityPointsPerSecond)
         case .width(let target):
-            isFull = false
-            restingFraction = policy.window > 0 ? target / policy.window : 0
+            panes.setCompanionZoomed(false)
+            if policy.window > 0 { panes.setCompanionShare(Double(target / policy.window)) }
             animateWidth(to: target, initialVelocity: initialVelocityPointsPerSecond)
         }
         updateVisibility()
@@ -651,6 +711,17 @@ final class PaneHostController: UIViewController {
     /// place and restarts from there, so the companion never jumps.
     private func animateWidth(to target: CGFloat, initialVelocity: CGFloat, completion: (() -> Void)? = nil) {
         stopSettle()
+        // UIKit animations off (the test launch's switch, or
+        // `performWithoutAnimation`): the width lands at once. A property
+        // animator would still run its spring.
+        guard UIView.areAnimationsEnabled else {
+            width = target
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+            if dragStartWidth == nil { resizeHold.finish() }
+            completion?()
+            return
+        }
         let distance = target - width
         let velocityVector = distance == 0 ? .zero : CGVector(dx: initialVelocity / distance, dy: 0)
         let timing = UISpringTimingParameters(dampingRatio: 0.86, initialVelocity: velocityVector)
@@ -689,24 +760,6 @@ final class PaneHostController: UIViewController {
         }
     }
 
-    // MARK: - Testing
-
-    /// The divider, so a test can drive a drag through the exact closures a
-    /// live pan calls instead of synthesizing touches.
-    var dividerForTesting: PaneDividerView { divider }
-    var companionWidthForTesting: CGFloat? { companion == nil ? nil : width }
-    var isFullForTesting: Bool { isFull }
-    var restingFractionForTesting: CGFloat? { restingFraction }
-    var coverForTesting: UIView { cover }
-    var companionForTesting: UIViewController? { companion?.controller }
-
-    /// Lands an in-flight open, snap, or close at its end now, completion
-    /// included, as if the spring had run out.
-    func finishSettleForTesting() {
-        guard let animator = settleAnimator else { return }
-        animator.stopAnimation(false)
-        animator.finishAnimation(at: .end)
-    }
 }
 
 extension PaneHostController: NavigationBarHiding {
