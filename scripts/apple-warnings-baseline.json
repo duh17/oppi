@@ -2,7 +2,7 @@
   "counts": {
     "Oppi": {
       "compiler": 5,
-      "swiftlint": 87
+      "swiftlint": 81
     },
     "OppiDebugHarness": {
       "swiftlint": 2
@@ -15,7 +15,7 @@
     },
     "OppiTests": {
       "compiler": 242,
-      "swiftlint": 181
+      "swiftlint": 178
     },
     "OppiUITests": {
       "compiler": 25
@@ -157,10 +157,9 @@
       "SwiftPM/(package scan)": 15
     },
     "swiftlint": {
-      "Oppi/App/AppOpener+ResourceReferences.swift": 4,
+      "Oppi/App/AppOpener+ResourceReferences.swift": 2,
       "Oppi/App/NavigationBreadcrumb.swift": 1,
       "Oppi/App/OppiApp.swift": 2,
-      "Oppi/App/Router.swift": 1,
       "Oppi/App/WorkspaceShellController.swift": 1,
       "Oppi/Core/Models/User.swift": 1,
       "Oppi/Core/Networking/ServerConnection+Refresh.swift": 1,
@@ -182,7 +181,6 @@
       "Oppi/Features/Chat/ChatViewController+Lifecycle.swift": 1,
       "Oppi/Features/Chat/Composer/ChatComposerOwner.swift": 1,
       "Oppi/Features/Chat/Composer/ComposerBarChrome.swift": 1,
-      "Oppi/Features/Chat/Composer/ComposerBarController+Build.swift": 1,
       "Oppi/Features/Chat/Composer/ExpandedComposerView.swift": 1,
       "Oppi/Features/Chat/Support/ChatTopBarActions.swift": 1,
       "Oppi/Features/Chat/Support/ExtensionSurfaceCompositeViews.swift": 1,
@@ -206,13 +204,12 @@
       "Oppi/Features/SSHTerminal/RexRemote.swift": 1,
       "Oppi/Features/SSHTerminal/SSHTerminalArrowControl.swift": 1,
       "Oppi/Features/SSHTerminal/SSHTerminalBar.swift": 1,
-      "Oppi/Features/SSHTerminal/SSHTerminalBarSettingsViewController.swift": 1,
       "Oppi/Features/SSHTerminal/SSHTerminalColors.swift": 1,
       "Oppi/Features/SSHTerminal/SSHTerminalEngine.swift": 1,
       "Oppi/Features/SSHTerminal/SSHTerminalFolderViewController.swift": 2,
       "Oppi/Features/SSHTerminal/SSHTerminalMetalRenderer.swift": 2,
       "Oppi/Features/SSHTerminal/SSHTerminalStatusGlyph.swift": 1,
-      "Oppi/Features/SSHTerminal/SSHTerminalViewController.swift": 3,
+      "Oppi/Features/SSHTerminal/SSHTerminalViewController.swift": 2,
       "Oppi/Features/Workspaces/SessionInboxComposeChrome.swift": 1,
       "Oppi/Features/Workspaces/WorkspaceComponents.swift": 2,
       "Oppi/Features/Workspaces/WorkspaceCreateViewController.swift": 3,
@@ -298,7 +295,6 @@
       "OppiTests/Timeline/UserTimelineRowContentTests.swift": 3,
       "OppiTests/Timeline/WorkingIndicatorLiveTailPinTests.swift": 1,
       "OppiTests/Views/EntityIconTests.swift": 5,
-      "OppiTests/Views/TrailingColumnResizeTests.swift": 3,
       "OppiTests/Views/WorkingSpinnerUIViewTests.swift": 1,
       "OppiTests/Workspaces/WorkspaceSettingsLockTests.swift": 2,
       "OppiTests/Workspaces/WorkspaceSettingsPagesTests.swift": 1,

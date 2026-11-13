@@ -415,7 +415,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
     /// a successful read changes nothing the owner reports, so its bar items
     /// would otherwise never reach the reader.
     private func applyEditEntry(to reader: FullScreenCodeViewController) {
-        reader.setEditBarItems(editOwner?.barItems ?? [])
+        reader.setHostBar(offers: editOwner?.readerOffers ?? [:], menu: editOwner?.menuActions ?? [])
         editOwner?.updateEditorPage(
             palette: (AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette,
             checkoutSubtitle: nil

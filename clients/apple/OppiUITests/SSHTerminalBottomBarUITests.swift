@@ -70,6 +70,24 @@ final class SSHTerminalBottomBarUITests: XCTestCase, PreviewUITestCase {
         scroll { element.exists && element.isHittable }
     }
 
+    /// Scrolls the Customize sheet back up until `element` shows. Only while it
+    /// is not there: a swipe down on a list already at its top closes the sheet.
+    private func scrollBack(to element: XCUIElement) {
+        var swipes = 0
+        while !(element.exists && element.isHittable), swipes < 6 {
+            app.swipeDown()
+            swipes += 1
+        }
+    }
+
+    /// Done closes Customize, a sheet over the terminal.
+    private func closeBottomBarSettings() {
+        let done = app.buttons["barCustomize.done"]
+        XCTAssertTrue(done.waitUntilExists(timeout: 5), "Customize has no Done")
+        done.tap()
+        XCTAssertTrue(element("settings.sshTerminal.bar.list").waitUntilGone(timeout: 5), "Done did not close Customize")
+    }
+
     private var customButtons: XCUIElementQuery {
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "sshTerminal.bar.custom."))
     }
@@ -127,7 +145,7 @@ final class SSHTerminalBottomBarUITests: XCTestCase, PreviewUITestCase {
             XCTAssertTrue(row.exists, "The list has no \(id) row")
         }
         // Back to the top for the screenshot.
-        for _ in 0..<4 { app.swipeDown() }
+        scrollBack(to: element("settings.sshTerminal.bar.row.keyboard"))
         attachScreenshot("settings-list")
 
         addEOFKey()
@@ -139,7 +157,7 @@ final class SSHTerminalBottomBarUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("settings-list-with-key")
 
         // Back in the terminal the key is on the bar, drawn as its short name.
-        app.buttons["BackButton"].tap()
+        closeBottomBarSettings()
         XCTAssertTrue(waitFor(customButtons.count == 1), "The custom key must be on the bar")
         let eof = customButtons.element(boundBy: 0)
         XCTAssertEqual(eof.label, "EOF", "VoiceOver says the name")
@@ -162,14 +180,19 @@ final class SSHTerminalBottomBarUITests: XCTestCase, PreviewUITestCase {
         openBottomBarSettings()
         addEOFKey()
         // The list is scrolled to its end after adding; the switches are above.
-        for _ in 0..<5 { app.swipeDown() }
+        scrollBack(to: app.switches["settings.sshTerminal.bar.escape"])
         for id in ["escape", "interrupt", "tab", "up", "down", "enter", "programShortcuts", "paste"] {
             let toggle = app.switches["settings.sshTerminal.bar.\(id)"]
             reveal(toggle)
             XCTAssertTrue(toggle.exists, "No switch for \(id)")
             if (toggle.value as? String) != "1" { toggle.tap() }
         }
-        app.buttons["BackButton"].tap()
+        // A bar that differs from the default offers Reset to Default.
+        let reset = app.buttons["settings.sshTerminal.bar.reset"]
+        reveal(reset)
+        XCTAssertTrue(reset.exists, "A customized bar offers Reset to Default")
+        attachScreenshot("customize-sheet")
+        closeBottomBarSettings()
         let more = app.buttons["sshTerminal.more"]
         XCTAssertTrue(more.waitUntilExists(timeout: 5))
         XCTAssertTrue(app.buttons["sshTerminal.bar.keyboard"].waitUntilExists(timeout: 5))
@@ -279,7 +302,7 @@ final class SSHTerminalBottomBarUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(others.exists, "No Rex panel choices in Bottom Bar")
         attachScreenshot("rex-settings")
         others.tap()
-        app.buttons["BackButton"].tap()
+        closeBottomBarSettings()
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
         XCTAssertTrue(switcher.waitUntilExists(timeout: 10))
         switcher.tap()

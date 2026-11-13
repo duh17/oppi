@@ -1,13 +1,13 @@
 import UIKit
 
-/// Settings > Editor: keybindings, display, indentation, typing, and the
-/// keyboard bar. Values are `CodeEditorPreferences.shared`, which an open
-/// editor observes, so changes apply without reopening the file. Everything
-/// here is saved on this device.
+/// Settings > Editor: keybindings, display, indentation, typing, the
+/// keyboard bar, and the file reader's bar. Values are
+/// `CodeEditorPreferences.shared`, which an open editor observes, so changes
+/// apply without reopening the file. Everything here is saved on this device.
 final class SettingsEditorViewController: ListScreenController<SettingsEditorViewController.Section, SettingsEditorViewController.Item> {
-    enum Section: Hashable, Sendable { case keyboard, display, saving, indentation, typing }
+    enum Section: Hashable, Sendable { case keyboard, display, saving, indentation, typing, reader }
     enum Item: Hashable, Sendable {
-        case keybindings, keyBar, customizeKeyBar
+        case keybindings, keyBar, customizeKeyBar, readerBar
         case syntax, lineNumbers, currentLine, wrapText, wrapCode
         case autoSave
         case detectIndentation, indentWith, tabWidth
@@ -30,6 +30,17 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
             footers: true
         )
     }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        // The Reader Bar row's summary follows the layout Customize writes.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(readerBarDidChange),
+            name: AppPreferences.ReaderBar.preference.didChangeNotification, object: nil
+        )
+    }
+
+    @objc private func readerBarDidChange() { setNeedsUpdateProperties() }
 
     override func sections() -> [ListSection<Section, Item>] {
         // Read every value so any change re-runs this pass.
@@ -67,6 +78,12 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
                 footer: String(localized: "Typing an opening bracket or quote adds its closer, and Backspace removes an empty pair."),
                 items: [.closeBrackets]
             ),
+            ListSection(
+                .reader,
+                header: String(localized: "Reader"),
+                footer: String(localized: "The buttons a file's bar shows when you read it, and their order. The rest are in its \u{2026} menu."),
+                items: [.readerBar]
+            ),
         ]
     }
 
@@ -76,6 +93,7 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
         case .keybindings: AnyHashable(preferences.keybindings)
         case .keyBar: AnyHashable(preferences.showsKeyBar)
         case .customizeKeyBar: AnyHashable(preferences.keyBarKeys.count)
+        case .readerBar: AnyHashable(AppPreferences.ReaderBar.layout())
         case .syntax: AnyHashable(preferences.highlightsSyntax)
         case .lineNumbers: AnyHashable(preferences.showsLineNumbers)
         case .currentLine: AnyHashable(preferences.highlightsCurrentLine)
@@ -145,8 +163,21 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
         }
     }
 
-    private lazy var indexRow = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
+    private lazy var indexRow = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, item in
         guard let self else { return }
+        if item == .readerBar {
+            let layout = AppPreferences.ReaderBar.layout()
+            cell.configure(
+                title: String(localized: "Reader Bar"),
+                image: nil,
+                value: String(localized: "\(layout.shown.count) of \(layout.order.count) buttons"),
+                identifier: "settings.editor.readerBar"
+            ) { [weak self] in
+                guard let self else { return }
+                Router.push(BarCustomizeViewController<ReaderBarAction, Never>(surface: .readerBar()), from: self)
+            }
+            return
+        }
         cell.configure(
             title: String(localized: "Customize Keys"),
             image: nil,
@@ -166,7 +197,7 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
         switch item {
         case .keybindings, .indentWith, .tabWidth:
             collectionView.dequeueConfiguredReusableCell(using: menuRow, for: indexPath, item: item)
-        case .customizeKeyBar:
+        case .customizeKeyBar, .readerBar:
             collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
         default:
             super.dequeue(item, at: indexPath)
@@ -196,7 +227,7 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
             toggleRow(cell, title: String(localized: "Detect From File"), isOn: preferences.detectsIndentation) { [weak self] in self?.preferences.detectsIndentation = $0 }
         case .closeBrackets:
             toggleRow(cell, title: String(localized: "Close Brackets and Quotes"), isOn: preferences.closesBrackets) { [weak self] in self?.preferences.closesBrackets = $0 }
-        case .keybindings, .customizeKeyBar, .indentWith, .tabWidth:
+        case .keybindings, .customizeKeyBar, .readerBar, .indentWith, .tabWidth:
             break
         }
     }

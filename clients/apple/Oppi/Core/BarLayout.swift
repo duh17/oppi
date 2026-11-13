@@ -140,3 +140,65 @@ struct BarLayoutPreference<Action: BarLayoutAction>: Sendable {
         NotificationCenter.default.post(name: didChangeNotification, object: nil)
     }
 }
+
+/// One button a bar can draw or its … menu can offer. Usually one per action;
+/// an action can stand for several (the terminal's Program Shortcuts is a key
+/// cap per shortcut), each its own slot.
+protocol BarSlot {
+    associatedtype Action: BarLayoutAction
+    /// Unique among the slots one placement lays out.
+    var id: String { get }
+    /// The action this slot belongs to.
+    var item: Action { get }
+    /// Whether turning the action off moves this slot into the … menu.
+    var menuWhenTurnedOff: Bool { get }
+    /// Whether this slot moves into the … menu when the bar has no room for it.
+    var menuWhenCrowdedOut: Bool { get }
+}
+
+extension BarSlot {
+    var menuWhenTurnedOff: Bool { true }
+    var menuWhenCrowdedOut: Bool { true }
+}
+
+/// What a bar draws, in order, and what its … menu offers, in order.
+struct BarPlacement<Slot: BarSlot & Equatable>: Equatable {
+    var bar: [Slot]
+    var menu: [Slot]
+}
+
+extension BarLayout {
+    /// The rules every customizable bar shares. The user's order is the
+    /// priority: the shown slots that fit `capacity` are drawn, and the rest
+    /// leave from the end into the menu. A turned-off action stays in the
+    /// order and is offered in the menu. An action the screen cannot offer
+    /// (`available`) is in neither, so a button that could only fail is never
+    /// shown. `slots` gives the buttons an action stands for here.
+    func placement<Slot: BarSlot & Equatable>(
+        available: Set<Action>,
+        capacity: Int,
+        slots: (Action) -> [Slot]
+    ) -> BarPlacement<Slot> where Slot.Action == Action {
+        let drawn = bar(available: available).flatMap(slots)
+        let fits = Array(drawn.prefix(max(0, capacity)))
+        let crowdedOut = Set(drawn.dropFirst(fits.count).map(\.id))
+        let turnedOff = Set(menu(available: available))
+        let menu = order.flatMap(slots).filter { slot in
+            if crowdedOut.contains(slot.id) { return slot.menuWhenCrowdedOut }
+            return turnedOff.contains(slot.item) && slot.menuWhenTurnedOff
+        }
+        return BarPlacement(bar: fits, menu: menu)
+    }
+}
+
+/// How many whole buttons fit a bar: its width less what the fixed items take
+/// (Back, the title's minimum, …), in slots of one button's width. Text size
+/// does not change it: every slot is a fixed 44 pt.
+enum BarCapacity {
+    static let slotWidth: CGFloat = 44
+
+    static func slots(width: CGFloat, fixed: CGFloat, slotWidth: CGFloat = slotWidth) -> Int {
+        guard slotWidth > 0 else { return 0 }
+        return max(0, Int(((width - fixed) / slotWidth).rounded(.down)))
+    }
+}

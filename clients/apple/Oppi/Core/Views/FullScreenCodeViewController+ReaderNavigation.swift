@@ -3,15 +3,15 @@ import UIKit
 /// Find and Outline: the bar items a file reader shows, and what they do. The
 /// body owns both (`ReaderBody`); the reader only places the buttons.
 extension FullScreenCodeViewController {
-    /// The items for the reader's own bar, Find first. Outline joins only
-    /// while the open file has headings.
-    func makeReaderNavigationItems(palette: ThemePalette) -> [UIBarButtonItem] {
-        var items: [UIBarButtonItem] = []
+    /// Find and Outline for the reader's own bar. Outline joins only while the
+    /// open file has headings.
+    func makeReaderNavigationItems(palette: ThemePalette) -> [ReaderBarAction: [UIBarButtonItem]] {
+        var items: [ReaderBarAction: [UIBarButtonItem]] = [:]
         if supportsFind {
             let find = railItem(symbol: "magnifyingglass", title: String(localized: "Find"), action: #selector(showFind))
             find.accessibilityIdentifier = "fileViewer.find.button"
             find.tintColor = palette.ui.fgDim
-            items.append(find)
+            items[.find] = [find]
         }
         outlineBarItem = nil
         if hasOutline {
@@ -30,9 +30,21 @@ extension FullScreenCodeViewController {
             menuAction.accessibilityIdentifier = "fileViewer.outline.button"
             outline.menuRepresentation = menuAction
             outlineBarItem = outline
-            items.append(outline)
+            items[.outline] = [outline]
         }
         return items
+    }
+
+    /// A reader control as a bar item: Find, Outline, and the side rail's
+    /// floating controls.
+    func railItem(symbol: String, title: String, action: Selector) -> UIBarButtonItem {
+        let item = UIBarButtonItem(image: UIImage(systemName: symbol), style: .plain, target: self, action: action)
+        item.title = title
+        item.accessibilityLabel = title
+        if #available(iOS 27.0, *) {
+            item.visibilityPriority = .high
+        }
+        return item
     }
 
     /// Whether the open file offers Find.

@@ -3,19 +3,19 @@ import UIKit
 extension FileViewerViewController {
     /// Find and Outline for a bar this viewer feeds (a tree pane): the reader
     /// has no bar of its own there. Outline is left out until the file has headings.
-    func readerNavigationItems() -> [UIBarButtonItem] {
-        var items: [UIBarButtonItem] = []
+    func readerNavigationItems() -> [ReaderBarAction: [UIBarButtonItem]] {
+        var items: [ReaderBarAction: [UIBarButtonItem]] = [:]
         if reader?.supportsFind == true {
             let find = findItem ?? makeFindItem()
             findItem = find
-            items.append(find)
+            items[.find] = [find]
         } else {
             findItem = nil
         }
         if reader?.hasOutline == true {
             let outline = outlineItem ?? makeOutlineItem()
             outlineItem = outline
-            items.append(outline)
+            items[.outline] = [outline]
         } else {
             outlineItem = nil
         }

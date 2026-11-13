@@ -21,8 +21,8 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         launchReviewCommentHarness()
 
         XCTAssertTrue(
-            app.buttons["document.edit.more"].waitUntilExists(timeout: 5),
-            "The full-screen reader did not expose its edit entry"
+            app.barOverflowButton.waitUntilExists(timeout: 5),
+            "The full-screen reader did not expose its … menu"
         )
         XCTAssertFalse(
             app.buttons["workspace-file-editor.edit"].exists,
@@ -126,7 +126,7 @@ final class FullScreenReviewCommentUITests: XCTestCase {
 
         tapElement(doneButton)
         XCTAssertTrue(
-            app.buttons["document.edit.more"].waitUntilExists(timeout: 5),
+            app.barOverflowButton.waitUntilExists(timeout: 5),
             "Closing the stash sheet should return to the document"
         )
         XCTAssertTrue(stashButton.waitUntilExists(timeout: 2))
@@ -136,8 +136,8 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         launchReviewCommentHarness(embedded: true)
 
         XCTAssertTrue(app.buttons["fullScreen.code.close"].waitUntilExists(timeout: 5))
-        let more = app.buttons["document.edit.more"]
-        XCTAssertTrue(more.waitUntilExists(timeout: 2), "The embedded reader lost its edit entry")
+        let more = app.barOverflowButton
+        XCTAssertTrue(more.waitUntilExists(timeout: 2), "The embedded reader lost its … menu")
         XCTAssertFalse(app.buttons["fullscreen-code.review-comments.stash"].exists)
 
         app.buttons["fullScreen.code.close"].tap()
@@ -147,12 +147,52 @@ final class FullScreenReviewCommentUITests: XCTestCase {
             "Embedded reader back chrome did not call the NavigationStack dismissal action"
         )
 
-        // The overflow is the reader's whole edit entry for held text.
+        // The … menu is the reader's whole edit entry for held text.
         tapElement(more)
         XCTAssertTrue(
             app.buttons["controlFile.editInSession"].waitUntilExists(timeout: 2),
             "The overflow did not offer Edit with Session"
         )
+    }
+
+    /// Customize for the reader's bar, from its … menu, as a sheet: turning
+    /// Copy off moves it from the bar into the menu, and Reset to Default
+    /// brings it back.
+    func testReaderBarCustomizeMovesAButtonIntoTheMenuAndResets() throws {
+        launchReviewCommentHarness()
+        let copy = app.buttons["fullscreen-code.copy"]
+        XCTAssertTrue(copy.waitUntilExists(timeout: 5), "Copy is on the default reader bar")
+        saveScreenshot(name: "reader-bar-default")
+        openReaderCustomize()
+        saveScreenshot(name: "reader-bar-customize")
+        let toggle = app.switches["settings.reader.bar.copy"]
+        XCTAssertTrue(toggle.waitUntilExists(timeout: 5), "Customize lists Copy")
+        toggle.tap()
+        app.buttons["barCustomize.done"].tap()
+        XCTAssertTrue(copy.waitUntilGone(timeout: 5), "A button turned off leaves the bar")
+
+        tapElement(app.barOverflowButton)
+        XCTAssertTrue(app.buttons["fileViewer.menu.copy"].waitUntilExists(timeout: 5), "…and is in the … menu")
+        saveScreenshot(name: "reader-bar-menu")
+        app.buttons["fileViewer.menu.customize"].tap()
+        // Reset to Default sits under the list, below the medium sheet's fold.
+        let reset = app.buttons["settings.reader.bar.reset"]
+        let list = app.collectionViews["settings.reader.bar.list"]
+        for _ in 0..<4 where !(reset.exists && reset.isHittable) { list.swipeUp() }
+        XCTAssertTrue(reset.waitUntilExists(timeout: 5), "A customized bar offers Reset to Default")
+        reset.tap()
+        app.buttons["barCustomize.done"].tap()
+        XCTAssertTrue(copy.waitUntilExists(timeout: 5), "Reset to Default puts Copy back on the bar")
+    }
+
+    private func openReaderCustomize() {
+        let more = app.barOverflowButton
+        XCTAssertTrue(more.waitUntilExists(timeout: 5), "The reader has a … menu")
+        tapElement(more)
+        let customize = app.buttons["fileViewer.menu.customize"]
+        XCTAssertTrue(customize.waitUntilExists(timeout: 5), "The … menu offers Customize Bar…")
+        customize.tap()
+        XCTAssertTrue(app.navigationBars["Reader Bar"].waitUntilExists(timeout: 5), "Customize opened as the Reader Bar sheet")
     }
 
     func testFullScreenCodeSelectionPaintsVisibleHighlight() throws {

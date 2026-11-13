@@ -233,7 +233,12 @@ struct PaperMarkupCanvasSessionTests {
             } != true
         )
         #expect(controller.shareableContentForTesting != nil)
-        #expect(!controller.hasFloatingViewingOptionsButtonForTesting)
+        func showsViewingOptions() -> Bool {
+            contentController.navigationItem.rightBarButtonItems?.contains {
+                $0.accessibilityIdentifier == "fullscreen.viewingOptions.button"
+            } == true
+        }
+        #expect(!showsViewingOptions())
 
         let annotateFrame = try #require(controller.floatingAnnotateButtonFrameForTesting)
         #expect(annotateFrame.midX < controller.view.bounds.midX)
@@ -243,7 +248,7 @@ struct PaperMarkupCanvasSessionTests {
         controller.toggleSourceForTesting()
         controller.view.layoutIfNeeded()
         #expect(controller.floatingAnnotateButtonForTesting == nil)
-        #expect(controller.hasFloatingViewingOptionsButtonForTesting)
+        #expect(showsViewingOptions())
     }
 
     @Test("Add to Chat delivers only to the origin destination")

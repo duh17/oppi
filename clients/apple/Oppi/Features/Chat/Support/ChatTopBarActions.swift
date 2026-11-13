@@ -121,3 +121,27 @@ extension ChatTopBarAction: BarLayoutAction {
     /// layout was saved (Git) is appended to its order and offered in the menu.
     static let defaultShown: Set<ChatTopBarAction> = [.context]
 }
+
+/// Each action is one button, in the bar or in the … menu.
+extension ChatTopBarAction: BarSlot {
+    var item: Self { self }
+}
+
+extension BarSurface where Action == ChatTopBarAction {
+    /// Customize for the chat's top bar: Settings → Chat → Top Bar, and the
+    /// bar's own … menu. Terminal keeps its row in every chat: a chat without
+    /// a workspace folder only leaves it out of that chat's bar.
+    static func chatTopBar(defaults: UserDefaults = .standard) -> Self {
+        BarSurface(
+            title: String(localized: "Top Bar"),
+            footer: String(localized: "A button turned off moves into the … menu, which always stays last. A button that doesn't fit the bar moves there too. Terminal also needs a workspace folder on the server."),
+            identifierPrefix: "settings.chat.topBar",
+            preference: AppPreferences.ChatTopBar.preference,
+            defaults: defaults,
+            row: { Row(title: $0.label, image: $0.image(textStyle: .body)) },
+            // The chat's "Chat tools are in the menu" hint points here;
+            // reaching the screen is done.
+            didOpen: { FeatureEducationTips.markTopBarMoreToolsFound() }
+        )
+    }
+}

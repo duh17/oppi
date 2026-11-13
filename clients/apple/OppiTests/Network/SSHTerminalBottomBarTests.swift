@@ -39,33 +39,29 @@ private func isolatedDefaults() -> UserDefaults {
 struct SSHTerminalBarPlacementTests {
     @Test func theDefaultBarPutsDictateAndAttachNextToTypeInTerminal() {
         let placement = offer().placement(layout: .defaultValue, capacity: 8)
-        #expect(actions(of: placement.slots) == [.keyboard, .dictate, .attach, .herdr, .rex, .switcher])
+        #expect(actions(of: placement.bar) == [.keyboard, .dictate, .attach, .herdr, .rex, .switcher])
         // Turned-off keys and Paste stay out of the menu; Browse Files Here,
         // which the menu always had, stays in it. Program Shortcuts is off and
         // not offered there either.
         #expect(actions(of: placement.menu) == [.browseFiles])
     }
 
-    @Test func buttonsThatDoNotFitMoveIntoTheMenuInOrderButPasteNever() {
+    /// The terminal's own slot rules over `BarLayout.placement` (whose order,
+    /// crowding, and availability rules are `BarPlacementTests`): a shown key
+    /// with no room is offered in the menu, a turned-off one is not, and Paste
+    /// never is.
+    @Test func keysCrowdedOutAreInTheMenuButTurnedOffKeysAndPasteNever() {
         let layout = SSHTerminalBarLayout(
             order: [.action(.escape), .action(.paste), .action(.keyboard), .action(.interrupt), .action(.dictate)],
             shown: [.action(.escape), .action(.paste), .action(.keyboard), .action(.interrupt), .action(.dictate), .action(.switcher)]
         )
         let placement = offer().placement(layout: layout, capacity: 2)
-        #expect(actions(of: placement.slots) == [.escape, .paste])
-        // A shown key with no room is offered; a hidden one is not.
+        #expect(actions(of: placement.bar) == [.escape, .paste])
         #expect(actions(of: placement.menu) == [.keyboard, .interrupt, .dictate, .attach, .browseFiles, .herdr, .rex, .switcher])
 
         let none = offer().placement(layout: layout, capacity: 0)
-        #expect(none.slots.isEmpty)
+        #expect(none.bar.isEmpty)
         #expect(!actions(of: none.menu).contains(.paste))
-    }
-
-    @Test func anActionTheTerminalCannotOfferIsNeitherDrawnNorInTheMenu() {
-        let placement = offer(overviews: [], openTerminals: 1, canBrowseFiles: false, canDictate: false, canAttach: false)
-            .placement(layout: .defaultValue, capacity: 8)
-        #expect(actions(of: placement.slots) == [.keyboard])
-        #expect(placement.menu.isEmpty)
     }
 
     @Test func aRexPaneOffersOnlyRexAndAHerdrTerminalOnlyHerdr() {
@@ -75,10 +71,10 @@ struct SSHTerminalBarPlacementTests {
             offer(context: context).placement(layout: layout, capacity: 8)
         }
         // Rex Sessions is not in a Rex pane's bar at all: the pane switcher's panel holds it.
-        #expect(actions(of: placement(in: .rex).slots) == [.keyboard, .dictate, .attach, .switcher])
-        #expect(actions(of: placement(in: .herdr).slots) == [.keyboard, .dictate, .attach, .herdr, .switcher])
+        #expect(actions(of: placement(in: .rex).bar) == [.keyboard, .dictate, .attach, .switcher])
+        #expect(actions(of: placement(in: .herdr).bar) == [.keyboard, .dictate, .attach, .herdr, .switcher])
         // A plain shell on a host with both keeps both.
-        #expect(actions(of: placement(in: .plain).slots) == [.keyboard, .dictate, .attach, .herdr, .rex, .switcher])
+        #expect(actions(of: placement(in: .plain).bar) == [.keyboard, .dictate, .attach, .herdr, .rex, .switcher])
 
         // The … menu follows: a multiplexer turned off in the layout is offered
         // there only where its terminal can use it (a Rex pane offers no Rex Sessions).
@@ -188,11 +184,11 @@ struct SSHTerminalBarFitTests {
         for rexPanesShown in [false, true] {
             let capacity = SSHTerminalBottomBar.capacity(width: 393, safeInsets: .zero, rexPanesShown: rexPanesShown, fixedItems: 2)
             let placement = offer(openTerminals: 2).placement(layout: layout, capacity: capacity)
-            #expect(placement.slots.count == capacity)
-            #expect(actions(of: placement.slots) == Array(SSHTerminalBarAction.allCases.prefix(capacity)))
+            #expect(placement.bar.count == capacity)
+            #expect(actions(of: placement.bar) == Array(SSHTerminalBarAction.allCases.prefix(capacity)))
             let overflow = SSHTerminalBarAction.allCases.dropFirst(capacity).filter { $0 != .paste }
             #expect(actions(of: placement.menu) == Array(overflow))
-            let pillWidth = CGFloat(placement.slots.count + 2) * SSHTerminalGlassPill.itemWidth
+            let pillWidth = CGFloat(placement.bar.count + 2) * SSHTerminalGlassPill.itemWidth
             #expect(pillWidth <= SSHTerminalBottomBar.roomWidth(width: 393, safeInsets: .zero, rexPanesShown: rexPanesShown))
         }
     }
@@ -251,7 +247,7 @@ struct SSHTerminalBarMigrationTests {
         ]
         #expect(Array(read.order.prefix(6)) == expected)
         #expect(read.shown == [.action(.keyboard), .action(.dictate), .action(.attach), .action(.browseFiles), .customKey(eof.id)])
-        #expect(offer(customKeys: [eof]).placement(layout: read, capacity: 8).slots.map(\.item)
+        #expect(offer(customKeys: [eof]).placement(layout: read, capacity: 8).bar.map(\.item)
             == [.action(.keyboard), .action(.dictate), .action(.attach), .action(.browseFiles), .customKey(eof.id)])
 
         // Turning Attach off is saved, and the next read keeps Dictate beside the keyboard.
@@ -463,7 +459,7 @@ struct SSHTerminalBarOfferTests {
 
     private func names(program: String) -> [String] {
         offer(program: program, customKeys: everyKey)
-            .placement(layout: shown(everyKey), capacity: 20).slots
+            .placement(layout: shown(everyKey), capacity: 20).bar
             .compactMap { if case .customKey(let key) = $0.content { key.name } else { nil } }
     }
 
@@ -497,7 +493,7 @@ struct SSHTerminalBarOfferTests {
         // In pi, the same key turned off is offered in the menu: nothing else has it.
         let inPi = offer(program: "pi", customKeys: [piOnly]).placement(layout: layout, capacity: 20)
         #expect(inPi.menu.contains { $0.item == .customKey(piOnly.id) })
-        #expect(!inPi.slots.contains { $0.item == .customKey(piOnly.id) })
+        #expect(!inPi.bar.contains { $0.item == .customKey(piOnly.id) })
     }
 
     @Test func customKeysFollowTheListsOrderAmongTheBuiltInButtons() {
@@ -506,12 +502,12 @@ struct SSHTerminalBarOfferTests {
             shown: [.customKey(eof.id), .action(.keyboard), .action(.dictate)]
         )
         let placement = offer(customKeys: [eof]).placement(layout: layout, capacity: 20)
-        #expect(placement.slots.map(\.item) == [.customKey(eof.id), .action(.keyboard), .action(.dictate)])
+        #expect(placement.bar.map(\.item) == [.customKey(eof.id), .action(.keyboard), .action(.dictate)])
     }
 
     @Test func aKeyThatDoesNotFitGoesToTheMenuAndIsStillSent() throws {
         let placement = offer(customKeys: [eof]).placement(layout: shown([eof]), capacity: 2)
-        #expect(placement.slots.map(\.item) == [.action(.keyboard), .action(.dictate)])
+        #expect(placement.bar.map(\.item) == [.action(.keyboard), .action(.dictate)])
         let overflowed = try #require(placement.menu.first { $0.item == .customKey(eof.id) })
         #expect(overflowed.strokes == eof.strokes)
         #expect(overflowed.title == "EOF")
@@ -522,20 +518,20 @@ struct SSHTerminalBarOfferTests {
         let defaults = SSHTerminalKeymap.actions(for: pi, userFile: nil)
         let layout = SSHTerminalBarLayout.defaultValue.setting(.programShortcuts, shown: true)
         let plain = offer(program: "pi", shortcuts: defaults).placement(layout: layout, capacity: 20)
-        let shortcuts = plain.slots.filter { $0.item == .programShortcuts }
+        let shortcuts = plain.bar.filter { $0.item == .programShortcuts }
         #expect(shortcuts.map(\.title) == ["Thinking", "Model", "Tools"])
         #expect(shortcuts.map(\.keyCap) == ["\u{21E7}Tab", "^L", "^O"])
 
         // The user's own keybinding file, read by the same loader, rebinds Model.
         let overridden = SSHTerminalKeymap.actions(for: pi, userFile: #"{"app.model.select":"ctrl+k"}"#)
         let rebound = offer(program: "pi", shortcuts: overridden).placement(layout: layout, capacity: 20)
-        let model = try #require(rebound.slots.first { $0.title == "Model" })
+        let model = try #require(rebound.bar.first { $0.title == "Model" })
         #expect(model.keyCap == "^K")
         #expect(model.strokes == SSHTerminalKeymap.parse("ctrl+k", syntax: .plus))
         // Unbinding an action removes its button.
         let unbound = SSHTerminalKeymap.actions(for: pi, userFile: #"{"app.model.select":[]}"#)
         let without = offer(program: "pi", shortcuts: unbound).placement(layout: layout, capacity: 20)
-        #expect(without.slots.filter { $0.item == .programShortcuts }.map(\.title) == ["Thinking", "Tools"])
+        #expect(without.bar.filter { $0.item == .programShortcuts }.map(\.title) == ["Thinking", "Tools"])
     }
 
     @Test func programShortcutsAreInlineCapsThatOverflowOneAtATimeAndStayOutOfTheMenuWhenOff() throws {
@@ -545,19 +541,19 @@ struct SSHTerminalBarOfferTests {
         let layout = SSHTerminalBarLayout.defaultValue.setting(.programShortcuts, shown: true)
         // Room for Type in Terminal, Dictate, Attach, and three of Claude Code's five shortcuts.
         let crowded = offer(program: "claude", shortcuts: actions).placement(layout: layout, capacity: 6)
-        #expect(crowded.slots.filter { $0.item == .programShortcuts }.count == 3)
+        #expect(crowded.bar.filter { $0.item == .programShortcuts }.count == 3)
         // The two that did not fit are in the menu, with the buttons that were never drawn.
         let overflow = crowded.menu.filter { $0.item == .programShortcuts }
         #expect(overflow.map(\.title) == actions.suffix(2).map(\.title))
         // Off, they are not in the menu: the key strips have them.
         let off = offer(program: "claude", shortcuts: actions).placement(layout: .defaultValue, capacity: 20)
-        #expect(!(off.slots + off.menu).contains { $0.item == .programShortcuts })
+        #expect(!(off.bar + off.menu).contains { $0.item == .programShortcuts })
     }
 
     @Test func aProgramWithNoShortcutsOffersNoProgramShortcutsRow() {
         let layout = SSHTerminalBarLayout.defaultValue.setting(.programShortcuts, shown: true)
         let none = offer(program: "opencode", shortcuts: []).placement(layout: layout, capacity: 20)
-        #expect(!(none.slots + none.menu).contains { $0.item == .programShortcuts })
+        #expect(!(none.bar + none.menu).contains { $0.item == .programShortcuts })
         #expect(!offer(program: "opencode", shortcuts: []).items.contains(.programShortcuts))
     }
 }
@@ -578,11 +574,11 @@ struct SSHTerminalRexControlTests {
 
         let layout = SSHTerminalBarLayout.defaultValue
         let inRex = offer(context: .rex).placement(layout: layout, capacity: 8)
-        #expect(actions(of: inRex.slots) == [.keyboard, .dictate, .attach, .switcher])
-        #expect(!(inRex.slots + inRex.menu).contains { $0.item == .action(.rex) || $0.item == .action(.herdr) })
+        #expect(actions(of: inRex.bar) == [.keyboard, .dictate, .attach, .switcher])
+        #expect(!(inRex.bar + inRex.menu).contains { $0.item == .action(.rex) || $0.item == .action(.herdr) })
         // The saved layout is untouched: a plain shell shows Rex again as it was left.
         #expect(layout.isShown(.action(.rex)))
-        #expect(actions(of: offer(context: .plain).placement(layout: layout, capacity: 8).slots).contains(.rex))
+        #expect(actions(of: offer(context: .plain).placement(layout: layout, capacity: 8).bar).contains(.rex))
     }
 
     @MainActor

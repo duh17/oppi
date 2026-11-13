@@ -22,10 +22,10 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     // MARK: - Top bar
 
     // Which buttons a layout puts on the bar and in the … menu, and in what
-    // order, is `ChatTopBarLayoutTests`; what the Top Bar page shows and
-    // writes is `SettingsChatTopBarPageTests`. These tests are the bar the
-    // chat draws from a stored layout, the system menu, and the push to the
-    // page.
+    // order, is `ChatTopBarLayoutTests` and `BarPlacementTests`; what
+    // Customize shows and writes is `BarCustomizePageTests`; the bar at 375 pt
+    // is `ChatTopBarOverflowTests`. These tests are the bar the chat draws
+    // from a stored layout, its … menu, and Customize as a sheet.
 
     /// The default bar (the context ring alone, with Files, Git, Outline, and
     /// Terminal in the … menu) and its one-time hint: it shows under the bar
@@ -98,12 +98,15 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// A customized bar, every button on in a chosen order: the bar reads the
-    /// stored order left to right, the … menu holds nothing but Customize Top
-    /// Bar…, and that opens the Top Bar page listing the same order with a
-    /// reorder handle on every row. A customized bar needs no hint about where
-    /// its buttons went. A three-character Git count ("99+") fits Git's slot:
-    /// every control keeps one even pitch, Git does not run into the button
-    /// after it, and the button still says the full count.
+    /// stored order left to right, as many as its width holds, and the … menu
+    /// holds the rest in the same order above Customize Top Bar… (an iPhone
+    /// crowds some out; the iPad and the Duo rail hold all five). Customize
+    /// opens as a sheet listing the same order with a reorder handle on every
+    /// row; turning a button off leaves the bar behind the sheet, and Reset to
+    /// Default brings the default bar back. A customized bar needs no hint
+    /// about where its buttons went. A three-character Git count ("99+") fits
+    /// Git's slot: every control keeps one even pitch, Git does not run into the
+    /// button after it, and the button still says the full count.
     func testTopBarFollowsTheChosenOrder() {
         launchScreen(
             "chat-top-bar-reordered",
@@ -111,13 +114,20 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             arguments: ["--reset-feature-tips"]
         )
         let ids = ["outline", "files", "context", "git", "terminal"]
-        for id in ids {
-            XCTAssertTrue(app.buttons["chat.toolbar.\(id)"].waitUntilExists(timeout: 15), "\(id) must be on the bar")
-        }
+        XCTAssertTrue(app.buttons["chat.toolbar.outline"].waitUntilExists(timeout: 15), "The first button in the order must be on the bar")
+        XCTAssertTrue(app.buttons["chat.toolbar.more"].exists, "… is always on the bar")
         // The Duo's vertical rail (`chat.rail.session`) runs the order down the
         // screen, so every position below is read along the bar's own axis.
         let onRail = app.buttons["chat.rail.session"].exists
-        let buttons = ids.map { app.buttons["chat.toolbar.\($0)"] }
+        // What fits is the start of the order; the rest is crowded out.
+        let drawn = ids.filter { app.buttons["chat.toolbar.\($0)"].exists }
+        let crowdedOut = Array(ids.dropFirst(drawn.count))
+        XCTAssertEqual(drawn, Array(ids.prefix(drawn.count)), "The bar must keep the first buttons in the order")
+        XCTAssertGreaterThanOrEqual(drawn.count, 2, "Even an iPhone bar holds a few buttons: \(drawn)")
+        if onRail || app.windows.firstMatch.frame.width >= 500 {
+            XCTAssertEqual(drawn, ids, "A rail or a bar 500 pt wide holds every button")
+        }
+        let buttons = drawn.map { app.buttons["chat.toolbar.\($0)"] }
         if onRail {
             assertTopToBottom(buttons, "The reordered rail")
         } else {
@@ -125,20 +135,24 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         }
 
         let git = app.buttons["chat.toolbar.git"]
-        XCTAssertTrue(
-            // Changes, not touches: the touched files Git reports (121 of 122).
-            waitFor((git.value as? String)?.contains("121 changed files") == true, timeout: 10),
-            "The Git button must say the full count: \(git.value ?? "nil")"
-        )
+        if drawn.contains("git") {
+            XCTAssertTrue(
+                // Changes, not touches: the touched files Git reports (121 of 122).
+                waitFor((git.value as? String)?.contains("121 changed files") == true, timeout: 10),
+                "The Git button must say the full count: \(git.value ?? "nil")"
+            )
+        }
         let terminal = app.buttons["chat.toolbar.terminal"]
-        XCTAssertLessThanOrEqual(
-            onRail ? git.frame.maxY : git.frame.maxX, onRail ? terminal.frame.minY : terminal.frame.minX,
-            "The badge's button must end before Terminal starts"
-        )
+        if drawn.contains("git"), drawn.contains("terminal") {
+            XCTAssertLessThanOrEqual(
+                onRail ? git.frame.maxY : git.frame.maxX, onRail ? terminal.frame.minY : terminal.frame.minX,
+                "The badge's button must end before Terminal starts"
+            )
+        }
         // The rail's spacing is the system's, set by each item's own size: only the
         // bar this layout draws promises one even pitch.
         if !onRail {
-            let centers = (ids + ["more"]).map { app.buttons["chat.toolbar.\($0)"].frame.midX }.sorted()
+            let centers = (drawn + ["more"]).map { app.buttons["chat.toolbar.\($0)"].frame.midX }.sorted()
             let pitches = zip(centers.dropFirst(), centers).map { $0 - $1 }
             XCTAssertLessThan(
                 (pitches.max() ?? 0) - (pitches.min() ?? 0), 1,
@@ -155,10 +169,13 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         let customize = app.buttons["Customize Top Bar…"]
         hold()
         XCTAssertTrue(customize.waitUntilExists(timeout: 5), "The … menu stays")
-        XCTAssertFalse(
-            app.buttons["chat.toolbar.menu.files"].exists,
-            "Nothing is hidden, so the … menu holds only Customize Top Bar…"
-        )
+        for id in ids {
+            XCTAssertEqual(
+                app.buttons["chat.toolbar.menu.\(id)"].exists, crowdedOut.contains(id),
+                "The … menu holds exactly the buttons the bar had no room for: \(crowdedOut)"
+            )
+        }
+        attachScreenshot("chat-top-bar-overflow-menu")
         customize.tap()
         XCTAssertTrue(app.navigationBars["Top Bar"].waitUntilExists(timeout: 5))
         let rows = ["outline", "files", "context", "git", "terminal"].map { "settings.chat.topBar.row.\($0)" }
@@ -175,6 +192,14 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             )
         }
         attachScreenshot("chat-settings-top-bar-reorder")
+
+        // A sheet over the chat, so the bar stays in view above it. The harness
+        // pins its layout in the volatile domain, which a switch cannot
+        // override; what a switch and Reset write is `BarCustomizePageTests`.
+        XCTAssertTrue(app.buttons["chat.toolbar.more"].exists, "The chat's bar stays in view above the sheet")
+        attachScreenshot("chat-customize-sheet")
+        app.buttons["barCustomize.done"].tap()
+        XCTAssertTrue(app.navigationBars["Top Bar"].waitUntilGone(timeout: 5), "Done closes the sheet")
         assertRunning()
     }
 

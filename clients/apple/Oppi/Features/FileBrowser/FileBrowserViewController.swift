@@ -1914,6 +1914,10 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         if !(navigationItem.rightBarButtonItems ?? []).elementsEqual(rightItems, by: ===) {
             navigationItem.rightBarButtonItems = rightItems
         }
+        // The open file's … menu (turned-off actions, Customize Bar…).
+        if navigationItem.additionalOverflowItems !== paneViewer?.bar.overflow {
+            navigationItem.additionalOverflowItems = paneViewer?.bar.overflow
+        }
 
         // The bar's search lists files in place of the folder; the column
         // searches in its own field.

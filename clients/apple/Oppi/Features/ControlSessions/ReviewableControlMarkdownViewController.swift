@@ -358,7 +358,8 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         let reader = FullScreenCodeViewController(
             content: .markdown(content: shownText, filePath: sourcePath),
             reviewCommentSelectionContext: selectionContext,
-            editItems: editOwner.barItems
+            hostOffers: editOwner.readerOffers,
+            hostMenu: editOwner.menuActions
         )
         self.reader = reader
         embed(reader)
@@ -431,7 +432,7 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
             fileViewer.bar.apply(to: navigationItem)
             return
         }
-        reader?.setEditBarItems(editOwner.barItems)
+        reader?.setHostBar(offers: editOwner.readerOffers, menu: editOwner.menuActions)
         editOwner.presentEditorIfNeeded(from: self)
     }
 

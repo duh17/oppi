@@ -346,7 +346,7 @@ final class DocumentEditOwner {
 
     /// The document's controls in `rightBarButtonItems` order (the leading
     /// element is trailing-most): the editor's own controls while typing, else
-    /// the "…" and the pencil. Empty when this document offers no edit at all.
+    /// the pencil. Empty when this document offers no editor.
     var barItems: [UIBarButtonItem] {
         if isEditing { return editorPage?.barButtons ?? [] }
         if cachedOffersEditor != offersEditor {
@@ -356,6 +356,13 @@ final class DocumentEditOwner {
         return cachedBarItems
     }
 
+    /// `barItems` as the reader bar's Edit (`ReaderBarAction.edit`), leading to
+    /// trailing; nothing when there is no edit entry.
+    var readerOffers: [ReaderBarAction: [UIBarButtonItem]] {
+        let items = barItems
+        return items.isEmpty ? [:] : [.edit: items.reversed()]
+    }
+
     /// The pencil's rule: a tagged, editable text read, or a session that still
     /// exists — a draft kept for a file that has since been deleted.
     private var offersEditor: Bool {
@@ -363,15 +370,14 @@ final class DocumentEditOwner {
     }
 
     private func makeBarItems() -> [UIBarButtonItem] {
-        var items: [UIBarButtonItem] = []
-        if let more = moreItem() { items.append(more) }
-        if offersEditor { items.append(pencilItem()) }
+        guard offersEditor else { return [] }
+        let pencil = pencilItem()
         // Editing is the reader's main action: on a narrow bar the reader's
-        // other buttons fold into the system's "…" before these do.
+        // other buttons fold into the system's "…" before it does.
         if #available(iOS 27.0, *) {
-            for item in items { item.visibilityPriority = .high }
+            pencil.visibilityPriority = .high
         }
-        return items
+        return [pencil]
     }
 
     private func pencilItem() -> UIBarButtonItem {
@@ -387,23 +393,22 @@ final class DocumentEditOwner {
         return item
     }
 
-    /// The overflow item: same pattern as an Agent's or a schedule's actions
-    /// menu, so a reader with only a session to offer still has a control.
-    private func moreItem() -> UIBarButtonItem? {
-        guard let agentAction else { return nil }
+    /// The document's own actions for the reader's … menu (`ReaderBar`):
+    /// Edit with Session, so a reader with only a session to offer still has
+    /// a way to edit. None while the editor is open.
+    var menuActions: [UIMenuElement] {
+        isEditing ? [] : agentMenuActions
+    }
+
+    private lazy var agentMenuActions: [UIMenuElement] = {
+        guard let agentAction else { return [] }
         let edit = UIAction(
             title: DocumentEditLabels.editWithSession,
             image: UIImage(systemName: DocumentEditLabels.editWithSessionImage)
         ) { _ in agentAction.start() }
         edit.accessibilityIdentifier = "controlFile.editInSession"
-        let item = UIBarButtonItem(
-            image: UIImage(systemName: DocumentEditLabels.moreImage),
-            menu: UIMenu(children: [edit])
-        )
-        item.accessibilityLabel = DocumentEditLabels.more
-        item.accessibilityIdentifier = "document.edit.more"
-        return item
-    }
+        return [edit]
+    }()
 
     // MARK: Editing
 

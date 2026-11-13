@@ -814,9 +814,15 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         return .fromText(diff.currentText, filePath: currentFile.path)
     }
 
+    /// The open file's own … entries (its turned-off reader actions and
+    /// Customize Bar…), then New Session and the prompt templates: one system
+    /// overflow, never a second.
     private func actionMenuElements() -> [UIMenuElement] {
         let busy = launchActionInFlightTitle != nil
-        return WorkspaceQuickActionMenu.elements(
+        let reader: [UIMenuElement] = currentFileViewer?.bar.overflow == nil
+            ? []
+            : [UIMenu(options: .displayInline, children: currentFileViewer?.bar.reader.overflowElements() ?? [])]
+        return reader + WorkspaceQuickActionMenu.elements(
             options: quickActionOptions,
             isLoading: isLoadingQuickActions,
             newSessionDisabled: busy,

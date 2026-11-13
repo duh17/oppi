@@ -2,7 +2,7 @@ import UIKit
 import UniformTypeIdentifiers
 
 /// The bottom bar's one centred glass pill: the program-status symbol (while a
-/// program has reported), the buttons the layout draws (`SSHTerminalBarPlacement.slots`:
+/// program has reported), the buttons the layout draws (`SSHTerminalBarPlacement.bar`:
 /// Type in Terminal, Dictate, Attach, keys, Paste, Browse Files Here, the
 /// multiplexers' overviews, the switcher, Program Shortcuts, and custom keys),
 /// in the layout's order, then

@@ -179,8 +179,8 @@ struct DocumentEditOwnerTests {
 
         #expect(await owner.read() == .ownRead, "no capability: the reader loads the file its own way")
         #expect(spy.count == 0, "a server that does not edit the file gets no tagged read")
-        #expect(identifiers(owner) == ["document.edit.more"])
-        #expect(owner.barItems.first?.menu?.children.count == 1)
+        #expect(identifiers(owner).isEmpty, "no pencil without the capability")
+        #expect(owner.menuActions.map { ($0 as? UIAction)?.accessibilityIdentifier } == ["controlFile.editInSession"])
     }
 
     @Test func untaggedReadLeavesNoPencil() async {
@@ -277,7 +277,8 @@ struct DocumentEditOwnerTests {
         )
 
         #expect(await owner.read() == .ownRead)
-        #expect(identifiers(owner) == ["document.edit.more"], "an image has no pencil, only the session route")
+        #expect(identifiers(owner).isEmpty, "an image has no pencil")
+        #expect(owner.menuActions.count == 1, "…only the session route")
     }
 
     @Test func snapshotIsNeverEditable() async {
@@ -296,8 +297,8 @@ struct DocumentEditOwnerTests {
         )
 
         #expect(await owner.read() == .bytes(WorkspaceFileDiskSnapshot(bytes: Data("hello".utf8), etag: "\"sha256-a\""), draftText: nil))
-        #expect(identifiers(owner) == ["document.edit.more", "workspace-file-editor.edit"])
-        let edit = owner.barItems.first?.menu?.children.first as? UIAction
+        #expect(identifiers(owner) == ["workspace-file-editor.edit"])
+        let edit = owner.menuActions.first as? UIAction
         #expect(edit?.accessibilityIdentifier == "controlFile.editInSession")
     }
 
@@ -807,7 +808,8 @@ struct DocumentEditOwnerTests {
         )
 
         #expect(await owner.read() == .ownRead)
-        #expect(identifiers(owner) == ["document.edit.more"])
+        #expect(identifiers(owner).isEmpty)
+        #expect(owner.menuActions.count == 1)
     }
 
     // MARK: Edits from the reader

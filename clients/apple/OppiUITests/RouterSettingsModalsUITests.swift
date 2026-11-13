@@ -145,9 +145,9 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         assertReviewSheet { prompt.tap() }
 
         // A SYSTEM.md that exists is a document: the reader has the pencil, and
-        // the "…" beside it holds Edit with Session.
+        // its … menu holds Edit with Session.
         prompt.tap()
-        let more = app.buttons["document.edit.more"]
+        let more = app.barOverflowButton
         XCTAssertTrue(more.waitUntilExists(timeout: 5), "The prompt reader offered no edit entry")
         let pencil = app.buttons["workspace-file-editor.edit"]
         XCTAssertTrue(pencil.waitUntilExists(timeout: 10), "An existing SYSTEM.md must be editable")
@@ -346,7 +346,7 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         tapScrolledIntoView(prompt)
         let pencil = app.buttons["workspace-file-editor.edit"]
         XCTAssertTrue(pencil.waitUntilExists(timeout: 10), "The schedule prompt reader has no pencil")
-        XCTAssertTrue(app.buttons["document.edit.more"].exists, "The prompt reader keeps Edit with Session beside the pencil")
+        XCTAssertTrue(app.barOverflowButton.exists, "The prompt reader keeps Edit with Session in its … menu")
         tapBarButton(app.buttons["fullScreen.code.close"])
         XCTAssertTrue(pencil.waitUntilGone(timeout: 10), "Its dismiss control must close the review sheet")
 
@@ -356,8 +356,7 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
     /// An Agent's prompt opens in our editor from the reader's pencil; typing
     /// writes nothing with Auto-Save off, Done asks, and Save writes through the
     /// Agent with the mode the record already had and returns to the definition
-    /// reader showing the new text. The "…" keeps Edit with Session beside the
-    /// pencil.
+    /// reader showing the new text. The … menu keeps Edit with Session.
     func testAgentPromptReaderEditsInPlace() {
         launch(page: "agents")
         let row = app.buttons["agents.row.agent-design"]
@@ -369,8 +368,8 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
 
         let pencil = app.buttons["workspace-file-editor.edit"]
         XCTAssertTrue(pencil.waitUntilExists(timeout: 10), "The prompt reader has no pencil")
-        let more = app.buttons["document.edit.more"]
-        XCTAssertTrue(more.exists, "The prompt reader keeps Edit with Session beside the pencil")
+        let more = app.barOverflowButton
+        XCTAssertTrue(more.exists, "The prompt reader keeps Edit with Session in its … menu")
         attachScreenshot("agent-prompt-reader")
         assertRunning()
 
@@ -456,11 +455,11 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         )
     }
 
-    /// A server without Skill file editing: the entry is the "…" alone, and it
-    /// holds Edit with Session.
+    /// A server without Skill file editing: no pencil, and the … menu holds
+    /// Edit with Session.
     func testSkillFileGuidedRevisionSheet() {
         launch(page: "skill-file-review")
-        let more = app.buttons["document.edit.more"]
+        let more = app.barOverflowButton
         XCTAssertTrue(more.waitUntilExists(timeout: 10), "Skill file viewer did not load")
         XCTAssertFalse(app.buttons["workspace-file-editor.edit"].exists, "No editor means no pencil")
         assertGuidedSheet(
@@ -483,14 +482,14 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// A server that edits Skill files: the pencil opens the editor on the same
-    /// file, and the "…" beside it holds Edit with Session. Typing saves through
+    /// file, and its … menu holds Edit with Session. Typing saves through
     /// the Skill, and Done returns to the reader with both controls.
     func testSkillFileEditEntryEditsInPlaceOrWithSession() {
         launch(page: "skill-file-edit")
         let pencil = app.buttons["workspace-file-editor.edit"]
         XCTAssertTrue(pencil.waitUntilExists(timeout: 10), "Skill file edit entry did not load")
-        let more = app.buttons["document.edit.more"]
-        XCTAssertTrue(more.exists, "The edit entry must offer Edit with Session beside the pencil")
+        let more = app.barOverflowButton
+        XCTAssertTrue(more.exists, "The edit entry must offer Edit with Session in the … menu")
         attachScreenshot("skill-file-edit-entry")
 
         pencil.tap()

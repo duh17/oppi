@@ -75,6 +75,8 @@ const allowed: [file: string, rule: string, count: number, reason: string][] = [
     "UIKit's editButtonItem on the template list plus its identifier."],
   [O + "Features/FileBrowser/Editing/WorkspaceFileEditChrome.swift", "edit pencil", 2,
     "The save status glyph and the conflict review's Keep Editing button."],
+  [O + "Core/Views/ReaderBar.swift", "edit pencil", 1,
+    "Edit's row in Customize Bar and its … menu entry; the button itself is the owner's."],
 ];
 
 function walkSwiftFiles(root: string): string[] {

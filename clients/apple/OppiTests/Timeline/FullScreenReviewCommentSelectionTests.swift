@@ -1929,7 +1929,7 @@ struct FullScreenReviewCommentSelectionTests {
             timelineRenderedText(of: $0) == longLine
         })
 
-        #expect(controller.hasFloatingViewingOptionsButtonForTesting)
+        #expect(viewingOptionsItem(in: controller) != nil)
         #expect(outputView.textContainer.lineBreakMode == .byClipping)
 
         controller.setReaderWrappingForTesting(true)
@@ -1991,21 +1991,15 @@ struct FullScreenReviewCommentSelectionTests {
         #expect((diagnostics.secondFragmentX ?? 0) > diagnostics.firstFragmentX + 20)
     }
 
-    @Test func viewingOptionsUsesBottomRightReaderButtonAndContinuousTextScale() throws {
+    @Test func viewingOptionsIsAReaderBarItemAndScalesTextContinuously() throws {
         FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code)
         defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code) }
         let controller = makeController(
             content: .code(content: "let answer = 42", language: "swift", filePath: "Answer.swift", startLine: 1)
         )
 
-        let buttonFrame = try #require(controller.floatingViewingOptionsButtonFrameForTesting)
-        #expect(buttonFrame.midX > controller.view.bounds.midX)
-        #expect(buttonFrame.midY > controller.view.bounds.midY)
-        #expect(abs(buttonFrame.width - FullScreenFloatingControlChrome.controlSize) <= 0.5)
-        #expect(abs(buttonFrame.height - FullScreenFloatingControlChrome.controlSize) <= 0.5)
-        #expect(
-            abs(controller.view.bounds.maxY - buttonFrame.maxY - FullScreenFloatingControlChrome.bottomPadding) <= 0.5
-        )
+        let item = try #require(viewingOptionsItem(in: controller), "Viewing Options is on the reader's bar")
+        #expect(item.accessibilityValue == "Text size 100 percent")
 
         let options = try #require(controller.makeViewingOptionsControllerForTesting())
         #expect(options.preferredContentSize.width == 340)
@@ -2020,26 +2014,6 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(scaledPointSize > initialPointSize)
     }
 
-    @Test func viewingOptionsStacksAboveTrailingFileNavigator() throws {
-        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code)
-        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code) }
-        let controller = makeController(
-            content: .code(content: "let answer = 42", language: "swift", filePath: "Answer.swift", startLine: 1)
-        )
-        controller.setTrailingFloatingAccessoryCount(1)
-        controller.view.layoutIfNeeded()
-
-        let buttonFrame = try #require(controller.floatingViewingOptionsButtonFrameForTesting)
-        #expect(buttonFrame.midX > controller.view.bounds.midX)
-        #expect(
-            abs(
-                controller.view.bounds.maxY
-                    - buttonFrame.maxY
-                    - FullScreenReviewCommentStashControl.bottomPadding(leadingAccessoryCount: 1)
-            ) <= 0.5
-        )
-    }
-
     @Test func geoJSONMapHidesViewingOptionsUntilSourceJSON() throws {
         FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code)
         defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code) }
@@ -2052,14 +2026,12 @@ struct FullScreenReviewCommentSelectionTests {
         )
 
         #expect(controller.installedBodyViewForTesting is GeoJSONMapView)
-        #expect(controller.floatingViewingOptionsButtonFrameForTesting == nil)
+        #expect(viewingOptionsItem(in: controller) == nil)
 
         controller.toggleSourceForTesting()
         controller.view.layoutIfNeeded()
 
-        let buttonFrame = try #require(controller.floatingViewingOptionsButtonFrameForTesting)
-        #expect(buttonFrame.midX > controller.view.bounds.midX)
-        #expect(buttonFrame.midY > controller.view.bounds.midY)
+        #expect(viewingOptionsItem(in: controller) != nil)
 
         let codeView = try #require(timelineAllTextViews(in: controller.view).first {
             timelineRenderedText(of: $0).contains("Mount Rainier")
@@ -2079,14 +2051,12 @@ struct FullScreenReviewCommentSelectionTests {
             content: .mermaid(content: "graph TD\n    A-->B", filePath: "flow.mmd")
         )
 
-        #expect(controller.floatingViewingOptionsButtonFrameForTesting == nil)
+        #expect(viewingOptionsItem(in: controller) == nil)
 
         controller.toggleSourceForTesting()
         controller.view.layoutIfNeeded()
 
-        let buttonFrame = try #require(controller.floatingViewingOptionsButtonFrameForTesting)
-        #expect(buttonFrame.midX > controller.view.bounds.midX)
-        #expect(buttonFrame.midY > controller.view.bounds.midY)
+        #expect(viewingOptionsItem(in: controller) != nil)
 
         let codeView = try #require(timelineAllTextViews(in: controller.view).first {
             timelineRenderedText(of: $0).contains("graph TD")
@@ -2116,7 +2086,7 @@ struct FullScreenReviewCommentSelectionTests {
         )
         let controller = makeController(content: .notebook(plan))
         let body = try #require(controller.installedBodyViewForTesting as? NotebookReaderBody)
-        #expect(controller.floatingViewingOptionsButtonFrameForTesting != nil)
+        #expect(viewingOptionsItem(in: controller) != nil)
 
         func output() throws -> UITextView {
             controller.view.layoutIfNeeded()
@@ -2236,7 +2206,7 @@ struct FullScreenReviewCommentSelectionTests {
         let edit = UIBarButtonItem(title: "Edit", primaryAction: UIAction { _ in })
         let controller = FullScreenCodeViewController(
             content: .markdown(content: "# Prompt", filePath: "Schedule.md"),
-            editItems: [edit]
+            hostOffers: [.edit: [edit]]
         )
         controller.loadViewIfNeeded()
 
@@ -2244,8 +2214,11 @@ struct FullScreenReviewCommentSelectionTests {
         let contentController = try #require(navigationController.topViewController)
         let actions = try #require(contentController.navigationItem.rightBarButtonItems)
 
-        #expect(actions.first === edit, "the edit entry sits before the reader's own copy control")
-        #expect(actions.dropFirst().contains { $0.image == UIImage(systemName: "doc.on.doc") })
+        // `rightBarButtonItems` run from the trailing edge in: Edit leads the
+        // default Reader Bar, ahead of the reader's own Copy.
+        #expect(actions.last === edit, "the edit entry leads the reader's controls")
+        #expect(actions.dropLast().contains { $0.image == UIImage(systemName: "doc.on.doc") })
+        #expect(contentController.navigationItem.additionalOverflowItems != nil, "the reader's … menu holds Customize Bar…")
     }
 
     @Test func fullScreenTerminalCopyStripsANSI() throws {
@@ -2585,17 +2558,14 @@ struct FullScreenReviewCommentSelectionTests {
         )
     }
 
-    @Test func reviewCommentStashButtonKeepsViewingOptionsAtBottomTrailing() throws {
+    @Test func reviewCommentStashButtonSitsBottomLeading() throws {
         let fixture = try makeStashFixture(stagedCount: 2)
         let stashFrame = try #require(fixture.controller.floatingStashButtonFrameForTesting)
-        let viewingOptionsFrame = try #require(fixture.controller.floatingViewingOptionsButtonFrameForTesting)
         let button = try #require(fixture.controller.floatingStashButtonForTesting)
 
         #expect(button.accessibilityValue == "2 staged comments")
         #expect(stashFrame.midX < fixture.controller.view.bounds.midX)
-        #expect(viewingOptionsFrame.midX > fixture.controller.view.bounds.midX)
-        #expect(stashFrame.maxX < viewingOptionsFrame.minX)
-        #expect(abs(stashFrame.midY - viewingOptionsFrame.midY) <= 1)
+        #expect(stashFrame.midY > fixture.controller.view.bounds.midY)
     }
 
     @Test func htmlPickStaysTrailingWhileMarkupAndStashStackLeading() throws {
@@ -2606,13 +2576,12 @@ struct FullScreenReviewCommentSelectionTests {
         let stashFrame = try #require(fixture.controller.floatingStashButtonFrameForTesting)
         let annotateFrame = try #require(fixture.controller.floatingAnnotateButtonFrameForTesting)
         let pickFrame = try #require(fixture.controller.floatingPickButtonFrameForTesting)
-        let viewingOptionsFrame = try #require(fixture.controller.floatingViewingOptionsButtonFrameForTesting)
         let annotate = try #require(fixture.controller.floatingAnnotateButtonForTesting)
         let pick = try #require(fixture.controller.floatingPickButtonForTesting)
         let comment = try #require(fixture.controller.floatingPickCommentButtonForTesting)
         #expect(annotateFrame.midX < fixture.controller.view.bounds.midX)
         #expect(pickFrame.midX > fixture.controller.view.bounds.midX)
-        #expect(pickFrame.maxY < viewingOptionsFrame.minY)
+        #expect(pickFrame.midY > fixture.controller.view.bounds.midY, "Pick sits in the bottom trailing corner")
         #expect(annotateFrame.minY >= stashFrame.maxY + FullScreenFloatingControlChrome.stackSpacing - 1)
         #expect(!stashFrame.intersects(annotateFrame))
         #expect(annotate.accessibilityLabel == "Annotate")
@@ -2859,47 +2828,6 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(markup.minY >= stash.maxY + FullScreenFloatingControlChrome.stackSpacing - 1)
     }
 
-    @Test func mermaidMarkupStacksBetweenPreviousFileAndStash() throws {
-        let fixture = try makeStashFixture(
-            content: .mermaid(content: "flowchart TD\nA[Start] --> B[End]", filePath: "flow.mmd"),
-            stagedCount: 1
-        )
-        // Previous file uses the same bottom-leading slot as markup when no
-        // accessory is present; the outer SwiftUI overlay is not in this fixture.
-        let previousFileSlot = try #require(fixture.controller.floatingAnnotateButtonFrameForTesting)
-        fixture.controller.setLeadingFloatingAccessoryCount(1)
-        fixture.controller.view.layoutIfNeeded()
-
-        let markup = try #require(fixture.controller.floatingAnnotateButtonFrameForTesting)
-        let stash = try #require(fixture.controller.floatingStashButtonFrameForTesting)
-        let spacing = FullScreenFloatingControlChrome.stackSpacing
-        #expect(markup.midX == previousFileSlot.midX)
-        #expect(previousFileSlot.minY >= markup.maxY + spacing - 1)
-        #expect(markup.minY >= stash.maxY + spacing - 1)
-        #expect(!markup.intersects(previousFileSlot))
-        #expect(!markup.intersects(stash))
-        #expect(!previousFileSlot.intersects(stash))
-
-        fixture.controller.setLeadingFloatingAccessoryCount(0)
-        fixture.controller.view.layoutIfNeeded()
-        #expect(fixture.controller.floatingAnnotateButtonFrameForTesting == previousFileSlot)
-    }
-
-    @Test func reviewCommentStashButtonStacksAboveLeadingFileNavigator() throws {
-        let fixture = try makeStashFixture(stagedCount: 1)
-        fixture.controller.setLeadingFloatingAccessoryCount(1)
-        fixture.controller.view.layoutIfNeeded()
-
-        let stashFrame = try #require(fixture.controller.floatingStashButtonFrameForTesting)
-        #expect(
-            abs(
-                fixture.controller.view.bounds.maxY
-                    - stashFrame.maxY
-                    - FullScreenReviewCommentStashControl.bottomPadding(leadingAccessoryCount: 1)
-            ) <= 0.5
-        )
-    }
-
     @Test func reviewCommentStashButtonRevealsAfterInlineSaveAndHidesAfterLastDelete() async throws {
         let fixture = try makeStashFixture(stagedCount: 0)
         #expect(fixture.controller.floatingStashButtonForTesting == nil)
@@ -3139,6 +3067,12 @@ struct FullScreenReviewCommentSelectionTests {
             localScopeId: "workspace-1",
             sessionId: "session-1"
         )
+    }
+
+    /// Viewing Options on the reader's own bar.
+    private func viewingOptionsItem(in controller: FullScreenCodeViewController) -> UIBarButtonItem? {
+        let host = (controller.children.first as? UINavigationController)?.topViewController
+        return host?.navigationItem.rightBarButtonItems?.first { $0.accessibilityIdentifier == "fullscreen.viewingOptions.button" }
     }
 
     private func makeController(

@@ -65,7 +65,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private lazy var rexPanelSettings = barStore.rexPanel
     /// What the bar drew on the last pass. The … menu offers its `menu`,
     /// so the menu opened now matches the bar on screen.
-    private var barPlacement = SSHTerminalBarPlacement(slots: [], menu: [])
+    private var barPlacement = SSHTerminalBarPlacement(bar: [], menu: [])
     private var barLayoutObserver: NSObjectProtocol?
     /// The width and side insets the pill's capacity was last worked out for.
     private var barFit = SSHTerminalBarFit()
@@ -946,10 +946,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         )
     }
 
-    /// Settings > Terminal > Bottom Bar, pushed over the terminal so the
-    /// bar being customized is one Back away.
+    /// Customize for the bottom bar (Settings > Terminal > Bottom Bar), as a
+    /// sheet over the terminal.
     private func customizeBar() {
-        Router.push(SSHTerminalBarSettingsViewController(context: barContext), from: self)
+        SSHTerminalBarSettingsViewController(context: barContext).presentSheet(from: self, detents: [.large()])
     }
 
     private func updateFloatingControls(themeID: ThemeID) {
@@ -1005,7 +1005,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             background: lastTerminalColors?.background.map(UIColor.init) ?? themeID.palette.ui.bg,
             keysEnabled: canSendKeys
         )
-        barPill.show(barPlacement.slots, showsStatus: showsStatus, animated: animates)
+        barPill.show(barPlacement.bar, showsStatus: showsStatus, animated: animates)
         installSwitcherMenu()
         rexPill.apply(
             state: channel.rex?.state, tint: tint, status: rexPillStatus(headline: headline, progress: progress),

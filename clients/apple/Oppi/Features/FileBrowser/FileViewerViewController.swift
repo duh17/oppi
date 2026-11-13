@@ -193,9 +193,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 #if DEBUG
     private var motionMarker: FileMotionDebugMarker?
 #endif
-    private lazy var adjacentButtons = AdjacentFileNavigatorButtons { [weak self] direction in
-        self?.navigateToAdjacentFile(direction)
-    }
+    private lazy var previousFileItem = makeAdjacentItem(.previous)
+    private lazy var nextFileItem = makeAdjacentItem(.next)
     private let stashButton = ReviewCommentStashFloatingButton()
 
     // Bar items, kept while their inputs hold.
@@ -439,18 +438,31 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     private var canGoPrevious: Bool { !editOwner.isEditing && adjacentSelection(.previous) != nil }
     private var canGoNext: Bool { !editOwner.isEditing && adjacentSelection(.next) != nil }
 
-    private var leadingAccessoryCount: Int {
-        AdjacentFileNavigatorLayout.leadingAccessoryCount(
-            canGoPrevious: adjacentSelection(.previous) != nil,
-            canGoNext: adjacentSelection(.next) != nil
-        )
+    /// Previous and next file as reader bar actions, where there is one.
+    /// Horizontal swipes stay reserved for Back.
+    private var adjacentOffers: [ReaderBarAction: [UIBarButtonItem]] {
+        var offers: [ReaderBarAction: [UIBarButtonItem]] = [:]
+        if canGoPrevious { offers[.previousFile] = [previousFileItem] }
+        if canGoNext { offers[.nextFile] = [nextFileItem] }
+        return offers
     }
 
-    private var trailingAccessoryCount: Int {
-        AdjacentFileNavigatorLayout.trailingAccessoryCount(
-            canGoPrevious: adjacentSelection(.previous) != nil,
-            canGoNext: adjacentSelection(.next) != nil
+    private func makeAdjacentItem(_ direction: FileBrowserNavigationDirection) -> UIBarButtonItem {
+        let action: ReaderBarAction = direction == .previous ? .previousFile : .nextFile
+        let item = UIBarButtonItem(
+            title: action.label,
+            image: UIImage(systemName: action.systemImage),
+            primaryAction: UIAction { [weak self] _ in self?.navigateToAdjacentFile(direction) }
         )
+        item.accessibilityLabel = direction == .previous ? "Previous file" : "Next file"
+        item.accessibilityIdentifier = direction == .previous ? "fileViewer.previous" : "fileViewer.next"
+        return item
+    }
+
+    /// What this viewer adds to a reader that draws its own bar: Edit, and
+    /// the previous and next file.
+    private var readerHostOffers: [ReaderBarAction: [UIBarButtonItem]] {
+        editOwner.readerOffers.merging(isUsingFileViewer && sharesReaderBar ? adjacentOffers : [:]) { own, _ in own }
     }
 
     // MARK: Content
@@ -623,7 +635,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             lineAnchorNotice: onLineAnchorNotice,
             onOutlineChange: { [weak self] in self?.updateBar() },
             headingAnchor: activeSelection == nil ? configuration.headingAnchor : nil,
-            editItems: editOwner.barItems,
+            hostOffers: readerHostOffers,
+            hostMenu: editOwner.menuActions,
             markdownViewportIntent: markdownViewportRestore.state[path],
             onMarkdownViewportIntentChange: { [weak self] in self?.markdownViewportRestore.state[path] = $0 },
             taskEditing: editOwner.makeReaderTaskEditing(path: path) { [weak self] text in if self?.isCurrentFile(path) == true { self?.content = .text(text) } },
@@ -639,14 +652,11 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             content: content,
             presentationMode: readerPresentationMode(back: back),
             reviewCommentSelectionContext: readerSelectionContext,
-            editItems: [],
             addToChatDestination: configuration.addToChatDestination
         ))
     }
 
     private func mountReaderPage(_ reader: FullScreenCodeViewController) -> UIView {
-        reader.setLeadingFloatingAccessoryCount(leadingAccessoryCount)
-        reader.setTrailingFloatingAccessoryCount(trailingAccessoryCount)
         let page = UIView()
         addPage(page)
         mountChild(reader) {
@@ -704,9 +714,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         }
         readerPage?.backgroundColor = palette.ui.bgDark
         if let reader {
-            reader.setEditBarItems(editOwner.barItems)
-            reader.setLeadingFloatingAccessoryCount(leadingAccessoryCount)
-            reader.setTrailingFloatingAccessoryCount(trailingAccessoryCount)
+            reader.setHostBar(offers: readerHostOffers, menu: editOwner.menuActions)
         }
         editOwner.updateEditorPage(palette: palette, checkoutSubtitle: checkoutSubtitle)
         if case .rendered(let renderer, _) = content {
@@ -715,7 +723,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     }
 
     private func updateFloatingControls(themeID: ThemeID) {
-        adjacentButtons.update(on: view, canGoPrevious: canGoPrevious, canGoNext: canGoNext, themeID: themeID)
         // The reader draws its own staged-comment button.
         let usesReaderStash: Bool = if case .text = content { true } else { false }
         stashButton.update(
@@ -724,7 +731,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             stash: configuration.showsReviewCommentStash && !usesReaderStash
                 ? configuration.reviewCommentSelectionScope?.router.stash
                 : nil,
-            leadingAccessoryCount: leadingAccessoryCount,
+            leadingAccessoryCount: 0,
             palette: themeID.palette
         )
     }
@@ -732,30 +739,33 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     // MARK: Bar
 
     private func updateBar() {
-        var items: [UIBarButtonItem] = []
         let editing = editOwner.isEditing
         // The entry stays off the bar while the file loads, as main's control did.
         let loading: Bool = if case .loading = content { true } else { false }
-        if editing {
-            // The editor owns the bar while typing: status, Preview, Done.
-            items = editOwner.barItems
-        } else {
-            // Left to right: the edit entry, then Share. The entry's items are
-            // trailing-first, so they go in reversed.
+        var offers: [ReaderBarAction: [UIBarButtonItem]] = [:]
+        var documentActions: [UIMenuElement] = []
+        // The editor owns the bar while typing: status, Preview, Done.
+        if !editing {
+            // A reader that draws its own bar offers these there.
             if !sharesReaderBar, !loading {
-                items.append(contentsOf: editOwner.barItems.reversed())
-                items.append(contentsOf: readerNavigationItems())
+                // The entry's items are trailing-first; offers read leading first.
+                offers = editOwner.readerOffers.merging(readerNavigationItems()) { own, _ in own }
+                documentActions = editOwner.menuActions
             }
-            // Share is on every file's bar. A pushed reader has its own bar
-            // with Share on it; everywhere else it is this one.
-            if !(isUsingFileViewer && sharesReaderBar), let share = shareBarItem() {
-                items.append(share)
+            // Share and the previous and next file are on every file's bar. A
+            // pushed reader has its own bar with them on it; everywhere else it
+            // is this one.
+            if !(isUsingFileViewer && sharesReaderBar) {
+                if let share = shareBarItem() { offers[.share] = [share] }
+                offers.merge(adjacentOffers) { own, _ in own }
             }
-            items.reverse()
         }
+        bar.reader.presenter = self
         if bar.title != viewerTitle { bar.title = viewerTitle }
-        if !bar.trailingItems.elementsEqual(items, by: ===) { bar.trailingItems = items }
-        if bar.isEditing != editing { bar.isEditing = editing }
+        bar.show(
+            offers: offers, documentActions: documentActions,
+            editorItems: editing ? editOwner.barItems : [], isEditing: editing
+        )
         bar.apply(to: navigationItem)
     }
 

@@ -197,7 +197,7 @@ struct BookReaderAppearanceReaderTests {
     /// The reader floats its own bar and pills over the page. On a light reading
     /// paper they take that paper and ink, because light glyphs on cream cannot
     /// be read; the theme's own ink holds 11.7:1 on sepia.
-    @Test("the reader's floating controls are inked for the page's paper")
+    @Test("the reader's bar items are inked for the page's paper")
     func readerChromeTakesThePaper() async throws {
         var appearance = BookReaderAppearance()
         appearance.theme = .sepia
@@ -206,23 +206,17 @@ struct BookReaderAppearanceReaderTests {
         try await fixture.settle()
 
         let sepia = try #require(BookReaderTheme.sepia.fixedColors)
+        let host = (fixture.reader.children.first as? UINavigationController)?.topViewController
         let options = try #require(
-            fixture.view("fullscreen.viewingOptions.button", in: fixture.reader.view) as? UIButton,
-            "the reader drew no floating control"
+            host?.navigationItem.rightBarButtonItems?.first { $0.accessibilityIdentifier == "fullscreen.viewingOptions.button" },
+            "the reader's bar has no Viewing Options"
         )
-        let pill = try #require(options.configuration)
-        #expect(sameColor(pill.baseForegroundColor, sepia.ink), "the pill's glyph is still the app's")
-        #expect(
-            sameColor(pill.background.backgroundColor, sepia.paper.withAlphaComponent(0.94)),
-            "the pill's fill is \(String(describing: pill.background.backgroundColor))"
-        )
+        #expect(sameColor(options.tintColor, sepia.ink), "the bar item's glyph is still the app's")
 
         // The app's own paper: the chrome goes back to the theme's glass.
         fixture.store.set(BookReaderAppearance())
         try await fixture.settle()
-        let restored = try #require(options.configuration)
-        #expect(!sameColor(restored.baseForegroundColor, sepia.ink), "the pill stayed on the book's ink")
-        #expect(!sameColor(restored.background.backgroundColor, sepia.paper.withAlphaComponent(0.94)))
+        #expect(!sameColor(options.tintColor, sepia.ink), "the bar item stayed on the book's ink")
     }
 
     /// The sheets a book opens belong to the page it is on: cream paper and the

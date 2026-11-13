@@ -80,10 +80,11 @@ enum SSHTerminalBottomBar {
 
     /// How many buttons the pill has room for besides its fixed items (the
     /// program-status symbol while shown, and …): whole 44 pt items in
-    /// `roomWidth`. Whatever is left over goes to the … menu.
+    /// `roomWidth` (`BarCapacity`). Whatever is left over goes to the … menu.
     static func capacity(width: CGFloat, safeInsets: UIEdgeInsets, rexPanesShown: Bool, fixedItems: Int) -> Int {
+        let item = SSHTerminalGlassPill.itemWidth
         let room = roomWidth(width: width, safeInsets: safeInsets, rexPanesShown: rexPanesShown)
-        return max(0, Int((room / SSHTerminalGlassPill.itemWidth).rounded(.down)) - fixedItems)
+        return BarCapacity.slots(width: room, fixed: CGFloat(fixedItems) * item, slotWidth: item)
     }
 }
 

@@ -275,11 +275,9 @@ final class SettingsChatViewController: ListScreenController<SettingsChatViewCon
         }
     }
 
-    /// The Top Bar page. Pushed through the router, like every other screen this
-    /// chat opens, so it lands the same way from Settings and from the chat's …
-    /// menu.
+    /// Customize for the top bar, the screen the chat's … menu opens as a sheet.
     private func openTopBarSettings() {
-        Router.push(SettingsChatTopBarViewController(), from: self)
+        Router.push(BarCustomizeViewController<ChatTopBarAction, Never>(surface: .chatTopBar()), from: self)
     }
 
     private func openQuickComments() {

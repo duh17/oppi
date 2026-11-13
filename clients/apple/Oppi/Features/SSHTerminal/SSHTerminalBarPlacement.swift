@@ -161,7 +161,7 @@ extension SSHTerminalExperimentAccess {
 
 /// One button the bar can draw or the … menu can offer: a list item, or one
 /// of the several buttons an item stands for (each of the program's shortcuts).
-struct SSHTerminalBarSlot: Equatable, Identifiable {
+struct SSHTerminalBarSlot: BarSlot, Equatable, Identifiable {
     enum Content: Equatable {
         case action(SSHTerminalBarAction)
         case customKey(SSHTerminalCustomKey)
@@ -274,10 +274,7 @@ struct SSHTerminalBarSlot: Equatable, Identifiable {
 }
 
 /// What the bottom bar draws, in one pill, and what the … menu offers.
-struct SSHTerminalBarPlacement: Equatable {
-    var slots: [SSHTerminalBarSlot]
-    var menu: [SSHTerminalBarSlot]
-}
+typealias SSHTerminalBarPlacement = BarPlacement<SSHTerminalBarSlot>
 
 /// What the bar offers this terminal now, and the one place that decides it:
 /// the built-in buttons this screen can use (its multiplexer, the hosts it
@@ -340,18 +337,9 @@ struct SSHTerminalBarOffer: Equatable {
 
     /// The buttons the shown items stand for that fit (`capacity`, in order),
     /// and the … menu's: everything that overflowed, and every turned-off
-    /// button that has no other home. A button the terminal cannot offer is
-    /// in neither.
+    /// button that has no other home (`BarLayout.placement`). A button the
+    /// terminal cannot offer is in neither.
     func placement(layout: SSHTerminalBarLayout, capacity: Int) -> SSHTerminalBarPlacement {
-        let items = items
-        let drawn = layout.bar(available: items).flatMap(slots(for:))
-        let fits = Array(drawn.prefix(max(0, capacity)))
-        let overflow = Set(drawn.dropFirst(fits.count).map(\.id))
-        let turnedOff = Set(layout.menu(available: items))
-        let menu = layout.order.flatMap(slots(for:)).filter { slot in
-            if overflow.contains(slot.id) { return slot.menuWhenCrowdedOut }
-            return turnedOff.contains(slot.item) && slot.menuWhenTurnedOff
-        }
-        return SSHTerminalBarPlacement(slots: fits, menu: menu)
+        layout.placement(available: items, capacity: capacity, slots: slots(for:))
     }
 }

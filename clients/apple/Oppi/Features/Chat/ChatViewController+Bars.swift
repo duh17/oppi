@@ -11,7 +11,9 @@ import UIKit
 /// session cannot offer (Files, Git, and Terminal without a workspace, Outline on an
 /// empty timeline, Terminal without a folder a shell can start in) leaves no control at
 /// all, and no menu item either: what the user chose is what the bar shows, and
-/// the … menu never offers a button that could only fail.
+/// the … menu never offers a button that could only fail. A bar too narrow
+/// for every chosen button keeps the first ones in the user's order and moves
+/// the rest into the … menu (`capacity`), so the title keeps its room.
 ///
 /// Items are built once and refreshed in the chat's `updateProperties()`.
 /// Each control's touch and accessibility activation run the same action.
@@ -107,9 +109,7 @@ final class ChatBarItems {
             ?? ThemeRuntimeState.currentPalette()
         let colors = ComposerThemeColors(palette: palette)
 
-        let available = currentAvailability(of: chat)
-        let layout = AppPreferences.ChatTopBar.layout
-        let drawn = layout.bar(available: available)
+        let drawn = placement(of: chat).bar
 
         // A shown action draws its own control; a hidden one is only in the …
         // menu. Nothing refills a place another action could not fill.
@@ -243,6 +243,45 @@ final class ChatBarItems {
         )
     }
 
+    /// The bar and the … menu for this chat now: one owner for both, so a
+    /// button crowded out of the bar is in the menu on the same pass. The
+    /// horizontal bar draws what fits its width (`capacity`); the Duo rail
+    /// draws every shown button and the system overflows it.
+    func placement(of chat: ChatViewController) -> BarPlacement<ChatTopBarAction> {
+        let capacity = SystemVerticalBar.traitIsActive(chat.traitCollection)
+            ? Int.max
+            : Self.capacity(barWidth: chat.timelineWidth, leadingItems: leadingItemCount(of: chat))
+        return AppPreferences.ChatTopBar.layout.placement(
+            available: currentAvailability(of: chat), capacity: capacity, slots: { [$0] }
+        )
+    }
+
+    /// The glass circles before the title: the sidebar toggle the screen
+    /// around the chat adds, and Back.
+    private func leadingItemCount(of chat: ChatViewController) -> Int {
+        leadingPrefix.count + (chat.usesCustomChatBackButton ? 1 : 0)
+    }
+
+    /// What the bar keeps besides its buttons: the side margins, each leading
+    /// glass circle with the gap after it, the gaps on both sides of the
+    /// title, the title's minimum, and … with its group's padding.
+    private static let barMargins: CGFloat = 2 * 16
+    private static let leadingItemWidth: CGFloat = 44 + 8
+    private static let titleGaps: CGFloat = 2 * 8
+    static let titleMinimumWidth: CGFloat = 96
+    private static let moreWidth: CGFloat = 44 + 2 * 4
+
+    /// How many buttons the horizontal bar has room for beside Back, the
+    /// title, and …, in a bar `barWidth` wide. The chat passes its timeline's
+    /// width, which a pane holds while its divider moves, so the bar settles
+    /// with the timeline instead of dropping buttons under the finger. Before
+    /// the first layout (no width yet) nothing is crowded out.
+    static func capacity(barWidth: CGFloat, leadingItems: Int) -> Int {
+        guard barWidth > 0 else { return .max }
+        let fixed = barMargins + CGFloat(leadingItems) * leadingItemWidth + titleGaps + titleMinimumWidth + moreWidth
+        return BarCapacity.slots(width: barWidth, fixed: fixed, slotWidth: barButtonSize.width)
+    }
+
     /// Whether the chat offers `action` now, in the bar or the … menu. The
     /// keyboard commands ask the same question the controls do.
     func isAvailable(_ action: ChatTopBarAction) -> Bool {
@@ -364,16 +403,16 @@ final class ChatBarItems {
         return UIMenu(children: [hidden, customize])
     }
 
-    /// The actions without a button, in the user's order, for the … menu. An
+    /// The actions without a button (turned off, or crowded out of a narrow
+    /// bar), in the user's order, for the … menu. An
     /// inline submenu is what draws the separator above Customize; with nothing
     /// hidden the menu holds Customize alone. Terminal while the experiment is
     /// off is not in here either: it cannot be drawn, so it belongs to the
     /// setting, not to a chat's menu.
     private func hiddenTopBarItems() -> [UIMenuElement] {
         guard let chat else { return [] }
-        let available = currentAvailability(of: chat)
         let filesOpen = chat.model.panel == .files
-        let items = AppPreferences.ChatTopBar.layout.menu(available: available).map { action in
+        let items = placement(of: chat).menu.map { action in
             let item = UIAction(
                 title: Self.menuTitle(action.menuTitle(filesOpen: filesOpen), detail: menuDetail(for: action, chat: chat)),
                 // The menu sizes unconfigured symbols itself; `nil` gives it
@@ -861,10 +900,10 @@ extension ChatViewController {
         }
     }
 
-    /// Settings → Chat → Top Bar, pushed over the chat so the bar being
-    /// customized stays one Back away.
+    /// Customize for the top bar, as a sheet over the chat so the bar being
+    /// customized stays in view and redraws as it changes.
     func customizeTopBar() {
-        Router.push(SettingsChatTopBarViewController(), from: self)
+        BarCustomizeViewController<ChatTopBarAction, Never>(surface: .chatTopBar()).presentSheet(from: self)
     }
 
     /// The one-time "Chat tools are in the menu" hint shows under the bar of a chat on screen

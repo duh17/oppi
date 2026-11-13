@@ -80,8 +80,20 @@ final class FullScreenCodeViewController: UIViewController {
     private let orgFolds: OrgFoldMemory?
     private let lineAnchorNotice: (@MainActor @Sendable (String) -> Void)?
     private var lineAnchorNoticeDelivered = false
-    private var editItems: [UIBarButtonItem]
-    private var lastEditItems: [UIBarButtonItem] = []
+    /// What the screen that owns this reader adds to its bar: the document's
+    /// Edit, and the previous and next file. `hostMenu` joins the … menu.
+    private var hostOffers: [ReaderBarAction: [UIBarButtonItem]]
+    private var hostMenu: [UIMenuElement]
+    /// The bar's layout over what the reader offers, and its … menu.
+    private lazy var readerBar: ReaderBar = {
+        let bar = ReaderBar()
+        bar.presenter = self
+        bar.onLayoutChange = { [weak self] in
+            guard let self, let host = contentHostController else { return }
+            installRightBarItems(on: host, palette: bodyThemeID.palette)
+        }
+        return bar
+    }()
     private var lastNavigationPresentation: NavigationPresentation?
     private var showSource = false
     private var completeRawText: String?
@@ -89,7 +101,6 @@ final class FullScreenCodeViewController: UIViewController {
     private var copyButton: UIBarButtonItem?
     /// The reader's Outline bar item, the popover's anchor (`FullScreenCodeViewController+ReaderNavigation`).
     var outlineBarItem: UIBarButtonItem?
-    private var floatingViewingOptionsButton: UIButton?
     private weak var viewingOptionsController: FullScreenViewingOptionsController?
     private(set) weak var contentHostController: UIViewController?
     private var viewingOptionsBarItem: UIBarButtonItem?
@@ -113,9 +124,6 @@ final class FullScreenCodeViewController: UIViewController {
     private var markupBottomConstraint: NSLayoutConstraint?
     private var pickBottomConstraint: NSLayoutConstraint?
     private let stashButton = ReviewCommentStashFloatingButton()
-    private var leadingFloatingAccessoryCount = 0
-    private var trailingFloatingAccessoryCount = 0
-    private var viewingOptionsBottomConstraint: NSLayoutConstraint?
     private var isSnapshotting = false
     private let addToChatDestination: ComposerCanvasDestination?
     private(set) var didDismissAfterCanvasDeliveryForTesting = false
@@ -135,7 +143,8 @@ final class FullScreenCodeViewController: UIViewController {
         lineAnchorNotice: (@MainActor @Sendable (String) -> Void)? = nil,
         onOutlineChange: (@MainActor () -> Void)? = nil,
         headingAnchor: ReaderHeadingAnchor? = nil,
-        editItems: [UIBarButtonItem] = [],
+        hostOffers: [ReaderBarAction: [UIBarButtonItem]] = [:],
+        hostMenu: [UIMenuElement] = [],
         markdownViewportIntent: FullScreenMarkdownViewportIntent? = nil,
         onMarkdownViewportIntentChange: ((FullScreenMarkdownViewportIntent) -> Void)? = nil,
         taskEditing: ReaderTaskEditing? = nil,
@@ -156,8 +165,8 @@ final class FullScreenCodeViewController: UIViewController {
         self.onOutlineChange = onOutlineChange
         self.headingAnchor = headingAnchor
         self.lineAnchorNotice = lineAnchorNotice
-        self.editItems = editItems
-        self.lastEditItems = editItems
+        self.hostOffers = hostOffers
+        self.hostMenu = hostMenu
         self.pendingMarkdownViewportIntent = markdownViewportIntent
         self.onMarkdownViewportIntentChange = onMarkdownViewportIntentChange
         self.addToChatDestination = addToChatDestination
@@ -254,12 +263,14 @@ final class FullScreenCodeViewController: UIViewController {
         applyThemeIfNeeded(ThemeRuntimeState.currentThemeID())
     }
 
-    /// The document's edit entry owns these: a pencil, or the "…" that holds
-    /// Edit with Session. The reader shows them left of its own controls.
-    func setEditBarItems(_ items: [UIBarButtonItem]) {
-        guard !items.elementsEqual(lastEditItems, by: ===) else { return }
-        editItems = items
-        lastEditItems = items
+    /// The owning screen's bar items (`hostOffers`) and … menu items.
+    func setHostBar(offers: [ReaderBarAction: [UIBarButtonItem]], menu: [UIMenuElement]) {
+        let sameOffers = offers.count == hostOffers.count && offers.allSatisfy { action, items in
+            hostOffers[action].map { $0.elementsEqual(items, by: ===) } ?? false
+        }
+        guard !sameOffers || !menu.elementsEqual(hostMenu, by: ===) else { return }
+        hostOffers = offers
+        hostMenu = menu
         lastNavigationPresentation = nil
         guard isViewLoaded, let viewController = contentHostController else { return }
         configureNavigation(on: viewController, palette: bodyThemeID.palette)
@@ -476,9 +487,6 @@ final class FullScreenCodeViewController: UIViewController {
             bodyView.topAnchor.constraint(equalTo: viewController.view.topAnchor),
             bodyView.bottomAnchor.constraint(equalTo: viewController.view.bottomAnchor),
         ])
-        if let floatingViewingOptionsButton {
-            viewController.view.bringSubviewToFront(floatingViewingOptionsButton)
-        }
         if let annotateButton {
             viewController.view.bringSubviewToFront(annotateButton)
         }
@@ -552,16 +560,12 @@ final class FullScreenCodeViewController: UIViewController {
         let presentation = makePresentation()
         // No titleView — immersive mode shows only floating glass pills.
         // See FullScreenViewerChrome.
-        configureFloatingViewingOptionsButton(
-            on: viewController,
-            presentation: presentation,
-            palette: palette
-        )
         configureFloatingAnnotateButton(on: viewController, palette: palette)
         configureFloatingStashButton(on: viewController, palette: palette)
         updateAnnotateAvailability()
 
         let navigationPresentation = NavigationPresentation(presentation)
+        defer { updateViewingOptions(presentation: presentation) }
         guard navigationPresentation != lastNavigationPresentation else {
             // A chunk can recreate a floating control. Keep it off the rail
             // without replacing the bar items the reader already has.
@@ -578,21 +582,17 @@ final class FullScreenCodeViewController: UIViewController {
 
     private func syncFloatingControlVisibility(on viewController: UIViewController) {
         let sideRail = SystemVerticalBar.isActive(viewController)
-        floatingViewingOptionsButton?.isHidden = sideRail
         annotateButton?.isHidden = sideRail
         stashButton.isHidden = sideRail
         updateBodyBottomInset()
     }
 
-    /// The body scrolls its last line above the taller of the two floating
-    /// stacks in the bottom corners: the host's previous/next file under
-    /// Annotate (leading), and its next file under Viewing Options (trailing).
+    /// The body scrolls its last line above the floating controls left in the
+    /// bottom corners: Annotate (leading) and Pick (trailing). Viewing Options
+    /// and the host's previous and next file are bar items (`ReaderBar`).
     private func updateBodyBottomInset() {
         func shown(_ control: UIView?) -> Int { control?.superview != nil && control?.isHidden == false ? 1 : 0 }
-        let rows = max(
-            leadingFloatingAccessoryCount + shown(annotateButton),
-            trailingFloatingAccessoryCount + shown(floatingViewingOptionsButton)
-        )
+        let rows = max(shown(annotateButton), shown(pickButton))
         let chrome = FullScreenFloatingControlChrome.self
         let inset = rows == 0 ? 0 : chrome.bottomPadding
             + CGFloat(rows) * chrome.controlSize
@@ -656,7 +656,7 @@ final class FullScreenCodeViewController: UIViewController {
         ReaderChromeSurfacePainter.paint(
             contentSurface,
             palette: bodyThemeID.palette,
-            buttons: [floatingViewingOptionsButton, annotateButton, pickButton, commentButton, stashButton.button],
+            buttons: [annotateButton, pickButton, commentButton, stashButton.button],
             bar: contentHostController?.navigationController?.navigationBar,
             items: (item?.leftBarButtonItems ?? []) + (item?.rightBarButtonItems ?? [])
                 + [item?.leftBarButtonItem, item?.rightBarButtonItem].compactMap { $0 }
@@ -670,18 +670,20 @@ final class FullScreenCodeViewController: UIViewController {
         if let bar = contentHostController?.navigationController?.navigationBar {
             views.append(bar)
         }
-        for control in [floatingViewingOptionsButton, annotateButton, pickButton, commentButton, stashButton.button] {
+        for control in [annotateButton, pickButton, commentButton, stashButton.button] {
             if let control { views.append(control) }
         }
         return views
     }
 
-    /// Sole writer of the content host's right bar items. Persistent viewer
-    /// controls join the side rail when the system says the bar is vertical.
+    /// Sole writer of the content host's right bar items and … menu: what the
+    /// reader offers, laid out by the person's Reader Bar (`ReaderBar`).
+    /// Persistent viewer controls join the side rail when the system says the
+    /// bar is vertical.
     private func installRightBarItems(on viewController: UIViewController, palette: ThemePalette) {
         let presentation = makePresentation()
         let sideRail = SystemVerticalBar.isActive(viewController)
-        var rightItems = editItems
+        var offers = makeReaderNavigationItems(palette: palette).merging(hostOffers) { own, _ in own }
 
         let copyImage = UIImage(systemName: "doc.on.doc")
         let copy = (installedBodyView as? DelimitedTableRenderView).map { table in
@@ -691,14 +693,9 @@ final class FullScreenCodeViewController: UIViewController {
         copy.tintColor = palette.ui.fgDim
         copy.accessibilityIdentifier = "fullscreen-code.copy"
         copyButton = copy
-        rightItems.append(copy)
-
-        rightItems.append(contentsOf: makeReaderNavigationItems(palette: palette))
-
+        offers[.copy] = [copy]
         if let shareable = shareableContent() {
-            rightItems.append(
-                FullScreenViewerNavigationChrome.makeShareButton(for: shareable, from: self, palette: palette)
-            )
+            offers[.share] = [FullScreenViewerNavigationChrome.makeShareButton(for: shareable, from: self, palette: palette)]
         }
 
         if let toggleTitle = presentation.sourceToggleTitle {
@@ -713,22 +710,25 @@ final class FullScreenCodeViewController: UIViewController {
             }
             toggle.accessibilityIdentifier = "fullscreen-code.source-toggle"
             toggle.tintColor = palette.ui.blue
-            rightItems.append(toggle)
+            offers[.sourceToggle] = [toggle]
         }
 
         viewingOptionsBarItem = nil
         annotateBarItem = nil
         stashBarItem = nil
+        if presentation.readerFamily != nil {
+            let item = railItem(
+                symbol: FullScreenViewingOptionsSymbols.readerModeIconName,
+                title: String(localized: "Viewing Options"),
+                action: #selector(showViewingOptions)
+            )
+            item.accessibilityIdentifier = "fullscreen.viewingOptions.button"
+            item.accessibilityHint = String(localized: "Adjust text size, wrapping, and spacing")
+            item.tintColor = palette.ui.fgDim
+            viewingOptionsBarItem = item
+            offers[.viewingOptions] = [item]
+        }
         if sideRail {
-            if floatingViewingOptionsButton != nil {
-                let item = railItem(
-                    symbol: FullScreenViewingOptionsSymbols.readerModeIconName,
-                    title: String(localized: "Viewing Options"),
-                    action: #selector(showViewingOptions)
-                )
-                viewingOptionsBarItem = item
-                rightItems.append(item)
-            }
             if annotateButton != nil {
                 let item = railItem(
                     symbol: PaperMarkupCanvasSession.AnnotateAction.systemImage,
@@ -737,7 +737,7 @@ final class FullScreenCodeViewController: UIViewController {
                 )
                 item.isEnabled = annotateButton?.isEnabled ?? false
                 annotateBarItem = item
-                rightItems.append(item)
+                offers[.annotate] = [item]
             }
             if let floatingStash = stashButton.button {
                 let item = railItem(
@@ -748,29 +748,16 @@ final class FullScreenCodeViewController: UIViewController {
                 item.badge = .count(stashButton.count)
                 item.accessibilityValue = floatingStash.accessibilityValue
                 stashBarItem = item
-                rightItems.append(item)
+                offers[.stash] = [item]
             }
         }
 
         syncFloatingControlVisibility(on: viewController)
-        viewController.navigationItem.rightBarButtonItems = rightItems
+        readerBar.update(offers: offers, documentActions: hostMenu)
+        viewController.navigationItem.rightBarButtonItems = readerBar.trailingItems
+        viewController.navigationItem.additionalOverflowItems = readerBar.overflow
         // New items carry the app palette's tints; a body on paper wants its ink.
         applyContentSurface()
-    }
-
-    func railItem(symbol: String, title: String, action: Selector) -> UIBarButtonItem {
-        let item = UIBarButtonItem(
-            image: UIImage(systemName: symbol),
-            style: .plain,
-            target: self,
-            action: action
-        )
-        item.title = title
-        item.accessibilityLabel = title
-        if #available(iOS 27.0, *) {
-            item.visibilityPriority = .high
-        }
-        return item
     }
 
     /// The title is the mode the control switches to. The symbol matches that mode.
@@ -784,62 +771,16 @@ final class FullScreenCodeViewController: UIViewController {
         return "text.page"
     }
 
-    private func configureFloatingViewingOptionsButton(
-        on viewController: UIViewController,
-        presentation: Presentation,
-        palette: ThemePalette
-    ) {
+    /// Viewing Options is a reader bar item (`installRightBarItems`); this
+    /// keeps its spoken value and an open panel on the current preferences.
+    private func updateViewingOptions(presentation: Presentation) {
         guard let readerFamily = presentation.readerFamily,
               let readerPreferences = presentation.readerPreferences else {
-            floatingViewingOptionsButton?.removeFromSuperview()
-            floatingViewingOptionsButton = nil
-            viewingOptionsBottomConstraint = nil
             viewingOptionsController?.dismiss(animated: true)
             return
         }
-
-        let button: UIButton
-        if let existing = floatingViewingOptionsButton {
-            button = existing
-        } else {
-            button = makeFloatingViewingOptionsButton(palette: palette)
-            floatingViewingOptionsButton = button
-            viewController.view.addSubview(button)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            let bottom = button.bottomAnchor.constraint(
-                equalTo: viewController.view.safeAreaLayoutGuide.bottomAnchor,
-                constant: -viewingOptionsBottomPadding
-            )
-            viewingOptionsBottomConstraint = bottom
-            NSLayoutConstraint.activate([
-                button.trailingAnchor.constraint(
-                    equalTo: viewController.view.safeAreaLayoutGuide.trailingAnchor,
-                    constant: -FullScreenFloatingControlChrome.trailingPadding
-                ),
-                bottom,
-                button.widthAnchor.constraint(equalToConstant: FullScreenFloatingControlChrome.controlSize),
-                button.heightAnchor.constraint(equalToConstant: FullScreenFloatingControlChrome.controlSize),
-            ])
-        }
-        viewingOptionsBottomConstraint?.constant = -viewingOptionsBottomPadding
-
-        updateFloatingViewingOptionsButton(button, palette: palette, preferences: readerPreferences)
-        viewController.view.bringSubviewToFront(button)
+        viewingOptionsBarItem?.accessibilityValue = FullScreenViewingOptionsController.accessibilityValue(for: readerPreferences)
         viewingOptionsController?.apply(family: readerFamily, preferences: readerPreferences)
-    }
-
-    private func makeFloatingViewingOptionsButton(palette: ThemePalette) -> UIButton {
-        let button = FullScreenViewingOptionsController.makeFloatingButton(palette: palette)
-        button.addTarget(self, action: #selector(showViewingOptions), for: .touchUpInside)
-        return button
-    }
-
-    private func updateFloatingViewingOptionsButton(
-        _ button: UIButton,
-        palette: ThemePalette,
-        preferences: FullScreenReaderPreferences
-    ) {
-        FullScreenViewingOptionsController.updateFloatingButton(button, palette: palette, preferences: preferences)
     }
 
     private func configureFloatingAnnotateButton(
@@ -939,10 +880,7 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     private var pickControlsBottomPadding: CGFloat {
-        let viewingOptionsVisible = floatingViewingOptionsButton?.isHidden == false
-        return FullScreenReviewCommentStashControl.bottomPadding(
-            leadingAccessoryCount: trailingFloatingAccessoryCount + (viewingOptionsVisible ? 1 : 0)
-        )
+        FullScreenReviewCommentStashControl.bottomPadding(leadingAccessoryCount: 0)
     }
 
     private func updatePickControls() {
@@ -1011,41 +949,12 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     private var markupBottomPadding: CGFloat {
-        FullScreenReviewCommentStashControl.bottomPadding(
-            leadingAccessoryCount: leadingFloatingAccessoryCount
-        )
+        FullScreenReviewCommentStashControl.bottomPadding(leadingAccessoryCount: 0)
     }
 
-    /// The stash sits above the host's leading controls and Annotate.
+    /// The stash sits above Annotate.
     private var stashLeadingAccessoryCount: Int {
-        leadingFloatingAccessoryCount + (annotateButton?.superview != nil ? 1 : 0)
-    }
-
-    func setLeadingFloatingAccessoryCount(_ count: Int) {
-        let normalized = max(0, count)
-        guard leadingFloatingAccessoryCount != normalized else { return }
-        leadingFloatingAccessoryCount = normalized
-        guard isViewLoaded, let host = contentHostController else { return }
-        markupBottomConstraint?.constant = -markupBottomPadding
-        configureFloatingStashButton(on: host, palette: bodyThemeID.palette)
-        updateBodyBottomInset()
-    }
-
-    private var viewingOptionsBottomPadding: CGFloat {
-        FullScreenReviewCommentStashControl.bottomPadding(
-            leadingAccessoryCount: trailingFloatingAccessoryCount
-        )
-    }
-
-    func setTrailingFloatingAccessoryCount(_ count: Int) {
-        let normalized = max(0, count)
-        guard trailingFloatingAccessoryCount != normalized else { return }
-        trailingFloatingAccessoryCount = normalized
-        guard isViewLoaded else { return }
-        viewingOptionsBottomConstraint?.constant = -viewingOptionsBottomPadding
-        pickBottomConstraint?.constant = -pickControlsBottomPadding
-        updateBodyBottomInset()
-        (contentHostController?.view ?? view).layoutIfNeeded()
+        annotateButton?.superview != nil ? 1 : 0
     }
 
     @objc private func stashButtonTapped() {
@@ -1159,7 +1068,7 @@ final class FullScreenCodeViewController: UIViewController {
         let presentation = makePresentation()
         guard let family = presentation.readerFamily,
               let preferences = presentation.readerPreferences,
-              floatingViewingOptionsButton != nil || viewingOptionsBarItem != nil else { return }
+              viewingOptionsBarItem != nil else { return }
 
         if let existing = viewingOptionsController {
             existing.dismiss(animated: true)
@@ -1190,10 +1099,10 @@ final class FullScreenCodeViewController: UIViewController {
         }
         viewingOptionsController = options
 
-        options.configurePresentation(
-            barItem: viewingOptionsBarItem,
-            sourceButton: floatingViewingOptionsButton
-        )
+        // Turned off, the item runs from the … menu and has no place to point
+        // at, so the options open as a sheet.
+        let onBar = readerBar.trailingItems.contains { $0 === viewingOptionsBarItem }
+        options.configurePresentation(barItem: onBar ? viewingOptionsBarItem : nil, sourceButton: nil)
         present(options, animated: true)
     }
 
@@ -1364,7 +1273,8 @@ extension FullScreenCodeViewController {
         reviewCommentSelectionContext: ReviewCommentSelectionContext?,
         lineAnchor: SourceLineAnchor? = nil,
         lineAnchorNotice: (@MainActor @Sendable (String) -> Void)? = nil,
-        editItems: [UIBarButtonItem] = []
+        hostOffers: [ReaderBarAction: [UIBarButtonItem]] = [:],
+        hostMenu: [UIMenuElement] = []
     ) -> FullScreenCodeViewController {
         FullScreenCodeViewController(
             content: content,
@@ -1372,12 +1282,9 @@ extension FullScreenCodeViewController {
             reviewCommentSelectionContext: reviewCommentSelectionContext,
             lineAnchor: lineAnchor,
             lineAnchorNotice: lineAnchorNotice,
-            editItems: editItems
+            hostOffers: hostOffers,
+            hostMenu: hostMenu
         )
-    }
-
-    var hasFloatingViewingOptionsButtonForTesting: Bool {
-        floatingViewingOptionsButton != nil
     }
 
     var installedBodyViewForTesting: UIView? {
@@ -1386,13 +1293,6 @@ extension FullScreenCodeViewController {
 
     var lineAnchorNoticeDeliveredForTesting: Bool {
         lineAnchorNoticeDelivered
-    }
-
-    var floatingViewingOptionsButtonFrameForTesting: CGRect? {
-        guard let button = floatingViewingOptionsButton,
-              let superview = button.superview else { return nil }
-        superview.layoutIfNeeded()
-        return view.convert(button.frame, from: superview)
     }
 
     var floatingAnnotateButtonForTesting: UIButton? {

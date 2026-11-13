@@ -430,9 +430,12 @@ final class FullScreenViewingOptionsController: UIViewController {
         var config = button.configuration ?? .plain()
         FullScreenFloatingControlChrome.applyGlassBackground(to: &config, palette: palette)
         button.configuration = config
-        button.accessibilityValue = String(
-            localized: "Text size \(Int(round(preferences.textScale * 100))) percent"
-        )
+        button.accessibilityValue = accessibilityValue(for: preferences)
+    }
+
+    /// What VoiceOver says for the Viewing Options control: the text size.
+    static func accessibilityValue(for preferences: FullScreenReaderPreferences) -> String {
+        String(localized: "Text size \(Int(round(preferences.textScale * 100))) percent")
     }
 }
 

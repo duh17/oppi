@@ -1325,16 +1325,20 @@ struct MutableFullScreenMarkdownBodyTests {
             let frame = textView.convert(textView.bounds, to: scrollView)
             guard frame.maxY > visibleTop, frame.minY < visibleBottom else { continue }
             let point = CGPoint(x: 8, y: max(0, visibleTop - frame.minY))
+            // The top can fall on the blank line between two paragraphs, whose
+            // enclosing paragraph is empty: the first one read is then the
+            // next, so read from the paragraph's start onward.
             guard let position = textView.closestPosition(to: point),
-                  let range = textView.tokenizer.rangeEnclosingPosition(
+                  let start = textView.tokenizer.rangeEnclosingPosition(
                     position,
                     with: .paragraph,
                     inDirection: .layout(.right)
-                  ),
-                  let paragraph = textView.text(in: range),
-                  let match = paragraph.range(of: #"Paragraph \d+"#, options: .regularExpression)
+                  )?.start ?? Optional(position),
+                  let rest = textView.textRange(from: start, to: textView.endOfDocument),
+                  let text = textView.text(in: rest),
+                  let match = text.range(of: #"Paragraph \d+"#, options: .regularExpression)
             else { continue }
-            return String(paragraph[match])
+            return String(text[match])
         }
         return nil
     }

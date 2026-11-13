@@ -1,12 +1,11 @@
 import UIKit
 
-/// Settings > Terminal > Bottom Bar: the buttons of the terminal's bottom
-/// bar as one ordered list. The bar draws the ones that are on, in this order,
-/// in one pill centred between Back and the trailing corner; a row's switch
-/// shows or hides its button, and its handle drags it into place. A hidden
-/// button moves into the … menu, except keys and Paste, which the keyboard bars
-/// and the grid's hold menu already offer, and Program Shortcuts, which the
-/// keyboard bar has.
+/// Settings > Terminal > Bottom Bar: Customize for the terminal's bottom bar
+/// (`BarCustomizeViewController`), with the sections only this bar has. The
+/// bar draws the buttons that are on, in this order, in one pill centred
+/// between Back and the trailing corner. A hidden button moves into the …
+/// menu, except keys and Paste, which the keyboard bars and the grid's hold
+/// menu already offer, and Program Shortcuts, which the keyboard bar has.
 ///
 /// The list holds three kinds of row: the built-in buttons, Program Shortcuts
 /// (the detected program's keys, as the key strips show them), and the custom
@@ -19,17 +18,15 @@ import UIKit
 /// and whether the pill's icon carries the program's status; it is left out of a
 /// terminal that Run on Connect started in Herdr, which has no Rex.
 ///
-/// The terminal can push this page from its … menu (Customize Bar…), so the
-/// bar being changed is one Back away. Opened from a terminal, the page leaves
-/// out the rows that terminal's multiplexer rules out (`SSHTerminalBarContext`:
-/// a Rex pane has no Herdr row), for presentation only: the saved layout keeps
-/// those actions' places and switches, and reordering moves only the rows shown.
-/// Opened from Settings it has every row.
-final class SSHTerminalBarSettingsViewController: ListScreenController<
-    SSHTerminalBarSettingsViewController.Section, SSHTerminalBarSettingsViewController.Item
+/// The terminal opens this screen as a sheet from its … menu (Customize Bar…).
+/// Opened from a terminal, it leaves out the rows that terminal's multiplexer
+/// rules out (`SSHTerminalBarContext`: a Rex pane has no Herdr row), for
+/// presentation only: the saved layout keeps those actions' places and
+/// switches, and reordering moves only the rows shown. Opened from Settings it
+/// has every row.
+final class SSHTerminalBarSettingsViewController: BarCustomizeViewController<
+    SSHTerminalBarItem, SSHTerminalBarSettingsViewController.Extra
 > {
-    enum Section: Hashable, Sendable { case items, add, rexPanel, reset }
-
     /// A choice of the Rex panel.
     enum RexPanelOption: CaseIterable, Hashable, Sendable {
         case thisPane, panes, otherSessions, statusOnIcon
@@ -73,11 +70,10 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
         }
     }
 
-    enum Item: Hashable, Sendable {
-        case bar(SSHTerminalBarItem)
+    /// The rows only this bar has.
+    enum Extra: Hashable, Sendable {
         case addKey
         case rexPanel(RexPanelOption)
-        case reset
     }
 
     private let store: SSHTerminalBarStore
@@ -86,71 +82,52 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
     init(context: SSHTerminalBarContext = .plain, store: SSHTerminalBarStore = SSHTerminalBarStore()) {
         self.context = context
         self.store = store
-        super.init(
+        let offers = Self.offeredMultiplexers(context: context)
+        super.init(surface: BarSurface(
             title: String(localized: "Bottom Bar"),
-            listIdentifier: "settings.sshTerminal.bar.list",
-            scope: .device,
-            headers: true,
-            footers: true
-        )
+            footer: Self.barFooter(offers: offers),
+            identifierPrefix: "settings.sshTerminal.bar",
+            layout: { store.layout },
+            defaultLayout: { store.defaultLayout },
+            save: { store.setLayout($0) },
+            reset: { store.reset() },
+            row: { Self.row($0, keys: store.customKeys) },
+            isListed: { Self.isListed($0, context: context, store: store) }
+        ))
     }
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        dataSource?.reorderingHandlers.canReorderItem = { slot in
-            if case .bar = slot.pageItem { return true }
-            return false
-        }
-        dataSource?.reorderingHandlers.didReorder = { [weak self] transaction in
-            guard let self else { return }
-            // The base keeps a drag inside its section, so the items section's
-            // order is the new order of the rows shown.
-            let shown = transaction.finalSnapshot.itemIdentifiers(inSection: .items).compactMap(\.pageItem).compactMap {
-                item -> SSHTerminalBarItem? in
-                if case .bar(let bar) = item { return bar }
-                return nil
-            }
-            save(store.layout.reordering(shown))
+    /// A row's words and symbol; a custom key adds its chord and the program
+    /// it shows for.
+    private static func row(_ item: SSHTerminalBarItem, keys: [SSHTerminalCustomKey]) -> BarSurface<SSHTerminalBarItem>.Row {
+        let symbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body)
+        switch item {
+        case .action(let action):
+            return .init(title: item.title(customKeys: keys), image: action.image(configuration: symbolConfiguration))
+        case .programShortcuts:
+            return .init(title: item.title(customKeys: keys), image: UIImage(systemName: "command", withConfiguration: symbolConfiguration))
+        case .customKey(let id):
+            let key = keys.first { $0.id == id }
+            return .init(
+                title: item.title(customKeys: keys),
+                subtitle: key.map { "\($0.chord) \u{00B7} \($0.showFor.title)" },
+                image: UIImage(systemName: "keyboard", withConfiguration: symbolConfiguration)
+            )
         }
     }
 
-    /// The page's one write of the layout. The store posts its change, which
-    /// the open terminal redraws its bar from; this page redraws itself.
-    private func save(_ next: SSHTerminalBarLayout) {
-        store.setLayout(next)
-        setNeedsUpdateProperties()
+    /// Whether the screen lists `item`: every row, except one this terminal's
+    /// multiplexer rules out, and a custom key the store no longer has.
+    private static func isListed(_ item: SSHTerminalBarItem, context: SSHTerminalBarContext, store: SSHTerminalBarStore) -> Bool {
+        switch item {
+        case .action(let action): !context.hidden.contains(action)
+        case .programShortcuts: true
+        case .customKey(let id): store.customKeys.contains { $0.id == id }
+        }
     }
 
-    override func sections() -> [ListSection<Section, Item>] {
-        let layout = store.layout
-        let offers = offeredMultiplexers
-        var sections: [ListSection<Section, Item>] = [
-            ListSection(
-                .items,
-                footer: Self.barFooter(offers: offers),
-                items: layout.order.filter(isListed).map(Item.bar)
-            ),
-            ListSection(.add, items: [.addKey]),
-        ]
-        if offers.rex {
-            sections.append(ListSection(
-                .rexPanel,
-                header: String(localized: "Rex Panel"),
-                footer: String(localized: "In a Rex pane the pane switcher at the bottom right is the one Rex control. Tap it for the panel; touch and hold for the quick pane menu. The panel's sections and the status on the icon are chosen here."),
-                items: RexPanelOption.allCases.map(Item.rexPanel)
-            ))
-        }
-        if layout != store.defaultLayout {
-            sections.append(ListSection(.reset, items: [.reset]))
-        }
-        return sections
-    }
-
-    override func showsHeader(for section: Section) -> Bool { section == .rexPanel }
-
-    /// The multiplexers this page can offer: the terminal has not ruled one out,
-    /// and its experiment is on.
-    private var offeredMultiplexers: (herdr: Bool, rex: Bool) {
+    /// The multiplexers this screen can offer: the terminal has not ruled one
+    /// out, and its experiment is on.
+    private static func offeredMultiplexers(context: SSHTerminalBarContext) -> (herdr: Bool, rex: Bool) {
         let access = SSHTerminalExperimentAccess.current
         return (access.herdr && context != .rex, access.rex && context != .herdr)
     }
@@ -168,128 +145,77 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
         return [base, multiplexers, program].compactMap { $0 }.joined(separator: " ")
     }
 
-    /// Whether the page lists `item`: every row, except one this terminal's
-    /// multiplexer rules out, and a custom key the store no longer has.
-    private func isListed(_ item: SSHTerminalBarItem) -> Bool {
-        switch item {
-        case .action(let action): !context.hidden.contains(action)
-        case .programShortcuts: true
-        case .customKey(let id): store.customKeys.contains { $0.id == id }
+    // MARK: - Extra sections
+
+    override func extraSections() -> [BarCustomizeExtraSection<Extra>] {
+        var sections = [BarCustomizeExtraSection<Extra>(rows: [.addKey])]
+        if Self.offeredMultiplexers(context: context).rex {
+            sections.append(BarCustomizeExtraSection(
+                header: String(localized: "Rex Panel"),
+                footer: String(localized: "In a Rex pane the pane switcher at the bottom right is the one Rex control. Tap it for the panel; touch and hold for the quick pane menu. The panel's sections and the status on the icon are chosen here."),
+                rows: RexPanelOption.allCases.map(Extra.rexPanel)
+            ))
+        }
+        return sections
+    }
+
+    override func inputs(ofExtra extra: Extra) -> AnyHashable {
+        switch extra {
+        case .addKey: AnyHashable(0)
+        case .rexPanel(let option): AnyHashable(option.isOn(store.rexPanel))
         }
     }
 
-    override func inputs(of item: Item) -> AnyHashable {
-        switch item {
-        case .bar(let bar):
-            AnyHashable([AnyHashable(store.layout.isShown(bar)), AnyHashable(key(bar))])
-        case .rexPanel(let option):
-            AnyHashable(option.isOn(store.rexPanel))
-        case .addKey, .reset:
-            AnyHashable(0)
-        }
-    }
-
-    private func key(_ item: SSHTerminalBarItem) -> SSHTerminalCustomKey? {
-        guard case .customKey(let id) = item else { return nil }
-        return store.customKeys.first { $0.id == id }
-    }
-
-    private lazy var actionRow = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, item in
-        guard let self else { return }
-        if item == .addKey {
-            cell.configure(
-                title: String(localized: "Add Custom Key\u{2026}"),
-                systemImage: "plus",
-                identifier: "settings.sshTerminal.bar.addKey"
-            ) { [weak self] in self?.present(SSHTerminalCustomKey(), isNew: true) }
-        } else {
-            cell.configure(
-                title: String(localized: "Reset to Default"),
-                identifier: "settings.sshTerminal.bar.reset"
-            ) { [weak self] in
-                self?.store.reset()
-                self?.setNeedsUpdateProperties()
-            }
-        }
+    private lazy var addKeyRow = UICollectionView.CellRegistration<SettingsActionRowCell, Extra> { [weak self] cell, _, _ in
+        cell.configure(
+            title: String(localized: "Add Custom Key\u{2026}"),
+            systemImage: "plus",
+            identifier: "settings.sshTerminal.bar.addKey"
+        ) { [weak self] in self?.present(SSHTerminalCustomKey(), isNew: true) }
     }
 
     override func prepareRegistrations() {
-        _ = actionRow
+        super.prepareRegistrations()
+        _ = addKeyRow
     }
 
-    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        switch item {
-        case .addKey, .reset: collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
-        case .bar, .rexPanel: super.dequeue(item, at: indexPath)
-        }
+    override func dequeue(extra: Extra, at indexPath: IndexPath) -> UICollectionViewCell? {
+        guard extra == .addKey else { return nil }
+        return collectionView.dequeueConfiguredReusableCell(using: addKeyRow, for: indexPath, item: extra)
     }
 
-    /// The one switch both kinds of row draw.
-    private func switchAccessory(
-        _ isOn: Bool, identifier: String, cell: UICollectionViewListCell, onChange: @escaping (Bool) -> Void
-    ) -> UICellAccessory {
-        .settingsToggle(isOn, identifier: identifier, reusing: cell, onChange: onChange)
-    }
-
-    override func configure(_ cell: UICollectionViewListCell, item: Item) {
-        if case .rexPanel(let option) = item {
-            var content = content(.plain)
-            content.text = option.title
-            cell.contentConfiguration = content
-            cell.accessories = [
-                switchAccessory(option.isOn(store.rexPanel), identifier: option.identifier, cell: cell) { [weak self] isOn in
-                    guard let self else { return }
-                    store.setRexPanel(option.setting(isOn, in: store.rexPanel))
-                    setNeedsUpdateProperties()
-                },
-            ]
-            return
-        }
-        guard case .bar(let bar) = item else { return }
-        let keys = store.customKeys
-        let custom = key(bar)
-        var content = content(custom == nil ? .plain : .subtitle)
-        content.text = bar.title(customKeys: keys)
-        let symbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body)
-        switch bar {
-        case .action(let action):
-            content.image = action.image(configuration: symbolConfiguration)
-        case .programShortcuts:
-            content.image = UIImage(systemName: "command", withConfiguration: symbolConfiguration)
-        case .customKey:
-            content.image = UIImage(systemName: "keyboard", withConfiguration: symbolConfiguration)
-        }
-        if let custom {
-            content.secondaryText = "\(custom.chord) \u{00B7} \(custom.showFor.title)"
-        }
-        content.imageProperties.reservedLayoutSize.width = UIListContentConfiguration.ImageProperties.standardDimension
+    override func configure(_ cell: UICollectionViewListCell, extra: Extra) {
+        guard case .rexPanel(let option) = extra else { return }
+        var content = content(.plain)
+        content.text = option.title
         cell.contentConfiguration = content
-        cell.accessibilityIdentifier = "settings.sshTerminal.bar.row.\(bar.rawValue)"
         cell.accessories = [
-            switchAccessory(
-                store.layout.isShown(bar),
-                identifier: "settings.sshTerminal.bar.\(bar.rawValue)",
-                cell: cell
-            ) { [weak self] isOn in
+            .settingsToggle(option.isOn(store.rexPanel), identifier: option.identifier, reusing: cell) { [weak self] isOn in
                 guard let self else { return }
-                save(store.layout.setting(bar, shown: isOn))
+                store.setRexPanel(option.setting(isOn, in: store.rexPanel))
+                setNeedsUpdateProperties()
             },
-            .reorder(displayed: .always),
         ]
     }
 
-    override func isSelectable(_ item: Item) -> Bool {
-        if case .bar(let bar) = item { return key(bar) != nil }
-        return false
+    // MARK: - Custom keys
+
+    private func key(_ row: Row) -> SSHTerminalCustomKey? {
+        guard case .action(.customKey(let id)) = row else { return nil }
+        return store.customKeys.first { $0.id == id }
     }
 
-    override func select(_ item: Item) {
-        guard case .bar(let bar) = item, let key = key(bar) else { return }
+    override func isSelectable(_ item: Row) -> Bool {
+        key(item) != nil
+    }
+
+    override func select(_ item: Row) {
+        guard let key = key(item) else { return }
         present(key, isNew: false)
     }
 
-    override func rowActions(for item: Item) -> [ListRowAction] {
-        guard case .bar(let bar) = item, case .customKey(let id) = bar, let key = key(bar) else { return [] }
+    override func rowActions(for item: Row) -> [ListRowAction] {
+        guard let key = key(item) else { return [] }
         // A full swipe deletes, as in any list; the key is cheap to make again.
         return [
             ListRowAction(
@@ -298,7 +224,7 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
                 style: .destructive,
                 accessibilityLabel: String(localized: "Delete \(key.displayName)")
             ) { [weak self] done in
-                self?.store.delete(id)
+                self?.store.delete(key.id)
                 self?.setNeedsUpdateProperties()
                 done(true)
             },

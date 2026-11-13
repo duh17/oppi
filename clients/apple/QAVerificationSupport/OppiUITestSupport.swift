@@ -173,6 +173,16 @@ extension XCTestCase {
 /// the label read only where the label is the state under test
 /// (`dev/testing/ios-accessibility-testability.md`, "Identifier naming").
 extension XCUIApplication {
+    /// The system's … in the front screen's bar (`additionalOverflowItems`): a
+    /// file reader's menu of turned-off buttons, Edit with Session, and
+    /// Customize Bar…. UIKit sets no identifier on it, so it is found by the
+    /// label iOS gives it; with several bars on screen the last is the
+    /// frontmost.
+    var barOverflowButton: XCUIElement {
+        let all = buttons.matching(NSPredicate(format: "label IN %@", ["More", "Actions"]))
+        return all.element(boundBy: max(all.count - 1, 0))
+    }
+
     /// Fails the run when an iPad shows the app in a compact window. The iPad lane exists to prove
     /// regular-width layout, and a simulator slot can remember a small floating window from an
     /// earlier run: the tests that need regular width then skip, and the ones that branch on the

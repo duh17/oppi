@@ -490,6 +490,23 @@ enum AppPreferences {
         }
     }
 
+    // MARK: - Reader bar
+
+    /// Which buttons a file reader's bar shows, and in what order. Nothing
+    /// stored is every button the reader can offer, as before the bar was
+    /// customizable.
+    enum ReaderBar {
+        static let preference = BarLayoutPreference<ReaderBarAction>(
+            orderKey: "\(AppIdentifiers.subsystem).reader.barOrder",
+            shownKey: "\(AppIdentifiers.subsystem).reader.barShown",
+            didChangeNotification: Notification.Name("oppi.readerBar.didChange")
+        )
+
+        static func layout(in defaults: UserDefaults = .standard) -> ReaderBarLayout {
+            preference.layout(in: defaults)
+        }
+    }
+
     // MARK: - Last active server
 
     /// The server a window last made active (`ConnectionCoordinator`). Launch

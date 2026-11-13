@@ -46,15 +46,15 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
     }
 
     /// The reader's edit entry, from the same owner every reader uses: text the
-    /// harness holds is a `.snapshot`, so there is no pencil and the "…" holds
-    /// Edit with Session.
-    private static func editItems() -> [UIBarButtonItem] {
+    /// harness holds is a `.snapshot`, so there is no pencil and the reader's
+    /// … menu holds Edit with Session.
+    private static func makeEditOwner() -> DocumentEditOwner {
         DocumentEditOwner(
             subject: .snapshot,
             agentAction: DocumentAgentEditAction {},
             backend: { nil },
             onChange: {}
-        ).barItems
+        )
     }
 
     private let diagnosticsStack = UIStackView()
@@ -124,6 +124,7 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
             filePath: "scripts/oppi.sh",
             languageHint: "bash"
         )
+        let editOwner = Self.makeEditOwner()
         let presentationMode: FullScreenCodeViewController.PresentationMode = Self.embeddedModeEnabled
             ? .embedded(onDismiss: { [weak self] in
                 guard let self else { return }
@@ -135,7 +136,8 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
             content: content,
             presentationMode: presentationMode,
             reviewCommentSelectionContext: context,
-            editItems: Self.editItems()
+            hostOffers: editOwner.readerOffers,
+            hostMenu: editOwner.menuActions
         )
         addChild(controller)
         controller.view.translatesAutoresizingMaskIntoConstraints = false

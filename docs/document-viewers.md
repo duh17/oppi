@@ -68,7 +68,7 @@ You are running in Oppi: your Markdown renders in a native iPhone/iPad app.
 
 ## Viewing Options
 
-**Viewing Options**, near the bottom-right of a full-screen viewer, adapts to the content:
+**Viewing Options**, in a full-screen viewer's bar ([The reader's bar](#the-readers-bar)), adapts to the content. A Git diff opened from a review keeps its own control near the bottom-right.
 
 | Content | Options |
 | --- | --- |
@@ -102,6 +102,12 @@ A Markdown table's cells use the message text, so they follow Dynamic Type and *
 - **Table viewer.** **N more columns** and **Show all N rows** open the whole table full screen. Its header row stays at the top while the rows scroll. Tap a cell to read its full text and copy it. **Copy** in the toolbar offers **Copy as Markdown** and **Copy as TSV**. The viewer shows up to 500 rows, 32 columns, and 256 characters per cell, as for CSV and TSV files, and when a table is cut, copy takes only the part shown.
 - **Copy.** Touch and hold **N more columns** for the same two copy actions, which always take every row. Text selected across cells copies as tab-separated cells, ready to paste into a spreadsheet.
 - **Formatting.** Bold, italic, strikethrough, `code`, and links show in cells.
+
+## The reader's bar
+
+The reader's bar holds **Edit**, **Find**, **Outline**, **Copy**, **Share**, the source toggle, **Viewing Options**, and **Previous File** and **Next File** for a file opened from a list (the File Browser or a chat's files), each where the file offers it. On a side toolbar (iPhone Duo), **Annotate** and **Staged Comments** join the bar; elsewhere they float over the page. Every button the reader offers is on the bar until you change it.
+
+**Settings → Editor → Reader Bar**, also **Customize Bar…** in the reader's **…** menu, chooses which buttons the bar shows and their order. A button turned off moves into the **…** menu, which also holds **Edit with Session** where a document offers it. **Reset to Default** shows every button again. While you edit a file, the editor's own controls take the bar. The layout is kept on this device.
 
 ## Outline and Find
 
@@ -209,7 +215,7 @@ This list cannot name every file that some program runs. To keep every home file
 
 ## Editing Skill files
 
-The files of an editable Skill (one in `~/.pi/agent/skills` or another top-level Skill directory, not from a package) open in the same editor when the server supports it, with the same save and conflict rules. A Skill that is a single Markdown file edits only that file. The file's pencil opens the editor on it, and the **…** beside the pencil holds **Edit with Session**, which starts an Oppi Control session that revises the Skill with your staged comments ([Edit with Oppi](usage.md#edit-with-oppi)). Package Skills stay read-only. A Skill file that is a symlink, over 1 MiB, or not UTF-8 text is read-only. A Skill file opened from a chat's Skill row shows the same reader, and so the same pencil and **…**, when the server's catalog proves that Skill is editable and the file is one of its own: it is matched by the Skill's own path, so a project Skill that shares a global Skill's name is never edited as that Skill, and one the catalog cannot name stays a plain reader.
+The files of an editable Skill (one in `~/.pi/agent/skills` or another top-level Skill directory, not from a package) open in the same editor when the server supports it, with the same save and conflict rules. A Skill that is a single Markdown file edits only that file. The file's pencil opens the editor on it, and the reader's **…** menu holds **Edit with Session**, which starts an Oppi Control session that revises the Skill with your staged comments ([Edit with Oppi](usage.md#edit-with-oppi)). Package Skills stay read-only. A Skill file that is a symlink, over 1 MiB, or not UTF-8 text is read-only. A Skill file opened from a chat's Skill row shows the same reader, and so the same pencil and **…**, when the server's catalog proves that Skill is editable and the file is one of its own: it is matched by the Skill's own path, so a project Skill that shares a global Skill's name is never edited as that Skill, and one the catalog cannot name stays a plain reader.
 
 ## Editing an Agent's or a schedule's prompt
 
