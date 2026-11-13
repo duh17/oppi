@@ -260,10 +260,10 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     }
 
     /// A skill file opens under its own server's scope; other targets live on
-    /// the server the screen handed in, else the active one.
+    /// the server the screen handed in, else the window's.
     private var connection: ServerConnection? {
         if case .hostFile(_, _, _, let connection) = viewer { return connection }
-        return serverConnection ?? root?.coordinator.activeConnection
+        return serverConnection ?? root?.windowConnectionOrStandIn
     }
 
     private var draftSessionId: String {
@@ -516,7 +516,7 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     /// taking the guided sheet above it along, so the chat is not left under
     /// either sheet. A pushed reader closes only the guided sheet and keeps
     /// its place in the stack beneath the chat.
-    func openRevisionSession(_ target: WorkspaceSessionNavTarget, navigation: AppNavigation) {
+    func openRevisionSession(_ target: WorkspaceSessionNavTarget, navigation: SceneNavigation) {
         guard let reader = presentedReaderScreen else {
             guidedSessionHandoff.prepare(target)
             closeGuidedRevision()

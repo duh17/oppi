@@ -896,7 +896,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private var canSendKeys: Bool { channel.connected && !channel.inputClosed }
 
     private func serverConnection() -> ServerConnection? {
-        dictationConnection ?? AppRootEnvironment.near(self)?.coordinator.activeConnection
+        dictationConnection ?? AppRootEnvironment.near(self)?.windowConnectionOrStandIn
     }
 
     /// One owner for a bar button, whether it came from its button, VoiceOver,

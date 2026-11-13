@@ -215,7 +215,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         #expect(store.payload(for: target.id) != nil)
 
         forgetSharedScopedLockFlags()
-        let reader = ChatReaderViewController(target: target, store: store, navigation: AppNavigation())
+        let reader = ChatReaderViewController(target: target, store: store, navigation: SceneNavigation())
         reader.loadViewIfNeeded()
         let controller = try #require(reader.page as? FullScreenCodeViewController)
         controller.loadViewIfNeeded()
@@ -232,7 +232,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         let store = ChatReaderPayloadStore()
         let target = store.store(.image(image))
         forgetSharedScopedLockFlags()
-        let reader = ChatReaderViewController(target: target, store: store, navigation: AppNavigation())
+        let reader = ChatReaderViewController(target: target, store: store, navigation: SceneNavigation())
         reader.loadViewIfNeeded()
         let navigation = try #require(reader.page as? UINavigationController)
         let imageController = try #require(navigation.topViewController as? FullScreenImageViewController)
@@ -908,7 +908,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         let window: UIWindow
         let controller: UIViewController
         let store: ChatReaderPayloadStore
-        let navigation: AppNavigation
+        let navigation: SceneNavigation
     }
 
     private static func makeEditDiffReaderPayload() -> ChatReaderPayload {
@@ -930,7 +930,7 @@ struct ToolTimelineRowFullScreenActivationTests {
 
     private func makeHostedChatReader(payload: ChatReaderPayload) throws -> HostedChatReader {
         let store = ChatReaderPayloadStore()
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         )

@@ -50,7 +50,7 @@ final class GuidedControlComposerModel {
     /// each time, so a server switch follows); sheets opened for one server
     /// (a chat's extension, a Skill file) pass that server.
     @ObservationIgnored private let serverConnection: @MainActor () -> ServerConnection
-    @ObservationIgnored private let navigation: AppNavigation
+    @ObservationIgnored private let navigation: SceneNavigation
     /// Where a prepared session goes; nil opens it in the app's navigation.
     @ObservationIgnored var onSessionPrepared: ((WorkspaceSessionNavTarget) -> Void)?
 
@@ -87,7 +87,7 @@ final class GuidedControlComposerModel {
     init(
         configuration: GuidedControlComposerConfiguration,
         connection: @escaping @MainActor () -> ServerConnection,
-        navigation: AppNavigation
+        navigation: SceneNavigation
     ) {
         self.configuration = configuration
         serverConnection = connection

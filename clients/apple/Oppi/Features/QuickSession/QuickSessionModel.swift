@@ -32,7 +32,7 @@ struct QuickSessionWorkspacePickerSection {
 @MainActor @Observable
 final class QuickSessionModel {
     @ObservationIgnored let coordinator: ConnectionCoordinator
-    @ObservationIgnored let navigation: AppNavigation
+    @ObservationIgnored let navigation: SceneNavigation
     @ObservationIgnored let composerDraftStore: ComposerDraftStore?
     @ObservationIgnored let liveVoiceCalls: LiveVoiceCallCenter
     /// Closes Quick Session; set by its view controller.
@@ -263,7 +263,7 @@ final class QuickSessionModel {
     }
 
     var selectedChatState: ChatSessionState {
-        selectedServerConnection()?.chatState ?? coordinator.activeConnection.chatState
+        selectedServerConnection()?.chatState ?? coordinator.connectionOrStandIn(for: windowServerId).chatState
     }
 
     /// Loads the selected server's Genmoji workspace and Agent icons.
@@ -297,11 +297,14 @@ final class QuickSessionModel {
             || (selectedAgent != nil && allServerWorkspaces.isEmpty)
     }
 
+    /// The server of the window Quick Session opened in: the default target.
+    var windowServerId: String? { navigation.activeServerId(in: coordinator) }
+
     func selectedServerConnection() -> ServerConnection? {
         if let selectedServerId {
             return coordinator.connection(for: selectedServerId)
         }
-        return coordinator.activeConnection
+        return coordinator.connectionOrStandIn(for: windowServerId)
     }
 
     /// Starts the session and opens it straight into a Live Voice call; none while the Live

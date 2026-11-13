@@ -2,7 +2,7 @@ import UIKit
 
 /// The app-wide modals of the window root, presented over whatever the window
 /// shows: the extension dialog (`ServerConnection.activeExtensionDialog`), the
-/// notice (`extensionToast`), and What's New (`AppNavigation.showWhatsNew`).
+/// notice (`extensionToast`), and What's New (`AppState.showWhatsNew`).
 /// Each is a router modal slot on `anchor`, set from that state in the owner's
 /// `updateProperties()`, so the owner runs again when any of it changes. A
 /// slot's `clear` writes the state back (nil, nil, false) once its modal is
@@ -36,6 +36,8 @@ final class AppRootModals {
     /// Reads the state behind the three slots, so the anchor's
     /// `updateProperties()` runs again when it changes.
     func update() {
+        // The transport focus: the server whose chat or list the person
+        // brought forward last, which a chat from another server moves.
         let connection = root.coordinator.activeConnection
         updateDialog(connection: connection)
         updateNotice(connection: connection)
@@ -130,10 +132,10 @@ final class AppRootModals {
     private func updateWhatsNew() {
         let navigation = root.navigation
         whatsNew.update(
-            id: navigation.showWhatsNew ? "whatsNew" : nil,
+            id: navigation.app.showWhatsNew ? "whatsNew" : nil,
             presentation: .fullScreen,
             root: root,
-            clear: { navigation.showWhatsNew = false },
+            clear: { navigation.app.showWhatsNew = false },
             // Full screen covers the anchor, which then stops updating, so the
             // screen closes itself instead of waiting for the cleared flag.
             screen: { .controller({ WhatsNewViewController { Router.finish($0) } }) }

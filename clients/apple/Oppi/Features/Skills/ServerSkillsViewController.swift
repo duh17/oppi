@@ -3,7 +3,7 @@ import UIKit
 /// Skills for the active server (route `.utility(.skills)`): the selected
 /// server's row (a switcher menu with several paired servers), the Skills the
 /// server resolved grouped by what needs attention, and search in the bar. A
-/// row opens the Skill's page through `AppNavigation`, so the route stays
+/// row opens the Skill's page through `SceneNavigation`, so the route stays
 /// tracked. `ServerSkillListPresentation` decides the search, the groups, and
 /// which state shows (`ServerSkillCatalogPresentationState`).
 ///
@@ -85,10 +85,10 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
     override var loadPolicy: LoadPolicy { .eachAppearance }
 
     /// The active server's catalog: another server is another catalog.
-    override func loadSubject() -> AnyHashable? { AnyHashable(coordinator.activeServerId) }
+    override func loadSubject() -> AnyHashable? { AnyHashable(root.windowServerId) }
 
     override func loadConnection() -> ServerConnection? {
-        coordinator.activeServerId.flatMap { coordinator.connection(for: $0) }
+        root.windowConnection
     }
 
     /// A switched server starts its own search: the old one's query would
@@ -100,9 +100,9 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
 
     override func updateProperties() {
         let servers = coordinator.serverStore.servers
-        let activeServerId = coordinator.activeServerId
+        let activeServerId = root.windowServerId
         let server = ServerSelection.resolve(selectedId: activeServerId, from: servers)
-        let store = activeServerId.flatMap { coordinator.connection(for: $0) }?.serverResourceStore
+        let store = root.windowConnection?.serverResourceStore
         let presentation = ServerSkillListPresentation(
             skills: activeServerId.flatMap { store?.skills(forServer: $0) } ?? [],
             query: query
@@ -155,7 +155,7 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
     /// base reload the page when one is installed; nothing about it reaches the
     /// rows.
     override func load() async throws {
-        guard let serverId = coordinator.activeServerId else { return }
+        guard let serverId = root.windowServerId else { return }
         guard let connection = loadConnection() else { throw noConnectionFailure() }
         let api = try requireAPIClient()
         connection.serverResourceStore.switchServer(to: serverId)
@@ -369,7 +369,7 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
     // MARK: - Actions
 
     private func open(_ skill: ServerSkillSummary) {
-        guard let activeServerId = coordinator.activeServerId else { return }
+        guard let activeServerId = root.windowServerId else { return }
         root.navigation.openServerResourceDetail(ServerResourceDetailNavTarget(
             serverId: activeServerId,
             kind: .skill,

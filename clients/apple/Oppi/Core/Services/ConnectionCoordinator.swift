@@ -156,16 +156,11 @@ final class ConnectionCoordinator {
     /// Seen ledgers for each server's connection; nil keeps seen state in memory.
     private let seenStorage: SessionSeenLedgerStorage?
 
-    /// Currently focused server ID (fingerprint). The server whose data
-    /// is displayed in the main UI.
-    private(set) var activeServerId: String? {
-        didSet {
-            if let activeServerId, activeServerId != oldValue { onActiveServerChanged(activeServerId) }
-        }
-    }
-    /// Records each newly active server; the app keeps it as the last active
-    /// server (`AppPreferences.LastActiveServer`). Tests leave it a no-op.
-    @ObservationIgnored var onActiveServerChanged: @MainActor (String) -> Void = { _ in }
+    /// The transport focus: the server a window or a leaf brought forward
+    /// last. Its connection recovers first at foreground and uploads MetricKit
+    /// reports. What a window shows is that window's own server
+    /// (`SceneNavigation.activeServerId(in:)`), never this.
+    private(set) var activeServerId: String?
     private var selectionRevision = 0
     /// Pairing attempts in start order, across every pairing flow, so an older
     /// approval cannot undo a newer one. See `addEnrolledServer`.
@@ -208,7 +203,14 @@ final class ConnectionCoordinator {
         return store
     }
 
-    /// The focused server's connection.
+    /// `serverId`'s connection, or a disconnected stand-in when it has none,
+    /// so a window with no server yet still has a connection to read.
+    func connectionOrStandIn(for serverId: String?) -> ServerConnection {
+        serverId.flatMap { connections[$0] } ?? disconnectedSentinel
+    }
+
+    /// The transport focus's connection (`activeServerId`), for app-wide
+    /// lifecycle work. A screen reads its window's or its route's server.
     /// Falls back to a disconnected sentinel if no server is active.
     var activeConnection: ServerConnection {
         if let id = activeServerId, let conn = connections[id] {

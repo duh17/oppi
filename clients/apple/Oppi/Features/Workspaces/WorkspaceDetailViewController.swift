@@ -52,7 +52,7 @@ final class WorkspaceDetailViewController: UIViewController {
     /// The route's value; the server's store has the latest one.
     var routeWorkspace: Workspace
     private var coordinator: ConnectionCoordinator { root.coordinator }
-    var navigation: AppNavigation { root.navigation }
+    var navigation: SceneNavigation { root.navigation }
     private var lockTarget: ScopedLockTarget { .workspace(serverId: serverId, workspaceId: workspaceId) }
 
     typealias List = SessionListCollection<Section, Item, Row, GroupToggle>
@@ -415,7 +415,7 @@ final class WorkspaceDetailViewController: UIViewController {
         guard connectTask == nil, isOnScreen else { return }
         connectTask = Task { [weak self, serverId] in
             guard let self else { return }
-            let ready = await coordinator.switchToServerReady(serverId)
+            let ready = await navigation.switchServerReady(serverId, coordinator: coordinator)
             connectTask = nil
             guard ready, !Task.isCancelled, !ScopedLockService.shared.isLocked(lockTarget) else { return }
             connection = coordinator.connection(for: serverId)
@@ -532,7 +532,7 @@ final class WorkspaceDetailViewController: UIViewController {
 
     // MARK: Search state
 
-    /// This workspace's search, kept in `AppNavigation` across pushes.
+    /// This workspace's search, kept in `SceneNavigation` across pushes.
     private var searchNavigation: SessionListSearchNavigationPersistence.State {
         get { navigation.workspaceSessionSearchByID[workspaceId] ?? .init() }
         set {

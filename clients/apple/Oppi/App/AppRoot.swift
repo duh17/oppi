@@ -19,7 +19,7 @@ import UIKit
 @MainActor
 struct AppRootEnvironment {
     let coordinator: ConnectionCoordinator
-    let navigation: AppNavigation
+    let navigation: SceneNavigation
     let themeStore: ThemeStore
     let quickCommentTemplateStore: QuickCommentTemplateStore
     let composerDraftStore: ComposerDraftStore
@@ -37,7 +37,7 @@ struct AppRootEnvironment {
     /// notification delegate.
     init(
         coordinator: ConnectionCoordinator,
-        navigation: AppNavigation,
+        navigation: SceneNavigation,
         themeStore: ThemeStore,
         quickCommentTemplateStore: QuickCommentTemplateStore,
         composerDraftStore: ComposerDraftStore,
@@ -61,7 +61,7 @@ struct AppRootEnvironment {
     /// Previews and tests: the root owns an opener built for these services.
     init(
         coordinator: ConnectionCoordinator,
-        navigation: AppNavigation,
+        navigation: SceneNavigation,
         themeStore: ThemeStore,
         quickCommentTemplateStore: QuickCommentTemplateStore,
         composerDraftStore: ComposerDraftStore,

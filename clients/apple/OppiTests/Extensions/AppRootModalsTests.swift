@@ -205,14 +205,14 @@ struct AppRootModalsTests {
         let (host, window) = try show(root)
         defer { hide(window) }
 
-        root.navigation.showWhatsNew = true
+        root.navigation.app.showWhatsNew = true
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { isSettled(host.presentedViewController) })
         let whatsNew = try #require(host.presentedViewController as? WhatsNewViewController)
 
         // The root is covered and may not update; the screen's own close must clear the flag.
         Router.finish(whatsNew)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { host.presentedViewController == nil })
-        #expect(await waitForMainActorCondition { !root.navigation.showWhatsNew })
+        #expect(await waitForMainActorCondition { !root.navigation.app.showWhatsNew })
     }
 
     // MARK: Fixtures

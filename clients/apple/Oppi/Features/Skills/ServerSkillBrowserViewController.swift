@@ -2,7 +2,7 @@ import UIKit
 
 /// A Skill's files as an expandable tree (route `.serverSkillBrowser`): folders
 /// open in place and a file opens in `ServerSkillFileViewController` through
-/// `AppNavigation`. The Skill's page loaded the detail just before opening
+/// `SceneNavigation`. The Skill's page loaded the detail just before opening
 /// this, so the tree usually shows at once; otherwise (or on a Retry, a pull, a
 /// return) the page asks the server.
 ///

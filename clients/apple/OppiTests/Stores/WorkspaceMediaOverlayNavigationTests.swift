@@ -479,8 +479,8 @@ struct WorkspaceMediaOverlayNavigationTests {
         let coordinator = ConnectionCoordinator(serverStore: serverStore)
         #expect(coordinator.restoreActiveServer(servers[0].id))
         let root = makeTestAppRoot(coordinator: coordinator)
-        root.navigation.launchPhase = .ready
-        root.navigation.showOnboarding = false
+        root.navigation.app.launchPhase = .ready
+        root.navigation.app.showOnboarding = false
         return (root, servers)
     }
 
@@ -525,10 +525,10 @@ struct WorkspaceMediaOverlayNavigationTests {
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) { !root.navigation.isMediaOverlayActive })
     }
 
-    private func readyNavigation() -> AppNavigation {
-        let navigation = AppNavigation()
-        navigation.launchPhase = .ready
-        navigation.showOnboarding = false
+    private func readyNavigation() -> SceneNavigation {
+        let navigation = SceneNavigation()
+        navigation.app.launchPhase = .ready
+        navigation.app.showOnboarding = false
         return navigation
     }
 }

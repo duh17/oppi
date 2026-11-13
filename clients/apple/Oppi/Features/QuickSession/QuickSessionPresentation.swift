@@ -4,7 +4,7 @@ import UIKit
 /// `update()` from its `updateProperties()`, so `showQuickSession` re-runs it.
 ///
 /// The request itself (Control widget, App Intents, Shortcuts) reaches
-/// `AppNavigation.showQuickSession` through `AppOpener`; this mounts Quick
+/// `SceneNavigation.showQuickSession` through `AppOpener`; this mounts Quick
 /// Session's controller above the root's content while `showQuickSession` is
 /// set, and on dismissal saves the draft, opens the session a launch created,
 /// and gives VoiceOver focus back to the control that opened it.
@@ -23,7 +23,7 @@ final class QuickSessionPresentation {
         self.host = host
     }
 
-    private var navigation: AppNavigation { root.navigation }
+    private var navigation: SceneNavigation { root.navigation }
 
     func update() {
         if navigation.showQuickSession {
@@ -122,11 +122,10 @@ final class QuickSessionPresentation {
             return
         }
 
-        // Switch server FIRST so coordinator.activeConnection (and all
-        // environment-injected stores) reflect the target server by the time
-        // ChatViewController renders. Without this, cross-server quick sessions can
-        // capture the OLD connection in the chat's session entry.
-        guard await coordinator.switchToServerReady(pending.target.serverId) else {
+        // Switch this window to the target server FIRST: the new session opens
+        // over that server's workspace list, and its connection must be ready
+        // by the time ChatViewController renders.
+        guard await navigation.switchServerReady(pending.target.serverId, coordinator: coordinator) else {
             return
         }
         navigation.pendingQuickSessionNav = nil
@@ -135,7 +134,7 @@ final class QuickSessionPresentation {
         // local attachments and dispatch the message through the focused stream.
         navigation.pendingQuickSessionMessage = pending.autoSendMessage
         navigation.pendingQuickSessionAttachments = pending.autoSendAttachments
-        navigation.pendingLiveVoiceSessionId = pending.startsLiveVoice ? pending.sessionId : nil
+        navigation.app.pendingLiveVoiceSessionId = pending.startsLiveVoice ? pending.sessionId : nil
 
         // Quick Session is just "new session from here". Preserve the current
         // compact stack, or select the session detail column on iPad.

@@ -3,7 +3,7 @@ import XCTest
 /// The Extensions list on the real screen over the settings sweep fixture
 /// server (`SCREENSHOT_SCREEN=settings-sweep`): its sections, search, and the
 /// states a server's catalog can be in. Opening a row goes through
-/// `AppNavigation`, which only the shell mounts; the paired-server E2E drives
+/// `SceneNavigation`, which only the shell mounts; the paired-server E2E drives
 /// that.
 @MainActor
 final class ServerExtensionsListUITests: XCTestCase, PreviewUITestCase {

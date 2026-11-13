@@ -33,7 +33,7 @@ extension QuickSessionModel {
 
         // With the experiment off no call starts, so there is no server answer to wait for.
         if startsLiveVoice, AppPreferences.Experiments.liveVoiceEnabled {
-            await awaitServerCatalog(serverId: launchContext?.serverId ?? coordinator.activeServerId)
+            await awaitServerCatalog(serverId: launchContext?.serverId ?? windowServerId)
             if Task.isCancelled { return }
         }
 
@@ -70,7 +70,7 @@ extension QuickSessionModel {
         } else if let launchContext {
             selectedServerId = launchContext.serverId
         } else {
-            selectedServerId = coordinator.activeServerId
+            selectedServerId = windowServerId
         }
 
         let manager = VoiceInputManager.shared

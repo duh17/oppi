@@ -230,7 +230,7 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
 
     /// The real workspace shell over fixture services
     /// (`SCREENSHOT_SCREEN=workspace-shell`), whose UIKit stacks follow
-    /// `AppNavigation`: the sidebar opens a workspace, its list opens a chat,
+    /// `SceneNavigation`: the sidebar opens a workspace, its list opens a chat,
     /// and Back pops each; Skills searches in the host's bar. iPhone and the
     /// Duo's outer display use the drawer, iPad in landscape the split view.
     func testWorkspaceShellOpensAndPopsRoutes() {
@@ -485,7 +485,7 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// iPad: the split view turns into the drawer stack in portrait and back
-    /// in landscape, rebuilt from `AppNavigation`, so the open chat and its
+    /// in landscape, rebuilt from `SceneNavigation`, so the open chat and its
     /// workspace survive both changes.
     func testWorkspaceShellKeepsTheRouteAcrossLayoutChanges() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Layout changes need an iPad window")

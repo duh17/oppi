@@ -393,7 +393,7 @@ struct ChatReaderOpenLookupDestinationTests {
         let reader = ChatReaderViewController(
             target: store.store(payload),
             store: store,
-            navigation: AppNavigation()
+            navigation: SceneNavigation()
         )
         reader.loadViewIfNeeded()
         return reader

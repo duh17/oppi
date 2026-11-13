@@ -20,17 +20,17 @@ private actor ResourceReferenceAsyncGate {
     }
 }
 
-@Suite("AppNavigation shell routing")
+@Suite("SceneNavigation shell routing")
 @MainActor
-struct AppNavigationShellRoutingTests {
+struct SceneNavigationShellRoutingTests {
     @Test func pairedLaunchRevealNeverShowsOnboarding() {
-        let navigation = AppNavigation()
-        navigation.showOnboarding = true
+        let navigation = SceneNavigation()
+        navigation.app.showOnboarding = true
 
-        navigation.revealPairedServerShell()
+        navigation.app.revealPairedServerShell()
 
-        #expect(navigation.launchPhase == .ready)
-        #expect(!navigation.showOnboarding)
+        #expect(navigation.app.launchPhase == .ready)
+        #expect(!navigation.app.showOnboarding)
     }
 
     @Test func pairedLaunchRevealsLocalStateBeforeTransportPreparation() async {
@@ -110,7 +110,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func setWorkspaceSessionPathReplacesExistingStackInOneAssignment() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.openWorkspaceUtility(.appSettings)
         navigation.openWorkspaceUtility(.manageServers)
 
@@ -120,7 +120,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func externalSessionDeepLinkPolicyReplacesKnownAndRootsUnknownTargets() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let source = WorkspaceSessionNavTarget(
             serverId: "server-1",
             sessionId: "source",
@@ -154,7 +154,7 @@ struct AppNavigationShellRoutingTests {
             WorkspaceNavigationPresentation.stack,
             WorkspaceNavigationPresentation.split,
         ] {
-            let missingTargetNavigation = AppNavigation()
+            let missingTargetNavigation = SceneNavigation()
             missingTargetNavigation.setWorkspaceNavigationPresentation(presentation)
             missingTargetNavigation.openWorkspaceSession(.init(
                 serverId: "server-1",
@@ -183,7 +183,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func referencedSessionAppendsToCompactChatHistoryAndSelfLinkIsNoOp() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let source = WorkspaceSessionNavTarget(
             serverId: "server-1",
             sessionId: "source",
@@ -209,7 +209,7 @@ struct AppNavigationShellRoutingTests {
     /// A refused lock takes the session's route off the compact stack, leaves every other screen, and
     /// says whether the session was the one on top. A session of another server with the same id is not it.
     @Test func removingASessionRouteFromTheStackLeavesOtherScreensAndReportsWhetherItWasVisible() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let locked = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "locked", workspaceId: "w1")
         let other = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "other", workspaceId: "w1")
         navigation.openWorkspaceSession(locked)
@@ -228,7 +228,7 @@ struct AppNavigationShellRoutingTests {
     /// A reader opened from the chat has its lock origin fixed at the workspace the chat had then, so it
     /// goes with the chat. Another session's chat above is not under this lock: it and its screens stay.
     @Test func removingASessionRouteAlsoDropsTheReadersOpenedFromItInTheStack() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let locked = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "locked", workspaceId: "w1")
         let other = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "other", workspaceId: "w1")
         let reader = ChatReaderNavTarget(id: UUID())
@@ -248,7 +248,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func removingASessionRouteAlsoDropsTheReadersOpenedFromItInTheSplitDetail() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.setWorkspaceNavigationPresentation(.split)
         let root = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "root", workspaceId: "w1")
         let locked = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "locked", workspaceId: "w1")
@@ -272,7 +272,7 @@ struct AppNavigationShellRoutingTests {
     /// The split detail's root is the session itself: removing it clears the detail column, and the
     /// screens pushed over it go with their root.
     @Test func removingTheSplitDetailSessionClearsTheColumn() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.setWorkspaceNavigationPresentation(.split)
         let locked = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "locked", workspaceId: "w1")
         navigation.openWorkspaceSession(locked)
@@ -289,7 +289,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func referencedSessionPushesFromSplitChatAndSelfLinkIsNoOp() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let source = WorkspaceSessionNavTarget(
             serverId: "server-1",
             sessionId: "source",
@@ -340,7 +340,7 @@ struct AppNavigationShellRoutingTests {
         )
 
         for presentation in [WorkspaceNavigationPresentation.stack, .split] {
-            let navigation = AppNavigation()
+            let navigation = SceneNavigation()
             navigation.setWorkspaceNavigationPresentation(presentation)
             navigation.openWorkspaceSession(source)
 
@@ -367,7 +367,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func referencedWorkspaceFileFallsBackToExplicitWorkspaceNavigationWhenSourceIsNotVisible() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let source = WorkspaceSessionNavTarget(
             serverId: "server-1",
             sessionId: "source",
@@ -394,7 +394,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func visibleSplitDiagnosticContextTracksNonSessionPathTop() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.openWorkspaceUtility(.skills)
         navigation.openServerResourceDetail(.init(
@@ -412,7 +412,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func referencedSessionChainSurvivesCompactToSplitToCompactTransition() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let source = WorkspaceSessionNavTarget(
             serverId: "server-1",
             sessionId: "source",
@@ -441,7 +441,7 @@ struct AppNavigationShellRoutingTests {
 
     @Test func supersededRequestDuringPreparationCannotActivateServerOrNavigate() async {
         let preparationGate = ResourceReferenceAsyncGate()
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let newerSession = WorkspaceSessionNavTarget(
             serverId: "server-newer",
             sessionId: "newer",
@@ -505,7 +505,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func aShellChangeKeepsTheOneStackAndShowsItInTheDetailColumn() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.openWorkspaceUtility(.appSettings)
 
         navigation.setWorkspaceNavigationPresentation(.split)
@@ -517,7 +517,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func openWorkspacePushesInboxInStackPresentation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let target = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
         navigation.openWorkspaceUtility(.appSettings)
 
@@ -528,7 +528,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func openWorkspaceUsesSplitSelectionInSplitPresentation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let target = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
         navigation.setWorkspaceNavigationPresentation(.split)
 
@@ -539,7 +539,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func showAllWorkspaceSessionsPopsWorkspaceInbox() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let target = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
         navigation.openWorkspace(target)
 
@@ -550,7 +550,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func leaveDeletedWorkspaceReturnsSelectedInboxToAllSessions() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let target = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1", name: "Notes")
@@ -564,7 +564,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func leaveDeletedWorkspaceMatchesSelectionByIdentityWhenNameChanged() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let selected = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1", name: "Notes")
@@ -578,9 +578,9 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func leaveDeletedWorkspaceLeavesUnselectedWorkspaceOnManagePath() {
-        let navigation = AppNavigation()
-        navigation.launchPhase = .ready
-        navigation.showOnboarding = false
+        let navigation = SceneNavigation()
+        navigation.app.launchPhase = .ready
+        navigation.app.showOnboarding = false
         let selected = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-keep", name: "Keep")
@@ -597,9 +597,9 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func leaveDeletedWorkspaceNoopsWhenNothingIsSelected() {
-        let navigation = AppNavigation()
-        navigation.launchPhase = .ready
-        navigation.showOnboarding = false
+        let navigation = SceneNavigation()
+        navigation.app.launchPhase = .ready
+        navigation.app.showOnboarding = false
         navigation.openHostSwitcherDestination(.serverSettings, serverId: "server-1")
         let pathCount = navigation.workspaceStackRouteElements.count
 
@@ -611,7 +611,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func leaveDeletedWorkspaceClearsSplitSelection() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let target = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -626,7 +626,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func sessionOpenedFromWorkspaceBuildsAllWorkspaceChatHierarchy() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -651,7 +651,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func sessionOpenedFromAllSessionsKeepsAllSessionsAsBackStop() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -673,7 +673,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func stackDiagnosticContextTracksVisibleDestinationAcrossBackNavigation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -706,7 +706,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func showSessionInboxInSplitClearsDetailTarget() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.openWorkspaceSession(WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1"))
 
@@ -717,7 +717,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func sessionOpenedFromSplitAllSessionsReturnsToAllSessionsOnInboxBack() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -742,7 +742,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func sessionOpenedFromSplitWorkspaceReturnsToThatWorkspaceOnInboxBack() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -768,7 +768,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func openSessionUsesSplitDetailSelectionInSplitPresentation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let target = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         navigation.setWorkspaceNavigationPresentation(.split)
 
@@ -791,7 +791,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func splitUtilityOwnsPushedControlChatAndBackStack() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.openWorkspaceUtility(.agents)
 
@@ -815,7 +815,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func openSessionPreservesWorkspaceHintFromWorkspaceTarget() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
         let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         navigation.setWorkspaceNavigationPresentation(.split)
@@ -832,7 +832,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func workspaceSelectionRestoresSessionLayerVisibility() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.splitColumnVisibility = .detailOnly
@@ -845,7 +845,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func sessionSelectionPreservesSplitColumnVisibility() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.splitColumnVisibility = .detailOnly
@@ -857,7 +857,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func fileBrowserUsesSplitDetailSelectionInSplitPresentation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
         let fileTarget = FileBrowserNavTarget(serverId: "server-1", workspaceId: "workspace-1", path: "")
         navigation.setWorkspaceNavigationPresentation(.split)
@@ -869,7 +869,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func columnDrillSurvivesStackToSplitSwap() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -897,7 +897,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func linkedFileUsesDedicatedDestinationInSplitPresentation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
         let fileTarget = WorkspaceLinkedFileNavTarget(
             serverId: "server-1",
@@ -920,7 +920,7 @@ struct AppNavigationShellRoutingTests {
             path: "Sources/App.swift",
             lineAnchor: anchor
         )
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.openWorkspaceLinkedFile(target)
 
         #expect(navigation.workspaceStackRouteElements.count == 1)
@@ -945,7 +945,7 @@ struct AppNavigationShellRoutingTests {
             path: "Sources/App.swift",
             lineAnchor: anchor
         )
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.setWorkspaceNavigationPresentation(.split)
 
         navigation.openWorkspaceLinkedFile(target)
@@ -957,7 +957,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func linkedFileAppendsInStackPresentationToPreserveBackNavigation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let firstTarget = WorkspaceLinkedFileNavTarget(
             serverId: "server-1",
             workspaceId: "workspace-1",
@@ -976,7 +976,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func linkedFileOpenedFromSessionPreservesSessionBackNavigation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         let fileTarget = WorkspaceLinkedFileNavTarget(
             serverId: "server-1",
@@ -991,7 +991,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func linkedFileOpenedFromSplitSessionPreservesSessionBackNavigation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         let fileTarget = WorkspaceLinkedFileNavTarget(
             serverId: "server-1",
@@ -1008,7 +1008,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func linkedFileOpenedFromSplitSessionSurvivesCompactRotation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         let fileTarget = WorkspaceLinkedFileNavTarget(
             serverId: "server-1",
@@ -1025,7 +1025,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func linkedFileChainOpenedFromSplitFileSurvivesCompactRotation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let firstTarget = WorkspaceLinkedFileNavTarget(
             serverId: "server-1",
             workspaceId: "workspace-1",
@@ -1046,7 +1046,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func splitFileBrowserDirectoryDrillSurvivesCompactRotation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
         let rootTarget = FileBrowserNavTarget(serverId: "server-1", workspaceId: "workspace-1", path: "")
         let childTarget = FileBrowserNavTarget(serverId: "server-1", workspaceId: "workspace-1", path: "notes/")
@@ -1060,7 +1060,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func splitAllSessionsSessionKeepsAllSessionsOnCompactRotation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -1078,7 +1078,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func splitWorkspaceSessionPreservesBothBackLayersOnCompactRotation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -1095,7 +1095,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func stackWorkspaceSessionSurvivesRegularWidthRotation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -1117,7 +1117,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func stackFileBrowserDrillSurvivesRegularWidthRotation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -1145,7 +1145,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func stackBackBeforeRegularWidthRotationKeepsWorkspaceDetail() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -1165,7 +1165,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func splitSystemBackBeforeCompactRotationDropsPoppedLinkedFile() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let firstTarget = WorkspaceLinkedFileNavTarget(
             serverId: "server-1",
             workspaceId: "workspace-1",
@@ -1291,7 +1291,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func hostFileOpenPushesViewerWithoutSwitchingWorkspace() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let sourceWorkspace = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -1318,7 +1318,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func utilityUsesSplitDetailSelectionInSplitPresentation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.setWorkspaceNavigationPresentation(.split)
 
         navigation.openWorkspaceUtility(.appSettings)
@@ -1327,7 +1327,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func agentAndScheduleUtilitiesAreReleaseEnabledAndAppendToStackPath() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
 
         navigation.openWorkspaceUtility(.agents)
 
@@ -1342,7 +1342,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func visibleUtilitiesStillAppendToStackPath() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
 
         navigation.openWorkspaceUtility(.manageServers)
         navigation.openWorkspaceUtility(.appSettings)
@@ -1352,7 +1352,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func agentAndScheduleUtilitiesReplaceSplitWorkspaceAndDetailSelection() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspace = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -1372,7 +1372,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func visibleUtilitiesStillRouteInSplitPresentation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.setWorkspaceNavigationPresentation(.split)
 
         navigation.openWorkspaceUtility(.manageServers)
@@ -1381,7 +1381,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func workspaceConfigurationUsesSplitDetailSelectionInSplitPresentation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
         navigation.setWorkspaceNavigationPresentation(.split)
 
@@ -1392,7 +1392,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func splitWorkspaceConfigurationPreservesWorkspaceBackLayerOnCompactRotation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -1407,7 +1407,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func stackWorkspaceConfigurationSurvivesRegularWidthRotation() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(
             serverId: "server-1",
             workspace: makeTestWorkspace(id: "workspace-1")
@@ -1423,7 +1423,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func showWorkspaceListKeepsCurrentSplitDetail() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
         let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         navigation.setWorkspaceNavigationPresentation(.split)
@@ -1439,7 +1439,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func completingWorkspaceConfigurationClearsMatchingSplitDetail() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.openWorkspaceConfiguration(workspaceTarget)
@@ -1699,10 +1699,10 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.visibleHostSwitcherDestination == .serverSettings)
     }
 
-    private func readyNavigation() -> AppNavigation {
-        let navigation = AppNavigation()
-        navigation.launchPhase = .ready
-        navigation.showOnboarding = false
+    private func readyNavigation() -> SceneNavigation {
+        let navigation = SceneNavigation()
+        navigation.app.launchPhase = .ready
+        navigation.app.showOnboarding = false
         return navigation
     }
 }

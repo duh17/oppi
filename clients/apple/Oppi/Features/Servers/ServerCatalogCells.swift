@@ -109,7 +109,7 @@ final class ServerCatalogServerRowCell: UICollectionViewListCell {
 /// every paired server, the shown one checked, each titled with its name and,
 /// unless connected, its connection state ("Name — state", the state also the
 /// action's accessibility value); then Usage for the shown server. Choosing a
-/// server asks for its lock, then makes it the active one once its connection
+/// server asks for its lock, then makes it the window's once its connection
 /// is ready. `ServerSwitchMenu` owns the rows; the menu is rebuilt each time it
 /// opens, so it lists current states.
 @MainActor
@@ -120,7 +120,7 @@ enum ServerCatalogServerMenu {
     ///     follow-up (clearing its search, loading its catalog) goes here.
     static func make(
         coordinator: ConnectionCoordinator,
-        navigation: AppNavigation,
+        navigation: SceneNavigation,
         shownServerId: @escaping @MainActor () -> String?,
         onSwitched: @escaping @MainActor (PairedServer) -> Void = { _ in }
     ) -> UIMenu {
@@ -140,7 +140,7 @@ enum ServerCatalogServerMenu {
                 },
                 activate: { server in
                     Task { @MainActor in
-                        guard await coordinator.switchToServerReady(server) else { return }
+                        guard await navigation.switchServerReady(server.id, coordinator: coordinator) else { return }
                         onSwitched(server)
                     }
                 }

@@ -24,15 +24,15 @@ extension WorkspaceDetailViewController: QuickSessionStarting {}
 @MainActor
 final class LiveKeyboardCommandSurface {
     private let root: AppRootEnvironment
-    private var navigation: AppNavigation { root.navigation }
+    private var navigation: SceneNavigation { root.navigation }
 
     init(root: AppRootEnvironment) {
         self.root = root
     }
 
     private var isInteractive: Bool {
-        navigation.launchPhase == .ready
-            && !navigation.showOnboarding
+        navigation.app.launchPhase == .ready
+            && !navigation.app.showOnboarding
             && !navigation.showQuickSession
             && !AppLockService.shared.isLocked
     }

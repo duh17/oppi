@@ -69,14 +69,14 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
     /// cancelled instead of landing here.
     override func loadSubject() -> AnyHashable? {
         AnyHashable([
-            AnyHashable(root.coordinator.activeServerId),
-            AnyHashable(root.coordinator.activeConnection.apiClient.map(ObjectIdentifier.init)),
+            AnyHashable(root.windowServerId),
+            AnyHashable(root.windowConnectionOrStandIn.apiClient.map(ObjectIdentifier.init)),
         ])
     }
 
     /// The active server's connection: the base reloads the page by itself when it
     /// installs an API client again after a rebuild.
-    override func loadConnection() -> ServerConnection? { root.coordinator.activeConnection }
+    override func loadConnection() -> ServerConnection? { root.windowConnectionOrStandIn }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
@@ -241,8 +241,8 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
 
     private func updateModals() {
         let prompt = prompt
-        let connection = root.coordinator.activeConnection
-        let serverName = root.activeServerName
+        let connection = root.windowConnectionOrStandIn
+        let serverName = root.windowServerName
         fileReview.update(
             // The reader opens whether or not SYSTEM.md exists: a missing file is
             // still the prompt's document, and the reader is where its pencil is.
@@ -294,7 +294,7 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
     /// once more when the page closes.
     private func openTools() {
         tools.pickerDidOpen()
-        Router.push(AgentToolSelectionViewController(selection: .pi(tools, serverName: root.activeServerName)), from: self)
+        Router.push(AgentToolSelectionViewController(selection: .pi(tools, serverName: root.windowServerName)), from: self)
     }
 
     private func openPrompt() {

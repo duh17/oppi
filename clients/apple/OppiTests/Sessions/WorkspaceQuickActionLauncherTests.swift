@@ -46,7 +46,7 @@ struct WorkspaceQuickActionLauncherTests {
         return WorkspaceQuickActionLauncher(
             connection: ServerConnection(),
             apiClient: APIClient(baseURL: baseURL, token: "test-token", configuration: config),
-            navigation: AppNavigation(),
+            navigation: SceneNavigation(),
             workspaceId: "w1",
             presenter: presenter,
             isLaunching: { false },

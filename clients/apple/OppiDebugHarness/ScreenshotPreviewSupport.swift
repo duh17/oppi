@@ -90,7 +90,7 @@ final class SettingsPagePreviewController: PreviewRootController {
         ScreenshotVolatileDefaults.applyImportedThemes()
         let root = AppRootEnvironment(
             coordinator: ConnectionCoordinator(serverStore: ServerStore()),
-            navigation: AppNavigation(),
+            navigation: SceneNavigation(),
             themeStore: themeStore,
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
             composerDraftStore: ComposerDraftStore(),
@@ -156,7 +156,7 @@ extension AppRootEnvironment {
     /// A preview's own services; the rest fresh.
     static func preview(
         coordinator: ConnectionCoordinator,
-        navigation: AppNavigation = AppNavigation(),
+        navigation: SceneNavigation = SceneNavigation(),
         themeStore: ThemeStore = ThemeStore()
     ) -> Self {
         AppRootEnvironment(

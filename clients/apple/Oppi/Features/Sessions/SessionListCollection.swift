@@ -512,7 +512,7 @@ enum SessionListSectionHeader<Toggle: Equatable>: Equatable {
 // MARK: - Search
 
 extension ScreenSearchController {
-    /// Keeps a session list's saved search (`AppNavigation`, kept across
+    /// Keeps a session list's saved search (`SceneNavigation`, kept across
     /// pushes) in step with this bar: typing and presenting write it, and
     /// `show(_:toolbar:)` puts it back on the bar.
     func bind(

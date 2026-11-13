@@ -164,9 +164,9 @@ struct NavigationBreadcrumbTests {
     }
 
     @Test func splitDetailPushChangesDepthAndEmitsWhenScreenTokenIsUnchanged() {
-        let navigation = AppNavigation()
-        navigation.launchPhase = .ready
-        navigation.showOnboarding = false
+        let navigation = SceneNavigation()
+        navigation.app.launchPhase = .ready
+        navigation.app.showOnboarding = false
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.openChatReader(ChatReaderNavTarget(id: UUID()))
 

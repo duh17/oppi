@@ -165,7 +165,7 @@ struct ChatTimelineRowColumnTests {
         let timeline: AnchoredCollectionView
         let window: UIWindow
         // Held for the test: the chat and the window trait do not own them.
-        let appNavigation: AppNavigation
+        let appNavigation: SceneNavigation
         let appRoot: AppRootEnvironment
 
         func hide() {
@@ -180,7 +180,7 @@ struct ChatTimelineRowColumnTests {
         let sessionId = "timeline-column-\(UUID().uuidString)"
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
-        let appNavigation = AppNavigation()
+        let appNavigation = SceneNavigation()
         let appRoot = makeTestAppRoot()
         let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: appNavigation)
         let navigation = UINavigationController(rootViewController: chat)

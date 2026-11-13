@@ -77,7 +77,7 @@ final class SchedulesViewController: UIViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    private var connection: ServerConnection { root.coordinator.activeConnection }
+    private var connection: ServerConnection { root.windowConnectionOrStandIn }
 
     /// The mode on screen: the chosen one where the server has a calendar.
     var mode: Mode { connection.scheduleCalendarAvailable ? Self.chosenMode : .list }

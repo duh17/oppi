@@ -123,7 +123,7 @@ struct ChatViewLifecycleTests {
         let chat = ChatViewController(
             sessionId: sessionId,
             connection: connection,
-            navigation: AppNavigation()
+            navigation: SceneNavigation()
         )
         chat.sessionManager._loadHistoryForTesting = { _, _ in nil }
         chat.loadViewIfNeeded()
@@ -200,7 +200,7 @@ struct ChatViewLifecycleTests {
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
-        let appNavigation = AppNavigation()
+        let appNavigation = SceneNavigation()
         appNavigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(
                 serverId: connection.currentServerId ?? "server-1",
@@ -247,7 +247,7 @@ struct ChatViewLifecycleTests {
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
-        let appNavigation = AppNavigation()
+        let appNavigation = SceneNavigation()
         appNavigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(
                 serverId: connection.currentServerId ?? "server-1",
@@ -294,7 +294,7 @@ struct ChatViewLifecycleTests {
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
-        let appNavigation = AppNavigation()
+        let appNavigation = SceneNavigation()
         let chat = makeChat(connection: connection, sessionId: sessionId, appNavigation: appNavigation)
         let stack = UINavigationController(rootViewController: UIViewController())
         stack.pushViewController(chat, animated: false)
@@ -337,7 +337,7 @@ struct ChatViewLifecycleTests {
             return frames.makeStream()
         }
 
-        let appNavigation = AppNavigation()
+        let appNavigation = SceneNavigation()
         appNavigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(
                 serverId: connection.currentServerId ?? "server-1",
@@ -394,7 +394,7 @@ struct ChatViewLifecycleTests {
             return AsyncStream { _ in }
         }
 
-        let appNavigation = AppNavigation()
+        let appNavigation = SceneNavigation()
         appNavigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(
                 serverId: connection.currentServerId ?? "server-1",
@@ -625,7 +625,7 @@ struct ChatViewLifecycleTests {
                 .appending(path: "quick-draft-\(UUID().uuidString).json", directoryHint: .notDirectory),
             saveDelay: .seconds(60)
         )
-        let appNavigation = AppNavigation()
+        let appNavigation = SceneNavigation()
         appNavigation.pendingQuickSessionMessage = message
         var chat: ChatViewController? = makeChat(
             connection: connection,
@@ -699,7 +699,7 @@ struct ChatViewLifecycleTests {
         let sessionId = "session-\(UUID().uuidString)"
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
-        let appNavigation = AppNavigation()
+        let appNavigation = SceneNavigation()
         appNavigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(
                 serverId: connection.currentServerId ?? "server-1",
@@ -741,7 +741,7 @@ struct ChatViewLifecycleTests {
         let sessionId = "session-\(UUID().uuidString)"
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
-        let appNavigation = AppNavigation()
+        let appNavigation = SceneNavigation()
         appNavigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(
                 serverId: connection.currentServerId ?? "server-1",
@@ -781,7 +781,7 @@ struct ChatViewLifecycleTests {
     private func makeHost(
         connection: ServerConnection,
         sessionId: String,
-        appNavigation: AppNavigation = AppNavigation()
+        appNavigation: SceneNavigation = SceneNavigation()
     ) -> HostHarness {
         let chat = makeChat(connection: connection, sessionId: sessionId, appNavigation: appNavigation)
         return show(chat, in: chat)
@@ -791,7 +791,7 @@ struct ChatViewLifecycleTests {
     private func makeStackedHost(
         connection: ServerConnection,
         sessionId: String,
-        appNavigation: AppNavigation
+        appNavigation: SceneNavigation
     ) -> (HostHarness, UINavigationController) {
         let chat = makeChat(connection: connection, sessionId: sessionId, appNavigation: appNavigation)
         let stack = UINavigationController(rootViewController: chat)
@@ -819,7 +819,7 @@ struct ChatViewLifecycleTests {
     private func makeChat(
         connection: ServerConnection,
         sessionId: String,
-        appNavigation: AppNavigation
+        appNavigation: SceneNavigation
     ) -> ChatViewController {
         ChatViewController(sessionId: sessionId, connection: connection, navigation: appNavigation)
     }

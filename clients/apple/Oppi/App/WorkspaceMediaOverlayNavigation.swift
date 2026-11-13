@@ -55,7 +55,7 @@ enum WorkspaceMediaOverlayNavigationPolicy {
 
     /// Whether a non-pop route clear lost the route the overlay snapshotted,
     /// such as a presentation flip or a server reset. A routed-stack pop is
-    /// the person's own navigation; `AppNavigation` ends the overlay instead of
+    /// the person's own navigation; `SceneNavigation` ends the overlay instead of
     /// restoring the chat under it.
     static func shouldRestoreRoute(
         overlayActive: Bool,
@@ -80,7 +80,7 @@ enum WorkspaceMediaOverlayNavigationPolicy {
 /// snapshotted one back. Observes for as long as it lives.
 @MainActor
 final class WorkspaceMediaOverlayObserver {
-    private let navigation: AppNavigation
+    private let navigation: SceneNavigation
     private let coordinator: ConnectionCoordinator
     private var observers: [NSObjectProtocol] = []
 
@@ -108,12 +108,12 @@ final class WorkspaceMediaOverlayObserver {
     }
 
     private func overlayDidBegin() {
-        navigation.beginMediaOverlay(activeServerId: coordinator.activeServerId)
+        navigation.beginMediaOverlay(activeServerId: navigation.activeServerId(in: coordinator))
     }
 
     private func overlayDidEnd() {
-        let restoreServerId = navigation.endMediaOverlay(currentServerId: coordinator.activeServerId)
+        let restoreServerId = navigation.endMediaOverlay(currentServerId: navigation.activeServerId(in: coordinator))
         guard let restoreServerId else { return }
-        _ = coordinator.restoreActiveServer(restoreServerId)
+        navigation.chooseServer(restoreServerId, coordinator: coordinator)
     }
 }

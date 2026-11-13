@@ -239,7 +239,7 @@ final class AppOpener {
     // Sibling `AppOpener+*.swift` files hold the destination work that is
     // real logic (resource references, invites), so these are internal.
     let coordinator: ConnectionCoordinator
-    let navigation: AppNavigation
+    let navigation: SceneNavigation
     private let composerDraftStore: ComposerDraftStore
     private let appLock: AppLockService
     let scopedLock: ScopedLockService
@@ -249,7 +249,11 @@ final class AppOpener {
     @ObservationIgnored private let systemOpen: SystemOpen
 
     var serverStore: ServerStore { coordinator.serverStore }
+    /// Where toasts show: the transport focus, the server last brought
+    /// forward, whose chat or list the person is looking at.
     var activeConnection: ServerConnection { coordinator.activeConnection }
+    /// The window's server (`SceneNavigation.activeServerId(in:)`).
+    var windowServerId: String? { navigation.activeServerId(in: coordinator) }
 
     /// An invite waiting for approval on the user's other device. The root
     /// covers the app until it resolves or the user cancels.
@@ -319,7 +323,7 @@ final class AppOpener {
 
     init(
         coordinator: ConnectionCoordinator,
-        navigation: AppNavigation,
+        navigation: SceneNavigation,
         composerDraftStore: ComposerDraftStore,
         appLock: AppLockService = .shared,
         scopedLock: ScopedLockService = .shared,
@@ -534,8 +538,8 @@ final class AppOpener {
             return true
         case .quickSession:
             return hasFinishedLaunch
-                && navigation.launchPhase == .ready
-                && !navigation.showOnboarding
+                && navigation.app.launchPhase == .ready
+                && !navigation.app.showOnboarding
         case .pairing(_, _, .deny):
             return true
         case .invite:
@@ -558,14 +562,17 @@ final class AppOpener {
         generation == self.generation && !Task.isCancelled
     }
 
-    /// Brings `serverId` up, refusing to activate a superseded request.
+    /// Brings `serverId` up as the window's server, refusing to activate a
+    /// superseded request.
     func openServer(_ serverId: String, generation: UInt64) async -> Bool {
 #if DEBUG
         if let _serverReadyForTesting {
-            return await _serverReadyForTesting(serverId)
+            let ready = await _serverReadyForTesting(serverId)
+            if ready { navigation.recordChosenServer(serverId) }
+            return ready
         }
 #endif
-        return await coordinator.switchToServerReady(serverId, shouldActivate: { [weak self] in
+        return await navigation.switchServerReady(serverId, coordinator: coordinator, shouldActivate: { [weak self] in
             self?.isCurrent(generation) ?? false
         })
     }
@@ -744,7 +751,7 @@ final class AppOpener {
         }
         guard allowed, isCurrent(generation) else { return .finished }
 
-        let previousServerId = coordinator.activeServerId
+        let previousServerId = windowServerId
         let switched = await timer.time("switchServerMs") { await openServer(serverId, generation: generation) }
         guard isCurrent(generation) else { return .finished }
         guard switched, let connection = coordinator.connection(for: serverId) else {
@@ -1002,7 +1009,7 @@ final class AppOpener {
             return .finished
         case .lookupFailed:
             // A server could not be asked, so the session may exist: keep the request for the next foreground.
-            if let activeServerId = coordinator.activeServerId { toastUnreachableIfFirstAttempt(activeServerId) }
+            if let windowServerId { toastUnreachableIfFirstAttempt(windowServerId) }
             return .unreachable
         case .done(let outcome):
             return outcome
@@ -1017,7 +1024,7 @@ final class AppOpener {
         }
         guard allowed, isCurrent(generation) else { return .finished }
 
-        let previousServerId = coordinator.activeServerId
+        let previousServerId = windowServerId
         let switched = await timer.time("switchServerMs") { await openServer(serverId, generation: generation) }
         guard isCurrent(generation) else { return .finished }
         guard switched, let connection = coordinator.connection(for: serverId) else {
@@ -1049,7 +1056,7 @@ final class AppOpener {
                 restoreServer(previousServerId, after: serverId)
                 return .finished
             }
-            guard coordinator.activeServerId == serverId else { return .finished }
+            guard windowServerId == serverId else { return .finished }
             timer.time("pushMs") { navigation.showThread(serverId: serverId, rootId: rootId) }
             logLinkOpened(timer)
             postOpenTask = Task { @MainActor [weak self, weak connection] in
@@ -1109,7 +1116,7 @@ final class AppOpener {
             return .finished
         }
         // The list drops a focus for another server, so leave the screen alone rather than reset it for nothing.
-        guard coordinator.activeServerId == serverId else { return .finished }
+        guard windowServerId == serverId else { return .finished }
         timer.time("pushMs") { navigation.showThread(serverId: serverId, rootId: rootId) }
         logLinkOpened(timer)
         return .finished
@@ -1139,7 +1146,7 @@ final class AppOpener {
     /// A cancelled lock prompt goes back to the server this open switched away from.
     private func restoreServer(_ previousServerId: String?, after serverId: String) {
         guard let previousServerId, previousServerId != serverId else { return }
-        coordinator.restoreActiveServer(previousServerId)
+        navigation.chooseServer(previousServerId, coordinator: coordinator)
     }
 
     private func inAppSessionServerId(for open: SessionOpen) -> String? {

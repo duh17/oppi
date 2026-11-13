@@ -10,7 +10,7 @@ import Foundation
 // A panel opens beside its session's chat (`ScenePanes.openPanel`).
 extension AppOpener {
     func performPane(_ link: PaneLink, sourceServerID: String?, generation: UInt64) async -> AppOpenOutcome {
-        guard let serverId = link.server ?? sourceServerID ?? coordinator.activeServerId else {
+        guard let serverId = link.server ?? sourceServerID ?? windowServerId else {
             toast(String(localized: "No server to open this link on"))
             return .finished
         }
@@ -30,7 +30,7 @@ extension AppOpener {
             navigation.pushPaneEntry(entry)
             return .finished
         }
-        let previousServerId = coordinator.activeServerId
+        let previousServerId = windowServerId
         let switched = await openServer(serverId, generation: generation)
         guard isCurrent(generation) else { return .finished }
         guard switched else {

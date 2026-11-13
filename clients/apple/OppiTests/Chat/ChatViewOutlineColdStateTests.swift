@@ -183,14 +183,14 @@ struct ChatViewOutlineColdStateTests {
 @MainActor
 private final class MountedChatFixture {
     let connection: ServerConnection
-    let appNavigation: AppNavigation
+    let appNavigation: SceneNavigation
     let host: UINavigationController
     let window: UIWindow
     private(set) var sessionId: String
 
     init(
         connection: ServerConnection,
-        appNavigation: AppNavigation,
+        appNavigation: SceneNavigation,
         host: UINavigationController,
         window: UIWindow,
         sessionId: String
@@ -248,7 +248,7 @@ private func makeMountedChat(
     connection.setAPIClientForTesting(nil)
     connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
 
-    let appNavigation = AppNavigation()
+    let appNavigation = SceneNavigation()
     let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: appNavigation)
     let host = UINavigationController(rootViewController: chat)
 

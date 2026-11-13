@@ -1143,8 +1143,8 @@ struct AppOpenerTests {
             servers: [makeServer("server-a")],
             appLockTimeout: .immediately
         )
-        harness.navigation.launchPhase = .ready
-        harness.navigation.showOnboarding = false
+        harness.navigation.app.launchPhase = .ready
+        harness.navigation.app.showOnboarding = false
         let url = try #require(URL(string: "oppi://workspace?path=/tmp/project&name=Locked"))
 
         harness.opener.open(AppOpenRequest(url: url, origin: .externalURL))
@@ -1196,8 +1196,8 @@ struct AppOpenerTests {
             appLockTimeout: .immediately,
             launch: false
         )
-        harness.navigation.launchPhase = .ready
-        harness.navigation.showOnboarding = false
+        harness.navigation.app.launchPhase = .ready
+        harness.navigation.app.showOnboarding = false
         harness.opener.launchDidFinish()
 
         harness.opener.open(.quickSession(QuickSessionStart(mode: .message)))
@@ -1264,8 +1264,8 @@ struct AppOpenerTests {
 
     @Test func quickSessionWaitsForLaunchAndDropsWhenOneIsShowing() async throws {
         let harness = await OpenerHarness(servers: [makeServer("server-a")], launch: false)
-        harness.navigation.launchPhase = .ready
-        harness.navigation.showOnboarding = false
+        harness.navigation.app.launchPhase = .ready
+        harness.navigation.app.showOnboarding = false
 
         harness.opener.open(.quickSession(QuickSessionStart(mode: .dictation)))
         await harness.settle()
@@ -1376,14 +1376,14 @@ struct AppOpenerTests {
 
     @Test func quickSessionParkedDuringOnboardingOpensWhenItClears() async throws {
         let harness = await OpenerHarness(servers: [makeServer("server-a")])
-        harness.navigation.launchPhase = .ready
-        harness.navigation.showOnboarding = true
+        harness.navigation.app.launchPhase = .ready
+        harness.navigation.app.showOnboarding = true
 
         harness.opener.open(.quickSession(QuickSessionStart(mode: .message)))
         await harness.settle()
         #expect(!harness.navigation.showQuickSession)
 
-        harness.navigation.showOnboarding = false
+        harness.navigation.app.showOnboarding = false
         harness.opener.presentationDidUpdate()
         await harness.settle()
         #expect(harness.navigation.showQuickSession)
@@ -1986,7 +1986,7 @@ private final class StubAuthenticator {
 private final class OpenerHarness {
     let serverStore: ServerStore
     let coordinator: ConnectionCoordinator
-    let navigation = AppNavigation()
+    let navigation = SceneNavigation()
     let composerDraftStore: ComposerDraftStore
     let appLock: AppLockService
     let scopedLock: ScopedLockService

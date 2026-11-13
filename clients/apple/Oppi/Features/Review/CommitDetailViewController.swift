@@ -58,7 +58,7 @@ final class CommitDetailViewController: UIViewController {
 
     private let connection: ServerConnection
     private let apiClient: APIClient?
-    private let appNavigation: AppNavigation
+    private let appNavigation: SceneNavigation
 
     private var detail: GitCommitDetail? {
         didSet { setNeedsUpdateProperties() }
@@ -121,7 +121,7 @@ final class CommitDetailViewController: UIViewController {
         configuration: Configuration,
         connection: ServerConnection,
         apiClient: APIClient?,
-        navigation: AppNavigation,
+        navigation: SceneNavigation,
         hostedInPanel: Bool = false,
         pushChat: ((ChatViewController) -> Void)? = nil
     ) {
@@ -352,7 +352,7 @@ final class CommitDetailViewController: UIViewController {
     }
 
     /// Pushes the new session's chat with this viewer's server and navigation.
-    /// The commit viewer opened from a chat keeps an `AppNavigation` of its own
+    /// The commit viewer opened from a chat keeps an `SceneNavigation` of its own
     /// (`ChatTimelineDestinationPresenter`), so its chat leaves the app's alone.
     func openQuickActionSession(_ destination: QuickActionSessionNavDestination) {
         quickActionLauncher.showChat(destination)

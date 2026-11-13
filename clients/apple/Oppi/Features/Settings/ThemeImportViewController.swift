@@ -103,7 +103,7 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
 
     /// The active server's connection: the base reloads the page by itself when it
     /// installs an API client again after a rebuild.
-    override func loadConnection() -> ServerConnection? { root.coordinator.activeConnection }
+    override func loadConnection() -> ServerConnection? { root.windowConnectionOrStandIn }
 
     override func load() async throws {
         let api = try requireAPIClient()
@@ -242,7 +242,7 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
     }
 
     private func importTheme(_ summary: RemoteThemeSummary) async {
-        guard let api = root.coordinator.activeConnection.apiClient else { return }
+        guard let api = root.windowConnectionOrStandIn.apiClient else { return }
         importingName = summary.filename
         defer { importingName = nil }
         do {

@@ -83,7 +83,7 @@ struct ChatSlashCommandRecoveryTests {
 @MainActor
 private final class SlashChatRig {
     let connection: ServerConnection
-    let appNavigation = AppNavigation()
+    let appNavigation = SceneNavigation()
     let chat: ChatViewController
     let stack: UINavigationController
     private let frames = ScriptedFrameStreamFactory()

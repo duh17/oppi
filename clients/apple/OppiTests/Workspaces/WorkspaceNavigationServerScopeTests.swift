@@ -23,7 +23,7 @@ struct WorkspaceNavigationServerScopeTests {
         let serverStore = ServerStore()
         serverStore.load()
         let coordinator = ConnectionCoordinator(serverStore: serverStore)
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
 
         let serverA = makeServer(id: "sha256:nav-a", name: "Server A", host: "server-a.test")
         let serverB = makeServer(id: "sha256:nav-b", name: "Server B", host: "server-b.test")
@@ -233,7 +233,7 @@ struct WorkspaceNavigationServerScopeTests {
     private func makeHost(
         coordinator: ConnectionCoordinator,
         serverStore: ServerStore,
-        navigation: AppNavigation
+        navigation: SceneNavigation
     ) -> WorkspaceNavigationHostHarness {
         let root = AppRootEnvironment(
             coordinator: coordinator,

@@ -55,10 +55,9 @@ final class GuidedControlComposerController: UIViewController {
         onSessionPrepared: ((WorkspaceSessionNavTarget) -> Void)? = nil
     ) {
         self.root = root
-        let coordinator = root.coordinator
         model = GuidedControlComposerModel(
             configuration: configuration,
-            connection: connection ?? { coordinator.activeConnection },
+            connection: connection ?? { root.windowConnectionOrStandIn },
             navigation: root.navigation
         )
         model.onSessionPrepared = onSessionPrepared

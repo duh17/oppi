@@ -485,7 +485,7 @@ private final class ConsentChat {
             ModelInfo(id: "github-copilot/claude-sonnet-5", name: "Sonnet", provider: "github-copilot", contextWindow: 200_000, isDefault: true),
         ]
         let sessionId = sessionId
-        chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: AppNavigation())
+        chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: SceneNavigation())
         host = UINavigationController(rootViewController: chat)
         window = ConsentWindow(host)
         connection._sendMessageForTesting = { [weak self] message in

@@ -85,11 +85,11 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
     /// servers; a workspace belongs to one host, which Workspace Settings made
     /// the active one.
     private var server: PairedServer? {
-        coordinator.serverStore.servers.first { $0.id == coordinator.activeServerId }
+        coordinator.serverStore.servers.first { $0.id == root.windowServerId }
     }
 
     private var client: APIClient? {
-        coordinator.activeServerId.flatMap { coordinator.connection(for: $0)?.apiClient }
+        root.windowConnection?.apiClient
     }
 
     // MARK: - Lifecycle
@@ -154,7 +154,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
     override var loadPolicy: LoadPolicy { .eachAppearance }
 
     /// The active server's MCP scope: another server is another host's servers.
-    override func loadSubject() -> AnyHashable? { AnyHashable(coordinator.activeServerId) }
+    override func loadSubject() -> AnyHashable? { AnyHashable(root.windowServerId) }
 
     /// A probe swaps the host's sections; the rows should not slide.
     override var animatesUpdates: Bool { false }
@@ -182,7 +182,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
         preparingCount += 1
         let client = await coordinator.apiClientReady(for: server.id)
         preparingCount -= 1
-        guard let client, coordinator.activeServerId == server.id else { return }
+        guard let client, root.windowServerId == server.id else { return }
         let scopeId = scopeId
         await model.refresh(
             hostId: server.id, hostName: server.name,

@@ -27,7 +27,7 @@ final class PanePreviewController: PreviewRootController {
         let chat = ChatViewController(
             sessionId: ChatRoutesFixture.sessionId,
             connection: connection,
-            navigation: AppNavigation(),
+            navigation: SceneNavigation(),
             workspaceIdHint: ChatRoutesFixture.workspace.id
         )
         chat.traitOverrides.appRootEnvironment = root

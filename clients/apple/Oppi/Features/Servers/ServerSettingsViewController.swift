@@ -688,7 +688,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             route?.willFinish()
             await coordinator.removeServer(id: server.id)
             if coordinator.serverStore.servers.isEmpty {
-                root.navigation.showOnboarding = true
+                root.navigation.app.showOnboarding = true
                 return
             }
             if let route {

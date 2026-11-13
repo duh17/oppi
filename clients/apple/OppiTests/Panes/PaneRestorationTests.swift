@@ -53,7 +53,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
     }
 
     /// Writes `navigation`'s tree for `scene` as the app does when it settles.
-    private func save(_ panes: ScenePanes, _ navigation: AppNavigation, scene: String, store: PaneTreeStore) {
+    private func save(_ panes: ScenePanes, _ navigation: SceneNavigation, scene: String, store: PaneTreeStore) {
         store.save(PaneLayoutArchive(restorable: panes.layout(navigation: navigation, rootServerId: serverId)), scene: scene)
     }
 
@@ -352,13 +352,15 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         #expect(asked == ["sha256:other"], "only the entry's server was asked")
     }
 
-    /// X8: every newly active server is recorded, for launch and App Intents.
-    @Test func theCoordinatorReportsEachNewlyActiveServer() async throws {
+    /// X8: every server a window newly chooses is recorded, for launch and
+    /// App Intents; a leaf bringing its own server forward is not a choice.
+    @Test func eachServerTheWindowChoosesIsRecorded() async throws {
         let root = try await makeTestTwoServerRoot(firstId: "sha256:first", otherId: "sha256:other")
         var recorded: [String] = []
-        root.coordinator.onActiveServerChanged = { recorded.append($0) }
-        #expect(root.coordinator.restoreActiveServer("sha256:other"))
-        #expect(root.coordinator.restoreActiveServer("sha256:other"))
+        root.navigation.app.onServerChosen = { recorded.append($0) }
+        #expect(root.navigation.chooseServer("sha256:other", coordinator: root.coordinator))
+        #expect(root.navigation.chooseServer("sha256:other", coordinator: root.coordinator))
+        #expect(root.coordinator.restoreActiveServer("sha256:first"))
         #expect(recorded == ["sha256:other"])
     }
 
@@ -369,8 +371,8 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let root = try await makeTestTwoServerRoot(firstId: "sha256:first", otherId: "sha256:other")
-        root.coordinator.onActiveServerChanged = { AppPreferences.LastActiveServer.set($0, in: defaults) }
-        #expect(root.coordinator.restoreActiveServer("sha256:other"))
+        root.navigation.app.onServerChosen = { AppPreferences.LastActiveServer.set($0, in: defaults) }
+        #expect(root.navigation.chooseServer("sha256:other", coordinator: root.coordinator))
 
         let servers = root.coordinator.serverStore.servers
         let lastActive = AppPreferences.LastActiveServer.id(in: defaults)

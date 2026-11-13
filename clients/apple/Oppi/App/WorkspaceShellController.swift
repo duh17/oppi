@@ -3,7 +3,7 @@ import UIKit
 // The workspace shell: what the window shows once the app is paired. UIKit
 // owns its structure. `WorkspaceShellController` measures the window and
 // mounts one of two layouts, the compact stack with its workspace drawer or
-// the split view; the stacks inside follow `AppNavigation` (`ShellRouter.swift`).
+// the split view; the stacks inside follow `SceneNavigation` (`ShellRouter.swift`).
 // In both, the session stack is the primary leaf of a `PaneHostController`,
 // so a wide window shows a screen's attached leaf beside it; the sidebar is
 // never a pane (a tiled sidebar in landscape, a drawer over the panes in
@@ -29,11 +29,11 @@ struct WorkspacePaneArea {
 }
 
 /// Measures the window, mounts the stack or split layout that shows
-/// `AppNavigation`'s stack, and covers everything while the active server is
+/// `SceneNavigation`'s stack, and covers everything while the active server is
 /// locked.
 final class WorkspaceShellController: UIViewController {
     private let root: AppRootEnvironment
-    private var navigation: AppNavigation { root.navigation }
+    private var navigation: SceneNavigation { root.navigation }
     private var layout: (any WorkspacePaneLayout)?
     private var layoutPresentation: WorkspaceNavigationPresentation?
     /// Made with the first layout, kept across layouts, dropped under a lock
@@ -117,7 +117,7 @@ final class WorkspaceShellController: UIViewController {
 
     override func updateProperties() {
         super.updateProperties()
-        // AVKit fullscreen freezes the presentation inside AppNavigation;
+        // AVKit fullscreen freezes the presentation inside SceneNavigation;
         // measure again once it ends.
         let mediaOverlayActive = navigation.isMediaOverlayActive
         if wasMediaOverlayActive, !mediaOverlayActive, measuredPresentation != nil {
@@ -128,7 +128,7 @@ final class WorkspaceShellController: UIViewController {
         // A locked active server covers everything under it: lists, sidebar,
         // pushed pages, and settings that follow the active host. The layout
         // is torn down, so nothing from the locked server stays mounted.
-        let serverId = root.coordinator.activeServerId
+        let serverId = root.windowServerId
         let locked = serverId.map { ScopedLockService.shared.isLocked(.server($0)) } ?? false
         if locked, let serverId {
             showLockCover(serverId: serverId)
@@ -153,7 +153,7 @@ final class WorkspaceShellController: UIViewController {
         updatePropertiesIfNeeded()
     }
 
-    /// Tells `AppNavigation` the measured presentation; the matching layout
+    /// Tells `SceneNavigation` the measured presentation; the matching layout
     /// mounts from it.
     private func applyPresentation(measured: Bool) {
         guard let presentation = measuredPresentation else { return }
@@ -263,11 +263,11 @@ final class WorkspaceShellController: UIViewController {
 // MARK: - Split
 
 /// Regular width and height, landscape: the workspace list beside the
-/// detail column. `AppNavigation` picks the detail root and its pushes, and
+/// detail column. `SceneNavigation` picks the detail root and its pushes, and
 /// the sidebar's visibility.
 final class WorkspaceSplitController: UISplitViewController, UISplitViewControllerDelegate, WorkspacePaneLayout {
     private let root: AppRootEnvironment
-    private var navigation: AppNavigation { root.navigation }
+    private var navigation: SceneNavigation { root.navigation }
     private let sidebarStack: ShellNavigationController
     /// The window's pane area, in the detail column once adopted.
     private var area: WorkspacePaneArea?
@@ -387,7 +387,7 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
     private static let foregroundShadowOffsetX: CGFloat = -5
 
     private let root: AppRootEnvironment
-    private var navigation: AppNavigation { root.navigation }
+    private var navigation: SceneNavigation { root.navigation }
     /// The window's pane area, once adopted: in a wide portrait window a
     /// screen's attached leaf sits beside the stack, and the drawer slides
     /// over both.

@@ -9,7 +9,7 @@ protocol PaneChatScrollReporting: AnyObject {
 
 /// The window's pane tree (`PaneLayout`): its leaves, their weights, focus,
 /// recency and zoom. The routed leaf's stack is the shell's
-/// (`AppNavigation.workspaceStackRouteElements`) and is read into the tree
+/// (`SceneNavigation.workspaceStackRouteElements`) and is read into the tree
 /// when it is saved; every other part lives here. Today a window holds the
 /// routed leaf and at most one attached companion beside it, which the pane
 /// host (`PaneHostController`) draws and reports into the tree: it opens and
@@ -47,7 +47,7 @@ final class ScenePanes {
     /// What was last written: `.none` before the first write, `.some(nil)`
     /// once an empty tree removed the entry.
     @ObservationIgnored private var lastWritten: PaneLayoutArchive?? = .none
-    @ObservationIgnored private weak var navigation: AppNavigation?
+    @ObservationIgnored private weak var navigation: SceneNavigation?
     @ObservationIgnored private weak var coordinator: ConnectionCoordinator?
     /// Debounce before a settled change is written.
     private static let settleDelay: Duration = .milliseconds(500)
@@ -242,7 +242,7 @@ final class ScenePanes {
     /// panels have links. A panel still waiting for its chat (the chat is a
     /// leaf state until its server connects) stays in the tree, so a save
     /// meanwhile does not lose it.
-    func layout(navigation: AppNavigation, rootServerId: String) -> PaneLayout {
+    func layout(navigation: SceneNavigation, rootServerId: String) -> PaneLayout {
         let stack = PaneEntries.primaryStack(navigation.workspaceStackRouteElements, rootServerId: rootServerId)
         let routed = routedLeafID
         var layout = tree
@@ -283,7 +283,7 @@ final class ScenePanes {
     /// saved. `applying: false` drops the saved tree (nothing paired to show
     /// it on).
     func restore(
-        navigation: AppNavigation,
+        navigation: SceneNavigation,
         coordinator: ConnectionCoordinator,
         applying: Bool = true,
         appLock: AppLockService = .shared
@@ -314,7 +314,7 @@ final class ScenePanes {
         }
     }
 
-    private func apply(_ archive: PaneLayoutArchive, navigation: AppNavigation, coordinator: ConnectionCoordinator) {
+    private func apply(_ archive: PaneLayoutArchive, navigation: SceneNavigation, coordinator: ConnectionCoordinator) {
         markRestoringUntilSurvived()
         rememberedShare = archive.companionFraction
         let layout = archive.layout
@@ -411,7 +411,7 @@ final class ScenePanes {
     /// the live chat; and the share the next companion opens at is kept only
     /// while no companion holds it as its weight.
     private func currentArchive() -> PaneLayoutArchive?? {
-        guard let navigation, let rootServerId = coordinator?.activeServerId else { return .none }
+        guard let navigation, let rootServerId = coordinator.flatMap(navigation.activeServerId(in:)) else { return .none }
         var layout = layout(navigation: navigation, rootServerId: rootServerId)
         // A zoom the window's width forced is redrawn from the width.
         if companionZoomIsFit, layout.zoomed == companionID { layout.zoomed = nil }

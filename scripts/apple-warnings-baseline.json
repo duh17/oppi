@@ -288,7 +288,7 @@
       "OppiTests/Settings/DurableSessionsSettingTests.swift": 1,
       "OppiTests/Settings/ServerMetricsEnableTests.swift": 1,
       "OppiTests/Skills/ServerSkillListPresentationTests.swift": 1,
-      "OppiTests/Stores/AppNavigationTests.swift": 1,
+      "OppiTests/Stores/SceneNavigationTests.swift": 1,
       "OppiTests/Stores/SessionStoreTests.swift": 1,
       "OppiTests/Support/TelemetryCapture.swift": 1,
       "OppiTests/Support/TerminalTestSettings.swift": 3,

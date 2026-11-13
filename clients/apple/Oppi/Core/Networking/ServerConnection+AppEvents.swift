@@ -203,7 +203,7 @@ extension ServerConnection {
 
     /// Drops a session this device knows is gone (the server deleted it, or
     /// this device did), and tells the window, which takes its routes off
-    /// every pane (`AppNavigation.removeSessionRoute`).
+    /// every pane (`SceneNavigation.removeSessionRoute`).
     func removeSession(_ sessionId: String) {
         sessionStore.remove(id: sessionId)
         guard let currentServerId else { return }

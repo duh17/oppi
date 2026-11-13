@@ -38,7 +38,7 @@ final class ScheduleCalendarPreviewController: PreviewRootController {
         connection.sessionStore.switchServer(to: server.id)
         connection.sessionStore.sessions = world.sessions
         let root = AppRootEnvironment.preview(coordinator: coordinator)
-        root.navigation.revealPairedServerShell()
+        root.navigation.app.revealPairedServerShell()
         shellRoot = root
         super.init(root: root, themeStore: root.themeStore, content: QuickSessionOverShellController(root: root))
     }

@@ -55,7 +55,7 @@ final class FileBrowserMotionPreviewController: PreviewRootController {
         // The screens push and play with these: the review screen holds both, the
         // viewer its services.
         let connection = ServerConnection()
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let root = AppRootEnvironment.preview(
             coordinator: ConnectionCoordinator(serverStore: ServerStore()),
             navigation: navigation

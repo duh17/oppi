@@ -23,7 +23,7 @@ struct SettingsRootThemeRepaintTests {
         coordinator.serverStore.replaceServersForPreview([server])
         let screen = SettingsRootViewController(root: AppRootEnvironment(
             coordinator: coordinator,
-            navigation: AppNavigation(),
+            navigation: SceneNavigation(),
             themeStore: ThemeStore(),
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
             composerDraftStore: ComposerDraftStore(),
@@ -114,7 +114,7 @@ struct SettingsRootSeparatorTests {
     @Test func everyRowsSeparatorStartsAtItsTitle() async throws {
         let screen = SettingsRootViewController(root: AppRootEnvironment(
             coordinator: ConnectionCoordinator(serverStore: ServerStore()),
-            navigation: AppNavigation(),
+            navigation: SceneNavigation(),
             themeStore: ThemeStore(),
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
             composerDraftStore: ComposerDraftStore(),

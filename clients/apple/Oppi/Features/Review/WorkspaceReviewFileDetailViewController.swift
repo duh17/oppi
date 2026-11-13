@@ -132,7 +132,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
 
     private let connection: ServerConnection
     private let apiClient: APIClient?
-    private let appNavigation: AppNavigation
+    private let appNavigation: SceneNavigation
 
     private var activeFile: WorkspaceReviewFile? {
         didSet { setNeedsUpdateProperties() }
@@ -249,7 +249,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         configuration: Configuration,
         connection: ServerConnection,
         apiClient: APIClient?,
-        navigation: AppNavigation,
+        navigation: SceneNavigation,
         hostedInPanel: Bool = false,
         pushChat: ((ChatViewController) -> Void)? = nil
     ) {

@@ -434,7 +434,7 @@ final class OnboardingViewController: UIViewController, RouterModalContainer {
         case .initial:
             // Reached again from a server that still works (a deep link, or a
             // removed server's replacement): offer the way back.
-            title = root.coordinator.activeConnection.credentials != nil
+            title = root.windowConnectionOrStandIn.credentials != nil
                 ? String(localized: "Back to current server")
                 : nil
             leaveButton.accessibilityIdentifier = "onboarding.backToServer"
@@ -561,7 +561,7 @@ final class OnboardingViewController: UIViewController, RouterModalContainer {
         switch mode {
         case .initial:
             phase = .idle
-            root.navigation.showOnboarding = false
+            root.navigation.app.showOnboarding = false
         case .addServer:
             finishAddServer()
         }
@@ -572,7 +572,7 @@ final class OnboardingViewController: UIViewController, RouterModalContainer {
         case .initial:
             root.navigation.shouldGuideWorkspaceCreation = true
             root.navigation.selectedTab = .workspaces
-            root.navigation.showOnboarding = false
+            root.navigation.app.showOnboarding = false
         case .addServer:
             finishAddServer()
         }
@@ -634,9 +634,12 @@ final class OnboardingViewController: UIViewController, RouterModalContainer {
             // A newer picker selection owns navigation, even if this pairing succeeded.
             guard enrollment.selected else { return }
 
-            // Load sessions into the connection that was just selected, not
-            // the one that was active when onboarding opened.
-            let selectedConnection = coordinator.activeConnection
+            // The pairing made the new server active; this window shows it.
+            // Load sessions into its connection, not the one the window
+            // showed when onboarding opened.
+            guard let selectedServerId = coordinator.activeServerId else { return }
+            root.navigation.recordChosenServer(selectedServerId)
+            let selectedConnection = coordinator.connectionOrStandIn(for: selectedServerId)
             selectedConnection.sessionStore.markSyncStarted()
             selectedConnection.sessionStore.applyServerSnapshot(enrollment.sessions)
             selectedConnection.sessionStore.markSyncSucceeded()
@@ -649,7 +652,7 @@ final class OnboardingViewController: UIViewController, RouterModalContainer {
             leaveOnboardingAfterPair()
         } catch {
             guard generation == pairingGeneration else { return }
-            coordinator.activeConnection.sessionStore.markSyncFailed()
+            root.windowConnectionOrStandIn.sessionStore.markSyncFailed()
             phase = .failed(OnboardingPairingFailure(error, host: credentials.host))
         }
     }

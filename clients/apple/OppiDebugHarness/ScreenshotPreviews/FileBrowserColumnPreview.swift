@@ -284,7 +284,7 @@ final class FileBrowserColumnPreviewController: PreviewRootController {
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         let root = AppRootEnvironment.preview(coordinator: coordinator)
         // Launched, as the window's shell is, so the keyboard commands answer.
-        root.navigation.revealPairedServerShell()
+        root.navigation.app.revealPairedServerShell()
         guard let server = PairedServer(from: ServerCredentials(
             host: FileBrowserColumnFixture.host,
             port: 7749,

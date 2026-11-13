@@ -27,7 +27,7 @@ struct ChatFilePanelFolderNavigationTests {
             connection: ServerConnection(),
             apiClient: api,
             fileIndexStore: FileIndexStore(),
-            navigation: AppNavigation()
+            navigation: SceneNavigation()
         )
         let panel = ChatFilePanelViewController(
             root: makeTestAppRoot(),

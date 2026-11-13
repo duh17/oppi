@@ -160,7 +160,7 @@ enum ProtectedDataAvailability {
 final class OppiApp {
     let root: AppRootEnvironment
     private var coordinator: ConnectionCoordinator { root.coordinator }
-    private var navigation: AppNavigation { root.navigation }
+    private var navigation: SceneNavigation { root.navigation }
     private var composerDraftStore: ComposerDraftStore { root.composerDraftStore }
     private var opener: AppOpener { root.opener }
 
@@ -191,7 +191,8 @@ final class OppiApp {
             serverStore: ServerStore(),
             seenStorage: SessionSeenLedgerStorage(defaults: .standard)
         )
-        let navigation = AppNavigation()
+        // One AppState for the app; the window's navigation reads it as `app`.
+        let navigation = SceneNavigation(app: AppState())
         let composerDraftStore = ComposerDraftStore()
         // One Live Voice call for the app, shown by the system as a call. Removing its
         // server ends it, and dictation anywhere waits while it holds the microphone.
@@ -205,7 +206,7 @@ final class OppiApp {
             })
         )
         coordinator.liveVoiceCalls = liveVoiceCalls
-        coordinator.onActiveServerChanged = { AppPreferences.LastActiveServer.set($0) }
+        navigation.app.onServerChosen = { AppPreferences.LastActiveServer.set($0) }
         VoiceInputManager.shared.liveVoiceCalls = liveVoiceCalls
         // The opener exists before any scene connects, so a notification
         // response or scene URL delivered during launch has its owner.
@@ -320,8 +321,8 @@ final class OppiApp {
     /// Navigation changes feed the crash context and route telemetry.
     private func observeNavigation() {
         let navigation = navigation
-        recordNavigationChanges("launch_phase") { navigation.launchPhase }
-        recordNavigationChanges("onboarding") { navigation.showOnboarding }
+        recordNavigationChanges("launch_phase") { navigation.app.launchPhase }
+        recordNavigationChanges("onboarding") { navigation.app.showOnboarding }
         recordNavigationChanges("quick_session") { navigation.showQuickSession }
         recordNavigationChanges("workspace_filter") { navigation.selectedWorkspaceFilter }
         recordNavigationChanges("workspace_stack_depth") { navigation.workspaceStackRouteElements.count }
@@ -460,8 +461,8 @@ final class OppiApp {
         if let e2eInvite, let e2eURL = URL(string: e2eInvite) {
             if AppOpener.e2eLaunchInviteAlreadyProcessed {
                 os_log(.error, "[E2E] Invite already processed this process; skipping duplicate bootstrap")
-                navigation.launchPhase = .ready
-                navigation.showOnboarding = false
+                navigation.app.launchPhase = .ready
+                navigation.app.showOnboarding = false
             } else {
                 // Drop leftover simulator pairings. Keep a DeviceAuthSession for
                 // this invite identity so a relaunch can refresh instead of
@@ -482,9 +483,9 @@ final class OppiApp {
                 os_log(.error, "[E2E] Processing invite URL: %{public}@", e2eInvite.prefix(80).description)
                 // The launch invite is launch: run its bootstrap in place.
                 await opener.runInviteForLaunch(e2eURL)
-                navigation.launchPhase = .ready
+                navigation.app.launchPhase = .ready
                 os_log(.error, "[E2E] Invite processing complete. showOnboarding=%{public}d workspaces=%{public}d",
-                       navigation.showOnboarding ? 1 : 0,
+                       navigation.app.showOnboarding ? 1 : 0,
                        connection.workspaceStore.workspaces.count)
             }
         } else {
@@ -885,8 +886,8 @@ final class OppiApp {
             sessionRefreshOutcome = "not_attempted"
             if route == .onboarding {
                 launchOutcome = "no_credentials"
-                navigation.showOnboarding = true
-                navigation.launchPhase = .ready
+                navigation.app.showOnboarding = true
+                navigation.app.launchPhase = .ready
             } else {
                 // Never onboarding on an unread pairing list: the launch
                 // canvas stays blank.
@@ -899,10 +900,11 @@ final class OppiApp {
         // Publish its stores immediately so transport availability can never
         // send an already-paired user back through onboarding.
         let launchConnection = coordinator.activatePairedServerShell(server)
+        navigation.recordChosenServer(server.id)
 
         // Show What's New after an upgrade. First install is not a changelog.
         if WhatsNewManager.shouldShow {
-            navigation.showWhatsNew = true
+            navigation.app.showWhatsNew = true
         } else {
             WhatsNewManager.recordFirstLaunchIfNeeded()
         }
@@ -928,7 +930,7 @@ final class OppiApp {
                 // 3. The window's panes, resolved against the cached stores:
                 // what they hold opens now, the rest shows its leaf state.
                 navigation.panes.restore(navigation: navigation, coordinator: coordinator)
-                navigation.revealPairedServerShell()
+                navigation.app.revealPairedServerShell()
             },
             // 4. Prepare the HTTPS endpoint after revealing the paired shell.
             prepare: {
@@ -938,7 +940,7 @@ final class OppiApp {
         var selectedServerReady = false
         if preparedConnection.credentials != nil,
            preparedConnection.apiClient != nil,
-           coordinator.activeServerId == server.id {
+           navigation.activeServerId(in: coordinator) == server.id {
             // The picker may have selected another paired shell during bootstrap.
             selectedServerReady = await coordinator.switchToServerReady(server)
         }

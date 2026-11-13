@@ -16,7 +16,7 @@ struct AppRootLaunchTests {
         let (root, app, window, expectsSplit) = try showRoot()
         defer { hide(window) }
 
-        app.root.navigation.revealPairedServerShell()
+        app.root.navigation.app.revealPairedServerShell()
         #expect(
             await waitForMainActorCondition(timeout: .seconds(5)) { root.children.contains { $0 is WorkspaceShellController } },
             "no shell under the root: \(childKinds(of: root))"
@@ -40,12 +40,12 @@ struct AppRootLaunchTests {
             "the launch phase did not start on the backdrop: \(childKinds(of: root))"
         )
 
-        app.root.navigation.showWhatsNew = true
+        app.root.navigation.app.showWhatsNew = true
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { isSettled(root.presentedViewController) })
         let whatsNew = try #require(root.presentedViewController as? WhatsNewViewController)
 
         // The launch resolves behind the cover.
-        app.root.navigation.revealPairedServerShell()
+        app.root.navigation.app.revealPairedServerShell()
 
         // What's New's Done button.
         Router.finish(whatsNew)

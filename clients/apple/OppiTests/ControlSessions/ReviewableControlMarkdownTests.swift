@@ -380,9 +380,9 @@ struct ReviewableControlMarkdownTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             presenter.presentedViewController === reader && !reader.isBeingPresented
         })
-        let navigation = AppNavigation()
-        navigation.launchPhase = .ready
-        navigation.showOnboarding = false
+        let navigation = SceneNavigation()
+        navigation.app.launchPhase = .ready
+        navigation.app.showOnboarding = false
         let depthBefore = navigation.workspaceStackRouteElements.count
 
         reader.openRevisionSession(
@@ -403,9 +403,9 @@ struct ReviewableControlMarkdownTests {
         let window = try showInTestWindow(stack)
         defer { hideTestWindow(window) }
         stack.pushViewController(reader, animated: false)
-        let navigation = AppNavigation()
-        navigation.launchPhase = .ready
-        navigation.showOnboarding = false
+        let navigation = SceneNavigation()
+        navigation.app.launchPhase = .ready
+        navigation.app.showOnboarding = false
         let depthBefore = navigation.workspaceStackRouteElements.count
 
         reader.openRevisionSession(
@@ -480,9 +480,9 @@ struct ReviewableControlMarkdownTests {
     }
 
     @Test func guidedSkillHandoffNavigatesOnlyAfterSheetDismissalCompletes() throws {
-        let navigation = AppNavigation()
-        navigation.launchPhase = .ready
-        navigation.showOnboarding = false
+        let navigation = SceneNavigation()
+        navigation.app.launchPhase = .ready
+        navigation.app.showOnboarding = false
         navigation.openWorkspaceUtility(.skills)
         navigation.openServerSkillBrowser(.init(serverId: "server-1", resourceId: "skill-1"))
         navigation.openServerSkillFile(.init(

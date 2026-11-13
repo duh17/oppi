@@ -151,9 +151,9 @@ struct SessionInboxHostChangeTests {
 @MainActor
 struct HostJobCompactSwitchTests {
     @Test func showAllWorkspaceSessionsWouldPopAHostJob() {
-        let navigation = AppNavigation()
-        navigation.launchPhase = .ready
-        navigation.showOnboarding = false
+        let navigation = SceneNavigation()
+        navigation.app.launchPhase = .ready
+        navigation.app.showOnboarding = false
         navigation.openHostSwitcherDestination(.usage, serverId: "server-a")
         #expect(navigation.visibleHostSwitcherDestination == .usage)
 

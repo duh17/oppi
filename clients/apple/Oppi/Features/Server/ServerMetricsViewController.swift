@@ -126,7 +126,7 @@ final class ServerMetricsViewController: UIViewController {
 
     /// The visible host: the active server, else the first paired one.
     private var server: PairedServer? {
-        ServerSelection.resolve(selectedId: coordinator.activeServerId, from: coordinator.serverStore.servers)
+        ServerSelection.resolve(selectedId: root.windowServerId, from: coordinator.serverStore.servers)
     }
 
     override func updateProperties() {

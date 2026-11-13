@@ -429,7 +429,7 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(staleServer)
         await coordinator.switchToTestServer(newerServer)
 
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.openWorkspaceSession(.init(
             serverId: newerServer.id,
             sessionId: "newer-session",

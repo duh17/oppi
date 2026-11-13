@@ -88,7 +88,7 @@ extension QuickSessionModel {
         }
         // A locked workspace (or server) asks first; nothing from the
         // previous workspace stays in the picker while it does, or after a cancel.
-        if let serverId = selectedServerId ?? coordinator.activeServerId {
+        if let serverId = selectedServerId ?? windowServerId {
             let lockTarget = ScopedLockTarget.workspace(serverId: serverId, workspaceId: workspace.id)
             if ScopedLockService.shared.isLocked(lockTarget) {
                 worktrees = []
@@ -260,7 +260,7 @@ extension QuickSessionModel {
     }
 
     func loadAgentsForSelectedServer(requestedAgentId: String? = nil) async {
-        guard let targetServerId = selectedServerId ?? coordinator.activeServerId else {
+        guard let targetServerId = selectedServerId ?? windowServerId else {
             availableAgents = []
             selectedAgentId = nil
             holdLaunchAfterAgentLoadFailure(requestedAgentId: requestedAgentId, detail: nil)

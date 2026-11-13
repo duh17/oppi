@@ -50,7 +50,7 @@ final class WorkspaceSettingsViewController: ListScreenController<
 
     /// Closes this screen after Delete Workspace or a session prepared by the
     /// Oppi bar when it was pushed onto another screen. As a shell route it leaves through the
-    /// `AppNavigation` change that follows instead.
+    /// `SceneNavigation` change that follows instead.
     var onLeave: (() -> Void)?
     /// The split detail root's Done: returns the column to the workspace's
     /// sessions. Nil elsewhere.
@@ -195,14 +195,15 @@ final class WorkspaceSettingsViewController: ListScreenController<
         AnyHashable([AnyHashable(serverId), AnyHashable(isLocked)])
     }
 
-    /// Makes the workspace's server the active one, then binds the model to it
+    /// Makes the workspace's server the window's, then binds the model to it
     /// and loads the Pi resources (a repeat load is a no-op). A shown list stays
     /// until the switch answers: `connection` is replaced only by its result.
     override func load() async throws {
         guard switchesServer, !isLocked else { return }
         // A switch the lock ended while it ran does not take the server either.
-        guard await root.coordinator.switchToServerReady(
+        guard await root.navigation.switchServerReady(
             serverId,
+            coordinator: root.coordinator,
             shouldActivate: { [weak self] in !(self?.isLocked ?? true) }
         ) else { return }
         guard !Task.isCancelled, !isLocked else { return }

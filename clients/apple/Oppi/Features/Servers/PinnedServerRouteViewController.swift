@@ -63,7 +63,7 @@ class PinnedServerRouteViewController<Page: UIViewController>: UIViewController,
     /// Reads what a switch changes, so it can be tracked.
     private func visibleServer() -> PairedServer? {
         ServerSelection.resolveVisible(
-            activeId: coordinator.activeServerId,
+            activeId: root.windowServerId,
             frozenId: openedServerId,
             from: coordinator.serverStore.servers
         )

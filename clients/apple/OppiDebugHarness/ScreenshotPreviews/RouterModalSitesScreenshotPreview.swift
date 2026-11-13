@@ -29,7 +29,7 @@ final class RouterModalSitesPreviewController: PreviewRootController {
         UserDefaults.standard.removeObject(forKey: "\(AppIdentifiers.subsystem).quickSession.lastAgentId")
         let site = environment["SCREENSHOT_MODAL_SITE"] ?? "quick-session"
         let quickSession = site == "quick-session"
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         if quickSession {
             // Opened from a linked worktree, as a workspace screen opens it.
             navigation.pendingQuickSessionStart = QuickSessionStart(context: QuickSessionLaunchContext(
@@ -42,7 +42,7 @@ final class RouterModalSitesPreviewController: PreviewRootController {
         // A thread link's handoff, as the opener leaves it: the list opens this
         // thread root in place.
         if let rootId = environment["SCREENSHOT_THREAD_FOCUS"] {
-            navigation.pendingThreadFocus = AppNavigation.ThreadFocus(
+            navigation.pendingThreadFocus = SceneNavigation.ThreadFocus(
                 serverId: RouterModalSitesFixtures.serverId, rootId: rootId
             )
         }
@@ -97,7 +97,7 @@ final class RouterModalSitesPreviewController: PreviewRootController {
 }
 
 /// The real workspace shell with Quick Session over it, mounted by
-/// `QuickSessionPresentation` while `AppNavigation.showQuickSession` is set.
+/// `QuickSessionPresentation` while `SceneNavigation.showQuickSession` is set.
 /// The shell goes inert under it, as under `AppRootViewController`.
 @MainActor
 final class QuickSessionOverShellController: UIViewController {
@@ -202,7 +202,7 @@ private final class RouterModalSitesRootViewController: UIViewController {
                 self?.connection.extensionToast = "Extension finished.\nDocs https://example.com/docs"
             },
             button("What's New", id: "routerModalSites.whatsNew") { [weak self] in
-                self?.root.navigation.showWhatsNew = true
+                self?.root.navigation.app.showWhatsNew = true
             },
         ]
         for (label, id) in [
@@ -241,7 +241,7 @@ private final class RouterModalSitesRootViewController: UIViewController {
         }
         lastResponseLabel.text = response.summary
         noticeStateLabel.text = connection.extensionToast == nil ? "Notice cleared" : "Notice shown"
-        whatsNewStateLabel.text = root.navigation.showWhatsNew ? "What's New shown" : "What's New cleared"
+        whatsNewStateLabel.text = root.navigation.app.showWhatsNew ? "What's New shown" : "What's New cleared"
         modals.update()
     }
 

@@ -1193,7 +1193,7 @@ struct FileBrowserReviewCommentSelectionTests {
         let reader = ChatReaderViewController(
             target: store.store(.document(content: content, destination: destination)),
             store: store,
-            navigation: AppNavigation()
+            navigation: SceneNavigation()
         )
         reader.loadViewIfNeeded()
         return try #require(reader.page as? FullScreenCodeViewController)

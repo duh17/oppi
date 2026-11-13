@@ -93,7 +93,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
     required init?(coder: NSCoder) { nil }
 
     private var palette: ThemePalette { root.themeStore.activeThemeID.palette }
-    private var connection: ServerConnection { root.coordinator.activeConnection }
+    private var connection: ServerConnection { root.windowConnectionOrStandIn }
 
     // MARK: - Lifecycle
 
@@ -507,7 +507,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
                         schedule: schedule,
                         apiClient: connection.apiClient,
                         connection: connection,
-                        serverName: root.activeServerName
+                        serverName: root.windowServerName
                     ) { [weak self] updated, summary in
                         self?.schedule = updated
                         self?.onChanged(summary)

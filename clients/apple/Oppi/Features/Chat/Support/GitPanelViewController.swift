@@ -24,7 +24,7 @@ final class GitPanelViewController: UIViewController {
         options: WorkspaceContextBarView.Options,
         connection: ServerConnection,
         apiClient: APIClient?,
-        navigation: AppNavigation,
+        navigation: SceneNavigation,
         onClose: @escaping () -> Void
     ) {
         readContext = context

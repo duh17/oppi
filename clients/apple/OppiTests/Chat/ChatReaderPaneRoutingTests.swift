@@ -218,7 +218,7 @@ struct ChatReaderPaneRoutingTests {
 
     private struct Host {
         let chat: ChatViewController
-        let appNavigation: AppNavigation
+        let appNavigation: SceneNavigation
         let appRoot: AppRootEnvironment
         let window: UIWindow
 
@@ -282,7 +282,7 @@ struct ChatReaderPaneRoutingTests {
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
-        let appNavigation = AppNavigation()
+        let appNavigation = SceneNavigation()
         let appRoot = makeTestAppRoot()
         let chat = ChatViewController(
             sessionId: sessionId, connection: connection, navigation: appNavigation, serverIdHint: "sha256:reader-routing"

@@ -9,7 +9,7 @@ struct FileBrowserServices {
     let connection: ServerConnection
     let apiClient: APIClient?
     let fileIndexStore: FileIndexStore
-    let navigation: AppNavigation
+    let navigation: SceneNavigation
     let reviewCommentSelectionScope: ReviewCommentSelectionScope?
 
     func isSame(as other: Self) -> Bool {
@@ -54,7 +54,7 @@ final class FileBrowserViewportRestore {
 /// files push the reader onto the panel's stack.
 ///
 /// The screen reads the lock service, the server's `FileIndexStore`, and
-/// `AppNavigation` in `updateProperties()` and applies a diffable snapshot
+/// `SceneNavigation` in `updateProperties()` and applies a diffable snapshot
 /// keyed by entry path; state rows have fixed ids. The open file is a
 /// `FileViewerViewController` from `FileBrowserViewerFactory`, a child whose
 /// bar items show in this screen's bar.
@@ -82,7 +82,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     /// to them.
     private var restoredDirectory: String?
     private var restoredSelection: FileBrowserSelection?
-    private var navigation: AppNavigation { services?.navigation ?? root.navigation }
+    private var navigation: SceneNavigation { services?.navigation ?? root.navigation }
 
     /// The shell route's server stores once its server is ready; the panel's
     /// from the start.
@@ -553,7 +553,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     }
 
     /// A workspace shell route: folders and workspace files open as routes
-    /// through `AppNavigation`. In the chat panel folders open in place and
+    /// through `SceneNavigation`. In the chat panel folders open in place and
     /// files push onto the panel's own stack.
     private var routesThroughShell: Bool {
         FileBrowserTreeNavigationReducer.shouldUseWorkspaceLinkedFileDestination(

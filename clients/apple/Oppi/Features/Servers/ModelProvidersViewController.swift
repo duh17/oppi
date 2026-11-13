@@ -86,7 +86,7 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
     /// The visible host: the active server, else the one this route opened for.
     private var server: PairedServer? {
         ServerSelection.resolveVisible(
-            activeId: coordinator.activeServerId,
+            activeId: root.windowServerId,
             frozenId: target.serverId,
             from: coordinator.serverStore.servers
         )

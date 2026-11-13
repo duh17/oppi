@@ -14,7 +14,7 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
     private let root: AppRootEnvironment
 
     private var coordinator: ConnectionCoordinator { root.coordinator }
-    private var navigation: AppNavigation { root.navigation }
+    private var navigation: SceneNavigation { root.navigation }
     private var serverStore: ServerStore { root.coordinator.serverStore }
 
     private var cacheSizeText = ""
@@ -337,15 +337,15 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
         }
     }
 
-    /// Server Settings follows the app's active host, so opening another paired
-    /// server's settings first makes it the active one, as the host switcher
+    /// Server Settings follows the window's server, so opening another paired
+    /// server's settings first makes it the window's, as the host switcher
     /// does. A locked server asks first; cancel stays in Settings.
     private func openServerSettings(_ server: PairedServer) {
         let coordinator = coordinator
         let navigation = navigation
         let perform: @MainActor () -> Void = {
-            if coordinator.activeServerId != server.id {
-                guard coordinator.restoreActiveServer(server.id) else { return }
+            if navigation.activeServerId(in: coordinator) != server.id {
+                guard navigation.chooseServer(server.id, coordinator: coordinator) else { return }
                 Task { await coordinator.prepareSelectedServerShell(for: server) }
             }
             navigation.openServerDetails(ServerDetailsNavTarget(serverId: server.id))

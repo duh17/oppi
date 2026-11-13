@@ -98,7 +98,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
     required init?(coder: NSCoder) { nil }
 
     private var palette: ThemePalette { root.themeStore.activeThemeID.palette }
-    private var connection: ServerConnection { root.coordinator.activeConnection }
+    private var connection: ServerConnection { root.windowConnectionOrStandIn }
     private var presenters: [RouterModalPresenter] {
         [nativeEditor, iconPicker, definitionReview, scheduleSheet]
     }
@@ -474,7 +474,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
                         agent: editing,
                         apiClient: connection.apiClient,
                         connection: connection,
-                        serverName: root.activeServerName,
+                        serverName: root.windowServerName,
                         onSaved: saved
                     )
                 }

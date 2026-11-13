@@ -18,7 +18,7 @@ final class LockedServerSwitchButton: UIButton {
             ServerSwitchMenu(
                 coordinator: root.coordinator,
                 currentServerId: nil,
-                omitting: root.coordinator.activeServerId,
+                omitting: root.windowServerId,
                 activate: { [weak self] in self?.activate($0) }
             ).elements()
         }
@@ -29,8 +29,8 @@ final class LockedServerSwitchButton: UIButton {
 
     override func updateProperties() {
         super.updateProperties()
-        let coordinator = root.coordinator
-        let others = coordinator.serverStore.servers.filter { $0.id != coordinator.activeServerId }
+        let windowServerId = root.windowServerId
+        let others = root.coordinator.serverStore.servers.filter { $0.id != windowServerId }
         isHidden = others.isEmpty
 
         let palette = root.themeStore.activeThemeID.palette
@@ -44,7 +44,7 @@ final class LockedServerSwitchButton: UIButton {
 
     private func activate(_ server: PairedServer) {
         let coordinator = root.coordinator
-        guard coordinator.restoreActiveServer(server.id) else { return }
+        guard root.navigation.chooseServer(server.id, coordinator: coordinator) else { return }
         Task { await coordinator.prepareSelectedServerShell(for: server) }
     }
 }

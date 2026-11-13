@@ -246,7 +246,7 @@ final class ReaderTaskEditPreviewController: PreviewRootController {
         ReaderTaskEditFixture.seed()
         let root = AppRootEnvironment.preview(
             coordinator: ConnectionCoordinator(serverStore: ServerStore()),
-            navigation: AppNavigation()
+            navigation: SceneNavigation()
         )
         let client = ReaderTaskEditFixture.makeClient()
         let name = ReaderTaskEditFixture.fileName

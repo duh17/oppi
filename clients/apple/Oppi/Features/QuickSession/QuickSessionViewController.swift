@@ -4,7 +4,7 @@ import UIKit
 /// the chat's composer (`ChatComposerOwner`) just above the keyboard.
 ///
 /// `AppRootViewController` mounts it over the shell while
-/// `AppNavigation.showQuickSession` is set (`QuickSessionPresentation`). Its
+/// `SceneNavigation.showQuickSession` is set (`QuickSessionPresentation`). Its
 /// state and actions live in `QuickSessionModel`; this controller draws them,
 /// presents the pickers, and is the composer's `ChatComposerSource`, as the
 /// chat screen is for its own composer.

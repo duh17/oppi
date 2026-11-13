@@ -22,14 +22,14 @@ final class SessionInboxViewController: UIViewController {
 
     private let root: AppRootEnvironment
     private var coordinator: ConnectionCoordinator { root.coordinator }
-    private var navigation: AppNavigation { root.navigation }
+    private var navigation: SceneNavigation { root.navigation }
 
     private typealias List = SessionListCollection<Section, Item, Row, StoppedDay>
     private lazy var list = List(
         root: root,
         appearance: .plain,
         actions: rowActions,
-        iconAssetCache: { [weak self] in self?.coordinator.activeConnection.iconAssetCache },
+        iconAssetCache: { [weak self] in self?.root.windowConnectionOrStandIn.iconAssetCache },
         configureRow: { [weak self] cell, row in self?.configure(cell, row: row) },
         onToggle: { [weak self] day in self?.toggleStoppedDayExpansion(day.groupID, day: day.day) }
     )
@@ -129,7 +129,7 @@ final class SessionInboxViewController: UIViewController {
             return { [weak self] in self?.confirmDelete(pending) }
         },
         lockTarget: { [weak self] session in
-            self?.coordinator.activeServerId.map { ScopedLockTarget.session(session, serverId: $0) }
+            self?.root.windowServerId.map { ScopedLockTarget.session(session, serverId: $0) }
         }
     )
 
@@ -208,7 +208,7 @@ final class SessionInboxViewController: UIViewController {
         isOnScreen = true
         // Like SwiftUI `.task(id:)`, the refresh starts again each time the
         // screen shows. The vertical bar edge is known only in the window.
-        startServerTask(for: coordinator.activeServerId)
+        startServerTask(for: root.windowServerId)
         setNeedsUpdateProperties()
         updatePropertiesIfNeeded()
         navigationController?.setToolbarHidden(toolbarItems?.isEmpty ?? true, animated: animated)
@@ -265,8 +265,8 @@ final class SessionInboxViewController: UIViewController {
     /// What the screen shows, read from the stores. Reads here are tracked,
     /// so a store change runs `updateProperties()` again.
     private func readState() -> InboxState {
-        let activeServerId = coordinator.activeServerId
-        let connection = activeServerId.flatMap { coordinator.connection(for: $0) }
+        let activeServerId = root.windowServerId
+        let connection = root.windowConnection
         let selectedServer = ServerSelection.resolve(
             selectedId: activeServerId,
             from: coordinator.serverStore.servers
@@ -401,7 +401,7 @@ final class SessionInboxViewController: UIViewController {
     /// match, a row acted on after a refresh) resolves against the active server.
     private func item(for session: Session) -> InboxItem? {
         if let item = itemsById[session.id] { return item }
-        guard let serverId = coordinator.activeServerId, let connection = coordinator.connection(for: serverId) else {
+        guard let serverId = root.windowServerId, let connection = root.windowConnection else {
             return nil
         }
         return InboxItem(
@@ -461,7 +461,7 @@ final class SessionInboxViewController: UIViewController {
             searchText: navigation.inboxSessionSearch.searchText,
             isSearchPresented: navigation.inboxSessionSearch.isSearchPresented,
             coverage: currentCoverageKey,
-            activeServerId: coordinator.activeServerId,
+            activeServerId: root.windowServerId,
             stackCount: navigation.workspaceStackRouteElements.count
         )
         guard let previous = observed else {
@@ -496,7 +496,7 @@ final class SessionInboxViewController: UIViewController {
     private func consumeThreadFocus() {
         guard let focus = navigation.pendingThreadFocus else { return }
         navigation.pendingThreadFocus = nil
-        guard focus.serverId == coordinator.activeServerId else { return }
+        guard focus.serverId == root.windowServerId else { return }
         applySearchNavigation(.reset)
         expandedThreadRoots.insert(focus.rootId)
         pendingThreadScroll = focus.rootId
@@ -567,11 +567,10 @@ final class SessionInboxViewController: UIViewController {
     }
 
     private func refreshSearch() {
-        let serverId = coordinator.activeServerId
         searchStore.search(
             query: navigation.inboxSessionSearch.searchText,
             workspaceId: nil,
-            apiClient: serverId.flatMap { coordinator.connection(for: $0) }?.apiClient
+            apiClient: root.windowConnection?.apiClient
         )
     }
 
@@ -609,39 +608,39 @@ final class SessionInboxViewController: UIViewController {
     }
 
     private func refreshVisibleServer() async {
-        guard let serverId = coordinator.activeServerId else { return }
+        guard let serverId = root.windowServerId else { return }
         await coordinator.refreshServer(serverId, force: true)
     }
 
     private func retryVisibleServer() async {
-        guard let serverId = coordinator.activeServerId else { return }
+        guard let serverId = root.windowServerId else { return }
         failedRetryServerId = nil
         if coordinator.connection(for: serverId)?.apiClient == nil {
             await coordinator.retryServerConnection(serverId)
         } else {
             await refreshVisibleServer()
         }
-        guard coordinator.activeServerId == serverId else { return }
+        guard root.windowServerId == serverId else { return }
         let state = readState()
         failedRetryServerId = state.refreshFailed || state.transportUnavailable ? serverId : nil
     }
 
     private func loadProviderSetupState() async {
-        guard let requestedServerId = coordinator.activeServerId else {
+        guard let requestedServerId = root.windowServerId else {
             providerSetupState = .unavailable
             return
         }
         guard let client = await coordinator.apiClientReady(for: requestedServerId) else {
-            guard requestedServerId == coordinator.activeServerId else { return }
+            guard requestedServerId == root.windowServerId else { return }
             providerSetupState = .unavailable
             return
         }
         do {
             let statuses = try await client.listProviderAuthStatus()
-            guard requestedServerId == coordinator.activeServerId else { return }
+            guard requestedServerId == root.windowServerId else { return }
             providerSetupState = ProviderSetupState(providerStatuses: statuses)
         } catch {
-            guard requestedServerId == coordinator.activeServerId else { return }
+            guard requestedServerId == root.windowServerId else { return }
             providerSetupState = .unavailable
         }
     }
@@ -945,14 +944,14 @@ final class SessionInboxViewController: UIViewController {
 
     func openNowPlaying() {
         guard isFrontOfNavigationStack,
-              let player = coordinator.activeServerId.flatMap({ coordinator.connection(for: $0) })?.audioPlayer else {
+              let player = root.windowConnection?.audioPlayer else {
             return
         }
         InAppNowPlayingChrome.presentPlayer(player, from: self)
     }
 
     private func openFiles() {
-        guard isFrontOfNavigationStack, let serverId = coordinator.activeServerId else { return }
+        guard isFrontOfNavigationStack, let serverId = root.windowServerId else { return }
         navigation.openWorkspaceFileBrowser(FileBrowserNavTarget.hostHome(serverId: serverId))
     }
 
@@ -968,8 +967,8 @@ final class SessionInboxViewController: UIViewController {
               navigation.workspaceStackRouteElements.isEmpty,
               let workspaceName = ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_WORKSPACE"],
               !workspaceName.isEmpty,
-              let serverId = coordinator.activeServerId,
-              let connection = coordinator.connection(for: serverId),
+              let serverId = root.windowServerId,
+              let connection = root.windowConnection,
               let workspace = connection.workspaceStore.workspaces.first(where: { $0.name == workspaceName })
         else { return }
 
@@ -978,13 +977,13 @@ final class SessionInboxViewController: UIViewController {
     }
 
     private func autoOpenE2ESessionIfRequested() {
-        let serverId = coordinator.activeServerId
+        let serverId = root.windowServerId
         guard !hasAutoOpenedE2ESession,
               let sessionId = ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_SESSION_ID"],
               !sessionId.isEmpty,
               // A requested workspace opens the session from its own list instead.
               ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] == nil,
-              let item = sessionItems(serverId: serverId, connection: serverId.flatMap { coordinator.connection(for: $0) })
+              let item = sessionItems(serverId: serverId, connection: root.windowConnection)
                 .first(where: { $0.session.id == sessionId })
         else { return }
 

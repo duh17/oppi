@@ -10,7 +10,7 @@ final class WorkspaceShellPreviewController: PreviewRootController {
         let root = AppRootEnvironment.preview(coordinator: Self.makeCoordinator())
         // A paired shell, as the window shows it, so the keyboard commands and
         // Quick Session (which `AppRootViewController` hosts) work here.
-        root.navigation.revealPairedServerShell()
+        root.navigation.app.revealPairedServerShell()
         super.init(root: root, themeStore: root.themeStore, content: QuickSessionOverShellController(root: root))
     }
 

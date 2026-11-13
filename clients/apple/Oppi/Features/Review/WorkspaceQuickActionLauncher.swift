@@ -9,7 +9,7 @@ import UIKit
 struct WorkspaceQuickActionLauncher {
     let connection: ServerConnection
     let apiClient: APIClient?
-    let navigation: AppNavigation
+    let navigation: SceneNavigation
     let workspaceId: String
     /// New Session's worktree; a commit is not tied to one.
     var worktreeId: String?
@@ -64,7 +64,7 @@ struct WorkspaceQuickActionLauncher {
     }
 
     /// Pushes a chat for a destination another path already has. A surface
-    /// inside a chat keeps that chat's `AppNavigation`, so its chat leaves the
+    /// inside a chat keeps that chat's `SceneNavigation`, so its chat leaves the
     /// app's alone.
     func showChat(_ destination: QuickActionSessionNavDestination) {
         let chat = ChatViewController(

@@ -1,13 +1,13 @@
 import UIKit
 
-// The workspace shell's stacks. `AppNavigation` is the single source of truth
+// The workspace shell's stacks. `SceneNavigation` is the single source of truth
 // for which screens are open: one stack (`workspaceStackRouteElements`), which
 // the compact shell shows whole and the split shell shows as its sidebar
 // selection and detail column (`SplitDetailColumn`). The shell controllers (`WorkspaceShellController.swift`)
 // read that state in `updateProperties()` and give each stack the routes it
 // shows. `ShellNavigationController` turns routes into hosted screens, and
 // when the user leaves one (Back, swipe, a screen's own `finish()` or
-// `dismiss()`) it reports the pop so `AppNavigation` follows.
+// `dismiss()`) it reports the pop so `SceneNavigation` follows.
 //
 // Each route's screen is a UIKit controller built by `ShellRouteScreens` (`ShellRouteScreens.swift`).
 

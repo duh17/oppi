@@ -125,7 +125,7 @@ struct ModelProvidersNavTarget: Hashable, Sendable {
 }
 
 /// What the split shell's detail column shows of the window's one stack
-/// (`AppNavigation.workspaceStackRouteElements`). The sidebar lists the
+/// (`SceneNavigation.workspaceStackRouteElements`). The sidebar lists the
 /// workspaces, so the stack's workspace layer is the sidebar's selection, not
 /// a screen here: the column's root is the first session, file, configuration
 /// or utility screen, else the selected workspace's sessions, else All
@@ -214,14 +214,69 @@ struct WorkspaceStackDiagnosticContext: Equatable, Sendable {
     )
 }
 
-/// Navigation state for the app.
+/// One window's navigation: its route stack, shell, pane tree, Quick
+/// Session, and server. What the whole app shares (launch, onboarding, What's
+/// New, Live Voice) is `app`, the one `AppState` every window reads.
 @MainActor @Observable
-final class AppNavigation {
+final class SceneNavigation {
+    /// The app-wide state, shared by every window.
+    @ObservationIgnored let app: AppState
     /// The window's pane tree beyond its routes: the companion, restoration.
     @ObservationIgnored let panes = ScenePanes()
     var selectedTab: AppTab = .workspaces
-    var showOnboarding: Bool = true
-    var showWhatsNew: Bool = false
+
+    init(app: AppState = AppState()) {
+        self.app = app
+    }
+
+    // MARK: - The window's server
+
+    /// The server this window last chose: launch, its host switcher, an open
+    /// that lands on another server's list. Nil until it chooses.
+    private(set) var chosenServerId: String?
+
+    /// The server this window shows: its sidebar, session lists, server pages
+    /// and lock cover. Leaves keep their own route's server and connection,
+    /// so a switch here never changes what an open chat, file or panel reads,
+    /// and a chat from another server opening here does not move this. The
+    /// coordinator's `activeServerId` is the transport focus, which any
+    /// window or leaf moves, so a window reads it only before it has chosen.
+    /// A window whose server was removed shows the first paired one, as the
+    /// coordinator does.
+    func activeServerId(in coordinator: ConnectionCoordinator) -> String? {
+        guard let chosenServerId else { return coordinator.activeServerId }
+        if coordinator.serverStore.server(for: chosenServerId) != nil { return chosenServerId }
+        return coordinator.serverStore.servers.first?.id
+    }
+
+    /// Makes the paired `serverId` this window's server now; its transport
+    /// prepares after (`prepareSelectedServerShell`) for callers that ask.
+    /// False for a server that is not paired.
+    @discardableResult
+    func chooseServer(_ serverId: String, coordinator: ConnectionCoordinator) -> Bool {
+        guard coordinator.restoreActiveServer(serverId) else { return false }
+        recordChosenServer(serverId)
+        return true
+    }
+
+    /// Makes `serverId` this window's server once its transport is ready.
+    /// A superseded or failed preparation leaves the window where it was.
+    func switchServerReady(
+        _ serverId: String,
+        coordinator: ConnectionCoordinator,
+        shouldActivate: @escaping @MainActor () -> Bool = { true }
+    ) async -> Bool {
+        guard await coordinator.switchToServerReady(serverId, shouldActivate: shouldActivate) else { return false }
+        recordChosenServer(serverId)
+        return true
+    }
+
+    /// The window's choice, for a server the coordinator already made active
+    /// (launch, a pairing).
+    func recordChosenServer(_ serverId: String) {
+        if chosenServerId != serverId { chosenServerId = serverId }
+        app.serverChosen(serverId)
+    }
 
     /// Which shell the window shows: the compact stack or the split view.
     /// Both show the one stack below; a change of shell converts nothing.
@@ -241,18 +296,6 @@ final class AppNavigation {
     /// remount after Back and split detail replacement on iPad.
     var inboxSessionSearch = SessionListSearchNavigationPersistence.State()
     var workspaceSessionSearchByID: [String: SessionListSearchNavigationPersistence.State] = [:]
-
-    /// Launch phase gate. While `.resolving`, the app root shows a blank
-    /// canvas until local pairing and cache state are known.
-    var launchPhase: AppLaunchPhase = .resolving
-
-    /// Reveal the normal app shell for an existing pairing before transport
-    /// preparation finishes. Connectivity failures must never masquerade as
-    /// missing credentials and route a paired user back through onboarding.
-    func revealPairedServerShell() {
-        showOnboarding = false
-        launchPhase = .ready
-    }
 
     /// Set after a fresh pairing when the server had no workspaces.
     /// The workspace navigation shell consumes this to present guided creation.
@@ -402,8 +445,8 @@ final class AppNavigation {
     }
 
     func diagnosticScreenLabel() -> String {
-        guard launchPhase == .ready else { return "launch_resolving" }
-        if showOnboarding { return "onboarding" }
+        guard app.launchPhase == .ready else { return "launch_resolving" }
+        if app.showOnboarding { return "onboarding" }
         if showQuickSession { return "quick_session" }
         return visibleDiagnosticContext.screen
     }
@@ -995,10 +1038,6 @@ final class AppNavigation {
     /// Attachments to auto-send when the quick session message opens.
     /// Extracted from `pendingQuickSessionNav` when Quick Session dismisses.
     var pendingQuickSessionAttachments: [PendingAttachment]?
-
-    /// Session whose chat starts Live Voice when it opens (a quick voice session).
-    /// Consumed once by that session's ChatViewController, then cleared.
-    var pendingLiveVoiceSessionId: String?
 
     /// A file browser drilled into a folder: the folder pushes onto the stack.
     func pushWorkspaceFileBrowser(_ target: FileBrowserNavTarget) {

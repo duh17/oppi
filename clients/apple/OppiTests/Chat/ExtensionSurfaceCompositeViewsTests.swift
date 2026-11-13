@@ -427,7 +427,7 @@ struct ExtensionSurfaceCompositeViewsTests {
         let sessionId = "composable-strip"
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
-        let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: AppNavigation())
+        let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: SceneNavigation())
         chat.loadViewIfNeeded()
         defer {
             chat.sessionManager.cleanup()
@@ -456,7 +456,7 @@ struct ExtensionSurfaceCompositeViewsTests {
     private func chatWithStripPill(_ sessionId: String) async throws -> (ChatViewController, UIWindow, UIControl, () -> Void) {
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
-        let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: AppNavigation())
+        let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: SceneNavigation())
         chat.sessionManager._loadHistoryForTesting = { _, _ in nil }
         connection.extensionSurfaces.apply(try surface("status-card.json"), sessionId: sessionId)
         let window = makeSceneWindow()
@@ -508,7 +508,7 @@ struct ExtensionSurfaceCompositeViewsTests {
         let sessionId = "composable-below"
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
-        let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: AppNavigation())
+        let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: SceneNavigation())
         chat.loadViewIfNeeded()
         defer {
             chat.sessionManager.cleanup()

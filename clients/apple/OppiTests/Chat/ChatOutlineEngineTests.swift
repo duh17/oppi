@@ -19,7 +19,7 @@ struct ChatOutlineEngineTests {
         var session = makeTestSession(id: sessionId, workspaceId: "ws-outline", status: .ready)
         session.engine = engine
         connection.sessionStore.upsert(session)
-        let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: AppNavigation())
+        let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: SceneNavigation())
 
         let outline = chat.makeOutlineController()
         let window = makeSceneWindow()

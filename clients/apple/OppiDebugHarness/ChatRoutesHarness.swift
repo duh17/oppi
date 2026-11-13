@@ -48,7 +48,7 @@ import UIKit
 final class ChatRoutesPreviewController: PreviewRootController {
     private let root: AppRootEnvironment
     private let connection: ServerConnection
-    private let navigation: AppNavigation
+    private let navigation: SceneNavigation
     /// The chat's own timeline, which the harness keeps seeded (`keepTimelineSeeded`).
     private let reducer: TimelineReducer
     private let landingProbe = ChatRoutesPreviewController.probeLabel("chatRoutes.landing")
@@ -70,7 +70,7 @@ final class ChatRoutesPreviewController: PreviewRootController {
             AppPreferences.ChatTopBar.shownKey: topBar.storedShown,
         ])
         let connection = ChatRoutesFixture.connection
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let chat = ChatViewController(
             sessionId: ChatRoutesFixture.sessionId,
             connection: connection,
@@ -157,8 +157,8 @@ final class ChatRoutesPreviewController: PreviewRootController {
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
         guard loops.isEmpty else { return }
-        navigation.launchPhase = .ready
-        navigation.showOnboarding = false
+        navigation.app.launchPhase = .ready
+        navigation.app.showOnboarding = false
         loops = [
             Task { @MainActor [weak self] in
                 // Holds the controller only for the write: a reference across the

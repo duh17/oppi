@@ -454,7 +454,7 @@ extension AppOpener {
             guard await scopedLock.authorize(
                 scopedLock.sessionTarget(serverId: session.serverID, sessionId: session.sessionID)
             ), isCurrent(generation) else { return .finished }
-            let previousServerId = coordinator.activeServerId
+            let previousServerId = windowServerId
             let switched = await openServer(session.serverID, generation: generation)
             guard isCurrent(generation) else { return .finished }
             guard switched else {

@@ -128,7 +128,7 @@ private struct ContextBarFixture {
             options: .init(),
             connection: connection,
             apiClient: nil,
-            navigation: AppNavigation()
+            navigation: SceneNavigation()
         )
         bar.presenter = screen
         screen.traitOverrides.appRootEnvironment = makeTestAppRoot()

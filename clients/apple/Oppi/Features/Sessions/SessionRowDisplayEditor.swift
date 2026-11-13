@@ -228,7 +228,7 @@ final class SessionRowDisplayEditorViewController: ListScreenController<
         )
         navigationItem.largeTitleDisplayMode = .never
         // The editor reads the loaded thread once, when it opens.
-        loaded = SessionRowPreviewSubject.loaded(from: root.coordinator.activeConnection)
+        loaded = SessionRowPreviewSubject.loaded(from: root.windowConnectionOrStandIn)
     }
 
     @available(*, unavailable)
@@ -271,7 +271,7 @@ final class SessionRowDisplayEditorViewController: ListScreenController<
             SessionRowView.Content(presentation: subject.presentation),
             display: draft,
             themeID: themeID,
-            iconAssetCache: root.coordinator.activeConnection.iconAssetCache
+            iconAssetCache: root.windowConnectionOrStandIn.iconAssetCache
         )
         if let thread = subject.thread {
             previewSlot.isHidden = false
@@ -279,7 +279,7 @@ final class SessionRowDisplayEditorViewController: ListScreenController<
                 SessionThreadStripView.Content(rollup: thread.rollup, askCounts: thread.askCounts),
                 display: draft,
                 style: SessionRowStyle.for(themeID),
-                iconAssetCache: root.coordinator.activeConnection.iconAssetCache
+                iconAssetCache: root.windowConnectionOrStandIn.iconAssetCache
             )
         } else {
             previewSlot.isHidden = true

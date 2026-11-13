@@ -22,9 +22,9 @@ final class SettingsVoiceViewController: ListScreenController<SettingsVoiceViewC
         )
     }
 
-    /// The server whose Dictation Dictionary the row opens: the active one.
+    /// The server whose Dictation Dictionary the row opens: the window's.
     private var dictionaryServer: PairedServer? {
-        root.coordinator.activeServerId.flatMap { root.coordinator.serverStore.server(for: $0) }
+        root.windowServerId.flatMap { root.coordinator.serverStore.server(for: $0) }
     }
 
     override func sections() -> [ListSection<Section, Item>] {

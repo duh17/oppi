@@ -34,7 +34,7 @@ struct LiveVoiceExperimentTests {
         let chat = ChatViewController(
             sessionId: "live-voice-entry",
             connection: connection,
-            navigation: AppNavigation()
+            navigation: SceneNavigation()
         )
         // The app root holds the app's Live Voice call, which decides whether one may start.
         chat.traitOverrides.appRootEnvironment = makeTestAppRoot()

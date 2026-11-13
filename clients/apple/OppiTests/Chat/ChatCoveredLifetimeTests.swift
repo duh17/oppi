@@ -16,7 +16,7 @@ struct ChatCoveredLifetimeTests {
     }
 
     @Test func stackedReaderDoesNotCountAsRemovedChat() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let session = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         navigation.openWorkspaceSession(session)
 
@@ -44,7 +44,7 @@ struct ChatCoveredLifetimeTests {
     /// An incognito session ends when its chat leaves the route, so every
     /// remount of the same chat must keep the session in the route.
     @Test func sessionStaysInRouteAcrossReopenCoverAndShellSwapUntilPopped() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1", workspaceId: "workspace-1")
         )
@@ -70,7 +70,7 @@ struct ChatCoveredLifetimeTests {
     /// A sidebar pick or notification can replace a stack whose incognito chat
     /// is covered, without the chat ever appearing again: the route watch ends it.
     @Test func coveredIncognitoChatEndsWhenALaterRouteChangeDropsItsSession() async {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "incognito", workspaceId: "workspace-1")
         )
@@ -94,7 +94,7 @@ struct ChatCoveredLifetimeTests {
     }
 
     @Test func cancelledIncognitoRouteWatchKeepsTheSession() async {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "incognito", workspaceId: "workspace-1")
         )
@@ -119,7 +119,7 @@ struct ChatCoveredLifetimeTests {
     }
 
     @Test func containsChatReaderTracksStackedAndPoppedTargets() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         )
@@ -140,7 +140,7 @@ struct ChatCoveredLifetimeTests {
     }
 
     @Test func nestedReaderOpenPushesOnTopOfTheExistingReader() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         )
@@ -158,7 +158,7 @@ struct ChatCoveredLifetimeTests {
     }
 
     @Test func linkedFileOnTheSameSessionCoversChat() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         let session = WorkspaceSessionNavTarget(
             serverId: "server-1",
             sessionId: "session-1",
@@ -181,7 +181,7 @@ struct ChatCoveredLifetimeTests {
     }
 
     @Test func splitDetailReaderCoversTheRootSession() {
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.setWorkspaceNavigationPresentation(.split)
         let session = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         navigation.openWorkspaceSession(session)
@@ -195,7 +195,7 @@ struct ChatCoveredLifetimeTests {
 
     @Test func storingAReaderDropsPayloadsWhoseTargetIsNotOnTheStack() {
         let store = ChatReaderPayloadStore()
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         )
@@ -219,7 +219,7 @@ struct ChatCoveredLifetimeTests {
 
     @Test func storingAReaderKeepsPayloadsStillOnTheStack() {
         let store = ChatReaderPayloadStore()
-        let navigation = AppNavigation()
+        let navigation = SceneNavigation()
         navigation.openWorkspaceSession(
             WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         )

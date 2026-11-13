@@ -53,7 +53,7 @@ struct ChatTimelineDestinationPresenter {
             ),
             connection: connection,
             apiClient: connection.apiClient,
-            navigation: AppNavigation()
+            navigation: SceneNavigation()
         )
         viewer.onClose = { [weak viewer] in
             guard let viewer else { return }
@@ -81,7 +81,7 @@ struct ChatTimelineDestinationPresenter {
     /// `pushChat` is where a session started from a commit opens.
     func panelScreen(
         for target: ChatTimelinePanelTarget,
-        navigation: AppNavigation,
+        navigation: SceneNavigation,
         pushChat: @escaping (ChatViewController) -> Void,
         onClose: @escaping () -> Void
     ) -> UIViewController {

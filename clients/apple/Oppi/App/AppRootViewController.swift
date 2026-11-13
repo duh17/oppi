@@ -18,7 +18,7 @@ final class AppRootViewController: UIViewController {
 
     private let app: OppiApp
     private var root: AppRootEnvironment { app.root }
-    private var navigation: AppNavigation { root.navigation }
+    private var navigation: SceneNavigation { root.navigation }
 #if DEBUG
     private var e2eDiagnostics: E2EDiagnosticsView?
 #endif
@@ -124,10 +124,10 @@ final class AppRootViewController: UIViewController {
         workspaceCreation.update(showsShell: contentKind == .shell, root: root, anchor: self)
     }
 
-    private static func content(for navigation: AppNavigation, pairedServersUnavailable: Bool) -> Content {
-        switch navigation.launchPhase {
+    private static func content(for navigation: SceneNavigation, pairedServersUnavailable: Bool) -> Content {
+        switch navigation.app.launchPhase {
         case .resolving: pairedServersUnavailable ? .pairedServersUnavailable : .launching
-        case .ready: navigation.showOnboarding ? .onboarding : .shell
+        case .ready: navigation.app.showOnboarding ? .onboarding : .shell
         }
     }
 

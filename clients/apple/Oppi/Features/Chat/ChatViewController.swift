@@ -118,7 +118,7 @@ final class ChatViewController: UIViewController {
     /// chat cannot take the app's pending quick-session message).
     let connection: ServerConnection
     let apiClient: APIClient?
-    let appNavigation: AppNavigation
+    let appNavigation: SceneNavigation
 
     let sessionManager: ChatSessionManager
     private let sessionRuntimeLease: ChatSessionManagerLease
@@ -187,7 +187,7 @@ final class ChatViewController: UIViewController {
     /// traits once the chat leaves the window, when it must say it left.
     weak var callCenterShowingChat: LiveVoiceCallCenter?
     /// The workspace route held this chat's session when it appeared. Only
-    /// such a chat can tell from `AppNavigation` that it was left; one pushed
+    /// such a chat can tell from `SceneNavigation` that it was left; one pushed
     /// straight onto a stack (`pushChat`) never ends an incognito session.
     var isRouteManaged = false
     /// Watches the route for an incognito chat hidden while still in it, so a
@@ -202,7 +202,7 @@ final class ChatViewController: UIViewController {
     init(
         sessionId: String,
         connection: ServerConnection,
-        navigation: AppNavigation,
+        navigation: SceneNavigation,
         apiClient: APIClient?? = nil,
         serverIdHint: String? = nil,
         workspaceIdHint: String? = nil,

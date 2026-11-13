@@ -3,7 +3,7 @@ import Foundation
 // The window's primary leaf as pane entries: what restoration writes and
 // reads, and the `.paneEntry` screens that show a restored or linked entry's
 // leaf state (`PaneLeafStateViewController`) until its content can open.
-extension AppNavigation {
+extension SceneNavigation {
     /// Shows exactly `elements` above the root, as the restored primary leaf.
     /// No scoped-lock gate runs: a locked entry arrives as a `.paneEntry`
     /// that asks only when tapped.

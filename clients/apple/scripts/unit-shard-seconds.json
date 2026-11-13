@@ -21,7 +21,7 @@
  "AppLockRedactionTests": 0,
  "AppLockServiceTests": 0.05,
  "AppLockShareExtensionTests": 0,
- "AppNavigationShellRoutingTests": 0.11,
+ "SceneNavigationShellRoutingTests": 0.11,
  "AppOpenerTests": 0.62,
  "AppSupportLinksTests": 0,
  "AppTabTests": 0,

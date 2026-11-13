@@ -24,7 +24,7 @@ final class RouterRoutesPreviewController: PreviewRootController {
         }
         let root = AppRootEnvironment(
             coordinator: Self.makeCoordinator(),
-            navigation: AppNavigation(),
+            navigation: SceneNavigation(),
             themeStore: ThemeStore(),
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
             composerDraftStore: ComposerDraftStore(),

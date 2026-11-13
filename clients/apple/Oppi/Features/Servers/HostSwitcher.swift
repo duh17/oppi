@@ -77,7 +77,7 @@ enum HostSwitcherDestination: Hashable {
 struct HostSwitcherModel {
     let coordinator: ConnectionCoordinator
     let serverStore: ServerStore
-    let navigation: AppNavigation
+    let navigation: SceneNavigation
     let current: PairedServer
     let destination: HostSwitcherDestination
     var onSwitch: ((PairedServer) -> Void)?
@@ -126,17 +126,18 @@ struct HostSwitcherModel {
         navigation.openHostSwitcherDestination(item, serverId: current.id)
     }
 
-    /// Makes `server` the active one. `ServerSwitchMenu` asks for the lock
+    /// Makes `server` the window's server. `ServerSwitchMenu` asks for the lock
     /// before it calls this, and this asks again: the guarantee must not rest
     /// on every caller remembering to. A second ask is harmless, because an
     /// unlocked server passes at once.
     func switchHost(_ server: PairedServer) {
         // Capture now: the unlock callback runs after this update.
         let coordinator = coordinator
+        let navigation = navigation
         let onSwitch = onSwitch
         let perform: @MainActor () -> Void = {
             // Selection is local; a failed HTTPS bootstrap must not keep the old host selected.
-            guard coordinator.restoreActiveServer(server.id) else { return }
+            guard navigation.chooseServer(server.id, coordinator: coordinator) else { return }
             onSwitch?(server)
             Task {
                 // Preparation updates this host's transport, never the current selection.

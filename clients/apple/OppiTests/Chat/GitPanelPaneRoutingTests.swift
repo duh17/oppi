@@ -146,7 +146,7 @@ private final class GitPanelPushFixture {
             options: .init(hostedInPanel: true),
             connection: connection,
             apiClient: makeTestURLProtocolClient(),
-            navigation: AppNavigation()
+            navigation: SceneNavigation()
         )
         bar.presenter = screen
         screen.traitOverrides.appRootEnvironment = makeTestAppRoot()

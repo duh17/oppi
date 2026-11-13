@@ -26,7 +26,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
     enum Hosting {
         /// Pushed on the shell's own stack (the default, and every width
         /// below regular): leaving pops it off that stack, and a nested open
-        /// joins `AppNavigation`'s own route list, like this reader's own
+        /// joins `SceneNavigation`'s own route list, like this reader's own
         /// push.
         case pushedRoute
         /// Hosted as an attached leaf's panel root (regular width): there is
@@ -56,7 +56,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
     }
 
     private let store: ChatReaderPayloadStore
-    private let navigation: AppNavigation
+    private let navigation: SceneNavigation
     private let hosting: Hosting
     /// What serves a live document on this reader's server. The app root answers
     /// by default; a caller that already holds a connection (and a test) can hand
@@ -73,7 +73,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
     init(
         target: ChatReaderNavTarget,
         store: ChatReaderPayloadStore,
-        navigation: AppNavigation,
+        navigation: SceneNavigation,
         editBackend: (@MainActor (DocumentEditSubject) -> DocumentEditOwner.Backend?)? = nil,
         hosting: Hosting = .pushedRoute
     ) {
@@ -97,7 +97,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
     convenience init(
         target: ChatReaderNavTarget,
         store: ChatReaderPayloadStore,
-        navigation: AppNavigation,
+        navigation: SceneNavigation,
         onClose: @escaping @MainActor () -> Void
     ) {
         self.init(target: target, store: store, navigation: navigation, hosting: .panel(onClose: onClose))
@@ -236,7 +236,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
                 )
                 Router.push(nestedReader, from: self)
             } else {
-                // Joins `AppNavigation`'s own route list, exactly as this
+                // Joins `SceneNavigation`'s own route list, exactly as this
                 // reader's own push did, so the nested reader survives a
                 // backgrounding or a stack/split swap the same way.
                 navigation.openChatReader(target)

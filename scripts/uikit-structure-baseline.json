@@ -1,9 +1,6 @@
 {
   "version": 1,
   "files": {
-    "clients/apple/Oppi/App/AppOpener+Invite.swift": {
-      "active connection read": 1
-    },
     "clients/apple/Oppi/App/AppOpener+Panes.swift": {
       "active connection read": 1
     },
@@ -13,7 +10,7 @@
     "clients/apple/Oppi/App/AppOpener.swift": {
       "active connection read": 4
     },
-    "clients/apple/Oppi/App/AppRootEnvironment+ServerName.swift": {
+    "clients/apple/Oppi/App/AppRootEnvironment+WindowServer.swift": {
       "active connection read": 1
     },
     "clients/apple/Oppi/App/AppRootModals.swift": {
@@ -43,12 +40,6 @@
     "clients/apple/Oppi/App/WorkspaceCreationIntake.swift": {
       "active connection read": 2
     },
-    "clients/apple/Oppi/Features/Agents/AgentDetailViewController.swift": {
-      "active connection read": 1
-    },
-    "clients/apple/Oppi/Features/Agents/AgentListViewController.swift": {
-      "active connection read": 3
-    },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditDraft.swift": {
       "AppPreferences.*.set": 1
     },
@@ -57,9 +48,6 @@
     },
     "clients/apple/Oppi/Features/Agents/AgentToolSelectionViewController.swift": {
       ".settingsToggle(": 1
-    },
-    "clients/apple/Oppi/Features/Agents/PiAgentDetailViewController.swift": {
-      "active connection read": 3
     },
     "clients/apple/Oppi/Features/Agents/PiToolsEditor.swift": {
       "APIClient settings write": 1
@@ -82,14 +70,8 @@
     "clients/apple/Oppi/Features/Chat/Support/Sharing/ShareSessionRedactionSheet.swift": {
       "AppPreferences.*.set": 1
     },
-    "clients/apple/Oppi/Features/ControlSessions/GuidedControlComposerController.swift": {
-      "active connection read": 1
-    },
-    "clients/apple/Oppi/Features/ControlSessions/ReviewableControlMarkdownViewController.swift": {
-      "active connection read": 1
-    },
     "clients/apple/Oppi/Features/Extensions/ServerExtensionsViewController.swift": {
-      "active connection read": 4
+      "active connection read": 1
     },
     "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditorViewController.swift": {
       "UIAlertController(": 1
@@ -103,14 +85,8 @@
     "clients/apple/Oppi/Features/Mcp/McpServerDetailViewController.swift": {
       ".settingsToggle(": 1
     },
-    "clients/apple/Oppi/Features/Mcp/McpServersViewController.swift": {
-      "active connection read": 1
-    },
-    "clients/apple/Oppi/Features/Onboarding/OnboardingViewController.swift": {
-      "active connection read": 3
-    },
     "clients/apple/Oppi/Features/QuickSession/QuickSessionModel+Launch.swift": {
-      "active connection read": 2
+      "active connection read": 1
     },
     "clients/apple/Oppi/Features/QuickSession/QuickSessionModel+Loads.swift": {
       "active connection read": 4
@@ -119,22 +95,10 @@
       "active connection read": 2
     },
     "clients/apple/Oppi/Features/QuickSession/QuickSessionModel.swift": {
-      "active connection read": 4
+      "active connection read": 2
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalBarSettingsViewController.swift": {
       ".settingsToggle(": 1
-    },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalViewController.swift": {
-      "active connection read": 1
-    },
-    "clients/apple/Oppi/Features/Schedules/ScheduleDetailViewController.swift": {
-      "active connection read": 1
-    },
-    "clients/apple/Oppi/Features/Schedules/ScheduleListViewController.swift": {
-      "active connection read": 2
-    },
-    "clients/apple/Oppi/Features/Schedules/SchedulesViewController.swift": {
-      "active connection read": 1
     },
     "clients/apple/Oppi/Features/Server/ServerMetricsViewController.swift": {
       "active connection read": 2
@@ -163,7 +127,6 @@
       "resolvedBadgeIcon.symbolName": 3
     },
     "clients/apple/Oppi/Features/Sessions/SessionRowDisplayEditor.swift": {
-      "active connection read": 3,
       "AppPreferences.*.set": 1
     },
     "clients/apple/Oppi/Features/Sessions/SessionRowView.swift": {
@@ -200,9 +163,6 @@
     "clients/apple/Oppi/Features/Settings/SettingsVoicePage.swift": {
       "AppPreferences.*.set": 3
     },
-    "clients/apple/Oppi/Features/Settings/ThemeImportViewController.swift": {
-      "active connection read": 2
-    },
     "clients/apple/Oppi/Features/Skills/ServerResourceDetailScreenController.swift": {
       "active connection read": 1
     },
@@ -212,14 +172,11 @@
     "clients/apple/Oppi/Features/Skills/ServerSkillFileViewController.swift": {
       "active connection read": 1
     },
-    "clients/apple/Oppi/Features/Skills/ServerSkillsViewController.swift": {
-      "active connection read": 2
-    },
     "clients/apple/Oppi/Features/Workspaces/SessionInboxViewController.swift": {
-      "active connection read": 10
+      "active connection read": 3
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateModel.swift": {
-      "active connection read": 3
+      "active connection read": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateViewController.swift": {
       ".settingsToggle(": 2
@@ -241,7 +198,7 @@
       ".settingsToggle(": 2
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSidebarViewController.swift": {
-      "active connection read": 3,
+      "active connection read": 2,
       "UserDefaults.standard.set(": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceToggleRows.swift": {

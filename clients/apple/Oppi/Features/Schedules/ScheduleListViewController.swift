@@ -87,7 +87,7 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
 
     /// The active server's connection: the base reloads the page by itself when it
     /// installs an API client again after a rebuild.
-    override func loadConnection() -> ServerConnection? { root.coordinator.activeConnection }
+    override func loadConnection() -> ServerConnection? { root.windowConnectionOrStandIn }
 
     /// The active server's schedules: the base runs it on every appearance, on
     /// pull to refresh, after a Retry, and when the server or its client
@@ -202,7 +202,7 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
 
     func mutate(_ schedule: AgentScheduleSummary, _ action: SummaryMutation) {
         Task { [weak self] in
-            guard let apiClient = self?.root.coordinator.activeConnection.apiClient else { return }
+            guard let apiClient = self?.root.windowConnectionOrStandIn.apiClient else { return }
             do {
                 let updated = switch action {
                 case .pause: try await apiClient.pauseAgentSchedule(schedule.id)

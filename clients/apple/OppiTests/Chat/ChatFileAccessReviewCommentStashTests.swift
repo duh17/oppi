@@ -239,7 +239,7 @@ private func makeReviewDetailFixture(
         ),
         connection: ServerConnection(),
         apiClient: nil,
-        navigation: AppNavigation()
+        navigation: SceneNavigation()
     )
     let host = UINavigationController(rootViewController: detail)
     host.traitOverrides.appRootEnvironment = makeTestAppRoot()

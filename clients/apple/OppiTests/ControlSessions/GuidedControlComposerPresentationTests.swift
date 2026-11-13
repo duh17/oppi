@@ -22,7 +22,7 @@ struct GuidedControlComposerPresentationTests {
                 placeholder: "Describe a change…"
             ),
             connection: { connection },
-            navigation: AppNavigation()
+            navigation: SceneNavigation()
         )
     }
 
@@ -132,7 +132,7 @@ struct GuidedControlComposerPresentationTests {
                 targetId: "s1", targetName: "Nightly", placeholder: "Describe a change…"
             ),
             connection: { connection },
-            navigation: AppNavigation()
+            navigation: SceneNavigation()
         )
         model.appear()
         let ready = await waitForMainActorCondition(timeout: .seconds(20)) { model.isInitialized }

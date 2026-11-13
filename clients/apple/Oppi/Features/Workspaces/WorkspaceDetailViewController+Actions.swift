@@ -192,7 +192,7 @@ extension WorkspaceDetailViewController {
         }
     }
 
-    /// Opens the session's chat through `AppNavigation`. The screen always
+    /// Opens the session's chat through `SceneNavigation`. The screen always
     /// has its server, so the hosted screen's server-less push of a chat on
     /// the current connection is gone.
     private func routeToSession(_ sessionId: String) {

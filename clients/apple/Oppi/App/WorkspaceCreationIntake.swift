@@ -33,7 +33,7 @@ final class WorkspaceCreationIntake {
     private var wasGuidingCreation: Bool
 
     private var coordinator: ConnectionCoordinator { root.coordinator }
-    private var navigation: AppNavigation { root.navigation }
+    private var navigation: SceneNavigation { root.navigation }
 
     init(
         root: AppRootEnvironment,
@@ -63,7 +63,7 @@ final class WorkspaceCreationIntake {
     }
 
     func update() {
-        let activeServerId = coordinator.activeServerId
+        let activeServerId = root.windowServerId
         let hasPendingDeepLink = navigation.pendingWorkspaceDeepLink != nil
         let isGuidingCreation = navigation.shouldGuideWorkspaceCreation
 
@@ -125,7 +125,7 @@ final class WorkspaceCreationIntake {
     }
 
     private var selectedServer: PairedServer? {
-        if let activeServerId = coordinator.activeServerId,
+        if let activeServerId = root.windowServerId,
            let server = servers.first(where: { $0.id == activeServerId }) {
             return server
         }
@@ -172,7 +172,7 @@ final class WorkspaceCreationIntake {
 
         guard !isStopped, !Task.isCancelled else { return }
         guard navigation.shouldGuideWorkspaceCreation, !guidedCreateConsumed else { return }
-        guard coordinator.activeServerId == server.id else { return }
+        guard root.windowServerId == server.id else { return }
         guard let connection = coordinator.connection(for: server.id),
               !connection.workspaceStore.lastSyncFailed else { return }
         let workspaces = connection.workspaceStore.workspaces

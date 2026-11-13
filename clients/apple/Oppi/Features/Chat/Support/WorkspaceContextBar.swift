@@ -237,7 +237,7 @@ final class WorkspaceContextBarView: UIView {
     private let options: Options
     private let connection: ServerConnection
     private let apiClient: APIClient?
-    private let navigation: AppNavigation
+    private let navigation: SceneNavigation
 
     private var isSelecting = false {
         didSet {
@@ -422,7 +422,7 @@ final class WorkspaceContextBarView: UIView {
         options: Options = Options(),
         connection: ServerConnection,
         apiClient: APIClient?,
-        navigation: AppNavigation
+        navigation: SceneNavigation
     ) {
         self.context = context
         self.options = options

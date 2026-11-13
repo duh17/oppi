@@ -344,7 +344,7 @@ final class UIHangHarnessViewController: UIViewController, NavigationBarHiding {
     private let scrollController = ChatScrollController()
     private let timeline = ChatTimelineController()
     private let chatReaderPayloadStore = ChatReaderPayloadStore()
-    private let harnessNavigation = AppNavigation()
+    private let harnessNavigation = SceneNavigation()
     private let frameIntervalMonitor = HarnessFrameIntervalMonitor()
 
     private var selectedSession: UIHangHarnessSession = .alpha

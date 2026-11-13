@@ -289,7 +289,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
         // The app root: router modals present with these services.
         let root = AppRootEnvironment(
             coordinator: coordinator,
-            navigation: AppNavigation(),
+            navigation: SceneNavigation(),
             themeStore: themeStore,
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
             composerDraftStore: ComposerDraftStore(),

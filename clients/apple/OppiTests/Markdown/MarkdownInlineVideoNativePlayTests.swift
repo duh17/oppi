@@ -358,7 +358,7 @@ struct MarkdownInlineVideoNativePlayTests {
         window.traitOverrides.appRootEnvironment = makeTestAppRoot()
         weak var closedChat: ChatViewController?
         do {
-            let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: AppNavigation())
+            let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: SceneNavigation())
             closedChat = chat
             window.rootViewController = UINavigationController(rootViewController: chat)
         }

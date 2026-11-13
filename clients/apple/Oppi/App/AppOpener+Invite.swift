@@ -117,9 +117,12 @@ extension AppOpener {
             // A newer selection owns the active connection; pairing still succeeded.
             guard enrollment.selected else { return }
 
-            // Reset the newly selected connection. The environment connection
-            // can still point at the previous server during deep-link handling.
-            let selectedConnection = coordinator.activeConnection
+            // The pairing made the new server active; this window shows it.
+            // Reset its connection: the window could still show the previous
+            // server during deep-link handling.
+            guard let selectedServerId = coordinator.activeServerId else { return }
+            navigation.recordChosenServer(selectedServerId)
+            let selectedConnection = coordinator.connectionOrStandIn(for: selectedServerId)
             selectedConnection.disconnectSession()
             selectedConnection.sessionStore.sessions.removeAll()
             selectedConnection.sessionStore.activeSessionId = nil
@@ -128,7 +131,7 @@ extension AppOpener {
             selectedConnection.sessionStore.applyServerSnapshot(enrollment.sessions, preserveRecentWindow: 0)
             selectedConnection.sessionStore.markSyncSucceeded()
             selectedConnection.syncLiveActivityState()
-            navigation.showOnboarding = false
+            navigation.app.showOnboarding = false
             // The reset clears focus under any on-screen chat; landing on the
             // inbox dismisses it, so its claim release is a no-op and the
             // re-synced list shows.
@@ -152,8 +155,8 @@ extension AppOpener {
             activeConnection.sessionStore.markSyncFailed()
 #if DEBUG
             if isE2EInviteLaunch, !serverStore.servers.isEmpty {
-                navigation.showOnboarding = false
-                navigation.launchPhase = .ready
+                navigation.app.showOnboarding = false
+                navigation.app.launchPhase = .ready
                 return
             }
 #endif
@@ -161,7 +164,7 @@ extension AppOpener {
                 loadState: serverStore.loadState,
                 pairedServerCount: serverStore.servers.count
             ) == .onboarding {
-                navigation.showOnboarding = true
+                navigation.app.showOnboarding = true
             }
             toast("Invite link failed: \(error.localizedDescription)")
         }

@@ -27,7 +27,7 @@ struct ChatFileBrowserPanelTests {
             connection: ServerConnection(),
             apiClient: nil,
             fileIndexStore: FileIndexStore(),
-            navigation: AppNavigation()
+            navigation: SceneNavigation()
         )
         let root = makeTestAppRoot()
 

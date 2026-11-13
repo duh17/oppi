@@ -6,8 +6,8 @@ import UIKit
 /// A scrolling `UICollectionView` list holds the destinations, the Workspaces
 /// disclosure, and the workspace rows. New Workspace and App Settings sit in a
 /// second, non-scrolling list pinned below it. Everything reads
-/// `AppNavigation` and the stores in `updateProperties()`: the selection a row
-/// paints is `AppNavigation`'s, never the collection view's own. A store tick
+/// `SceneNavigation` and the stores in `updateProperties()`: the selection a row
+/// paints is `SceneNavigation`'s, never the collection view's own. A store tick
 /// reconfigures only the rows whose content changed.
 ///
 /// Destinations, the disclosure, state rows, and the footer are native list
@@ -17,7 +17,7 @@ final class WorkspaceSidebarViewController: UIViewController {
     private let root: AppRootEnvironment
     private let onSelect: (() -> Void)?
 
-    private var navigation: AppNavigation { root.navigation }
+    private var navigation: SceneNavigation { root.navigation }
     private var coordinator: ConnectionCoordinator { root.coordinator }
 
     private let headerLabel = UILabel()
@@ -200,7 +200,7 @@ final class WorkspaceSidebarViewController: UIViewController {
 
     private var selectedServer: PairedServer? {
         ServerSelection.resolve(
-            selectedId: coordinator.activeServerId,
+            selectedId: root.windowServerId,
             from: coordinator.serverStore.servers
         )
     }
@@ -397,7 +397,7 @@ final class WorkspaceSidebarViewController: UIViewController {
                 isSelected: row.isSelected,
                 lockBadge: row.lockBadge,
                 themeID: appliedThemeID ?? root.themeStore.activeThemeID,
-                iconAssetCache: root.coordinator.activeConnection.iconAssetCache
+                iconAssetCache: root.windowConnectionOrStandIn.iconAssetCache
             )
             cell.element.accessibilityIdentifier = WorkspaceHomeView.workspaceOpenAccessibilityIdentifier(
                 workspaceName: workspace.name

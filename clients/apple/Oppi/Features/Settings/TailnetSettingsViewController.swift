@@ -477,8 +477,8 @@ final class TailnetSettingsViewController: ListScreenController<TailnetSettingsV
         let coordinator = coordinator
         let navigation = root.navigation
         let perform: @MainActor () -> Void = {
-            if coordinator.activeServerId != server.id {
-                guard coordinator.restoreActiveServer(server.id) else { return }
+            if navigation.activeServerId(in: coordinator) != server.id {
+                guard navigation.chooseServer(server.id, coordinator: coordinator) else { return }
                 Task { await coordinator.prepareSelectedServerShell(for: server) }
             }
             navigation.openServerDetails(ServerDetailsNavTarget(serverId: server.id))

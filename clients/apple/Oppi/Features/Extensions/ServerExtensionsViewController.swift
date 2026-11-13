@@ -6,7 +6,7 @@ import UIKit
 /// loading, offline, empty, and failed states in the list. Reload (a bar
 /// button) reloads the server's plugins; its report is the Last Reload
 /// section, kept per server by the store, until the next one. A
-/// row opens the extension's detail through `AppNavigation`, so the route
+/// row opens the extension's detail through `SceneNavigation`, so the route
 /// survives a stack/split change. The screen follows the active server and
 /// reloads the catalog when it changes and each time it appears.
 ///
@@ -105,10 +105,10 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     override var loadPolicy: LoadPolicy { .eachAppearance }
 
     /// The active server's catalog: another server is another catalog.
-    override func loadSubject() -> AnyHashable? { AnyHashable(coordinator.activeServerId) }
+    override func loadSubject() -> AnyHashable? { AnyHashable(root.windowServerId) }
 
     override func loadConnection() -> ServerConnection? {
-        coordinator.activeServerId.flatMap { coordinator.connection(for: $0) }
+        root.windowConnection
     }
 
     /// A switched server starts its own search: the old one's query would filter
@@ -119,10 +119,10 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     }
 
     override func updateProperties() {
-        let activeServerId = coordinator.activeServerId
+        let activeServerId = root.windowServerId
         let servers = coordinator.serverStore.servers
         let server = ServerSelection.resolve(selectedId: activeServerId, from: servers)
-        let store = activeServerId.flatMap { coordinator.connection(for: $0) }?.serverResourceStore
+        let store = root.windowConnection?.serverResourceStore
         let presentation = ServerExtensionListPresentation(
             extensions: activeServerId.flatMap { store?.extensions(forServer: $0) } ?? [],
             query: searchText
@@ -139,7 +139,7 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
             catalog = .unavailable
         }
         let reload = activeServerId.flatMap { store?.pluginReload(forServer: $0) }
-        let isConnected = activeServerId.flatMap { coordinator.connection(for: $0) }?.apiClient != nil
+        let isConnected = root.windowConnection?.apiClient != nil
         state = ViewState(
             activeServerId: activeServerId,
             server: server,
@@ -301,7 +301,7 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     /// Reloads the active server's plugins. The store keeps the report on the server that was
     /// asked, so a switch meanwhile cannot show it under another server.
     func reloadPlugins() {
-        guard let serverId = coordinator.activeServerId,
+        guard let serverId = root.windowServerId,
               let connection = coordinator.connection(for: serverId),
               let api = connection.apiClient else { return }
         let store = connection.serverResourceStore
@@ -309,8 +309,8 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     }
 
     private func open(_ resourceId: String) {
-        guard let serverId = coordinator.activeServerId else { return }
-        // Opens through `AppNavigation` so the route stays tracked.
+        guard let serverId = root.windowServerId else { return }
+        // Opens through `SceneNavigation` so the route stays tracked.
         root.navigation.openServerResourceDetail(ServerResourceDetailNavTarget(
             serverId: serverId,
             kind: .extension,
@@ -434,7 +434,7 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     /// base reload the page when one is installed; nothing about it reaches the
     /// rows.
     override func load() async throws {
-        guard let serverId = coordinator.activeServerId else { return }
+        guard let serverId = root.windowServerId else { return }
         guard let connection = loadConnection() else { throw noConnectionFailure() }
         let api = try requireAPIClient()
         connection.serverResourceStore.switchServer(to: serverId)

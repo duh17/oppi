@@ -13,7 +13,7 @@ struct ChatFilePanelInputs {
     let connection: ServerConnection
     let apiClient: APIClient?
     let fileIndexStore: FileIndexStore
-    let navigation: AppNavigation
+    let navigation: SceneNavigation
 
     var browserServices: FileBrowserServices {
         FileBrowserServices(

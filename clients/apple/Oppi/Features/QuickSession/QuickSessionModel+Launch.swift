@@ -97,8 +97,8 @@ extension QuickSessionModel {
 
         // Nothing is created or sent until this device allows the model provider (and, for a
         // call, the voice backend). Not Now keeps the sheet and its draft.
-        let consentServerId = selectedServerId ?? coordinator.activeServerId ?? "default"
-        let consentConnection = selectedServerConnection() ?? coordinator.activeConnection
+        let consentServerId = selectedServerId ?? windowServerId ?? "default"
+        let consentConnection = selectedServerConnection() ?? coordinator.connectionOrStandIn(for: windowServerId)
         let consentRecipients = AISharingConsentPrompt.modelSharingRecipients(
             modelId: aiSharingModelId,
             liveVoice: startsLiveVoice,
@@ -159,7 +159,7 @@ extension QuickSessionModel {
         // Capture references before dismiss tears Quick Session down.
         let nav = navigation
         let coordinator = coordinator
-        let serverId = selectedServerId ?? coordinator.activeServerId ?? "default"
+        let serverId = selectedServerId ?? windowServerId ?? "default"
         let attachments = pendingAttachments
         let launchEngine = self.engine
         let incognito = launchesIncognito

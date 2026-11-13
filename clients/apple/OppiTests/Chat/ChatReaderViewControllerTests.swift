@@ -12,7 +12,7 @@ struct ChatReaderViewControllerTests {
         let navigation: UINavigationController
         let reader: ChatReaderViewController
         let store: ChatReaderPayloadStore
-        let appNavigation: AppNavigation
+        let appNavigation: SceneNavigation
 
         func close() { window.isHidden = true }
     }
@@ -29,7 +29,7 @@ struct ChatReaderViewControllerTests {
     ) -> Host {
         forgetSharedScopedLockFlags()
         let store = ChatReaderPayloadStore()
-        let appNavigation = AppNavigation()
+        let appNavigation = SceneNavigation()
         let target = payload.map { store.store($0) } ?? ChatReaderNavTarget(id: UUID())
         appNavigation.openChatReader(target)
         let reader = ChatReaderViewController(
@@ -253,7 +253,7 @@ struct ChatReaderViewControllerTests {
     func routerStackHidesTheBarOverAPageOnly(animated: Bool) async throws {
         forgetSharedScopedLockFlags()
         let store = ChatReaderPayloadStore()
-        let appNavigation = AppNavigation()
+        let appNavigation = SceneNavigation()
         let root = AppearanceRoot()
         let navigation = RouterNavigationController(rootViewController: root)
         // Only a window in the app's scene gets real appearance transitions.

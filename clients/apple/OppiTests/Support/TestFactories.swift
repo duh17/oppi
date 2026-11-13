@@ -63,7 +63,7 @@ func makeTestAppRoot(
     if let serverSettings { coordinator.makeServerSettings = serverSettings }
     return AppRootEnvironment(
         coordinator: coordinator,
-        navigation: AppNavigation(),
+        navigation: SceneNavigation(),
         themeStore: themeStore,
         quickCommentTemplateStore: QuickCommentTemplateStore(templates: []),
         composerDraftStore: composerDraftStore ?? ComposerDraftStore(
@@ -360,7 +360,7 @@ final class TestOpenRequestRecorder {
 func makeRecordingAppRoot() -> (root: AppRootEnvironment, recorder: TestOpenRequestRecorder) {
     let recorder = TestOpenRequestRecorder()
     let coordinator = ConnectionCoordinator(serverStore: ServerStore())
-    let navigation = AppNavigation()
+    let navigation = SceneNavigation()
     let drafts = ComposerDraftStore(
         fileURL: FileManager.default.temporaryDirectory
             .appending(path: "test-recording-drafts-\(UUID().uuidString).json", directoryHint: .notDirectory),

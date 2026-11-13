@@ -16,7 +16,7 @@ struct GuidedControlComposerModelTests {
                 placeholder: "Describe it…"
             ),
             connection: { connection },
-            navigation: AppNavigation()
+            navigation: SceneNavigation()
         )
     }
 
@@ -101,7 +101,7 @@ struct GuidedControlComposerConnectionWordsTests {    private func placeholder(c
                 placeholder: "Describe a new theme…"
             ),
             connection: { connection },
-            navigation: AppNavigation()
+            navigation: SceneNavigation()
         ).placeholder
     }
 

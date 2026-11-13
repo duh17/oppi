@@ -8,7 +8,7 @@ import UIKit
 /// own, so Face ID for the key works as it does for any host.
 extension AppOpener {
     func performTerminal(_ open: TerminalOpen, generation: UInt64) async -> AppOpenOutcome {
-        let serverId = open.sourceServerID ?? coordinator.activeServerId
+        let serverId = open.sourceServerID ?? windowServerId
         let route = TerminalLinkRoute.decide(
             link: open.link,
             serverHost: serverId.flatMap { serverStore.server(for: $0)?.host },

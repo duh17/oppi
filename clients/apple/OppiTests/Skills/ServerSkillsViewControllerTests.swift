@@ -15,7 +15,7 @@ struct ServerSkillsViewControllerTests {
         )
     }
 
-    @Test("a row is one button that opens its detail through AppNavigation")
+    @Test("a row is one button that opens its detail through SceneNavigation")
     func rowOpensDetailRoute() async throws {
         let routes = TestURLProtocol.routeScope(mockPageRoutes { _ in nil })
         defer { routes.end() }

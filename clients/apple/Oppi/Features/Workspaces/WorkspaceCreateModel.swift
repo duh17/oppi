@@ -137,10 +137,10 @@ final class WorkspaceCreateModel {
         return connection
     }
 
-    /// Store scoped to the server this sheet creates on. The active server's
-    /// store is the fallback: deep links can switch servers just before presenting.
+    /// Store scoped to the server this sheet creates on; an empty stand-in
+    /// until that server has a connection, never another server's list.
     private var targetWorkspaceStore: WorkspaceStore {
-        coordinator.connection(for: server.id)?.workspaceStore ?? coordinator.activeConnection.workspaceStore
+        coordinator.connectionOrStandIn(for: server.id).workspaceStore
     }
 
     /// Skills discovered for the current server and folder.

@@ -477,8 +477,8 @@ extension ChatViewController {
         // A quick voice session opens straight into its call. The call takes the
         // composer first, so the quick message below lands in it and sends during
         // the call instead of being set aside as a draft.
-        if appNavigation.pendingLiveVoiceSessionId == sessionId {
-            appNavigation.pendingLiveVoiceSessionId = nil
+        if appNavigation.app.pendingLiveVoiceSessionId == sessionId {
+            appNavigation.app.pendingLiveVoiceSessionId = nil
             startLiveVoice()
         }
 
@@ -563,7 +563,7 @@ extension ChatViewController {
         let connection = connection
         Task {
             // Runs once this navigation change settles: a pop reaches
-            // AppNavigation in the stack's `didShow`, after this disappearance.
+            // SceneNavigation in the stack's `didShow`, after this disappearance.
             // A chat still in the route (another tab, a page pushed above it)
             // ends when a later route change drops it.
             let endedIncognito = incognitoEnd.flatMap { $0.chatWasLeft() ? $0 : nil }
@@ -800,7 +800,7 @@ struct IncognitoSessionEnd: Sendable {
     let scope: SessionRouteScope?
     let apiClient: APIClient?
     let sessionStore: SessionStore
-    let navigation: AppNavigation
+    let navigation: SceneNavigation
 
     /// Popped or replaced in the workspace route. A push above the chat, a tab
     /// switch, a lock cover, a stack/split swap, or reopening the same session

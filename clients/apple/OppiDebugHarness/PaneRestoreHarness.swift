@@ -27,7 +27,7 @@ final class PaneRestorePreviewController: PreviewRootController {
             AppPreferences.ChatTopBar.shownKey: topBar.storedShown,
         ])
         let root = AppRootEnvironment.preview(coordinator: Self.makeCoordinator())
-        root.navigation.revealPairedServerShell()
+        root.navigation.app.revealPairedServerShell()
         self.root = root
         super.init(root: root, themeStore: root.themeStore, content: WorkspaceShellController(root: root))
     }

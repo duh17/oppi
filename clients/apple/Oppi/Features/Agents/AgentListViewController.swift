@@ -83,8 +83,8 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     /// without a Retry.
     override func loadSubject() -> AnyHashable? {
         AnyHashable([
-            AnyHashable(root.coordinator.activeServerId),
-            AnyHashable(root.coordinator.activeConnection.apiClient.map(ObjectIdentifier.init)),
+            AnyHashable(root.windowServerId),
+            AnyHashable(root.windowConnectionOrStandIn.apiClient.map(ObjectIdentifier.init)),
         ])
     }
 
@@ -93,7 +93,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
 
     /// The active server's connection: the base reloads the page by itself when it
     /// installs an API client again after a rebuild.
-    override func loadConnection() -> ServerConnection? { root.coordinator.activeConnection }
+    override func loadConnection() -> ServerConnection? { root.windowConnectionOrStandIn }
 
     /// The sidebar toggle at the split detail root.
     private func sidebarItems() -> [UIBarButtonItem] {
@@ -190,7 +190,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
             ) { [weak self] in
                 self?.openAgent(agent.id)
             }
-            let assets = root.coordinator.activeConnection.iconAssetCache
+            let assets = root.windowConnectionOrStandIn.iconAssetCache
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
                 let badge = ControlStatusPill()
                 badge.apply(

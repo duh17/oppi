@@ -3,7 +3,7 @@ import UIKit
 @testable import Oppi
 
 /// The UIKit router: a push carries the app root, the shell's stack follows
-/// `AppNavigation`, bar policy follows the screen in front, a slot presents and
+/// `SceneNavigation`, bar policy follows the screen in front, a slot presents and
 /// replaces its modal and closes with its screen, and a presentation follows the
 /// theme. Every screen is UIKit, `.controller` roots included.
 @MainActor
@@ -73,7 +73,7 @@ struct RouterUIKitTests {
         #expect(dismissals == 1)
     }
 
-    @Test("the shell's stack follows AppNavigation, and Back keeps AppNavigation in step")
+    @Test("the shell's stack follows SceneNavigation, and Back keeps SceneNavigation in step")
     func shellStackFollowsNavigationAndReportsPops() async throws {
         let root = makeTestAppRoot()
         let navigation = root.navigation
@@ -92,7 +92,7 @@ struct RouterUIKitTests {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 3
         })
 
-        // A page a screen pushes itself sits above its route, outside AppNavigation.
+        // A page a screen pushes itself sits above its route, outside SceneNavigation.
         let extensions = try #require(shellStack.topViewController as? ServerExtensionsViewController)
         Router.push(UIViewController(), from: extensions)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
@@ -101,13 +101,13 @@ struct RouterUIKitTests {
         shellStack.popViewController(animated: false)
         #expect(navigation.workspaceStackRouteElements == [.utility(.skills), .utility(.extensions)])
 
-        // Back from a route pops it from AppNavigation too.
+        // Back from a route pops it from SceneNavigation too.
         shellStack.popViewController(animated: false)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             navigation.workspaceStackRouteElements == [.utility(.skills)]
         })
 
-        // Replacing the stack in AppNavigation replaces the UIKit stack.
+        // Replacing the stack in SceneNavigation replaces the UIKit stack.
         navigation.showAllWorkspaceSessions()
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 1

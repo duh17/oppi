@@ -129,10 +129,11 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    `clients/apple/Oppi/Features/` and `clients/apple/Oppi/App/`, the
  *    app-wide active server's connection (`.activeConnection`) and the
  *    coordinator's lookups (`coordinator.connection`,
- *    `connectionCoordinator.connection`) are counted per file. Stage 3 of the
- *    pane plan resolves each leaf's connection from its own stack entry's
- *    server and makes the active server per window, so a screen that reads
- *    the app-wide one is what it unwinds. Baseline 111 on 2026-11-12; a new
+ *    `connectionCoordinator.connection`) are counted per file. Each leaf
+ *    resolves its connection from its own route's server, and a page that
+ *    follows its window reads `AppRootEnvironment.windowConnection`; the
+ *    coordinator's active server is only the transport focus. Baseline 69 on
+ *    2026-11-13; a new
  *    file has baseline 0 and the count only goes down. A read held in
  *    another variable, or passed down from the caller, is not seen.
  *
@@ -294,7 +295,7 @@ const adaptiveWidthExceptions: { file: string; reason: string }[] = [
     reason: "The owner.",
   },
   {
-    file: "clients/apple/Oppi/App/AppNavigation.swift",
+    file: "clients/apple/Oppi/App/SceneNavigation.swift",
     reason: "The shell's split-or-stack choice also needs the vertical class and the aspect ratio.",
   },
   {
@@ -720,7 +721,9 @@ adaptiveWidthExceptions.
 .activeConnection, coordinator.connection, or connectionCoordinator.connection in
 Oppi/Features or Oppi/App reads the app-wide active server's connection, which the
 pane plan's Stage 3 replaces with each leaf's own server. Take the connection the
-screen was built with (its route's server), not the active one. The count only
+screen was built with (its route's server), or the window's
+(AppRootEnvironment.windowConnection) for a page that follows the window, not the
+active one. The count only
 goes down.
 
 targetEnvironment(macCatalyst) or isMacCatalystApp outside platformCheckOwners means
