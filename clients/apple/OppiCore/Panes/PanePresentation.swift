@@ -108,6 +108,13 @@ enum PaneMinimumSize {
     static let list = CGSize(width: 320, height: 280)
     /// Reader, editor and diff.
     static let document = CGSize(width: 360, height: 280)
+    /// A chat's panel beside it (Files, Git, Outline, Context, Share, a
+    /// reader, an extension panel): never narrower than an iPhone (390 pt,
+    /// iPhone 12 to 16). With the chat's 375 pt that is 766 pt, so the iPad
+    /// mini in portrait (744 pt; 756 pt on the A20 Pro) shows the panel full
+    /// over the chat by the fit rule, and landscape (813 pt beside the
+    /// sidebar) puts it beside the chat.
+    static let attached = CGSize(width: 390, height: 280)
 
     /// The minimum for a linkable route; nil for `.local`, which only the app can size.
     static func standard(for route: PaneRoute) -> CGSize? {

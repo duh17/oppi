@@ -21,15 +21,24 @@ struct PaneHostControllerTests {
         #expect(landscape == .split)
     }
 
-    /// WA1 in a real window: the chat keeps its minimum and a list companion
-    /// takes the rest of the 744 pt.
-    @Test func aPortraitMiniHostShowsTheLeafAndAListBesideIt() throws {
+    /// A chat's panel is at least an iPhone wide: in mini portrait it opens
+    /// full over the chat (the fit rule's zoom); turned to landscape it sits
+    /// beside the chat, and back in portrait it is full again.
+    @Test func aChatPanelIsFullInPortraitAndBesideTheChatInLandscape() throws {
         let host = PaneTestHost(width: 744, height: 1133)
         defer { host.hide() }
-        host.showPanel(minWidth: 320, idealWidth: 400, maxWidth: 640)
-        #expect(host.companionWidth == 368)
-        #expect(abs(host.screenWidth - (744 - 368)) < 0.5)
+        host.showPanel(minWidth: PaneMinimumSize.attached.width, idealWidth: 400, maxWidth: 640)
+        #expect(host.scenePanes.isCompanionZoomed)
+        #expect(host.divider.mode == .noRoomBeside)
+        #expect(host.panes.primary.view.accessibilityElementsHidden, "the covered chat leaves VoiceOver")
+
+        host.act { host.resize(width: 1133) }
         #expect(!host.scenePanes.isCompanionZoomed)
+        #expect(host.companionWidth == 400)
+        #expect(abs(host.screenWidth - 733) < 0.5, "the chat keeps the rest of the window")
+
+        host.act { host.resize(width: 744) }
+        #expect(host.scenePanes.isCompanionZoomed)
     }
 
     /// R4: a push over the owner parks its companion at once; the view stays

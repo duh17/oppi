@@ -8,6 +8,7 @@ import UIKit
 @MainActor
 enum KeyboardCommandMenu {
     static let sessionMenuID = UIMenu.Identifier("\(AppIdentifiers.subsystem).menu.session")
+    static let panesMenuID = UIMenu.Identifier("\(AppIdentifiers.subsystem).menu.panes")
 
     static func build(into builder: any UIMenuBuilder, action: Selector) {
         func item(_ command: KeyboardCommand) -> UIKeyCommand { command.makeKeyCommand(action: action) }
@@ -36,6 +37,10 @@ enum KeyboardCommandMenu {
             builder.insertChild(inline([.toggleSidebar, .toggleFileTree]), atStartOfMenu: .view)
         }
         builder.insertChild(inline(KeyboardCommand.panes.map(KeyboardCommand.pane)), atStartOfMenu: .view)
+        builder.insertChild(
+            UIMenu(title: String(localized: "Panes"), identifier: panesMenuID, children: KeyboardCommand.paneCommands.map(item)),
+            atEndOfMenu: .view
+        )
 
         let session = UIMenu(
             title: String(localized: "Session"),

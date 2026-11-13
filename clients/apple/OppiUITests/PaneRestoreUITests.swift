@@ -18,9 +18,12 @@ final class PaneRestoreUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// The chat comes back after a relaunch; on a wide window its Git panel
-    /// comes back beside it.
+    /// comes back beside it (landscape on the iPad mini: in portrait a panel
+    /// opens full over the chat).
     func testARelaunchRestoresTheChatAndItsPanel() throws {
-        launchShell()
+        let landscape: UIDeviceOrientation = UIDevice.current.userInterfaceIdiom == .pad ? .landscapeLeft : .portrait
+        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
+        launchShell(orientation: landscape)
         let row = app.descendants(matching: .any)[sessionRow]
         XCTAssertTrue(row.waitUntilExists(timeout: 10), "The fixture session is listed")
         row.tap()
@@ -35,7 +38,7 @@ final class PaneRestoreUITests: XCTestCase, PreviewUITestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(1.5))
         attachScreenshot("restore-before-relaunch")
 
-        launchShell()
+        launchShell(orientation: landscape)
         XCTAssertTrue(git.waitUntilExists(timeout: 10), "The chat is back after a relaunch")
         if wide {
             XCTAssertTrue(app.navigationBars["Git"].waitUntilExists(timeout: 10), "Its Git panel is back beside it")
@@ -116,10 +119,8 @@ final class PaneRestoreUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("missing-file")
     }
 
-    private func launchShell(environment: [String: String] = [:]) {
-        // Portrait: the iPad mini is still wide (744 pt holds the chat and a
-        // panel), and landscape captures come out with a black band.
-        XCUIDevice.shared.orientation = .portrait
+    private func launchShell(environment: [String: String] = [:], orientation: UIDeviceOrientation = .portrait) {
+        XCUIDevice.shared.orientation = orientation
         launchPreview(screen: "pane-restore", environment: environment, ready: nil)
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10), "The shell came up")
     }

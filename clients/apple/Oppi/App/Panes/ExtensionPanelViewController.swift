@@ -39,12 +39,15 @@ enum ExtensionPanelSnapshot: Equatable {
     /// The pane's widths from the surface's declared size: the size sets only the width the pane
     /// opens at; the person's resize wins after that.
     static func widths(for hints: ExtensionUISurfacePanelHints?) -> PaneCompanionWidths {
+        // Beside a chat, a panel is never narrower than an iPhone; "narrow"
+        // opens at that width.
+        let minimum = PaneMinimumSize.attached.width
         let ideal: CGFloat = switch hints?.size {
-        case "narrow": 320
+        case "narrow": minimum
         case "wide": 560
         default: 400
         }
-        return PaneCompanionWidths(minimum: 320, ideal: ideal, maximum: 820)
+        return PaneCompanionWidths(minimum: minimum, ideal: ideal, maximum: 820)
     }
 
     /// The pane's glyph: the surface's allowed icon, or the generic extension glyph.

@@ -318,10 +318,12 @@ extension ChatViewController {
 
     /// A document, image, or the share redaction review reads comfortably
     /// wider than Files, Git, Outline, and Context, which are mostly lists.
+    /// Every panel is at least an iPhone wide (`PaneMinimumSize.attached`).
     private func panelWidth(_ panel: ChatPanel) -> (minimum: CGFloat, ideal: CGFloat, maximum: CGFloat) {
-        switch panel {
-        case .files, .outline, .git, .context: (320, 400, 640)
-        case .reader, .share, .timeline: (360, 520, 820)
+        let minimum = PaneMinimumSize.attached.width
+        return switch panel {
+        case .files, .outline, .git, .context: (minimum, 400, 640)
+        case .reader, .share, .timeline: (minimum, 520, 820)
         case .panel(let surfaceId):
             {
                 let widths = ExtensionPanelSnapshot.widths(for: panelHints(surfaceId))

@@ -129,6 +129,23 @@ final class LiveKeyboardCommandSurface {
         case .focusComposer: run = focusComposer()
         case .nextSession: run = openAdjacentSession(offset: 1)
         case .previousSession: run = openAdjacentSession(offset: -1)
+        case .splitRight: run = paneAction(yieldsToEditor: true, body: { host in host.split(axis: .row) })
+        case .splitDown: run = paneAction(yieldsToEditor: false, body: { host in host.split(axis: .column) })
+        case .zoomPane:
+            let host = paneHost
+            let zoomed = host?.panes.zoomedCell
+            run = paneAction(
+                yieldsToEditor: true,
+                available: { $0.panes.cellLayout.leaves.count > 1 },
+                body: { host in host.zoom(zoomed == nil ? host.focusedCell : nil) }
+            )
+            if zoomed != nil { title = String(localized: "Restore Panes") }
+        case .equaliseSizes:
+            run = paneAction(
+                yieldsToEditor: false,
+                available: { $0.panes.cellLayout.leaves.count > 1 },
+                body: { $0.equaliseSizes() }
+            )
         }
         return run.map { KeyboardCommand.Resolved(title: title, run: $0) }
     }
@@ -175,8 +192,34 @@ final class LiveKeyboardCommandSurface {
             else { return nil }
             return { delegate.presentationControllerDidAttemptToDismiss?(controller) }
         }
+        // Then the focused pane: a split leaf closes; the chat's leaf closes
+        // its panel. With one pane left nothing closes, so the window stays.
+        if let host = paneHost, case .split(let id) = host.focusedLeaf {
+            return { [weak host] in host?.closePane(id) }
+        }
         guard let chat = frontChat, chat.hasPanelBeside else { return nil }
         return { [weak chat] in chat?.showPanel(nil) }
+    }
+
+    /// The innermost pane host that holds the window's focus
+    /// (`Router.paneScreens`): the window's host wraps the shell, so the
+    /// outer one would split the whole shell.
+    private var paneHost: PaneHostController? {
+        Router.paneScreens(in: window).first.flatMap(PaneHostController.containing)
+    }
+
+    /// A pane command for the focused pane, while nothing is presented over
+    /// the window. Split needs a wide window (`canSplit`). The code editor's
+    /// own Cmd-D and Shift-Cmd-Return (Duplicate Line, Insert Line Above) win
+    /// while it has focus; the grip's menu still splits and zooms.
+    private func paneAction(
+        yieldsToEditor: Bool,
+        available: (PaneHostController) -> Bool = { $0.canSplit },
+        body: @escaping @MainActor (PaneHostController) -> Void
+    ) -> (@MainActor () -> Void)? {
+        guard isInteractive, topPresented == nil, let host = paneHost, available(host) else { return nil }
+        if yieldsToEditor, firstResponder(in: window) is CodeEditorTextView { return nil }
+        return { [weak host] in host.map(body) }
     }
 
     /// Whether the sidebar shows now, with the action that toggles it.

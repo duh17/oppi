@@ -39,12 +39,16 @@ struct KeyboardCommandTests {
         let terminal = SSHTerminalHardwareShortcut.allCases.map { chord($0.input, .command) }
         let editor = try editorChords()
         #expect(Set(app).isDisjoint(with: terminal))
-        // Cmd-L is Go to Line in the editor. The editor's key command sits ahead
-        // of the menu, and Focus Composer is withdrawn while the editor has
-        // focus (`LiveKeyboardCommandSurface`), so the two are never both on.
-        #expect(Set(app).intersection(editor) == [chord("l", .command)])
+        // Cmd-L is Go to Line, Cmd-D Duplicate Line and Shift-Cmd-Return Insert
+        // Line Above in the editor. The editor's key commands sit ahead of the
+        // menu, and Focus Composer, Split Right and Zoom Pane are withdrawn
+        // while the editor has focus (`LiveKeyboardCommandSurface`), so the
+        // two are never both on.
+        #expect(Set(app).intersection(editor) == [
+            chord("l", .command), chord("d", .command), chord("\r", [.command, .shift]),
+        ])
         // Cmd-Return and Option-Return send from the composer.
-        #expect(!app.contains { $0.hasPrefix("\r|") })
+        #expect(!app.contains { $0 == chord("\r", .command) || $0 == chord("\r", .alternate) })
     }
 
     @Test("A menu item's property list names its command")

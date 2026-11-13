@@ -25,14 +25,18 @@ struct PaneDividerMathTests {
         #expect(roomy.maximum == 640, "the companion's own ceiling when the window has room for both")
     }
 
-    /// The iPad mini in portrait: the sidebar is a drawer over the panes, so
-    /// the host has the whole 744 pt and a list companion fits beside the
-    /// chat (375 + 1 + 368).
-    @Test func theMiniInPortraitHoldsTheChatAndAListBesideIt() {
-        let portrait = PaneWidthPolicy.resolved(minWidth: 320, idealWidth: 400, maxWidth: 640, window: 744)
-        #expect(portrait.fitsBeside)
-        #expect(portrait.maximum == 368)
-        #expect(portrait.ideal == 368)
+    /// A chat's panel is at least an iPhone wide, so the iPad mini in
+    /// portrait (744 pt, 756 on the A20 Pro) cannot hold it beside the chat's
+    /// 375 pt and shows it full; landscape beside the sidebar (813 pt) can.
+    @Test func aChatPanelOpensFullInMiniPortraitAndBesideInLandscape() {
+        let minimum = PaneMinimumSize.attached.width
+        for portrait in [744, 756] as [CGFloat] {
+            #expect(!PaneWidthPolicy.resolved(minWidth: minimum, idealWidth: 400, maxWidth: 640, window: portrait).fitsBeside)
+        }
+        let landscape = PaneWidthPolicy.resolved(minWidth: minimum, idealWidth: 400, maxWidth: 640, window: 813)
+        #expect(landscape.fitsBeside)
+        #expect(landscape.maximum == 813 - PaneWidthPolicy.screenMinimumWidth - PanePresentation.dividerThickness)
+        #expect(landscape.ideal == 400)
     }
 
     /// A window too narrow for both minimums: the companion has no ordinary

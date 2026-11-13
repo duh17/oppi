@@ -66,10 +66,25 @@ enum PaneEntries {
 
     // MARK: Entries to shell routes
 
+    /// The connection an entry reads: its own server's, never the window's.
+    private static func connection(_ serverId: String, _ coordinator: ConnectionCoordinator) -> ServerConnection? {
+        coordinator.connection(for: serverId)
+    }
+
+    /// Workspace `id` on `serverId`, and the host that server is reached at
+    /// (a terminal leaf's SSH host).
+    static func workspace(
+        _ id: String, serverId: String, coordinator: ConnectionCoordinator
+    ) -> (workspace: Workspace, host: String)? {
+        guard let connection = connection(serverId, coordinator),
+              let workspace = connection.workspaceStore.workspaces.first(where: { $0.id == id }) else { return nil }
+        return (workspace, connection.credentials?.host ?? coordinator.serverStore.server(for: serverId)?.host ?? "")
+    }
+
     /// The screen `entry` opens as when its content is known; nil while it
     /// is not (or for a route the primary leaf has no screen for yet).
     static func element(for entry: PaneStackEntry, coordinator: ConnectionCoordinator) -> WorkspaceStackRouteElement? {
-        guard let connection = coordinator.connection(for: entry.serverId) else { return nil }
+        guard let connection = connection(entry.serverId, coordinator) else { return nil }
         let serverId = entry.serverId
         func workspace(_ id: String) -> Workspace? {
             connection.workspaceStore.workspaces.first { $0.id == id }
@@ -119,7 +134,7 @@ enum PaneEntries {
         case .connected: return .connected
         case .connecting, .recovering: return .connecting
         case .disconnected, .syncFailed:
-            return .unreachable(coordinator.connection(for: serverId)?.unreachableRemedy ?? .retry)
+            return .unreachable(connection(serverId, coordinator)?.unreachableRemedy ?? .retry)
         }
     }
 
@@ -133,7 +148,7 @@ enum PaneEntries {
         lookedUp: PaneContentPresence
     ) -> PaneContentPresence {
         if element(for: entry, coordinator: coordinator) != nil { return .present }
-        guard let connection = coordinator.connection(for: entry.serverId) else { return .unknown }
+        guard let connection = connection(entry.serverId, coordinator) else { return .unknown }
         switch entry.route {
         case .panel(let sessionId, _):
             // A panel opens beside its chat, so it is there when its session is.

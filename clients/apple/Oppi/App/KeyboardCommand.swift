@@ -23,13 +23,22 @@ enum KeyboardCommand: Hashable, Sendable {
     case focusComposer
     case nextSession
     case previousSession
+    /// View ▸ Panes: the focused pane's split, zoom, and the tree's sizes.
+    case splitRight
+    case splitDown
+    case zoomPane
+    case equaliseSizes
 
     /// Every command, in menu order.
     static let all: [Self] = [
         .newSession, .settings, .close, .toggleSidebar, .toggleFileTree,
         .pane(.files), .pane(.git), .pane(.outline), .pane(.context),
         .stop, .focusComposer, .nextSession, .previousSession,
+        .splitRight, .splitDown, .zoomPane, .equaliseSizes,
     ]
+
+    /// View ▸ Panes, in menu order.
+    static let paneCommands: [Self] = [.splitRight, .splitDown, .zoomPane, .equaliseSizes]
 
     /// The chat panes the Option-Command digits open, in digit order.
     static let panes: [ChatTopBarAction] = [.files, .git, .outline, .context]
@@ -47,6 +56,10 @@ enum KeyboardCommand: Hashable, Sendable {
         case .focusComposer: "focusComposer"
         case .nextSession: "nextSession"
         case .previousSession: "previousSession"
+        case .splitRight: "splitRight"
+        case .splitDown: "splitDown"
+        case .zoomPane: "zoomPane"
+        case .equaliseSizes: "equaliseSizes"
         }
     }
 
@@ -69,6 +82,10 @@ enum KeyboardCommand: Hashable, Sendable {
         case .focusComposer: String(localized: "Focus Composer")
         case .nextSession: String(localized: "Next Session")
         case .previousSession: String(localized: "Previous Session")
+        case .splitRight: String(localized: "Split Right")
+        case .splitDown: String(localized: "Split Down")
+        case .zoomPane: String(localized: "Zoom Pane")
+        case .equaliseSizes: String(localized: "Equalise Sizes")
         }
     }
 
@@ -86,6 +103,10 @@ enum KeyboardCommand: Hashable, Sendable {
         case .focusComposer: ("l", .command)
         case .nextSession: ("]", [.command, .shift])
         case .previousSession: ("[", [.command, .shift])
+        case .splitRight: ("d", .command)
+        case .splitDown: ("d", [.command, .shift])
+        case .zoomPane: ("\r", [.command, .shift])
+        case .equaliseSizes: ("=", [.control, .command])
         }
     }
 

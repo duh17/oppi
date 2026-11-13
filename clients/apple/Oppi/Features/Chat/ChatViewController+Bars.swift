@@ -400,7 +400,16 @@ final class ChatBarItems {
             image: UIImage(systemName: "slider.horizontal.3")
         ) { [weak self] _ in self?.chat?.customizeTopBar() }
         customize.accessibilityIdentifier = "chat.toolbar.menu.customize"
-        return UIMenu(children: [hidden, customize])
+        // Split Right and Split Down on a wide window: with one pane there is
+        // no grip yet, so this is where touch makes the first split.
+        let panes = UIDeferredMenuElement.uncached { [weak self] completion in
+            MainActor.assumeIsolated {
+                guard let chat = self?.chat, let host = PaneHostController.containing(chat) else { return completion([]) }
+                let items = host.splitItems(for: chat).map(\.element)
+                completion(items.isEmpty ? [] : [UIMenu(options: .displayInline, children: items)])
+            }
+        }
+        return UIMenu(children: [hidden, panes, customize])
     }
 
     /// The actions without a button (turned off, or crowded out of a narrow

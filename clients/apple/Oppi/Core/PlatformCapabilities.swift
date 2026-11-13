@@ -41,4 +41,9 @@ enum PlatformCapabilities {
     /// (`PaneWidthPolicy.fitsBeside`). nil where the system
     /// sizes the window: the iPhone, and iPad windowing keeps its own limits.
     static let minimumWindowSize: CGSize? = isMacCatalyst ? CGSize(width: 700, height: 500) : nil
+
+    /// The most pane leaves a window keeps live at once; more go to overflow
+    /// (`PanePresentation.resolve`). The iPad mini holds four within its
+    /// memory budget; on the Mac the window's width binds first.
+    static let livePaneLimit = isMacCatalyst ? 8 : 4
 }

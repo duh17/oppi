@@ -269,7 +269,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     /// Regular width puts these beside the chat;
     /// compact width presents them as sheets.
     func testOutlineSearchesAndClosesBothWays() {
-        launch()
+        launchWide()
         let outlineButton = app.buttons["chat.toolbar.outline"]
         XCTAssertTrue(outlineButton.waitUntilExists(timeout: 10), "Seeded timeline must make the outline available")
         outlineButton.tap()
@@ -448,7 +448,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     }
 
     func testContextOpensAndCloses() {
-        launch()
+        launchWide()
         app.buttons["chat.toolbar.context"].tap()
         let context = app.navigationBars["Context"]
         XCTAssertTrue(context.waitUntilExists(timeout: 5), "Context did not open")
@@ -844,8 +844,10 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// A surface placed as a panel (`placement.kind: "panel"`) has no drawer: its pill opens the
-    /// surface in its pane beside the chat on a wide window, and full screen on a narrow one, under
-    /// Oppi's bar with the surface's title and subtitle.
+    /// surface in its pane under Oppi's bar with the surface's title and subtitle. Where it goes
+    /// follows the fit rule, read from the window as the app reads it: beside the chat when both
+    /// minimums fit (iPad mini landscape), full over the chat with Close on a wide window that
+    /// cannot hold both (mini portrait), and full screen on a compact one.
     func testAPanelPlacedSurfaceOpensItsPaneFromThePill() throws {
         launch(environment: ["CHAT_ROUTES_SURFACE": "panel", "CHAT_ROUTES_REVIEW_COMMENT": "none"])
         let pill = app.descendants(matching: .any)["extension-strip-aboveEditor-pill-surface-jobs"]
@@ -857,9 +859,16 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         let drawer = app.descendants(matching: .any)["extension-strip-aboveEditor-drawer-surface-jobs"]
         XCTAssertFalse(drawer.exists, "A panel surface has no drawer")
         XCTAssertTrue(app.staticTexts["npm test · running"].waitUntilExists(timeout: 5), "The pane draws the surface")
-        let wide = app.windows.firstMatch.horizontalSizeClass == .regular
-        XCTAssertEqual(app.collectionViews["chat.timeline"].isHittable, wide, "Beside the chat when wide, over it when narrow")
-        attachScreenshot(wide ? "panel-surface-beside-chat" : "panel-surface-full-screen")
+        let window = app.windows.firstMatch
+        let wide = window.horizontalSizeClass == .regular
+        // The chat's 375 pt beside a panel's 390 pt and the divider.
+        let beside = wide && window.frame.width >= 375 + 1 + 390
+        let timeline = app.collectionViews["chat.timeline"]
+        XCTAssertTrue(
+            waitFor(timeline.isHittable == beside),
+            beside ? "Beside the chat when both fit" : "Over the chat when they do not (\(window.frame.width) pt)"
+        )
+        attachScreenshot(beside ? "panel-surface-beside-chat" : "panel-surface-full")
 
         if wide {
             app.buttons["extensionPanel.close"].tap()
@@ -1108,7 +1117,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     /// native Back leads to Git, and New Session closes the column before
     /// opening its chat on this chat's stack, after which Git reopens.
     func testGitPanelCommitPushesAChatAndShowsTheDiffPanel() {
-        launch()
+        launchWide()
         openGitPanel()
         tapCommitRow()
         let commit = app.navigationBars["Commit"]
@@ -1198,7 +1207,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     /// All changes lists every change, opens a file's review over itself, and
     /// closes by its own control and, as a sheet, by swipe-down.
     func testGitPanelScopesItsFilesAndOpensAReview() {
-        launch()
+        launchWide()
         openGitPanel()
         let panel = app.navigationBars["Git"]
         XCTAssertTrue(panel.exists, "The Git panel must be titled Git")
@@ -1354,7 +1363,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     /// not reach it). Compact width presents a modal; regular width opens the
     /// attached leaf, with the chat still beside it.
     func testTimelineCommitAndFileViewers() {
-        launch()
+        launchWide()
         XCTAssertTrue(
             app.descendants(matching: .any)["chat.user.path-pill.abc1234"].waitUntilExists(timeout: 10),
             "Seeded commit pill missing"
@@ -1577,6 +1586,23 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     /// The chat-routes bar is complete once Outline is on it: Outline shows only
     /// while the fixture timeline has rows, and it takes a slot before the ring,
     /// so a tap before it arrives can land on the wrong button.
+    /// A test that checks a panel beside the chat: on the iPad mini that is
+    /// landscape, since a panel is at least an iPhone wide and opens full in
+    /// portrait. Phones are unchanged.
+    private func launchWide(environment: [String: String] = [:]) {
+        let pad = UIDevice.current.userInterfaceIdiom == .pad
+        if pad {
+            XCUIDevice.shared.orientation = .landscapeLeft
+            addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
+        }
+        launch(environment: environment)
+        guard pad else { return }
+        // A fresh launch can come up in the orientation SpringBoard last had.
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let window = app.windows.firstMatch
+        XCTAssertTrue(waitFor(window.frame.width > window.frame.height), "The iPad turned to landscape")
+    }
+
     private func launch(environment: [String: String] = [:]) {
         launchScreen("chat-routes", environment: environment)
         XCTAssertTrue(app.buttons["chat.toolbar.context"].waitUntilExists(timeout: 15), "Chat routes harness did not appear")

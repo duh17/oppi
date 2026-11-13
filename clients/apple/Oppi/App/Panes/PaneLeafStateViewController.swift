@@ -27,6 +27,11 @@ final class PaneLeafStateViewController: UIViewController {
     private var lastStatus: PaneConnectionStatus?
     private var resolved = false
     private(set) var shownState: PaneLeafState?
+    /// A split leaf opens the content in itself (`PaneSplitScreens`); nil
+    /// opens it in the window's routed stack.
+    var onOpen: ((WorkspaceStackRouteElement) -> Void)?
+    /// A split leaf closes itself; nil steps the routed stack down.
+    var onClose: (() -> Void)?
 
     init(entry: PaneStackEntry, root: AppRootEnvironment) {
         self.entry = entry
@@ -120,7 +125,10 @@ final class PaneLeafStateViewController: UIViewController {
         resolved = true
         let entry = entry
         let navigation = root.navigation
-        Task { @MainActor in navigation.resolvePaneEntry(entry, with: element) }
+        let onOpen = onOpen
+        Task { @MainActor in
+            if let onOpen { onOpen(element) } else { navigation.resolvePaneEntry(entry, with: element) }
+        }
     }
 
     /// A session (or a session's file) the stores do not hold is asked of its
@@ -177,6 +185,7 @@ final class PaneLeafStateViewController: UIViewController {
     }
 
     private func closePane() {
+        if let onClose { return onClose() }
         root.navigation.closePaneEntry(entry)
     }
 

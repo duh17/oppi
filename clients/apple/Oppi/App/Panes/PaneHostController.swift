@@ -25,8 +25,13 @@ struct PaneCompanionWidths: Equatable {
 /// side-by-side maximum it slides over the primary, which keeps its width and
 /// is covered, up to the full window but a grab edge. A companion whose
 /// minimum does not fit beside the primary's opens full.
+///
+/// The tree's other leaves, the ones Split made, are stacks of their own laid
+/// out with the primary's cell by the fit rule (`PaneHostController+Tree`):
+/// the primary and its companion share that cell exactly as they share the
+/// window when it has no other leaf.
 final class PaneHostController: UIViewController {
-    enum Leaf: Equatable { case primary, companion }
+    enum Leaf: Equatable { case primary, companion, split(PaneID) }
 
     let primary: UIViewController
     /// The window's pane tree: the companion's share, zoom and focus live
@@ -35,7 +40,11 @@ final class PaneHostController: UIViewController {
     /// How long a parked companion's view stays in the hierarchy, hidden, so
     /// a quick return (a push and pop over its owner) does not rebuild it.
     let parkedViewLifetime: TimeInterval
-    var focusedLeaf: Leaf { companion != nil && panes.isCompanionFocused ? .companion : .primary }
+    var focusedLeaf: Leaf {
+        let focus = panes.tree.focus
+        if splitLeaves[focus] != nil { return .split(focus) }
+        return companion != nil && panes.isCompanionFocused ? .companion : .primary
+    }
 
     private struct Companion {
         let controller: UIViewController
@@ -54,7 +63,7 @@ final class PaneHostController: UIViewController {
     /// Paints over the part of the primary the companion has slid across past
     /// the side-by-side maximum, fading in until full leaves only the grab
     /// edge, so the primary reads as collapsing rather than squeezed.
-    private let cover = UIView()
+    let cover = UIView()
 
     /// The companion's drawn width, the one source of truth for layout: set
     /// directly during a drag, and through an animator for every open,
@@ -89,7 +98,9 @@ final class PaneHostController: UIViewController {
     /// The screens on either side that hold their heavy views while the
     /// divider moves or the window resizes, and settle once.
     private lazy var resizeHold = PaneResizeHold(
-        leaves: { [weak self] in [self?.primary, self?.companion?.controller] },
+        leaves: { [weak self] in
+            [self?.primary, self?.companion?.controller] + (self?.splitLeaves.values.map(\.controller) ?? [])
+        },
         layout: { [weak self] in self?.view.layoutIfNeeded() }
     )
 
@@ -99,6 +110,19 @@ final class PaneHostController: UIViewController {
     /// weakly by identity, so a new screen at a freed screen's address has
     /// not heard anything. A leaf's entry goes when the leaf leaves the host.
     private var reported: [ObjectIdentifier: (visibility: PaneVisibility, screens: NSHashTable<UIViewController>)] = [:]
+
+    // The tree's other cells (`PaneHostController+Tree`).
+    var splitLeaves: [PaneID: PaneSplitLeaf] = [:]
+    var splitDividers: [PaneSplitDividerView] = []
+    var grips: [PaneID: PaneGripView] = [:]
+    var splitDrag: PaneSplitDrag?
+    /// Where each cell sits after the last layout pass.
+    var cellPresentation: PanePresentation?
+    /// The primary's cell, which it shares with its companion; zero while
+    /// it is in overflow or behind another cell's zoom.
+    var routedCell: CGRect = .zero
+    /// The zone a drag over the panes would drop into (`+Drop`).
+    let dropHighlight = UIView()
 
     init(primary: UIViewController, panes: ScenePanes = ScenePanes(), parkedViewLifetime: TimeInterval = 10) {
         self.primary = primary
@@ -143,6 +167,7 @@ final class PaneHostController: UIViewController {
     /// screen-less presentation act there. A companion that covers the
     /// primary is the only leaf showing.
     var focusedLeafController: UIViewController {
+        if case .split(let id) = focusedLeaf, let leaf = splitLeaves[id] { return leaf.controller }
         let companionInFront = focusedLeaf == .companion || showsFull
         return companionInFront ? companion?.controller ?? primary : primary
     }
@@ -155,7 +180,9 @@ final class PaneHostController: UIViewController {
     /// The front screen of each leaf, the focused leaf's first.
     var leafScreens: [UIViewController] {
         let focused = focusedLeafController
-        let others = [primary, companion?.controller].compactMap { $0 }.filter { $0 !== focused }
+        let leaves: [UIViewController] = [primary, companion?.controller].compactMap { $0 }
+            + panes.splitLeaves.compactMap { splitLeaves[$0.id]?.controller }
+        let others = leaves.filter { $0 !== focused }
         return ([focused] + others).map(Self.frontScreen(of:))
     }
 
@@ -241,6 +268,7 @@ final class PaneHostController: UIViewController {
         divider.onExpandRequested = { [weak self] in self?.settle(.full, initialVelocityPointsPerSecond: 0) }
         divider.onRestoreRequested = { [weak self] in self?.restoreFromFull() }
         divider.onCloseRequested = { [weak self] in self?.companion?.owner?.dividerRequestedClose() }
+        installDropInteraction()
         for name in [UITextField.textDidBeginEditingNotification, UITextView.textDidBeginEditingNotification] {
             NotificationCenter.default.addObserver(
                 self, selector: #selector(inputBeganEditing(_:)), name: name, object: nil
@@ -252,21 +280,53 @@ final class PaneHostController: UIViewController {
         super.updateProperties()
         // Observation tracking re-runs this when the theme store changes.
         cover.backgroundColor = AppRootEnvironment.near(self)?.themeStore.backgroundColor ?? .systemBackground
+        // Reading the tree here re-runs this when a split, close, focus or
+        // weight changes it.
+        _ = panes.tree
+        syncSplitLeaves()
+        view.setNeedsLayout()
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        if lastBoundsWidth != view.bounds.width {
+        resolveCells()
+        // The primary's cell is the width it and its companion share: the
+        // window, or what the split leaves leave of it.
+        let cellWidth = routedCell.width
+        if cellWidth > 0, lastBoundsWidth != cellWidth {
             // Only a change: the first layout, as a companion opens, must
             // leave the open's spring to carry the width from zero.
             let changed = lastBoundsWidth != nil
-            lastBoundsWidth = view.bounds.width
+            lastBoundsWidth = cellWidth
             if changed {
                 boundsWidthChanged()
                 windowWidthChanged()
             }
         }
         layoutLeaves()
+        layoutSplitLeaves()
+    }
+
+    // MARK: Hold and settle for the tree's dividers
+
+    func holdForResize(beginningAt length: CGFloat) {
+        stopSettle()
+        resizeHold.dragBegan(at: length)
+    }
+
+    func resizeMoved(to length: CGFloat) {
+        resizeHold.dividerMoved(to: length) { [weak self] in self?.splitDrag != nil }
+        resizeHold.measureFrame {
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+        }
+    }
+
+    func resizeEnded() {
+        resizeHold.dragEnded()
+        resizeHold.finish()
+        resizeHold.takeVisit().map { Telemetry.record($0) }
+        updateVisibility()
     }
 
     /// A window resize (rotation, Split View, Stage Manager, a Mac window
@@ -507,7 +567,7 @@ final class PaneHostController: UIViewController {
             minWidth: widths.minimum,
             idealWidth: widths.ideal,
             maxWidth: widths.maximum,
-            window: view.bounds.width
+            window: routedCell.width > 0 ? routedCell.width : view.bounds.width
         )
     }
 
@@ -568,10 +628,14 @@ final class PaneHostController: UIViewController {
         if !isLiveResizing { updateVisibility() }
     }
 
+    /// Lays the primary and its companion out in the primary's cell.
     private func layoutLeaves() {
-        let bounds = view.bounds
-        guard let companion, let policy else {
-            primary.view.frame = bounds
+        let bounds = routedCell
+        let cellShown = bounds.width > 0
+        primary.view.isHidden = !cellShown
+        companion?.controller.view.isHidden = !cellShown
+        guard cellShown, let companion, let policy else {
+            if cellShown { primary.view.frame = bounds }
             for decoration in [cover, hairline, divider] as [UIView] { decoration.isHidden = true }
             primary.view.accessibilityElementsHidden = false
             return
@@ -581,12 +645,14 @@ final class PaneHostController: UIViewController {
         // primary, which keeps the width it had there instead of squeezing
         // (and reflowing every frame) on the way to full.
         let sideBySide = min(drawn, policy.maximum)
-        primary.view.frame = CGRect(x: 0, y: 0, width: bounds.width - sideBySide, height: bounds.height)
-        let companionFrame = CGRect(x: bounds.maxX - drawn, y: 0, width: drawn, height: bounds.height)
+        primary.view.frame = CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width - sideBySide, height: bounds.height)
+        let companionFrame = CGRect(x: bounds.maxX - drawn, y: bounds.minY, width: drawn, height: bounds.height)
         companion.controller.view.frame = companionFrame
         let line = 1 / max(traitCollection.displayScale, 1)
-        hairline.frame = CGRect(x: companionFrame.minX - line, y: 0, width: line, height: bounds.height)
-        cover.frame = CGRect(x: 0, y: 0, width: max(0, hairline.frame.minX), height: bounds.height)
+        hairline.frame = CGRect(x: companionFrame.minX - line, y: bounds.minY, width: line, height: bounds.height)
+        cover.frame = CGRect(
+            x: bounds.minX, y: bounds.minY, width: max(0, hairline.frame.minX - bounds.minX), height: bounds.height
+        )
         cover.alpha = policy.full > policy.maximum
             ? min(1, max(0, (drawn - policy.maximum) / (policy.full - policy.maximum)))
             : 0
@@ -594,11 +660,13 @@ final class PaneHostController: UIViewController {
         // window) it takes the whole grab edge, so a touch there drags the
         // companion rather than reaching the covered primary.
         let hitWidth = PaneDividerView.hitWidth
-        if companionFrame.minX <= hitWidth {
-            divider.frame = CGRect(x: 0, y: 0, width: companionFrame.minX + hitWidth / 2, height: bounds.height)
+        if companionFrame.minX - bounds.minX <= hitWidth {
+            divider.frame = CGRect(
+                x: bounds.minX, y: bounds.minY, width: companionFrame.minX - bounds.minX + hitWidth / 2, height: bounds.height
+            )
         } else {
-            let x = min(companionFrame.minX - hitWidth / 2, bounds.width - hitWidth)
-            divider.frame = CGRect(x: x, y: 0, width: hitWidth, height: bounds.height)
+            let x = min(companionFrame.minX - hitWidth / 2, bounds.maxX - hitWidth)
+            divider.frame = CGRect(x: x, y: bounds.minY, width: hitWidth, height: bounds.height)
         }
         cover.isHidden = false
         hairline.isHidden = drawn <= 0
@@ -615,6 +683,15 @@ final class PaneHostController: UIViewController {
 
     private func touched(at point: CGPoint) {
         guard !divider.frame.contains(point) || divider.isHidden else { return }
+        guard !splitDividers.contains(where: { $0.frame.contains(point) }) else { return }
+        if let (id, _) = splitLeaves.first(where: { !$0.value.controller.view.isHidden && $0.value.controller.view.frame.contains(point) }) {
+            // Hit testing must not lay the panes out (it moves the grip the
+            // touch is landing on); the next pass draws the new focus.
+            panes.focus(id)
+            view.setNeedsLayout()
+            updateVisibility()
+            return
+        }
         let inCompanion = companion.map { $0.controller.view.frame.contains(point) } ?? false
         focus(inCompanion ? .companion : .primary)
     }
@@ -626,7 +703,9 @@ final class PaneHostController: UIViewController {
     }
 
     private func focus(_ leaf: Leaf) {
+        if case .split(let id) = leaf { return focus(cell: id) }
         guard focusedLeaf != leaf, leaf == .primary || companion != nil else { return }
+        if case .split = focusedLeaf { panes.focus(panes.routedLeafID) }
         panes.focusCompanion(leaf == .companion)
         updateVisibility()
     }
@@ -637,6 +716,11 @@ final class PaneHostController: UIViewController {
     /// keyboard moves, so the leaves are settled when it does.
     @objc private func inputBeganEditing(_ notification: Notification) {
         guard let input = notification.object as? UIView, let window = view.window, input.window === window else { return }
+        if let (id, _) = splitLeaves.first(where: { input.isDescendant(of: $0.value.controller.view) }) {
+            applyKeyboardFollowing(firstResponderIn: nil)
+            focus(cell: id)
+            return
+        }
         let leaf: Leaf? = if let companion, input.isDescendant(of: companion.controller.view) {
             .companion
         } else if input.isDescendant(of: primary.view) {
@@ -658,11 +742,19 @@ final class PaneHostController: UIViewController {
     }
 
     /// Tells each leaf's screens what they can see now, once per change.
-    private func updateVisibility() {
+    func updateVisibility() {
+        let routedShown = routedCell.width > 0 || cellPresentation == nil
         let covered = companion != nil && showsFull
-        report(covered ? .covered : .visible(focused: focusedLeaf == .primary), to: primary)
+        report(
+            !routedShown ? .parked : covered ? .covered : .visible(focused: focusedLeaf == .primary),
+            to: primary
+        )
         if let companion {
-            report(.visible(focused: focusedLeaf == .companion), to: companion.controller)
+            report(routedShown ? .visible(focused: focusedLeaf == .companion) : .parked, to: companion.controller)
+        }
+        for (id, leaf) in splitLeaves {
+            let shown = cellPresentation?.frames[id] != nil
+            report(shown ? .visible(focused: focusedLeaf == .split(id)) : .parked, to: leaf.controller)
         }
     }
 

@@ -241,6 +241,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(makeLayout(), animated: false)
         collectionView.delegate = self
+        collectionView.dragDelegate = self
         collectionView.keyboardDismissMode = .interactive
         // Pull-to-refresh needs the bounce even when the rows fit on screen.
         collectionView.alwaysBounceVertical = true
@@ -1801,6 +1802,15 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     }
 
     func rowPath(at indexPath: IndexPath) -> String? { dataSource?.itemIdentifier(for: indexPath)?.path }
+
+    /// A workspace row as a pane entry, for a drag (`+Drag`); nil on the host.
+    func paneEntry(forRowPath path: String) -> PaneStackEntry? {
+        guard case .workspace(let workspaceId, let worktreeId) = scope, let serverId else { return nil }
+        let route: PaneRoute = path.hasSuffix("/")
+            ? .files(workspace: workspaceId, path: String(path.dropLast()))
+            : .file(.workspace(id: workspaceId, worktree: worktreeId), path: path, line: nil)
+        return PaneStackEntry(serverId: serverId, route: route)
+    }
 
     /// The entry at `path` for its row menu (`FileBrowserViewController+RowMenu.swift`):
     /// its file (nil for a folder), its cell, and what a tap on it does.

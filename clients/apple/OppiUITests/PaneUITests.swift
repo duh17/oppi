@@ -72,10 +72,6 @@ final class PaneUITests: XCTestCase, PreviewUITestCase {
     /// width, which follows the drag (A1).
     func testDividerDragsResizesExpandsAndCloses() throws {
         try launchChatRoutes()
-        // The companion's width is largest, and most natural to drag, in
-        // landscape, where the iPad shows it beside the chat.
-        XCUIDevice.shared.orientation = .landscapeLeft
-        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
         app.buttons["chat.toolbar.files"].tap()
         let files = app.navigationBars["Files"]
         XCTAssertTrue(files.waitUntilExists(timeout: 5), "Files panel did not open")
@@ -187,8 +183,6 @@ final class PaneUITests: XCTestCase, PreviewUITestCase {
     /// again. The window is restored even when a step fails: SpringBoard
     /// would open every later run in the small window.
     func testDraggingTheWindowCornerNarrowsThePanesAndFullSizeRestoresThem() throws {
-        XCUIDevice.shared.orientation = .landscapeLeft
-        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
         try launchPanes()
         openGitPanel()
         XCTAssertTrue(divider.waitUntilExists(timeout: 5), "The Git panel did not open beside the chat")
@@ -247,7 +241,6 @@ final class PaneUITests: XCTestCase, PreviewUITestCase {
     func testLongTitleTruncatesInsideItsPane() throws {
         let title = String(repeating: "A long session title that keeps going ", count: 6).prefix(200)
         try launchChatRoutes(environment: ["CHAT_ROUTES_SESSION_TITLE": String(title)])
-        XCUIDevice.shared.orientation = .portrait
         app.buttons["chat.toolbar.files"].tap()
         XCTAssertTrue(app.navigationBars["Files"].waitUntilExists(timeout: 5), "Files panel did not open")
         XCTAssertTrue(divider.waitUntilExists(timeout: 5))
@@ -290,7 +283,16 @@ final class PaneUITests: XCTestCase, PreviewUITestCase {
         )
     }
 
+    /// A chat's panel is at least an iPhone wide, so the iPad mini holds it
+    /// beside the chat only in landscape; in portrait it opens full.
+    private func turnLandscape() {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
+    }
+
     private func launchPanes() throws {
+        turnLandscape()
         launchPreview(screen: "panes")
         try skipUnlessWide()
     }
@@ -298,6 +300,7 @@ final class PaneUITests: XCTestCase, PreviewUITestCase {
     /// The chat-routes bar is complete once Outline is on it (see
     /// `ChatRoutesUITests.launch`).
     private func launchChatRoutes(environment: [String: String] = [:]) throws {
+        turnLandscape()
         launchPreview(screen: "chat-routes", environment: environment, ready: nil)
         XCTAssertTrue(app.buttons["chat.toolbar.context"].waitUntilExists(timeout: 15), "Chat routes harness did not appear")
         XCTAssertTrue(app.buttons["chat.toolbar.outline"].waitUntilExists(timeout: 10), "The fixture timeline did not load")
