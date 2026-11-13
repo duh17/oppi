@@ -76,6 +76,7 @@ final class NativeMarkdownImageView: UIView {
     private struct RequestIdentity: Equatable {
         let url: URL
         let displayWidth: CGFloat?
+        let displaySize: MarkdownEmbedSize?
         let preparationScope: ChatTimelinePreparationRunway.Scope?
         let preparationItemID: String?
         let preparationTarget: ChatTimelinePreparationRunway.ImageTarget?
@@ -85,6 +86,14 @@ final class NativeMarkdownImageView: UIView {
     private var currentRequestIdentity: RequestIdentity?
     private var currentAltText = ""
     private var preferredDisplayWidth: CGFloat?
+    /// The size the Markdown asks for (`![[pic.png|300]]`): the picture draws
+    /// no larger, from the leading edge. Nil fills the width.
+    private var displaySize: MarkdownEmbedSize?
+    /// The box the picture and an SVG draw in: the full width, or a sized
+    /// width from the leading edge.
+    private let mediaGuide = UILayoutGuide()
+    private lazy var mediaFullWidth = mediaGuide.trailingAnchor.constraint(equalTo: trailingAnchor)
+    private lazy var mediaSizedWidth = mediaGuide.widthAnchor.constraint(equalToConstant: 0)
     private var preparesForDisplay = true
     private var pendingRemoteLoad: PendingImageLoad?
     private var loadTask: Task<Void, Never>?
@@ -208,6 +217,7 @@ final class NativeMarkdownImageView: UIView {
         remotePromptStack.addArrangedSubview(remotePromptLabel)
         remotePromptStack.addArrangedSubview(remoteLoadButton)
 
+        addLayoutGuide(mediaGuide)
         addSubview(imageView)
         addSubview(spinner)
         addSubview(altLabel)
@@ -226,6 +236,11 @@ final class NativeMarkdownImageView: UIView {
 
         NSLayoutConstraint.activate([
             hc,
+            mediaFullWidth,
+            mediaGuide.topAnchor.constraint(equalTo: topAnchor),
+            mediaGuide.leadingAnchor.constraint(equalTo: leadingAnchor),
+            mediaGuide.bottomAnchor.constraint(equalTo: bottomAnchor),
+            mediaGuide.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
 
             // Loading state: spinner + alt
             spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -235,11 +250,11 @@ final class NativeMarkdownImageView: UIView {
             altLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             altLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
 
-            // Image view fills available width
-            imageView.topAnchor.constraint(equalTo: topAnchor),
-            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // Image view fills the media box
+            imageView.topAnchor.constraint(equalTo: mediaGuide.topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: mediaGuide.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: mediaGuide.trailingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: mediaGuide.bottomAnchor),
 
             // Error label centered
             errorLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -286,6 +301,7 @@ final class NativeMarkdownImageView: UIView {
         fetchWorkspaceFile: FetchWorkspaceFile?,
         fetchSessionFile: FetchSessionFile?,
         fetchHostFile: FetchHostFile? = nil,
+        displaySize: MarkdownEmbedSize? = nil,
         renderingMode: ContentRenderingMode = .live,
         preferredDisplayWidth: CGFloat? = nil,
         preparesForDisplay: Bool = true,
@@ -298,6 +314,7 @@ final class NativeMarkdownImageView: UIView {
         let identity = RequestIdentity(
             url: url,
             displayWidth: canonicalWidth,
+            displaySize: displaySize,
             preparationScope: preparationContext?.scope,
             preparationItemID: preparationContext?.itemID,
             preparationTarget: preparationContext?.target
@@ -350,6 +367,8 @@ final class NativeMarkdownImageView: UIView {
             currentRequestIdentity = identity
             currentURL = url
             self.preferredDisplayWidth = canonicalWidth
+            self.displaySize = displaySize
+            setMediaWidth(nil)
             self.preparesForDisplay = preparesForDisplay
             currentPreparationContext = preparationContext
             usesCanonicalLoadingForCurrentRequest = false
@@ -820,7 +839,30 @@ final class NativeMarkdownImageView: UIView {
             surface: .inlineProse,
             screenHeight: window?.bounds.height
         )
-        setDisplayHeight(max(displayHeight, Self.loadingPlaceholderHeight))
+        guard let displaySize else {
+            setMediaWidth(nil)
+            setDisplayHeight(max(displayHeight, Self.loadingPlaceholderHeight))
+            return
+        }
+        // A sized picture keeps its own proportions, inside the asked-for box,
+        // the width there is, and the height a full-width one may take.
+        var width = min(displayWidth, CGFloat(displaySize.width))
+        if let height = displaySize.height { width = min(width, CGFloat(height) / heightToWidthRatio) }
+        let maximumHeight = min(displayHeight, displayWidth * heightToWidthRatio)
+        width = max(1, min(width, maximumHeight / heightToWidthRatio))
+        setMediaWidth(width)
+        setDisplayHeight(width * heightToWidthRatio)
+    }
+
+    /// Draws the picture `width` points wide from the leading edge, or across
+    /// the full width when nil.
+    private func setMediaWidth(_ width: CGFloat?) {
+        mediaSizedWidth.constant = width ?? 0
+        if width == nil { mediaSizedWidth.isActive = false }
+        mediaFullWidth.isActive = width == nil
+        mediaSizedWidth.isActive = width != nil
+        imageView.layer.cornerRadius = width == nil ? 0 : layer.cornerRadius
+        imageView.clipsToBounds = width != nil
     }
 
     private func setDisplayHeight(_ height: CGFloat) {
@@ -1129,10 +1171,10 @@ final class NativeMarkdownImageView: UIView {
 
         addSubview(overlay)
         NSLayoutConstraint.activate([
-            overlay.topAnchor.constraint(equalTo: topAnchor),
-            overlay.leadingAnchor.constraint(equalTo: leadingAnchor),
-            overlay.trailingAnchor.constraint(equalTo: trailingAnchor),
-            overlay.bottomAnchor.constraint(equalTo: bottomAnchor),
+            overlay.topAnchor.constraint(equalTo: mediaGuide.topAnchor),
+            overlay.leadingAnchor.constraint(equalTo: mediaGuide.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: mediaGuide.trailingAnchor),
+            overlay.bottomAnchor.constraint(equalTo: mediaGuide.bottomAnchor),
         ])
         svgTapOverlay = overlay
         return overlay
@@ -1160,10 +1202,10 @@ final class NativeMarkdownImageView: UIView {
 
         addSubview(webView)
         NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: topAnchor),
-            webView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            webView.topAnchor.constraint(equalTo: mediaGuide.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: mediaGuide.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: mediaGuide.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: mediaGuide.bottomAnchor),
         ])
 
         svgWebView = webView

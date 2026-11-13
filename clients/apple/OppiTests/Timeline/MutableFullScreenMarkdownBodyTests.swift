@@ -945,7 +945,7 @@ struct MutableFullScreenMarkdownBodyTests {
 
         let reader = try #require(timelineFirstView(ofType: NativeFullScreenMarkdownBody.self, in: wrapper))
         let imageURL = try #require(reader.debugRenderedSegmentsForTesting.compactMap { segment -> URL? in
-            guard case .image(_, let url) = segment else { return nil }
+            guard case .image(_, let url, _) = segment else { return nil }
             return url
         }.first)
         #expect(imageURL.path.contains("/workspaces/workspace-b/"))
@@ -1232,7 +1232,7 @@ struct MutableFullScreenMarkdownBodyTests {
         }
         #expect(rendered)
         let imageURL = try #require(body.debugRenderedSegmentsForTesting.compactMap { segment -> URL? in
-            guard case .image(_, let url) = segment else { return nil }
+            guard case .image(_, let url, _) = segment else { return nil }
             return url
         }.first)
         let parsed = try #require(WorkspaceFileURL.parse(imageURL))

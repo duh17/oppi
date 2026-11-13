@@ -51,7 +51,8 @@ indirect enum MarkdownInline: Equatable, Sendable {
     case strong([Self])
     case code(String)
     case link(children: [Self], destination: String?)
-    case image(alt: String, source: String?)
+    /// `size` is Obsidian's `![[pic.png|300]]` or `![alt|300x200](pic.png)`.
+    case image(alt: String, source: String?, size: MarkdownEmbedSize? = nil)
     /// Oppi-native `![[video-file]]` / `![](video-file)` embed. Produced by the
     /// wiki-link rewriter after origin and file-type checks succeed.
     case videoEmbed(MarkdownVideoEmbed)
@@ -82,6 +83,48 @@ struct MarkdownMath: Equatable, Sendable {
     let isDisplay: Bool
 }
 
+/// The display size an embed asks for, in points, from the last `|` piece of
+/// a wiki embed's label or an image's alt text (Obsidian Help, "Embed files"):
+/// `300` is a width, and the height follows the picture; `300x200` is a box
+/// the picture fits inside.
+struct MarkdownEmbedSize: Hashable, Sendable {
+    let width: Int
+    let height: Int?
+
+    /// `300` or `300x200`, nothing else: no units, no zero, no spaces inside.
+    init?(_ text: some StringProtocol) {
+        let parts = Substring(text).split(separator: "x", maxSplits: 1, omittingEmptySubsequences: false)
+        guard let width = Self.dimension(parts[0]) else { return nil }
+        if parts.count == 2 {
+            guard let height = Self.dimension(parts[1]) else { return nil }
+            self.height = height
+        } else {
+            height = nil
+        }
+        self.width = width
+    }
+
+    /// Splits a trailing size off a label: `"300"` is a size with no label,
+    /// `"Chart|300"` a label and a size, anything else a label alone.
+    static func split(label: String) -> (label: String, size: Self?) {
+        if let size = Self(label.trimmingCharacters(in: .whitespaces)) { return ("", size) }
+        guard let pipe = label.lastIndex(of: "|"),
+              let size = Self(label[label.index(after: pipe)...].trimmingCharacters(in: .whitespaces)) else {
+            return (label, nil)
+        }
+        return (String(label[..<pipe]).trimmingCharacters(in: .whitespaces), size)
+    }
+
+    /// The Markdown that writes this size: `300` or `300x200`.
+    var markup: String { height.map { "\(width)x\($0)" } ?? "\(width)" }
+
+    private static func dimension(_ digits: Substring) -> Int? {
+        guard (1 ... 5).contains(digits.utf8.count), digits.utf8.allSatisfy({ $0 >= 0x30 && $0 <= 0x39 }),
+              let value = Int(digits), value > 0 else { return nil }
+        return value
+    }
+}
+
 /// Extract plain text from inline nodes, stripping all formatting.
 func plainText(from inlines: [MarkdownInline]) -> String {
     // Fast path: single .text inline (most common for plain table cells).
@@ -93,7 +136,7 @@ func plainText(from inlines: [MarkdownInline]) -> String {
         case .strong(let children): return plainText(from: children)
         case .code(let s): return s
         case .link(let children, _): return plainText(from: children)
-        case .image(let alt, _): return alt
+        case .image(let alt, _, _): return alt
         case .videoEmbed(let embed): return embed.displayLabel
         case .audioEmbed(let embed): return embed.displayLabel
         case .usdzEmbed(let embed): return embed.displayLabel

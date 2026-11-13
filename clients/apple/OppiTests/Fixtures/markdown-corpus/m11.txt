@@ -1,4 +1,5 @@
 m11 abs value in table cell
+note: the row splits at the bare pipes, as in GitHub, Obsidian and comrak; write \| inside a formula in a table (n11)
 @@@@ source
 | Name | Formula |
 |---|---|

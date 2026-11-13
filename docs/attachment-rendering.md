@@ -153,7 +153,11 @@ Embedded images use the same origin-first decision as video and audio. Public HT
 | `![x](doc.pdf)`, `![[readme.md]]` | File link |
 | `![x](https://example.com/a.usdz)` | Fails closed: not a remote image and not a USDZ embed |
 
-Image-only paragraphs become standalone image views, and mixed paragraphs split into text, image, and text segments. Raster images are downsampled. SVG uses the client's SVG path. Markdown image syntax never resolves stored tool attachments.
+Image-only paragraphs become standalone image views, and mixed paragraphs split into text, image, and text segments, also inside lists and block quotes. Raster images are downsampled. SVG uses the client's SVG path. Markdown image syntax never resolves stored tool attachments.
+
+A size after the last `|` works as in Obsidian: `![[a.png|300]]` or `![300](a.png)` draws the image at most 300 points wide with its own proportions, and `![[a.png|Chart|300x200]]` or `![Chart|300x200](a.png)` fits it inside a 300 by 200 box. The image never grows past the message width. Anything else after the `|` is the label.
+
+A table cell or a heading draws as text, so an embed there is a file link with the file's icon. Tapping it opens the image, video, audio, or model in its viewer.
 
 ### Markdown inline video
 

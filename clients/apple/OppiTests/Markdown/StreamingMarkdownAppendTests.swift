@@ -412,7 +412,7 @@ struct StreamingMarkdownAppendTests {
                 return "table:\(headers.count)x\(rows.count)"
             case .thematicBreak:
                 return "break"
-            case .image(let alt, _):
+            case .image(let alt, _, _):
                 return "image:\(alt)"
             case .mermaidDiagram(let code):
                 return "mermaid:\(code)"

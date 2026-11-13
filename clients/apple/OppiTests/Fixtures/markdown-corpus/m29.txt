@@ -1,5 +1,4 @@
 m29 embed in table (audio/video/image)
-known-wrong: embeds in table cells draw as a link and [alt]
 @@@@ source
 | Clip | Pic |
 |---|---|
@@ -7,8 +6,8 @@ known-wrong: embeds in table cells draw as a link and [alt]
 @@@@ tree
 TABLE
   hdr: T(Clip) ‖ T(Pic)
-  row: VIDEO(clips/a.mp4) ‖ IMG(alt→img/p.png)
+  row: LINK[T(clips/a.mp4)→oppi-resource-reference://resolve?target=clips/a.mp4&workspaceId=ws&fileCandidate=clips/a.mp4&sourceServerId=srv&sourceSessionId=s1&label=clips/a.mp4] ‖ LINK[T(alt)→oppi-resource-reference://resolve?target=img/p.png&workspaceId=ws&fileCandidate=img/p.png&sourceServerId=srv&sourceSessionId=s1&label=alt]
 @@@@ render
 TABLE
   hdr: <b>Clip</b> ‖ <b>Pic</b>
-  row: <a>clips/a.mp4</a> ‖ [alt]
+  row: ◆ <a>clips/a.mp4</a> ‖ ◆ <a>alt</a>

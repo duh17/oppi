@@ -84,7 +84,7 @@ struct MarkdownInlineUSDZTests {
             return true
         })
         let imageURLs = segments.compactMap { segment -> URL? in
-            guard case .image(_, let url) = segment else { return nil }
+            guard case .image(_, let url, _) = segment else { return nil }
             return url
         }
         #expect(imageURLs.isEmpty)

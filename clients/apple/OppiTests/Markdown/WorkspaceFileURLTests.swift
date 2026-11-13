@@ -171,7 +171,7 @@ struct FlatSegmentImageWorktreeIdentityTests {
             worktreeId: "wt_feature"
         )
         let urls = segments.compactMap { segment -> URL? in
-            if case .image(_, let url) = segment { return url }
+            if case .image(_, let url, _) = segment { return url }
             return nil
         }
         #expect(urls.count == 3)
@@ -183,7 +183,7 @@ struct FlatSegmentImageWorktreeIdentityTests {
 
     private func imageURL(from segments: [FlatSegment]) -> URL? {
         for segment in segments {
-            if case .image(_, let url) = segment {
+            if case .image(_, let url, _) = segment {
                 return url
             }
         }

@@ -111,7 +111,7 @@ enum MarkdownInlineRenderer {
                 link.url = destination.flatMap(URL.init(string:)).flatMap { $0.scheme == nil ? nil : $0 }
                 link.underline = link.url.map { !ResourceReferenceURL.isReference($0) } ?? true
                 append(children, link)
-            case .image(let alt, _):
+            case .image(let alt, _, _):
                 let trimmed = alt.trimmingCharacters(in: .whitespacesAndNewlines)
                 appendText(trimmed.isEmpty ? "[image]" : "[\(trimmed)]", context, color: style.mutedColor)
             case .videoEmbed(let embed):

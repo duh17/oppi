@@ -1590,7 +1590,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             canonicalWidth: canonicalWidth
         ) else { return }
         let waitsForPreparedInternalGeometry: Bool
-        if case .image(_, let url) = renderedSegments[item] {
+        if case .image(_, let url, _) = renderedSegments[item] {
             waitsForPreparedInternalGeometry = RemoteMarkdownImagePolicy.decision(for: url)
                 == .internalImageURL
                 && heightLedger.finalHeight(for: id, canonicalWidth: canonicalWidth) == nil
@@ -1756,7 +1756,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         guard renderedSegments.indices.contains(item),
               renderedSegmentIDs.indices.contains(item),
               let canonicalWidth = preparedCanonicalWidth,
-              case .image(_, let url) = renderedSegments[item],
+              case .image(_, let url, _) = renderedSegments[item],
               RemoteMarkdownImagePolicy.decision(for: url) == .internalImageURL else {
             return false
         }

@@ -1,11 +1,17 @@
 import cmark_gfm
 import cmark_gfm_extensions
-/// Puts back what the wiki-link pre-pass hid from cmark's table splitter.
+/// Puts back the wiki-link bodies the pre-pass hid from cmark.
 private struct CMarkRestoration {
     let wiki: MarkdownWikiLinkRewriter.Restoration
+    /// Inside a table cell, where GFM turns `\|` into `|`: hidden bodies get the same.
+    var inTableCell = false
 
     func restore(_ text: String) -> String {
-        wiki.restore(text)
+        wiki.restore(text, unescapingPipes: inTableCell)
+    }
+
+    func restore(_ math: MarkdownMath) -> MarkdownMath {
+        MarkdownMath(latex: restore(math.latex), source: restore(math.source), isDisplay: math.isDisplay)
     }
 }
 
@@ -229,7 +235,7 @@ private func convertCMarkBlock(
     let nodeType = cmark_node_get_type(node)
 
     if let (math, isClosed) = MarkdownMathExtension.blockMath(node) {
-        return .math(math, isClosed: isClosed)
+        return .math(restoration.restore(math), isClosed: isClosed)
     }
 
     switch nodeType {
@@ -395,8 +401,10 @@ private func convertCMarkTable(
     while let row = rowNode {
         var cells: [[MarkdownInline]] = []
         var cellNode = cmark_node_first_child(row)
+        var cellRestoration = restoration
+        cellRestoration.inTableCell = true
         while let cell = cellNode {
-            cells.append(convertCMarkInlines(cell, restoration: restoration))
+            cells.append(convertCMarkInlines(cell, restoration: cellRestoration))
             cellNode = cmark_node_next(cell)
         }
         if isHeader {
@@ -498,7 +506,7 @@ private func convertCMarkInline(
 
     default:
         if let math = MarkdownMathExtension.inlineMath(node) {
-            return .math(math)
+            return .math(restoration.restore(math))
         }
         // Check for strikethrough extension.
         if let typeStr = cmark_node_get_type_string(node) {

@@ -136,8 +136,9 @@ enum MarkdownBlockSerializer {
                 return "[\(text)](<\(bracketed)>)"
             }
             return text
-        case .image(let alt, let source):
-            return "![\(alt)](\(source ?? ""))"
+        case .image(let alt, let source, let size):
+            let sizedAlt = size.map { alt.isEmpty ? $0.markup : "\(alt)|\($0.markup)" } ?? alt
+            return "![\(sizedAlt)](\(source ?? ""))"
         case .videoEmbed(let embed):
             if let label = embed.reference.visibleLabel, label != embed.reference.target {
                 return "![[\(embed.reference.target)|\(label)]]"
@@ -180,7 +181,9 @@ enum MarkdownBlockSerializer {
     ///   support reads `\]` as a display-math delimiter and shows it.
     /// - Math goes out untouched: `\(…\)`, `\[…\]`, `$…$` and `$$…$$` are
     ///   Org's LaTeX fragments and the reader's math syntax alike, and an
-    ///   escape inside one would change the TeX.
+    ///   escape inside one would change the TeX. What counts as math is the
+    ///   parser's own rule (`MathDelimiterRules`), so `$5*2 or (2*$3)`, which
+    ///   the parser reads as prose, has its stars escaped like other prose.
     ///
     /// Backticks are left alone: Org has no code-span syntax of its own, and a
     /// Markdown code span is worth keeping in Org prose.
@@ -235,35 +238,24 @@ enum MarkdownBlockSerializer {
         }
     }
 
-    /// The end of the math fragment starting at `index` (`\(…\)`, `\[…\]`,
-    /// `$$…$$`, `$…$`), or nil when none starts there or it never closes. A
-    /// single `$` pair needs non-space text just inside both signs, as Org and
-    /// TeX require, so prose such as "$5 and $10" is not read as math.
+    /// The end of the math fragment starting at `index`, or nil when none
+    /// starts there. `$…$`, `$$…$$` and `\(…\)` follow the parser's rules, so
+    /// what goes out unescaped here is exactly what parses back as math. `\[…\]`
+    /// inside a line is not math to the parser; it stays as Org wrote it.
     private static func mathEnd(_ bytes: [UInt8], at index: Int) -> Int? {
-        func find(_ closer: [UInt8], from start: Int) -> Int? {
-            var cursor = start
-            while cursor + closer.count <= bytes.count {
-                if bytes[cursor] == closer[0], bytes[cursor..<(cursor + closer.count)].elementsEqual(closer) {
-                    return cursor
-                }
-                cursor += 1
-            }
-            return nil
-        }
-        func isSpace(_ byte: UInt8) -> Bool { byte == 0x20 || byte == 0x09 }
-
         let next = index + 1 < bytes.count ? bytes[index + 1] : 0
         switch bytes[index] {
         case 0x5C where next == 0x28: // \(
-            return find([0x5C, 0x29], from: index + 2).map { $0 + 2 }
+            return bytes.withUnsafeBufferPointer { MathDelimiterRules.parenMath(in: $0, open: index + 1)?.end }
         case 0x5C where next == 0x5B: // \[
-            return find([0x5C, 0x5D], from: index + 2).map { $0 + 2 }
-        case 0x24 where next == 0x24: // $$
-            return find([0x24, 0x24], from: index + 2).map { $0 + 2 }
-        case 0x24: // $
-            guard next != 0, !isSpace(next), let close = find([0x24], from: index + 2),
-                  !isSpace(bytes[close - 1]) else { return nil }
-            return close + 1
+            var cursor = index + 2
+            while cursor + 1 < bytes.count {
+                if bytes[cursor] == 0x5C, bytes[cursor + 1] == 0x5D { return cursor + 2 }
+                cursor += 1
+            }
+            return nil
+        case 0x24: // $ or $$
+            return bytes.withUnsafeBufferPointer { MathDelimiterRules.dollarMath(in: $0, open: index)?.end }
         default:
             return nil
         }

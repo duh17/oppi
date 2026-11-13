@@ -1,10 +1,9 @@
 m30 wiki link shadowed by reference definition
-known-wrong: a reference definition shadows the wiki link
 @@@@ source
 See [[foo]] here.
 
 [foo]: https://example.com
 @@@@ tree
-P: T(See [)LINK[T(foo)→https://example.com]T(] here.)
+P: T(See )LINK[T(foo)→oppi-resource-reference://resolve?target=foo&workspaceId=ws&fileCandidate=foo.md&sourceServerId=srv&sourceSessionId=s1&label=foo]T( here.)
 @@@@ render
-TEXT: See [<a>foo</a>] here.
+TEXT: See <a>foo</a> here.

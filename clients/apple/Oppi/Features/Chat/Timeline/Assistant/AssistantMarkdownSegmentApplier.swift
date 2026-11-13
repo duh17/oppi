@@ -692,7 +692,7 @@ final class AssistantMarkdownSegmentApplier {
         case .thematicBreak:
             stackView.addArrangedSubview(makeThematicBreak(palette: palette))
 
-        case .image(let alt, let url):
+        case .image(let alt, let url, let size):
             let imageView = NativeMarkdownImageView()
             imageView.onDisplayHeightChange = onImageDisplayHeightChange
             imageView.onPreparedGeometry = onImagePreparedGeometry
@@ -702,6 +702,7 @@ final class AssistantMarkdownSegmentApplier {
                 fetchWorkspaceFile: config.resourceAccess.fetchWorkspaceFile,
                 fetchSessionFile: config.resourceAccess.fetchSessionFile,
                 fetchHostFile: config.resourceAccess.fetchHostFile,
+                displaySize: size,
                 renderingMode: config.renderingMode,
                 preferredDisplayWidth: preparationWidth,
                 preparesForDisplay: preparesImagesForDisplay,
@@ -1065,7 +1066,7 @@ final class AssistantMarkdownSegmentApplier {
             case .thematicBreak:
                 break
 
-            case .image(let alt, let url):
+            case .image(let alt, let url, let size):
                 // Image views manage their own load lifecycle — nothing to diff in-place.
                 if let imageView = imageViews[index] {
                     imageView.onDisplayHeightChange = onImageDisplayHeightChange
@@ -1076,6 +1077,7 @@ final class AssistantMarkdownSegmentApplier {
                         fetchWorkspaceFile: config.resourceAccess.fetchWorkspaceFile,
                         fetchSessionFile: config.resourceAccess.fetchSessionFile,
                         fetchHostFile: config.resourceAccess.fetchHostFile,
+                        displaySize: size,
                         renderingMode: config.renderingMode,
                         preferredDisplayWidth: preparationWidth,
                         preparesForDisplay: preparesImagesForDisplay,
@@ -1639,7 +1641,7 @@ private enum SegmentSignature: Equatable {
     case codeBlock
     case table
     case thematicBreak
-    case image(url: URL)
+    case image(url: URL, size: MarkdownEmbedSize?)
     case video(reference: ResourceReference)
     case audio(reference: ResourceReference)
     case usdz(reference: ResourceReference)
@@ -1667,8 +1669,8 @@ private enum SegmentSignature: Equatable {
             self = .table
         case .thematicBreak:
             self = .thematicBreak
-        case .image(_, let url):
-            self = .image(url: url)
+        case .image(_, let url, let size):
+            self = .image(url: url, size: size)
         case .video(let embed):
             self = .video(reference: embed.reference)
         case .audio(let embed):

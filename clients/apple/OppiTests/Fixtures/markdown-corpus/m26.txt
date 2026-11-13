@@ -1,8 +1,7 @@
 m26 wiki link with underscores/stars
-known-wrong: emphasis wins inside [[*draft*]]
 @@@@ source
 See [[my_notes_file]] and [[*draft*]] and [[a__b__c.md]].
 @@@@ tree
-P: T(See )LINK[T(my_notes_file)→oppi-resource-reference://resolve?target=my_notes_file&workspaceId=ws&fileCandidate=my_notes_file.md&sourceServerId=srv&sourceSessionId=s1&label=my_notes_file]T( and )T([[)EM[T(draft)]T(]] and )LINK[T(a__b__c.md)→oppi-resource-reference://resolve?target=a__b__c.md&workspaceId=ws&fileCandidate=a__b__c.md&sourceServerId=srv&sourceSessionId=s1&label=a__b__c.md]T(.)
+P: T(See )LINK[T(my_notes_file)→oppi-resource-reference://resolve?target=my_notes_file&workspaceId=ws&fileCandidate=my_notes_file.md&sourceServerId=srv&sourceSessionId=s1&label=my_notes_file]T( and )LINK[T(*draft*)→oppi-resource-reference://resolve?target=*draft*&workspaceId=ws&fileCandidate=*draft*.md&sourceServerId=srv&sourceSessionId=s1&label=*draft*]T( and )LINK[T(a__b__c.md)→oppi-resource-reference://resolve?target=a__b__c.md&workspaceId=ws&fileCandidate=a__b__c.md&sourceServerId=srv&sourceSessionId=s1&label=a__b__c.md]T(.)
 @@@@ render
-TEXT: See <a>my_notes_file</a> and [[<i>draft</i>]] and <a>a__b__c.md</a>.
+TEXT: See <a>my_notes_file</a> and <a>*draft*</a> and <a>a__b__c.md</a>.

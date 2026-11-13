@@ -369,7 +369,7 @@ struct CommonMarkTests {
             Issue.record("Expected paragraph")
             return
         }
-        guard case .image(let alt, let source) = inlines.first else {
+        guard case .image(let alt, let source, _) = inlines.first else {
             Issue.record("Expected image")
             return
         }

@@ -497,13 +497,13 @@ final class ChatTimelinePreparationRunway {
     }
 
     private static func imageURLs(in blocks: [MarkdownBlock], key: Key) -> [URL] {
-        // FlatSegment promotes only top-level paragraph images to native image
-        // views. Matching that boundary avoids fetching images that will remain
-        // fallback text inside headings, lists, quotes, or tables.
+        // Only top-level paragraph images are prefetched. Images in lists and
+        // quotes load when their view is shown; images in headings and tables
+        // are links and never load.
         let sources = blocks.flatMap { block -> [String] in
             guard case .paragraph(let inlines) = block else { return [] }
             return inlines.compactMap { inline in
-                guard case .image(_, let source) = inline else { return nil }
+                guard case .image(_, let source, _) = inline else { return nil }
                 return source
             }
         }

@@ -17,7 +17,7 @@ Assistant messages link to files with wiki links or standard Markdown links. A t
 [Contributing](CONTRIBUTING.md)
 ```
 
-**Workspace links.** Oppi keeps an explicit extension and adds `.md` to an extensionless wiki target. `./` and `../` resolve against the source Markdown file's directory when known; otherwise paths are relative to the workspace root. Backslashes become `/`. Query strings stay literal text. A link to the current session does nothing.
+**Workspace links.** Oppi keeps an explicit extension and adds `.md` to an extensionless wiki target. `./` and `../` resolve against the source Markdown file's directory when known; otherwise paths are relative to the workspace root. Backslashes become `/`. Query strings stay literal text. A link to the current session does nothing. The target and label are read as written, as in Obsidian: `*` and `_` inside `[[…]]` are not emphasis, a `[name]: url` definition does not take over `[[name]]`, and the first `]]` ends the link.
 
 **Host links.** Absolute POSIX paths, `~` and `~/...`, and local `file://` URLs open a real file the Oppi server process can read. `~otheruser` and non-local `file://` URLs stay literal. A host file opens in the existing viewer on the current stack; it does not switch workspace or start a session in another checkout. The viewer title shows the file's real path. Relative links inside a host Markdown file resolve against that file's directory.
 

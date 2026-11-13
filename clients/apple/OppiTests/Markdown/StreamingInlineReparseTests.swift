@@ -519,8 +519,8 @@ struct StreamingMarkdownDifferentialTests {
                 return leftHeaders == rightHeaders && leftRows == rightRows
             case (.thematicBreak, .thematicBreak):
                 return true
-            case let (.image(leftAlt, leftURL), .image(rightAlt, rightURL)):
-                return leftAlt == rightAlt && leftURL == rightURL
+            case let (.image(leftAlt, leftURL, leftSize), .image(rightAlt, rightURL, rightSize)):
+                return leftAlt == rightAlt && leftURL == rightURL && leftSize == rightSize
             case let (.mermaidDiagram(leftCode), .mermaidDiagram(rightCode)):
                 return leftCode == rightCode
             case let (.latexBlock(leftCode), .latexBlock(rightCode)):

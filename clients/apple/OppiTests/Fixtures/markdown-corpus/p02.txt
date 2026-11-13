@@ -1,0 +1,7 @@
+p02 wiki link bodies stay literal next to emphasis, code and math
+@@@@ source
+*see [[a*b]]* and [[x_y_z|_label_]] with _em_, `[[c*d*]]` and $f([[g]])$.
+@@@@ tree
+P: EM[T(see )LINK[T(a*b)→oppi-resource-reference://resolve?target=a*b&workspaceId=ws&fileCandidate=a*b.md&sourceServerId=srv&sourceSessionId=s1&label=a*b]]T( and )LINK[T(_label_)→oppi-resource-reference://resolve?target=x_y_z&workspaceId=ws&fileCandidate=x_y_z.md&sourceServerId=srv&sourceSessionId=s1&label=_label_]T( with )EM[T(em)]T(, )CODE([[c*d*]])T( and )MATH(f([[g]]))T(.)
+@@@@ render
+TEXT: <i>see </i><i><a>a*b</a></i> and <a>_label_</a> with <i>em</i>, <code>[[c*d*]]</code> and ⟦f([[g]])⟧.

@@ -65,6 +65,10 @@ final class MarkdownTablesPreviewController: PreviewRootController {
 /// table with more than a thousand dollar signs. `SCREENSHOT_MATH_PAGE=stream`
 /// streams a long math-heavy answer 48 bytes every 50 ms, following its tail,
 /// then names the scroll view `markdownMath.streamDone`.
+/// `SCREENSHOT_MATH_PAGE=parity` holds the wiki-link and embed shapes the
+/// parser glue repairs (emphasis and reference definitions inside `[[…]]`,
+/// embed sizes, embeds in table cells and quotes) and an Org paragraph with
+/// dollars and stars; workspace images come from a local stand-in fetcher.
 final class MarkdownMathPreviewController: PreviewRootController {
     init(root: AppRootEnvironment) {
         super.init(
@@ -108,6 +112,12 @@ final class MarkdownMathPreviewController: PreviewRootController {
             MarkdownMessageContentController(message: costReport, scrollIdentifier: "markdownMath.scroll")
         case "stream":
             MarkdownMessageContentController(message: streamedAnswer, scrollIdentifier: "markdownMath.scroll", streams: true)
+        case "parity":
+            MarkdownMessageContentController(
+                message: parityAnswer,
+                scrollIdentifier: "markdownMath.scroll",
+                resourceAccess: previewWorkspaceAccess
+            )
         default:
             MarkdownMessageContentController(message: message, scrollIdentifier: "markdownMath.scroll")
         }
@@ -132,6 +142,52 @@ final class MarkdownMathPreviewController: PreviewRootController {
         """#
     }.joined(separator: "\n")
 
+    private static let parityAnswer: String = {
+        let org = "Costs $5*2 or (2*$3) total and $x_1$ math."
+        let orgMarkdown = MarkdownBlockSerializer.serialize(
+            OrgToMarkdownConverter.convert(located: OrgParser().parseLocated(org))
+        )
+        let markdown = #"""
+        See [[*draft*]] beside [[my_notes_file]], and [[foo]] here.
+
+        Labels: [[docs/a.md|A | B]] and [[docs/c.md|[c]]].
+
+        ![[img/wide.png|160]]
+
+        | Clip | Pic | Sized |
+        | --- | --- | --- |
+        | ![[clips/a.mp4]] | ![alt](img/p.png) | ![[img/pic.png|300]] |
+
+        > Quoted: ![[img/y.png]]
+
+        """#
+        return markdown + "Org: " + orgMarkdown + "\n\n[foo]: https://example.com\n"
+    }()
+
+    /// Workspace `ws` on a placeholder server, serving one generated picture for every path.
+    private static var previewWorkspaceAccess: MarkdownResourceAccess {
+        MarkdownResourceAccess(
+            identity: .init(serverID: "preview", workspaceID: "ws", serverBaseURL: URL(string: "https://oppi.invalid")),
+            fetchWorkspaceFile: { _, path in previewPicture(label: path) }
+        )
+    }
+
+    private static func previewPicture(label: String) -> Data {
+        let size = CGSize(width: 1_200, height: 800)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: format).pngData { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor.systemIndigo.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: size.width / 2, height: size.height))
+            (label as NSString).draw(
+                at: CGPoint(x: 60, y: 340),
+                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 96), .foregroundColor: UIColor.white]
+            )
+        }
+    }
+
     private static let costReport: String = {
         let rows = (1 ... 600).map { "| run-\($0) | $\($0 % 9).\($0 % 7)5 | $\($0 % 13).2\($0 % 10) |" }
         return """
@@ -153,16 +209,23 @@ private final class MarkdownMessageContentController: UIViewController {
     private let message: String
     private let scrollIdentifier: String
     private let streams: Bool
+    private let resourceAccess: MarkdownResourceAccess
     private var appliedWidth: CGFloat = 0
     private var streamedByteCount = 0
     private var streamTimer: Timer?
 
     private static let margin: CGFloat = 16
 
-    init(message: String, scrollIdentifier: String, streams: Bool = false) {
+    init(
+        message: String,
+        scrollIdentifier: String,
+        streams: Bool = false,
+        resourceAccess: MarkdownResourceAccess = .empty
+    ) {
         self.message = message
         self.scrollIdentifier = scrollIdentifier
         self.streams = streams
+        self.resourceAccess = resourceAccess
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -199,7 +262,8 @@ private final class MarkdownMessageContentController: UIViewController {
             markdown.apply(configuration: .make(
                 content: message,
                 isStreaming: false,
-                themeID: ThemeRuntimeState.currentThemeID()
+                themeID: ThemeRuntimeState.currentThemeID(),
+                resourceAccess: resourceAccess
             ))
             return
         }

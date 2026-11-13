@@ -506,7 +506,7 @@ struct MarkdownReaderRenderAheadContractTests {
             let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
             collection.layoutIfNeeded()
             let imageItem = try #require(body.debugRenderedSegmentsForTesting.firstIndex {
-                if case .image(_, let url) = $0 { return url.path.hasSuffix(fixture.name) }
+                if case .image(_, let url, _) = $0 { return url.path.hasSuffix(fixture.name) }
                 return false
             })
 
@@ -959,7 +959,7 @@ struct MarkdownReaderRenderAheadContractTests {
         let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
         collection.layoutIfNeeded()
         let svgItem = try #require(body.debugRenderedSegmentsForTesting.firstIndex {
-            if case .image(_, let url) = $0 { return url.path.hasSuffix("diagram.svg") }
+            if case .image(_, let url, _) = $0 { return url.path.hasSuffix("diagram.svg") }
             return false
         })
 

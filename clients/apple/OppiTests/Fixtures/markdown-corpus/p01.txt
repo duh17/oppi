@@ -1,0 +1,17 @@
+p01 embed sizes: wiki |300 and |WxH, Markdown alt size
+@@@@ source
+![[img/pic.png|300]]
+
+![[img/pic.png|Chart|120x80]] and ![250](img/b.png) and ![Logo|64](img/c.png) and ![[img/2024.png]]
+@@@@ tree
+P: IMG(img/pic.png→img/pic.png|300)
+P: IMG(Chart→img/pic.png|120x80)T( and )IMG(→img/b.png|250)T( and )IMG(Logo→img/c.png|64)T( and )IMG(img/2024.png→img/2024.png)
+@@@@ render
+IMAGE(img/pic.png → https://oppi.invalid/workspaces/ws/raw/img/pic.png |300)
+IMAGE(Chart → https://oppi.invalid/workspaces/ws/raw/img/pic.png |120x80)
+TEXT:  and 
+IMAGE( → https://oppi.invalid/workspaces/ws/raw/img/b.png |250)
+TEXT:  and 
+IMAGE(Logo → https://oppi.invalid/workspaces/ws/raw/img/c.png |64)
+TEXT:  and 
+IMAGE(img/2024.png → https://oppi.invalid/workspaces/ws/raw/img/2024.png)

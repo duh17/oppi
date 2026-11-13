@@ -686,165 +686,15 @@ enum ResourceReferenceURL {
 /// relative. `http`, `https`, `mailto`, `oppi`, `oppi-session-file`, and already
 /// rewritten resource-reference destinations stay unchanged.
 enum MarkdownWikiLinkRewriter {
-    struct ParserInput {
-        let source: String
-        let restoration: Restoration
-    }
-
-    struct Restoration {
-        fileprivate let labelSeparatorToken: String?
-
-        func restore(_ literal: String) -> String {
-            guard let labelSeparatorToken,
-                  UTF8Search.range(of: labelSeparatorToken, in: literal) != nil else { return literal }
-            return literal.replacingOccurrences(of: labelSeparatorToken, with: "|")
-        }
-    }
-
-    private static let parserBoundaryTokens = [
-        "q0q", "q1q", "q2q", "q3q", "q4q", "q5q", "q6q", "q7q",
-    ]
-    private static let maximumTokenSelectionAttempts = 8
-    private static let parserBoundaryTokenByteCount = 3
-
-    private struct ParserBoundaryCandidate {
-        let end: String.Index
-        let separator: String.Index?
-        let canProtect: Bool
-    }
-
     private struct ParsedWikiTarget {
         let path: String
         let lineAnchor: SourceLineAnchor?
         var headingAnchor: ReaderHeadingAnchor?
     }
 
-    /// Selects at most eight source-absent, three-byte alphanumeric tokens.
-    /// Returning nil is the fail-closed result when the bounded set is exhausted.
-    static func selectParserBoundaryToken(
-        absentFrom source: String,
-        candidates: [String]
-    ) -> String? {
-        for candidate in candidates.prefix(maximumTokenSelectionAttempts) {
-            guard candidate.utf8.count == parserBoundaryTokenByteCount,
-                  candidate.utf8.allSatisfy(isASCIILetterOrDigit) else {
-                continue
-            }
-            if UTF8Search.range(of: candidate, in: source) == nil { return candidate }
-        }
-        return nil
-    }
-
-    /// Protect wiki-link separators before cmark-gfm decides table cell
-    /// boundaries. This deliberately knows nothing about CommonMark containers:
-    /// transformed bytes are restored from every literal field during AST
-    /// conversion, including code and HTML where wiki syntax stays literal.
-    ///
-    /// Candidate recognition is atomic. Nested opens, escaped closes, multiple
-    /// unescaped separators, empty labels/targets, unsupported targets, and
-    /// unmatched candidates are copied without transforming any bytes. A valid
-    /// minimum `[[a|b]]` grows from seven to nine bytes, so total parser input
-    /// amplification is at most 9/7. Token selection is capped at eight checks;
-    /// exhaustion returns the original source with no restoration context.
-    static func parserInput(_ source: String) -> ParserInput {
-        guard UTF8Search.range(of: "[[", in: source) != nil, UTF8Search.range(of: "|", in: source) != nil,
-              let token = selectParserBoundaryToken(absentFrom: source, candidates: parserBoundaryTokens) else {
-            return unchangedParserInput(source)
-        }
-
-        var result = ""
-        result.reserveCapacity(source.utf8.count)
-        var cursor = source.startIndex
-        var replacedSeparator = false
-
-        while cursor < source.endIndex,
-              let open = UTF8Search.range(of: "[[", in: source, from: cursor) {
-            guard let candidate = parserBoundaryCandidate(in: source, opening: open) else {
-                result.append(contentsOf: source[cursor ..< source.endIndex])
-                cursor = source.endIndex
-                break
-            }
-
-            if candidate.canProtect, let separator = candidate.separator {
-                result.append(contentsOf: source[cursor ..< separator])
-                result += token
-                let afterSeparator = source.index(after: separator)
-                result.append(contentsOf: source[afterSeparator ..< candidate.end])
-                replacedSeparator = true
-            } else {
-                result.append(contentsOf: source[cursor ..< candidate.end])
-            }
-            cursor = candidate.end
-        }
-
-        if cursor < source.endIndex {
-            result.append(contentsOf: source[cursor ..< source.endIndex])
-        }
-
-        guard replacedSeparator else { return unchangedParserInput(source) }
-        return ParserInput(source: result, restoration: Restoration(labelSeparatorToken: token))
-    }
-
-    private static func parserBoundaryCandidate(
-        in source: String,
-        opening: Range<String.Index>
-    ) -> ParserBoundaryCandidate? {
-        var cursor = opening.upperBound
-        var precedingBackslashes = 0
-        var separator: String.Index?
-        var canProtect = true
-
-        while cursor < source.endIndex {
-            let character = source[cursor]
-            let next = source.index(after: cursor)
-            let escaped = precedingBackslashes % 2 == 1
-
-            if character == "[", next < source.endIndex, source[next] == "[" {
-                canProtect = false
-            } else if character == "]", escaped {
-                canProtect = false
-            } else if character == "]", next < source.endIndex, source[next] == "]" {
-                let end = source.index(after: next)
-                guard let separator else {
-                    return ParserBoundaryCandidate(end: end, separator: nil, canProtect: false)
-                }
-                let target = source[opening.upperBound ..< separator]
-                let labelStart = source.index(after: separator)
-                let label = source[labelStart ..< cursor]
-                return ParserBoundaryCandidate(
-                    end: end,
-                    separator: separator,
-                    canProtect: canProtect
-                        && isPotentiallySupportedWikiTarget(target)
-                        && !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                )
-            } else if character == "|", !escaped {
-                if separator == nil {
-                    separator = cursor
-                } else {
-                    canProtect = false
-                }
-            }
-
-            precedingBackslashes = character == "\\" ? precedingBackslashes + 1 : 0
-            cursor = next
-        }
-
-        return nil
-    }
-
-    private static func isPotentiallySupportedWikiTarget(_ rawTarget: Substring) -> Bool {
-        classifyWikiTarget(String(rawTarget)) != nil
-    }
-
-    private static func unchangedParserInput(_ source: String) -> ParserInput {
-        ParserInput(source: source, restoration: Restoration(labelSeparatorToken: nil))
-    }
-
-    private static func isASCIILetterOrDigit(_ byte: UInt8) -> Bool {
-        (byte >= 48 && byte <= 57)
-            || (byte >= 65 && byte <= 90)
-            || (byte >= 97 && byte <= 122)
+    /// Whether `rawTarget` names a file a wiki link may open (the pre-pass asks).
+    static func isPotentiallySupportedWikiTarget(_ rawTarget: String) -> Bool {
+        classifyWikiTarget(rawTarget) != nil
     }
 
     private struct RewriteContext {
@@ -853,6 +703,9 @@ enum MarkdownWikiLinkRewriter {
         let sessionID: String?
         let sourceDirectory: String?
         var linksHeadings = false
+        /// Inside a table cell or a heading, which draw as text and cannot host
+        /// a picture or a player: an embed there is a link that opens it.
+        var embedsAsLinks = false
     }
 
     static func rewrite(
@@ -986,9 +839,11 @@ enum MarkdownWikiLinkRewriter {
     }
 
     private static func rewrite(block: MarkdownBlock, context: RewriteContext) -> MarkdownBlock {
+        var linking = context
+        linking.embedsAsLinks = true
         switch block {
         case .heading(let level, let inlines):
-            return .heading(level: level, inlines: rewrite(inlines: inlines, context: context))
+            return .heading(level: level, inlines: rewrite(inlines: inlines, context: linking))
         case .paragraph(let inlines):
             return .paragraph(rewrite(inlines: inlines, context: context))
         case .blockQuote(let children):
@@ -1008,8 +863,8 @@ enum MarkdownWikiLinkRewriter {
             })
         case .table(let headers, let rows):
             return .table(
-                headers: headers.map { rewrite(inlines: $0, context: context) },
-                rows: rows.map { row in row.map { rewrite(inlines: $0, context: context) } }
+                headers: headers.map { rewrite(inlines: $0, context: linking) },
+                rows: rows.map { row in row.map { rewrite(inlines: $0, context: linking) } }
             )
         case .codeBlock, .thematicBreak, .htmlBlock, .math:
             return block
@@ -1036,7 +891,7 @@ enum MarkdownWikiLinkRewriter {
                     destination: destination,
                     context: context
                 ))
-            case .image(let alt, let source):
+            case .image(let alt, let source, _):
                 result.append(contentsOf: rewriteMarkdownImage(
                     alt: alt,
                     source: source,
@@ -1136,14 +991,20 @@ enum MarkdownWikiLinkRewriter {
         context: RewriteContext
     ) -> [MarkdownInline] {
         let parsed = wikiLinkParts(rawContent)
+        // Text after the first pipe that ends in `|300` or `|300x200` sizes
+        // the embed; the rest is its label.
+        let sized: (label: String, size: MarkdownEmbedSize?) = rawContent.contains("|")
+            ? MarkdownEmbedSize.split(label: parsed.label)
+            : (parsed.label, nil)
+        let label = sized.label.isEmpty ? parsed.target : sized.label
         switch bangEmbedOutcome(
             rawTarget: parsed.target,
-            visibleLabel: parsed.label,
+            visibleLabel: label,
             dialect: .wiki,
             context: context
         ) {
         case .image(let source):
-            return [.image(alt: parsed.label, source: source)]
+            return [.image(alt: label, source: source, size: sized.size)]
         case .video(let embed):
             return [.videoEmbed(embed)]
         case .audio(let embed):
@@ -1165,8 +1026,10 @@ enum MarkdownWikiLinkRewriter {
         source: String?,
         context: RewriteContext
     ) -> [MarkdownInline] {
+        // Obsidian sizes an image from its alt text: `![250](url)`, `![Chart|250x100](url)`.
+        let (alt, size) = MarkdownEmbedSize.split(label: alt)
         guard let source, !source.isEmpty else {
-            return [.image(alt: alt, source: source)]
+            return [.image(alt: alt, source: source, size: size)]
         }
         let trimmedAlt = alt.trimmingCharacters(in: .whitespacesAndNewlines)
         let visibleLabel = trimmedAlt.isEmpty ? source : trimmedAlt
@@ -1177,7 +1040,7 @@ enum MarkdownWikiLinkRewriter {
             context: context
         ) {
         case .image(let resolvedSource):
-            return [.image(alt: alt, source: resolvedSource)]
+            return [.image(alt: alt, source: resolvedSource, size: size)]
         case .video(let embed):
             return [.videoEmbed(embed)]
         case .audio(let embed):
@@ -1187,9 +1050,9 @@ enum MarkdownWikiLinkRewriter {
         case .fileLink(let inline):
             return [inline]
         case .remoteImage(let remoteSource):
-            return [.image(alt: alt, source: remoteSource)]
+            return [.image(alt: alt, source: remoteSource, size: size)]
         case .failClosed:
-            return [.image(alt: alt, source: nil)]
+            return [.image(alt: alt, source: nil, size: size)]
         }
     }
 
@@ -1223,7 +1086,7 @@ enum MarkdownWikiLinkRewriter {
         }
         guard let classified else { return .failClosed }
 
-        if classified.parsed.lineAnchor != nil {
+        if classified.parsed.lineAnchor != nil || context.embedsAsLinks {
             return .fileLink(fileLinkInline(
                 rawTarget: trimmed,
                 classified: classified,

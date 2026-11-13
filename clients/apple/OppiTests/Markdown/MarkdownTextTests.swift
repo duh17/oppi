@@ -1379,8 +1379,6 @@ struct WorkspaceWikiLinkRenderingTests {
         | --- | --- |
         | [[note\|label]] | x |
         """#
-        #expect(MarkdownWikiLinkRewriter.parserInput(source).source == source)
-
         let table = try #require(firstTable(in: parseCommonMark(source)))
         #expect(table.rows[0].map { plainText(from: $0) } == ["[[note|label]]", "x"])
 
@@ -1402,9 +1400,10 @@ struct WorkspaceWikiLinkRenderingTests {
         let source = String(repeating: minimumLabeledReference, count: 20_000)
         let parserInput = MarkdownWikiLinkRewriter.parserInput(source)
 
-        // A three-byte token replaces one byte, so the worst valid reference
-        // expands from seven to nine bytes: at most 9/7 overall.
-        #expect(parserInput.source.utf8.count * 7 <= source.utf8.count * 9)
+        // A body becomes two three-byte frames around its index: twenty
+        // thousand of the shortest references grow from seven bytes to at most
+        // fifteen each.
+        #expect(parserInput.source.utf8.count * 7 <= source.utf8.count * 15)
         #expect(parserInput.restoration.restore(parserInput.source) == source)
         #expect(MarkdownWikiLinkRewriter.parserInput(source).source == parserInput.source)
     }
@@ -1508,7 +1507,7 @@ struct WorkspaceWikiLinkRenderingTests {
         let blocks = parseCommonMark(source)
         guard case .paragraph(let inlines) = try #require(blocks.first),
               case .link(let linkChildren, let parsedLinkDestination) = try #require(inlines.first),
-              case .image(let imageAlt, let parsedImageDestination) = try #require(inlines.dropFirst(2).first) else {
+              case .image(let imageAlt, let parsedImageDestination, _) = try #require(inlines.dropFirst(2).first) else {
             Issue.record("Expected link and image")
             return
         }
@@ -2647,7 +2646,7 @@ struct FlatSegmentImageResolutionTests {
             serverBaseURL: baseURL
         )
         #expect(segments.count == 1)
-        if case .image(let alt, let url) = segments[0] {
+        if case .image(let alt, let url, _) = segments[0] {
             #expect(alt == "Chart")
             #expect(url.absoluteString.contains("/workspaces/ws-abc123/raw/charts/mockup.png"))
             #expect(url.absoluteString.hasPrefix("https://server.example.com"))
@@ -2703,7 +2702,7 @@ struct FlatSegmentImageResolutionTests {
         } else {
             Issue.record("Expected text before mixed paragraph image")
         }
-        if case .image(let alt, let url) = segments[1] {
+        if case .image(let alt, let url, _) = segments[1] {
             #expect(alt == "Chart")
             #expect(url.absoluteString.contains("/raw/chart.png"))
         } else {
@@ -2727,7 +2726,7 @@ struct FlatSegmentImageResolutionTests {
         } else {
             Issue.record("Expected text before inline image")
         }
-        if case .image(let alt, let url) = segments[1] {
+        if case .image(let alt, let url, _) = segments[1] {
             #expect(alt == "Red green")
             #expect(url.absoluteString.contains("/raw/fixtures/red-green.\(ext)"))
         } else {
@@ -2750,7 +2749,7 @@ struct FlatSegmentImageResolutionTests {
             serverBaseURL: baseURL
         )
         #expect(segments.count == 1)
-        if case .image(let alt, let url) = segments[0] {
+        if case .image(let alt, let url, _) = segments[0] {
             #expect(alt == "Remote")
             #expect(url.absoluteString == "https://example.com/image.png")
         } else {
@@ -2765,7 +2764,7 @@ struct FlatSegmentImageResolutionTests {
         // No workspace context needed for absolute URLs
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
         #expect(segments.count == 1)
-        if case .image(let alt, let url) = segments[0] {
+        if case .image(let alt, let url, _) = segments[0] {
             #expect(alt == "HTTP")
             #expect(url.absoluteString == "http://cdn.example.com/photo.jpg")
         } else {
@@ -2796,7 +2795,7 @@ struct FlatSegmentImageResolutionTests {
             workspaceID: "my-workspace",
             serverBaseURL: URL(string: "https://pi.local:8080")!
         )
-        if case .image(_, let url) = segments[0] {
+        if case .image(_, let url, _) = segments[0] {
             let abs = url.absoluteString
             #expect(abs.contains("/workspaces/my-workspace/raw/output/figure1.jpg"))
             #expect(abs.hasPrefix("https://pi.local:8080"))
@@ -2815,7 +2814,7 @@ struct FlatSegmentImageResolutionTests {
             serverBaseURL: baseURL
         )
         #expect(segments.count == 1)
-        guard case .image(let alt, let url) = segments[0] else {
+        guard case .image(let alt, let url, _) = segments[0] else {
             Issue.record("Expected host image segment, got \(segments[0])")
             return
         }
@@ -2840,7 +2839,7 @@ struct FlatSegmentImageResolutionTests {
         // Segments: .text("Before..."), .image("Chart"), .text("After...")
         #expect(segments.count == 3)
         if case .text = segments[0] {} else { Issue.record("Expected text before image") }
-        if case .image(let alt, _) = segments[1] {
+        if case .image(let alt, _, _) = segments[1] {
             #expect(alt == "Chart")
         } else {
             Issue.record("Expected .image segment in middle")
@@ -2858,7 +2857,7 @@ struct FlatSegmentImageResolutionTests {
             serverBaseURL: baseURL
         )
         // Empty alt: promoted to .image with empty alt and a generic placeholder on load failure.
-        if case .image(let alt, _) = segments[0] {
+        if case .image(let alt, _, _) = segments[0] {
             #expect(alt.isEmpty)
         } else {
             // Also acceptable: empty paragraph filtered out entirely
@@ -2879,7 +2878,7 @@ struct FlatSegmentImageResolutionTests {
             sourceDirectory: "docs"
         )
         #expect(segments.count == 1)
-        if case .image(_, let url) = segments[0] {
+        if case .image(_, let url, _) = segments[0] {
             // Should resolve to docs/images/chart.png, not images/chart.png
             #expect(url.absoluteString.contains("/raw/docs/images/chart.png"),
                     "Expected docs/images/chart.png, got \(url.absoluteString)")
@@ -2900,7 +2899,7 @@ struct FlatSegmentImageResolutionTests {
             sourceDirectory: "docs"
         )
         #expect(segments.count == 1)
-        guard case .image(_, let url) = segments[0] else {
+        guard case .image(_, let url, _) = segments[0] else {
             Issue.record("Expected host image segment, got \(segments[0])")
             return
         }
@@ -2919,7 +2918,7 @@ struct FlatSegmentImageResolutionTests {
             serverBaseURL: baseURL
         )
         #expect(segments.count == 1)
-        guard case .image(_, let url) = segments[0] else {
+        guard case .image(_, let url, _) = segments[0] else {
             Issue.record("Expected host image segment, got \(segments[0])")
             return
         }
@@ -2937,7 +2936,7 @@ struct FlatSegmentImageResolutionTests {
             serverBaseURL: baseURL,
             sourceDirectory: "docs"
         )
-        if case .image(_, let url) = segments[0] {
+        if case .image(_, let url, _) = segments[0] {
             #expect(url.absoluteString == "https://example.com/pic.png",
                     "HTTPS URLs should pass through unchanged")
         }
@@ -2953,7 +2952,7 @@ struct FlatSegmentImageResolutionTests {
             serverBaseURL: baseURL,
             sourceDirectory: nil
         )
-        if case .image(_, let url) = segments[0] {
+        if case .image(_, let url, _) = segments[0] {
             #expect(url.absoluteString.contains("/raw/images/fig.png"))
             #expect(!url.absoluteString.contains("docs"))
         }
@@ -3222,7 +3221,7 @@ struct OnlineImageEndToEndTests {
         #expect(blocks.count == 1)
         if case .paragraph(let inlines) = blocks[0] {
             #expect(inlines.count == 1)
-            if case .image(let alt, let source) = inlines[0] {
+            if case .image(let alt, let source, _) = inlines[0] {
                 #expect(alt == "GitHub avatar")
                 #expect(source == "https://avatars.githubusercontent.com/u/1?v=4")
             } else {
@@ -3238,7 +3237,7 @@ struct OnlineImageEndToEndTests {
         let blocks = parseCommonMark(md)
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
         #expect(segments.count == 1)
-        if case .image(let alt, let url) = segments[0] {
+        if case .image(let alt, let url, _) = segments[0] {
             #expect(alt == "GitHub avatar")
             #expect(url.absoluteString == "https://avatars.githubusercontent.com/u/1?v=4")
         } else {
@@ -3256,7 +3255,7 @@ struct OnlineImageEndToEndTests {
             serverBaseURL: URL(string: "https://server.local")!
         )
         #expect(segments.count == 1)
-        if case .image(let alt, let url) = segments[0] {
+        if case .image(let alt, let url, _) = segments[0] {
             #expect(alt == "test")
             #expect(url.absoluteString == "https://example.com/photo.jpg")
         } else {
@@ -3293,7 +3292,7 @@ struct OnlineImageNoWorkspaceTests {
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
         // Must produce .image, not .text with [GitHub avatar]
         #expect(segments.count == 1, "Expected 1 segment, got \(segments.count)")
-        if case .image(let alt, let url) = segments[0] {
+        if case .image(let alt, let url, _) = segments[0] {
             #expect(alt == "GitHub avatar")
             #expect(url.scheme == "https")
         } else {
@@ -3494,11 +3493,11 @@ struct MarkdownBangEmbedUnificationTests {
             serverBaseURL: baseURL
         )
 
-        guard case .image(_, let wikiURL) = wiki.first else {
+        guard case .image(_, let wikiURL, _) = wiki.first else {
             Issue.record("Expected wiki bang HEIC image, got \(wiki)")
             return
         }
-        guard case .image(_, let markdownURL) = markdown.first else {
+        guard case .image(_, let markdownURL, _) = markdown.first else {
             Issue.record("Expected markdown bang HEIC image, got \(markdown)")
             return
         }
@@ -3522,11 +3521,11 @@ struct MarkdownBangEmbedUnificationTests {
             serverBaseURL: baseURL
         )
 
-        guard case .image(let wikiAlt, let wikiURL) = wiki.first else {
+        guard case .image(let wikiAlt, let wikiURL, _) = wiki.first else {
             Issue.record("Expected wiki bang image, got \(wiki)")
             return
         }
-        guard case .image(let markdownAlt, let markdownURL) = markdown.first else {
+        guard case .image(let markdownAlt, let markdownURL, _) = markdown.first else {
             Issue.record("Expected markdown bang image, got \(markdown)")
             return
         }
@@ -3560,15 +3559,15 @@ struct MarkdownBangEmbedUnificationTests {
             serverBaseURL: baseURL
         )
 
-        guard case .image(_, let wikiURL) = wiki.first else {
+        guard case .image(_, let wikiURL, _) = wiki.first else {
             Issue.record("Expected host wiki image, got \(wiki)")
             return
         }
-        guard case .image(_, let markdownURL) = markdown.first else {
+        guard case .image(_, let markdownURL, _) = markdown.first else {
             Issue.record("Expected host markdown image, got \(markdown)")
             return
         }
-        guard case .image(_, let homeURL) = home.first else {
+        guard case .image(_, let homeURL, _) = home.first else {
             Issue.record("Expected home markdown image, got \(home)")
             return
         }
@@ -3675,15 +3674,15 @@ struct MarkdownBangEmbedUnificationTests {
             serverBaseURL: baseURL
         )
 
-        guard case .image(_, let urlA) = serverA.first else {
+        guard case .image(_, let urlA, _) = serverA.first else {
             Issue.record("Expected host image for server A, got \(serverA)")
             return
         }
-        guard case .image(_, let urlB) = serverB.first else {
+        guard case .image(_, let urlB, _) = serverB.first else {
             Issue.record("Expected host image for server B, got \(serverB)")
             return
         }
-        guard case .image(_, let urlSession) = otherSession.first else {
+        guard case .image(_, let urlSession, _) = otherSession.first else {
             Issue.record("Expected host image for other session, got \(otherSession)")
             return
         }
@@ -3736,7 +3735,7 @@ struct MarkdownBangEmbedUnificationTests {
 
         for segments in [markdown, wiki] {
             for segment in segments {
-                if case .image(_, let url) = segment {
+                if case .image(_, let url, _) = segment {
                     #expect(HostFileURL.parse(url) == nil, "network-path must not become a host file: \(url)")
                     #expect(WorkspaceFileURL.parse(url) == nil)
                 }

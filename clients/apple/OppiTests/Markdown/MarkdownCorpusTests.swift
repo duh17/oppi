@@ -33,8 +33,9 @@ struct MarkdownCorpusTests {
         #expect(actual.render == entry.render, "render of \(entry.name)")
     }
 
+    /// The 71 audit cases (`m`, `n`, `o`) and the parity cases added after them (`p`).
     @Test func corpusHoldsEveryAuditCase() {
-        #expect(MarkdownCorpus.cases().count == 71)
+        #expect(MarkdownCorpus.cases().filter { !$0.fileName.hasPrefix("p") }.count == 71)
     }
 }
 
@@ -133,7 +134,7 @@ enum MarkdownCorpus {
         case .strong(let c): "B[\(c.map(dump).joined())]"
         case .code(let s): "CODE(\(s))"
         case .link(let c, let destination): "LINK[\(c.map(dump).joined())→\(destination ?? "nil")]"
-        case .image(let alt, let source): "IMG(\(alt)→\(source ?? "nil"))"
+        case .image(let alt, let source, let size): "IMG(\(alt)→\(source ?? "nil")\(size.map { "|" + $0.markup } ?? ""))"
         case .videoEmbed(let e): "VIDEO(\(e.reference.target))"
         case .audioEmbed(let e): "AUDIO(\(e.reference.target))"
         case .usdzEmbed(let e): "USDZ(\(e.reference.target))"
@@ -186,7 +187,7 @@ enum MarkdownCorpus {
         case .table(let headers, let rows): "TABLE\n  hdr: " + cells(headers, isHeader: true)
             + rows.map { "\n  row: " + cells($0, isHeader: false) }.joined()
         case .thematicBreak: "HR"
-        case .image(let alt, let url): "IMAGE(\(alt) → \(url.absoluteString))"
+        case .image(let alt, let url, let size): "IMAGE(\(alt) → \(url.absoluteString)\(size.map { " |" + $0.markup } ?? ""))"
         case .video(let embed): "VIDEO(\(embed.reference.target))"
         case .audio(let embed): "AUDIO(\(embed.reference.target))"
         case .usdz(let embed): "USDZ(\(embed.reference.target))"

@@ -353,8 +353,9 @@ enum FlatSegment: Sendable {
     case table(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]])
     case thematicBreak
     /// A standalone image paragraph. The URL is fully resolved at build time
-    /// using the workspace context or a host-file source. Rendered by `NativeMarkdownImageView`.
-    case image(alt: String, url: URL)
+    /// using the workspace context or a host-file source. Rendered by `NativeMarkdownImageView`,
+    /// no larger than `size` when the Markdown gives one.
+    case image(alt: String, url: URL, size: MarkdownEmbedSize? = nil)
     /// An Oppi-authenticated native video embed from `![[video-file]]` or `![](video-file)`.
     case video(MarkdownVideoEmbed)
     /// An Oppi-authenticated native audio embed from `![[audio-file]]` or `![](audio-file)`.
@@ -889,7 +890,15 @@ enum FlatSegment: Sendable {
         }
     }
 
+    /// Whether a paragraph inside a list or quote holds something drawn as its
+    /// own view: a media embed or display formula anywhere, or an image at the
+    /// paragraph's top level (`resolveParagraphImageSegments` promotes only
+    /// those; an image inside a link stays its alt text).
     private static func inlinesContainPromotedMediaEmbed(_ inlines: [MarkdownInline]) -> Bool {
+        inlines.contains { if case .image = $0 { true } else { false } } || inlinesContainMediaEmbed(inlines)
+    }
+
+    private static func inlinesContainMediaEmbed(_ inlines: [MarkdownInline]) -> Bool {
         inlines.contains { inline in
             switch inline {
             case .videoEmbed, .audioEmbed, .usdzEmbed:
@@ -900,7 +909,7 @@ enum FlatSegment: Sendable {
                  .strong(let children),
                  .strikethrough(let children),
                  .link(let children, _):
-                return inlinesContainPromotedMediaEmbed(children)
+                return inlinesContainMediaEmbed(children)
             case .text, .code, .image, .softBreak, .hardBreak, .html:
                 return false
             }
@@ -1318,7 +1327,13 @@ enum FlatSegment: Sendable {
                 return
             }
 
-            let attributed = attributedString(for: .paragraph(pendingInlines), palette: palette)
+            // The line break beside a promoted image or embed ends at that
+            // view; kept, it would draw an empty line (with quote chrome in a quote).
+            func isBreak(_ inline: MarkdownInline) -> Bool {
+                if case .softBreak = inline { true } else if case .hardBreak = inline { true } else { false }
+            }
+            let trimmed = Array(pendingInlines.drop(while: isBreak).reversed().drop(while: isBreak).reversed())
+            let attributed = attributedString(for: .paragraph(trimmed), palette: palette)
             if !attributed.characters.isEmpty {
                 segments.append(.text(attributed))
             }
@@ -1342,7 +1357,7 @@ enum FlatSegment: Sendable {
                 flushPendingInlines()
                 segments.append(.usdz(embed))
                 promotedAnyImage = true
-            } else if case .image(let alt, let source) = inline,
+            } else if case .image(let alt, let source, let size) = inline,
                let imageURL = resolveImageURL(
                    source: source,
                    serverID: serverID,
@@ -1353,7 +1368,7 @@ enum FlatSegment: Sendable {
                    worktreeId: worktreeId
                ) {
                 flushPendingInlines()
-                segments.append(.image(alt: alt, url: imageURL))
+                segments.append(.image(alt: alt, url: imageURL, size: size))
                 promotedAnyImage = true
             } else {
                 pendingInlines.append(inline)
@@ -1371,7 +1386,7 @@ enum FlatSegment: Sendable {
     ) {
         guard workspaceID == nil else { return }
         for inline in inlines {
-            if case .image(_, let source) = inline,
+            if case .image(_, let source, _) = inline,
                let source, !source.isEmpty,
                !source.hasPrefix("data:"),
                !source.hasPrefix("http://"),

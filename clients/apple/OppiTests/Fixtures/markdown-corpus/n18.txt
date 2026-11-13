@@ -11,4 +11,4 @@ QUOTE
 @@@@ render
 TEXT:   • 
 VIDEO(clips/a.mp4)
-TEXT: ▎ [img/y.png]
+IMAGE(img/y.png → https://oppi.invalid/workspaces/ws/raw/img/y.png)

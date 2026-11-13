@@ -125,11 +125,6 @@
       "owner": "editor",
       "reason": "One interpreter: parse, execute, motions; splitting scatters shared state."
     },
-    "clients/apple/OppiCore/Formatting/MarkdownWikiLink.swift": {
-      "budget": 1600,
-      "owner": "client markdown",
-      "reason": "Source anchors and resource references; low churn, keep one file."
-    },
     "clients/apple/OppiCore/Runtime/ChatSessionManager.swift": {
       "budget": 2900,
       "owner": "RT2 session history and conversation streams",

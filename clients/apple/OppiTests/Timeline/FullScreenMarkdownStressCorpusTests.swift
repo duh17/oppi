@@ -461,7 +461,7 @@ struct FullScreenMarkdownStressCorpusTests {
         #expect(mermaid.contains { $0.debugIsShowingDiagramForTesting })
 
         scrollToFirst { segment in
-            if case .image(_, let url) = segment {
+            if case .image(_, let url, _) = segment {
                 return url.host?.contains("example.invalid") == true
             }
             return false
@@ -822,7 +822,7 @@ struct FullScreenMarkdownStressCorpusTests {
             return false
         })
         let imageItem = try #require(segments.firstIndex { segment in
-            if case .image(_, let url) = segment {
+            if case .image(_, let url, _) = segment {
                 return url.host?.contains("example.invalid") != true
             }
             return false

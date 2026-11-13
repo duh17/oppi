@@ -1,5 +1,5 @@
 m28 wiki link label containing pipe and bracket
-known-wrong: the first ]] closes the link: label [c then ]
+note: the first ]] closes the link (label [c, then ]), as in Obsidian, where a label cannot hold ]]
 @@@@ source
 See [[docs/a.md|A | B]] and [[docs/b.md|x]y]] and [[docs/c.md|[c]]].
 @@@@ tree

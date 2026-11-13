@@ -249,7 +249,7 @@ struct ReaderOutline: Equatable, Sendable {
             case .text(let string), .code(let string): string
             case .emphasis(let children), .strong(let children), .strikethrough(let children),
                  .link(let children, _): plainText(children)
-            case .image(let alt, _): alt
+            case .image(let alt, _, _): alt
             case .math(let math): math.source
             case .softBreak, .hardBreak: " "
             default: ""

@@ -1737,7 +1737,7 @@ struct ChatTimelinePreparationRunwayTests {
                 "table:\(headers.count):\(rows.count)"
             case .thematicBreak:
                 "thematic-break"
-            case .image(let alt, let url):
+            case .image(let alt, let url, _):
                 "image:\(alt):\(url.absoluteString)"
             case .video:
                 "video"
