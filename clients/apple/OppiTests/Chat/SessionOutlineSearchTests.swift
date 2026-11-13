@@ -51,10 +51,12 @@ struct SessionOutlineSearchTests {
     private func type(_ text: String, into search: UISearchController, outline: SessionOutlineViewController) async throws {
         search.searchBar.text = text
         search.searchResultsUpdater?.updateSearchResults(for: search)
-        let applied = await waitForTimelineCondition(timeoutMs: 2_000) {
-            await MainActor.run { outline.query == text }
+        // Polled here on the main actor: the outline is not Sendable.
+        let deadline = ContinuousClock.now + .seconds(2)
+        while outline.query != text, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
         }
-        try #require(applied, "The debounced query never reached \"\(text)\"")
+        try #require(outline.query == text, "The debounced query never reached \"\(text)\"")
         outline.view.layoutIfNeeded()
     }
 

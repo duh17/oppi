@@ -41,7 +41,7 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     /// Stored session attachment bytes, for a committed message's images. The second
     /// argument is the session the reference names, when it names one.
     var fetchSessionAttachment: ((_ attachmentId: String, _ sessionId: String?) async throws -> Data)? = nil
-    var onOpenPathPill: ((UserMessagePathPill, UIView) -> Void)? = nil
+    var onOpenPathPill: ((UserMessagePathPill, UIView, PaneOpenPlacement) -> Void)? = nil
     let canFork: Bool
     let onFork: (() -> Void)?
     var itemID: String? = nil
@@ -1123,10 +1123,12 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             pillView.accessibilityTraits = .button
             pillView.isAccessibilityElement = true
             if let control = pillView as? UIControl {
-                let capturedPill = pill
                 control.addAction(UIAction { [weak self] _ in
-                    self?.openPathPill(capturedPill)
+                    self?.openPathPill(pill)
                 }, for: .touchUpInside)
+                if pill.timelineDestination == .workspaceFileBrowser {
+                    PaneOpenMenu.attach(to: control) { [weak self] in self?.openPathPill(pill, placement: $0) }
+                }
             }
             pathPillRow.addArrangedSubview(pillView)
         }
@@ -1139,8 +1141,8 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         }
     }
 
-    private func openPathPill(_ pill: UserMessagePathPill) {
-        currentConfiguration.onOpenPathPill?(pill, self)
+    private func openPathPill(_ pill: UserMessagePathPill, placement: PaneOpenPlacement = .here) {
+        currentConfiguration.onOpenPathPill?(pill, self, placement)
     }
 
     private func makeCapsuleView(

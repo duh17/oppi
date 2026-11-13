@@ -112,6 +112,26 @@ struct ChatTimelineDestinationPresenter {
         }
     }
 
+    /// A file pill as a pane's content, read from the same origin and
+    /// checkout its viewer reads (`fileContent`); nil for a commit.
+    func paneContent(for request: ChatTimelineDestinationRequest) -> PaneOpenContent? {
+        guard case .workspaceFile(let pill) = request.destination,
+              let serverId = request.serverId ?? connection.currentServerId else { return nil }
+        let file = fileContent(for: pill, source: request.panelTarget)
+        let target: WorkspaceLinkedFileNavTarget = switch file.source {
+        case .hostFile:
+            .hostFile(serverId: serverId, workspaceId: file.workspaceId, path: file.filePath, fileName: file.fileName,
+                      sourceSessionId: request.sessionId)
+        case .sessionFile(let sessionId):
+            .sessionFile(serverId: serverId, workspaceId: file.workspaceId, sessionId: sessionId, path: file.filePath,
+                         fileName: file.fileName, sourceSessionId: request.sessionId)
+        default:
+            .workspaceFile(serverId: serverId, workspaceId: file.workspaceId, worktreeId: file.worktreeId,
+                           path: file.filePath, fileName: file.fileName, sourceSessionId: request.sessionId)
+        }
+        return PaneOpenContent(file: target)
+    }
+
     /// Upload pills open the session-origin copy the server materialized in
     /// the session's checkout. Review and repo pills open the workspace file in
     /// the session's checkout, so Edit writes where the agent works.

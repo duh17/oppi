@@ -18,6 +18,8 @@ struct ChatTimelineDestinationRequest {
     let reviewCommentSelectionScope: ReviewCommentSelectionScope?
     let sourceView: UIView
     let presenter: UIViewController
+    /// A long-press menu's Open in New Pane or Open in Pane; `.here` is a tap.
+    var placement: PaneOpenPlacement = .here
 }
 
 extension ChatTimelineDestinationRequest {

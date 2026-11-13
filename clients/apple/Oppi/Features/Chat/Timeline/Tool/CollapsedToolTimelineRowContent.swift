@@ -3,6 +3,18 @@ import UIKit
 /// Header-only element. Body controls stay siblings so expansion does not hide them.
 final class ToolTimelineHeaderElement: UIAccessibilityElement {
     var onActivate: (() -> Bool)?
+    /// The changed file's pane items, read when VoiceOver asks, so they
+    /// follow the window's width.
+    var paneActions: (() -> [UIAccessibilityCustomAction])?
+
+    override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+        get {
+            let own = super.accessibilityCustomActions
+            guard let paneActions else { return own }
+            return (own ?? []) + paneActions()
+        }
+        set { super.accessibilityCustomActions = newValue }
+    }
 
     override func accessibilityActivate() -> Bool {
         onActivate?() ?? false
@@ -33,6 +45,7 @@ final class ToolTimelineHeaderElement: UIAccessibilityElement {
 
     func reset() {
         onActivate = nil
+        paneActions = nil
         accessibilityIdentifier = nil
         accessibilityLabel = nil
         accessibilityValue = nil

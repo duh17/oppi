@@ -55,7 +55,7 @@ struct ChatTimelineConfiguration {
     let readAloudAvailable: Bool
     let routeScope: SessionRouteScope?
     let onFork: (String) -> Void
-    let onOpenCurrentFile: (String) -> Void
+    let onOpenCurrentFile: (String, PaneOpenPlacement) -> Void
     /// Opens a session by id: a child tail row's subagent.
     let onOpenSession: (String) -> Void
     let onOpenChatReader: ((ChatReaderPayload) -> Void)?
@@ -120,7 +120,7 @@ struct ChatTimelineConfiguration {
         readAloudAvailable: Bool = false,
         routeScope: SessionRouteScope? = nil,
         onFork: @escaping (String) -> Void,
-        onOpenCurrentFile: @escaping (String) -> Void = { _ in },
+        onOpenCurrentFile: @escaping (String, PaneOpenPlacement) -> Void = { _, _ in },
         onOpenSession: @escaping (String) -> Void = { _ in },
         onOpenChatReader: ((ChatReaderPayload) -> Void)? = nil,
         onBackSwipe: @escaping () -> Void,
@@ -423,7 +423,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         backSwipeGestureInstaller = installer
     }
 
-    var onOpenCurrentFile: ((String) -> Void)? {
+    var onOpenCurrentFile: ((String, PaneOpenPlacement) -> Void)? {
         get { context.onOpenCurrentFile }
         set { context.onOpenCurrentFile = newValue }
     }

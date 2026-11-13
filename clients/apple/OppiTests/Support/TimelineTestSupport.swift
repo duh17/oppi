@@ -846,7 +846,7 @@ func makeOwnedTimelineConfiguration(
         serverId: serverId,
         workspaceId: workspaceId,
         onFork: { _ in },
-        onOpenCurrentFile: { _ in },
+        onOpenCurrentFile: { _, _ in },
         onOpenChatReader: onOpenChatReader,
         onBackSwipe: {},
         onShowEarlier: {},

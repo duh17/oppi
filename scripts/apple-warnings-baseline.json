@@ -10,7 +10,7 @@
       "compiler": 8
     },
     "OppiTests": {
-      "compiler": 242
+      "compiler": 238
     },
     "OppiUITests": {
       "compiler": 23
@@ -123,7 +123,6 @@
       "OppiTests/Timeline/ToolExpandedHostedSurfaceTests.swift": 1,
       "OppiTests/Timeline/ToolExpandedSurfaceHostTests.swift": 1,
       "OppiTests/Timeline/ToolRowAutoFollowTests.swift": 4,
-      "OppiTests/Timeline/ToolRowContentViewTests.swift": 4,
       "OppiTests/Timeline/ToolTimelineRowFullScreenActivationTests.swift": 1,
       "OppiTests/Timeline/ToolTimelineRowModeDispatchTests.swift": 3,
       "OppiTests/Timeline/UserTimelineRowContentTests.swift": 2,

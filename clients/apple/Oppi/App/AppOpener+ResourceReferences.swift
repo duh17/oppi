@@ -490,15 +490,7 @@ extension AppOpener {
                 guard let self else { return }
                 postWorkspaceLinkedFileWillOpen(reference: reference)
                 navigation.openReferencedWorkspaceLinkedFile(
-                    .workspaceFile(
-                        serverId: file.serverID,
-                        workspaceId: file.workspaceID,
-                        worktreeId: file.worktreeID,
-                        path: file.path,
-                        lineAnchor: reference.lineAnchor,
-                        headingAnchor: reference.headingAnchor,
-                        sourceSessionId: reference.sourceSessionID
-                    ),
+                    Self.linkedFileTarget(file, reference: reference),
                     workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace),
                     sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
                         reference.sourceServerID.map { sourceServerID in
@@ -533,14 +525,7 @@ extension AppOpener {
                 // Host files stay on the current stack. Do not select another
                 // workspace or pretend the file lives in this checkout.
                 navigation.openReferencedWorkspaceLinkedFile(
-                    .hostFile(
-                        serverId: file.serverID,
-                        workspaceId: reference.workspaceID ?? "",
-                        path: file.path,
-                        lineAnchor: reference.lineAnchor,
-                        headingAnchor: reference.headingAnchor,
-                        sourceSessionId: reference.sourceSessionID
-                    ),
+                    Self.linkedFileTarget(file, reference: reference),
                     sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
                         reference.sourceServerID.map { sourceServerID in
                             WorkspaceSessionNavTarget(
@@ -552,6 +537,86 @@ extension AppOpener {
                 )
             }
             return .finished
+        }
+    }
+
+    /// The file a `[[path]]` match opens, at the reference's anchors.
+    nonisolated static func linkedFileTarget(
+        _ file: WorkspaceFileResourceReference,
+        reference: ResourceReference
+    ) -> WorkspaceLinkedFileNavTarget {
+        .workspaceFile(
+            serverId: file.serverID,
+            workspaceId: file.workspaceID,
+            worktreeId: file.worktreeID,
+            path: file.path,
+            lineAnchor: reference.lineAnchor,
+            headingAnchor: reference.headingAnchor,
+            sourceSessionId: reference.sourceSessionID
+        )
+    }
+
+    /// The host file a `[[/path]]` match opens; it keeps no workspace of its own.
+    nonisolated static func linkedFileTarget(
+        _ file: HostFileResourceReference,
+        reference: ResourceReference
+    ) -> WorkspaceLinkedFileNavTarget {
+        .hostFile(
+            serverId: file.serverID,
+            workspaceId: reference.workspaceID ?? "",
+            path: file.path,
+            lineAnchor: reference.lineAnchor,
+            headingAnchor: reference.headingAnchor,
+            sourceSessionId: reference.sourceSessionID
+        )
+    }
+
+    // MARK: - Opening in a pane
+
+    /// Whether a link names a file or folder an item menu can open in a pane
+    /// (`PaneOpenMenu`): a `[[path]]`, a session's file, a `file://` link,
+    /// or an `oppi://file` or `oppi://files` link.
+    nonisolated static func opensInPane(_ request: AppOpenRequest) -> Bool {
+        switch request {
+        case .resourceReference(let reference):
+            return reference.fileCandidatePath?.isEmpty == false
+        case .sessionFile, .fileLink:
+            return true
+        case .pane(let link, _):
+            switch link.route {
+            case .file, .files: return true
+            default: return false
+            }
+        default:
+            return false
+        }
+    }
+
+    /// What a link opens as in a pane, found as a tap finds it: a `[[path]]`
+    /// resolves against its checkout (a file only; an ambiguous one is
+    /// left to the tap's chooser). Nil when it names no file this device
+    /// can open.
+    func paneContent(for request: AppOpenRequest) async -> PaneOpenContent? {
+        switch request {
+        case .resourceReference(let reference):
+            guard let lookup = try? await currentFileMatches(for: reference),
+                  case .resolution(.resolved(let match)) = ResourceReferenceCandidateCollector.resolve(
+                      reference, sessionMatches: [], fileLookup: lookup
+                  ) else { return nil }
+            switch match {
+            case .workspaceFile(let file): return PaneOpenContent(file: Self.linkedFileTarget(file, reference: reference))
+            case .hostFile(let file): return PaneOpenContent(file: Self.linkedFileTarget(file, reference: reference))
+            case .session: return nil
+            }
+        case .sessionFile(let reference):
+            return Self.sessionFileTarget(for: reference).map { PaneOpenContent(file: $0) }
+        case .fileLink(let payload):
+            return resolveFileLink(payload).map { PaneOpenContent(file: $0.target) }
+        case .pane(let link, let sourceServerID):
+            guard Self.opensInPane(request), let serverId = link.server ?? sourceServerID ?? windowServerId else { return nil }
+            return PaneOpenContent(entry: PaneStackEntry(serverId: serverId, route: link.route))
+        default:
+            return nil
         }
     }
 

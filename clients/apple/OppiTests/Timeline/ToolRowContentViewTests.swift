@@ -332,7 +332,7 @@ struct ToolHeaderAccessibilityTests {
             isExpanded: true
         )
         config.currentFileOpenIntent = .init(path: "docs/current.md")
-        config.openCurrentFile = {}
+        config.openCurrentFile = { _ in }
         config.onHeaderActivate = { true }
         let view = ToolTimelineRowContentView(configuration: config)
         let header = try #require(view.subviews.first?.accessibilityElements?.first as? ToolTimelineHeaderElement)

@@ -1185,6 +1185,7 @@
 		84D2E0198B168E6368CC5178 /* ThemeRuntimeStateExtendedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE8DD7A8E9B0751D5FB62E9B /* ThemeRuntimeStateExtendedTests.swift */; };
 		84D97D7A6BAECBC26DFA3EB7 /* MermaidClassConformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DC06B08A7E54DA7F542ED19 /* MermaidClassConformanceTests.swift */; };
 		85096684D240CBCB624F74E4 /* WorkspaceStoppedSessionGroupingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E7532A9986BC7B0150782F /* WorkspaceStoppedSessionGroupingTests.swift */; };
+		8523A4A7FAF2EDEF767EAC54 /* PaneOpenChoicesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 069F3B3636E19E3FABDECB3E /* PaneOpenChoicesTests.swift */; };
 		8529ED5A37A2232C8E101B6E /* NoticeChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECE1F198655008644B8A6A08 /* NoticeChrome.swift */; };
 		8578FCF74A611E8808FA4FDB /* ServerSkillListPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD4CCF57864B54E419000917 /* ServerSkillListPresentation.swift */; };
 		8583957070AD267A048F7CEC /* GuidedControlComposerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F5B32F8EE2FE06844C45846 /* GuidedControlComposerController.swift */; };
@@ -1269,6 +1270,7 @@
 		8DB763EE22FA430B8DB8D41A /* CommandMetricClassificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0810899A998B9790DBBE476 /* CommandMetricClassificationTests.swift */; };
 		8DCFFC260D4A54F8B956C06C /* DocumentFamily.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5398DC223A63D4284069B932 /* DocumentFamily.swift */; };
 		8DDCAEA56D6AEC1212B078F2 /* SSHTerminalOverlays.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6FB25C83D59EAC7C7645D0F /* SSHTerminalOverlays.swift */; };
+		8DEA03F57DB205F6B1A87470 /* PaneOpenMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADBD96EC15F272A392BBBCE7 /* PaneOpenMenu.swift */; };
 		8DFE48AA4B811729E87C8CD2 /* TestDoubles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E63D8B13DD41CDB9D19ECC6 /* TestDoubles.swift */; };
 		8E3A1AC23CAF5066FC97434E /* PaneLeafStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8890CE30511ED60BAFA2D670 /* PaneLeafStateTests.swift */; };
 		8E529F7B9BFE7004BD144787 /* EPUBMarkup.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F8F71A03B9B1F98A42CA2E /* EPUBMarkup.swift */; };
@@ -2252,6 +2254,7 @@
 		F976AEEF86F68E14C84067B0 /* ScreenAwakeControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34F3E4DC44580B2DFBF8376F /* ScreenAwakeControllerTests.swift */; };
 		F99AE7E800FF208CAEF681B1 /* SSHTerminalRexHostStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94EC36AECFB47B1674FE4D2A /* SSHTerminalRexHostStore.swift */; };
 		FA634B76C8E9CD3599B996A8 /* MermaidKanbanParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B231D97AE677A326B334E5 /* MermaidKanbanParser.swift */; };
+		FA7359795D434B208A0A81C2 /* PaneLinkMenuUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E380B7E34A8BAD67A512A3A6 /* PaneLinkMenuUITests.swift */; };
 		FA7B98A1FEC9B12594D68E32 /* TestFactories.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9ADC6C6B9062E402A307F35 /* TestFactories.swift */; };
 		FA7E0B83B17E00D6F70DD4AA /* ServerNotificationsConsentAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB9890BAADE997B38ECC4CE4 /* ServerNotificationsConsentAlert.swift */; };
 		FA7F94452AD16F1144A4274B /* ProviderAuthFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35F0F7021189F9C668C0B936 /* ProviderAuthFlow.swift */; };
@@ -2450,6 +2453,7 @@
 		0568D4E6AE1774A817C312B8 /* TimelineReducerAskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineReducerAskTests.swift; sourceTree = "<group>"; };
 		059DC71532A5BD33D34A3460 /* WorkspaceSidebarViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSidebarViewController.swift; sourceTree = "<group>"; };
 		05AED7D340E2E5DE88628061 /* ReaderTaskEditUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderTaskEditUITests.swift; sourceTree = "<group>"; };
+		069F3B3636E19E3FABDECB3E /* PaneOpenChoicesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneOpenChoicesTests.swift; sourceTree = "<group>"; };
 		06BA659E662145D1E8BB87E8 /* SSHTerminalGlyphRasterCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalGlyphRasterCache.swift; sourceTree = "<group>"; };
 		06BED5B0F53D9FAAFC4342E3 /* TelemetryCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryCapture.swift; sourceTree = "<group>"; };
 		06E3B6DD28CCCB0C00BEBC6B /* PaneSplitUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneSplitUITests.swift; sourceTree = "<group>"; };
@@ -3865,6 +3869,7 @@
 		AD69D768A17D9233F891FA5B /* KeyboardCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardCommand.swift; sourceTree = "<group>"; };
 		AD7DE592B68A360C70E2D8CC /* SSHTerminalBarSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalBarSettingsViewController.swift; sourceTree = "<group>"; };
 		ADA9C9D41C79850268217205 /* ServerSwitchMenuTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSwitchMenuTests.swift; sourceTree = "<group>"; };
+		ADBD96EC15F272A392BBBCE7 /* PaneOpenMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneOpenMenu.swift; sourceTree = "<group>"; };
 		ADC590D9C770E04CAD2BE337 /* UIValidateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIValidateTests.swift; sourceTree = "<group>"; };
 		ADF21C02D7EBCCDAB571091B /* ScenePanes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScenePanes.swift; sourceTree = "<group>"; };
 		AE043DCB4817E8000AD0DA46 /* FullScreenReviewCommentUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenReviewCommentUITests.swift; sourceTree = "<group>"; };
@@ -4333,6 +4338,7 @@
 		E3340AD3206F86AF6286F1B5 /* ComposerBarController+Actions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ComposerBarController+Actions.swift"; sourceTree = "<group>"; };
 		E33E11C7F239F16F65BC9E89 /* PairedDeviceRoster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairedDeviceRoster.swift; sourceTree = "<group>"; };
 		E366C8637E1606C0CDC2FC75 /* AspectFitMediaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AspectFitMediaView.swift; sourceTree = "<group>"; };
+		E380B7E34A8BAD67A512A3A6 /* PaneLinkMenuUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneLinkMenuUITests.swift; sourceTree = "<group>"; };
 		E391B3F4D2BCBEC318A2FC31 /* WorkspaceSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSettingsViewController.swift; sourceTree = "<group>"; };
 		E3AB80529A9DCA6A8A7694B8 /* PairedServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairedServer.swift; sourceTree = "<group>"; };
 		E3ACA814F5A5367B42D9E980 /* TelemetrySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetrySettings.swift; sourceTree = "<group>"; };
@@ -5510,6 +5516,7 @@
 				08B267CE767D8564D7632743 /* MarkdownTablesUITests.swift */,
 				DE4A3C1E940215C1DDF6C6ED /* ModelProvidersUITests.swift */,
 				F72A61AB5A44BFDDEC0C1B72 /* NoticeDismissUITests.swift */,
+				E380B7E34A8BAD67A512A3A6 /* PaneLinkMenuUITests.swift */,
 				C6D58F6C23DD91F76E16E983 /* PaneResizeSmoothnessUITests.swift */,
 				D4D84A88F95EF3A34C6F5877 /* PaneRestoreUITests.swift */,
 				06E3B6DD28CCCB0C00BEBC6B /* PaneSplitUITests.swift */,
@@ -6253,6 +6260,7 @@
 				8517C3BD2613827750E2C745 /* PaneHostController+Tree.swift */,
 				AE2833AC228E5F64CE54E22F /* PaneLauncherViewController.swift */,
 				2CFD37071D5E20FD06F413BC /* PaneLeafStateViewController.swift */,
+				ADBD96EC15F272A392BBBCE7 /* PaneOpenMenu.swift */,
 				8B85351186F4EC3ED9E963F5 /* PaneResizeHold.swift */,
 				73B5F90E26F80840C063CC14 /* PaneSheetArbiter.swift */,
 				961330E4EE72E6506B45C430 /* PaneSplitScreens.swift */,
@@ -7556,6 +7564,7 @@
 				DA49C845588AB209B49EF504 /* PaneLayoutTests.swift */,
 				8890CE30511ED60BAFA2D670 /* PaneLeafStateTests.swift */,
 				FC2A6E03B240FC886742950E /* PaneLinkCodecTests.swift */,
+				069F3B3636E19E3FABDECB3E /* PaneOpenChoicesTests.swift */,
 				567F5960B33FF8A908BA143C /* PanePresentationTests.swift */,
 				A1182A8208A4847BA4A09C01 /* PaneRestorationTests.swift */,
 				FB098D47895521AFC05786A0 /* PaneSheetArbiterTests.swift */,
@@ -8616,6 +8625,7 @@
 				D8A8EC4BC13445EA4E4197C4 /* NoticeDismissUITests.swift in Sources */,
 				DAAFF102B8F4542AFB261162 /* OppiTestLaunch.swift in Sources */,
 				0F2A8DBFBDE21F3A58BC97DC /* OppiUITestSupport.swift in Sources */,
+				FA7359795D434B208A0A81C2 /* PaneLinkMenuUITests.swift in Sources */,
 				45F56A22E7BA99DE70BAFC99 /* PaneResizeSmoothnessUITests.swift in Sources */,
 				3569EA2DD1241A3F1F56E0B0 /* PaneRestoreUITests.swift in Sources */,
 				AB3EC111DBE7C8DED532BCBD /* PaneSplitUITests.swift in Sources */,
@@ -9093,6 +9103,7 @@
 				8E3A1AC23CAF5066FC97434E /* PaneLeafStateTests.swift in Sources */,
 				387B469391D0C6FD08E2EE60 /* PaneLinkCodecTests.swift in Sources */,
 				565EBE4781F45ABF0DE78255 /* PaneLiveResizeTimelineTests.swift in Sources */,
+				8523A4A7FAF2EDEF767EAC54 /* PaneOpenChoicesTests.swift in Sources */,
 				960EA63EFD374B39962A6241 /* PanePresentationTests.swift in Sources */,
 				38FF874424F1B52C872FB2E9 /* PaneRestorationTests.swift in Sources */,
 				75A1E32EE5C31567AB45E164 /* PaneSheetArbiterTests.swift in Sources */,
@@ -10106,6 +10117,7 @@
 				5B434E9554AA3FD2066C38EB /* PaneLeafStateViewController.swift in Sources */,
 				C203E804B18DD2DF8B281E4F /* PaneLinkCodec.swift in Sources */,
 				1F99E434729393174A65D7C0 /* PaneLiveResizing.swift in Sources */,
+				8DEA03F57DB205F6B1A87470 /* PaneOpenMenu.swift in Sources */,
 				727C5E4238B6BE9E594194D1 /* PanePresentation.swift in Sources */,
 				6AAF5347DC32376C84CC590F /* PaneResizeHold.swift in Sources */,
 				211868F298283BAD979834F4 /* PaneResizeMeter.swift in Sources */,

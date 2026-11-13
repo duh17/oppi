@@ -287,6 +287,47 @@ final class ScenePanes {
         } ? leaf.id : nil
     }
 
+    /// The screens items opened as whose entries have no link (a file opened
+    /// from a chat keeps its chat's lock), by entry: Undo brings such a pane
+    /// back as it was while the window lives. Not saved.
+    @ObservationIgnored private(set) var standIns: [PaneLocalToken: WorkspaceStackRouteElement] = [:]
+
+    /// Remembers the screen an opened item's stand-in entry shows.
+    func remember(_ element: WorkspaceStackRouteElement, for entry: PaneStackEntry) {
+        guard case .local(let token) = entry.route else { return }
+        standIns[token] = element
+    }
+
+    /// Open in New Pane: `entry` in a new leaf to the right of `id`, focused,
+    /// filling the window when `full` (the fit rule: it cannot sit beside
+    /// it). Undo takes it back. Returns the new leaf's id.
+    @discardableResult
+    func open(_ entry: PaneStackEntry, besideCell id: PaneID, full: Bool) -> PaneID? {
+        guard tree.leaves.count < PaneLayout.maximumLeaves else { return nil }
+        let leaf = PaneLeaf(id: freshLeafID(), name: nil, stack: [entry], attachedTo: nil, origin: .split)
+        undoable(Self.openAction) { cells in
+            let opened = try cells.split(id, axis: .row, inserting: leaf).focusing(leaf.id)
+            return full ? try opened.zoom(leaf.id) : opened
+        }
+        return tree.leaf(leaf.id) == nil ? nil : leaf.id
+    }
+
+    /// Open in Pane: a split leaf shows `entry` in place of what it showed,
+    /// focused. Undo brings back what it showed.
+    func open(_ entry: PaneStackEntry, inCell id: PaneID) {
+        guard id != routedLeafID, tree.leaf(id)?.attachedTo == nil else { return }
+        undoable(Self.openInPaneAction) { cells in
+            var cells = cells
+            cells.root = cells.root.mapLeaves { leaf in
+                guard leaf.id == id else { return leaf }
+                var leaf = leaf
+                leaf.stack = [entry]
+                return leaf
+            }
+            return try cells.focusing(id)
+        }
+    }
+
     /// What a split of `id` shows.
     private func splitEntry(copying id: PaneID) -> PaneStackEntry {
         let top = topEntry(of: id)
@@ -415,6 +456,8 @@ final class ScenePanes {
     static let closeAction = String(localized: "Close Pane")
     static let moveAction = String(localized: "Move Pane")
     static let resetAction = String(localized: "Reset Panes")
+    static let openAction = String(localized: "Open in New Pane")
+    static let openInPaneAction = String(localized: "Open in Pane")
 
     /// Newest last, at most `undoDepth`. Not saved: a relaunch starts empty.
     private(set) var undoSteps: [UndoStep] = []

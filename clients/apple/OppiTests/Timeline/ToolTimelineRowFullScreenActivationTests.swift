@@ -77,7 +77,7 @@ struct ToolTimelineRowFullScreenActivationTests {
             isExpanded: true
         )
         configuration.currentFileOpenIntent = .init(path: "docs/current.md")
-        configuration.openCurrentFile = { activationCount += 1 }
+        configuration.openCurrentFile = { _ in activationCount += 1 }
         let view = ToolTimelineRowContentView(configuration: configuration)
 
         host.view.addSubview(view)

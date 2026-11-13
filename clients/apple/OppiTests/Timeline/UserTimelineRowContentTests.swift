@@ -541,7 +541,7 @@ struct UserTimelineRowContentTests {
             canFork: false,
             onFork: nil
         )
-        config.onOpenPathPill = { pill, _ in
+        config.onOpenPathPill = { pill, _, _ in
             openedPill = pill
         }
         let view = UserTimelineRowContentView(configuration: config)

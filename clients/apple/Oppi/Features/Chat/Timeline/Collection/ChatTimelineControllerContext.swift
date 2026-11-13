@@ -14,7 +14,7 @@ final class ChatTimelineControllerContext {
     var chromeStyle: ChatTimelineChromeStyle = .standard
     var routeScope: SessionRouteScope?
     var onFork: ((String) -> Void)?
-    var onOpenCurrentFile: ((String) -> Void)?
+    var onOpenCurrentFile: ((String, PaneOpenPlacement) -> Void)?
     var onOpenSession: ((String) -> Void)?
     var onOpenChatReader: ((ChatReaderPayload) -> Void)?
     var onShowEarlier: (() -> Void)?

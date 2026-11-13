@@ -312,7 +312,7 @@ struct ToolPresentationConfigTests {
             "content": .string(""),
         ], for: "write-current")
         var openedPaths: [String] = []
-        harness.coordinator.onOpenCurrentFile = { openedPaths.append($0) }
+        harness.coordinator.onOpenCurrentFile = { path, _ in openedPaths.append(path) }
         let item = ChatItem.toolCall(
             id: "write-current",
             tool: "write",

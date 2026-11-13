@@ -636,7 +636,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             onOutlineChange: { [weak self] in self?.updateBar() },
             headingAnchor: activeSelection == nil ? configuration.headingAnchor : nil,
             hostOffers: readerHostOffers,
-            hostMenu: editOwner.menuActions,
+            hostMenu: documentMenu,
             markdownViewportIntent: markdownViewportRestore.state[path],
             onMarkdownViewportIntentChange: { [weak self] in self?.markdownViewportRestore.state[path] = $0 },
             taskEditing: editOwner.makeReaderTaskEditing(path: path) { [weak self] text in if self?.isCurrentFile(path) == true { self?.content = .text(text) } },
@@ -714,7 +714,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         }
         readerPage?.backgroundColor = palette.ui.bgDark
         if let reader {
-            reader.setHostBar(offers: readerHostOffers, menu: editOwner.menuActions)
+            reader.setHostBar(offers: readerHostOffers, menu: documentMenu)
         }
         editOwner.updateEditorPage(palette: palette, checkoutSubtitle: checkoutSubtitle)
         if case .rendered(let renderer, _) = content {
@@ -750,7 +750,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             if !sharesReaderBar, !loading {
                 // The entry's items are trailing-first; offers read leading first.
                 offers = editOwner.readerOffers.merging(readerNavigationItems()) { own, _ in own }
-                documentActions = editOwner.menuActions
+                documentActions = documentMenu
             }
             // Share and the previous and next file are on every file's bar. A
             // pushed reader has its own bar with them on it; everywhere else it
@@ -767,6 +767,58 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             editorItems: editing ? editOwner.barItems : [], isEditing: editing
         )
         bar.apply(to: navigationItem)
+    }
+
+    /// The … menu's document actions: the editor's, then Open in New Pane
+    /// and Open in Pane ▸ for this file on a window wide enough for panes.
+    private var documentMenu: [UIMenuElement] {
+        paneFile == nil ? editOwner.menuActions : editOwner.menuActions + [paneMenu]
+    }
+
+    /// Built when the menu opens, from the panes the window has then. One
+    /// element, so the bar sees the same menu while nothing else changed.
+    private lazy var paneMenu = makePaneMenu()
+
+    private func makePaneMenu() -> UIDeferredMenuElement {
+        UIDeferredMenuElement.uncached { [weak self] completion in
+            // The menu asks on the main thread.
+            MainActor.assumeIsolated { completion(self?.paneMenuElements() ?? []) }
+        }
+    }
+
+    private func paneMenuElements() -> [UIMenuElement] {
+        guard let view = viewIfLoaded else { return [] }
+        return PaneOpenMenu.items(near: view, includesOpenHere: false) { [weak self] placement in
+            guard let self, let file = paneFile, let view = viewIfLoaded else { return }
+            PaneOpenMenu.open(placement, from: view) { PaneOpenContent(file: file) }
+        }.map(\.element)
+    }
+
+    /// The file shown now as a pane opens it, from the same origin; nil for a
+    /// revision or a session-touched file, which a pane cannot name.
+    private var paneFile: WorkspaceLinkedFileNavTarget? {
+        guard configuration.revision == nil, let serverId = configuration.serverId else { return nil }
+        let path = currentFilePath
+        switch configuration.source {
+        case .workspaceFile:
+            return .workspaceFile(
+                serverId: serverId, workspaceId: configuration.workspaceId, worktreeId: configuration.worktreeId,
+                path: path, lineAnchor: activeSelection == nil ? configuration.lineAnchor : nil,
+                sourceSessionId: configuration.sessionId
+            )
+        case .sessionFile(let sessionId):
+            return .sessionFile(
+                serverId: serverId, workspaceId: configuration.workspaceId, sessionId: sessionId, path: path,
+                sourceSessionId: configuration.sessionId
+            )
+        case .hostFile:
+            return .hostFile(
+                serverId: serverId, workspaceId: configuration.workspaceId, path: path,
+                sourceSessionId: configuration.sessionId, controlSessionId: configuration.controlSessionId
+            )
+        case .sessionTouched:
+            return nil
+        }
     }
 
     private func shareBarItem() -> UIBarButtonItem? {

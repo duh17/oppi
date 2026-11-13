@@ -502,7 +502,7 @@ enum MarkdownLinkInteractionSupport {
         shareWebLink: @escaping (_ url: URL, _ sourceView: UITextView?) -> Void
     ) -> UITextItem.MenuConfiguration? {
         guard let request, case .webLink(let normalizedURL) = request else {
-            return UITextItem.MenuConfiguration(menu: defaultMenu)
+            return UITextItem.MenuConfiguration(menu: withPaneItems(request, defaultMenu: defaultMenu, textView: textView))
         }
 
         let copyAction = UIAction(
@@ -530,6 +530,22 @@ enum MarkdownLinkInteractionSupport {
         return UITextItem.MenuConfiguration(
             menu: UIMenu(children: [openAction, copyAction, shareAction])
         )
+    }
+
+    /// A file link's menu: Open Here, Open in New Pane and Open in Pane ▸
+    /// above the system's items, on a window wide enough for panes. Open
+    /// Here is the tap's open.
+    private static func withPaneItems(_ request: AppOpenRequest?, defaultMenu: UIMenu, textView: UITextView) -> UIMenu {
+        guard let request, AppOpener.opensInPane(request),
+              let section = PaneOpenMenu.section(near: textView, open: { [weak textView] placement in
+                  guard let textView, let opener = AppRootEnvironment.near(textView)?.opener else { return }
+                  guard placement != .here else {
+                      opener.open(request)
+                      return
+                  }
+                  PaneOpenMenu.open(placement, from: textView) { await opener.paneContent(for: request) }
+              }) else { return defaultMenu }
+        return UIMenu(children: [section] + defaultMenu.children)
     }
 }
 

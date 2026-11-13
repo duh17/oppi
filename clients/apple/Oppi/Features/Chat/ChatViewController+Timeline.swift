@@ -52,7 +52,10 @@ extension ChatViewController {
         // Regular width opens it beside the chat, like the reader; narrow
         // width keeps the modal.
         return { [weak self] request in
-            if let self, opensPanelsBeside {
+            if request.placement != .here {
+                let content = presenter.paneContent(for: request)
+                PaneOpenMenu.open(request.placement, from: request.sourceView) { content }
+            } else if let self, opensPanelsBeside {
                 showPanel(.timeline(request.panelTarget))
             } else {
                 presenter.open(request)
@@ -210,7 +213,9 @@ extension ChatViewController {
         )
     }
 
-    private func openCurrentToolFile(path: String) {
+    /// The file a tool row changed, over the chat as a tap opens it, or in a
+    /// pane from the row's menu.
+    private func openCurrentToolFile(path: String, placement: PaneOpenPlacement) {
         let serverId = resolvedServerId
         guard let target = Self.currentToolFileTarget(
             serverId: serverId,
@@ -219,6 +224,10 @@ extension ChatViewController {
             path: path
         ), let serverId else {
             connection.extensionToast = "Could not open the current file"
+            return
+        }
+        guard placement == .here else {
+            PaneOpenMenu.open(placement, from: view) { PaneOpenContent(file: target) }
             return
         }
 
@@ -262,7 +271,7 @@ extension ChatViewController {
             readAloudAvailable: connection.speechAvailable,
             routeScope: focusedRouteScope,
             onFork: { [weak self] in self?.forkFromMessage($0) },
-            onOpenCurrentFile: { [weak self] in self?.openCurrentToolFile(path: $0) },
+            onOpenCurrentFile: { [weak self] in self?.openCurrentToolFile(path: $0, placement: $1) },
             onOpenSession: { [weak self] in self?.openChildSession($0) },
             onOpenChatReader: { [weak self] in self?.openTimelineReader($0) },
             onBackSwipe: { [weak self] in self?.navigateBackFromChat() },

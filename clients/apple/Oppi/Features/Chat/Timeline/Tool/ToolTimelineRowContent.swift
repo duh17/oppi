@@ -70,7 +70,9 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     /// of which origin serves the bytes.
     var sourceFilePath: String? = nil
     var currentFileOpenIntent: ToolCurrentFileOpenIntent? = nil
-    var openCurrentFile: (() -> Void)? = nil
+    /// Opens the file the tool changed: `.here` as a tap does, or in a pane
+    /// from the row's menu.
+    var openCurrentFile: ((PaneOpenPlacement) -> Void)? = nil
     var openFullScreen: ((ChatReaderPayload) -> Void)? = nil
     /// Same owner as a timeline selection tap. Nil when the row cannot expand.
     var onHeaderActivate: (() -> Bool)? = nil
@@ -1287,6 +1289,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             onActivate: configuration.onHeaderActivate,
             customActions: currentFileActions
         )
+        headerElement.paneActions = currentFileActivationAvailable ? { [weak self] in
+            guard let self else { return [] }
+            return PaneOpenMenu.accessibilityActions(near: self, includesOpenHere: false, open: self.openCurrentFile)
+        } : nil
         updateAccessibilityChildren()
 
         // 6. Status appearance
@@ -2247,7 +2253,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     func activateExpandedContent() {
         if currentFileActivationAvailable {
-            currentConfiguration.openCurrentFile?()
+            currentConfiguration.openCurrentFile?(.here)
             return
         }
         showFullScreenContent()
@@ -2300,7 +2306,23 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return (terminal, source)
     }
 
+    /// Opens the changed file where a menu or action asks.
+    private func openCurrentFile(_ placement: PaneOpenPlacement) {
+        currentConfiguration.openCurrentFile?(placement)
+    }
+
+    /// The row's menu; on the output it opens the changed file, also in a pane.
     func contextMenu(for target: ContextMenuTarget) -> UIMenu? {
+        let menu = rowMenu(for: target)
+        guard let menu, target == .output || target == .expanded, currentFileActivationAvailable,
+              let panes = PaneOpenMenu.section(near: self, includesOpenHere: false, open: { [weak self] in
+                  self?.openCurrentFile($0)
+              }) else { return menu }
+        // Beside Open Current File, which is Open Here.
+        return UIMenu(title: menu.title, children: [panes] + menu.children)
+    }
+
+    private func rowMenu(for target: ContextMenuTarget) -> UIMenu? {
         let command = commandCopyText
         let output = outputCopyText
 

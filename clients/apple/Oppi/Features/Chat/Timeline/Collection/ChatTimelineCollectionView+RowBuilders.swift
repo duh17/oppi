@@ -176,8 +176,8 @@ extension ChatTimelineController {
                 sessionId: sessionId
             ),
             fetchSessionAttachment: attachmentFetcher,
-            onOpenPathPill: { [weak self] pill, sourceView in
-                self?.openUserMessagePathPill(pill, from: sourceView)
+            onOpenPathPill: { [weak self] pill, sourceView, placement in
+                self?.openUserMessagePathPill(pill, from: sourceView, placement: placement)
             },
             canFork: canFork,
             onFork: forkAction,
@@ -237,7 +237,7 @@ extension ChatTimelineController {
     /// Maps a pill tap to a typed destination request. Building and presenting the destination
     /// belongs to chat composition (`openDestination`); the timeline supplies source identity,
     /// review-comment scope, and the view/presenter it was tapped from.
-    func openUserMessagePathPill(_ pill: UserMessagePathPill, from sourceView: UIView) {
+    func openUserMessagePathPill(_ pill: UserMessagePathPill, from sourceView: UIView, placement: PaneOpenPlacement = .here) {
         guard let destination = pill.timelineDestination,
               let workspaceId, !workspaceId.isEmpty,
               let presenter = sourceView.nearestViewController,
@@ -261,7 +261,8 @@ extension ChatTimelineController {
                 reviewCommentSelectionScope: interactionContext.reviewCommentSelectionRouter
                     .map(ReviewCommentSelectionScope.activeSession),
                 sourceView: sourceView,
-                presenter: presenter
+                presenter: presenter,
+                placement: placement
             )
         )
     }
@@ -592,8 +593,8 @@ extension ChatTimelineController {
         configuration.rowWidth = timelineRowWidth()
         if let intent = configuration.currentFileOpenIntent,
            let onOpenCurrentFile {
-            configuration.openCurrentFile = {
-                onOpenCurrentFile(intent.path)
+            configuration.openCurrentFile = { placement in
+                onOpenCurrentFile(intent.path, placement)
             }
         }
         if let onOpenChatReader {

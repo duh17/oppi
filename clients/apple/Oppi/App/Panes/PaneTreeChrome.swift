@@ -28,6 +28,7 @@ struct PaneMenuItem {
     var element: UIMenuElement {
         guard children.isEmpty else {
             let menu = UIMenu(title: title, image: UIImage(systemName: symbol), children: children.map(\.element))
+            menu.accessibilityIdentifier = identifier
             return menu
         }
         let run = run

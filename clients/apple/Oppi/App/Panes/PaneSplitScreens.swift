@@ -81,7 +81,8 @@ enum PaneSplitScreens {
         return state
     }
 
-    private static func screen(for element: WorkspaceStackRouteElement, root: AppRootEnvironment) -> UIViewController {
+    /// The screen the shell would show for `element`, as a leaf's root.
+    static func screen(for element: WorkspaceStackRouteElement, root: AppRootEnvironment) -> UIViewController {
         ShellRouteScreens.make(ShellRoute(element), placement: .pushed, root: root, openSidebar: nil)
     }
 

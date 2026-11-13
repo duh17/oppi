@@ -1,12 +1,14 @@
 import UIKit
 
 /// A row's menu: Share…, Open, and Copy Path for a file; Open and Copy Path
-/// for a folder, because the server has no folder download to share.
+/// for a folder, because the server has no folder download to share. On a
+/// window wide enough for panes, Open is Open Here, with Open in New Pane and
+/// Open in Pane ▸ beside it (`PaneOpenMenu`).
 ///
 /// Long press and secondary click open the menu; VoiceOver and Full Keyboard
-/// Access reach Share… and Copy Path as the row's actions (Open is the row's
-/// own activation). Every way in runs `performRowAction`, which finds the
-/// row by its path when it runs.
+/// Access reach Share…, Copy Path and the pane items as the row's actions
+/// (Open is the row's own activation). Every way in runs `performRowAction`,
+/// which finds the row by its path when it runs.
 extension FileBrowserViewController {
     enum RowAction {
         case share
@@ -52,14 +54,18 @@ extension FileBrowserViewController {
         guard indexPaths.count == 1, let path = rowPath(at: indexPaths[0]), rowMenuEntry(path: path) != nil else {
             return nil
         }
+        let panes = paneItems(path: path)
         let configuration = UIContextMenuConfiguration(identifier: path as NSString, previewProvider: nil) { [weak self] _ in
-            UIMenu(children: Self.rowActions(path: path).map { action in
+            let rowItems: [UIMenuElement] = Self.rowActions(path: path).flatMap { action -> [UIMenuElement] in
+                // Open Here stands in for Open.
+                if action == .open, !panes.isEmpty { return panes.map(\.element) }
                 let item = UIAction(title: action.title, image: UIImage(systemName: action.symbol)) { _ in
                     self?.performRowAction(action, path: path)
                 }
                 item.accessibilityIdentifier = action.identifier
-                return item
-            })
+                return [item]
+            }
+            return UIMenu(children: rowItems)
         }
         // Share stays on top when the menu opens above a row low on the screen.
         configuration.preferredMenuElementOrder = .fixed
@@ -67,11 +73,39 @@ extension FileBrowserViewController {
     }
 
     func rowAccessibilityActions(path: String) -> [UIAccessibilityCustomAction] {
-        Self.rowActions(path: path).filter { $0 != .open }.map { action in
+        let rowActions = Self.rowActions(path: path).filter { $0 != .open }.map { action in
             UIAccessibilityCustomAction(name: action.title) { [weak self] _ in
                 self?.performRowAction(action, path: path) ?? false
             }
         }
+        guard paneContent(path: path) != nil else { return rowActions }
+        return rowActions + PaneOpenMenu.accessibilityActions(near: view, includesOpenHere: false) { [weak self] placement in
+            self?.openRow(path: path, placement: placement)
+        }
+    }
+
+    /// Open Here, Open in New Pane and Open in Pane ▸ for the row at `path`;
+    /// empty on a compact window or for a row with nothing a pane can show.
+    private func paneItems(path: String) -> [PaneMenuItem] {
+        guard paneContent(path: path) != nil else { return [] }
+        return PaneOpenMenu.items(near: view) { [weak self] placement in
+            self?.openRow(path: path, placement: placement)
+        }
+    }
+
+    /// The row at `path` as a pane's content: a workspace file or folder by
+    /// its link, as a drag carries it. The home folder's rows have none.
+    private func paneContent(path: String) -> PaneOpenContent? {
+        paneEntry(forRowPath: path).map { PaneOpenContent(entry: $0) }
+    }
+
+    private func openRow(path: String, placement: PaneOpenPlacement) {
+        guard placement != .here else {
+            performRowAction(.open, path: path)
+            return
+        }
+        let content = paneContent(path: path)
+        PaneOpenMenu.open(placement, from: view) { content }
     }
 
     /// False when the row is gone or its file cannot be read now.

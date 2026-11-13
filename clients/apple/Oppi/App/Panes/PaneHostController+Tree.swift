@@ -89,6 +89,15 @@ extension PaneHostController {
         // A compact window shows one pane at a time, the focused one, and the
         // chip lists the rest (build plan §1.5). The tree is unchanged.
         if showsChip(cells) { cells.zoomed = cells.focus }
+        let resolved = presentation(of: cells)
+        cellPresentation = resolved
+        // A collapsed routed leaf is its strip: the primary and its companion park.
+        let routedCollapsed = cells.collapsed[panes.routedLeafID] != nil
+        routedCell = routedCollapsed ? .zero : resolved.frames[panes.routedLeafID] ?? .zero
+    }
+
+    /// Where `cells` would sit in the host now, by the fit rule.
+    func presentation(of cells: PaneLayout) -> PanePresentation {
         // The split view's sidebar floats over the host's leading edge and
         // reaches it as the leading safe area: several panes fit and sit
         // beside it, never under it. One pane fills the host, as before, and
@@ -110,10 +119,7 @@ extension PaneHostController {
             liveCap: PlatformCapabilities.livePaneLimit
         )
         presentation.frames = presentation.frames.mapValues { $0.offsetBy(dx: sideInsets.leading, dy: 0) }
-        cellPresentation = presentation
-        // A collapsed routed leaf is its strip: the primary and its companion park.
-        let routedCollapsed = cells.collapsed[panes.routedLeafID] != nil
-        routedCell = routedCollapsed ? .zero : presentation.frames[panes.routedLeafID] ?? .zero
+        return presentation
     }
 
     func layoutSplitLeaves() {
@@ -329,6 +335,9 @@ extension PaneHostController {
 
     private func makeScreen(_ entry: PaneStackEntry, leaf id: PaneID) -> UIViewController {
         if let screen = openingScreens.removeValue(forKey: id) { return screen }
+        if case .local(let token) = entry.route, let element = panes.standIns[token], let root = AppRootEnvironment.near(self) {
+            return PaneSplitScreens.screen(for: element, root: root)
+        }
         let restored = panes.takeRestored(id)
         return PaneSplitScreens.make(entry, root: AppRootEnvironment.near(self), restored: restored, actions: PaneSplitScreens.Actions(
             show: { [weak self] entry in
@@ -482,7 +491,7 @@ extension PaneHostController {
     }
 
     /// Offers Undo for the change just made.
-    private func offerUndo() {
+    func offerUndo() {
         guard let action = panes.undoAction else { return }
         undoToast.show(action: action)
         view.setNeedsLayout()
@@ -921,7 +930,7 @@ extension PaneHostController {
         }
     }
 
-    private func announceLayoutChange() {
+    func announceLayoutChange() {
         UIAccessibility.post(notification: .layoutChanged, argument: nil)
     }
 }

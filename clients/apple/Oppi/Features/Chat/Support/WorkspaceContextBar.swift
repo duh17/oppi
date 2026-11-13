@@ -1209,6 +1209,13 @@ final class WorkspaceContextBarView: UIView {
             }
         }
         row.accessibilityLabel = content.labelParts.joined(separator: ", ")
+        if !isSelecting, canTap, file.gitFile != nil, let serverId = context.serverId, let workspaceId = context.workspaceId {
+            // Open Here is the review; a pane shows the file in its checkout.
+            let target = WorkspaceLinkedFileNavTarget.workspaceFile(
+                serverId: serverId, workspaceId: workspaceId, worktreeId: context.worktreeId, path: file.path
+            )
+            PaneOpenMenu.attach(to: row, here: { [weak self] in self?.open(file) }, content: { PaneOpenContent(file: target) })
+        }
         // While selecting, a row Select cannot pick reads as dimmed text.
         let unselectable = isSelecting && !file.isSelectable
         content.stack.alpha = unselectable ? 0.45 : 1
