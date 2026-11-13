@@ -4,7 +4,10 @@ import {
   normalizeExtensionUINativeSurface,
   type ExtensionUIProtocolRequest,
 } from "./extension-ui-contract.js";
-import { isExtensionUISurfaceIconName } from "./extension-surface-icons.js";
+import {
+  EXTENSION_UI_SURFACE_WORKING_ICON,
+  isExtensionUISurfaceIconName,
+} from "./extension-surface-icons.js";
 import { projectNodeToV1, v1PillSubtitle, v1TextBlock } from "./extension-surface-projection.js";
 import type {
   ExtensionUIAccessibility,
@@ -496,7 +499,15 @@ function node(
         ...tappable,
       };
     case "icon":
-      return { ...base, type, name: iconName(value.name), ...tone };
+      return {
+        ...base,
+        type,
+        name:
+          value.name === EXTENSION_UI_SURFACE_WORKING_ICON
+            ? EXTENSION_UI_SURFACE_WORKING_ICON
+            : iconName(value.name),
+        ...tone,
+      };
     case "elapsed": {
       if (
         typeof value.since !== "number" ||

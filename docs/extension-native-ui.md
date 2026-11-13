@@ -141,7 +141,7 @@ iOS draws each row as a list row: the state symbol, the `title` on one line, the
 | State | Meaning | Treatment |
 | --- | --- | --- |
 | `queued` | Waiting to start | Muted or pending |
-| `running` | Active work or stopping | Orange, working |
+| `running` | Active work or stopping | Oppi's still working mark, as session rows show it |
 | `success` | Ready or completed | Green |
 | `warning` | Completed with caveat | Orange, warning |
 | `error` | Failed | Red |
@@ -392,7 +392,7 @@ The drawer has a maximum height and scrolls. While its body is taller than that,
 | `text` | `text`, `style?`, `tone?`, `selected?`, `disabled?`, `action?` | `style`: `body`, `headline`, `caption`, `mono`. |
 | `markdown` | `markdown` | |
 | `badge` | `text`, `tone?`, `icon?`, `selected?`, `disabled?`, `action?` | A short status word. |
-| `icon` | `name`, `tone?` | An SF Symbol name from the server's allow-list. |
+| `icon` | `name`, `tone?` | An SF Symbol name from the server's allow-list, or `working`: Oppi's still working mark, as session rows show it, which ignores `tone`. |
 | `elapsed` | `since`, `format?`, `style?`, `tone?` | A live count. See [Elapsed](#elapsed). |
 | `progress` | `value?`, `kind?`, `label?`, `tone?` | `value` is 0–1; without it the progress is indeterminate. `kind`: `bar`, `ring`. |
 | `keyValue` | `pairs` | Each pair is `{ key, value, tone? }`; at most 24. |
@@ -475,8 +475,9 @@ The server advertises these capability levels and clients must support at least 
 | `extension-native-ui:v2:blocks` | `blocks` sections and composed pills |
 | `extension-native-ui:v2:elapsed` | The `elapsed` node, ticked by the client, and pill text at the strip's size |
 | `extension-native-ui:v2:panel` | [Panel panes](#panel-panes): a composable surface's `panel` hints and the `panel` placement |
+| `extension-native-ui:v2:working` | The `working` icon, drawn as Oppi's still working mark |
 
-A client names the version 2 capabilities it draws in a `client_capabilities` message on its session stream, and the server sends each client the shape it can draw. A client without `composites` gets the version 1 projection of every composable surface. A client without `blocks` gets the projection of a surface that has a `blocks` section or a pill. A client without `elapsed` gets each `elapsed` node as static text, and a pill's `headline` text as `caption`, because it draws `headline` too large for the strip. A client without `panel` gets each composable surface without its `panel` hints, and a `panel` placement as `strip`, so its pill opens the drawer as before. Version 1 hints go to every client: a client that does not read them ignores them.
+A client names the version 2 capabilities it draws in a `client_capabilities` message on its session stream, and the server sends each client the shape it can draw. A client without `composites` gets the version 1 projection of every composable surface. A client without `blocks` gets the projection of a surface that has a `blocks` section or a pill. A client without `elapsed` gets each `elapsed` node as static text, and a pill's `headline` text as `caption`, because it draws `headline` too large for the strip. A client without `panel` gets each composable surface without its `panel` hints, and a `panel` placement as `strip`, so its pill opens the drawer as before. A client without `working` gets each `working` icon as the `arrow.triangle.2.circlepath` symbol. Version 1 hints go to every client: a client that does not read them ignores them.
 
 Terminal fallback is part of the contract:
 

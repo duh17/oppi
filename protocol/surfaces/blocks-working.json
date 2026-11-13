@@ -1,0 +1,86 @@
+{
+  "version": 2,
+  "id": "blocks-working",
+  "title": "Jobs",
+  "placement": {
+    "kind": "strip",
+    "preferred": "aboveComposer"
+  },
+  "lifecycle": "persistent",
+  "header": {
+    "title": "Jobs",
+    "subtitle": "1 running"
+  },
+  "actions": {
+    "retry": {
+      "title": "Retry",
+      "role": "primary",
+      "pending": {
+        "title": "Retrying…",
+        "disabled": [
+          "retry"
+        ]
+      }
+    },
+    "openLog": {
+      "title": "Logs"
+    },
+    "copy": {
+      "title": "Copy",
+      "role": "secondary"
+    }
+  },
+  "fallback": {
+    "text": "1 job running"
+  },
+  "revision": 7,
+  "extensionScopeId": "npm:deploy-helper",
+  "extensionDisplayName": "Deploy Helper",
+  "pill": {
+    "content": {
+      "type": "row",
+      "spacing": "tight",
+      "children": [
+        {
+          "type": "icon",
+          "name": "working",
+          "tone": "accent"
+        },
+        {
+          "type": "text",
+          "text": "1 job running",
+          "style": "headline"
+        }
+      ]
+    },
+    "tap": "drawer"
+  },
+  "sections": [
+    {
+      "composite": "blocks",
+      "id": "jobs",
+      "state": {
+        "kind": "content"
+      },
+      "fallback": {
+        "text": "1 job running"
+      },
+      "body": {
+        "type": "row",
+        "children": [
+          {
+            "type": "icon",
+            "id": "status:job-1",
+            "name": "working",
+            "tone": "accent"
+          },
+          {
+            "type": "text",
+            "text": "npm test",
+            "style": "headline"
+          }
+        ]
+      }
+    }
+  ]
+}

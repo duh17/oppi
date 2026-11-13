@@ -26,6 +26,7 @@ export function buildSurfaceFixtures(): Record<string, unknown> {
     "blocks-filters.json": blocksFiltersSurface(),
     "blocks-status.json": blocksStatusSurface(),
     "blocks-elapsed.json": blocksElapsedSurface(),
+    "blocks-working.json": blocksWorkingSurface(),
     "blocks-action.json": blocksActionMessage(),
     "blocks-patch.json": blocksPatchMessage(),
     "blocks-unknown-node.json": blocksUnknownNodeSurface(),
@@ -685,6 +686,45 @@ function blocksElapsedSurface(): unknown {
           children: [
             { type: "text", text: "npm test" },
             { type: "elapsed", id: "job-elapsed", since: 1_790_000_000_000, format: "short" },
+          ],
+        },
+      },
+    ],
+  });
+}
+
+/**
+ * A running row and its pill with the host's still working mark. Only a client that declares
+ * `v2:working` is sent it so; every other tree client gets the stand-in symbol.
+ */
+function blocksWorkingSurface(): unknown {
+  return baseSurface({
+    id: "blocks-working",
+    title: "Jobs",
+    header: { title: "Jobs", subtitle: "1 running" },
+    fallback: { text: "1 job running" },
+    pill: {
+      content: {
+        type: "row",
+        spacing: "tight",
+        children: [
+          { type: "icon", name: "working", tone: "accent" },
+          { type: "text", text: "1 job running", style: "headline" },
+        ],
+      },
+      tap: "drawer",
+    },
+    sections: [
+      {
+        composite: "blocks",
+        id: "jobs",
+        state: { kind: "content" },
+        fallback: { text: "1 job running" },
+        body: {
+          type: "row",
+          children: [
+            { type: "icon", id: "status:job-1", name: "working", tone: "accent" },
+            { type: "text", text: "npm test", style: "headline" },
           ],
         },
       },

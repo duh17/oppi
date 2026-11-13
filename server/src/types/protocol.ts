@@ -657,7 +657,7 @@ export type ExtensionUISurfaceNode =
     })
   | (ExtensionUISurfaceNodeBase & {
       type: "icon";
-      /** An SF Symbol name from the server's allow-list. */
+      /** An SF Symbol name from the server's allow-list, or `working`: the host's still working mark. */
       name: string;
       tone?: ExtensionUISurfaceTone;
     })

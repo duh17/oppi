@@ -704,10 +704,16 @@ final class BlocksBadgeView: BlocksTapControl {
     }
 }
 
-/// An icon: an SF Symbol the server allow-lists. A name this build cannot draw leaves the gap
-/// empty rather than failing the node.
+/// An icon: an SF Symbol the server allow-lists, or `working`, which draws the app's still working
+/// mark (`WorkingMarkView`) in the style and tint session rows use, whatever the node's tone. A name
+/// this build cannot draw leaves the gap empty rather than failing the node.
 final class BlocksIconView: UIView {
+    /// The one icon name that is not an SF Symbol (`extension-native-ui:v2:working`).
+    static let workingName = "working"
+
     private let image = UIImageView()
+    private var mark: WorkingMarkView?
+    private var markStyle: UIFont.TextStyle?
     /// A glyph in a pill keeps the symbol's own size; beside a card's text it gets a column.
     private var inline = false
 
@@ -737,16 +743,23 @@ final class BlocksIconView: UIView {
         node surfaceNode: ExtensionUISurfaceNode,
         environment: ExtensionSurfaceBlocksEnvironment
     ) {
-        let color = ExtensionSurfaceBlockMetrics.textColor(node.tone, environment.palette)
-        image.image = UIImage.scaledSymbol(
-            node.name,
-            style: environment.inline ? .caption1 : .body,
-            weight: .semibold,
-            color: color
-        )
+        let style: UIFont.TextStyle = environment.inline ? .caption1 : .body
+        let working = node.name == Self.workingName
+        if working {
+            image.image = nil
+            showMark(style: style).apply(tint: environment.palette.ui.blue, palette: environment.palette)
+        } else {
+            image.image = UIImage.scaledSymbol(
+                node.name,
+                style: style,
+                weight: .semibold,
+                color: ExtensionSurfaceBlockMetrics.textColor(node.tone, environment.palette)
+            )
+        }
+        mark?.isHidden = !working
         image.isHidden = image.image == nil
         inline = environment.inline
-        let label = node.base.accessibility?.label
+        let label = node.base.accessibility?.label ?? (working ? WorkingMarkView.spokenLabel : nil)
         isAccessibilityElement = label != nil
         accessibilityLabel = label
         accessibilityValue = node.base.accessibility?.value
@@ -759,9 +772,31 @@ final class BlocksIconView: UIView {
     /// than it, centred: in a row whose children share their first line, the glyph then centres on
     /// the title's first line, and every glyph takes the same column so titles line up from row to
     /// row whatever symbol leads them.
+    /// The working mark for `style`, made on first use: its side is fixed by its text style.
+    private func showMark(style: UIFont.TextStyle) -> WorkingMarkView {
+        if let mark, markStyle == style { return mark }
+        mark?.removeFromSuperview()
+        let next = WorkingMarkView(textStyle: style)
+        next.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(next)
+        NSLayoutConstraint.activate([
+            next.centerXAnchor.constraint(equalTo: centerXAnchor),
+            next.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        mark = next
+        markStyle = style
+        return next
+    }
+
     override var intrinsicContentSize: CGSize {
-        guard !image.isHidden else { return .zero }
-        let symbol = image.intrinsicContentSize
+        let symbol: CGSize
+        if let mark, !mark.isHidden {
+            symbol = mark.intrinsicContentSize
+        } else if !image.isHidden {
+            symbol = image.intrinsicContentSize
+        } else {
+            return .zero
+        }
         guard !inline else { return symbol }
         let line = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection).lineHeight
         let height = ceil(max(line, symbol.height))

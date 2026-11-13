@@ -67,6 +67,16 @@ export const EXTENSION_UI_SURFACE_ICON_NAMES = [
   "xmark.circle.fill",
 ] as const;
 
+/**
+ * The one `icon` node name that is not an SF Symbol: the host's still working mark, the same mark
+ * session rows show for a working agent. Only an `icon` node takes it; a badge, a control, or a
+ * pane names a symbol.
+ */
+export const EXTENSION_UI_SURFACE_WORKING_ICON = "working";
+
+/** What a client that predates the working mark is sent in its place. */
+export const EXTENSION_UI_SURFACE_WORKING_ICON_STAND_IN = "arrow.triangle.2.circlepath";
+
 const ICON_NAMES: ReadonlySet<string> = new Set(EXTENSION_UI_SURFACE_ICON_NAMES);
 
 export function isExtensionUISurfaceIconName(value: string): boolean {

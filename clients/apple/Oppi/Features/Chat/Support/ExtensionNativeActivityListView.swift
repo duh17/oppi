@@ -99,6 +99,9 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
     private let control = ActivityRowControl()
     /// The state symbol, on the title's first line rather than centered on the row.
     private let marker = UIImageView()
+    /// A running row's state: the app's still working mark, as session rows draw it, in the
+    /// symbol's place.
+    private let workingMark = WorkingMarkView(textStyle: .subheadline)
     private let content = UIListContentView(configuration: .subtitleCell())
     /// The quiet one-line detail under the content's subtitle.
     private let detailLabel = ExtensionNativeBlockStyle.label(.caption1)
@@ -155,7 +158,7 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
         trailing.spacing = 6
         trailing.isUserInteractionEnabled = false
         // The text fills the row's height; the symbol and the time hang off the title's line.
-        for view in [marker, text, trailing] as [UIView] {
+        for view in [marker, text, trailing, workingMark] as [UIView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             control.addSubview(view)
         }
@@ -205,6 +208,8 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
             // Inset to the text, as a list cell's separator is.
             separator.leadingAnchor.constraint(equalTo: text.leadingAnchor),
             markerWidth,
+            workingMark.centerXAnchor.constraint(equalTo: marker.centerXAnchor),
+            workingMark.centerYAnchor.constraint(equalTo: marker.centerYAnchor),
             linkButton.widthAnchor.constraint(equalToConstant: 44),
             linkButton.heightAnchor.constraint(equalToConstant: 44),
         ])
@@ -266,11 +271,15 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
         let accessibilitySize = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
 
         let titleFont = ExtensionNativeBlockStyle.font(.subheadline, weight: .semibold)
-        marker.image = UIImage(
-            systemName: Self.markerSymbol(tone),
-            withConfiguration: UIImage.SymbolConfiguration(textStyle: .body)
-        )
+        let working = tone == .running
+        marker.image = Self.markerSymbol(tone).flatMap {
+            UIImage(systemName: $0, withConfiguration: UIImage.SymbolConfiguration(textStyle: .body))
+        }
         marker.tintColor = ExtensionNativeBlockStyle.activityColor(tone, palette: palette)
+        workingMark.isHidden = !working
+        if working {
+            workingMark.apply(tint: ExtensionNativeBlockStyle.activityColor(tone, palette: palette), palette: palette)
+        }
         var configuration = UIListContentConfiguration.subtitleCell()
         // No hyphens inside names: `catalyst-ghostty-spike` wraps at its own hyphens. An attributed
         // title takes its line breaks from its paragraph style: one line cut in the middle keeps
@@ -492,9 +501,10 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
         }
     }
 
-    private static func markerSymbol(_ tone: ExtensionNativeBlockPresentation.ActivityTone) -> String {
+    /// A running row draws `workingMark` instead.
+    private static func markerSymbol(_ tone: ExtensionNativeBlockPresentation.ActivityTone) -> String? {
         switch tone {
-        case .running: "circle.dotted.circle"
+        case .running: nil
         case .success: "checkmark.circle.fill"
         case .warning: "exclamationmark.circle.fill"
         case .error: "xmark.circle.fill"

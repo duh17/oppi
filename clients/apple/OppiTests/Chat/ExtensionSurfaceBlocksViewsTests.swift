@@ -781,6 +781,68 @@ struct ExtensionSurfaceBlocksViewsTests {
         ]
     }
 
+    /// An `icon` named `working` draws the app's still working mark, in the body and in the pill, and
+    /// speaks "Working"; a symbol name keeps its symbol.
+    @Test func theWorkingIconDrawsTheStillWorkingMark() throws {
+        let view = composites(try surface("blocks-working.json"))
+        let icon = try #require(subviews(of: BlocksIconView.self, in: view).first)
+        let mark = try #require(subviews(of: WorkingMarkView.self, in: icon).first)
+        #expect(!mark.isHidden && mark.image != nil)
+        #expect(icon.accessibilityLabel == WorkingMarkView.spokenLabel)
+        #expect(icon.intrinsicContentSize.height >= mark.side)
+
+        let symbols = composites(try headerlessBlocks([jobRow()]))
+        let symbol = try #require(subviews(of: BlocksIconView.self, in: symbols).first)
+        let symbolMarks = subviews(of: WorkingMarkView.self, in: symbol).filter { !$0.isHidden }
+        #expect(symbolMarks.isEmpty)
+
+        let panel = makePanel(try surface("blocks-working.json"))
+        let pill = testUnwrap(control("extension-strip-aboveEditor-pill-surface-blocks_2dworking", in: panel))
+        #expect(subviews(of: WorkingMarkView.self, in: pill).contains { !$0.isHidden })
+    }
+
+    /// A widget's pill wears its most urgent row's tone as a dot; while that is a running row, the
+    /// still working mark takes the dot's place.
+    @Test func aWidgetPillWithARunningRowDrawsTheStillWorkingMarkForItsDot() throws {
+        func pill(rowState: String) throws -> UIView {
+            let json = """
+            {"version":1,"id":"widget:agents","source":"widget",
+             "presentation":{"style":"surfacePanel","title":"Agents","subtitle":"1 working"},
+             "blocks":[{"type":"activityList","id":"rows","rows":[{"id":"a","title":"auth","state":"\(rowState)"}]}]}
+            """
+            let native = try JSONDecoder().decode(ExtensionUINativeSurface.self, from: Data(json.utf8))
+            let panel = ExtensionSurfacePanelView(
+                placement: .aboveEditor,
+                actions: ExtensionSurfaceDrawerActions(openReader: { _ in }, sendAction: nil)
+            )
+            panel.apply(ExtensionSurfacePanelView.Content(
+                surface: ExtensionSurfaceState(nativeSurfaces: [
+                    native.id: ExtensionNativeSurfaceState(key: "agents", surface: native, placement: nil, order: 1),
+                ]),
+                messageQueue: nil,
+                themeID: themeID,
+                collapseRequestID: 0
+            ))
+            show(panel, inset: 0)
+            panel.layoutIfNeeded()
+            // The strip's one pill.
+            return testUnwrap(subviews(of: UIControl.self, in: panel).first {
+                $0.accessibilityIdentifier?.hasPrefix("extension-strip-aboveEditor-pill-") == true
+            })
+        }
+        func shownMarks(_ root: UIView) -> Int {
+            subviews(of: WorkingMarkView.self, in: root).filter { !$0.isHidden && $0.image != nil }.count
+        }
+
+        let running = try pill(rowState: "running")
+        #expect(shownMarks(running) == 1)
+        #expect(toneDot(in: running)?.isHidden == true, "the dot and the mark both show")
+
+        let done = try pill(rowState: "success")
+        #expect(shownMarks(done) == 0)
+        #expect(toneDot(in: done)?.isHidden == false)
+    }
+
     @Test func aCardThatIsItsSurfacesOnlyContentSitsOnTheDrawerWithoutAFrame() throws {
         func cards(_ bodies: [[String: Any]]) throws -> [ExtensionSurfaceBlocksView] {
             subviews(of: ExtensionSurfaceBlocksView.self, in: composites(try headerlessBlocks(bodies)))

@@ -443,7 +443,7 @@ export function spacer(
   };
 }
 
-/** An SF Symbol from the host's allow-list. */
+/** An SF Symbol from the host's allow-list, or `working` for the host's still working mark. */
 export function icon(fields: {
   id?: string;
   name: string;

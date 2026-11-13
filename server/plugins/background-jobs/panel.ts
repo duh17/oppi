@@ -103,7 +103,8 @@ function glyph(status: JobStatus): {
   name: string;
   tone: "accent" | "success" | "warning" | "danger";
 } {
-  if (status === "running") return { name: "arrow.triangle.2.circlepath", tone: "accent" };
+  // The host's still working mark, the one its session rows show for a working agent.
+  if (status === "running") return { name: "working", tone: "accent" };
   if (status === "completed") return { name: "checkmark.circle.fill", tone: "success" };
   if (status === "cancelled") return { name: "minus.circle", tone: "warning" };
   if (status === "timed_out") return { name: "exclamationmark.triangle.fill", tone: "warning" };

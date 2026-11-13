@@ -77,7 +77,7 @@ enum ChatRoutesJobsSurface {
                   {
                     "id": "status:bash-8",
                     "type": "icon",
-                    "name": "arrow.triangle.2.circlepath",
+                    "name": "working",
                     "tone": "accent"
                   },
                   {
@@ -143,7 +143,7 @@ enum ChatRoutesJobsSurface {
                   {
                     "id": "status:bash-72",
                     "type": "icon",
-                    "name": "arrow.triangle.2.circlepath",
+                    "name": "working",
                     "tone": "accent"
                   },
                   {

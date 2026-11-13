@@ -34,4 +34,9 @@ enum ClientCapability {
     /// placement's pill as the way into that pane. A client that does not name it is sent each
     /// surface without the hints and placed as `strip`.
     static let extensionNativeUIPanel = "extension-native-ui:v2:panel"
+
+    /// `extension-native-ui:v2:working`: this build draws an `icon` node named `working` as the
+    /// app's still working mark (`BlocksIconView`). A client that does not name it is sent a
+    /// symbol in its place.
+    static let extensionNativeUIWorking = "extension-native-ui:v2:working"
 }

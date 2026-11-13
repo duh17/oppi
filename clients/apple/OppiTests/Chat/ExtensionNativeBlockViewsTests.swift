@@ -119,6 +119,25 @@ struct ExtensionNativeBlockViewsTests {
         #expect(label().contains("Running bash"))
     }
 
+    /// A running row draws the app's still working mark where other states draw their symbol, and a
+    /// reused row trades them back when the state changes.
+    @Test func aRunningRowDrawsTheStillWorkingMarkInPlaceOfItsSymbol() throws {
+        func shownMarks(_ stack: UIView) -> [WorkingMarkView] {
+            subviews(of: WorkingMarkView.self, in: stack).filter { !$0.isHidden && $0.image != nil }
+        }
+        let stack = layout(.blocks([activityList(rowID: "task-1", subtitle: nil)]), context: context())
+        // The running parent draws the mark; its finished child draws a checkmark.
+        #expect(shownMarks(stack).count == 1)
+
+        stack.apply(.blocks([activityList(rowID: "task-1", subtitle: nil, state: "success")]), context: context())
+        stack.layoutIfNeeded()
+        #expect(shownMarks(stack).isEmpty)
+
+        stack.apply(.blocks([activityList(rowID: "task-1", subtitle: nil)]), context: context())
+        stack.layoutIfNeeded()
+        #expect(shownMarks(stack).count == 1)
+    }
+
     @Test func disclosureRowBuildsOutputOnlyWhenOpenAndStaysOpenAcrossSnapshots() throws {
         func snapshot(_ raw: String) -> ExtensionNativeBlockContent {
             .blocks([.activityList(base: base("jobs"), rows: [

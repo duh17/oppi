@@ -614,16 +614,25 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         row.accessibilityIdentifier = "tool.notebook.call"
 
         let lineHeight = codeFont.lineHeight
-        let icon = UIImageView(image: UIImage(systemName: statusSymbol(call.status))?.applyingSymbolConfiguration(
-            UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
-        ))
-        icon.tintColor = statusColor(call.status, palette: palette)
+        let icon: UIImageView
+        if call.status == "running" {
+            // The app's still working mark, as session rows draw it; it sizes itself to caption type.
+            let mark = WorkingMarkView(textStyle: .caption2)
+            mark.apply(tint: statusColor(call.status, palette: palette), palette: palette)
+            // Centred on the first code line's height below, like the symbols.
+            mark.setContentHuggingPriority(.defaultHigh, for: .vertical)
+            mark.setContentCompressionResistancePriority(.defaultHigh, for: .vertical)
+            icon = mark
+        } else {
+            icon = UIImageView(image: UIImage(systemName: statusSymbol(call.status))?.applyingSymbolConfiguration(
+                UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+            ))
+            icon.tintColor = statusColor(call.status, palette: palette)
+            icon.widthAnchor.constraint(equalToConstant: 12).isActive = true
+        }
         icon.contentMode = .center
         icon.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            icon.widthAnchor.constraint(equalToConstant: 12),
-            icon.heightAnchor.constraint(equalToConstant: lineHeight),
-        ])
+        icon.heightAnchor.constraint(equalToConstant: lineHeight).isActive = true
         icon.setContentHuggingPriority(.required, for: .horizontal)
         icon.isAccessibilityElement = false
 
@@ -750,7 +759,6 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         switch status {
         case "ok": return "checkmark.circle.fill"
         case "error": return "xmark.circle.fill"
-        case "running": return "circle.dotted"
         default: return "minus.circle.fill"
         }
     }

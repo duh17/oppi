@@ -539,6 +539,40 @@ struct NotebookCellPresentationTests {
         #expect(caption.bounds.height > 8)
     }
 
+    /// A running call draws the app's still working mark in its symbol's place; a finished one keeps
+    /// its symbol.
+    @Test @MainActor func aRunningCallDrawsTheStillWorkingMark() {
+        let plan = NotebookCellPlan(
+            sources: [.init(label: nil, language: "javascript", code: "await bash('ls')")],
+            inputIsCode: true,
+            metadata: [],
+            calls: [
+                .init(name: "bash", status: "ok", duration: "39 ms", arguments: "git tag --list", error: nil),
+                .init(name: "bash", status: "running", duration: nil, arguments: "gh release list", error: nil),
+            ],
+            omittedCalls: 0,
+            callsIncomplete: false,
+            output: .none,
+            availabilityNote: nil,
+            running: true,
+            failed: false
+        )
+        let view = NotebookCellView()
+        view.apply(plan)
+        view.frame = CGRect(x: 0, y: 0, width: 340, height: 400)
+        view.layoutIfNeeded()
+        let rows = views(in: view, id: "tool.notebook.call")
+        func marks(_ row: UIView) -> [WorkingMarkView] {
+            var found: [WorkingMarkView] = (row as? WorkingMarkView).map { [$0] } ?? []
+            for subview in row.subviews { found.append(contentsOf: marks(subview)) }
+            return found
+        }
+        #expect(rows.count == 2)
+        #expect(rows.first.map(marks)?.isEmpty == true, "a finished call drew the working mark")
+        let mark = rows.last.flatMap { marks($0).first }
+        #expect(mark?.image != nil, "the running call did not draw the working mark")
+    }
+
     private func allLabels(in view: UIView) -> [UILabel] {
         var found: [UILabel] = (view as? UILabel).map { [$0] } ?? []
         for subview in view.subviews { found.append(contentsOf: allLabels(in: subview)) }

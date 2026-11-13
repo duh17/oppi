@@ -1,3 +1,7 @@
+import {
+  EXTENSION_UI_SURFACE_WORKING_ICON,
+  EXTENSION_UI_SURFACE_WORKING_ICON_STAND_IN,
+} from "./extension-surface-icons.js";
 import type {
   ExtensionUISurface,
   ExtensionUISurfaceElapsedNode,
@@ -35,24 +39,26 @@ export function elapsedSnapshotText(
   return h > 0 ? `${h}:${two(m)}:${two(sec)}` : `${m}:${two(sec)}`;
 }
 
-/** Does any tree or the pill hold an elapsed node? */
-export function extensionUISurfaceUsesElapsed(surface: ExtensionUISurface): boolean {
-  const holds = (node: ExtensionUISurfaceNode | ExtensionUISurfacePillNode): boolean =>
-    node.type === "elapsed" || ("children" in node && node.children.some(holds));
+type AnyNode = ExtensionUISurfaceNode | ExtensionUISurfacePillNode;
+
+/** Does any tree or the pill hold a node that `matches`? */
+function surfaceHolds(surface: ExtensionUISurface, matches: (node: AnyNode) => boolean): boolean {
+  const holds = (node: AnyNode): boolean =>
+    matches(node) || ("children" in node && node.children.some(holds));
   return (
     (surface.pill?.content.children.some(holds) ?? false) ||
     surface.sections.some((section) => section.composite === "blocks" && holds(section.body))
   );
 }
 
-/**
- * The surface for a client that draws trees but declared no `v2:elapsed`: every elapsed node is a
- * text node of its span at `now`. Such a build decodes a node kind it does not know as
- * "Unsupported block", so it is never sent one. Call only when `extensionUISurfaceUsesElapsed`.
- */
-export function withStaticElapsed(surface: ExtensionUISurface, now: number): ExtensionUISurface {
-  const rewrite = <T extends ExtensionUISurfaceNode | ExtensionUISurfacePillNode>(node: T): T => {
-    if (node.type === "elapsed") return elapsedAsText(node, now) as T;
+/** The surface with each node `swap` answers for replaced, in its trees and its pill. */
+function rewriteNodes(
+  surface: ExtensionUISurface,
+  swap: (node: AnyNode) => AnyNode | undefined,
+): ExtensionUISurface {
+  const rewrite = <T extends AnyNode>(node: T): T => {
+    const swapped = swap(node);
+    if (swapped !== undefined) return swapped as T;
     if (!("children" in node)) return node;
     return { ...node, children: node.children.map(rewrite) };
   };
@@ -65,6 +71,43 @@ export function withStaticElapsed(surface: ExtensionUISurface, now: number): Ext
       section.composite === "blocks" ? { ...section, body: rewrite(section.body) } : section,
     ),
   };
+}
+
+/** Does any tree or the pill hold an elapsed node? */
+export function extensionUISurfaceUsesElapsed(surface: ExtensionUISurface): boolean {
+  return surfaceHolds(surface, (node) => node.type === "elapsed");
+}
+
+/**
+ * The surface for a client that draws trees but declared no `v2:elapsed`: every elapsed node is a
+ * text node of its span at `now`. Such a build decodes a node kind it does not know as
+ * "Unsupported block", so it is never sent one. Call only when `extensionUISurfaceUsesElapsed`.
+ */
+export function withStaticElapsed(surface: ExtensionUISurface, now: number): ExtensionUISurface {
+  return rewriteNodes(surface, (node) =>
+    node.type === "elapsed" ? elapsedAsText(node, now) : undefined,
+  );
+}
+
+/** Does any tree or the pill hold an `icon` node that names the working mark? */
+export function extensionUISurfaceUsesWorkingIcon(surface: ExtensionUISurface): boolean {
+  return surfaceHolds(
+    surface,
+    (node) => node.type === "icon" && node.name === EXTENSION_UI_SURFACE_WORKING_ICON,
+  );
+}
+
+/**
+ * The surface for a client that draws trees but declared no `v2:working`: each working mark is the
+ * symbol such a build can draw. It leaves an icon name it does not know as an empty gap. Call only
+ * when `extensionUISurfaceUsesWorkingIcon`.
+ */
+export function withWorkingIconStandIn(surface: ExtensionUISurface): ExtensionUISurface {
+  return rewriteNodes(surface, (node) =>
+    node.type === "icon" && node.name === EXTENSION_UI_SURFACE_WORKING_ICON
+      ? { ...node, name: EXTENSION_UI_SURFACE_WORKING_ICON_STAND_IN }
+      : undefined,
+  );
 }
 
 function isPillHeadline(

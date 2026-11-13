@@ -638,6 +638,9 @@ private extension ExtensionSurfacePlacementGroup {
 private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
     private let marker = UIImageView()
     private let dot = UIView()
+    /// The tone dot's place while the surface's most urgent row is running: the app's still
+    /// working mark, as session rows show it.
+    private let workingMark = WorkingMarkView(textStyle: .caption1)
     /// The facts the surface composed for its pill, drawn in place of the header-derived title.
     private let content = ExtensionSurfacePillContentView()
     private let titleLabel = ExtensionChromeFont.label(.caption1, .semibold)
@@ -681,7 +684,8 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
         subtitleLabel.lineBreakMode = .byTruncatingTail
         mediaLabel.accessibilityIdentifier = "chat.messageQueue.widget.media"
         content.isHidden = true
-        for view in [marker, dot, content, titleLabel, subtitleLabel, mediaLabel, chevron] {
+        workingMark.isHidden = true
+        for view in [marker, dot, workingMark, content, titleLabel, subtitleLabel, mediaLabel, chevron] {
             row.addArrangedSubview(view)
         }
         drawerButton.translatesAutoresizingMaskIntoConstraints = false
@@ -735,13 +739,22 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
             dot.isHidden = false
             marker.isHidden = true
         }
+        let working = entry.leadingSystemImage == nil && entry.stateTone == .running
+        if working {
+            dot.isHidden = true
+            workingMark.apply(tint: tone, palette: palette)
+        }
+        workingMark.isHidden = !working
         applyPill(pill, summaryOnly: summaryOnly)
         // A composed pill replaces the words the strip would have derived from the header: the
         // surface said what its one line is.
         let showsContent = pill != nil
         // Two leading indicators would only disagree: a content row that starts with an icon
         // already shows the state the strip's dot would repeat.
-        if showsContent, content.startsWithIcon { dot.isHidden = true }
+        if showsContent, content.startsWithIcon {
+            dot.isHidden = true
+            workingMark.isHidden = true
+        }
         titleLabel.text = entry.title
         titleLabel.textColor = palette.ui.fg
         titleLabel.isHidden = showsContent

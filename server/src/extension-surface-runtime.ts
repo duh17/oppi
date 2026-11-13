@@ -22,9 +22,11 @@ import {
   extensionUISurfacePillUsesHeadline,
   extensionUISurfaceUsesElapsed,
   extensionUISurfaceUsesPanelHints,
+  extensionUISurfaceUsesWorkingIcon,
   withPillHeadlinesAsCaption,
   withoutPanelHints,
   withStaticElapsed,
+  withWorkingIconStandIn,
 } from "./extension-surface-projection.js";
 import type {
   ExtensionUIBlocksComposite,
@@ -50,9 +52,11 @@ import type {
  */
 
 /**
- * What a client draws, named by the newest capability it declared. `panel` draws every node kind
- * and opens a surface in a pane, so it alone is sent a surface's `panel` hints and a `panel`
- * placement; every other audience gets the surface without them, placed as `strip`
+ * What a client draws, named by the newest capability it declared. `working` draws everything
+ * `panel` does and the `working` icon; every audience below it is sent that icon as a symbol it
+ * draws (`withWorkingIconStandIn`). `panel` draws every node kind
+ * and opens a surface in a pane, so it and `working` alone are sent a surface's `panel` hints and a
+ * `panel` placement; every other audience gets the surface without them, placed as `strip`
  * (`withoutPanelHints`). `elapsed` draws every node kind; `blocks` draws a tree but predates the elapsed node and the strip's pill type sizes, so it
  * is sent each elapsed node as static text and a pill's `headline` as `caption`
  * (`surfaceForAudience`); `composites` draws only the closed set, so it gets the v1 projection of
@@ -60,10 +64,15 @@ import type {
  * did before surfaces existed.
  */
 export type ExtensionUISurfaceAudience =
-  "panel" | "elapsed" | "blocks" | "composites" | "v1-projection";
+  "working" | "panel" | "elapsed" | "blocks" | "composites" | "v1-projection";
 
 /** The audiences that draw a tree of primitives. */
-const TREE_AUDIENCES: readonly ExtensionUISurfaceAudience[] = ["panel", "elapsed", "blocks"];
+const TREE_AUDIENCES: readonly ExtensionUISurfaceAudience[] = [
+  "working",
+  "panel",
+  "elapsed",
+  "blocks",
+];
 
 /** Every audience; the filters over it keep this order, so each emitted list is stable. */
 const ALL_AUDIENCES: readonly ExtensionUISurfaceAudience[] = [
@@ -99,13 +108,16 @@ function rewritesForBlocks(surface: ExtensionUISurface): boolean {
 
 /** Whether this audience is sent a rewritten copy of this surface rather than the surface itself. */
 function rewritesFor(audience: ExtensionUISurfaceAudience, surface: ExtensionUISurface): boolean {
+  if (audience === "working") return false;
+  if (extensionUISurfaceUsesWorkingIcon(surface)) return true;
   if (audience === "panel") return false;
   if (extensionUISurfaceUsesPanelHints(surface)) return true;
   return audience === "blocks" && rewritesForBlocks(surface);
 }
 
 /**
- * A surface in the shape this audience draws. Every audience but `panel` loses the pane hints.
+ * A surface in the shape this audience draws. Every audience but `working` gets the working icon
+ * as its stand-in symbol, and every audience but `working` and `panel` loses the pane hints.
  * `blocks` also gets a node kind newer than its build as the static shape it can draw, formatted
  * at `now`, and a pill's `headline` as the `caption` it draws at the strip's size. A surface that
  * needs none of that is returned as it is.
@@ -116,7 +128,11 @@ export function surfaceForAudience(
   now: number,
 ): ExtensionUISurface {
   if (!rewritesFor(audience, surface)) return surface;
-  let shaped = extensionUISurfaceUsesPanelHints(surface) ? withoutPanelHints(surface) : surface;
+  let shaped = extensionUISurfaceUsesWorkingIcon(surface)
+    ? withWorkingIconStandIn(surface)
+    : surface;
+  if (audience === "panel") return shaped;
+  if (extensionUISurfaceUsesPanelHints(shaped)) shaped = withoutPanelHints(shaped);
   if (audience !== "blocks") return shaped;
   if (extensionUISurfaceUsesElapsed(shaped)) shaped = withStaticElapsed(shaped, now);
   if (extensionUISurfacePillUsesHeadline(shaped)) shaped = withPillHeadlinesAsCaption(shaped);

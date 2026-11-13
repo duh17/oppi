@@ -5,6 +5,7 @@ import {
   EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
   EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
   EXTENSION_NATIVE_UI_PANEL_CAPABILITY,
+  EXTENSION_NATIVE_UI_WORKING_CAPABILITY,
 } from "../src/extension-ui-contract.js";
 import { readExtensionUISurface } from "../src/extension-surface.js";
 import type { ExtensionUISurfaceAudience } from "../src/extension-surface-runtime.js";
@@ -362,6 +363,50 @@ describe("SessionSurfaces", () => {
     expect(resent?.surface.panel).toBeUndefined();
   });
 
+  it("sends the working mark only to a client that draws it, and a symbol to the rest", async () => {
+    const h = harness();
+    const read = readExtensionUISurface(
+      JSON.parse(JSON.stringify(fixtures["blocks-working.json"])),
+    );
+    if ("problem" in read) throw new Error(read.problem);
+    const pane = [
+      EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+      EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+      EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+      EXTENSION_NATIVE_UI_PANEL_CAPABILITY,
+    ];
+    h.surfaces.declare("new-phone", [...pane, EXTENSION_NATIVE_UI_WORKING_CAPABILITY]);
+    h.surfaces.declare("pane-phone", pane);
+    expect(h.surfaces.audience("new-phone")).toBe("working");
+    expect(h.surfaces.audience("pane-phone")).toBe("panel");
+    h.surfaces.publisher.publish(read.surface, undefined);
+
+    const glyphs = (surface: ExtensionUISurface | undefined): string[] => {
+      const names: string[] = [];
+      const walk = (node: { type: string; name?: string; children?: unknown[] }): void => {
+        if (node.type === "icon" && node.name) names.push(node.name);
+        for (const child of node.children ?? []) walk(child as typeof node);
+      };
+      if (surface?.pill) walk(surface.pill.content);
+      for (const section of surface?.sections ?? [])
+        if (section.composite === "blocks") walk(section.body);
+      return names;
+    };
+    expect(glyphs(h.of("extension_ui_surface", "working")[0]?.surface)).toEqual([
+      "working",
+      "working",
+    ]);
+    // An older build leaves an icon name it does not know as an empty gap: it gets a symbol.
+    expect(glyphs(h.of("extension_ui_surface", "panel")[0]?.surface)).toEqual([
+      "arrow.triangle.2.circlepath",
+      "arrow.triangle.2.circlepath",
+    ]);
+    const handed = h.surfaces
+      .messages("pane-phone")
+      .find((message) => message.type === "extension_ui_surface");
+    expect(glyphs(handed?.surface)).not.toContain("working");
+  });
+
   it("keeps the shape a client already draws", () => {
     const h = harness();
     h.surfaces.publisher.publish(surfaceOf(), undefined);
@@ -421,7 +466,7 @@ describe("SessionSurfaces", () => {
     const before = h.frames.length;
     h.surfaces.stop();
     // Every shape a client could hold is cleared: each v2 audience and the v1 widget slot.
-    for (const audience of ["panel", "elapsed", "blocks", "composites"] as const) {
+    for (const audience of ["working", "panel", "elapsed", "blocks", "composites"] as const) {
       expect(h.of("extension_ui_patch", audience)).toEqual([
         expect.objectContaining({ removed: true }),
       ]);
@@ -433,10 +478,10 @@ describe("SessionSurfaces", () => {
 
     // Nothing is left to fire: the deadline took its timer with it.
     vi.advanceTimersByTime(60_000);
-    expect(h.frames).toHaveLength(before + 5);
+    expect(h.frames).toHaveLength(before + 6);
     expect(h.surfaces.messages("phone")).toEqual([]);
     h.surfaces.publisher.publish(surfaceOf(), undefined);
-    expect(h.frames).toHaveLength(before + 5);
+    expect(h.frames).toHaveLength(before + 6);
     expect(h.surfaces.audience("phone")).toBe("v1-projection");
   });
 

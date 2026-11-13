@@ -1359,6 +1359,7 @@ struct ServerConnectionStreamTests {
                 ClientCapability.extensionNativeUIBlocks,
                 ClientCapability.extensionNativeUIElapsed,
                 ClientCapability.extensionNativeUIPanel,
+                ClientCapability.extensionNativeUIWorking,
             ]
         )
         defer { conn.disconnectStream() }
@@ -1374,6 +1375,7 @@ struct ServerConnectionStreamTests {
             ClientCapability.extensionNativeUIBlocks,
             ClientCapability.extensionNativeUIElapsed,
             ClientCapability.extensionNativeUIPanel,
+            ClientCapability.extensionNativeUIWorking,
         ]], "Every shape in one declaration; the server ranks the strongest")
     }
 

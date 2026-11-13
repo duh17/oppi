@@ -49,6 +49,10 @@ describe("surface fixtures", () => {
       problem: '"flame" is not an allowed icon name',
     });
     expect("problem" in readExtensionUISurface({ ...value, panel: { size: "huge" } })).toBe(true);
+    // The working mark is an `icon` node's alone; a pane names a symbol.
+    expect(readExtensionUISurface({ ...value, panel: { icon: "working" } })).toMatchObject({
+      problem: '"working" is not an allowed icon name',
+    });
   });
 
   it("keeps a widget's pane hints, and drops ones the host cannot draw", () => {

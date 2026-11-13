@@ -81,6 +81,13 @@ export const EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY = "extension-native-ui:v2:el
  */
 export const EXTENSION_NATIVE_UI_PANEL_CAPABILITY = "extension-native-ui:v2:panel";
 /**
+ * v2 working: the client draws an `icon` node named `working` as the host's still working mark.
+ * Any other tree client is sent the stand-in symbol in its place, since it leaves an icon name it
+ * does not know as an empty gap. Implies `panel`: a client that names it without `panel` draws what
+ * `panel` names.
+ */
+export const EXTENSION_NATIVE_UI_WORKING_CAPABILITY = "extension-native-ui:v2:working";
+/**
  * Pane layouts: the client draws a `layout_proposal` as a card. Declared in the same
  * `client_capabilities` list; a socket that has not named it is never sent one.
  */
@@ -94,6 +101,7 @@ export const EXTENSION_NATIVE_UI_SERVER_CAPABILITIES = [
   EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
   EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
   EXTENSION_NATIVE_UI_PANEL_CAPABILITY,
+  EXTENSION_NATIVE_UI_WORKING_CAPABILITY,
 ] as const;
 export const EXTENSION_NATIVE_UI_RENDER_NATIVE_CAPABILITIES = [
   EXTENSION_NATIVE_UI_TEXT_FALLBACK_CAPABILITY,
