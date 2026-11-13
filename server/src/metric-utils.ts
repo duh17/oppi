@@ -48,16 +48,18 @@ export function jsonlMaxBytesFromEnv(envVarName: string): number | null {
  * Remove daily JSONL files older than `retentionDays`.
  *
  * Matches files of the form `${prefix}YYYY-MM-DD${suffix}` in `dir`.
- * Best-effort — silently ignores read/unlink errors.
+ * Best-effort — silently ignores read/unlink errors. `now` is the clock the cutoff is measured
+ * from (epoch ms).
  */
 export function pruneOldJsonlFiles(
   dir: string,
   prefix: string,
   suffix: string,
   retentionDays: number,
+  now: number = Date.now(),
 ): void {
   const retentionMs = retentionDays * 24 * 60 * 60 * 1000;
-  const cutoffMs = Date.now() - retentionMs;
+  const cutoffMs = now - retentionMs;
 
   if (!existsSync(dir)) return;
 

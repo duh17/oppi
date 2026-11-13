@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildServerLogReview } from "../scripts/server-log-review.ts";
 import { rotateServerLog } from "../src/server-log-rotation.js";
@@ -32,6 +32,7 @@ describe("rotateServerLog", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -119,6 +120,8 @@ describe("rotateServerLog", () => {
   });
 
   it("drops days past retention and prunes daily files that aged out", async () => {
+    // Retention is measured from the injected `now`, not the wall clock.
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2027-03-01T00:00:00Z") });
     writeFileSync(livePath, record(1, 1) + record(10, 1) + record(12, 1));
     writeFileSync(join(dir, "server-2026-10-01.log"), "aged out\n");
     writeFileSync(join(dir, "server-2026-11-08.log"), "still kept\n");

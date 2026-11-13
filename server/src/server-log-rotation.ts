@@ -88,7 +88,7 @@ export async function rotateServerLog(
   const livePath = join(dataDir, LIVE_FILE);
   const today = dateString(now);
 
-  pruneOldJsonlFiles(dataDir, DAILY_PREFIX, DAILY_SUFFIX, retentionDays);
+  pruneOldJsonlFiles(dataDir, DAILY_PREFIX, DAILY_SUFFIX, retentionDays, now);
 
   let file;
   try {
