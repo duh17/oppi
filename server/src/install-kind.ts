@@ -3,12 +3,9 @@ import { execFile, execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
-import { promisify } from "node:util";
 
 import type { ServerInstallKind } from "./types/server-update.js";
 import { getPackageInfo, packageRootDir } from "./version.js";
-
-const execFileAsync = promisify(execFile);
 
 /** Script the app's source-link update runs; it keeps dist on a failed compile. */
 export const SOURCE_BUILD_SCRIPT = "build:in-place";
@@ -134,14 +131,11 @@ export function resolveInstallKind(packageName = getPackageInfo().name): Install
 export async function resolveInstallKindAsync(
   packageName = getPackageInfo().name,
   packageDir = packageRootDir(),
+  signal?: AbortSignal,
 ): Promise<InstallKind> {
   if (isManagedInstall(packageDir)) return installKind(packageName, "managed", packageDir);
   try {
-    const { stdout } = await execFileAsync("npm", ["root", "-g"], {
-      encoding: "utf-8",
-      timeout: 8_000,
-      maxBuffer: 64 * 1024,
-    });
+    const stdout = await npmRootGlobal(signal);
     return installKind(
       packageName,
       classifyGlobalEntry(packageName, stdout.trim(), packageDir),
@@ -150,4 +144,24 @@ export async function resolveInstallKindAsync(
   } catch {
     return installKind(packageName, "other", packageDir);
   }
+}
+
+/**
+ * `npm root -g`, killed when `signal` aborts. Settles after the process exits
+ * (execFile's callback runs on close), so an aborted caller knows npm is gone.
+ */
+function npmRootGlobal(signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const child = execFile(
+      "npm",
+      ["root", "-g"],
+      { encoding: "utf-8", timeout: 8_000, maxBuffer: 64 * 1024 },
+      (error, stdout) => (error ? reject(error) : resolve(stdout)),
+    );
+    signal?.addEventListener("abort", () => child.kill(), { once: true });
+  });
 }

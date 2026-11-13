@@ -283,7 +283,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
                 .detail(title: "Session", value: humanSessionTitle(sessionId)),
                 .detail(
                     title: "Delivery",
-                    value: streamingBehavior.map { $0 == .steer ? "Steers the session" : "Sends as follow-up" } ?? "Auto"
+                    value: streamingBehavior.map { $0 == .steer ? "Steers a busy session" : "Follow-up if busy" } ?? "Automatic: follow-up if busy"
                 ),
                 .caption("Sends into an existing session"),
             ]

@@ -156,11 +156,13 @@ async function sendExistingSessionInput(
   if (session.workspaceId !== input.action.workspaceId) {
     throw new Error("Session does not belong to schedule workspace");
   }
+  // Delivery "Auto" (no streamingBehavior) is a follow-up: sendPrompt runs it as
+  // a plain prompt when the session is idle and queues it after the current turn
+  // when busy. The busy check happens inside serialized admission, so a turn that
+  // starts between the schedule firing and the send cannot fail the run.
   await deps.sessions.sendPrompt(input.action.sessionId, input.action.prompt, {
     requestId: input.run.idempotencyKey,
-    ...(input.action.streamingBehavior
-      ? { streamingBehavior: input.action.streamingBehavior }
-      : {}),
+    streamingBehavior: input.action.streamingBehavior ?? "followUp",
   });
   return { sessionId: input.action.sessionId, promptDispatch: "delivered" };
 }

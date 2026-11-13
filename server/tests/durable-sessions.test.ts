@@ -47,7 +47,10 @@ import { ProjectContextDoc } from "../plugins/project-context/contract.js";
 import { AgentLaunchService, DelegationPolicyError } from "../src/agent-launch-service.js";
 import { createAgentRoutes } from "../src/routes/agents.js";
 import { createAgentScheduleDispatchHooks } from "../src/agent-schedule-dispatch.js";
-import type { NewSessionDispatchInput } from "../src/agent-schedules.js";
+import type {
+  ExistingSessionDispatchInput,
+  NewSessionDispatchInput,
+} from "../src/agent-schedules.js";
 import { SessionManager } from "../src/sessions.js";
 import { durableStoreId } from "../src/session-runtime-capabilities.js";
 import { SessionRuntimes } from "../src/runtime-router.js";
@@ -3627,6 +3630,120 @@ describe("durable engine on create requests", () => {
     expect(f.storage.getSession(result.sessionId)?.launch).toMatchObject({
       source: "schedule",
       agentId: agent.id,
+    });
+  });
+
+  describe("existing-session schedule delivery", () => {
+    const dispatch = (f: Fixture, sessionId: string, prompt: string, streamingBehavior?: "steer") =>
+      createAgentScheduleDispatchHooks(
+        {
+          storage: f.storage,
+          sessions: f.manager,
+          ensureSessionContextWindow: (session) => session,
+        },
+        "test-runner",
+      ).sendExistingSessionInput({
+        run: { id: `run-${prompt}`, idempotencyKey: `schedule-run-${prompt}`, slotKey: prompt },
+        schedule: { id: "schedule-1" },
+        action: {
+          type: "existing_session",
+          workspaceId: f.workspace.id,
+          sessionId,
+          prompt,
+          ...(streamingBehavior ? { streamingBehavior } : {}),
+        },
+      } as unknown as ExistingSessionDispatchInput);
+    const inbox = async (f: Fixture, sessionId: string) =>
+      (
+        await (
+          await f.openStore(sessionId)
+        ).snapshot(InboxDoc, conversationOf(f.storage, sessionId), context)
+      )?.items.map((item) => [item.mode, item.mode === "write" ? undefined : item.content]);
+
+    it("Auto queues a follow-up behind a busy durable session instead of failing", async () => {
+      const turnGate = gate();
+      const f = await fixture(
+        model(async ({ text, signal }) => {
+          if (text.includes("LONG_TURN")) await turnGate.wait(signal);
+          return fauxAssistantMessage(`ANSWER ${text}`);
+        }),
+      );
+      await f.manager.startSession(f.parent.id, f.workspace);
+      await f.manager.sendPrompt(f.parent.id, "LONG_TURN");
+      const harness = await f.harness();
+      const conversation = conversationOf(f.storage, f.parent);
+      await until(
+        async () => (await harness.snapshot(LiveDoc, conversation, context))?.run !== undefined,
+        "the long turn running",
+      );
+
+      await expect(dispatch(f, f.parent.id, "SCHEDULED")).resolves.toEqual({
+        sessionId: f.parent.id,
+        promptDispatch: "delivered",
+      });
+      expect(await inbox(f, f.parent.id)).toEqual([["followUp", "SCHEDULED"]]);
+
+      turnGate.open();
+      await until(
+        async () => (await userTexts(harness, conversation)).includes("SCHEDULED"),
+        "the follow-up running after the turn",
+      );
+    });
+
+    it("Auto sends a plain prompt to an idle durable session", async () => {
+      const f = await fixture(model(({ text }) => fauxAssistantMessage(`ANSWER ${text}`)));
+      await f.manager.startSession(f.parent.id, f.workspace);
+      await dispatch(f, f.parent.id, "SCHEDULED");
+      const harness = await f.harness();
+      await until(
+        async () =>
+          (await userTexts(harness, conversationOf(f.storage, f.parent))).includes("SCHEDULED"),
+        "the prompt running",
+      );
+      expect(await inbox(f, f.parent.id)).toEqual([]);
+    });
+
+    it("Auto resolves a race between two sends: one prompt, one follow-up, no failure", async () => {
+      const turnGate = gate();
+      const f = await fixture(
+        model(async ({ text, signal }) => {
+          if (text.includes("FIRST")) await turnGate.wait(signal);
+          return fauxAssistantMessage(`ANSWER ${text}`);
+        }),
+      );
+      await f.manager.startSession(f.parent.id, f.workspace);
+      // Both see an idle session when they are issued; only one can start the turn.
+      const results = await Promise.allSettled([
+        dispatch(f, f.parent.id, "FIRST"),
+        dispatch(f, f.parent.id, "SECOND"),
+      ]);
+      expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
+      expect(await inbox(f, f.parent.id)).toEqual([["followUp", "SECOND"]]);
+      turnGate.open();
+    });
+
+    it("an explicit Steer still steers a busy session", async () => {
+      const turnGate = gate();
+      const f = await fixture(
+        model(async ({ text, signal }) => {
+          if (text.includes("LONG_TURN")) {
+            await turnGate.wait(signal);
+            return toolCall("read", { path: "FILE" });
+          }
+          return fauxAssistantMessage(`ANSWER ${text}`);
+        }),
+      );
+      await f.manager.startSession(f.parent.id, f.workspace);
+      await f.manager.sendPrompt(f.parent.id, "LONG_TURN");
+      const harness = await f.harness();
+      await until(
+        async () =>
+          (await harness.snapshot(LiveDoc, conversationOf(f.storage, f.parent), context))?.run !==
+          undefined,
+        "the long turn running",
+      );
+      await dispatch(f, f.parent.id, "REDIRECT", "steer");
+      expect(await inbox(f, f.parent.id)).toEqual([["steer", "REDIRECT"]]);
     });
   });
 

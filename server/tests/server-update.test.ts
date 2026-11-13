@@ -44,6 +44,7 @@ const originalInstallSleep = process.env.FAKE_NPM_INSTALL_SLEEP;
 const originalRootSleep = process.env.FAKE_NPM_ROOT_SLEEP;
 const originalBuildFail = process.env.FAKE_NPM_BUILD_FAIL;
 const originalNpmLog = process.env.FAKE_NPM_LOG;
+const originalRootPidFile = process.env.FAKE_NPM_ROOT_PID_FILE;
 
 // State that arrives through a fake-npm subprocess (npm view / npm root -g / npm install) needs
 // a real deadline: vitest's 1 s waitFor default is shorter than a loaded host's process spawn.
@@ -60,6 +61,7 @@ function restoreEnv(): void {
     ["FAKE_NPM_ROOT_SLEEP", originalRootSleep],
     ["FAKE_NPM_BUILD_FAIL", originalBuildFail],
     ["FAKE_NPM_LOG", originalNpmLog],
+    ["FAKE_NPM_ROOT_PID_FILE", originalRootPidFile],
   ] as const) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -86,6 +88,7 @@ if [ "$1" = "run" ]; then
   exit 0
 fi
 if [ "$1" = "root" ] && [ "$2" = "-g" ]; then
+  if [ -n "\${FAKE_NPM_ROOT_PID_FILE:-}" ]; then echo $$ > "\${FAKE_NPM_ROOT_PID_FILE}"; fi
   if [ -n "\${FAKE_NPM_ROOT_SLEEP:-}" ]; then sleep "\${FAKE_NPM_ROOT_SLEEP}"; fi
   printf '%s\\n' "\${FAKE_NPM_ROOT}"
   exit 0
@@ -216,6 +219,32 @@ function identityCtx(service: ServerUpdateService): RouteContext {
 }
 
 describe("ServerUpdateService", () => {
+  it("stop() ends a lookup still running and starts no new one", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-update-stop-"));
+    try {
+      useFakeNpm(dir, { latest: "9.9.9" });
+      process.env.FAKE_NPM_ROOT_SLEEP = "30";
+      const pidFile = join(dir, "root.pid");
+      process.env.FAKE_NPM_ROOT_PID_FILE = pidFile;
+      const service = new ServerUpdateService();
+      service.start();
+      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true), SUBPROCESS_WAIT);
+      const pid = Number(readFileSync(pidFile, "utf8"));
+
+      await service.stop();
+
+      // The npm process is gone when stop() returns: nothing writes npm's log into
+      // a home directory the caller removes next.
+      expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
+      const calls = npmCalls(dir).length;
+      service.snapshot();
+      await service.refreshLatest();
+      expect(npmCalls(dir)).toHaveLength(calls);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("reports registry failure as unknown latest, not an error status", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-update-reg-"));
     try {

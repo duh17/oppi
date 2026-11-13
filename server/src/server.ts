@@ -1209,6 +1209,7 @@ export class Server {
     this.liveActivityNotifier.stop();
     this.sessionPushNotifier.stop();
     await this.scheduleRunner.stop();
+    await this.serverUpdate.stop();
     this.opsMetrics.stop();
     this.resourceSampler.stop();
     this.stopBonjourAdvertisement();

@@ -52,9 +52,13 @@ export type ServerUpdateBeginResult =
       update: ServerUpdateInfo;
     };
 
-export async function fetchLatestPublishedVersion(packageName: string): Promise<string | null> {
+export async function fetchLatestPublishedVersion(
+  packageName: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
   const result = await runNpm(["view", packageName, "version"], {
     timeoutMs: REGISTRY_TIMEOUT_MS,
+    signal,
   });
   if (result.code !== 0) return null;
   const version = result.output.trim().split(/\s+/).pop() ?? "";
@@ -224,9 +228,14 @@ export async function serveUpdatedProcess(
 
 function runNpm(
   args: string[],
-  options: { timeoutMs: number; inheritStdio?: boolean; cwd?: string },
+  options: { timeoutMs: number; inheritStdio?: boolean; cwd?: string; signal?: AbortSignal },
 ): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve, reject) => {
+    const { signal } = options;
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
     const child = spawn("npm", args, {
       stdio: options.inheritStdio ? "inherit" : ["ignore", "pipe", "pipe"],
       timeout: options.timeoutMs,
@@ -241,8 +250,15 @@ function runNpm(
     child.stderr?.on("data", (chunk: Buffer | string) => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     });
+    // Not spawn's own `signal` option: it rejects at once, while the process still runs.
+    // This settles on close, so a caller that awaits the abort knows npm has exited.
+    signal?.addEventListener("abort", () => child.kill(), { once: true });
     child.on("error", reject);
     child.on("close", (code) => {
+      if (signal?.aborted) {
+        reject(signal.reason);
+        return;
+      }
       resolve({
         code,
         output: Buffer.concat(chunks).toString("utf8").slice(-ERROR_TAIL_CHARS),
@@ -262,6 +278,8 @@ export class ServerUpdateService {
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private installKindCache: InstallKind | null = null;
   private installKindInFlight: Promise<InstallKind> | null = null;
+  /** Aborts the npm lookups `start()` and `snapshot()` kick off; `stop()` fires it. */
+  private readonly lookups = new AbortController();
   private sourceCache: { version: string | null; changed: boolean; checkedAt: number } | null =
     null;
   private readonly onRestart?: (mode: ServerRestartMode, targetVersion: string) => void;
@@ -297,17 +315,28 @@ export class ServerUpdateService {
     void this.resolveInstall();
   }
 
+  /**
+   * Cancel the npm lookups and wait for their processes to exit. A lookup that
+   * outlives the server writes npm's log into the home directory after it is gone.
+   * An install the person asked for is not a lookup and keeps running.
+   */
+  async stop(): Promise<void> {
+    this.lookups.abort(new Error("Server update service stopped"));
+    await Promise.allSettled([this.latestInFlight, this.installKindInFlight]);
+  }
+
   async refreshLatest(): Promise<string | null> {
     if (this.latestInFlight) return this.latestInFlight;
     const packageName = getPackageInfo().name;
-    this.latestInFlight = fetchLatestPublishedVersion(packageName)
+    this.latestInFlight = fetchLatestPublishedVersion(packageName, this.lookups.signal)
       .then((version) => {
         this.latestVersion = version;
         this.latestFetchedAt = Date.now();
         return version;
       })
       .catch((err: unknown) => {
-        log.warn("server_update.registry_failed", { error: safeErrorMessage(err) });
+        if (!this.lookups.signal.aborted)
+          log.warn("server_update.registry_failed", { error: safeErrorMessage(err) });
         this.latestVersion = null;
         this.latestFetchedAt = Date.now();
         return null;
@@ -512,6 +541,7 @@ export class ServerUpdateService {
       this.installKindInFlight = resolveInstallKindAsync(
         getPackageInfo().name,
         this.packageDir,
+        this.lookups.signal,
       ).then((value) => {
         this.installKindCache = value;
         return value;

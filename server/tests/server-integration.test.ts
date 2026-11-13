@@ -362,9 +362,16 @@ describe("GET /me", () => {
 
 describe("GET /server/info", () => {
   it("returns version, uptime, and capabilities", async () => {
-    const res = await get("/server/info");
+    // The update block is absent until the server's `npm root -g` lookup finishes, which a
+    // loaded host can delay past the first request.
+    let res = await get("/server/info");
+    let body = await res.json();
+    for (let tries = 0; tries < 100 && !body.update; tries += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      res = await get("/server/info");
+      body = await res.json();
+    }
     expect(res.status).toBe(200);
-    const body = await res.json();
     expect(body.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(body.uptime).toBeTypeOf("number");
     expect(body.os).toBeTypeOf("string");
