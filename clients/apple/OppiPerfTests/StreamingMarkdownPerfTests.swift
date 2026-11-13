@@ -15,9 +15,9 @@ struct ParseCommonMarkTailTests {
 
     @Test func singleBlock_returnsLine1() {
         let md = "Just one paragraph.\n"
-        let tail1 = parseCommonMarkTail(md)
-        let blocks = tail1.blocks
-        let lastLine = tail1.lastBlockStartLine
+        let parsed = parseCommonMarkTail(md)
+        let blocks = parsed.blocks
+        let lastLine = parsed.lastBlockStartLine
         #expect(blocks.count == 1)
         // Only one block → no stable prefix → function returns 1
         #expect(lastLine == 1)
@@ -25,9 +25,9 @@ struct ParseCommonMarkTailTests {
 
     @Test func twoParagraphs_lastLineIsSecond() {
         let md = "First paragraph.\n\nSecond paragraph.\n"
-        let tail2 = parseCommonMarkTail(md)
-        let blocks = tail2.blocks
-        let lastLine = tail2.lastBlockStartLine
+        let parsed = parseCommonMarkTail(md)
+        let blocks = parsed.blocks
+        let lastLine = parsed.lastBlockStartLine
         #expect(blocks.count == 2)
         // "Second paragraph" starts on line 3 (two lines for first para + blank)
         #expect(lastLine == 3)
@@ -43,9 +43,9 @@ struct ParseCommonMarkTailTests {
         let x = 42
         ```
         """
-        let tail3 = parseCommonMarkTail(md)
-        let blocks = tail3.blocks
-        let lastLine = tail3.lastBlockStartLine
+        let parsed = parseCommonMarkTail(md)
+        let blocks = parsed.blocks
+        let lastLine = parsed.lastBlockStartLine
         #expect(blocks.count == 3)
         // Code block starts after heading (line 1) + blank (line 2) + paragraph (line 3) + blank (line 4)
         // → line 5
@@ -53,18 +53,18 @@ struct ParseCommonMarkTailTests {
     }
 
     @Test func emptyDocument_returnsLine1() {
-        let tail4 = parseCommonMarkTail("")
-        let blocks = tail4.blocks
-        let lastLine = tail4.lastBlockStartLine
+        let parsed = parseCommonMarkTail("")
+        let blocks = parsed.blocks
+        let lastLine = parsed.lastBlockStartLine
         #expect(blocks.isEmpty)
         #expect(lastLine == 1)
     }
 
     @Test func singleCodeBlock_returnsLine1() {
         let md = "```swift\nlet x = 1\n```\n"
-        let tail5 = parseCommonMarkTail(md)
-        let blocks = tail5.blocks
-        let lastLine = tail5.lastBlockStartLine
+        let parsed = parseCommonMarkTail(md)
+        let blocks = parsed.blocks
+        let lastLine = parsed.lastBlockStartLine
         #expect(blocks.count == 1)
         #expect(lastLine == 1)
     }
@@ -85,8 +85,8 @@ struct ParseCommonMarkTailTests {
         Final paragraph.
         """
         let plain = parseCommonMark(md)
-        let tail6 = parseCommonMarkTail(md)
-        let withMeta = tail6.blocks
+        let parsed = parseCommonMarkTail(md)
+        let withMeta = parsed.blocks
         #expect(plain == withMeta)
     }
 
@@ -94,9 +94,9 @@ struct ParseCommonMarkTailTests {
         // Generate 10 paragraphs separated by blank lines.
         let paragraphs = (1...10).map { "Paragraph \($0)." }
         let md = paragraphs.joined(separator: "\n\n") + "\n"
-        let tail7 = parseCommonMarkTail(md)
-        let blocks = tail7.blocks
-        let lastLine = tail7.lastBlockStartLine
+        let parsed = parseCommonMarkTail(md)
+        let blocks = parsed.blocks
+        let lastLine = parsed.lastBlockStartLine
         #expect(blocks.count == 10)
         // Last paragraph starts well after line 1
         #expect(lastLine > 1)
@@ -137,8 +137,8 @@ struct IncrementalParseCorrectnessTests {
 
     @Test func twoParas_incrementalMatchesFull() {
         let content = "First paragraph.\n\nSecond paragraph growing...\n"
-        let tail8 = parseCommonMarkTail(content)
-        let lastLine = tail8.lastBlockStartLine
+        let parsed = parseCommonMarkTail(content)
+        let lastLine = parsed.lastBlockStartLine
         // Boundary at start of second para.
         let byteOffset = utf8ByteOffset(forLine: lastLine, in: content)
 
@@ -153,8 +153,8 @@ struct IncrementalParseCorrectnessTests {
 
         This is an expanding paragraph that keeps growing.
         """
-        let tail9 = parseCommonMarkTail(content)
-        let lastLine = tail9.lastBlockStartLine
+        let parsed = parseCommonMarkTail(content)
+        let lastLine = parsed.lastBlockStartLine
         let byteOffset = utf8ByteOffset(forLine: lastLine, in: content)
         let incremental = simulateIncrementalParse(content: content, prefixUTF8ByteCount: byteOffset)
         let full = fullParse(content: content)
@@ -172,8 +172,8 @@ struct IncrementalParseCorrectnessTests {
 
         Tail paragraph growing here.
         """
-        let tail10 = parseCommonMarkTail(content)
-        let lastLine = tail10.lastBlockStartLine
+        let parsed = parseCommonMarkTail(content)
+        let lastLine = parsed.lastBlockStartLine
         let byteOffset = utf8ByteOffset(forLine: lastLine, in: content)
         let incremental = simulateIncrementalParse(content: content, prefixUTF8ByteCount: byteOffset)
         let full = fullParse(content: content)
@@ -182,8 +182,8 @@ struct IncrementalParseCorrectnessTests {
 
     @Test func singleBlock_noPrefixSplit_matchesFull() {
         let content = "A single growing paragraph with no block boundaries."
-        let tail11 = parseCommonMarkTail(content)
-        let lastLine = tail11.lastBlockStartLine
+        let parsed = parseCommonMarkTail(content)
+        let lastLine = parsed.lastBlockStartLine
         // lastLine == 1 → no stable prefix, byte offset 0
         let byteOffset = utf8ByteOffset(forLine: lastLine, in: content)
         // byteOffset == 0 → fallback to full parse
@@ -309,8 +309,8 @@ struct StreamingMarkdownPerfBenchmarks {
 
     @Test func benchmark_100Paragraphs() {
         let content = makeStreamingDocument(paragraphCount: 100)
-        let tail12 = parseCommonMarkTail(content)
-        let lastLine = tail12.lastBlockStartLine
+        let parsed = parseCommonMarkTail(content)
+        let lastLine = parsed.lastBlockStartLine
         let byteOffset = utf8ByteOffset(forLine: lastLine, in: content)
 
         // Warm up.
@@ -339,8 +339,8 @@ struct StreamingMarkdownPerfBenchmarks {
 
     @Test func benchmark_500Paragraphs() {
         let content = makeStreamingDocument(paragraphCount: 500)
-        let tail13 = parseCommonMarkTail(content)
-        let lastLine = tail13.lastBlockStartLine
+        let parsed = parseCommonMarkTail(content)
+        let lastLine = parsed.lastBlockStartLine
         let byteOffset = utf8ByteOffset(forLine: lastLine, in: content)
 
         _ = parseCommonMark(content)
@@ -367,8 +367,8 @@ struct StreamingMarkdownPerfBenchmarks {
 
     @Test func benchmark_1000Paragraphs() {
         let content = makeStreamingDocument(paragraphCount: 1000)
-        let tail14 = parseCommonMarkTail(content)
-        let lastLine = tail14.lastBlockStartLine
+        let parsed = parseCommonMarkTail(content)
+        let lastLine = parsed.lastBlockStartLine
         let byteOffset = utf8ByteOffset(forLine: lastLine, in: content)
 
         _ = parseCommonMark(content)
@@ -484,8 +484,8 @@ struct StreamingMarkdownPerfBenchmarks {
         // Verify that computing the UTF-8 byte offset from a line number is
         // negligible (< 1ms for 1000-line document).
         let content = makeStreamingDocument(paragraphCount: 1000)
-        let tail15 = parseCommonMarkTail(content)
-        let lastLine = tail15.lastBlockStartLine
+        let parsed = parseCommonMarkTail(content)
+        let lastLine = parsed.lastBlockStartLine
 
         let overheadNs = medianNs {
             _ = utf8ByteOffset(forLine: lastLine, in: content)
@@ -508,9 +508,9 @@ struct StreamingMarkdownPerfBenchmarks {
     @Test func benchmark_segmentBuild_500Paragraphs_tailVsFull() {
         let content = makeStreamingDocument(paragraphCount: 500)
         let themeID = ThemeRuntimeState.currentThemeID()
-        let tail16 = parseCommonMarkTail(content)
-        let allBlocks = tail16.blocks
-        let lastLine = tail16.lastBlockStartLine
+        let parsed = parseCommonMarkTail(content)
+        let allBlocks = parsed.blocks
+        let lastLine = parsed.lastBlockStartLine
         let byteOffset = utf8ByteOffset(forLine: lastLine, in: content)
 
         guard byteOffset > 0, byteOffset < content.utf8.count else {
@@ -522,8 +522,8 @@ struct StreamingMarkdownPerfBenchmarks {
         let boundaryIdx = utf8.index(utf8.startIndex, offsetBy: byteOffset)
         let tailContent = String(content[boundaryIdx...])
         let prefixBlocks = Array(allBlocks.dropLast())
-        let tail17 = parseCommonMarkTail(tailContent)
-        let tailBlocks = tail17.blocks
+        let tailParsed = parseCommonMarkTail(tailContent)
+        let tailBlocks = tailParsed.blocks
         let prefixSegments = FlatSegment.build(from: prefixBlocks, themeID: themeID)
 
         // Warm up
@@ -548,9 +548,9 @@ struct StreamingMarkdownPerfBenchmarks {
     @Test func benchmark_segmentBuild_1000Paragraphs_tailVsFull() {
         let content = makeStreamingDocument(paragraphCount: 1000)
         let themeID = ThemeRuntimeState.currentThemeID()
-        let tail18 = parseCommonMarkTail(content)
-        let allBlocks = tail18.blocks
-        let lastLine = tail18.lastBlockStartLine
+        let parsed = parseCommonMarkTail(content)
+        let allBlocks = parsed.blocks
+        let lastLine = parsed.lastBlockStartLine
         let byteOffset = utf8ByteOffset(forLine: lastLine, in: content)
 
         guard byteOffset > 0, byteOffset < content.utf8.count else { return }
@@ -559,8 +559,8 @@ struct StreamingMarkdownPerfBenchmarks {
         let boundaryIdx = utf8.index(utf8.startIndex, offsetBy: byteOffset)
         let tailContent = String(content[boundaryIdx...])
         let prefixBlocks = Array(allBlocks.dropLast())
-        let tail19 = parseCommonMarkTail(tailContent)
-        let tailBlocks = tail19.blocks
+        let tailParsed = parseCommonMarkTail(tailContent)
+        let tailBlocks = tailParsed.blocks
         let prefixSegments = FlatSegment.build(from: prefixBlocks, themeID: themeID)
 
         _ = FlatSegment.build(from: allBlocks, themeID: themeID)
@@ -616,9 +616,9 @@ struct BoundaryDetectionEdgeCaseTests {
             return x
         ```
         """
-        let tail20 = parseCommonMarkTail(md)
-        let blocks = tail20.blocks
-        let lastLine = tail20.lastBlockStartLine
+        let parsed = parseCommonMarkTail(md)
+        let blocks = parsed.blocks
+        let lastLine = parsed.lastBlockStartLine
         // 2 blocks: paragraph + codeBlock
         #expect(blocks.count == 2)
         // Last block (code block) starts after the blank line following "Prose paragraph."
@@ -632,18 +632,18 @@ struct BoundaryDetectionEdgeCaseTests {
 
         Trailing paragraph.
         """
-        let tail21 = parseCommonMarkTail(md)
-        let blocks = tail21.blocks
-        let lastLine = tail21.lastBlockStartLine
+        let parsed = parseCommonMarkTail(md)
+        let blocks = parsed.blocks
+        let lastLine = parsed.lastBlockStartLine
         #expect(blocks.count == 2)
         #expect(lastLine > 1)
     }
 
     @Test func noPreviousBlocks_returnsSingleBlock() {
         let md = "Growing single paragraph with no separators at all."
-        let tail22 = parseCommonMarkTail(md)
-        let blocks = tail22.blocks
-        let lastLine = tail22.lastBlockStartLine
+        let parsed = parseCommonMarkTail(md)
+        let blocks = parsed.blocks
+        let lastLine = parsed.lastBlockStartLine
         #expect(blocks.count == 1)
         #expect(lastLine == 1)
     }
@@ -662,8 +662,8 @@ struct BoundaryDetectionEdgeCaseTests {
 
         Final paragraph.
         """
-        let tail23 = parseCommonMarkTail(md)
-        let lastLine = tail23.lastBlockStartLine
+        let parsed = parseCommonMarkTail(md)
+        let lastLine = parsed.lastBlockStartLine
         // "Final paragraph." is the last block — appears after the horizontal rule.
         // Count lines: H1(1) blank(2) Para1(3) blank(4) H2(5) blank(6) Para2(7) blank(8) hr(9) blank(10) Final(11)
         #expect(lastLine == 11)

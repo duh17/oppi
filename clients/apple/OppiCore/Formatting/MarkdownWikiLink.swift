@@ -740,7 +740,7 @@ enum MarkdownWikiLinkRewriter {
         guard !isRFC3986NetworkPath(trimmedTarget) else { return nil }
         guard let parsed = parseWikiTarget(target) else { return nil }
 
-        var path = parsed.path.replacingOccurrences(of: "\\", with: "/")
+        var path = slashSeparated(parsed.path)
         let resolveFromSource = path.hasPrefix("./") || path.hasPrefix("../")
         if resolveFromSource,
            let sourceDirectory,
@@ -756,7 +756,7 @@ enum MarkdownWikiLinkRewriter {
         }
 
         guard !path.hasPrefix("/"), !path.hasPrefix("~") else { return nil }
-        guard !path.contains("?"), !path.contains(":") else { return nil }
+        guard !contains("?", in: path), !contains(":", in: path) else { return nil }
 
         guard var normalized = normalizeWorkspacePath(path) else { return nil }
         if (normalized as NSString).pathExtension.isEmpty {
@@ -770,8 +770,8 @@ enum MarkdownWikiLinkRewriter {
     static func resolvedHostPath(_ rawPath: String) -> String? {
         let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
-              !trimmed.contains("?"),
-              !trimmed.contains("\0"),
+              !contains("?", in: trimmed),
+              !contains("\0", in: trimmed),
               !isRFC3986NetworkPath(trimmed) else {
             return nil
         }
@@ -906,7 +906,9 @@ enum MarkdownWikiLinkRewriter {
     }
 
     private static func rewriteText(_ text: String, context: RewriteContext) -> [MarkdownInline] {
-        guard text.contains("[[") else { return [.text(text)] }
+        // Every text node of every block comes through here: a byte search, not
+        // Foundation's `contains`, which cost more than parsing the document.
+        guard UTF8Search.range(of: "[[", in: text) != nil else { return [.text(text)] }
 
         var result: [MarkdownInline] = []
         var cursor = text.startIndex
@@ -1343,12 +1345,12 @@ enum MarkdownWikiLinkRewriter {
     ) -> ClassifiedWikiTarget? {
         let trimmedDestination = destination.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isRFC3986NetworkPath(trimmedDestination) else { return nil }
-        guard !destination.contains("?"),
+        guard !contains("?", in: destination),
               let parsed = parseMarkdownLinkTarget(destination) else {
             return nil
         }
 
-        var path = parsed.path.replacingOccurrences(of: "\\", with: "/")
+        var path = slashSeparated(parsed.path)
         let trimmedSource = sourceDirectory?.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasSourceDirectory = trimmedSource?.isEmpty == false
         let isExplicitHostForm = path.hasPrefix("/")
@@ -1364,7 +1366,7 @@ enum MarkdownWikiLinkRewriter {
         }
 
         guard !path.hasPrefix("/"), !path.hasPrefix("~") else { return nil }
-        guard !path.contains("?"), !path.contains(":") else { return nil }
+        guard !contains("?", in: path), !contains(":", in: path) else { return nil }
         guard let normalized = normalizeWorkspacePath(path) else { return nil }
         return ClassifiedWikiTarget(parsed: parsed, kind: .workspaceFile, path: normalized)
     }
@@ -1425,6 +1427,18 @@ enum MarkdownWikiLinkRewriter {
             return nil
         }
         return ParsedWikiTarget(path: path, lineAnchor: lineAnchor)
+    }
+
+    /// Whether `text` holds the ASCII character `ascii`, by bytes: Foundation's
+    /// `contains` costs more than the rest of classifying a target, and every
+    /// link in a document is classified.
+    private static func contains(_ ascii: Unicode.Scalar, in text: String) -> Bool {
+        text.utf8.contains(UInt8(ascii: ascii))
+    }
+
+    /// `path` with Windows separators as `/`.
+    private static func slashSeparated(_ path: String) -> String {
+        contains("\\", in: path) ? path.replacingOccurrences(of: "\\", with: "/") : path
     }
 
     private static func normalizeWorkspacePath(_ path: String) -> String? {

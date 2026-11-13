@@ -3,21 +3,45 @@ import Foundation
 // The wiki-link pre-pass: what `parseCommonMark` hides from cmark before it
 // parses, and puts back after.
 extension MarkdownWikiLinkRewriter {
+    /// The wiki-link bodies to hide from cmark. The parser feeds the source in
+    /// pieces with each hidden body's frame in its place, so the document is
+    /// never copied, and nothing is hidden in most documents.
     struct ParserInput {
-        let source: String
-        let restoration: Restoration
+        /// Each hidden body's byte range in the source, in order.
+        let hiddenRanges: [Range<Int>]
+        /// Nil when nothing is hidden.
+        let restoration: Restoration?
     }
 
     /// Puts back the wiki-link bodies `parserInput` hid from cmark.
     struct Restoration {
         /// Frames each hidden body's index: `q0q12q0q` is body 12.
-        fileprivate let token: String?
+        fileprivate let token: String
         fileprivate let bodies: [Substring]
+        /// The 1-based source line of each hidden body, ascending.
+        fileprivate let lines: [Int]
+
+        /// What cmark reads in place of hidden body `index`.
+        func frame(_ index: Int) -> String {
+            token + String(index) + token
+        }
+
+        /// Whether a hidden body sits on one of `lines`: blocks outside them
+        /// hold no frame and skip restoring.
+        func hidesText(onLines lines: ClosedRange<Int>) -> Bool {
+            var low = 0
+            var high = self.lines.count
+            while low < high {
+                let middle = (low + high) / 2
+                if self.lines[middle] < lines.lowerBound { low = middle + 1 } else { high = middle }
+            }
+            return low < self.lines.count && self.lines[low] <= lines.upperBound
+        }
 
         /// `unescapingPipes`: the literal is a table cell's, where GFM reads
         /// `\|` as `|`; a hidden body gets the same reading.
         func restore(_ literal: String, unescapingPipes: Bool = false) -> String {
-            guard let token, UTF8Search.range(of: token, in: literal) != nil else { return literal }
+            guard UTF8Search.range(of: token, in: literal) != nil else { return literal }
             let frame = Array(token.utf8)
             return UTF8Search.withBytes(of: literal) { bytes in
                 var result = ""
@@ -63,20 +87,34 @@ extension MarkdownWikiLinkRewriter {
     private static let maximumTokenSelectionAttempts = 8
     private static let parserBoundaryTokenByteCount = 3
 
-    /// Selects at most eight source-absent, three-byte alphanumeric tokens.
-    /// Returning nil is the fail-closed result when the bounded set is exhausted.
+    /// The first of at most eight candidates that is a three-byte alphanumeric
+    /// token absent from `source`. Returning nil is the fail-closed result when
+    /// the bounded set is exhausted. One `memchr` pass per distinct first byte
+    /// (all of the production tokens start with `q`, rare in prose) instead of
+    /// a full search per candidate.
     static func selectParserBoundaryToken(
         absentFrom source: String,
         candidates: [String]
     ) -> String? {
-        for candidate in candidates.prefix(maximumTokenSelectionAttempts) {
-            guard candidate.utf8.count == parserBoundaryTokenByteCount,
-                  candidate.utf8.allSatisfy(isASCIILetterOrDigit) else {
-                continue
+        let tokens = candidates.prefix(maximumTokenSelectionAttempts).map { Array($0.utf8) }
+        var unusable = tokens.map { $0.count != parserBoundaryTokenByteCount || !$0.allSatisfy(isASCIILetterOrDigit) }
+        UTF8Search.withBytes(of: source) { bytes in
+            guard let base = bytes.baseAddress else { return }
+            for lead in Set(tokens.indices.filter { !unusable[$0] }.map { tokens[$0][0] }) {
+                var index = 0
+                while index + parserBoundaryTokenByteCount <= bytes.count,
+                      let hit = memchr(base + index, Int32(lead), bytes.count - index) {
+                    let at = UnsafeRawPointer(base).distance(to: hit)
+                    guard at + parserBoundaryTokenByteCount <= bytes.count else { break }
+                    for token in tokens.indices where !unusable[token] && tokens[token][0] == lead
+                        && tokens[token][1] == bytes[at + 1] && tokens[token][2] == bytes[at + 2] {
+                        unusable[token] = true
+                    }
+                    index = at + 1
+                }
             }
-            if UTF8Search.range(of: candidate, in: source) == nil { return candidate }
         }
-        return nil
+        return unusable.firstIndex(of: false).map { String(decoding: tokens[$0], as: UTF8.self) }
     }
 
     /// Hides the body of each wiki link from cmark, so the link stays one
@@ -86,29 +124,42 @@ extension MarkdownWikiLinkRewriter {
     /// Obsidian parse `[[…]]` as one node; cmark gives an extension no turn
     /// before it handles `[` itself, so this is done before cmark runs. The
     /// body becomes an alphanumeric token (`[[q0q3q0q]]`), and the
-    /// restoration puts it back in every literal during AST conversion,
-    /// including code, HTML and math, where wiki syntax stays literal.
+    /// restoration puts it back during AST conversion in every literal of a
+    /// block that holds one, including code, HTML and math, where wiki syntax
+    /// stays literal.
     ///
     /// This deliberately knows nothing about CommonMark containers. A body is
     /// hidden only when it is a supported target with an optional non-empty
     /// label after one unescaped `|`, closes on its own line, and holds no
     /// nested `[[`, escaped `]` or backtick (a backtick could pair with one
-    /// outside the link as a code span). Anything else is copied unchanged,
+    /// outside the link as a code span). Anything else is left as written,
     /// and so is a body cmark would leave alone anyway: one without a byte it
     /// acts on (`*`, `_`, `|`, a bracket, …) in a document that defines no
     /// link reference. The first `]]` closes the link, as in Obsidian. Token selection is
-    /// capped at eight checks; exhaustion returns the original source with no
-    /// restoration context.
+    /// capped at eight checks; exhaustion hides nothing.
+    ///
+    /// Why before cmark, not a repair of its tree: the GFM table splitter cuts
+    /// a row at an unescaped `|` and drops the cells past the header's count
+    /// before any inline parsing (`[[docs/a.md|Alpha]]` in a cell, m27), so
+    /// the tree no longer holds the link. Emphasis or a reference link formed
+    /// inside the brackets (m26, m30) would need the written delimiters back
+    /// from source positions; one mechanism covers all three instead.
     static func parserInput(_ source: String) -> ParserInput {
-        guard UTF8Search.range(of: "[[", in: source) != nil,
-              let token = selectParserBoundaryToken(absentFrom: source, candidates: parserBoundaryTokens) else {
-            return unchangedParserInput(source)
-        }
-        let definesReferences = UTF8Search.range(of: "]:", in: source) != nil
+        let nothing = ParserInput(hiddenRanges: [], restoration: nil)
+        guard UTF8Search.range(of: "[[", in: source) != nil else { return nothing }
+        // Each found when first needed: a document whose links all hold a
+        // byte cmark acts on never searches for `]:`.
+        var definesReferences: Bool?
+        var token: String?
+        // Documents repeat targets; classifying one costs microseconds.
+        var supportedTargets: [String: Bool] = [:]
         return UTF8Search.withBytes(of: source) { bytes in
-            var result = ""
+            guard let base = bytes.baseAddress else { return nothing }
+            var ranges: [Range<Int>] = []
             var bodies: [Substring] = []
-            var copied = 0
+            var lines: [Int] = []
+            var line = 1
+            var counted = 0
             var cursor = 0
             while let open = nextDoubleBracket(UInt8(ascii: "["), in: bytes, from: cursor) {
                 guard let candidate = parserBoundaryCandidate(in: bytes, opening: open) else { break }
@@ -116,22 +167,30 @@ extension MarkdownWikiLinkRewriter {
                 guard candidate.canProtect else { continue }
                 let bodyStart = open + 2
                 let bodyEnd = candidate.end - 2
-                guard definesReferences || bytes[bodyStart ..< bodyEnd].contains(where: isInlineSyntaxByte) else { continue }
+                if !bytes[bodyStart ..< bodyEnd].contains(where: isInlineSyntaxByte) {
+                    if definesReferences == nil { definesReferences = UTF8Search.range(of: "]:", in: source) != nil }
+                    guard definesReferences == true else { continue }
+                }
                 let targetEnd = candidate.firstPipe ?? bodyEnd
                 let target = String(decoding: UnsafeBufferPointer(rebasing: bytes[bodyStart ..< targetEnd]), as: UTF8.self)
-                guard isPotentiallySupportedWikiTarget(target) else { continue }
-                let body = Substring(String(decoding: UnsafeBufferPointer(rebasing: bytes[bodyStart ..< bodyEnd]), as: UTF8.self))
-                if bodies.isEmpty { result.reserveCapacity(bytes.count + 64) }
-                result += String(decoding: UnsafeBufferPointer(rebasing: bytes[copied ..< bodyStart]), as: UTF8.self)
-                result += token
-                result += String(bodies.count)
-                result += token
-                bodies.append(body)
-                copied = bodyEnd
+                let isSupported = supportedTargets[target] ?? isPotentiallySupportedWikiTarget(target)
+                supportedTargets[target] = isSupported
+                guard isSupported else { continue }
+                if token == nil {
+                    token = selectParserBoundaryToken(absentFrom: source, candidates: parserBoundaryTokens)
+                    guard token != nil else { return nothing }
+                }
+                while counted < bodyStart, let newline = memchr(base + counted, 0x0A, bodyStart - counted) {
+                    line += 1
+                    counted = UnsafeRawPointer(base).distance(to: newline) + 1
+                }
+                counted = bodyStart
+                ranges.append(bodyStart ..< bodyEnd)
+                bodies.append(Substring(String(decoding: UnsafeBufferPointer(rebasing: bytes[bodyStart ..< bodyEnd]), as: UTF8.self)))
+                lines.append(line)
             }
-            guard !bodies.isEmpty else { return unchangedParserInput(source) }
-            result += String(decoding: UnsafeBufferPointer(rebasing: bytes[copied...]), as: UTF8.self)
-            return ParserInput(source: result, restoration: Restoration(token: token, bodies: bodies))
+            guard let token, !ranges.isEmpty else { return nothing }
+            return ParserInput(hiddenRanges: ranges, restoration: Restoration(token: token, bodies: bodies, lines: lines))
         }
     }
 
@@ -208,10 +267,6 @@ extension MarkdownWikiLinkRewriter {
         }
 
         return nil
-    }
-
-    private static func unchangedParserInput(_ source: String) -> ParserInput {
-        ParserInput(source: source, restoration: Restoration(token: nil, bodies: []))
     }
 
     /// A byte cmark's inline parser or the GFM table splitter can act on.

@@ -1366,7 +1366,6 @@ struct WorkspaceWikiLinkRenderingTests {
     ])
     func unsupportedWikiCandidatesRemainAtomicInGFMTable(testCase: AtomicWikiTableCase) throws {
         let source = "| A | B | C | D |\n| --- | --- | --- | --- |\n| \(testCase.content) | x |"
-        #expect(MarkdownWikiLinkRewriter.parserInput(source).source == source)
 
         let table = try #require(firstTable(in: parseCommonMark(source)))
         #expect(table.rows.count == 1)
@@ -1395,17 +1394,25 @@ struct WorkspaceWikiLinkRenderingTests {
         #expect(plainText(from: children) == "label")
     }
 
-    @Test func validWikiProtectionHasBoundedParserInputAmplification() {
-        let minimumLabeledReference = "[[a|b]]"
-        let source = String(repeating: minimumLabeledReference, count: 20_000)
-        let parserInput = MarkdownWikiLinkRewriter.parserInput(source)
-
-        // A body becomes two three-byte frames around its index: twenty
-        // thousand of the shortest references grow from seven bytes to at most
-        // fifteen each.
-        #expect(parserInput.source.utf8.count * 7 <= source.utf8.count * 15)
-        #expect(parserInput.restoration.restore(parserInput.source) == source)
-        #expect(MarkdownWikiLinkRewriter.parserInput(source).source == parserInput.source)
+    @Test func everyHiddenWikiBodyComesBackExactly() throws {
+        // Twenty thousand hidden bodies on one line: frames with five-digit
+        // indices, and a table and a code span on other lines.
+        let links = String(repeating: "[[a|b]]", count: 20_000)
+        let source = "\(links)\n\n| A |\n| --- |\n| [[c|d]] |\n\n`[[e|*f*]]` and [[g|*h*]]"
+        let blocks = parseCommonMark(source)
+        guard case .paragraph(let inlines) = try #require(blocks.first) else {
+            Issue.record("Expected a paragraph, got \(blocks)")
+            return
+        }
+        #expect(plainText(from: inlines) == links)
+        let table = try #require(firstTable(in: blocks))
+        #expect(table.rows.map { $0.map { plainText(from: $0) } } == [["[[c|d]]"]])
+        guard case .paragraph(let last) = try #require(blocks.last) else {
+            Issue.record("Expected a closing paragraph, got \(blocks)")
+            return
+        }
+        #expect(last.first == .code("[[e|*f*]]"))
+        #expect(plainText(from: Array(last.dropFirst())) == " and [[g|*h*]]")
     }
 
     @Test func parserBoundaryTokenSelectionIsBoundedAndFailsClosed() {
@@ -1423,7 +1430,7 @@ struct WorkspaceWikiLinkRenderingTests {
 
         let productionCollisions = (0...7).map { "q\($0)q" }.joined()
         let source = "\(productionCollisions) | [[a|b]] |"
-        #expect(MarkdownWikiLinkRewriter.parserInput(source).source == source)
+        #expect(MarkdownWikiLinkRewriter.parserInput(source).hiddenRanges.isEmpty)
     }
 
     @Test(arguments: [

@@ -6,7 +6,6 @@ import Foundation
 /// simple HTML tables. Fenced code is left untouched. Colspan/rowspan and
 /// nested tables stay raw HTML.
 enum MarkdownTableMarkupRewriter {
-    private static let dashLike: Set<Character> = ["-", "–", "—", "─", "−"]
     private static let maxHTMLTableBytes = 32 * 1024
 
     static func rewrite(_ source: String, rewriteHTMLTables: Bool = true) -> String {
@@ -19,103 +18,153 @@ enum MarkdownTableMarkupRewriter {
 
     // MARK: - Delimiter rows
 
+    /// Rewrites the delimiter row right under a header row when it uses an org
+    /// `+` or a Unicode dash (`–`, `—`, `─`, `−`). Later dash-only or `+` rows
+    /// stay literal body cells, and fenced code is left alone.
+    ///
+    /// Works on bytes, a line at a time: a line is read past its first
+    /// non-blank byte only when that byte can start a delimiter row (`|`, `+`,
+    /// `-`, `:`, or `E2`, the lead byte of every dash above) or a fence, and the
+    /// line above only for such a row. Returns `source` itself when no row
+    /// changes.
     private static func normalizeDelimiterRows(_ source: String) -> String {
-        guard mayHaveNearMissDelimiterRow(source) else { return source }
-
-        var openFence: (character: Character, count: Int)?
-        var awaitingDelimiter = false
-        var inTable = false
-        var lines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        for index in lines.indices {
-            let line = lines[index]
-            if let fence = openFence {
-                if isClosingFence(line, matching: fence) {
-                    openFence = nil
-                }
-                awaitingDelimiter = false
-                inTable = false
-                continue
-            }
-            if let fence = openingFence(in: line) {
-                openFence = fence
-                awaitingDelimiter = false
-                inTable = false
-                continue
-            }
-            if line.trimmingCharacters(in: .whitespaces).isEmpty {
-                awaitingDelimiter = false
-                inTable = false
-                continue
-            }
-            // Only the delimiter immediately under a header is rewritten.
-            // Later dash-only or org `+` rows stay literal body cells.
-            if !inTable, awaitingDelimiter, let rewritten = normalizedDelimiterRow(line) {
-                lines[index] = rewritten
-                awaitingDelimiter = false
-                inTable = true
-                continue
-            }
-            if inTable {
-                continue
-            }
-            awaitingDelimiter = line.contains("|") && normalizedDelimiterRow(line) == nil
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    /// Whether some line could be a delimiter row this rewrite changes: only
-    /// pipes, colons, dashes and spaces, with at least one pipe and at least
-    /// one org `+` or non-ASCII dash (every one in `dashLike` starts with byte
-    /// `E2`). One pass over the bytes; prose fails on its first letter, so most
-    /// documents never reach the line split below.
-    private static func mayHaveNearMissDelimiterRow(_ source: String) -> Bool {
+        var edits: [(range: Range<Int>, replacement: [UInt8])] = []
         UTF8Search.withBytes(of: source) { bytes in
-            var isCandidate = true
-            var hasPipe = false
-            var hasMark = false
-            for byte in bytes {
-                switch byte {
-                case 0x0A:
-                    if isCandidate, hasPipe, hasMark { return true }
-                    isCandidate = true
-                    hasPipe = false
-                    hasMark = false
-                case 0x7C: hasPipe = true
-                case 0x2B, 0xE2: hasMark = true
-                case 0x2D, 0x3A, 0x20, 0x09, 0x0D, 0x80 ... 0xBF: break
-                default: isCandidate = false
+            guard let base = bytes.baseAddress else { return }
+            var openFence: (byte: UInt8, count: Int)?
+            // The non-blank line above in this run of lines, and whether it was
+            // a delimiter row; nil after a blank line or a fence.
+            var previous: (range: Range<Int>, isDelimiterRow: Bool)?
+            var inTable = false
+            var lineStart = 0
+            while lineStart < bytes.count {
+                let newline = memchr(base + lineStart, 0x0A, bytes.count - lineStart)
+                    .map { UnsafeRawPointer(base).distance(to: $0) } ?? bytes.count
+                defer { lineStart = newline + 1 }
+                var end = newline
+                if end > lineStart, bytes[end - 1] == 0x0D { end -= 1 }
+                var first = lineStart
+                while first < end, bytes[first] == 0x20 || bytes[first] == 0x09 { first += 1 }
+                let line = UnsafeBufferPointer(rebasing: bytes[first ..< end])
+
+                if let fence = openFence {
+                    if isClosingFence(line, matching: fence) { openFence = nil }
+                    previous = nil
+                    inTable = false
+                    continue
+                }
+                if let fence = openingFence(line) {
+                    openFence = fence
+                    previous = nil
+                    inTable = false
+                    continue
+                }
+                guard let lead = line.first else {
+                    previous = nil
+                    inTable = false
+                    continue
+                }
+                if inTable { continue }
+                let needsRewrite = isDelimiterRowLead(lead) ? delimiterRowNeedsRewrite(line) : nil
+                if let needsRewrite, let above = previous, !above.isDelimiterRow,
+                   memchr(base + above.range.lowerBound, 0x7C, above.range.count) != nil {
+                    if needsRewrite { edits.append((first ..< end, rewrittenDelimiterRow(line))) }
+                    inTable = true
+                    continue
+                }
+                previous = (lineStart ..< end, needsRewrite != nil)
+            }
+        }
+        guard !edits.isEmpty else { return source }
+        return UTF8Search.withBytes(of: source) { bytes in
+            var result: [UInt8] = []
+            result.reserveCapacity(bytes.count)
+            var copied = 0
+            for edit in edits {
+                result.append(contentsOf: bytes[copied ..< edit.range.lowerBound])
+                result.append(contentsOf: edit.replacement)
+                copied = edit.range.upperBound
+            }
+            result.append(contentsOf: bytes[copied...])
+            return String(decoding: result, as: UTF8.self)
+        }
+    }
+
+    private static func isDelimiterRowLead(_ byte: UInt8) -> Bool {
+        byte == 0x7C || byte == 0x2B || byte == 0x2D || byte == 0x3A || byte == 0xE2
+    }
+
+    /// The length of the dash at `index`: 1 for `-`, 3 for `–`, `—`, `─` or
+    /// `−`, nil for anything else.
+    private static func dashLength(_ line: UnsafeBufferPointer<UInt8>, at index: Int) -> Int? {
+        if line[index] == 0x2D { return 1 }
+        guard line[index] == 0xE2, index + 2 < line.count else { return nil }
+        switch (line[index + 1], line[index + 2]) {
+        case (0x80, 0x93), (0x80, 0x94), (0x94, 0x80), (0x88, 0x92): return 3
+        default: return nil
+        }
+    }
+
+    /// Nil unless `line` is a delimiter row: cells split by `|`, at least one
+    /// not blank, each of those only dashes, `+` and `:` (blanks around them,
+    /// not between) with at least one dash or `+`. Otherwise whether it holds a
+    /// `+` or a Unicode dash.
+    private static func delimiterRowNeedsRewrite(_ line: UnsafeBufferPointer<UInt8>) -> Bool? {
+        var hasPipe = false
+        var hasCell = false
+        var cellHasContent = false
+        var cellHasDash = false
+        var cellHasTrailingBlank = false
+        var needsRewrite = false
+        var index = 0
+        while index < line.count {
+            let byte = line[index]
+            if byte == 0x7C {
+                if cellHasContent, !cellHasDash { return nil }
+                hasCell = hasCell || cellHasContent
+                hasPipe = true
+                cellHasContent = false
+                cellHasDash = false
+                cellHasTrailingBlank = false
+            } else if byte == 0x20 || byte == 0x09 {
+                cellHasTrailingBlank = cellHasContent
+            } else {
+                if cellHasTrailingBlank { return nil }
+                cellHasContent = true
+                if byte == 0x2B {
+                    cellHasDash = true
+                    needsRewrite = true
+                } else if byte != 0x3A {
+                    guard let length = dashLength(line, at: index) else { return nil }
+                    cellHasDash = true
+                    needsRewrite = needsRewrite || length > 1
+                    index += length - 1
                 }
             }
-            return isCandidate && hasPipe && hasMark
+            index += 1
         }
+        if cellHasContent, !cellHasDash { return nil }
+        guard hasPipe, hasCell || cellHasContent else { return nil }
+        return needsRewrite
     }
 
-    private static func normalizedDelimiterRow(_ line: String) -> String? {
-        guard line.contains("|") else { return nil }
-        let cells = line.split(separator: "|", omittingEmptySubsequences: false)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        guard !cells.isEmpty, cells.allSatisfy(isDelimiterCell) else { return nil }
-
-        return String(line.map { character in
-            if character == "+" { return "|" }
-            if dashLike.contains(character) { return "-" }
-            return character
-        })
-    }
-
-    private static func isDelimiterCell(_ cell: String) -> Bool {
-        guard !cell.isEmpty else { return false }
-        var sawDash = false
-        for character in cell {
-            if dashLike.contains(character) || character == "+" {
-                sawDash = true
-                continue
+    /// `line` with each `+` as `|` and each dash as `-`.
+    private static func rewrittenDelimiterRow(_ line: UnsafeBufferPointer<UInt8>) -> [UInt8] {
+        var result: [UInt8] = []
+        result.reserveCapacity(line.count)
+        var index = 0
+        while index < line.count {
+            if line[index] == 0x2B {
+                result.append(0x7C)
+            } else if let length = dashLength(line, at: index) {
+                result.append(0x2D)
+                index += length - 1
+            } else {
+                result.append(line[index])
             }
-            if character == ":" { continue }
-            return false
+            index += 1
         }
-        return sawDash
+        return result
     }
 
     // MARK: - HTML tables
@@ -125,7 +174,7 @@ enum MarkdownTableMarkupRewriter {
 
         var result = ""
         result.reserveCapacity(source.utf8.count)
-        var openFence: (character: Character, count: Int)?
+        var openFence: (byte: UInt8, count: Int)?
         var buffer = ""
         let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
 
@@ -140,13 +189,13 @@ enum MarkdownTableMarkupRewriter {
             let suffix = index < lines.count - 1 || source.hasSuffix("\n") ? "\n" : ""
             if let fence = openFence {
                 buffer += text + suffix
-                if isClosingFence(text, matching: fence) {
+                if isClosingFence(text.utf8, matching: fence) {
                     flush(transform: false)
                     openFence = nil
                 }
                 continue
             }
-            if let fence = openingFence(in: text) {
+            if let fence = openingFence(text.utf8) {
                 flush(transform: true)
                 openFence = fence
                 buffer += text + suffix
@@ -450,21 +499,17 @@ enum MarkdownTableMarkupRewriter {
 
     // MARK: - Fences
 
-    private static func openingFence(in line: String) -> (character: Character, count: Int)? {
-        let trimmed = String(line.drop(while: { $0 == " " || $0 == "\t" }))
-        guard let first = trimmed.first, first == "`" || first == "~" else { return nil }
-        let count = trimmed.prefix(while: { $0 == first }).count
-        guard count >= 3 else { return nil }
-        return (first, count)
+    /// A line whose first non-blank bytes are three or more backticks or tildes.
+    private static func openingFence(_ line: some Collection<UInt8>) -> (byte: UInt8, count: Int)? {
+        let trimmed = line.drop { $0 == 0x20 || $0 == 0x09 }
+        guard let first = trimmed.first, first == UInt8(ascii: "`") || first == UInt8(ascii: "~") else { return nil }
+        let count = trimmed.prefix { $0 == first }.count
+        return count >= 3 ? (first, count) : nil
     }
 
-    private static func isClosingFence(
-        _ line: String,
-        matching fence: (character: Character, count: Int)
-    ) -> Bool {
-        let trimmed = String(line.drop(while: { $0 == " " || $0 == "\t" }))
-        let count = trimmed.prefix(while: { $0 == fence.character }).count
-        guard count >= fence.count else { return false }
-        return trimmed.dropFirst(count).allSatisfy { $0.isWhitespace }
+    private static func isClosingFence(_ line: some Collection<UInt8>, matching fence: (byte: UInt8, count: Int)) -> Bool {
+        let trimmed = line.drop { $0 == 0x20 || $0 == 0x09 }
+        let count = trimmed.prefix { $0 == fence.byte }.count
+        return count >= fence.count && trimmed.dropFirst(count).allSatisfy { $0 == 0x20 || $0 == 0x09 || $0 == 0x0D }
     }
 }

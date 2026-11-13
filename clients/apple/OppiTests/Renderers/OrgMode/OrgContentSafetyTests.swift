@@ -191,10 +191,9 @@ struct OrgContentSafetyTests {
         }
     }
 
-    @Test func escapingABracketNeverWritesTheTwoByteSequenceThatTriggersAWholeDocumentMathScan() {
-        // CMarkFastParser's math-protection fast path skips a document that
-        // has none of `$`, `\[`, or `\(...\)`; writing `\[` for an ordinary
-        // `]( ` escape would push every large file through that scan.
+    @Test func escapingABracketNeverWritesTheTwoByteSequenceThatOpensDisplayMath() {
+        // `\[` alone on a line opens a display formula that runs to a `\]`
+        // line, so a bracket escaped that way could swallow the text after it.
         let markdown = DocumentRenderPipeline.orgToMarkdown("See [x](y) and [a][b] and [lone] brackets.")
         #expect(!markdown.contains("\\["), "got \(markdown)")
     }

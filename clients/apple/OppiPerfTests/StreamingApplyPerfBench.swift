@@ -409,6 +409,201 @@ struct StreamingApplyPerfBench {
         print("METRIC long_cell_configure_max_ms=\(timelineStats.cellConfigureMaxMs)")
     }
 
+    // MARK: - Tick breakdown
+
+    /// A math-heavy answer: headings, prose with inline formulas, display
+    /// blocks and lists of formulas, about 10 KB.
+    private static func makeMathHeavyAnswer() -> String {
+        (1...12).map { section in
+            """
+            ## Step \(section): the update rule
+
+            Let $x_t \\in \\mathbb{R}^{d}$ be the parameters after step $t$ and $\\eta_{\(section)} > 0$ the step size. \
+            The loss $L(x) = \\frac{1}{2}\\|Ax - b\\|^2$ has gradient $\\nabla L(x) = A^\\top (Ax - b)$, so a step costs \
+            one product with $A$ and one with $A^\\top$.
+
+            $$
+            x_{t+1} = x_t - \\eta_{\(section)} \\nabla L(x_t) = (I - \\eta_{\(section)} A^\\top A) x_t + \\eta_{\(section)} A^\\top b
+            $$
+
+            - The Hessian is $H = A^\\top A$, so the step converges when $0 < \\eta < 2 / \\lambda_{\\max}(H)$.
+            - With $\\kappa = \\lambda_{\\max} / \\lambda_{\\min}$ the error shrinks like $(1 - 1/\\kappa)^t$.
+            - A budget of $\(section * 100)$ steps reaches $\\epsilon \\approx e^{-\(section)}$ when $\\kappa \\le \(section * 10)$.
+
+            """
+        }.joined()
+    }
+
+    /// A long table-heavy answer: a 150-row table and a 60-row table with
+    /// code, bold and dollar amounts in cells, prose around them; about 20 KB.
+    private static func makeTableHeavyAnswer() -> String {
+        func table(rows: Int, offset: Int) -> String {
+            var lines = [
+                "| File | Lines | Status | Cost | Note |",
+                "| --- | ---: | :---: | ---: | --- |",
+            ]
+            for row in 0..<rows {
+                let index = row + offset
+                lines.append(
+                    "| `src/module\(index)/File\(index).swift` | \(index * 37 % 900 + 12) | **\(index.isMultiple(of: 3) ? "changed" : "kept")** "
+                        + "| $\(index * 13 % 97).\(index % 10)0 | see [notes](https://example.com/\(index)) |"
+                )
+            }
+            return lines.joined(separator: "\n")
+        }
+        return """
+        ## Audit of the module tree
+
+        Every file below was read once. Costs are the measured build minutes at $0.08 a minute, rounded to cents.
+
+        \(table(rows: 150, offset: 0))
+
+        The changed files cluster in the first third. The second table lists the tests that cover them.
+
+        \(table(rows: 60, offset: 150))
+
+        Nothing else changed.
+
+        """
+    }
+
+    /// Per-tick milliseconds for one phase of a streamed answer.
+    private struct PhaseSamples {
+        var ns: [UInt64] = []
+
+        func line(_ name: String) -> String {
+            let stats = Stats(durationsNs: ns)
+            let quarter = max(1, ns.count / 4)
+            let early = Double(ns.prefix(quarter).reduce(0, +)) / Double(quarter) / 1000
+            let late = Double(ns.suffix(quarter).reduce(0, +)) / Double(quarter) / 1000
+            return String(
+                format: "%@ avg=%.1fus p50=%.1fus p95=%.1fus max=%.1fus first-quarter=%.1fus last-quarter=%.1fus",
+                name, stats.avgUs, stats.p50Us, stats.p95Us, stats.maxUs, early, late
+            )
+        }
+    }
+
+    /// Streams `answer` in 64-byte ticks through each stage the chat runs per
+    /// tick, on separate instances, and prints where a tick's time goes:
+    /// the streaming parse, the segment build (parse plus FlatSegment and its
+    /// attributed strings), the content view's apply (build plus the segment
+    /// applier's views and text storage), the row's height measure (first and
+    /// repeated), its layout at that height, and the whole timeline tick
+    /// (collection apply and layout) with the answer as the visible streaming
+    /// row. A first measure far above the repeat means UIKit re-measured views
+    /// that did not change.
+    private func measureTickBreakdown(name: String, answer: String) {
+        let h = Harness()
+        let baseItems = Self.buildTimeline(turnCount: Self.turnCount)
+        let width: CGFloat = 358
+
+        var parser = CommonMarkStreamingParser()
+        let source = AssistantMarkdownSegmentSource()
+        let view = AssistantMarkdownContentView(frame: CGRect(x: 0, y: 0, width: width, height: 100))
+        view.hostLayoutWidth = width
+        h.window.addSubview(view)
+        defer { view.removeFromSuperview() }
+
+        let bytes = Array(answer.utf8)
+        var ticks: [String] = []
+        var end = 0
+        while end < bytes.count {
+            end = min(bytes.count, end + 64)
+            // Ticks end on a character boundary.
+            while end < bytes.count, bytes[end] & 0xC0 == 0x80 { end += 1 }
+            ticks.append(String(decoding: bytes[..<end], as: UTF8.self))
+        }
+
+        let (initialItems, streamingID) = Self.withStreamingTail(base: baseItems, streamingText: "")
+        h.apply(items: initialItems, streamingAssistantID: streamingID)
+        h.collectionView.layoutIfNeeded()
+
+        var parse = PhaseSamples(), build = PhaseSamples(), apply = PhaseSamples()
+        var measure = PhaseSamples(), remeasure = PhaseSamples(), layout = PhaseSamples(), timeline = PhaseSamples()
+        func timed(_ samples: inout PhaseSamples, _ body: () -> Void) {
+            let start = DispatchTime.now().uptimeNanoseconds
+            body()
+            samples.ns.append(DispatchTime.now().uptimeNanoseconds &- start)
+        }
+
+        for text in ticks {
+            let config = AssistantMarkdownContentView.Configuration.make(
+                content: text,
+                isStreaming: true,
+                themeID: .dark,
+                textSelectionEnabled: false
+            )
+            timed(&parse) { _ = parser.parse(text) }
+            timed(&build) { _ = source.buildSegments(config) }
+            timed(&apply) { view.apply(configuration: config) }
+            var fitted = CGSize.zero
+            func fit() {
+                fitted = view.systemLayoutSizeFitting(
+                    CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                    withHorizontalFittingPriority: .required,
+                    verticalFittingPriority: .fittingSizeLevel
+                )
+            }
+            timed(&measure, fit)
+            timed(&remeasure, fit)
+            // As a self-sizing cell does: take the fitted height, then lay out.
+            timed(&layout) {
+                view.frame.size = CGSize(width: width, height: fitted.height)
+                view.layoutIfNeeded()
+            }
+
+            let (items, _) = Self.withStreamingTail(base: baseItems, streamingText: text)
+            timed(&timeline) {
+                h.apply(items: items, streamingAssistantID: streamingID)
+                h.collectionView.layoutIfNeeded()
+                let last = IndexPath(item: h.coordinator.currentIDs.count - 1, section: 0)
+                h.collectionView.scrollToItem(at: last, at: .bottom, animated: false)
+                h.collectionView.layoutIfNeeded()
+            }
+        }
+
+        // Which views the row's height measure spends its time in, at the
+        // final tick: each arranged view measured alone at the row width.
+        var byType: [String: (count: Int, ns: UInt64)] = [:]
+        if let stack = view.subviews.compactMap({ $0 as? UIStackView }).first {
+            for arranged in stack.arrangedSubviews {
+                let start = DispatchTime.now().uptimeNanoseconds
+                _ = arranged.systemLayoutSizeFitting(
+                    CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                    withHorizontalFittingPriority: .required,
+                    verticalFittingPriority: .fittingSizeLevel
+                )
+                let key = String(describing: type(of: arranged))
+                let entry = byType[key] ?? (0, 0)
+                byType[key] = (entry.count + 1, entry.ns + DispatchTime.now().uptimeNanoseconds &- start)
+            }
+        }
+        for (key, entry) in byType.sorted(by: { $0.value.ns > $1.value.ns }) {
+            print("[TickBreakdown] \(name) measure-by-view \(key) count=\(entry.count) total=\(String(format: "%.1f", Double(entry.ns) / 1000))us")
+        }
+        print("[TickBreakdown] \(name) bytes=\(bytes.count) ticks=\(ticks.count)")
+        print("[TickBreakdown] \(parse.line("parse"))")
+        print("[TickBreakdown] \(build.line("segment-build"))")
+        print("[TickBreakdown] \(apply.line("content-apply"))")
+        print("[TickBreakdown] \(measure.line("row-measure"))")
+        print("[TickBreakdown] \(remeasure.line("row-remeasure"))")
+        print("[TickBreakdown] \(layout.line("row-layout"))")
+        print("[TickBreakdown] \(timeline.line("timeline-tick"))")
+        for (phase, samples) in [("parse", parse), ("build", build), ("apply", apply), ("measure", measure), ("layout", layout), ("timeline", timeline)] {
+            print("METRIC tick_\(name)_\(phase)_avg_us=\(String(format: "%.1f", Stats(durationsNs: samples.ns).avgUs))")
+        }
+    }
+
+    @Test("Streaming tick breakdown: math-heavy answer")
+    func mathHeavyTickBreakdown() {
+        measureTickBreakdown(name: "math", answer: Self.makeMathHeavyAnswer())
+    }
+
+    @Test("Streaming tick breakdown: table-heavy answer")
+    func tableHeavyTickBreakdown() {
+        measureTickBreakdown(name: "table", answer: Self.makeTableHeavyAnswer())
+    }
+
     /// Cold configure+size of 80 real collapsed tool `SafeSizingCell`s.
     /// Descriptor-only builder time is not the measurement; each sample paints
     /// a cell and asks it to self-size.

@@ -22,9 +22,6 @@ struct CommonMarkStreamingParseResult: Equatable, Sendable {
     /// The text ends inside a fenced code or math block whose closing line has
     /// not arrived, as cmark parsed it.
     let endsInOpenBlock: Bool
-
-    /// The block still receiving bytes.
-    var openBlockID: Int? { blockIDs.last }
 }
 
 /// Incrementally parses a monotonically growing CommonMark document.

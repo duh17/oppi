@@ -1,14 +1,8 @@
-/// Parse a CommonMark string into renderable block nodes.
-///
-/// Delegates to CMarkFastParser. Intentionally nonisolated so callers can
-/// run it off the main thread via `Task.detached`.
-nonisolated func parseCommonMark(_ source: String) -> [MarkdownBlock] {
-    return parseCommonMarkFast(source)
-}
-
 /// One parse for the streaming driver (`CommonMarkStreamingParser`): the
 /// blocks, where each starts, and what cmark knows about the end of the text,
-/// so the driver never scans the bytes again for structure.
+/// so the driver never scans the bytes again for structure. The parsers
+/// themselves (`parseCommonMark`, `parseCommonMarkLocated`,
+/// `parseCommonMarkTail`) live in `CMarkFastParser.swift`.
 struct CommonMarkTailParse: Sendable {
     let blocks: [MarkdownBlock]
     /// The 1-based line each block starts on.
@@ -26,13 +20,4 @@ struct CommonMarkTailParse: Sendable {
     var lastBlockStartLine: Int {
         blockStartLines.count >= 2 ? blockStartLines[blockStartLines.count - 1] : 1
     }
-}
-
-nonisolated func parseCommonMarkTail(_ source: String) -> CommonMarkTailParse {
-    parseCommonMarkFastTail(source)
-}
-
-/// Parse CommonMark and retain top-level source line ranges.
-nonisolated func parseCommonMarkLocated(_ source: String) -> [LocatedMarkdownBlock] {
-    parseCommonMarkFastLocated(source)
 }

@@ -2,12 +2,13 @@ import cmark_gfm
 import cmark_gfm_extensions
 /// Puts back the wiki-link bodies the pre-pass hid from cmark.
 private struct CMarkRestoration {
-    let wiki: MarkdownWikiLinkRewriter.Restoration
+    /// Nil in a block that holds no hidden body: literals pass through.
+    let wiki: MarkdownWikiLinkRewriter.Restoration?
     /// Inside a table cell, where GFM turns `\|` into `|`: hidden bodies get the same.
     var inTableCell = false
 
     func restore(_ text: String) -> String {
-        wiki.restore(text, unescapingPipes: inTableCell)
+        wiki?.restore(text, unescapingPipes: inTableCell) ?? text
     }
 
     func restore(_ math: MarkdownMath) -> MarkdownMath {
@@ -15,18 +16,53 @@ private struct CMarkRestoration {
     }
 }
 
-/// Fast CommonMark parser using the C cmark-gfm library directly.
-///
-/// Parses directly through cmark-gfm and converts to `[MarkdownBlock]`.
-///
-/// Used for the non-streaming full-document parse path where source
-/// positions are not needed.
+/// cmark-gfm's tree for one parse, before conversion to `[MarkdownBlock]`.
 private struct CMarkParsedDocument {
     let root: UnsafeMutablePointer<cmark_node>
-    let restoration: CMarkRestoration
-    /// What cmark parsed, after the pre-passes: line numbers in the tree count its lines.
+    let wiki: MarkdownWikiLinkRewriter.Restoration?
+    /// The text cmark parsed, before wiki bodies were hidden (that keeps lines
+    /// and fences): line numbers in the tree count its lines.
     let input: String
     let hasReferenceDefinitions: Bool
+
+    /// The restoration for top-level block `node`: none unless a hidden body
+    /// sits on its lines.
+    func restoration(for node: UnsafeMutablePointer<cmark_node>) -> CMarkRestoration {
+        guard let wiki else { return CMarkRestoration(wiki: nil) }
+        let start = Int(cmark_node_get_start_line(node))
+        let end = Int(cmark_node_get_end_line(node))
+        guard start > 0, end >= start else { return CMarkRestoration(wiki: wiki) }
+        return CMarkRestoration(wiki: wiki.hidesText(onLines: start ... end) ? wiki : nil)
+    }
+}
+
+/// The GFM extensions the parser attaches, found once (they are process-wide
+/// and built into swift-cmark). The converter tells their nodes apart by
+/// extension pointer: a node's type name would be a C string to copy and
+/// compare for every list item, table and unknown inline.
+private struct GFMExtensions: @unchecked Sendable {
+    let table: UnsafeMutablePointer<cmark_syntax_extension>
+    let strikethrough: UnsafeMutablePointer<cmark_syntax_extension>
+    let tasklist: UnsafeMutablePointer<cmark_syntax_extension>
+
+    static let shared: GFMExtensions = {
+        cmark_gfm_core_extensions_ensure_registered()
+        return GFMExtensions(
+            table: cmark_find_syntax_extension("table")!,
+            strikethrough: cmark_find_syntax_extension("strikethrough")!,
+            tasklist: cmark_find_syntax_extension("tasklist")!
+        )
+    }()
+}
+
+/// A literal as a `String`, read from the node's own chunk: the public
+/// getters (`cmark_node_get_literal`, `_url`, `_fence_info`) first copy a
+/// chunk that points into its paragraph into a new NUL-terminated buffer.
+/// Reads `cmark_node.as`, which is not stable API; swift-cmark is pinned by
+/// revision, as `MarkdownMathExtension` notes.
+private func string(_ chunk: cmark_chunk) -> String {
+    guard chunk.len > 0, let data = chunk.data else { return "" }
+    return String(decoding: UnsafeBufferPointer(start: data, count: Int(chunk.len)), as: UTF8.self)
 }
 
 /// Marks the document root when the text defines a link reference. cmark
@@ -48,8 +84,7 @@ private func cmarkParsedDocument(
     _ source: String,
     rewriteHTMLTables: Bool
 ) -> CMarkParsedDocument? {
-    cmark_gfm_core_extensions_ensure_registered()
-
+    let gfm = GFMExtensions.shared
     // Only `~~x~~` strikes through. A single tilde is everyday text in agent
     // output (`~10~20ms`, `List~int~`, Org's `~code~`), and struck-through
     // text is visible, so the single-tilde form would cross out real content.
@@ -60,14 +95,8 @@ private func cmarkParsedDocument(
 
     // Math first: its block extension has to be asked before `table`.
     MarkdownMathExtension.attach(to: parser)
-    if let tableExt = cmark_find_syntax_extension("table") {
-        cmark_parser_attach_syntax_extension(parser, tableExt)
-    }
-    if let strikeExt = cmark_find_syntax_extension("strikethrough") {
-        cmark_parser_attach_syntax_extension(parser, strikeExt)
-    }
-    if let tasklistExt = cmark_find_syntax_extension("tasklist") {
-        cmark_parser_attach_syntax_extension(parser, tasklistExt)
+    for ext in [gfm.table, gfm.strikethrough, gfm.tasklist] {
+        cmark_parser_attach_syntax_extension(parser, ext)
     }
     cmark_parser_attach_syntax_extension(parser, referenceDefinitionProbe)
 
@@ -77,9 +106,24 @@ private func cmarkParsedDocument(
         source,
         rewriteHTMLTables: rewriteHTMLTables
     )
-    let parserInput = MarkdownWikiLinkRewriter.parserInput(tableSource)
-    parserInput.source.withCString { ptr in
-        cmark_parser_feed(parser, ptr, parserInput.source.utf8.count)
+    // cmark takes a document in pieces (a line may span two), so each hidden
+    // wiki body is fed as its frame between pieces of the text, uncopied.
+    let wikiInput = MarkdownWikiLinkRewriter.parserInput(tableSource)
+    UTF8Search.withBytes(of: tableSource) { bytes in
+        func feed(_ piece: UnsafeBufferPointer<UInt8>) {
+            guard let base = piece.baseAddress, !piece.isEmpty else { return }
+            base.withMemoryRebound(to: CChar.self, capacity: piece.count) { cmark_parser_feed(parser, $0, piece.count) }
+        }
+        var fed = 0
+        if let wiki = wikiInput.restoration {
+            for (index, hidden) in wikiInput.hiddenRanges.enumerated() {
+                feed(UnsafeBufferPointer(rebasing: bytes[fed ..< hidden.lowerBound]))
+                var frame = wiki.frame(index)
+                frame.withUTF8(feed)
+                fed = hidden.upperBound
+            }
+        }
+        feed(UnsafeBufferPointer(rebasing: bytes[fed...]))
     }
 
     let doc = cmark_parser_finish(parser)
@@ -88,20 +132,22 @@ private func cmarkParsedDocument(
     let hasReferenceDefinitions = cmark_node_get_user_data(doc) != nil
     return CMarkParsedDocument(
         root: doc,
-        restoration: CMarkRestoration(wiki: parserInput.restoration),
-        input: parserInput.source,
+        wiki: wikiInput.restoration,
+        input: tableSource,
         hasReferenceDefinitions: hasReferenceDefinitions
     )
 }
 
-nonisolated func parseCommonMarkFast(_ source: String) -> [MarkdownBlock] {
+/// Parse a CommonMark string into renderable block nodes. Nonisolated so
+/// callers can run it off the main actor.
+nonisolated func parseCommonMark(_ source: String) -> [MarkdownBlock] {
     guard let parsed = cmarkParsedDocument(source, rewriteHTMLTables: true) else { return [] }
     defer { cmark_node_free(parsed.root) }
 
     var blocks: [MarkdownBlock] = []
     var child = cmark_node_first_child(parsed.root)
     while let node = child {
-        if let block = convertCMarkBlock(node, restoration: parsed.restoration) {
+        if let block = convertCMarkBlock(node, restoration: parsed.restoration(for: node)) {
             blocks.append(block)
         }
         child = cmark_node_next(node)
@@ -109,27 +155,16 @@ nonisolated func parseCommonMarkFast(_ source: String) -> [MarkdownBlock] {
     return blocks
 }
 
-nonisolated func parseCommonMarkFastLocated(_ source: String) -> [LocatedMarkdownBlock] {
-    guard let parsed = cmarkParsedDocument(source, rewriteHTMLTables: false) else { return [] }
-    defer { cmark_node_free(parsed.root) }
-
-    var blocks: [LocatedMarkdownBlock] = []
-    var child = cmark_node_first_child(parsed.root)
-    while let node = child {
-        if let block = convertCMarkBlock(node, restoration: parsed.restoration) {
-            blocks.append(LocatedMarkdownBlock(
-                block: block,
-                lineRange: sourceLineRange(for: node)
-            ))
-        }
-        child = cmark_node_next(node)
-    }
-    return blocks
+/// Parse CommonMark and keep each top-level block's source lines. HTML tables
+/// stay HTML here: converting them would move the lines after them.
+nonisolated func parseCommonMarkLocated(_ source: String) -> [LocatedMarkdownBlock] {
+    let parsed = parseCommonMarkTail(source)
+    return zip(parsed.blocks, parsed.blockLineRanges).map { LocatedMarkdownBlock(block: $0, lineRange: $1) }
 }
 
 /// The streaming driver's parse: top-level blocks with the line each starts
 /// on, and what cmark knows about the end of the text.
-nonisolated func parseCommonMarkFastTail(_ source: String) -> CommonMarkTailParse {
+nonisolated func parseCommonMarkTail(_ source: String) -> CommonMarkTailParse {
     guard let parsed = cmarkParsedDocument(source, rewriteHTMLTables: false) else {
         return CommonMarkTailParse(
             blocks: [], blockStartLines: [], blockLineRanges: [], endsInOpenBlock: false, hasReferenceDefinitions: false
@@ -143,7 +178,7 @@ nonisolated func parseCommonMarkFastTail(_ source: String) -> CommonMarkTailPars
     var lastNode: UnsafeMutablePointer<cmark_node>?
     var child = cmark_node_first_child(parsed.root)
     while let node = child {
-        if let block = convertCMarkBlock(node, restoration: parsed.restoration) {
+        if let block = convertCMarkBlock(node, restoration: parsed.restoration(for: node)) {
             blocks.append(block)
             startLines.append(Int(cmark_node_get_start_line(node)))
             lineRanges.append(sourceLineRange(for: node))
@@ -211,18 +246,15 @@ private func sourceLineRange(for node: UnsafeMutablePointer<cmark_node>) -> Clos
     let end = Int(cmark_node_get_end_line(node))
     guard start > 0 else { return nil }
 
-    if cmark_node_get_type(node) == CMARK_NODE_CODE_BLOCK {
-        var fenceLength: Int32 = 0
-        var fenceOffset: Int32 = 0
-        var fenceCharacter: CChar = 0
-        cmark_node_get_fenced(node, &fenceLength, &fenceOffset, &fenceCharacter)
-        if fenceLength > 0 {
-            let rawCode = cmark_node_get_literal(node).flatMap { String(cString: $0) } ?? ""
-            let code = rawCode.hasSuffix("\n") ? String(rawCode.dropLast()) : rawCode
-            let lineCount = max(1, code.split(separator: "\n", omittingEmptySubsequences: false).count)
-            let codeStart = start + 1
-            return codeStart...(codeStart + lineCount - 1)
-        }
+    if cmark_node_get_type(node) == CMARK_NODE_CODE_BLOCK, node.pointee.as.code.fence_length > 0 {
+        // The code's own lines, without the fences: one per newline, the
+        // last one's newline aside.
+        let literal = node.pointee.as.code.literal
+        let code = UnsafeBufferPointer(start: literal.data, count: Int(literal.len))
+        var newlines = code.reduce(0) { $1 == 0x0A ? $0 + 1 : $0 }
+        if code.last == 0x0A { newlines -= 1 }
+        let codeStart = start + 1
+        return codeStart...(codeStart + newlines)
     }
 
     return start...max(start, end)
@@ -247,17 +279,12 @@ private func convertCMarkBlock(
         return .heading(level: level, inlines: convertCMarkInlines(node, restoration: restoration))
 
     case CMARK_NODE_CODE_BLOCK:
-        let rawCode = cmark_node_get_literal(node).flatMap { String(cString: $0) } ?? ""
-        let restoredCode = restoration.restore(rawCode)
+        let restoredCode = restoration.restore(string(node.pointee.as.code.literal))
         var code = restoredCode.hasSuffix("\n") ? String(restoredCode.dropLast()) : restoredCode
-        let rawInfo = cmark_node_get_fence_info(node).flatMap { String(cString: $0) }
-        let restoredInfo = rawInfo.map(restoration.restore)
-        let language = (restoredInfo?.isEmpty == false) ? restoredInfo : nil
+        let info = restoration.restore(string(node.pointee.as.code.info))
         // Strip trailing inner fences from 4+ backtick code blocks.
-        var fl: Int32 = 0; var fo: Int32 = 0; var fc: CChar = 0
-        cmark_node_get_fenced(node, &fl, &fo, &fc)
-        if fl > 3 { code = stripTrailingInnerFence(code) }
-        return .codeBlock(language: language, code: code)
+        if node.pointee.as.code.fence_length > 3 { code = stripTrailingInnerFence(code) }
+        return .codeBlock(language: info.isEmpty ? nil : info, code: code)
 
     case CMARK_NODE_BLOCK_QUOTE:
         var children: [MarkdownBlock] = []
@@ -279,14 +306,8 @@ private func convertCMarkBlock(
 
         var item = cmark_node_first_child(node)
         while let itemNode = item {
-            // Check if this item is a task list item via the tasklist extension.
-            var isTask = false
-            if let typeStr = cmark_node_get_type_string(itemNode) {
-                if String(cString: typeStr) == "tasklist" {
-                    isTask = true
-                    hasTaskItems = true
-                }
-            }
+            let isTask = cmark_node_get_syntax_extension(itemNode) == GFMExtensions.shared.tasklist
+            hasTaskItems = hasTaskItems || isTask
             let checked = isTask && cmark_gfm_extensions_get_tasklist_item_checked(itemNode)
             itemCheckedStates.append(isTask ? checked : nil)
             itemStartLines.append(Int(cmark_node_get_start_line(itemNode)))
@@ -327,16 +348,12 @@ private func convertCMarkBlock(
         return .thematicBreak
 
     case CMARK_NODE_HTML_BLOCK:
-        let html = cmark_node_get_literal(node).flatMap { String(cString: $0) } ?? ""
-        return .htmlBlock(restoration.restore(html))
+        return .htmlBlock(restoration.restore(string(node.pointee.as.literal)))
 
     default:
-        // Check for table extension node.
-        if let typeStr = cmark_node_get_type_string(node) {
-            let type = String(cString: typeStr)
-            if type == "table" {
-                return convertCMarkTable(node, restoration: restoration)
-            }
+        // A table is the only other block the attached extensions make.
+        if cmark_node_get_syntax_extension(node) == GFMExtensions.shared.table {
+            return convertCMarkTable(node, restoration: restoration)
         }
         return nil
     }
@@ -428,9 +445,7 @@ private func extractCMarkPlainText(
     while let c = child {
         let childType = cmark_node_get_type(c)
         if childType == CMARK_NODE_TEXT || childType == CMARK_NODE_CODE {
-            if let literal = cmark_node_get_literal(c) {
-                result += restoration.restore(String(cString: literal))
-            }
+            result += restoration.restore(string(c.pointee.as.literal))
         } else if childType == CMARK_NODE_SOFTBREAK || childType == CMARK_NODE_LINEBREAK {
             result += "\n"
         } else {
@@ -467,8 +482,7 @@ private func convertCMarkInline(
 
     switch nodeType {
     case CMARK_NODE_TEXT:
-        guard let literal = cmark_node_get_literal(node) else { return nil }
-        return .text(restoration.restore(String(cString: literal)))
+        return .text(restoration.restore(string(node.pointee.as.literal)))
 
     case CMARK_NODE_EMPH:
         return .emphasis(convertCMarkInlines(node, restoration: restoration))
@@ -477,22 +491,19 @@ private func convertCMarkInline(
         return .strong(convertCMarkInlines(node, restoration: restoration))
 
     case CMARK_NODE_CODE:
-        guard let literal = cmark_node_get_literal(node) else { return nil }
-        return .code(restoration.restore(String(cString: literal)))
+        return .code(restoration.restore(string(node.pointee.as.literal)))
 
     case CMARK_NODE_LINK:
-        let rawDestination = cmark_node_get_url(node).flatMap { String(cString: $0) }
-        let destination = rawDestination.map { restoration.restore($0) }
         return .link(
             children: convertCMarkInlines(node, restoration: restoration),
-            destination: destination
+            destination: restoration.restore(string(node.pointee.as.link.url))
         )
 
     case CMARK_NODE_IMAGE:
-        let alt = extractCMarkPlainText(node, restoration: restoration)
-        let rawSource = cmark_node_get_url(node).flatMap { String(cString: $0) }
-        let source = rawSource.map { restoration.restore($0) }
-        return .image(alt: alt, source: source)
+        return .image(
+            alt: extractCMarkPlainText(node, restoration: restoration),
+            source: restoration.restore(string(node.pointee.as.link.url))
+        )
 
     case CMARK_NODE_SOFTBREAK:
         return .softBreak
@@ -501,19 +512,14 @@ private func convertCMarkInline(
         return .hardBreak
 
     case CMARK_NODE_HTML_INLINE:
-        guard let literal = cmark_node_get_literal(node) else { return nil }
-        return .html(restoration.restore(String(cString: literal)))
+        return .html(restoration.restore(string(node.pointee.as.literal)))
 
     default:
         if let math = MarkdownMathExtension.inlineMath(node) {
             return .math(restoration.restore(math))
         }
-        // Check for strikethrough extension.
-        if let typeStr = cmark_node_get_type_string(node) {
-            let type = String(cString: typeStr)
-            if type == "strikethrough" {
-                return .strikethrough(convertCMarkInlines(node, restoration: restoration))
-            }
+        if cmark_node_get_syntax_extension(node) == GFMExtensions.shared.strikethrough {
+            return .strikethrough(convertCMarkInlines(node, restoration: restoration))
         }
         return nil
     }
