@@ -544,7 +544,7 @@ enum ScheduleCalendarRowViews {
         return row
     }
 
-    /// "Today ✓5 ▦1 ⚠1 ?1 … $10.84 so far"; at accessibility sizes the counts say their words
+    /// "Today ✓5 ▶1 ⚠1 ?1 … $10.84 so far"; at accessibility sizes the counts say their words
     /// and wrap. A day with nothing run yet says "3 upcoming" and no cost.
     static func summary(
         _ summary: ScheduleCalendarAgenda.Summary,
@@ -576,7 +576,7 @@ enum ScheduleCalendarRowViews {
             text.append(NSAttributedString(string: " ", attributes: [.font: font]))
         }
         count(summary.done, "checkmark.circle.fill", palette.ui.green, String(localized: "done"))
-        count(summary.running, "circle.grid.3x3.fill", palette.ui.blue, String(localized: "running"))
+        count(summary.running, WorkingMarkView.symbolName, palette.ui.blue, String(localized: "running"))
         count(summary.failed, "exclamationmark.triangle.fill", palette.ui.red, String(localized: "failed"))
         count(summary.needsYou, "questionmark.bubble.fill", palette.ui.orange, String(localized: "needs you"))
         if !summary.hasRuns {

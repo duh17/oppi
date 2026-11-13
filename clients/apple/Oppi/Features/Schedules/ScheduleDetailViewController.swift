@@ -482,7 +482,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
     private static func runIconName(_ status: AgentScheduleRunStatus) -> String {
         switch status {
         case .completed: "checkmark.circle.fill"
-        case .running: "play.circle.fill"
+        case .running: WorkingMarkView.symbolName
         case .claimed, .pending: "clock.fill"
         case .failed: "exclamationmark.triangle.fill"
         }
