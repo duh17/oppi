@@ -350,6 +350,20 @@ struct FlatSegmentBuildTests {
         #expect(attributed.runs.contains { $0.inlinePresentationIntent == .stronglyEmphasized })
     }
 
+    @Test func dollarAmountsInProseStayLiteralAroundRealFormulas() {
+        for (markdown, formulas) in [
+            ("It costs $5 and $10.", 0),
+            ("Costs went from $7.76 to $49.56 (+$41.80).", 0),
+            ("It costs $5 and $10, where $x^2$ is the fit.", 1),
+            ("It costs $5 and then $\\alpha$ appears.", 1),
+        ] {
+            let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
+            #expect(inlineMathAttachments(in: segments).count == formulas, "\(markdown)")
+            let visible = textSegmentString(segments) ?? ""
+            #expect(visible.contains("$5") || visible.contains("$7.76"), "\(markdown)")
+        }
+    }
+
     @Test func inlineDollarLatexArrowRendersAsFormulaAttachment() {
         let segments = FlatSegment.build(
             from: parseCommonMark("A $\\rightarrow$ B\n"),

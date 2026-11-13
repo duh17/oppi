@@ -1336,7 +1336,8 @@ enum FlatSegment: Sendable {
                 let latexStart = source.index(after: cursor)
                 if let close = nextInlineMathDelimiter(in: source, from: latexStart) {
                     let latex = String(source[latexStart ..< close])
-                    if isLikelyLatexMath(latex),
+                    if !isDollarFollowedByDigit(at: close, in: source),
+                       isLikelyLatexMath(latex),
                        let attachment = inlineLatexAttachment(
                            source: latex,
                            palette: palette,

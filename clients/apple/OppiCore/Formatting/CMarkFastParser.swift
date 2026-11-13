@@ -489,6 +489,9 @@ private enum MarkdownMathDelimiterRewriter {
         result.reserveCapacity(line.utf8.count)
         var cursor = line.startIndex
         var codeDelimiterLength: Int?
+        // GFM splits a table row into cells on unescaped pipes before it parses
+        // any inline content, so a formula cannot span a cell boundary.
+        let isTableRow = line.drop(while: { $0 == " " || $0 == "\t" }).first == "|"
 
         while cursor < line.endIndex {
             if line[cursor] == "`", !isEscaped(at: cursor, in: line) {
@@ -563,7 +566,8 @@ private enum MarkdownMathDelimiterRewriter {
 
             if matches(#"\("#, in: line, at: cursor),
                !isEscaped(at: cursor, in: line),
-               let closeRange = nextUnescaped(#"\)"#, in: line, after: line.index(cursor, offsetBy: 2)) {
+               let closeRange = nextUnescaped(#"\)"#, in: line, after: line.index(cursor, offsetBy: 2)),
+               !(isTableRow && containsUnescapedPipe(line[cursor ..< closeRange.upperBound])) {
                 let sourceRange = cursor ..< closeRange.upperBound
                 appendToken(
                     for: String(line[sourceRange]),
@@ -581,7 +585,9 @@ private enum MarkdownMathDelimiterRewriter {
                 let contentStart = line.index(after: cursor)
                 if let close = nextSingleUnescapedDollar(in: line, from: contentStart) {
                     let latex = String(line[contentStart ..< close])
-                    if isLikelyDollarMath(latex) {
+                    if !isDollarFollowedByDigit(at: close, in: line),
+                       !(isTableRow && containsUnescapedPipe(line[contentStart ..< close])),
+                       isLikelyDollarMath(latex) {
                         let sourceRange = cursor ..< line.index(after: close)
                         appendToken(
                             for: String(line[sourceRange]),
@@ -642,6 +648,20 @@ private enum MarkdownMathDelimiterRewriter {
             cursor = source.index(after: cursor)
         }
         return nil
+    }
+
+    private static func containsUnescapedPipe(_ text: Substring) -> Bool {
+        var escaped = false
+        for character in text {
+            if escaped {
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == "|" {
+                return true
+            }
+        }
+        return false
     }
 
     private static func isLikelyDollarMath(_ source: String) -> Bool {
@@ -715,6 +735,14 @@ private enum MarkdownMathDelimiterRewriter {
         let nextIsDollar = next < source.endIndex && source[next] == "$"
         return previousIsDollar || nextIsDollar
     }
+}
+
+/// Pandoc's rule for `$...$` math: the closing `$` must not be followed by a
+/// digit, so "$7.76 to $49.56" is two prices, not one formula. The parser's
+/// math scanner and the inline renderer both apply it.
+nonisolated func isDollarFollowedByDigit(at index: String.Index, in source: String) -> Bool {
+    let next = source.index(after: index)
+    return next < source.endIndex && source[next].isASCII && source[next].isNumber
 }
 
 nonisolated func markdownMathScannerDiagnostics(

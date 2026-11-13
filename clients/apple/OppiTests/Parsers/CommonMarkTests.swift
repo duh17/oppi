@@ -901,6 +901,51 @@ struct CommonMarkTests {
         #expect(rows[0].map { plainText(from: $0) } == ["Session state", "~/.config/pi-remote/sessions/<userId>/<sessionId>.json"])
     }
 
+    @Test func tableCellsWithDollarAmountsSplitOnPipesAndKeepBold() {
+        let md = """
+        | | Before | After |
+        |---|---|---|
+        | Night shift run | $7.76 | **$49.56** |
+        | "4 runs done" | $13.07 | **$55.74** |
+        | Day total | $17.08 | **$59.75** |
+
+        """
+        let blocks = parseCommonMark(md)
+        guard case .table(let headers, let rows) = blocks.first, blocks.count == 1 else {
+            Issue.record("Expected one table, got \(blocks)")
+            return
+        }
+        #expect(headers.map { plainText(from: $0) } == ["", "Before", "After"])
+        #expect(rows.map { $0.map { plainText(from: $0) } } == [
+            ["Night shift run", "$7.76", "$49.56"],
+            ["\u{201C}4 runs done\u{201D}", "$13.07", "$55.74"],
+            ["Day total", "$17.08", "$59.75"],
+        ])
+        for row in rows {
+            #expect(row[2].count == 1)
+            guard case .strong = row[2].first else {
+                Issue.record("Expected the After cell to be bold, got \(row[2])")
+                continue
+            }
+        }
+    }
+
+    @Test func tableCellsKeepInlineMathButNeverLetItSpanCells() {
+        let md = """
+        | A | B |
+        |---|---|
+        | $x^2$ | $\\alpha$ |
+        | $a | b^2$ | c |
+
+        """
+        guard case .table(_, let rows) = parseCommonMark(md).first else {
+            Issue.record("Expected table")
+            return
+        }
+        #expect(rows[0].map { plainText(from: $0) } == ["$x^2$", "$\\alpha$"])
+        #expect(rows[1].map { plainText(from: $0) } == ["$a", "b^2$"])
+    }
+
     // MARK: - HTML Blocks
 
     @Test func htmlBlock() {
