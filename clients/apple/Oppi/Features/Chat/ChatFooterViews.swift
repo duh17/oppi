@@ -63,18 +63,20 @@ extension ChatViewController {
         ]
         if let session, let workspaceId = session.workspaceId,
            let worktreeId = session.worktreeId, worktreeId != WorkspaceWorktree.mainId {
-            items.append(Self.copyBranchItem(workspaceId: workspaceId, worktreeId: worktreeId, connection: connection))
+            items.append(Self.copyBranchItem(workspaceId: workspaceId, worktreeId: worktreeId, connection: connection, in: view))
         }
-        items.append(UIAction(title: String(localized: "Copy Session ID"), image: UIImage(systemName: "doc.on.doc")) { _ in
+        items.append(UIAction(title: String(localized: "Copy Session ID"), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
             UIPasteboard.general.string = linkedId
-            TransientConfirmationPill.show(String(localized: "Session ID Copied"))
+            guard let self else { return }
+            TransientConfirmationPill.show(String(localized: "Session ID Copied"), in: view)
         })
         let needsAttention = ["warning", "error"].contains(rowState ?? "")
         if let session, session.status != .stopped || needsAttention, let scope = session.routeScope {
-            let stop = UIAction(title: String(localized: "Stop"), image: UIImage(systemName: "stop.circle")) { _ in
+            let stop = UIAction(title: String(localized: "Stop"), image: UIImage(systemName: "stop.circle")) { [weak self] _ in
                 Task {
-                    await SessionListLifecycle.setRunning(false, session, scope: scope, connection: connection) {
-                        TransientConfirmationPill.show($0)
+                    await SessionListLifecycle.setRunning(false, session, scope: scope, connection: connection) { message in
+                        guard let self else { return }
+                        TransientConfirmationPill.show(message, in: self.view)
                     }
                 }
             }
@@ -89,9 +91,10 @@ extension ChatViewController {
     private static func copyBranchItem(
         workspaceId: String,
         worktreeId: String,
-        connection: ServerConnection
+        connection: ServerConnection,
+        in chatView: UIView
     ) -> UIMenuElement {
-        UIDeferredMenuElement.uncached { [weak connection] completion in
+        UIDeferredMenuElement.uncached { [weak connection, weak chatView] completion in
             Task { @MainActor in
                 let worktrees = try? await connection?.apiClient?.listWorkspaceWorktrees(workspaceId: workspaceId)
                 guard let branch = worktrees?.first(where: { $0.id == worktreeId })?.branch, !branch.isEmpty else {
@@ -100,7 +103,7 @@ extension ChatViewController {
                 }
                 completion([UIAction(title: String(localized: "Copy Branch"), image: UIImage(systemName: "arrow.triangle.branch")) { _ in
                     UIPasteboard.general.string = branch
-                    TransientConfirmationPill.show(String(localized: "Branch Copied"))
+                    if let chatView { TransientConfirmationPill.show(String(localized: "Branch Copied"), in: chatView) }
                 }])
             }
         }

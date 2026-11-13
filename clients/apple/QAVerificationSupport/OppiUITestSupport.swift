@@ -191,6 +191,20 @@ extension XCUIApplication {
         )
     }
 
+    /// Drags the app's window by its bottom-trailing corner until that corner
+    /// is at `corner`, in screen points. An iPad app cannot resize its own
+    /// window (`requestGeometryUpdate` takes orientations only), but in
+    /// windowed-apps mode the person, or this drag, can. SpringBoard remembers
+    /// the size for later launches, so a test that shrinks the window drags it
+    /// back to full size before it ends.
+    func dragWindowCorner(to corner: CGPoint) {
+        let window = windows.firstMatch.frame
+        let screen = XCUIApplication(bundleIdentifier: "com.apple.springboard").coordinate(withNormalizedOffset: .zero)
+        let start = screen.withOffset(CGVector(dx: window.maxX - 4, dy: window.maxY - 4))
+        let end = screen.withOffset(CGVector(dx: corner.x - 4, dy: corner.y - 4))
+        start.press(forDuration: 0.3, thenDragTo: end, withVelocity: .default, thenHoldForDuration: 0.3)
+    }
+
     /// The server switcher whose label names `name` (`Current server: <name>`).
     /// Every switcher shares `server.switcher`; the label says which server is current.
     func serverSwitcher(named name: String) -> XCUIElement {

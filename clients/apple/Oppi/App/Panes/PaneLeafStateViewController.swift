@@ -8,12 +8,14 @@ import UIKit
 ///
 /// The connection supplies the remedy for an unreachable server: Retry for a
 /// remote one. A removed server, a deleted session, file or workspace offer
-/// Choose… (the session list) and Close Pane.
+/// Choose… (the session list) and Close Pane. A locked entry shows the one
+/// lock cover every locked screen shows (`ScopedLockCoverViewController`).
 final class PaneLeafStateViewController: UIViewController {
     let entry: PaneStackEntry
     private let root: AppRootEnvironment
     private var coordinator: ConnectionCoordinator { root.coordinator }
     private let stateView = UIContentUnavailableView(loadState: .connecting)
+    private var lockCover: ScopedLockCoverViewController?
 
     /// The server's answer for a session the local stores do not hold.
     private var lookedUp: PaneContentPresence = .unknown
@@ -78,7 +80,35 @@ final class PaneLeafStateViewController: UIViewController {
         }
         shownState = state
         view.accessibilityIdentifier = "pane.state.\(Self.identifier(for: state))"
-        stateView.configuration = configuration(for: state)
+        showLockCover(state == .locked)
+        stateView.isHidden = state == .locked
+        if state != .locked { stateView.configuration = configuration(for: state) }
+    }
+
+    /// Unlocking through the cover changes the lock, which re-runs the
+    /// update and opens the content.
+    private func showLockCover(_ shows: Bool) {
+        if shows, lockCover == nil {
+            let cover = ScopedLockCoverViewController(
+                target: PaneEntries.lockTarget(entry), title: Self.title(for: entry.route)
+            )
+            addChild(cover)
+            cover.view.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(cover.view)
+            NSLayoutConstraint.activate([
+                cover.view.topAnchor.constraint(equalTo: view.topAnchor),
+                cover.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                cover.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                cover.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            ])
+            cover.didMove(toParent: self)
+            lockCover = cover
+        } else if !shows, let cover = lockCover {
+            cover.willMove(toParent: nil)
+            cover.view.removeFromSuperview()
+            cover.removeFromParent()
+            lockCover = nil
+        }
     }
 
     // MARK: Resolution
@@ -142,12 +172,6 @@ final class PaneLeafStateViewController: UIViewController {
         }
     }
 
-    private func unlock() {
-        _ = ScopedLockService.shared.gate(PaneEntries.lockTarget(entry)) { [weak self] in
-            self?.setNeedsUpdateProperties()
-        }
-    }
-
     private func choose() {
         root.navigation.showAllWorkspaceSessions()
     }
@@ -179,12 +203,8 @@ final class PaneLeafStateViewController: UIViewController {
             config = .loadState(.connecting, palette: palette)
             if let serverName { config.text = String(localized: "Connecting to \(serverName)…") }
         case .locked:
-            config = .loadState(.empty(
-                title: String(localized: "Locked"),
-                systemImage: "lock.fill",
-                message: String(localized: "Unlock to show this pane.")
-            ), palette: palette)
-            config.setProminentButton(String(localized: "Unlock")) { [weak self] in self?.unlock() }
+            // The lock cover shows instead (`showLockCover`).
+            config = .loadState(.connecting, palette: palette)
         case .missing(let content):
             config = .loadState(.paneMissing(content), palette: palette)
             config.setProminentButton(String(localized: "Choose…")) { [weak self] in self?.choose() }

@@ -223,6 +223,10 @@ final class SceneNavigation {
     @ObservationIgnored let app: AppState
     /// The window's pane tree beyond its routes: the companion, restoration.
     @ObservationIgnored let panes = ScenePanes()
+    /// The window this navigation drives, set when its scene connects. What
+    /// opens with no screen of its own (a link, a keyboard command) opens in
+    /// its focused leaf (`Router.focusedScreen(in:)`), never another window's.
+    @ObservationIgnored weak var window: UIWindow?
     var selectedTab: AppTab = .workspaces
 
     init(app: AppState = AppState()) {
@@ -419,7 +423,7 @@ final class SceneNavigation {
         guard !showQuickSession else { return }
         let screen = diagnosticScreenLabel()
         let presentation = workspaceNavigationPresentation.telemetryLabel
-        let front = FrontScreens.current()
+        let front = FrontScreens.current(in: window)
         pendingQuickSessionStart = start
         showQuickSession = true
         ClientLog.info(

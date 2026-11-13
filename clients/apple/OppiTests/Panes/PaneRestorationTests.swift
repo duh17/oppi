@@ -80,6 +80,52 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         #expect(restored.zoomed)
     }
 
+    /// The host takes the restored companion as it mounts: the saved share of
+    /// the window, not the panel's own ideal width, and the focus.
+    @Test func aRestoredCompanionMountsAtItsSavedShareWithFocus() async throws {
+        let store = try makeStore()
+        let before = try await makeRoot(sessions: [session("s-1")])
+        before.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
+        let saved = before.navigation.panes
+        saved.companionDidOpen(PaneStackEntry(serverId: serverId, route: .git(workspace: "ws-1", worktree: nil)))
+        saved.setCompanionShare(0.45)
+        saved.focusCompanion(true)
+        save(saved, before.navigation, scene: "scene-host", store: store)
+
+        let after = try await makeRoot(sessions: [session("s-1")])
+        after.navigation.panes.connect(scene: "scene-host", store: store)
+        after.navigation.panes.restore(navigation: after.navigation, coordinator: after.coordinator)
+        let host = PaneTestHost(width: 1000, scenePanes: after.navigation.panes)
+        defer { host.hide() }
+        host.showPanel(minWidth: 320, idealWidth: 400, maxWidth: 640)
+
+        #expect(host.companionWidth == 450, "0.45 of the window, not the ideal 400")
+        #expect(abs(host.screenWidth - 550) < 0.5)
+        #expect(host.panes.focusedLeaf == .companion)
+        #expect(!host.panes.primary.view.accessibilityElementsHidden, "both leaves show")
+    }
+
+    /// The tree is written once it has rested: a burst of changes writes
+    /// only its last state, 500 ms after it.
+    @Test func aBurstOfChangesIsWrittenOnceItRests() async throws {
+        let store = try makeStore()
+        let root = try await makeRoot(sessions: [session("s-1"), session("s-2")])
+        root.navigation.panes.connect(scene: "scene-burst", store: store)
+        root.navigation.panes.restore(navigation: root.navigation, coordinator: root.coordinator)
+        root.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
+        try await Task.sleep(for: .milliseconds(100))
+        root.navigation.restorePrimaryStack(chatInWorkspace("s-2"))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(store.load(scene: "scene-burst") == nil, "nothing is written while the changes keep coming")
+
+        let written = await waitForMainActorCondition(timeout: .seconds(2)) {
+            store.load(scene: "scene-burst") != nil
+        }
+        #expect(written)
+        let routes = store.load(scene: "scene-burst")?.layout.leaves.first?.stack.map(\.route)
+        #expect(routes == [.sessions(workspace: "ws-1"), .session("s-2")], "the last state, not the first")
+    }
+
     /// O1: relaunched offline, the chat is a leaf state until its server
     /// answers, so its extension panel and reading position wait. A save
     /// meanwhile keeps both, and the next launch still has them.

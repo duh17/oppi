@@ -370,7 +370,7 @@ func makeRecordingAppRoot() -> (root: AppRootEnvironment, recorder: TestOpenRequ
         coordinator: coordinator,
         navigation: navigation,
         composerDraftStore: drafts,
-        browserPresent: { _ = recorder.record(.webLink($0)) },
+        browserPresent: { url, _ in _ = recorder.record(.webLink(url)) },
         systemOpen: { _ = recorder.record(.system($0)) }
     )
     opener._openRequestObserverForTesting = { recorder.record($0) }

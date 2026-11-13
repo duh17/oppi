@@ -143,9 +143,7 @@ extension AppOpener {
             toastUnreachableIfFirstAttempt(target.serverId)
             return .unreachable
         }
-        await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
-            shouldNavigate: { [weak self] in self?.isCurrent(generation) ?? false }
-        ) { [weak self] in
+        await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
             guard let self else { return }
             NotificationCenter.default.post(
                 name: .workspaceLinkedFileWillOpen,
@@ -575,11 +573,14 @@ extension AppOpener {
         )
     }
 
+    /// Closes a document viewer covering this opener's window, then runs
+    /// `navigate` unless a newer open has taken over.
     func dismissCoveringDocumentOverlayThenNavigateIfCurrent(
         generation: UInt64,
-        navigate: @escaping @MainActor () -> Void
+        navigate: @escaping @MainActor () -> Void = {}
     ) async {
         await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
+            from: navigation.window?.rootViewController,
             shouldNavigate: { [weak self] in self?.isCurrent(generation) ?? false },
             navigate: navigate
         )
@@ -614,9 +615,7 @@ extension AppOpener {
         } else {
             workspace = nil
         }
-        await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
-            shouldNavigate: { [weak self] in self?.isCurrent(generation) ?? false }
-        ) { [weak self] in
+        await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
             self?.navigation.openWorkspaceLinkedFile(resolution.target, workspace: workspace)
         }
         return .finished

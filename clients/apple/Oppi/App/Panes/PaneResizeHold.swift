@@ -63,15 +63,28 @@ final class PaneResizeHold {
     }
 
     /// A window resize (rotation, Split View, Stage Manager, a Mac window
-    /// edge): the screens hold from the first change and settle once, as at
-    /// rest, when the width has rested, unless `canSettle` says a drag or a
-    /// spring has taken over the hold.
-    func windowWidthChanged(canSettle: @escaping () -> Bool) {
+    /// edge): the screens hold from the first change and settle when the
+    /// width has rested, unless `canSettle` says a drag or a spring has taken
+    /// over the hold. A resize that is not live (a rotation, tiling, full
+    /// screen) settles once, as at rest. During a live resize (`live`) a rest
+    /// is a pause, as a divider's is, and `liveResizeEnded` settles at rest.
+    func windowWidthChanged(live: Bool, canSettle: @escaping () -> Bool) {
         hold()
         schedulePause { [weak self] in
             guard canSettle() else { return }
-            self?.settle(final: true)
+            self?.settle(final: !live)
         }
+    }
+
+    /// The person started resizing the window: the screens hold before the
+    /// first width arrives.
+    func liveResizeBegan() {
+        hold()
+    }
+
+    /// The live resize ended: the held screens settle at rest.
+    func liveResizeEnded() {
+        settle(final: true)
     }
 
     /// One divider frame, measured as the main thread's whole cost of it.

@@ -1399,7 +1399,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
                     ) {
                         return
                     }
-                    FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
+                    FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType, near: thumbnail)
                 }
             }
         }
@@ -1542,13 +1542,14 @@ private final class UserTimelineImageThumbnailView: UIView {
             }
         case .animatedRaster, .web:
             onTap = { [weak self] in
-                if let self, ChatReaderOpenLookup.open(
+                guard let self else { return }
+                if ChatReaderOpenLookup.open(
                     .imageData(data, mimeType: mimeType),
                     from: self
                 ) {
                     return
                 }
-                FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
+                FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType, near: self)
             }
         case .failure:
             onTap = nil

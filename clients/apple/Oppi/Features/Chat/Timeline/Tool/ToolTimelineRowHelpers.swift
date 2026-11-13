@@ -156,10 +156,7 @@ enum ToolTimelineRowPresentationHelpers {
                 from: presenter
             )
         )
-        FullScreenViewerPresentationPolicy.configureLargePresentation(
-            controller,
-            traitCollection: sourceView.traitCollection
-        )
+        FullScreenViewerPresentationPolicy.configureLargePresentation(controller, over: presenter)
         controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID().preferredColorScheme == .light ? .light : .dark
         presenter.present(controller, animated: true)
     }
@@ -176,7 +173,7 @@ enum ToolTimelineRowPresentationHelpers {
         guard !isWithinFullScreenModalContext(presenter) else { return }
         let controller = FullScreenImageViewController.makeSlideDownController(
             image: image,
-            prefersFullScreenOverlay: AdaptiveWidth.isWide(sourceView.traitCollection),
+            prefersFullScreenOverlay: AdaptiveWidth.windowIsWide(sourceView),
             addToChatDestination: destination
         )
         ImagePreviewPresentationCoordinator.present(controller, from: presenter)

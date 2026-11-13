@@ -1,14 +1,16 @@
 import UIKit
 
-/// Brief confirmation ("Session ID Copied") that floats above the key window
-/// and fades out on its own. VoiceOver hears it as an announcement.
+/// Brief confirmation ("Session ID Copied") that floats at the top of the
+/// window the action ran in, and fades out on its own. VoiceOver hears it as
+/// an announcement.
 @MainActor
 enum TransientConfirmationPill {
     private static let tag = 0x0991_C0DE
 
-    static func show(_ message: String, systemImage: String = "checkmark.circle.fill") {
+    /// Shows `message` in the window of `view`, the control that ran it.
+    static func show(_ message: String, systemImage: String = "checkmark.circle.fill", in view: UIView) {
         UIAccessibility.post(notification: .announcement, argument: message)
-        guard let window = keyWindow() else { return }
+        guard let window = view.window else { return }
         window.viewWithTag(tag)?.removeFromSuperview()
 
         let pill = UIView()
@@ -55,13 +57,5 @@ enum TransientConfirmationPill {
         } completion: { _ in
             pill.removeFromSuperview()
         }
-    }
-
-    private static func keyWindow() -> UIWindow? {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .filter { $0.activationState == .foregroundActive }
-            .flatMap(\.windows)
-            .first(where: \.isKeyWindow)
     }
 }

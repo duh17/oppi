@@ -1468,14 +1468,14 @@ final class NativeExpandedInlineImageView: UIView {
             if ChatReaderOpenLookup.open(.imageData(data, mimeType: mimeType), from: self) {
                 return
             }
-            FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
+            FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType, near: self)
             return
         }
         guard let image = imageView.image else { return }
         if ChatReaderOpenLookup.open(.image(image), from: self) {
             return
         }
-        FullScreenImageViewController.present(image: image)
+        FullScreenImageViewController.present(image: image, near: self)
     }
 
     @objc private func handleAnimatedImageTap() {

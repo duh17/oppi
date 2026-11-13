@@ -145,13 +145,19 @@ extension AttachedLeafController {
 /// A bare screen with an attached leaf, the way the chat and the review
 /// screens mount one. Its content counts its own layout passes (a reflow of
 /// the leaf beside), follows the keyboard as the chat does, and records the
-/// visibility its leaf reports.
+/// visibility its leaf reports and the holds and settles of a resize.
 @MainActor
-final class PaneLeafScreen: UIViewController, PaneKeyboardFollowing, PaneVisibilityObserving {
+final class PaneLeafScreen: UIViewController, PaneKeyboardFollowing, PaneVisibilityObserving, PaneLiveResizing {
+    enum LiveResize: Equatable {
+        case held
+        case settled(final: Bool)
+    }
+
     lazy var leaf = AttachedLeafController(screen: self)
     let field = UITextField()
     var followsKeyboard = true
     private(set) var visibilities: [PaneVisibility] = []
+    private(set) var liveResize: [LiveResize] = []
     private let content = LayoutCountingView()
     var layoutCount: Int { content.layoutCount }
 
@@ -169,6 +175,14 @@ final class PaneLeafScreen: UIViewController, PaneKeyboardFollowing, PaneVisibil
 
     func paneVisibilityDidChange(_ visibility: PaneVisibility) {
         visibilities.append(visibility)
+    }
+
+    func paneWillBeginLiveResize() {
+        liveResize.append(.held)
+    }
+
+    func paneSettleLiveResize(to size: CGSize, final: Bool) {
+        liveResize.append(.settled(final: final))
     }
 
     func showPanel(

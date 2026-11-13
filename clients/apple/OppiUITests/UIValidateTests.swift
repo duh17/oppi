@@ -23,6 +23,8 @@ final class UIValidateTests: XCTestCase {
         // Portrait unless OPPI_UI_VALIDATE_ORIENTATION=landscape: a simulator an
         // earlier test left in landscape would otherwise change the layout this
         // dump records.
+        // Captures are the screen's, not the app's: in landscape `app.screenshot()`
+        // draws the iPad's interface sideways into a clipped portrait canvas.
         let landscape = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_ORIENTATION"] == "landscape"
         XCUIDevice.shared.orientation = landscape ? .landscapeLeft : .portrait
         let app = OppiTestLaunch.makeApp()
@@ -73,7 +75,7 @@ final class UIValidateTests: XCTestCase {
             .split(separator: ",").map(String.init) ?? []
         if !taps.isEmpty {
             try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-            try app.screenshot().pngRepresentation.write(to: outputDir.appendingPathComponent("step-0.png"))
+            try XCUIScreen.main.screenshot().pngRepresentation.write(to: outputDir.appendingPathComponent("step-0.png"))
         }
         for (index, identifier) in taps.enumerated() {
             let point = identifier.split(separator: ":").compactMap { Double($0) }
@@ -107,7 +109,7 @@ final class UIValidateTests: XCTestCase {
                 if doubleTap { target.doubleTap() } else if swipeUp { target.swipeUp() } else { target.tap() }
             }
             _ = try app.snapshot() // Wait for the resulting UI state to settle.
-            try app.screenshot().pngRepresentation.write(to: outputDir.appendingPathComponent("step-\(index + 1).png"))
+            try XCUIScreen.main.screenshot().pngRepresentation.write(to: outputDir.appendingPathComponent("step-\(index + 1).png"))
         }
 
         let snapshot = try app.snapshot()
@@ -121,7 +123,7 @@ final class UIValidateTests: XCTestCase {
             screen: resolvedScreen,
             tree: tree,
             audit: audit,
-            screenshot: app.screenshot()
+            screenshot: XCUIScreen.main.screenshot()
         )
         let shared = URL(fileURLWithPath: "/tmp/oppi-ui-validate/\(resolvedScreen)", isDirectory: true)
         if shared.standardizedFileURL != outputDir.standardizedFileURL {
@@ -130,7 +132,7 @@ final class UIValidateTests: XCTestCase {
                 screen: resolvedScreen,
                 tree: tree,
                 audit: audit,
-                screenshot: app.screenshot()
+                screenshot: XCUIScreen.main.screenshot()
             )
         }
     }

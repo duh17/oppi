@@ -411,6 +411,11 @@ final class WorkspaceDetailViewController: UIViewController {
         list.removeAll()
     }
 
+    /// A workspace page is not a leaf: it is the window's list of one
+    /// workspace's sessions (the split sidebar's selection), so opening one
+    /// from another server makes that server the window's, and the sidebar
+    /// and the page agree. A leaf (a chat, a file, a panel) reads its own
+    /// route's server and never moves the window's.
     private func startConnectTask() {
         guard connectTask == nil, isOnScreen else { return }
         connectTask = Task { [weak self, serverId] in

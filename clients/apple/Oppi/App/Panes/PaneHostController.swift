@@ -78,6 +78,14 @@ final class PaneHostController: UIViewController {
     private var dragZone: PaneSnapZone?
     private var settleAnimator: UIViewPropertyAnimator?
 
+    /// The window is being resized live (a Stage Manager corner, a Mac
+    /// window edge): frames follow, and what a leaf hears about itself (its
+    /// visibility, a parked companion's release) waits for the resize to end.
+    private(set) var isLiveResizing = false
+    private var geometryObservation: NSKeyValueObservation?
+    /// Parked companions whose time ran out during a live resize.
+    private var releasesAfterLiveResize: [UIViewController] = []
+
     /// The screens on either side that hold their heavy views while the
     /// divider moves or the window resizes, and settle once.
     private lazy var resizeHold = PaneResizeHold(
@@ -131,11 +139,17 @@ final class PaneHostController: UIViewController {
         return nil
     }
 
-    /// The front screen of the focused leaf: Find and Close act there. A
-    /// companion that covers the primary is the only leaf showing.
-    var focusedScreen: UIViewController? {
+    /// The focused leaf's controller: Find, Close, a link's push and a
+    /// screen-less presentation act there. A companion that covers the
+    /// primary is the only leaf showing.
+    var focusedLeafController: UIViewController {
         let companionInFront = focusedLeaf == .companion || showsFull
-        let leaf = companionInFront ? companion?.controller ?? primary : primary
+        return companionInFront ? companion?.controller ?? primary : primary
+    }
+
+    /// The front screen of the focused leaf.
+    var focusedScreen: UIViewController? {
+        let leaf = focusedLeafController
         return (leaf as? UINavigationController)?.topViewController ?? leaf
     }
 
@@ -188,6 +202,7 @@ final class PaneHostController: UIViewController {
     override func loadView() {
         let view = PaneHostView()
         view.onTouch = { [weak self] point in self?.touched(at: point) }
+        view.onWindowChange = { [weak self] in self?.observeWindowGeometry() }
         self.view = view
     }
 
@@ -254,10 +269,46 @@ final class PaneHostController: UIViewController {
     /// a close) owns the hold and settles at its end.
     private func windowWidthChanged() {
         guard settleAnimator == nil, dragStartWidth == nil else { return }
-        resizeHold.windowWidthChanged { [weak self] in
+        resizeHold.windowWidthChanged(live: isLiveResizing) { [weak self] in
             guard let self else { return false }
             return self.dragStartWidth == nil && self.settleAnimator == nil
         }
+    }
+
+    /// Follows the window scene's live resize
+    /// (`effectiveGeometry.isInteractivelyResizing`) for the window the host
+    /// is in now.
+    private func observeWindowGeometry() {
+        geometryObservation = view.window?.windowScene?.observe(
+            \.effectiveGeometry, options: [.initial, .new]
+        ) { [weak self] scene, _ in
+            MainActor.assumeIsolated {
+                self?.windowLiveResizeChanged(scene.effectiveGeometry.isInteractivelyResizing)
+            }
+        }
+    }
+
+    /// The person began or ended resizing the window live. The leaves hold
+    /// from the start, as for a divider, and settle at each pause and once at
+    /// the end (`PaneResizeHold`). Back and forth across the fit rule's
+    /// boundary the companion's frame follows, but its leaves hear their
+    /// visibility, and a parked companion is released, only at the end. A
+    /// resize that is not live (rotation, tiling, full screen) is one settle
+    /// (`windowWidthChanged`).
+    func windowLiveResizeChanged(_ resizing: Bool) {
+        guard resizing != isLiveResizing else { return }
+        isLiveResizing = resizing
+        guard view.window != nil else { return }
+        if resizing {
+            guard settleAnimator == nil, dragStartWidth == nil else { return }
+            resizeHold.liveResizeBegan()
+            return
+        }
+        resizeHold.liveResizeEnded()
+        let releases = releasesAfterLiveResize
+        releasesAfterLiveResize = []
+        for controller in releases { releaseParked(controller) }
+        updateVisibility()
     }
 
     // MARK: Companion
@@ -354,8 +405,12 @@ final class PaneHostController: UIViewController {
         controller.view.isHidden = true
         let timer = Timer.scheduledTimer(withTimeInterval: parkedViewLifetime, repeats: false) { [weak self, weak controller] _ in
             MainActor.assumeIsolated {
-                guard let controller else { return }
-                self?.releaseParked(controller)
+                guard let self, let controller else { return }
+                if self.isLiveResizing {
+                    self.releasesAfterLiveResize.append(controller)
+                } else {
+                    self.releaseParked(controller)
+                }
             }
         }
         parked.append((controller, timer))
@@ -500,7 +555,7 @@ final class PaneHostController: UIViewController {
         applyFitRule()
         guard settleAnimator == nil, companion != nil else { return }
         width = restingWidth
-        updateVisibility()
+        if !isLiveResizing { updateVisibility() }
     }
 
     private func layoutLeaves() {
@@ -766,9 +821,16 @@ extension PaneHostController: NavigationBarHiding {
     var hidesNavigationBar: Bool { true }
 }
 
-/// Reports where each touch lands, for pane focus; hit testing is unchanged.
+/// Reports where each touch lands, for pane focus (hit testing is
+/// unchanged), and when the view moves to another window.
 private final class PaneHostView: UIView {
     var onTouch: ((CGPoint) -> Void)?
+    var onWindowChange: (() -> Void)?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        onWindowChange?()
+    }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)

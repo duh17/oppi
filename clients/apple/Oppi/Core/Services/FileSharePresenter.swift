@@ -70,32 +70,36 @@ enum FileSharePresenter {
 
     // MARK: - Render + Present
 
-    /// Share content using the smart default format.
+    /// Share content using the smart default format, from `screen`'s window.
     static func shareDefault(
         _ content: FileShareService.ShareableContent,
+        from screen: UIViewController,
         loadingToken: ExportLoadingToken? = nil,
         sourceItem: (any UIPopoverPresentationControllerSourceItem)? = nil
     ) async {
         let format = FileShareService.defaultFormat(for: content)
-        await share(content, format: format, loadingToken: loadingToken, sourceItem: sourceItem)
+        await share(content, format: format, from: screen, loadingToken: loadingToken, sourceItem: sourceItem)
     }
 
-    /// Share content in a specific format.
+    /// Share content in a specific format, from `screen`'s window.
     static func share(
         _ content: FileShareService.ShareableContent,
         format: FileShareService.ExportFormat,
+        from screen: UIViewController,
         loadingToken: ExportLoadingToken? = nil,
         sourceItem: (any UIPopoverPresentationControllerSourceItem)? = nil
     ) async {
         loadingToken?.start()
         let item = await FileShareService.render(content, as: format)
         loadingToken?.stop()
-        presentActivityController(item: item, sourceItem: sourceItem)
+        presentActivityController(item: item, from: screen, sourceItem: sourceItem)
     }
 
-    /// Share an existing URL from UIKit interaction menus.
-    static func share(_ url: URL, sourceView: UIView? = nil) {
-        presentActivityController(item: .file(url), sourceItem: sourceView)
+    /// Share an existing URL from UIKit interaction menus, from the window
+    /// `sourceView` is in; nothing once it has left its window.
+    static func share(_ url: URL, sourceView: UIView?) {
+        guard let sourceView, let screen = Router.presenter(near: sourceView) else { return }
+        presentActivityController(item: .file(url), from: screen, sourceItem: sourceView)
     }
 
     // MARK: - Files on the server
@@ -114,9 +118,11 @@ enum FileSharePresenter {
     /// when there is no sheet.
     static func share(
         _ file: RemoteFileShare,
+        from screen: UIViewController,
         sourceItem: (any UIPopoverPresentationControllerSourceItem)?
     ) async {
-        guard !isPreparingRemoteFile, let presenter = topViewController() else { return }
+        guard !isPreparingRemoteFile, screen.viewIfLoaded?.window != nil else { return }
+        let presenter = Router.topPresenter(from: screen)
         isPreparingRemoteFile = true
         defer { isPreparingRemoteFile = false }
 
@@ -150,7 +156,7 @@ enum FileSharePresenter {
 
         switch result {
         case .success:
-            presentActivityController(item: .file(destination), sourceItem: sourceItem)
+            presentActivityController(item: .file(destination), from: screen, sourceItem: sourceItem)
         case .failure(let error):
             try? FileManager.default.removeItem(at: destination.deletingLastPathComponent())
             if error is CancellationError { return }
@@ -178,16 +184,19 @@ enum FileSharePresenter {
     /// and any UIKit surface that needs a share button.
     /// The Share item for a file: its format menu or direct export when its
     /// bytes are in hand, else a download and the share sheet.
-    static func makeShareBarButtonItem(for file: ShareableFile) -> UIBarButtonItem {
+    /// `screen` is the screen whose bar holds the item: the share sheet
+    /// opens in its window.
+    static func makeShareBarButtonItem(for file: ShareableFile, from screen: UIViewController) -> UIBarButtonItem {
         switch file {
         case .loaded(let content):
-            return makeShareBarButtonItem(for: content)
+            return makeShareBarButtonItem(for: content, from: screen)
         case .remote(let remote):
             let box = Weak<UIBarButtonItem>()
             let button = UIBarButtonItem(
                 image: UIImage(systemName: "square.and.arrow.up"),
-                primaryAction: UIAction { _ in
-                    Task { @MainActor in await share(remote, sourceItem: box.value) }
+                primaryAction: UIAction { [weak screen] _ in
+                    guard let screen else { return }
+                    Task { @MainActor in await share(remote, from: screen, sourceItem: box.value) }
                 }
             )
             box.value = button
@@ -197,6 +206,7 @@ enum FileSharePresenter {
 
     static func makeShareBarButtonItem(
         for content: FileShareService.ShareableContent,
+        from screen: UIViewController,
         tintColor: UIColor? = nil
     ) -> UIBarButtonItem {
         let formats = FileShareService.availableFormats(for: content)
@@ -210,11 +220,11 @@ enum FileSharePresenter {
             let buttonBox = Weak<UIBarButtonItem>()
             button = UIBarButtonItem(
                 image: shareImage,
-                primaryAction: UIAction { _ in
-                    guard let btn = buttonBox.value else { return }
+                primaryAction: UIAction { [weak screen] _ in
+                    guard let btn = buttonBox.value, let screen else { return }
                     let token = BarButtonLoadingToken(button: btn, tintColor: tintColor)
                     Task { @MainActor in
-                        await shareDefault(content, loadingToken: token, sourceItem: btn)
+                        await shareDefault(content, from: screen, loadingToken: token, sourceItem: btn)
                     }
                 }
             )
@@ -227,6 +237,7 @@ enum FileSharePresenter {
             let weakButton = Weak(button)
             button.menu = buildFormatMenu(
                 for: content,
+                from: screen,
                 tintColor: tintColor,
                 buttonRef: { weakButton.value }
             )
@@ -245,6 +256,7 @@ enum FileSharePresenter {
     /// any other UIKit surface that needs a format picker.
     static func buildFormatMenu(
         for content: FileShareService.ShareableContent,
+        from screen: UIViewController,
         tintColor: UIColor? = nil,
         buttonRef: (@MainActor () -> UIBarButtonItem?)? = nil
     ) -> UIMenu {
@@ -254,11 +266,12 @@ enum FileSharePresenter {
             return UIAction(
                 title: info.label,
                 image: UIImage(systemName: info.icon)
-            ) { _ in
+            ) { [weak screen] _ in
+                guard let screen else { return }
                 let button = buttonRef?()
                 let token: ExportLoadingToken? = button.map { BarButtonLoadingToken(button: $0, tintColor: tintColor) }
                 Task { @MainActor in
-                    await share(content, format: format, loadingToken: token, sourceItem: button)
+                    await share(content, format: format, from: screen, loadingToken: token, sourceItem: button)
                 }
             }
         }
@@ -267,15 +280,18 @@ enum FileSharePresenter {
 
     // MARK: - Activity Controller Presentation
 
-    /// Present UIActivityViewController from the topmost view controller.
+    /// Present UIActivityViewController over `screen`, from the top of its
+    /// window; nothing when `screen` has left the window.
     ///
     /// The iPad popover points at `sourceItem` (the row or the bar button).
     /// Cleans up temp files on completion.
     static func presentActivityController(
         item: FileShareService.ShareItem,
+        from screen: UIViewController,
         sourceItem: (any UIPopoverPresentationControllerSourceItem)? = nil
     ) {
-        guard let topVC = topViewController() else { return }
+        guard screen.viewIfLoaded?.window != nil else { return }
+        let topVC = Router.topPresenter(from: screen)
 
         let ac = UIActivityViewController(
             activityItems: item.activityItems,
@@ -299,20 +315,5 @@ enum FileSharePresenter {
             }
         }
         topVC.present(ac, animated: true)
-    }
-
-    private static func topViewController() -> UIViewController? {
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive }),
-              let rootVC = scene.keyWindow?.rootViewController else {
-            return nil
-        }
-
-        var topVC = rootVC
-        while let presented = topVC.presentedViewController {
-            topVC = presented
-        }
-        return topVC
     }
 }

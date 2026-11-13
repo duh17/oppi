@@ -55,10 +55,11 @@ struct ModalPresentation {
         )
     }
 
-    /// Document and file viewers: covers the window when wide, a large page
-    /// sheet with a grabber when compact.
-    static func largeViewer(for traitCollection: UITraitCollection) -> Self {
-        if AdaptiveWidth.isWide(traitCollection) {
+    /// Document and file viewers: covers the window when it is wide, a large
+    /// page sheet with a grabber when compact. The window of `view` decides,
+    /// not the pane it sits in, which may lay out compact beside another.
+    static func largeViewer(over view: UIView) -> Self {
+        if AdaptiveWidth.windowIsWide(view) {
             return Self(style: .overFullScreen)
         }
         return Self(style: .pageSheet, detents: [.large()], prefersGrabberVisible: true)
@@ -425,6 +426,64 @@ enum Router {
               index > 0 else { return false }
         navigation.popToViewController(navigation.viewControllers[index - 1], animated: true)
         return true
+    }
+
+    /// The screen an action with no screen of its own lands on in `window` (a
+    /// link, a notification, a keyboard command): the top of a sheet's stack
+    /// over the window, else the front screen of the focused pane leaf. A
+    /// presented controller with no stack of its own (an alert, a plain sheet)
+    /// leaves the stack underneath. Another window is never asked.
+    static func focusedScreen(in window: UIWindow) -> UIViewController? {
+        window.rootViewController.flatMap(front(of:))
+    }
+
+    /// The controller that presents for `view`: its own screen, or what its
+    /// window already presents above that. Nil outside a window.
+    static func presenter(near view: UIView) -> UIViewController? {
+        guard view.window != nil, let screen = view.nearestViewController else { return nil }
+        return topPresenter(from: screen)
+    }
+
+    private static func front(of controller: UIViewController) -> UIViewController? {
+        if let presented = controller.presentedViewController, !presented.isBeingDismissed,
+           !(presented is UISearchController), let found = front(of: presented) {
+            return found
+        }
+        if let navigation = controller as? UINavigationController {
+            guard let top = navigation.topViewController else { return nil }
+            // The stack's top is the screen, unless it presents over itself
+            // or holds the window's panes; a screen's own children (a file
+            // browser's tree and file) are parts of it.
+            if top.presentedViewController != nil || top is UISplitViewController || paneHost(under: top) != nil {
+                return front(of: top) ?? top
+            }
+            return top
+        }
+        if let host = controller as? PaneHostController {
+            return front(of: host.focusedLeafController)
+        }
+        if let split = controller as? UISplitViewController {
+            let column = split.isCollapsed ? split.viewControllers.last : split.viewController(for: .secondary)
+            return column.flatMap(front(of:))
+        }
+        // The window's panes hold the focus: a container's other children
+        // (a drawer's sidebar, the Live Voice strip) never take it.
+        if let host = paneHost(under: controller) {
+            return front(of: host)
+        }
+        // Later children are in front of earlier ones in the shell's
+        // containers; a hidden one (a parked companion) is not.
+        for child in controller.children.reversed() where child.viewIfLoaded?.isHidden != true {
+            if let found = front(of: child) { return found }
+        }
+        return controller.navigationController == nil ? nil : controller
+    }
+
+    private static func paneHost(under controller: UIViewController) -> PaneHostController? {
+        for child in controller.children {
+            if let host = child as? PaneHostController ?? paneHost(under: child) { return host }
+        }
+        return nil
     }
 
     /// The front-most controller in the window of `controller`, the one UIKit

@@ -364,7 +364,7 @@ final class TailnetSettingsViewController: ListScreenController<TailnetSettingsV
                 title: String(localized: "Sign In to Tailscale"), systemImage: "person.badge.key", identifier: "tailnet.signIn"
             ) { [weak self] in
                 guard let self, case .needsLogin(let url?) = tailnet.state else { return }
-                InAppBrowserPresenter.present(url: url)
+                InAppBrowserPresenter.present(url: url, from: self)
             }
         case .tryAgain:
             cell.configure(title: String(localized: "Retry"), identifier: "tailnet.tryAgain") { [weak self] in

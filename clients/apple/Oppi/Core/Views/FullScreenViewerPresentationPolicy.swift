@@ -2,12 +2,14 @@ import UIKit
 
 @MainActor
 enum FullScreenViewerPresentationPolicy {
-    /// Wide covers the window; compact keeps the large page sheet.
+    /// A wide window is covered; a compact one gets the large page sheet. The
+    /// window decides, not `presenter`'s pane, which may lay out compact
+    /// beside another.
     static func configureLargePresentation(
         _ controller: UIViewController,
-        traitCollection: UITraitCollection
+        over presenter: UIViewController
     ) {
-        if AdaptiveWidth.isWide(traitCollection) {
+        if AdaptiveWidth.windowIsWide(presenter.view) {
             controller.modalPresentationStyle = .overFullScreen
             controller.modalTransitionStyle = .coverVertical
             return
@@ -38,11 +40,12 @@ enum FullScreenViewerPresentationPolicy {
         return nil
     }
 
-    /// Dismiss the covering document overlay, then run `navigate` if
-    /// `shouldNavigate` is still true. Session and file resource opens share
-    /// this seam so a wiki/file/session tap cannot push under a modal reader.
+    /// Dismiss the covering document overlay in `root`'s window, then run
+    /// `navigate` if `shouldNavigate` is still true. Session and file resource
+    /// opens share this seam so a wiki/file/session tap cannot push under a
+    /// modal reader.
     static func dismissCoveringOverlayThenNavigate(
-        from root: UIViewController? = nil,
+        from root: UIViewController?,
         animated: Bool = true,
         shouldNavigate: () -> Bool = { true },
         navigate: () -> Void
@@ -68,9 +71,8 @@ enum FullScreenViewerPresentationPolicy {
         from root: UIViewController?,
         animated: Bool
     ) async {
-        let rootController = root ?? keyWindowRootViewController()
-        guard let rootController,
-              let overlay = coveringPresentedDocumentOverlay(from: rootController),
+        guard let root,
+              let overlay = coveringPresentedDocumentOverlay(from: root),
               let presenter = overlay.presentingViewController else {
             return
         }
@@ -79,14 +81,5 @@ enum FullScreenViewerPresentationPolicy {
                 continuation.resume()
             }
         }
-    }
-
-    private static func keyWindowRootViewController() -> UIViewController? {
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene }).first,
-              let root = scene.windows.first(where: \.isKeyWindow)?.rootViewController else {
-            return nil
-        }
-        return root
     }
 }

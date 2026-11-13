@@ -697,7 +697,7 @@ final class FullScreenCodeViewController: UIViewController {
 
         if let shareable = shareableContent() {
             rightItems.append(
-                FullScreenViewerNavigationChrome.makeShareButton(for: shareable, palette: palette)
+                FullScreenViewerNavigationChrome.makeShareButton(for: shareable, from: self, palette: palette)
             )
         }
 

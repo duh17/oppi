@@ -10,8 +10,8 @@ protocol QuickSessionStarting: UIViewController {
 extension SessionInboxViewController: QuickSessionStarting {}
 extension WorkspaceDetailViewController: QuickSessionStarting {}
 
-/// The window's owners behind the keyboard commands (`KeyboardCommand`) and the
-/// system Find. Each finds the owner a touch control runs and returns its
+/// One window's owners behind the keyboard commands (`KeyboardCommand`) and the
+/// system Find; the window (`AppWindow`) asks for the commands typed in it. Each finds the owner a touch control runs and returns its
 /// action while it is available; none keeps logic of its own beyond asking
 /// where the owner is.
 ///
@@ -24,10 +24,12 @@ extension WorkspaceDetailViewController: QuickSessionStarting {}
 @MainActor
 final class LiveKeyboardCommandSurface {
     private let root: AppRootEnvironment
+    private let window: UIWindow
     private var navigation: SceneNavigation { root.navigation }
 
-    init(root: AppRootEnvironment) {
+    init(root: AppRootEnvironment, window: UIWindow) {
         self.root = root
+        self.window = window
     }
 
     private var isInteractive: Bool {
@@ -37,12 +39,12 @@ final class LiveKeyboardCommandSurface {
             && !AppLockService.shared.isLocked
     }
 
-    private var rootController: UIViewController? { FrontScreens.keyWindow()?.rootViewController }
+    private var rootController: UIViewController? { window.rootViewController }
 
     /// The chat in front, when nothing is presented over it.
     private var frontChat: ChatViewController? {
         guard isInteractive else { return nil }
-        return FrontScreens.screens().lazy.compactMap { ($0 as? ChatRouteViewController)?.chat }.first
+        return FrontScreens.screens(in: window).lazy.compactMap { ($0 as? ChatRouteViewController)?.chat }.first
     }
 
     /// The topmost modal the window presents. An active `UISearchController`
@@ -81,9 +83,8 @@ final class LiveKeyboardCommandSurface {
     private var frontSearch: (search: UISearchController, screen: UIViewController)? {
         guard isInteractive else { return nil }
         // Beside a companion, the focused leaf's search comes first.
-        var screens = FrontScreens.screens()
-        if topPresented == nil,
-           let focused = descendant(of: rootController, as: PaneHostController.self)?.focusedScreen {
+        var screens = FrontScreens.screens(in: window)
+        if topPresented == nil, let focused = Router.focusedScreen(in: window) {
             screens.insert(focused, at: 0)
         }
         let searches = screens.compactMap { screen in
@@ -132,7 +133,7 @@ final class LiveKeyboardCommandSurface {
     /// as an App Intent does.
     private func newSession() -> (@MainActor () -> Void)? {
         guard isInteractive, topPresented == nil else { return nil }
-        if let starter = FrontScreens.screens().lazy.compactMap({ $0 as? any QuickSessionStarting }).first {
+        if let starter = FrontScreens.screens(in: window).lazy.compactMap({ $0 as? any QuickSessionStarting }).first {
             guard starter.isFrontOfNavigationStack else { return nil }
             return { starter.startQuickSession(dictate: false) }
         }
@@ -191,7 +192,7 @@ final class LiveKeyboardCommandSurface {
     /// file's and the browser is found above it.
     private var frontFileBrowser: FileBrowserViewController? {
         guard isInteractive, topPresented == nil else { return nil }
-        let browser = FrontScreens.screens().lazy.compactMap { screen in
+        let browser = FrontScreens.screens(in: window).lazy.compactMap { screen in
             sequence(first: screen, next: \.parent).lazy.compactMap { $0 as? FileBrowserViewController }.first
         }.first
         guard let browser, browser.treeToggleState.available else { return nil }
@@ -213,7 +214,7 @@ final class LiveKeyboardCommandSurface {
     /// Offering Focus Composer then would show a second Cmd-L that cannot fire.
     private func focusComposer() -> (@MainActor () -> Void)? {
         guard let chat = frontChat, chat.canFocusComposer,
-              !(firstResponder(in: FrontScreens.keyWindow()) is CodeEditorTextView) else { return nil }
+              !(firstResponder(in: window) is CodeEditorTextView) else { return nil }
         return { [weak chat] in chat?.composer.requestFocus() }
     }
 

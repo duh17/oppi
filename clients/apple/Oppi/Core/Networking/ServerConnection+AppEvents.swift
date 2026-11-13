@@ -203,14 +203,23 @@ extension ServerConnection {
 
     /// Drops a session this device knows is gone (the server deleted it, or
     /// this device did), and tells the window, which takes its routes off
-    /// every pane (`SceneNavigation.removeSessionRoute`).
+    /// every pane (`SceneNavigation.removeSessionRoute`). A list refresh that
+    /// no longer holds a session does not count: the list is a window of
+    /// recent sessions, so an older one falls out of it without being
+    /// deleted, and a pane still showing it looks it up on its own server.
     func removeSession(_ sessionId: String) {
         sessionStore.remove(id: sessionId)
         guard let currentServerId else { return }
+        Self.postSessionDeleted(serverId: currentServerId, sessionId: sessionId)
+    }
+
+    /// Tells the windows `sessionId` on `serverId` is gone, for an owner that
+    /// dropped it from its store itself (an Incognito chat's end).
+    static func postSessionDeleted(serverId: String, sessionId: String) {
         NotificationCenter.default.post(
-            name: Self.sessionDeletedNotification,
-            object: self,
-            userInfo: ["serverId": currentServerId, "sessionId": sessionId]
+            name: sessionDeletedNotification,
+            object: nil,
+            userInfo: ["serverId": serverId, "sessionId": sessionId]
         )
     }
 

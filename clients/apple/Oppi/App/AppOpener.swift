@@ -233,7 +233,8 @@ enum WorkspaceDeepLink {
 /// replaces it and cancels the work the older one started.
 @MainActor @Observable
 final class AppOpener {
-    typealias BrowserPresent = @MainActor (URL) -> Void
+    /// A web link and the opener's window, whose focused leaf presents it.
+    typealias BrowserPresent = @MainActor (URL, UIWindow?) -> Void
     typealias SystemOpen = @MainActor (URL) -> Void
 
     // Sibling `AppOpener+*.swift` files hold the destination work that is
@@ -265,6 +266,9 @@ final class AppOpener {
     /// The one parked request: App Lock, launch, an invite bootstrap, or an
     /// unreachable server is keeping it. A newer request replaces it.
     @ObservationIgnored private var parked: AppOpenRequest?
+    /// The parked request ran and found its server unreachable, as opposed
+    /// to waiting for launch, App Lock or the shell before it ever ran.
+    @ObservationIgnored private var parkedAfterRunning = false
     /// The generation of the request that owns `currentTask`; every await
     /// checks it so a superseded open cannot navigate.
     @ObservationIgnored var generation: UInt64 = 0
@@ -328,7 +332,10 @@ final class AppOpener {
         appLock: AppLockService = .shared,
         scopedLock: ScopedLockService = .shared,
         intentSessionOpenTrigger: IntentSessionOpenTrigger = .shared,
-        browserPresent: @escaping BrowserPresent = { InAppBrowserPresenter.present(url: $0) },
+        browserPresent: @escaping BrowserPresent = { url, window in
+            guard let screen = window.flatMap({ Router.focusedScreen(in: $0) ?? $0.rootViewController }) else { return }
+            InAppBrowserPresenter.present(url: url, from: screen)
+        },
         systemOpen: @escaping SystemOpen = { UIApplication.shared.open($0) }
     ) {
         self.coordinator = coordinator
@@ -465,11 +472,14 @@ final class AppOpener {
 
     func drainParkedIfPossible() {
         guard let request = parked else { return }
-        // A removed server or a sign-out ends the request instead of leaving a
-        // toast that repeats at every launch. Before launch reads the pairing
-        // list, a missing server is only unread; a server whose record could
-        // not be read is still paired.
-        if serverStore.loadState == .loaded,
+        // A server removed (or a sign-out) since the request ran ends it
+        // instead of leaving a toast that repeats at every launch. A request
+        // that never ran (a cold-launch link) runs, so an unpaired server
+        // answers as it does for a warm link: its pane's missing state or a
+        // toast. Before launch reads the pairing list, a missing server is
+        // only unread; a server whose record could not be read is still
+        // paired.
+        if parkedAfterRunning, serverStore.loadState == .loaded,
            let serverId = serverIdReferenced(by: request),
            !serverStore.isPaired(serverId) {
             clearParked()
@@ -503,6 +513,7 @@ final class AppOpener {
 
     private func clearParked() {
         parked = nil
+        parkedAfterRunning = false
         parkedAt = nil
         didToastUnreachable = false
     }
@@ -550,8 +561,9 @@ final class AppOpener {
         }
     }
 
-    private func park(_ request: AppOpenRequest) {
+    private func park(_ request: AppOpenRequest, afterRunning: Bool) {
         parked = request
+        parkedAfterRunning = afterRunning
         // A retry of the same request keeps its original deadline.
         if parkedAt == nil { parkedAt = now }
         activeRequest = nil
@@ -580,7 +592,7 @@ final class AppOpener {
     private func perform(_ request: AppOpenRequest, generation: UInt64) async {
         guard isCurrent(generation) else { return }
         guard canRunNow(request) else {
-            park(request)
+            park(request, afterRunning: false)
             return
         }
 
@@ -635,7 +647,7 @@ final class AppOpener {
     func finish(_ request: AppOpenRequest, outcome: AppOpenOutcome, generation: UInt64) {
         guard isCurrent(generation) else { return }
         if outcome == .unreachable {
-            park(request)
+            park(request, afterRunning: true)
         } else {
             activeRequest = nil
             parkedAt = nil
@@ -790,10 +802,7 @@ final class AppOpener {
     ) async -> AppOpenOutcome {
         let timer = timer ?? LinkOpenTimer(kind: "session", origin: origin)
         await timer.time("dismissOverlayMs") {
-            await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
-                shouldNavigate: { [weak self] in self?.isCurrent(generation) ?? false },
-                navigate: {}
-            )
+            await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation)
         }
         guard isCurrent(generation) else { return .finished }
 
@@ -1032,10 +1041,7 @@ final class AppOpener {
             return .unreachable
         }
         await timer.time("dismissOverlayMs") {
-            await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
-                shouldNavigate: { [weak self] in self?.isCurrent(generation) ?? false },
-                navigate: {}
-            )
+            await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation)
         }
         guard isCurrent(generation) else { return .finished }
 
@@ -1327,7 +1333,7 @@ final class AppOpener {
 #endif
         switch mode {
         case .inApp:
-            browserPresent(url)
+            browserPresent(url, navigation.window)
         case .external:
             systemOpen(url)
         }

@@ -809,8 +809,11 @@ struct IncognitoSessionEnd: Sendable {
         !navigation.routeContainsSession(sessionId)
     }
 
+    /// Drops the session here, and from every pane that still names it, as
+    /// any deletion does (`ServerConnection.removeSession`).
     func forgetLocally() {
         sessionStore.remove(id: sessionId)
+        if let serverId { ServerConnection.postSessionDeleted(serverId: serverId, sessionId: sessionId) }
     }
 
     /// The chat is hidden but its session is still in the route. The chat

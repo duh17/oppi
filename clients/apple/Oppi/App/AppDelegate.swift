@@ -137,10 +137,11 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate, @preconcurrency AppI
         if let minimum = PlatformCapabilities.minimumWindowSize {
             windowScene.sizeRestrictions?.minimumSize = minimum
         }
-        let window = UIWindow(windowScene: windowScene)
+        let window = AppWindow(windowScene: windowScene)
         // UIKit code anywhere in the window, presented controllers included,
         // finds the app root here (`AppRootEnvironment.near()`).
         window.traitOverrides.appRootEnvironment = app.root
+        app.root.navigation.window = window
         window.rootViewController = app.makeRootViewController()
         self.window = window
         window.makeKeyAndVisible()

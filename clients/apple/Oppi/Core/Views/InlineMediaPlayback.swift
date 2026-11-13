@@ -767,8 +767,9 @@ final class AnimatedImageWebContainerView: UIView {
 
 @MainActor
 enum FullScreenImageDataPreviewPresenter {
-    static func present(data: Data, mimeType: String?, title: String = "Preview") {
-        guard let presenter = activePresenter() else { return }
+    /// Presents the preview for `view`, from its own window.
+    static func present(data: Data, mimeType: String?, title: String = "Preview", near view: UIView) {
+        guard let presenter = Router.presenter(near: view) else { return }
         present(data: data, mimeType: mimeType, title: title, from: presenter)
     }
 
@@ -787,22 +788,11 @@ enum FullScreenImageDataPreviewPresenter {
                 data: data,
                 mimeType: mimeType,
                 title: title,
-                prefersFullScreenOverlay: AdaptiveWidth.isWide(presenter.traitCollection),
+                prefersFullScreenOverlay: AdaptiveWidth.windowIsWide(presenter.view),
                 addToChatDestination: destination
             ),
             from: presenter
         )
-    }
-
-    private static func activePresenter() -> UIViewController? {
-        let scene = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }
-        var controller = scene?.windows.first { $0.isKeyWindow }?.rootViewController
-        while let presented = controller?.presentedViewController {
-            controller = presented
-        }
-        return controller
     }
 }
 
@@ -1260,9 +1250,9 @@ final class DataImagePreviewView: UIView {
     @objc private func openFullScreen() {
         switch tapPayload {
         case (let image?, _):
-            FullScreenImageViewController.present(image: UIImage(data: data) ?? image)
+            FullScreenImageViewController.present(image: UIImage(data: data) ?? image, near: self)
         case (nil, let mimeType):
-            FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
+            FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType, near: self)
         }
     }
 

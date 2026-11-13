@@ -763,8 +763,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         if shareItemKey == contentGeneration, let shareItem { return shareItem }
         shareItemKey = contentGeneration
         shareItem = switch content {
-        case .text(let text): ShareableFile.loaded(.fromText(text, filePath: currentFilePath)).barItem
-        case .rendered(let renderer, _): renderer.share.barItem
+        case .text(let text): ShareableFile.loaded(.fromText(text, filePath: currentFilePath)).barItem(from: self)
+        case .rendered(let renderer, _): renderer.share.barItem(from: self)
         case .loading, .sizeWarning, .error, .missing: nil
         }
         return shareItem

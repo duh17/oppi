@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 @testable import Oppi
 
@@ -112,6 +113,33 @@ struct ChatCoveredLifetimeTests {
         navigation.popShownStack(toDepth: 0)
         await Self.settle()
         #expect(store.sessions.contains { $0.id == "incognito" })
+    }
+
+    /// An ended Incognito session is a deletion every window hears, so no
+    /// pane keeps a route to it.
+    @Test func anEndedIncognitoSessionIsPostedAsDeleted() async {
+        let sessionId = "incognito-\(UUID().uuidString)"
+        let navigation = SceneNavigation()
+        let store = SessionStore()
+        store.switchServer(to: "server-1")
+        store.upsert(makeTestSession(id: sessionId))
+        let posted = OSAllocatedUnfairLock<[String: String]?>(initialState: nil)
+        let observer = NotificationCenter.default.addObserver(
+            forName: ServerConnection.sessionDeletedNotification, object: nil, queue: nil
+        ) { note in
+            guard note.userInfo?["sessionId"] as? String == sessionId else { return }
+            let info = note.userInfo as? [String: String]
+            posted.withLock { $0 = info }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        IncognitoSessionEnd(
+            sessionId: sessionId, serverId: "server-1", scope: nil, apiClient: nil,
+            sessionStore: store, navigation: navigation
+        ).forgetLocally()
+
+        #expect(!store.sessions.contains { $0.id == sessionId })
+        #expect(posted.withLock { $0 } == ["serverId": "server-1", "sessionId": sessionId])
     }
 
     private static func settle() async {

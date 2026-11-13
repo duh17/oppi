@@ -3,15 +3,14 @@ import UIKit
 
 @MainActor
 enum InAppBrowserPresenter {
-    static func present(url: URL) {
-        guard let presenter = activePresenter() else { return }
+    /// Presents `url` over `screen`'s window, unless a browser is already in
+    /// front there.
+    static func present(url: URL, from screen: UIViewController) {
+        let presenter = Router.topPresenter(from: screen)
         if presenter is SFSafariViewController { return }
 
         let controller = makeController(url: url)
-        FullScreenViewerPresentationPolicy.configureLargePresentation(
-            controller,
-            traitCollection: presenter.traitCollection
-        )
+        FullScreenViewerPresentationPolicy.configureLargePresentation(controller, over: presenter)
         presenter.present(controller, animated: true)
     }
 
@@ -21,17 +20,6 @@ enum InAppBrowserPresenter {
 
         let controller = SFSafariViewController(url: url, configuration: configuration)
         controller.view.accessibilityIdentifier = "inAppBrowser.view"
-        return controller
-    }
-
-    private static func activePresenter() -> UIViewController? {
-        let scene = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }
-        var controller = scene?.windows.first { $0.isKeyWindow }?.rootViewController
-        while let presented = controller?.presentedViewController {
-            controller = presented
-        }
         return controller
     }
 }

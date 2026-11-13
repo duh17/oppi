@@ -131,6 +131,58 @@ struct PaneHostControllerTests {
         #expect(abs((host.scenePanes.companionShare ?? 0) - 0.4) < 1e-9)
     }
 
+    /// W2 and CT13: a live window resize (a Stage Manager corner, a Mac
+    /// window edge) holds the leaves from its start. Back and forth across
+    /// the fit boundary the companion's frame follows the window, while the
+    /// leaves hear no visibility; the end settles them once, at rest, and
+    /// tells them what they can see.
+    @Test func aLiveResizeFollowsTheWindowAndSettlesOnceAtItsEnd() throws {
+        let host = PaneTestHost(width: 1000)
+        defer { host.hide() }
+        let companion = PaneCompanionScreen()
+        host.showPanel(minWidth: 320, idealWidth: 400, maxWidth: 640, makeScreen: { companion })
+        let resizes = host.screen.liveResize.count
+        let heard = (screen: host.screen.visibilities, companion: companion.visibilities)
+
+        host.panes.windowLiveResizeChanged(true)
+        #expect(host.screen.liveResize.dropFirst(resizes) == [.held], "held before the first width arrives")
+        host.resize(width: 600)
+        #expect(host.companionWidth == 600 - PaneWidthPolicy.fullWindowGrabEdge, "the frame follows the window")
+        #expect(host.panes.primary.view.accessibilityElementsHidden, "VoiceOver reads only the leaf showing")
+        host.resize(width: 1000)
+        #expect(host.companionWidth == 400)
+        #expect(!host.panes.primary.view.accessibilityElementsHidden)
+        host.resize(width: 600)
+        #expect(host.screen.visibilities == heard.screen, "no visibility while the window moves")
+        #expect(companion.visibilities == heard.companion)
+        #expect(host.screen.liveResize.dropFirst(resizes) == [.held], "nothing settles while it moves")
+
+        host.panes.windowLiveResizeChanged(false)
+        #expect(host.screen.liveResize.dropFirst(resizes) == [.held, .settled(final: true)])
+        #expect(host.screen.visibilities == heard.screen + [.covered], "one visibility, at the end")
+        #expect(companion.visibilities == heard.companion)
+    }
+
+    /// CT11: a resize that is not live (rotation, tiling, full screen, the
+    /// zoom button) holds the leaves and settles them once when the width
+    /// has rested, and leaves no hold on.
+    @Test func aResizeThatIsNotLiveSettlesOnceWhenItRests() async throws {
+        let host = PaneTestHost(width: 1000)
+        defer { host.hide() }
+        host.showPanel(minWidth: 320, idealWidth: 400, maxWidth: 640)
+        let resizes = host.screen.liveResize.count
+
+        host.resize(width: 800)
+        #expect(host.screen.liveResize.dropFirst(resizes) == [.held])
+        let settled = await waitForMainActorCondition(timeout: .seconds(2)) {
+            host.screen.liveResize.count == resizes + 2
+        }
+        #expect(settled)
+        #expect(host.screen.liveResize.dropFirst(resizes) == [.held, .settled(final: true)])
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(host.screen.liveResize.count == resizes + 2, "one settle, and no hold left on")
+    }
+
     /// P1: a memory warning reduces two parked leaves to what rebuilds them;
     /// each is rebuilt when its owner returns.
     @Test func aMemoryWarningDropsParkedLeavesAndTheirOwnersRebuildThem() throws {

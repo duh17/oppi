@@ -84,7 +84,7 @@ extension FileBrowserViewController {
         case .copyPath:
             UIPasteboard.general.string = path
             AppHaptics.impact(style: .light, intensity: 0.8)
-            TransientConfirmationPill.show(String(localized: "Path Copied"))
+            TransientConfirmationPill.show(String(localized: "Path Copied"), in: view)
         case .share:
             guard let file = entry.file, let services, let api = services.apiClient else { return false }
             // The file is read the way its viewer reads it: the same origin and checkout.
@@ -92,7 +92,7 @@ extension FileBrowserViewController {
                 .configuration(readerRequest(file, context: nil, services: services), chromeMode: .pushed)
                 .fileAccess
             let share = access.remoteFileShare(api: api, path: file.path, fileName: file.name, size: file.size)
-            Task { await FileSharePresenter.share(share, sourceItem: entry.cell) }
+            Task { await FileSharePresenter.share(share, from: self, sourceItem: entry.cell) }
         }
         return true
     }

@@ -1284,7 +1284,7 @@ final class NativeMarkdownImageView: UIView {
                     from: presenter
                 )
             } else {
-                FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
+                FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType, near: self)
             }
             return true
         }
@@ -1295,7 +1295,7 @@ final class NativeMarkdownImageView: UIView {
         if let presenter = presenterPreferringReader() {
             FullScreenImageViewController.present(image: image, from: presenter)
         } else {
-            FullScreenImageViewController.present(image: image)
+            FullScreenImageViewController.present(image: image, near: self)
         }
         return true
     }

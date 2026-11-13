@@ -4,7 +4,7 @@ import UIKit
 /// iPadOS shows in the menu bar and in the Command-hold shortcut overlay. A
 /// system menu that already has the command's job (Close, Settings, Sidebar)
 /// gives it its place; the rest sit in View and a Session menu. Edit > Find is
-/// the system's own: the app delegate answers it (`find(_:)`).
+/// the system's own. The window answers both (`AppWindow`).
 @MainActor
 enum KeyboardCommandMenu {
     static let sessionMenuID = UIMenu.Identifier("\(AppIdentifiers.subsystem).menu.session")
@@ -47,23 +47,28 @@ enum KeyboardCommandMenu {
 }
 
 extension AppDelegate {
+    override func buildMenu(with builder: any UIMenuBuilder) {
+        super.buildMenu(with: builder)
+        guard builder.system == .main else { return }
+        KeyboardCommandMenu.build(into: builder, action: #selector(AppWindow.performKeyboardCommand(_:)))
+    }
+}
+
+/// The app's window. It answers the keyboard commands and the system Find
+/// itself, from the responder chain, so a command typed in a window acts in
+/// that window's focused leaf and never in another window.
+final class AppWindow: UIWindow {
     /// The app root the front screen sees, found as the app's own UIKit code
     /// finds it (`AppRootEnvironment.near`: the window's in the real scene, a
-    /// fixture's in a UI harness), else the app's.
+    /// fixture's in a UI harness), else the window's.
     private var commandSurface: LiveKeyboardCommandSurface? {
-        let frontRoot = FrontScreens.screens().lazy.compactMap { AppRootEnvironment.near($0) }.first
-        return (frontRoot ?? app?.root).map(LiveKeyboardCommandSurface.init)
+        let frontRoot = FrontScreens.screens(in: self).lazy.compactMap { AppRootEnvironment.near($0) }.first
+        return (frontRoot ?? traitCollection.appRootEnvironment).map { LiveKeyboardCommandSurface(root: $0, window: self) }
     }
 
     @objc func performKeyboardCommand(_ sender: UICommand) {
         guard let id = sender.propertyList as? String, let command = KeyboardCommand(id: id) else { return }
         commandSurface?.resolve(command)?.run()
-    }
-
-    override func buildMenu(with builder: any UIMenuBuilder) {
-        super.buildMenu(with: builder)
-        guard builder.system == .main else { return }
-        KeyboardCommandMenu.build(into: builder, action: #selector(performKeyboardCommand(_:)))
     }
 
     /// The menu item is on only while its owner is available, and says what it
@@ -86,8 +91,8 @@ extension AppDelegate {
 
     // MARK: Find
 
-    /// The system Edit > Find reaches the app delegate when no focused text
-    /// view has a find of its own: it drives the search bar in front.
+    /// The system Edit > Find reaches the window when no focused text view
+    /// has a find of its own: it drives the search bar in front.
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(UIResponder.find(_:)) {
             return commandSurface?.find() != nil

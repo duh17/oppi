@@ -84,7 +84,7 @@ One owner per layout question. `userInterfaceIdiom` is never a layout signal: th
 
 - Wide or compact: `AdaptiveWidth.isWide(traits)`. An attached leaf forces compact, so window-following chrome (search Cancel) asks `AdaptiveWidth.windowIsWide(view)`. The shell's split or stack (`WorkspaceNavigationPresentation.resolve`) and the Duo's rail (`SystemVerticalBar`) stay separate.
 - Panes: `PaneHostController` wraps each shell and harness stack beside one `AttachedLeafController` companion; outside its primary leaf a panel is a sheet. `PaneResizeHold` holds leaves through resizes. `ScenePanes` persists the tree; `PaneEntries` maps routes to `PaneRoute`; `ExtensionPanelViewController` is `.panel`.
-- Presentation: a choice or options panel opened from a control is `ModalPresentation.popoverOrSheet`, sourced at that control; direct presenters use `apply(to:source:)`.
+- Presentation: a control's choice panel is `ModalPresentation.popoverOrSheet` sourced there; direct presenters use `apply(to:source:)`. Never scan `connectedScenes`: `Router.presenter(near:)`, `Router.focusedScreen(in:)`.
 - Content width: a full-width content column caps at `ReadableContentWidth`, by width alone; bars, backgrounds and scroll views stay full-bleed. Reader prose keeps `ReaderReadingColumn`.
 - Media: a box the content does not size uses `ImageViewportSizing.aspectFit` (`AspectFitMediaView` for a page).
 - File Browser: `FileBrowserViewController.Layout` alone arranges the tree and the open file; a tucked-away regular-width tree is the app-wide `FileBrowserViewOptionsStore.hidesTree`, toggled only through `toggleTree()`.

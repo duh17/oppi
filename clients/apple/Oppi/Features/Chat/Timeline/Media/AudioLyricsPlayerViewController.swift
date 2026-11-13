@@ -695,9 +695,9 @@ final class AudioFileShareButton: UIButton {
             defer { self?.setLoading(false) }
             do {
                 let data = try await loadData()
-                guard let self else { return }
+                guard let self, let screen = Router.presenter(near: self) else { return }
                 let item = FileShareService.fileShareItem(data: data, filename: filename)
-                FileSharePresenter.presentActivityController(item: item, sourceItem: self)
+                FileSharePresenter.presentActivityController(item: item, from: screen, sourceItem: self)
             } catch is CancellationError {
                 return
             } catch {

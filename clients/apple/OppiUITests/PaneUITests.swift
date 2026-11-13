@@ -181,6 +181,45 @@ final class PaneUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// W1: dragging the window's corner (Stage Manager) under 640 pt makes the
+    /// window compact, where the panel has no room beside the chat and the
+    /// divider goes; dragged back to full size, the panel is beside the chat
+    /// again. The window is restored even when a step fails: SpringBoard
+    /// would open every later run in the small window.
+    func testDraggingTheWindowCornerNarrowsThePanesAndFullSizeRestoresThem() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
+        try launchPanes()
+        openGitPanel()
+        XCTAssertTrue(divider.waitUntilExists(timeout: 5), "The Git panel did not open beside the chat")
+        let full = app.windows.firstMatch.frame
+        addTeardownBlock { @MainActor [app] in
+            guard let app, app.windows.firstMatch.frame.size != full.size else { return }
+            app.dragWindowCorner(to: CGPoint(x: full.maxX, y: full.maxY))
+        }
+        attachScreenCapture("window-full")
+
+        app.dragWindowCorner(to: CGPoint(x: full.minX + 600, y: full.maxY - 160))
+        let window = app.windows.firstMatch
+        XCTAssertTrue(
+            waitFor(window.frame.width < 640 && window.horizontalSizeClass == .compact),
+            "The corner drag did not make the window compact: \(window.frame)"
+        )
+        XCTAssertTrue(divider.waitUntilGone(timeout: 5), "A compact window has no divider")
+        attachScreenCapture("window-compact")
+        assertRunning()
+
+        app.dragWindowCorner(to: CGPoint(x: full.maxX, y: full.maxY))
+        XCTAssertTrue(
+            waitFor(window.frame.size == full.size && window.horizontalSizeClass == .regular),
+            "The window did not return to full size: \(window.frame)"
+        )
+        XCTAssertTrue(app.navigationBars["Git"].waitUntilExists(timeout: 5), "The Git panel must be back")
+        XCTAssertTrue(divider.waitUntilExists(timeout: 5), "Full size puts the panel beside the chat again")
+        attachScreenCapture("window-restored")
+        assertRunning()
+    }
+
     /// K3: typing (or dictating) in the composer while a link opens beside
     /// the chat keeps the composer first responder: opening a pane never
     /// takes the keyboard.
@@ -224,6 +263,15 @@ final class PaneUITests: XCTestCase, PreviewUITestCase {
     }
 
     // MARK: - Steps
+
+    /// The screen's capture: in landscape `app.screenshot()` draws the iPad's
+    /// interface sideways into a clipped portrait canvas.
+    private func attachScreenCapture(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
 
     private var divider: XCUIElement {
         app.descendants(matching: .any)["pane.divider.0"]

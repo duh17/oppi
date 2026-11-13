@@ -497,7 +497,7 @@ final class SessionListCollection<
         guard indexPaths.count == 1, let indexPath = indexPaths.first, let session = session(at: indexPath) else {
             return nil
         }
-        return SessionListRowMenus.contextMenu(for: session, actions: actions)
+        return SessionListRowMenus.contextMenu(for: session, actions: actions, in: collectionView)
     }
 }
 
@@ -673,17 +673,21 @@ enum SessionListRowMenus {
         return configuration
     }
 
+    /// `list` is the list the menu opens in; its window shows the menu's
+    /// confirmations.
     static func contextMenu(
         for session: Session,
-        actions: SessionListRowActions
+        actions: SessionListRowActions,
+        in list: UIView
     ) -> UIContextMenuConfiguration {
-        UIContextMenuConfiguration(identifier: session.id as NSString, previewProvider: nil) { _ in
-            menu(for: session, actions: actions)
+        UIContextMenuConfiguration(identifier: session.id as NSString, previewProvider: nil) { [weak list] _ in
+            guard let list else { return nil }
+            return menu(for: session, actions: actions, in: list)
         }
     }
 
     /// System menu rows: plain outline symbols, no tint, like Mail and Files.
-    static func menu(for session: Session, actions: SessionListRowActions) -> UIMenu {
+    static func menu(for session: Session, actions: SessionListRowActions, in list: UIView) -> UIMenu {
         var main: [UIMenuElement] = [
             UIAction(title: String(localized: "Open"), image: UIImage(systemName: "bubble.left.and.text.bubble.right")) { _ in
                 actions.open(session)
@@ -706,7 +710,7 @@ enum SessionListRowMenus {
         main.append(menuAction("Copy Session ID", symbol: "doc.on.doc", id: "session.copyId.\(session.id)") {
             UIPasteboard.general.string = session.id
             AppHaptics.impact(style: .light, intensity: 0.8)
-            TransientConfirmationPill.show(String(localized: "Session ID Copied"))
+            TransientConfirmationPill.show(String(localized: "Session ID Copied"), in: list)
         })
         guard session.status == .stopped, let delete = actions.delete(session) else {
             return UIMenu(children: main)

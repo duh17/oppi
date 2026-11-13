@@ -12,35 +12,28 @@ enum QuickSessionPresentationSource: String, Sendable {
     case keyboard = "keyboard"
 }
 
-/// The screens in front in the foreground window, read from UIKit. The route
-/// state behind `diagnosticScreenLabel` can lag a push, so a Quick Session
-/// request logs this too: whether a chat was on top when a control opened it.
+/// The screens in front in a window, read from UIKit. The route state behind
+/// `diagnosticScreenLabel` can lag a push, so a Quick Session request logs
+/// this too: whether a chat was on top when a control opened it.
 @MainActor
 struct FrontScreens {
     let chatOnTop: Bool
     /// Class names of the front screens, comma separated.
     let names: String
 
-    static func current() -> Self {
-        let fronts = screens()
+    static func current(in window: UIWindow?) -> Self {
+        let fronts = window.map(screens(in:)) ?? []
         return Self(
             chatOnTop: fronts.contains { $0 is ChatRouteViewController },
             names: fronts.map { String(describing: type(of: $0)) }.joined(separator: ",")
         )
     }
 
-    /// The foreground scene's key window.
-    static func keyWindow() -> UIWindow? {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }?.keyWindow
-    }
-
-    /// The screens in front in the key window, the topmost presented screen's
-    /// first; empty without a window.
-    static func screens() -> [UIViewController] {
+    /// The screens in front in `window`, the topmost presented screen's
+    /// first.
+    static func screens(in window: UIWindow) -> [UIViewController] {
         var fronts: [UIViewController] = []
-        if let root = keyWindow()?.rootViewController { collect(root, into: &fronts) }
+        if let root = window.rootViewController { collect(root, into: &fronts) }
         return fronts
     }
 

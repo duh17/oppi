@@ -29,7 +29,7 @@ struct ChatTimelineDestinationPresenter {
         )
         Router.present(
             viewer,
-            presentation: .largeViewer(for: request.sourceView.traitCollection).inNavigation(),
+            presentation: .largeViewer(over: request.sourceView).inNavigation(),
             from: request.presenter
         )
     }
@@ -71,7 +71,7 @@ struct ChatTimelineDestinationPresenter {
         let viewer = FileViewerViewController(configuration: configuration, services: .init(connection: connection))
         Router.present(
             viewer,
-            presentation: .largeViewer(for: request.sourceView.traitCollection).inNavigation(),
+            presentation: .largeViewer(over: request.sourceView).inNavigation(),
             from: request.presenter
         )
     }

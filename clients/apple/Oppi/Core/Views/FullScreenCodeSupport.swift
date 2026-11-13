@@ -672,10 +672,12 @@ enum FullScreenViewerNavigationChrome {
 
     static func makeShareButton(
         for content: FileShareService.ShareableContent,
+        from screen: UIViewController,
         palette: ThemePalette
     ) -> UIBarButtonItem {
         FileSharePresenter.makeShareBarButtonItem(
             for: content,
+            from: screen,
             tintColor: palette.ui.fgDim
         )
     }

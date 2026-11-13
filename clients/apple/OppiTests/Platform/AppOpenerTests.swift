@@ -216,6 +216,28 @@ struct AppOpenerTests {
         harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
     }
 
+    /// A cold-launch link to a server this device has not paired answers as a
+    /// warm one does once launch ends, instead of vanishing with the parked slot.
+    @Test func aColdLaunchLinkToAnUnpairedServerOpensTheMissingState() async throws {
+        let harness = await OpenerHarness(servers: [makeServer("server-a")], launch: false)
+
+        harness.opener.open(AppOpenRequest(
+            url: try #require(URL(string: "oppi://session/child?server=unpaired-server")),
+            origin: .externalURL
+        ))
+        await harness.settle()
+        #expect(harness.opener._parkedRequestForTesting != nil)
+
+        harness.opener.launchDidFinish()
+        harness.opener.sceneDidBecomeActive()
+        await harness.settle()
+
+        #expect(harness.navigation.workspaceStackRouteElements == [
+            .paneEntry(PaneStackEntry(serverId: "unpaired-server", route: .session("child"))),
+        ])
+        #expect(harness.opener._parkedRequestForTesting == nil)
+    }
+
     @Test func aRequestParkedBeforeThePairingListIsReadStillOpens() async throws {
         // A locked launch has not read the pairing list yet: its server is
         // unread, not removed, however often the root redraws.
@@ -2060,7 +2082,7 @@ private final class OpenerHarness {
             appLock: appLock,
             scopedLock: scopedLock,
             intentSessionOpenTrigger: intentTrigger,
-            browserPresent: { recorder.browserURLs.append($0) },
+            browserPresent: { url, _ in recorder.browserURLs.append(url) },
             systemOpen: { recorder.systemURLs.append($0) }
         )
         self.opener = opener

@@ -206,12 +206,12 @@ extension QuickSessionModel {
                 workspaceId: cleanup.workspaceId,
                 sessionId: cleanup.sessionId
             )
-            connection.sessionStore.remove(id: cleanup.sessionId)
+            connection.removeSession(cleanup.sessionId)
             await TimelineCache.shared.removeTrace(cleanup.sessionId, serverId: cleanup.serverId)
             AppPreferences.QuickSession.removePendingDictationCleanup(cleanup)
         } catch let apiError as APIError {
             if case .server(let status, _) = apiError, status == 404 {
-                connection.sessionStore.remove(id: cleanup.sessionId)
+                connection.removeSession(cleanup.sessionId)
                 await TimelineCache.shared.removeTrace(cleanup.sessionId, serverId: cleanup.serverId)
                 AppPreferences.QuickSession.removePendingDictationCleanup(cleanup)
             } else {

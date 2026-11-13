@@ -263,7 +263,7 @@ final class FullScreenImageViewController: UIViewController {
         guard let pngData = image.pngData() else { return }
         let content = FileShareService.ShareableContent.imageData(pngData, filename: "image.png")
         Task {
-            await FileSharePresenter.shareDefault(content)
+            await FileSharePresenter.shareDefault(content, from: self)
         }
     }
 
@@ -476,23 +476,16 @@ extension FullScreenImageViewController {
         ImagePreviewPresentationCoordinator.present(
             makeSlideDownController(
                 image: image,
-                prefersFullScreenOverlay: AdaptiveWidth.isWide(presenter.traitCollection),
+                prefersFullScreenOverlay: AdaptiveWidth.windowIsWide(presenter.view),
                 addToChatDestination: destination
             ),
             from: presenter
         )
     }
 
-    /// Present the image viewer from the topmost view controller.
-    /// Works from both UIKit and SwiftUI contexts.
-    static func present(image: UIImage) {
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene }).first,
-              let root = scene.windows.first(where: \.isKeyWindow)?.rootViewController else { return }
-        var presenter = root
-        while let presented = presenter.presentedViewController {
-            presenter = presented
-        }
+    /// Present the image viewer for `view`, from its own window.
+    static func present(image: UIImage, near view: UIView) {
+        guard let presenter = Router.presenter(near: view) else { return }
         present(image: image, from: presenter)
     }
 }
