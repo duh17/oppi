@@ -14,6 +14,11 @@ struct MarkdownTableGridStyle: Equatable, @unchecked Sendable {
     let link: UIColor
     let code: UIColor
     let fonts: TableInlineText.Fonts
+    /// What the grid shows under a cell, composited over the card it sits on: an
+    /// opaque color a view can paint to cover the drawn cell exactly.
+    private let plainCellBackground: UIColor
+    private let headerCellBackground: UIColor
+    private let zebraCellBackground: UIColor
 
     init(palette: ThemePalette, traits: UITraitCollection, fonts: TableInlineText.Fonts) {
         let highlight = palette.ui.bgHighlight.resolvedColor(with: traits)
@@ -25,6 +30,39 @@ struct MarkdownTableGridStyle: Equatable, @unchecked Sendable {
         link = palette.ui.blue.resolvedColor(with: traits)
         code = palette.ui.mdCode.resolvedColor(with: traits)
         self.fonts = fonts
+        let card = palette.ui.bgDark.resolvedColor(with: traits)
+        plainCellBackground = card
+        headerCellBackground = Self.composite(highlight, over: card)
+        zebraCellBackground = Self.composite(highlight.withAlphaComponent(0.45), over: card)
+    }
+
+    /// The opaque color behind row `row`'s text, as drawn by the grid: row 0 is
+    /// the header, then body rows alternate plain and striped.
+    func cellBackground(row: Int) -> UIColor {
+        if row == 0 { return headerCellBackground }
+        return (row - 1) % 2 == 1 ? zebraCellBackground : plainCellBackground
+    }
+
+    private struct RGBA {
+        var r: CGFloat = 0
+        var g: CGFloat = 0
+        var b: CGFloat = 0
+        var a: CGFloat = 0
+
+        init(_ color: UIColor) {
+            color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        }
+    }
+
+    private static func composite(_ color: UIColor, over base: UIColor) -> UIColor {
+        let top = RGBA(color)
+        let bottom = RGBA(base)
+        return UIColor(
+            red: top.r * top.a + bottom.r * (1 - top.a),
+            green: top.g * top.a + bottom.g * (1 - top.a),
+            blue: top.b * top.a + bottom.b * (1 - top.a),
+            alpha: 1
+        )
     }
 
     var cellColors: TableInlineText.Colors {

@@ -6,25 +6,22 @@ import UIKit
 final class MarkdownTableGridRenderer: NSObject, CALayerDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var layout: MarkdownTableGridLayout?
-    private var hiddenCell: (row: Int, column: Int)?
 
-    func update(layout: MarkdownTableGridLayout?, hiddenCell: (row: Int, column: Int)?) {
+    func update(layout: MarkdownTableGridLayout?) {
         lock.lock()
         self.layout = layout
-        self.hiddenCell = hiddenCell
         lock.unlock()
     }
 
-    func setHiddenCell(_ cell: (row: Int, column: Int)?) {
-        lock.lock()
-        hiddenCell = cell
-        lock.unlock()
+    /// The grid layer is never animated. A standalone layer cross-fades `contents`
+    /// over 0.25s on every redisplay unless its delegate says otherwise.
+    func action(for layer: CALayer, forKey event: String) -> (any CAAction)? {
+        NSNull()
     }
 
     func draw(_ layer: CALayer, in ctx: CGContext) {
         lock.lock()
         let layout = layout
-        let hiddenCell = hiddenCell
         lock.unlock()
         guard let layout else { return }
 
@@ -68,7 +65,6 @@ final class MarkdownTableGridRenderer: NSObject, CALayerDelegate, @unchecked Sen
         let columns = layout.columns(intersecting: clip.minX, clip.maxX)
         for row in rows {
             for column in columns {
-                if let hiddenCell, hiddenCell.row == row, hiddenCell.column == column { continue }
                 let frame = layout.cellFrame(row: row, column: column)
                 layout.drawnCells[row][column].draw(
                     with: CGRect(
@@ -123,7 +119,10 @@ private final class MarkdownTableAccessibilityCell: UIAccessibilityElement, UIAc
 /// Cells that take touches (links, review-comment selection) mount one
 /// `UITextView` over the cell being touched, in `hitTest`, so native link taps,
 /// link menus, selection handles, and the edit menu behave as they did when every
-/// cell was a text view. The drawn text under it is hidden while it is mounted.
+/// cell was a text view. The text view paints the cell's own background opaque
+/// and covers the drawn cell, so the drawn layer is never invalidated for a
+/// touch: a redisplay swaps `contents` (or blanks whole 512pt tiles) and the
+/// cells around the touch would flicker.
 final class MarkdownTableGridView: UIView {
     /// Backing store above this area (in points squared) is tiled: a plain layer
     /// of 400k pt² is about 14 MB at 3x.
@@ -166,7 +165,7 @@ final class MarkdownTableGridView: UIView {
         deactivateCell()
         self.layout = layout
         accessibilityCells = nil
-        renderer.update(layout: layout, hiddenCell: nil)
+        renderer.update(layout: layout)
         let wantsTiles = layout.contentWidth * layout.contentHeight > Self.plainBackingAreaLimit
         if contentLayer == nil || wantsTiles != isTiled {
             installContentLayer(tiled: wantsTiles)
@@ -180,7 +179,7 @@ final class MarkdownTableGridView: UIView {
         deactivateCell()
         layout = nil
         accessibilityCells = nil
-        renderer.update(layout: nil, hiddenCell: nil)
+        renderer.update(layout: nil)
         contentLayer?.removeFromSuperlayer()
         contentLayer = nil
         isTiled = false
@@ -244,15 +243,27 @@ final class MarkdownTableGridView: UIView {
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
+        // Only a finger on the screen mounts: UIKit also hit-tests with no event,
+        // and a touch that lands on a scroll in progress stops it, it does not tap.
         guard hit === self,
               isInteractive,
-              event == nil || event?.type == .touches,
+              event?.type == .touches,
+              !isInScrollInProgress,
               let layout,
               let cell = layout.cell(at: point)
         else { return hit }
         activateCell(row: cell.row, column: cell.column)
         // The mounted text view now covers the point.
         return super.hitTest(point, with: event)
+    }
+
+    private var isInScrollInProgress: Bool {
+        var view = superview
+        while let current = view {
+            if let scroll = current as? UIScrollView, scroll.isDragging || scroll.isDecelerating { return true }
+            view = current.superview
+        }
+        return false
     }
 
     func activateCell(row: Int, column: Int) {
@@ -266,7 +277,9 @@ final class MarkdownTableGridView: UIView {
         textView.isEditable = false
         textView.isScrollEnabled = false
         textView.isSelectable = true
-        textView.backgroundColor = .clear
+        // Opaque, the color the grid shows under the cell, so it covers the drawn
+        // text without the grid redrawing.
+        textView.backgroundColor = layout.style.cellBackground(row: row)
         textView.textContainerInset = UIEdgeInsets(
             top: MarkdownTableGridLayout.cellVerticalInset,
             left: 0,
@@ -292,8 +305,6 @@ final class MarkdownTableGridView: UIView {
 
         activeCell = (row, column)
         activeTextView = textView
-        renderer.setHiddenCell((row, column))
-        contentLayer?.setNeedsDisplay(textView.frame)
     }
 
     func deactivateCell() {
@@ -301,8 +312,6 @@ final class MarkdownTableGridView: UIView {
         textView.removeFromSuperview()
         activeTextView = nil
         activeCell = nil
-        renderer.setHiddenCell(nil)
-        contentLayer?.setNeedsDisplay(textView.frame)
     }
 
     // MARK: Accessibility

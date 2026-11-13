@@ -8,6 +8,11 @@ import UIKit
 struct MarkdownTableGridTests {
     // MARK: - Fixtures
 
+    /// What UIKit hands `hitTest` for a finger on the screen.
+    private final class TouchEvent: UIEvent {
+        override var type: UIEvent.EventType { .touches }
+    }
+
     private static let headers: [[MarkdownInline]] = [[.text("Name")], [.text("Value")], [.text("Notes")]]
 
     /// The Notes column is past the readable clamp, so the table wraps.
@@ -98,6 +103,36 @@ struct MarkdownTableGridTests {
             bytes = buffer
         }
 
+        private static func standsOut(_ pixel: [UInt8], from background: [UInt8]) -> Bool {
+            zip(pixel, background).contains { abs(Int($0) - Int($1)) > 48 }
+        }
+
+        /// The box around the pixels in `rect` (top-left origin) that stand out
+        /// from the rect's dominant color (its background), relative to `rect`'s
+        /// origin. A pixel counts as ink when a channel is more than 48 off, so
+        /// the blended edge of a row that sits between pixels is not text.
+        func inkBounds(in rect: CGRect) -> CGRect {
+            let minX = max(0, Int(rect.minX)), maxX = min(width, Int(rect.maxX))
+            let minY = max(0, Int(rect.minY)), maxY = min(height, Int(rect.maxY))
+            func pixel(_ x: Int, _ y: Int) -> [UInt8] {
+                let offset = (y * width + x) * 4
+                return Array(bytes[offset ..< offset + 4])
+            }
+            var counts: [[UInt8]: Int] = [:]
+            for y in minY ..< maxY {
+                for x in minX ..< maxX { counts[pixel(x, y), default: 0] += 1 }
+            }
+            guard let background = counts.max(by: { $0.value < $1.value })?.key else { return .null }
+            var box: CGRect?
+            for y in minY ..< maxY {
+                for x in minX ..< maxX where Self.standsOut(pixel(x, y), from: background) {
+                    let point = CGRect(x: x - minX, y: y - minY, width: 1, height: 1)
+                    box = box.map { $0.union(point) } ?? point
+                }
+            }
+            return box ?? .null
+        }
+
         /// Whether every pixel in `rect` (top-left origin) is the same color.
         func isUniform(_ rect: CGRect) -> Bool {
             let minX = max(0, Int(rect.minX)), maxX = min(width, Int(rect.maxX))
@@ -150,7 +185,7 @@ struct MarkdownTableGridTests {
     /// The text view a touch at `point` lands in: the hit view or the text view
     /// that holds it (a laid-out text view hit-tests to its text's own view).
     private static func touchedTextView(_ grid: MarkdownTableGridView, at point: CGPoint) -> UITextView? {
-        var view = grid.hitTest(point, with: nil)
+        var view = grid.hitTest(point, with: TouchEvent())
         while let current = view, current !== grid {
             if let textView = current as? UITextView { return textView }
             view = current.superview
@@ -246,23 +281,44 @@ struct MarkdownTableGridTests {
         #expect(second.attributedText.isEqual(to: layout.cells[5][0]))
     }
 
-    @Test func mountedTextViewReplacesTheDrawnTextUnderIt() throws {
+    @Test func mountedTextViewCoversTheDrawnCellWithTheColorTheGridShowsThere() throws {
         let (table, window) = Self.mount(headers: Self.headers, rows: Self.gridRows(6), selection: true)
         defer { window.isHidden = true }
         let grid = table.debugGridViewForTesting
         let layout = try Self.gridLayout(table)
-        let textArea = layout.cellFrame(row: 2, column: 2).insetBy(dx: 0, dy: MarkdownTableGridLayout.cellVerticalInset)
+        let before = try Self.render(grid)
 
-        #expect(try !Self.render(grid).isUniform(textArea), "drawn before a touch")
-        _ = grid.hitTest(Self.textCellPoint(layout, row: 2, column: 2), with: nil)
-        let activated = try Self.render(grid)
-        #expect(activated.isUniform(textArea), "the text view draws the cell now, not the grid")
-        // The neighbours stay drawn.
-        let neighbour = layout.cellFrame(row: 2, column: 0).insetBy(dx: 0, dy: MarkdownTableGridLayout.cellVerticalInset)
-        #expect(!activated.isUniform(neighbour))
+        // Header, a striped row and a plain row: each cover matches the grid's
+        // fill composited over the card behind it.
+        let card = ThemeRuntimeState.currentPalette().ui.bgDark.resolvedColor(with: table.traitCollection)
+        for (row, fill) in [(0, layout.style.headerBackground), (1, nil), (2, layout.style.zebraBackground)] {
+            grid.activateCell(row: row, column: 2)
+            let cover = try #require(grid.activeTextView?.backgroundColor)
+            var cr: CGFloat = 0, cg: CGFloat = 0, cb: CGFloat = 0, ca: CGFloat = 0
+            #expect(cover.getRed(&cr, green: &cg, blue: &cb, alpha: &ca))
+            #expect(ca == 1, "row \(row): a translucent cover would show the drawn text through it")
 
+            var expected: [CGFloat] = [0, 0, 0]
+            var br: CGFloat = 0, bg: CGFloat = 0, bb: CGFloat = 0, ba: CGFloat = 0
+            card.getRed(&br, green: &bg, blue: &bb, alpha: &ba)
+            let base = [br, bg, bb]
+            if let fill {
+                var fr: CGFloat = 0, fg: CGFloat = 0, fb: CGFloat = 0, fa: CGFloat = 0
+                fill.getRed(&fr, green: &fg, blue: &fb, alpha: &fa)
+                expected = [fr * fa + base[0] * (1 - fa), fg * fa + base[1] * (1 - fa), fb * fa + base[2] * (1 - fa)]
+            } else {
+                expected = base
+            }
+            #expect(
+                zip([cr, cg, cb], expected).allSatisfy { abs($0 - $1) < 0.01 },
+                "row \(row): cover \([cr, cg, cb]) vs grid over card \(expected)"
+            )
+        }
+
+        // The drawn layer is the same picture throughout.
+        #expect(try Self.render(grid) == before)
         grid.deactivateCell()
-        #expect(try !Self.render(grid).isUniform(textArea), "drawn again once the text view leaves")
+        #expect(try Self.render(grid) == before)
     }
 
     @Test func textViewIsOnlyMountedWhenTheGridTakesTouches() throws {
@@ -271,7 +327,7 @@ struct MarkdownTableGridTests {
         let grid = table.debugGridViewForTesting
         let layout = try Self.gridLayout(table)
 
-        let hit = grid.hitTest(Self.textCellPoint(layout, row: 1, column: 2), with: nil)
+        let hit = grid.hitTest(Self.textCellPoint(layout, row: 1, column: 2), with: TouchEvent())
         #expect(hit === grid, "no links and no review selection: the table copies on long press instead")
         #expect(grid.activeTextView == nil)
     }
@@ -328,6 +384,129 @@ struct MarkdownTableGridTests {
             zip(expected, drawn).allSatisfy { abs($0 - $1) <= 6 },
             "drawn link \(drawn) vs theme link \(expected)"
         )
+    }
+
+    // MARK: - A touch does not redraw the grid
+
+    /// A scroll view that reports a scroll in progress, as UIKit does between
+    /// a drag's start and the end of its deceleration.
+    private final class ScrollingScrollView: UIScrollView {
+        var scrolling = false
+        override var isDragging: Bool { scrolling }
+    }
+
+    private static func contentLayer(_ grid: MarkdownTableGridView) throws -> CALayer {
+        try #require(grid.layer.sublayers?.first { $0.delegate === grid.renderer })
+    }
+
+    /// Lets the layer tree commit and tiles finish drawing.
+    private static func settle(_ layer: CALayer) {
+        for _ in 0 ..< 5 {
+            layer.displayIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+    }
+
+    @Test(arguments: [6, 300])
+    func theGridLayerNeverCrossFadesItsContents(rowCount: Int) throws {
+        let (table, window) = Self.mount(headers: Self.headers, rows: Self.gridRows(rowCount))
+        defer { window.isHidden = true }
+        let grid = table.debugGridViewForTesting
+        let layer = try Self.contentLayer(grid)
+
+        // A standalone layer fades a changed `contents` in over 0.25s unless its
+        // delegate answers the action lookup with NSNull. (`CALayer.action(forKey:)`
+        // reports that as nil, and a test window is never committed, so the
+        // delegate's answer is what can be observed.)
+        #expect(layer.delegate === grid.renderer)
+        #expect(grid.renderer.action(for: layer, forKey: "contents") is NSNull)
+    }
+
+    @Test(arguments: [6, 300])
+    func touchingACellDoesNotInvalidateTheDrawnGrid(rowCount: Int) throws {
+        let (table, window) = Self.mount(headers: Self.headers, rows: Self.gridRows(rowCount), selection: true)
+        defer { window.isHidden = true }
+        let grid = table.debugGridViewForTesting
+        let layout = try Self.gridLayout(table)
+        let layer = try Self.contentLayer(grid)
+        #expect(grid.isTiled == (rowCount == 300))
+        Self.settle(layer)
+        #expect(!layer.needsDisplay(), "grid should be drawn before the touch")
+
+        // Redrawing even one tile blanks a 512pt band until it comes back.
+        grid.activateCell(row: 2, column: 2)
+        #expect(grid.activeCell?.row == 2)
+        #expect(!layer.needsDisplay(), "activating a cell invalidated the drawn grid")
+
+        grid.activateCell(row: 3, column: 0)
+        grid.deactivateCell()
+        #expect(grid.activeCell == nil)
+        #expect(!layer.needsDisplay(), "leaving a cell invalidated the drawn grid")
+        _ = layout
+    }
+
+    @Test func aTouchThatStopsOrStartsAScrollDoesNotMountACell() throws {
+        let scroller = ScrollingScrollView(frame: CGRect(x: 0, y: 0, width: 370, height: 900))
+        let (table, tableWindow) = Self.mount(headers: Self.headers, rows: Self.gridRows(10), selection: true)
+        tableWindow.isHidden = true
+        let window = makeTestWindow(frame: scroller.frame)
+        window.addSubview(scroller)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        scroller.addSubview(table)
+        table.frame = CGRect(x: 0, y: 0, width: 370, height: table.debugMeasuredHeightForTesting)
+        table.layoutIfNeeded()
+        let grid = table.debugGridViewForTesting
+        let layout = try Self.gridLayout(table)
+        let point = Self.textCellPoint(layout, row: 2, column: 2)
+
+        scroller.scrolling = true
+        _ = grid.hitTest(point, with: TouchEvent())
+        #expect(grid.activeTextView == nil, "a touch during a scroll mounted a cell")
+
+        scroller.scrolling = false
+        _ = grid.hitTest(point, with: TouchEvent())
+        #expect(grid.activeCell?.row == 2 && grid.activeCell?.column == 2)
+    }
+
+    @Test func hitTestsThatAreNotTouchesDoNotMountACell() throws {
+        let (table, window) = Self.mount(headers: Self.headers, rows: Self.gridRows(6), selection: true)
+        defer { window.isHidden = true }
+        let grid = table.debugGridViewForTesting
+        let layout = try Self.gridLayout(table)
+
+        // UIKit hit-tests with no event to find views for accessibility and menus.
+        _ = grid.hitTest(Self.textCellPoint(layout, row: 2, column: 2), with: nil)
+        #expect(grid.activeTextView == nil)
+    }
+
+    /// The text view mounted on a cell lays its text out where the grid drew it,
+    /// so a tap swaps one for the other without the text moving.
+    @Test func mountedCellTextSitsWhereTheGridDrewIt() throws {
+        let (table, window) = Self.mount(headers: Self.headers, rows: Self.gridRows(6), selection: true)
+        defer { window.isHidden = true }
+        let grid = table.debugGridViewForTesting
+        let layout = try Self.gridLayout(table)
+
+        for (row, column) in [(0, 0), (2, 2), (3, 2), (4, 0)] {
+            let frame = layout.cellFrame(row: row, column: column)
+            let drawn = try Self.render(grid)
+            grid.activateCell(row: row, column: column)
+            let textView = try #require(grid.activeTextView)
+            #expect(textView.frame == frame)
+
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            let mountedImage = UIGraphicsImageRenderer(size: frame.size, format: format).image { _ in
+                textView.drawHierarchy(in: CGRect(origin: .zero, size: frame.size), afterScreenUpdates: true)
+            }
+            let mounted = try RenderedPixels(mountedImage)
+            let drawnInk = drawn.inkBounds(in: frame)
+            let mountedInk = mounted.inkBounds(in: CGRect(origin: .zero, size: frame.size))
+            let label = "row \(row) column \(column): drawn \(drawnInk) mounted \(mountedInk)"
+            #expect(abs(drawnInk.minX - mountedInk.minX) <= 1 && abs(drawnInk.maxX - mountedInk.maxX) <= 1, "\(label)")
+            #expect(abs(drawnInk.minY - mountedInk.minY) <= 1 && abs(drawnInk.maxY - mountedInk.maxY) <= 1, "\(label)")
+        }
     }
 
     // MARK: - VoiceOver
