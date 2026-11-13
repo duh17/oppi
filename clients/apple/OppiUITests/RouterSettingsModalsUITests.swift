@@ -314,7 +314,12 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         launch(page: "schedules")
         let row = app.buttons["schedules.row.schedule-nightly"]
         XCTAssertTrue(row.waitUntilExists(timeout: 10), "Schedules list did not load")
-        XCTAssertTrue(row.label.hasSuffix("active"), "The fixture's nightly schedule starts active: \(row.label)")
+        // The row's spoken label names a state only when it is not active.
+        let spokenParts = row.label.components(separatedBy: ", ")
+        XCTAssertTrue(
+            spokenParts.allSatisfy { $0 != "Paused" && $0 != "Archived" },
+            "The fixture's nightly schedule starts active: \(row.label)"
+        )
         row.press(forDuration: 1.0)
         let pause = app.descendants(matching: .any).matching(identifier: "Pause").firstMatch
         XCTAssertTrue(pause.waitUntilExists(timeout: 5), "The row's context menu has no Pause: \(app.debugDescription)")

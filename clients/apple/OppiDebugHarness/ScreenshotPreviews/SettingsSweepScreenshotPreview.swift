@@ -748,7 +748,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
             )),
             "/server/resources/extensions/oppi-control": json(controlDetail),
             "/agents": json(Agents(agents: [agentSummary])),
-            "/schedules": json(Schedules(schedules: [scheduleSummary])),
             "/schedules/\(schedule.id)/runs": Data(#"{"runs":[]}"#.utf8),
             "/servers/github/login": json(McpFlowBody(flow: mcpFlow)),
             "/mcp/auth/flows/mcp-flow": json(McpFlowBody(flow: mcpFlow)),
@@ -768,6 +767,12 @@ final class SettingsSweepPreviewController: PreviewRootController {
             }
         }
         let records = Records(agent: agent, schedule: schedule)
+        // The list reloads after a pause, so it shows the status the pause stored.
+        func currentScheduleSummary() -> AgentScheduleSummary {
+            var current = scheduleSummary
+            current.status = records.schedule.status
+            return current
+        }
         SettingsSweepFixtureURLProtocol.recordHandler = { method, path, body in
             let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
             if path == "/agents/\(agent.id)" {
@@ -793,10 +798,13 @@ final class SettingsSweepPreviewController: PreviewRootController {
                     return nil
                 }
             }
+            // `schedules-failed`: no answer, so the list's request answers 404.
+            if path == "/schedules", method == "GET", page != "schedules-failed" {
+                return json(Schedules(schedules: [currentScheduleSummary()]))
+            }
             if path == "/schedules/\(schedule.id)/pause", method == "POST" {
-                var paused = scheduleSummary
-                paused.status = .paused
-                return json(ScheduleSummaryBody(schedule: paused))
+                records.schedule.status = .paused
+                return json(ScheduleSummaryBody(schedule: currentScheduleSummary()))
             }
             if path == "/schedules/\(schedule.id)" {
                 switch method {
@@ -819,7 +827,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
                     }
                     records.schedule.version = (records.schedule.version ?? 0) + 1
                     records.schedule.updatedAt = Date()
-                    var saved = scheduleSummary
+                    var saved = currentScheduleSummary()
                     saved.version = records.schedule.version
                     saved.updatedAt = records.schedule.updatedAt
                     if case .newSession(_, let prompt, _, _, _, _, _) = records.schedule.action {
@@ -853,9 +861,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
         }
         if page == "theme-import-failed" {
             SettingsSweepFixtureURLProtocol.routes["/themes"] = nil
-        }
-        if page == "schedules-failed" {
-            SettingsSweepFixtureURLProtocol.routes["/schedules"] = nil
         }
         if page == "skill-detail-failed" {
             SettingsSweepFixtureURLProtocol.routes["/server/resources/skills/release"] = nil
