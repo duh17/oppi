@@ -1733,7 +1733,7 @@ struct ChatTimelinePreparationRunwayTests {
                 "text:\(String(attributed.characters))"
             case .codeBlock(let language, let code):
                 "code:\(language ?? ""):\(code)"
-            case .table(let headers, let rows):
+            case .table(let headers, let rows, _):
                 "table:\(headers.count):\(rows.count)"
             case .thematicBreak:
                 "thematic-break"

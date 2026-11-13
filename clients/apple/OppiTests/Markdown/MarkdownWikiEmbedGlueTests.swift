@@ -45,7 +45,7 @@ struct MarkdownWikiEmbedGlueTests {
     }
 
     @Test func wikiLinkInTableCellKeepsEmphasisCharactersAndItsCell() throws {
-        guard case .table(_, let rows)? = Self.blocks("| A | B |\n|---|---|\n| [[*a*\\|b]] | x |").first else {
+        guard case .table(_, let rows, _)? = Self.blocks("| A | B |\n|---|---|\n| [[*a*\\|b]] | x |").first else {
             Issue.record("Expected a table")
             return
         }
@@ -84,7 +84,7 @@ struct MarkdownWikiEmbedGlueTests {
 
     @Test func embedsInTableCellsAndHeadingsBecomeLinksThatOpenThem() {
         let blocks = Self.blocks("# Plot ![[img/p.png]]\n\n| Clip | Pic |\n|---|---|\n| ![[clips/a.mp4]] | ![alt](img/p.png) |")
-        guard case .heading(_, let heading)? = blocks.first, case .table(_, let rows)? = blocks.last else {
+        guard case .heading(_, let heading)? = blocks.first, case .table(_, let rows, _)? = blocks.last else {
             Issue.record("Expected a heading and a table")
             return
         }

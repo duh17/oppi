@@ -1640,7 +1640,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         case .codeBlock(_, let code):
             // Monospace glyphs are wider than proportional text.
             return ceil(estimatedTextHeight(code, contentWidth: contentWidth, charWidth: 9.6, lineHeight: 16, lineSpacing: 56))
-        case .table(let headers, let rows):
+        case .table(let headers, let rows, _):
             let metrics = NativeTableBlockView.measureNaturalColumns(headers: headers, rows: rows)
             if MarkdownTableColumnLayout.needsGridMode(naturalWidths: metrics.columnWidths) {
                 return CGFloat(max(headers.isEmpty ? 1 : 1, rows.count + 1)) * 56 + 16

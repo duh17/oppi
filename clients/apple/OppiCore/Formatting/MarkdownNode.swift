@@ -1,5 +1,21 @@
 import Foundation
 
+/// A GFM table column's alignment, as its delimiter row writes it.
+enum MarkdownTableAlignment: Equatable, Sendable {
+    case left
+    case center
+    case right
+
+    /// The delimiter cell that writes it.
+    var delimiter: String {
+        switch self {
+        case .left: ":---"
+        case .center: ":---:"
+        case .right: "---:"
+        }
+    }
+}
+
 /// Parsed CommonMark block node.
 ///
 /// Produced by `parseCommonMark(_:)` from the cmark-gfm AST.
@@ -13,7 +29,9 @@ indirect enum MarkdownBlock: Equatable, Sendable {
     case orderedList(start: Int, [[Self]])
     case taskList([TaskItem])
     case thematicBreak
-    case table(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]])
+    /// `alignments` are the delimiter row's (`:---`, `:---:`, `---:`), one per
+    /// column, nil where it sets none; empty when no column sets one.
+    case table(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]], alignments: [MarkdownTableAlignment?] = [])
     case htmlBlock(String)
     /// A `$$` or `\[` display-math fence. `isClosed` is false while its
     /// closing line has not arrived (streaming) or never does; the block then

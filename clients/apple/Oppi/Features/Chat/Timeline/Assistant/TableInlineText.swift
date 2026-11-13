@@ -20,7 +20,10 @@ enum TableInlineText {
         let boldItalic: UIFont?
         let code: UIFont
 
+        /// Digits in `body` and its faces are tabular, all one width, so the numbers
+        /// in a column line up by place value.
         init(body: UIFont, code: UIFont) {
+            let body = Self.tabularDigits(body)
             self.body = body
             bold = Self.face(body, .traitBold) ?? body
             italic = Self.face(body, .traitItalic)
@@ -30,6 +33,28 @@ enum TableInlineText {
 
         static var current: Self {
             Self(body: AppFont.messageBody, code: AppFont.messageInlineCode)
+        }
+
+        /// The message faces at `scale` times their size (the reader's text size).
+        static func current(scale: CGFloat) -> Self {
+            guard scale != 1 else { return current }
+            return Self(
+                body: FullScreenCodeTypography.scaledFont(AppFont.messageBody, scale: scale),
+                code: FullScreenCodeTypography.scaledFont(AppFont.messageInlineCode, scale: scale)
+            )
+        }
+
+        /// A digit's advance in the body face: the planner's unit.
+        var digitWidth: CGFloat {
+            ("0" as NSString).size(withAttributes: [.font: body]).width
+        }
+
+        private static func tabularDigits(_ font: UIFont) -> UIFont {
+            let descriptor = font.fontDescriptor.addingAttributes([.featureSettings: [[
+                UIFontDescriptor.FeatureKey.type: kNumberSpacingType,
+                UIFontDescriptor.FeatureKey.selector: kMonospacedNumbersSelector,
+            ]]])
+            return UIFont(descriptor: descriptor, size: font.pointSize)
         }
 
         private static func face(_ font: UIFont, _ traits: UIFontDescriptor.SymbolicTraits) -> UIFont? {

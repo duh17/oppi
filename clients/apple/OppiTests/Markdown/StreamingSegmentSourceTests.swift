@@ -271,7 +271,7 @@ struct StreamingSegmentSourceTests {
                 return NSAttributedString(leftText).isEqual(to: NSAttributedString(rightText))
             case let (.codeBlock(leftLanguage, leftCode), .codeBlock(rightLanguage, rightCode)):
                 return leftLanguage == rightLanguage && leftCode == rightCode
-            case let (.table(leftHeaders, leftRows), .table(rightHeaders, rightRows)):
+            case let (.table(leftHeaders, leftRows, _), .table(rightHeaders, rightRows, _)):
                 return leftHeaders == rightHeaders && leftRows == rightRows
             case (.thematicBreak, .thematicBreak):
                 return true

@@ -546,7 +546,7 @@ struct FlatSegmentBuildTests {
         let blocks: [MarkdownBlock] = [.table(headers: [[.text("A")]], rows: [[[.text("1")]]])]
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
         #expect(segments.count == 1)
-        if case .table(let headers, let rows) = segments[0] {
+        if case .table(let headers, let rows, _) = segments[0] {
             #expect(headers.map { plainText(from: $0) } == ["A"])
             #expect(rows.map { $0.map { plainText(from: $0) } } == [["1"]])
         }
@@ -909,7 +909,7 @@ struct WorkspaceWikiLinkRenderingTests {
     private func firstTable(in blocks: [MarkdownBlock]) -> ParsedTable? {
         for block in blocks {
             switch block {
-            case .table(let headers, let rows):
+            case .table(let headers, let rows, _):
                 return ParsedTable(headers: headers, rows: rows)
             case .blockQuote(let children):
                 if let table = firstTable(in: children) { return table }
@@ -1386,7 +1386,7 @@ struct WorkspaceWikiLinkRenderingTests {
             themeID: .dark,
             workspaceID: "workspace-1"
         )
-        guard case .table(_, let rows) = try #require(segments.first),
+        guard case .table(_, let rows, _) = try #require(segments.first),
               case .link(let children, _) = try #require(rows[0][0].first) else {
             Issue.record("Expected escaped separator to produce a wiki link")
             return
@@ -3047,7 +3047,7 @@ struct TableCellInlineContentTests {
         let blocks = parseCommonMark(md)
         #expect(blocks.count == 1)
 
-        guard case .table(let headers, let rows) = blocks[0] else {
+        guard case .table(let headers, let rows, _) = blocks[0] else {
             Issue.record("Expected .table block, got \(blocks[0])")
             return
         }
@@ -3073,7 +3073,7 @@ struct TableCellInlineContentTests {
         | [Article A](https://a.com) | [Full](https://a.com/full) |
         """
         let blocks = parseCommonMark(md)
-        guard case .table(_, let rows) = blocks[0] else {
+        guard case .table(_, let rows, _) = blocks[0] else {
             Issue.record("Expected .table block")
             return
         }
@@ -3096,7 +3096,7 @@ struct TableCellInlineContentTests {
         | foo | bar |
         """
         let blocks = parseCommonMark(md)
-        guard case .table(let headers, let rows) = blocks[0] else {
+        guard case .table(let headers, let rows, _) = blocks[0] else {
             Issue.record("Expected .table block")
             return
         }
@@ -3111,7 +3111,7 @@ struct TableCellInlineContentTests {
         | **bold** and [link](https://x.com) |
         """
         let blocks = parseCommonMark(md)
-        guard case .table(_, let rows) = blocks[0] else {
+        guard case .table(_, let rows, _) = blocks[0] else {
             Issue.record("Expected .table block")
             return
         }
@@ -3133,7 +3133,7 @@ struct TableCellInlineContentTests {
         ]
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
         #expect(segments.count == 1)
-        guard case .table(_, let rows) = segments[0] else {
+        guard case .table(_, let rows, _) = segments[0] else {
             Issue.record("Expected .table segment")
             return
         }
@@ -3152,7 +3152,7 @@ struct TableCellInlineContentTests {
         """
 
         let blocks = parseCommonMark(markdown)
-        guard case .table(let headers, let rows) = try #require(blocks.first) else {
+        guard case .table(let headers, let rows, _) = try #require(blocks.first) else {
             Issue.record("Expected a table block")
             return
         }
@@ -3176,7 +3176,7 @@ struct TableCellInlineContentTests {
             workspaceID: "workspace-1",
             sessionID: "session-source"
         )
-        guard case .table(_, let renderedRows) = try #require(segments.first) else {
+        guard case .table(_, let renderedRows, _) = try #require(segments.first) else {
             Issue.record("Expected a table segment")
             return
         }
@@ -3199,7 +3199,7 @@ struct TableCellInlineContentTests {
         let segments = FlatSegment.build(from: blocks, themeID: .dark, workspaceID: "workspace-1")
 
         #expect(segments.count == 1)
-        guard case .table(_, let rows) = segments[0] else {
+        guard case .table(_, let rows, _) = segments[0] else {
             Issue.record("Expected .table segment")
             return
         }

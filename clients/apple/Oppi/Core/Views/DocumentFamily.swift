@@ -97,7 +97,7 @@ enum DocumentFamily: Equatable {
     /// Reader-preference family; nil when the rendered view ignores preferences.
     var readerFamily: FullScreenReaderContentFamily? {
         switch self {
-        case .delimitedTable: return .renderedDocument
+        case .delimitedTable: return .table
         case .geoJSON: return nil
         }
     }
@@ -154,6 +154,7 @@ enum DocumentFamily: Equatable {
             )
             view.applyReaderPreferences(readerPreferences)
             view.allowsCellDetail = true
+            view.bouncesVertically = true
             view.accessibilityIdentifier = "full-screen.delimited-table.body"
             return view
 

@@ -45,7 +45,7 @@ struct ReaderReadingColumn: Equatable {
     @MainActor
     private func naturalWidth(of segment: FlatSegment, in available: CGFloat) -> CGFloat? {
         switch segment {
-        case .table(let headers, let rows):
+        case .table(let headers, let rows, _):
             // Mirrors NativeTableBlockView's card: the width its plan draws at
             // in `available`, so a table that fits as a grid narrower than the
             // window centers instead of hugging the leading edge. A wrapping
@@ -57,6 +57,7 @@ struct ReaderReadingColumn: Equatable {
                 longestWordWidths: metrics.longestWordWidths,
                 clipContentWidth: metrics.totalWidth,
                 availableWidth: available,
+                valueWidths: metrics.valueWidths,
                 fillWidth: proseWidth,
                 displayScale: 1
             )

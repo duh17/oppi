@@ -73,6 +73,9 @@ struct CommonMarkStreamingParser: Sendable {
         /// The header and delimiter rows, newline included.
         let head: String
         let headers: [[MarkdownInline]]
+        /// The delimiter row's alignments, which `head` holds: every resumed
+        /// tick's table keeps them.
+        let alignments: [MarkdownTableAlignment?]
         /// Rows whose line has ended.
         var finishedRows: [[[MarkdownInline]]]
         /// UTF-8 offset just past the last finished row.
@@ -205,11 +208,11 @@ struct CommonMarkStreamingParser: Sendable {
         // Every new line must still be a row of this one table: a blank line,
         // a new block or a definition ends the fast path.
         guard parsed.blocks.count == 1, !parsed.hasReferenceDefinitions,
-              case .table(_, let newRows) = parsed.blocks[0],
+              case .table(_, let newRows, _) = parsed.blocks[0],
               newRows.count == finishedLines + (hasOpenLine ? 1 : 0) else { return nil }
 
         let unchangedRows = table.finishedRows.count
-        let block = MarkdownBlock.table(headers: table.headers, rows: table.finishedRows + newRows)
+        let block = MarkdownBlock.table(headers: table.headers, rows: table.finishedRows + newRows, alignments: table.alignments)
         if let lastNewline {
             table.finishedRows += newRows.prefix(finishedLines)
             table.finishedEnd += restUTF8.distance(from: restUTF8.startIndex, to: lastNewline) + 1
@@ -237,7 +240,7 @@ struct CommonMarkStreamingParser: Sendable {
         let tailStart = state?.prefixUTF8ByteCount ?? 0
         guard referenceMarkerOffset == nil, !holdsReferenceDefinitions,
               lastBlock.id == tailStart,
-              case .table(let headers, let rows)? = lastBlock.block else { return }
+              case .table(let headers, let rows, let alignments)? = lastBlock.block else { return }
         let utf8 = content.utf8
         let start = utf8.index(utf8.startIndex, offsetBy: tailStart)
         guard let headerEnd = utf8[start...].firstIndex(of: 0x0A),
@@ -251,12 +254,13 @@ struct CommonMarkStreamingParser: Sendable {
         let head = String(content[start ..< rowsStart])
         // The rows must read the same under the header alone: a table whose
         // header came off the end of a paragraph would not.
-        guard parseCommonMarkTail(head).blocks == [.table(headers: headers, rows: [])] else { return }
+        guard parseCommonMarkTail(head).blocks == [.table(headers: headers, rows: [], alignments: alignments)] else { return }
         let finishedEnd = lastNewline.map { utf8.index(after: $0) } ?? rowsStart
         openTable = OpenTable(
             start: tailStart,
             head: head,
             headers: headers,
+            alignments: alignments,
             finishedRows: Array(rows.prefix(finishedLines)),
             finishedEnd: utf8.distance(from: utf8.startIndex, to: finishedEnd)
         )

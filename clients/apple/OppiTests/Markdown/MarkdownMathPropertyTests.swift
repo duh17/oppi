@@ -92,16 +92,25 @@ struct MarkdownMathPropertyTests {
         var parser = CommonMarkStreamingParser()
         let bytes = Array(source.utf8)
         var end = 0
+        var resumedAlignedTicks = 0
         while end < bytes.count {
             end = min(bytes.count, end + chunk)
             while end < bytes.count, bytes[end] & 0xC0 == 0x80 { end += 1 }
             let prefix = String(decoding: bytes[..<end], as: UTF8.self)
-            let streamed = parser.parse(prefix).blocks
+            let result = parser.parse(prefix)
+            let streamed = result.blocks
             guard streamed == parseCommonMarkTail(prefix).blocks else {
                 Issue.record("chunk \(chunk): tick at byte \(end) differs from a fresh parse")
                 return
             }
+            // A tick resumed from the checkpoint keeps the delimiter row's
+            // alignments, not only its cells.
+            if result.openTableUnchangedRows > 0, case .table(let headers, _, let alignments)? = streamed.last, headers.count == 4 {
+                #expect(alignments == [nil, .right, .center, nil], "chunk \(chunk): byte \(end)")
+                resumedAlignedTicks += 1
+            }
         }
+        #expect(resumedAlignedTicks > 0, "chunk \(chunk): no tick resumed the aligned table")
     }
 
     // MARK: - No math in code
@@ -191,7 +200,7 @@ struct MarkdownMathPropertyTests {
             case .blockQuote(let children): formulas(in: children)
             case .unorderedList(let items), .orderedList(_, let items): items.flatMap(formulas(in:))
             case .taskList(let items): items.flatMap { formulas(in: $0.content) }
-            case .table(let headers, let rows): (headers + rows.flatMap { $0 }).flatMap(formulas(in:))
+            case .table(let headers, let rows, _): (headers + rows.flatMap { $0 }).flatMap(formulas(in:))
             case .codeBlock, .thematicBreak, .htmlBlock: []
             }
         }

@@ -45,6 +45,9 @@ indirect enum FullScreenCodeContent {
     case graphviz(content: String, filePath: String?)
     /// CSV/TSV table or GeoJSON/TopoJSON map; `DocumentFamily` owns the per-kind behavior.
     case document(DocumentFamily)
+    /// A table from Markdown, opened from its card: the same table view, with
+    /// every row and the whole screen (`MarkdownTableReaderBody`).
+    case markdownTable(MarkdownTableDocument)
     /// A downloaded EPUB book. One chapter at a time, with the book's table of
     /// contents and saved position; `BookReaderBody` owns chapter navigation.
     case book(EPUBReaderDocument)

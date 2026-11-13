@@ -3,6 +3,22 @@ import Testing
 import UIKit
 @testable import Oppi
 
+/// A Markdown table as a message draws it when it fits: the tab-stop text of a
+/// real table view, applied at a width the table fits in.
+@MainActor
+func timelineClipTableText(
+    headers: [[MarkdownInline]],
+    rows: [[[MarkdownInline]]],
+    alignments: [MarkdownTableAlignment?] = [],
+    palette: ThemePalette
+) throws -> NSAttributedString {
+    let table = NativeTableBlockView()
+    table.frame = CGRect(x: 0, y: 0, width: 4000, height: 800)
+    table.apply(headers: headers, rows: rows, alignments: alignments, palette: palette)
+    table.layoutIfNeeded()
+    return try #require(table.debugClipTextForTesting, "The table draws as tab-stop text")
+}
+
 @MainActor
 func timelineAllLabels(in root: UIView) -> [UILabel] {
     var labels: [UILabel] = []

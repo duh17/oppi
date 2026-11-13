@@ -16,10 +16,22 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, UIColl
     private let headerBackdrop = UIView()
     private var palette: ThemePalette
     private var textScale: CGFloat = 1
+    /// Numeric columns read from their trailing edge, as in a Markdown table.
+    private var alignments: [MarkdownTableColumnAlignment] = []
 
     /// A tap on a cell opens its full text. Set only where the grid owns taps:
     /// the full-screen viewer. Inline in a tool row, a tap opens that viewer.
     var allowsCellDetail = false
+
+    /// Whether the grid bounces vertically even when its rows fit. The full-screen
+    /// viewer turns it on: its body runs under the floating bar, and UIKit adds the
+    /// bar's top inset only on an axis that can scroll, so a short table without it
+    /// draws its header under the bar. Inline in a tool row the row owns vertical
+    /// scrolling, so it stays off.
+    var bouncesVertically: Bool {
+        get { collectionView.alwaysBounceVertical }
+        set { collectionView.alwaysBounceVertical = newValue }
+    }
 
     init(plan: DelimitedTableViewerPlan, palette: ThemePalette? = nil) {
         self.plan = plan
@@ -41,7 +53,7 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, UIColl
 
     /// Copy as TSV or Markdown, for the viewer's Copy button. `didCopy` gets the
     /// text; the viewer puts it on the pasteboard and flashes its confirmation.
-    func makeCopyMenu(didCopy: @escaping (String) -> Void) -> UIMenu {
+    func makeCopyMenu(didCopy: @escaping (String) -> Void) -> UIMenu? {
         // The parser may have dropped rows, columns, or characters: say so.
         let table = plan.table
         let partial = table.truncatedRows || table.truncatedColumns || table.truncatedCells
@@ -162,6 +174,15 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, UIColl
     }
 
     private func reloadMetrics() {
+        if alignments.isEmpty {
+            var detector = MarkdownTableColumnAlignment.Detector()
+            detector.replaceRows(
+                keeping: 0,
+                with: plan.table.rows.map { $0.map { [.text($0)] } },
+                columnCount: plan.table.columnCount
+            )
+            alignments = detector.alignments
+        }
         let font = cellFont(isHeader: false)
         layout.columnWidths = measuredColumnWidths(font: font)
         layout.rowHeight = ceil(font.lineHeight + 14)
@@ -169,10 +190,12 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, UIColl
         layout.invalidateLayout()
     }
 
+    /// Proportional, as the Markdown table reads, with tabular digits so numbers
+    /// stack by place value.
     private func cellFont(isHeader: Bool) -> UIFont {
-        let size = 13 * textScale
-        let base = UIFont.monospacedSystemFont(ofSize: size, weight: isHeader ? .semibold : .regular)
-        return UIFontMetrics(forTextStyle: .caption1).scaledFont(for: base)
+        let size = 15 * textScale
+        let base = UIFont.monospacedDigitSystemFont(ofSize: size, weight: isHeader ? .semibold : .regular)
+        return UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: base)
     }
 
     private func measuredColumnWidths(font: UIFont) -> [CGFloat] {
@@ -182,9 +205,11 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, UIColl
         let maxWidth: CGFloat = 240
         var widths = Array(repeating: minWidth, count: columns)
         let sampleRows = [plan.table.headers] + Array(plan.table.rows.prefix(40))
-        for row in sampleRows {
+        // The header draws semibold, wider than the cells: measure it so.
+        let headerFont = cellFont(isHeader: true)
+        for (rowIndex, row) in sampleRows.enumerated() {
             for (index, cell) in row.enumerated() where index < columns {
-                let width = (cell as NSString).size(withAttributes: [.font: font]).width + 20
+                let width = (cell as NSString).size(withAttributes: [.font: rowIndex == 0 ? headerFont : font]).width + 20
                 widths[index] = min(maxWidth, max(widths[index], ceil(width)))
             }
         }
@@ -226,9 +251,11 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, UIColl
             return UICollectionViewCell()
         }
         let item = cellContent(at: indexPath.item)
+        let column = indexPath.item % max(plan.table.columnCount, 1)
         cell.apply(
             text: item.text,
-            isHeader: item.isHeader,
+            row: item.row,
+            alignment: column < alignments.count ? alignments[column] : .leading,
             palette: palette,
             font: cellFont(isHeader: item.isHeader)
         )
@@ -297,11 +324,22 @@ private final class DelimitedTableCell: UICollectionViewCell {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func apply(text: String, isHeader: Bool, palette: ThemePalette, font: UIFont) {
+    /// Drawn as the Markdown table's grid: a filled header in the header ink
+    /// with a hairline under it, full-contrast cells, and every other row banded.
+    func apply(text: String, row: Int, alignment: MarkdownTableColumnAlignment, palette: ThemePalette, font: UIFont) {
+        let isHeader = row == 0
         label.text = text
         label.font = font
-        label.textColor = isHeader ? palette.fg : palette.fgDim
-        contentView.backgroundColor = isHeader ? palette.bgHighlight : palette.bgDark
+        label.textAlignment = alignment == .trailing ? .right : .natural
+        label.textColor = isHeader ? palette.ui.cyan : palette.ui.fg
+        contentView.backgroundColor = if isHeader {
+            palette.ui.bgHighlight
+        } else if row % 2 == 0 {
+            palette.ui.bgHighlight.withAlphaComponent(0.45)
+        } else {
+            palette.ui.bgDark
+        }
+        divider.isHidden = !isHeader
         divider.backgroundColor = palette.ui.comment.withAlphaComponent(0.25)
     }
 }

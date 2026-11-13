@@ -720,7 +720,7 @@ struct CommonMarkTests {
         """
         let blocks = parseCommonMark(md)
         #expect(blocks.count == 1)
-        guard case .table(let headers, let rows) = blocks[0] else {
+        guard case .table(let headers, let rows, _) = blocks[0] else {
             Issue.record("Expected table")
             return
         }
@@ -728,6 +728,23 @@ struct CommonMarkTests {
         #expect(rows.count == 2)
         #expect(rows[0].map { plainText(from: $0) } == ["Cell A", "Cell B"])
         #expect(rows[1].map { plainText(from: $0) } == ["Cell C", "Cell D"])
+    }
+
+    /// The delimiter row's colons reach the table, and serializing writes them back.
+    @Test func tableKeepsItsDelimiterRowAlignments() {
+        let md = "| Name | Status | Count | Note |\n| :--- | :---: | ---: | --- |\n| a | ok | 3 | x |\n"
+        guard case .table(_, _, let alignments) = parseCommonMark(md).first else {
+            Issue.record("Expected table")
+            return
+        }
+        #expect(alignments == [.left, .center, .right, nil])
+        #expect(MarkdownBlockSerializer.serialize(parseCommonMark(md)).contains("| :--- | :---: | ---: | --- |"))
+
+        guard case .table(_, _, let none) = parseCommonMark("| A | B |\n| --- | --- |\n| 1 | 2 |\n").first else {
+            Issue.record("Expected table")
+            return
+        }
+        #expect(none.isEmpty, "A table that aligns nothing carries no alignments")
     }
 
     @Test func tableCellInlineCodeText() {
@@ -740,7 +757,7 @@ struct CommonMarkTests {
 
         let blocks = parseCommonMark(md)
         #expect(blocks.count == 1)
-        guard case .table(let headers, let rows) = blocks[0] else {
+        guard case .table(let headers, let rows, _) = blocks[0] else {
             Issue.record("Expected table")
             return
         }
@@ -759,7 +776,7 @@ struct CommonMarkTests {
 
         """
         let blocks = parseCommonMark(md)
-        guard case .table(let headers, let rows) = blocks.first, blocks.count == 1 else {
+        guard case .table(let headers, let rows, _) = blocks.first, blocks.count == 1 else {
             Issue.record("Expected one table, got \(blocks)")
             return
         }
@@ -786,7 +803,7 @@ struct CommonMarkTests {
         | $a | b^2$ | c |
 
         """
-        guard case .table(_, let rows) = parseCommonMark(md).first else {
+        guard case .table(_, let rows, _) = parseCommonMark(md).first else {
             Issue.record("Expected table")
             return
         }
@@ -1190,7 +1207,7 @@ struct PartialTableParsingTests {
         """
         let blocks = parseCommonMark(md)
         #expect(blocks.count == 1)
-        guard case .table(let headers, let rows) = blocks[0] else {
+        guard case .table(let headers, let rows, _) = blocks[0] else {
             Issue.record("Expected table")
             return
         }
@@ -1207,7 +1224,7 @@ struct PartialTableParsingTests {
         """
         let blocks = parseCommonMark(md)
         #expect(blocks.count == 1)
-        guard case .table(let headers, let rows) = blocks[0] else {
+        guard case .table(let headers, let rows, _) = blocks[0] else {
             Issue.record("Expected table")
             return
         }
@@ -1234,7 +1251,7 @@ struct PartialTableParsingTests {
         """
         let blocks = parseCommonMark(md)
         #expect(blocks.count == 1)
-        guard case .table(let headers, _) = blocks[0] else {
+        guard case .table(let headers, _, _) = blocks[0] else {
             Issue.record("Expected table even with incomplete separator")
             return
         }
@@ -1250,7 +1267,7 @@ struct PartialTableParsingTests {
         """
         let blocks = parseCommonMark(md)
         #expect(blocks.count == 1)
-        guard case .table(_, let rows) = blocks[0] else {
+        guard case .table(_, let rows, _) = blocks[0] else {
             Issue.record("Expected table")
             return
         }
@@ -1267,7 +1284,7 @@ struct PartialTableParsingTests {
         """
         let blocks = parseCommonMark(md)
         #expect(blocks.count == 1)
-        guard case .table(_, let rows) = blocks[0] else {
+        guard case .table(_, let rows, _) = blocks[0] else {
             Issue.record("Expected table")
             return
         }
@@ -1289,7 +1306,7 @@ struct LenientTableMarkupTests {
         """
         let blocks = parseCommonMark(md)
         #expect(blocks.count == 1)
-        guard case .table(let headers, let rows) = blocks[0] else {
+        guard case .table(let headers, let rows, _) = blocks[0] else {
             Issue.record("Expected GFM table, got \(String(describing: blocks.first))")
             return
         }
@@ -1306,7 +1323,7 @@ struct LenientTableMarkupTests {
         | foo  | bar   |
         """
         let blocks = parseCommonMark(md)
-        guard case .table(let headers, let rows) = try #require(blocks.first) else {
+        guard case .table(let headers, let rows, _) = try #require(blocks.first) else {
             Issue.record("Expected org-style delimiter to become a table")
             return
         }
@@ -1321,7 +1338,7 @@ struct LenientTableMarkupTests {
         server | 245 | 84865
         """
         let blocks = parseCommonMark(md)
-        guard case .table(let headers, let rows) = try #require(blocks.first) else {
+        guard case .table(let headers, let rows, _) = try #require(blocks.first) else {
             Issue.record("Expected em-dash delimiter to become a table")
             return
         }
@@ -1336,7 +1353,7 @@ struct LenientTableMarkupTests {
         | a.ts | 12 |
         """
         let blocks = parseCommonMark(md)
-        guard case .table(_, let rows) = try #require(blocks.first) else {
+        guard case .table(_, let rows, _) = try #require(blocks.first) else {
             Issue.record("Expected box-drawing delimiter to become a table")
             return
         }
@@ -1351,7 +1368,7 @@ struct LenientTableMarkupTests {
         </table>
         """
         let blocks = parseCommonMark(md)
-        guard case .table(let headers, let rows) = try #require(blocks.first) else {
+        guard case .table(let headers, let rows, _) = try #require(blocks.first) else {
             Issue.record("Expected simple HTML table, got \(String(describing: blocks.first))")
             return
         }
@@ -1395,7 +1412,7 @@ struct LenientTableMarkupTests {
         | 1+2 | 3 |
         """
         let blocks = parseCommonMark(md)
-        guard case .table(_, let rows) = try #require(blocks.first) else {
+        guard case .table(_, let rows, _) = try #require(blocks.first) else {
             Issue.record("Expected ordinary GFM table")
             return
         }
@@ -1415,7 +1432,7 @@ struct LenientTableMarkupTests {
         let blocks = parseCommonMark(md)
         #expect(blocks.contains { if case .paragraph = $0 { true } else { false } })
         guard let table = blocks.first(where: { if case .table = $0 { true } else { false } }),
-              case .table(let headers, let rows) = table else {
+              case .table(let headers, let rows, _) = table else {
             Issue.record("Expected a table after the paragraph, got \(blocks)")
             return
         }
@@ -1431,7 +1448,7 @@ struct LenientTableMarkupTests {
         </table>
         """
         let blocks = parseCommonMark(md)
-        guard case .table(let headers, let rows) = try #require(blocks.first) else {
+        guard case .table(let headers, let rows, _) = try #require(blocks.first) else {
             Issue.record("Expected thead/tbody HTML to become a table")
             return
         }
@@ -1447,7 +1464,7 @@ struct LenientTableMarkupTests {
         | foo | bar |
         """
         let blocks = parseCommonMark(md)
-        guard case .table(_, let rows) = try #require(blocks.first) else {
+        guard case .table(_, let rows, _) = try #require(blocks.first) else {
             Issue.record("Expected a table")
             return
         }

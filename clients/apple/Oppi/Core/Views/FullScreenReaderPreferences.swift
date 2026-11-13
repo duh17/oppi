@@ -9,12 +9,14 @@ enum FullScreenReaderContentFamily: String, Codable, CaseIterable, Equatable {
     case terminal
     case html
     case renderedDocument
+    /// A Markdown table or a CSV/TSV file in its full-screen viewer: text size only.
+    case table
 
     var supportsWrapping: Bool {
         switch self {
         case .code, .source, .diff, .terminal:
             return true
-        case .markdown, .html, .renderedDocument:
+        case .markdown, .html, .renderedDocument, .table:
             return false
         }
     }
@@ -23,7 +25,7 @@ enum FullScreenReaderContentFamily: String, Codable, CaseIterable, Equatable {
         switch self {
         case .markdown, .renderedDocument:
             return true
-        case .code, .source, .diff, .terminal, .html:
+        case .code, .source, .diff, .terminal, .html, .table:
             return false
         }
     }

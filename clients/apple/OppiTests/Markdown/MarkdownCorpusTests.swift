@@ -167,7 +167,7 @@ enum MarkdownCorpus {
                 .joined(separator: "\n")
         case .thematicBreak:
             return indent + "HR"
-        case .table(let headers, let rows):
+        case .table(let headers, let rows, _):
             let cells = { (row: [[MarkdownInline]]) in row.map { $0.map(dump).joined() }.joined(separator: " ‖ ") }
             return indent + "TABLE\n\(indent)  hdr: " + cells(headers) + rows.map { "\n\(indent)  row: " + cells($0) }.joined()
         case .htmlBlock(let html):
@@ -184,7 +184,7 @@ enum MarkdownCorpus {
         switch segment {
         case .text(let text): "TEXT: " + runs(NSAttributedString(text), fontTraits: false)
         case .codeBlock(let language, let code): "CODE[\(language ?? "-")]: " + oneLine(code)
-        case .table(let headers, let rows): "TABLE\n  hdr: " + cells(headers, isHeader: true)
+        case .table(let headers, let rows, _): "TABLE\n  hdr: " + cells(headers, isHeader: true)
             + rows.map { "\n  row: " + cells($0, isHeader: false) }.joined()
         case .thematicBreak: "HR"
         case .image(let alt, let url, let size): "IMAGE(\(alt) → \(url.absoluteString)\(size.map { " |" + $0.markup } ?? ""))"

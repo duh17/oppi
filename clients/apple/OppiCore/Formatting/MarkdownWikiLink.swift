@@ -193,10 +193,11 @@ enum MarkdownWikiLinkRewriter {
                     isPartial: item.isPartial
                 )
             })
-        case .table(let headers, let rows):
+        case .table(let headers, let rows, let alignments):
             return .table(
                 headers: headers.map { rewrite(inlines: $0, context: linking) },
-                rows: rows.map { row in row.map { rewrite(inlines: $0, context: linking) } }
+                rows: rows.map { row in row.map { rewrite(inlines: $0, context: linking) } },
+                alignments: alignments
             )
         case .codeBlock, .thematicBreak, .htmlBlock, .math:
             return block

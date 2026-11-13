@@ -17,6 +17,9 @@ final class MarkdownTableClipText {
 
     /// Natural single-line width of each column; they set the tab stops.
     let columnWidths: [CGFloat]
+    /// A trailing column's cells end at its right edge (a right tab stop), a
+    /// centered column's center on its middle (a center tab stop).
+    let alignments: [MarkdownTableColumnAlignment]
     /// Identifies the palette the text is colored with.
     let paletteIdentity: ObjectIdentifier
 
@@ -42,8 +45,15 @@ final class MarkdownTableClipText {
     /// UTF-16 offset where each body row's text (with its leading newline) starts.
     private var bodyRowStarts: [Int] = []
 
-    init(headers: [[MarkdownInline]], columnWidths: [CGFloat], palette: ThemePalette, fonts: TableInlineText.Fonts) {
+    init(
+        headers: [[MarkdownInline]],
+        columnWidths: [CGFloat],
+        alignments: [MarkdownTableColumnAlignment] = [],
+        palette: ThemePalette,
+        fonts: TableInlineText.Fonts
+    ) {
         self.columnWidths = columnWidths
+        self.alignments = alignments
         self.fonts = fonts
         paletteIdentity = ObjectIdentifier(palette.uiCache)
         dimColor = palette.ui.comment.withAlphaComponent(0.4)
@@ -63,7 +73,9 @@ final class MarkdownTableClipText {
         guard !columnWidths.isEmpty else { return }
 
         // One tab stop per column at its right edge. After a cell, a \t moves
-        // the cursor to the exact stop, so no space padding rounds off.
+        // the cursor to the exact stop, so no space padding rounds off. A
+        // trailing column also has a right stop a buffer before it, a centered
+        // one a center stop at its middle: a \t ahead of the cell places it.
         let leadPadWidth = NativeTableBlockView.measuredTextWidth("  ", font: cellFont)
         let sepWidth = NativeTableBlockView.measuredTextWidth("  │  ", font: cellFont)
         // +1 buffer: when content exactly fills the column the cursor sits ON
@@ -73,6 +85,11 @@ final class MarkdownTableClipText {
         var position = leadPadWidth
         for (index, width) in columnWidths.enumerated() {
             position += width + buffer
+            switch index < alignments.count ? alignments[index] : .leading {
+            case .leading: break
+            case .center: tabStops.append(NSTextTab(textAlignment: .center, location: position - buffer - width / 2))
+            case .trailing: tabStops.append(NSTextTab(textAlignment: .right, location: position - buffer))
+            }
             tabStops.append(NSTextTab(textAlignment: .left, location: position))
             if index < columnWidths.count - 1 { position += sepWidth }
         }
@@ -89,6 +106,12 @@ final class MarkdownTableClipText {
     }
 
     var bodyRowCount: Int { bodyRowStarts.count }
+
+    /// The tab that carries a trailing or centered column's cell to its stop.
+    private func appendAlignmentTab(column: Int, to result: NSMutableAttributedString) {
+        guard column < alignments.count, alignments[column] != .leading else { return }
+        result.append(NSAttributedString(string: "\t", attributes: [.font: cellFont, .paragraphStyle: paragraph]))
+    }
 
     /// Size of the laid-out text. Lays out only what changed since the last call.
     var measuredSize: CGSize {
@@ -142,6 +165,7 @@ final class MarkdownTableClipText {
                     .font: cellFont, .foregroundColor: dimColor, .paragraphStyle: paragraph,
                 ]))
             }
+            appendAlignmentTab(column: index, to: result)
             // Drawn as the grid draws it, so it is as wide as it was measured.
             let cellStart = result.length
             TableInlineText.appendCell(
@@ -206,6 +230,7 @@ final class MarkdownTableClipText {
                     .font: cellFont, .foregroundColor: dimColor, .paragraphStyle: paragraph,
                 ]))
             }
+            appendAlignmentTab(column: index, to: result)
             let cellStart = result.length
             TableInlineText.appendCell(
                 inlines,

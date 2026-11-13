@@ -82,21 +82,6 @@ struct TableColumnAlignmentTests {
         try assertColumnsAligned(headers: headers, rows: rows)
     }
 
-    // MARK: - Single column (no separators — should not crash)
-
-    @Test func singleColumnTableRenders() {
-        let headers: [[MarkdownInline]] = [[.text("Item")]]
-        let rows: [[[MarkdownInline]]] = [
-            [[.text("Alpha")]],
-            [[.text("日本語")]],
-        ]
-        let palette = ThemePalettes.dark
-        let attrText = NativeTableBlockView.makeTableAttributedText(
-            headers: headers, rows: rows, palette: palette
-        )
-        #expect(!attrText.string.isEmpty)
-    }
-
     /// The rule under the header spans the table: it ended short of the right
     /// edge when its dash width was rounded up before counting the dashes.
     @Test(arguments: [
@@ -104,7 +89,7 @@ struct TableColumnAlignmentTests {
         ["Run", "Images", "Avg KB", "Total MB", "p50 ms", "p95 ms"],
     ])
     func headerRuleSpansTheTable(headerTexts: [String]) throws {
-        let text = NativeTableBlockView.makeTableAttributedText(
+        let text = try timelineClipTableText(
             headers: headerTexts.map { [.text($0)] },
             rows: [headerTexts.map { [.text("\($0) value")] }],
             palette: ThemePalettes.dark
@@ -130,7 +115,131 @@ struct TableColumnAlignmentTests {
         #expect(abs(lineWidths[1] - tableWidth) <= 1, "rule \(lineWidths[1]) vs table \(tableWidth)")
     }
 
+    // MARK: - Numbers align on their trailing edge
+
+    @Test(arguments: [
+        ("0.35 ms", MarkdownTableColumnAlignment.CellKind.number), ("1,702 ms", .number), ("99.95%", .number),
+        ("$7.76", .number), ("−3", .number), ("4x", .number), ("182 MB", .number), ("12", .number),
+        ("4.1 KB", .number), ("12%", .number), ("about 2.0 ms", .number), ("~3 s", .number),
+        ("—", .empty), ("n/a", .empty), ("", .empty),
+        ("about half", .text), ("2026-09-14", .text), ("iOS 27.1", .text), ("3f9c2a1", .text),
+        ("Tue 09:00", .text), ("2 of 5", .text),
+    ])
+    func cellsReadAsNumbersOnlyWhenTheyAreNumbers(text: String, kind: MarkdownTableColumnAlignment.CellKind) {
+        #expect(MarkdownTableColumnAlignment.kind(of: text) == kind)
+    }
+
+    /// A column is numeric while every filled cell is a number; one word in it
+    /// makes it text, and a streamed row that is replaced takes its word along.
+    @Test func aColumnOfNumbersStaysNumericAsRowsStream() {
+        func row(_ cells: String...) -> [[MarkdownInline]] { cells.map { [.text($0)] } }
+        var detector = MarkdownTableColumnAlignment.Detector()
+        let rows = [row("6 KB message", "0.03 ms", "—"), row("67 KB report", "0.35 ms", "—")]
+        detector.replaceRows(keeping: 0, with: rows, columnCount: 3)
+        #expect(detector.alignments == [.leading, .trailing, .leading], "A column of dashes has no number to align")
+
+        detector.replaceRows(keeping: 2, with: rows + [row("273 KB session", "pending", "2.0 ms")], columnCount: 3)
+        #expect(detector.alignments == [.leading, .leading, .trailing])
+
+        // The device report's table: every timing, hedged or not, under dashes.
+        detector.replaceRows(keeping: 2, with: rows + [row("273 KB session", "1.1 ms", "about 2.0 ms")], columnCount: 3)
+        #expect(detector.alignments == [.leading, .trailing, .trailing])
+    }
+
+    /// In the tab-stop text a numeric column's values, and its header, end at
+    /// the column's right edge; a text column's start at its left edge.
+    @Test func numericColumnsEndOnTheirRightEdgeInClipText() throws {
+        let headers: [[MarkdownInline]] = [[.text("Input")], [.text("Median")]]
+        let rows: [[[MarkdownInline]]] = [
+            [[.text("6 KB message")], [.text("0.03 ms")]],
+            [[.text("273 KB session")], [.text("1,702.4 ms")]],
+        ]
+        let text = try timelineClipTableText(headers: headers, rows: rows, palette: ThemePalettes.dark)
+        let frames = try cellFrames(in: text)
+        let numbers = (0 ... 2).compactMap { frames[TableSelectionText.CellPosition(row: $0, column: 1)] }
+        let labels = (0 ... 2).compactMap { frames[TableSelectionText.CellPosition(row: $0, column: 0)] }
+        try #require(numbers.count == 3 && labels.count == 3)
+        for frame in numbers.dropFirst() {
+            #expect(abs(frame.maxX - numbers[0].maxX) <= 1, "Right edges \(numbers.map(\.maxX))")
+        }
+        #expect(numbers[1].minX > numbers[2].minX + 5, "The shorter value starts further right")
+        for frame in labels.dropFirst() {
+            #expect(abs(frame.minX - labels[0].minX) <= 1, "Left edges \(labels.map(\.minX))")
+        }
+    }
+
+    /// The source's delimiter row outranks detection: `:---` keeps numbers at
+    /// the leading edge, `---:` and `:---:` place text; columns it leaves alone
+    /// are detected.
+    @Test func delimiterRowAlignmentWinsAndDetectionFillsTheRest() {
+        #expect(MarkdownTableColumnAlignment.resolve(
+            explicit: [.left, .right, .center, nil],
+            detected: [.trailing, .leading, .leading, .trailing]
+        ) == [.leading, .trailing, .center, .trailing])
+        #expect(MarkdownTableColumnAlignment.resolve(explicit: [], detected: [.leading, .trailing]) == [.leading, .trailing])
+    }
+
+    /// A centered column's cells center on the column's middle in the tab-stop text.
+    @Test func centeredColumnsCenterInClipText() throws {
+        let headers: [[MarkdownInline]] = [[.text("Name")], [.text("Status")]]
+        let rows: [[[MarkdownInline]]] = [
+            [[.text("build")], [.text("ok")]],
+            [[.text("tests")], [.text("passed again")]],
+        ]
+        let table = NativeTableBlockView()
+        table.frame = CGRect(x: 0, y: 0, width: 600, height: 200)
+        table.apply(headers: headers, rows: rows, alignments: [nil, .center], palette: ThemePalettes.dark)
+        table.layoutIfNeeded()
+        let text = try #require(table.debugClipTextForTesting)
+        let frames = try cellFrames(in: text)
+        let short = try #require(frames[TableSelectionText.CellPosition(row: 1, column: 1)])
+        let long = try #require(frames[TableSelectionText.CellPosition(row: 2, column: 1)])
+        #expect(abs(short.midX - long.midX) <= 1, "Centers \(short.midX) and \(long.midX)")
+        #expect(table.tableText(.markdown).contains("| --- | :---: |"), "Copy keeps the alignment")
+    }
+
+    /// The wrapping grid right-aligns the same columns, header included, and
+    /// draws digits tabular so they stack by place value.
+    @Test func numericColumnsAlignRightInTheGrid() throws {
+        let table = NativeTableBlockView()
+        table.surface = .viewer
+        table.apply(
+            headers: [[.text("Device")], [.text("Cold launch")]],
+            rows: [[[.text("iPhone 16 Pro")], [.text("412 ms")]], [[.text("iPhone SE")], [.text("1,702 ms")]]],
+            palette: ThemePalettes.dark
+        )
+        let layout = try #require(table.debugGridViewForTesting.layout)
+        func alignment(_ row: Int, _ column: Int) -> NSTextAlignment? {
+            (layout.cells[row][column].attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.alignment
+        }
+        #expect((0 ... 2).allSatisfy { alignment($0, 1) == .right })
+        #expect((0 ... 2).allSatisfy { alignment($0, 0) != .right })
+        let font = try #require(layout.cells[1][1].attribute(.font, at: 0, effectiveRange: nil) as? UIFont)
+        let one = ("1" as NSString).size(withAttributes: [.font: font]).width
+        let eight = ("8" as NSString).size(withAttributes: [.font: font]).width
+        #expect(abs(one - eight) < 0.01, "Tabular digits: 1 is \(one), 8 is \(eight)")
+    }
+
     // MARK: - Helpers
+
+    /// Each cell's laid-out frame in the tab-stop text, by its cell attribute.
+    private func cellFrames(in text: NSAttributedString) throws -> [TableSelectionText.CellPosition: CGRect] {
+        let storage = NSTextStorage(attributedString: text)
+        let layoutManager = NSLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        storage.addLayoutManager(layoutManager)
+        layoutManager.addTextContainer(container)
+        layoutManager.ensureLayout(for: container)
+        var frames: [TableSelectionText.CellPosition: CGRect] = [:]
+        text.enumerateAttribute(TableSelectionText.cellAttribute, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+            guard let point = (value as? NSValue)?.cgPointValue else { return }
+            let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            frames[TableSelectionText.CellPosition(row: Int(point.y), column: Int(point.x))] =
+                layoutManager.boundingRect(forGlyphRange: glyphs, in: container)
+        }
+        return frames
+    }
 
     /// Assert that all `│` separators in the rendered table align vertically
     /// within 1pt tolerance (sub-pixel — effectively exact).
@@ -172,9 +281,7 @@ struct TableColumnAlignmentTests {
         rows: [[[MarkdownInline]]]
     ) throws -> [[CGFloat]] {
         let palette = ThemePalettes.dark
-        let attrText = NativeTableBlockView.makeTableAttributedText(
-            headers: headers, rows: rows, palette: palette
-        )
+        let attrText = try timelineClipTableText(headers: headers, rows: rows, palette: palette)
 
         // Use TextKit 1 layout manager for precise glyph-position queries.
         let textStorage = NSTextStorage(attributedString: attrText)

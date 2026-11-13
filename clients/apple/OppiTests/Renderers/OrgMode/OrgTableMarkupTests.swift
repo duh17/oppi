@@ -45,7 +45,7 @@ struct OrgTableMarkupTests {
         | =verbatim= |
         """)
         let parsed = parseCommonMark(markdown)
-        guard case .table(_, let rows)? = parsed.first else {
+        guard case .table(_, let rows, _)? = parsed.first else {
             Issue.record("Expected a table, got \(parsed)")
             return
         }

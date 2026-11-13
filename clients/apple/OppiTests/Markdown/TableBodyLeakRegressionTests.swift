@@ -324,7 +324,7 @@ struct TableBodyLeakRegressionTests {
         _ block: MarkdownBlock
     ) -> (headers: [[MarkdownInline]], rows: [[[MarkdownInline]]])? {
         switch block {
-        case .table(let headers, let rows)
+        case .table(let headers, let rows, _)
             where headers.first.map({ plainText(from: $0) }) == "Work":
             return (headers, rows)
         case .blockQuote(let children):

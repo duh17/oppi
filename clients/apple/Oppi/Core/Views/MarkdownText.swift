@@ -350,7 +350,7 @@ enum HostFileURL {
 enum FlatSegment: Sendable {
     case text(AttributedString)
     case codeBlock(language: String?, code: String)
-    case table(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]])
+    case table(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]], alignments: [MarkdownTableAlignment?] = [])
     case thematicBreak
     /// A standalone image paragraph. The URL is fully resolved at build time
     /// using the workspace context or a host-file source. Rendered by `NativeMarkdownImageView`,
@@ -611,14 +611,14 @@ enum FlatSegment: Sendable {
                         appendSegment(segment, lineRange: lineRange)
                         emittedAnyRenderable = true
 
-                    case .table(let headers, let rows):
+                    case .table(let headers, let rows, let alignments):
                         if !itemHasPrefix {
                             textLines.append(markerForItem(itemIndex))
                             itemHasPrefix = true
                         }
                         flushListTextLines()
                         flushPendingText()
-                        appendSegment(.table(headers: headers, rows: rows), lineRange: lineRange)
+                        appendSegment(.table(headers: headers, rows: rows, alignments: alignments), lineRange: lineRange)
                         emittedAnyRenderable = true
 
                     case .thematicBreak:
@@ -729,9 +729,9 @@ enum FlatSegment: Sendable {
                 flushPendingText()
                 appendCodeSegment(language: language, code: code, lineRange: lineRange)
 
-            case .table(let headers, let rows):
+            case .table(let headers, let rows, let alignments):
                 flushPendingText()
-                appendSegment(.table(headers: headers, rows: rows), lineRange: lineRange)
+                appendSegment(.table(headers: headers, rows: rows, alignments: alignments), lineRange: lineRange)
 
             case .thematicBreak:
                 flushPendingText()
@@ -1494,7 +1494,7 @@ enum FlatSegment: Sendable {
 
     enum MarkdownInlineRenderPiece {
         case attributed(NSAttributedString)
-        case table(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]])
+        case table(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]], alignments: [MarkdownTableAlignment?] = [])
     }
 
     /// Split markdown into text runs and table blocks for hosts that can
@@ -1534,9 +1534,9 @@ enum FlatSegment: Sendable {
 
         for block in blocks {
             switch block {
-            case .table(let headers, let rows):
+            case .table(let headers, let rows, let alignments):
                 flushPendingText()
-                pieces.append(.table(headers: headers, rows: rows))
+                pieces.append(.table(headers: headers, rows: rows, alignments: alignments))
 
             case .codeBlock(_, let code):
                 let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)

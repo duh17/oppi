@@ -5,10 +5,12 @@ import UIKit
 
 /// `SCREENSHOT_SCREEN=markdown-tables`: one assistant message with the table
 /// shapes chat meets, drawn by the live markdown renderer at the window's width:
-/// a prose table that fits by wrapping, a wide table that scrolls sideways at any
-/// device width, phone to 13-inch iPad (the "N more columns" cue; the planner wraps
-/// prose but never breaks a word, so its long header words force the scroll), a 30-row table
-/// folded behind "Show all 30 rows", and cells with inline code and bold.
+/// a short benchmark table (4 columns, 3 rows) that is just too wide for a phone
+/// in portrait, a prose table that fits by wrapping, an 8-column table of numbers
+/// with right-aligned delimiters, a wide table that scrolls sideways at any device
+/// width, phone to 13-inch iPad (the planner wraps prose but never breaks a word,
+/// so its long header words force the scroll), a 40-row table folded behind
+/// "Show all 40 rows", and cells with inline code and bold.
 final class MarkdownTablesPreviewController: PreviewRootController {
     init(root: AppRootEnvironment) {
         super.init(
@@ -22,8 +24,16 @@ final class MarkdownTablesPreviewController: PreviewRootController {
     required init?(coder: NSCoder) { nil }
 
     private static var message: String {
-        let longRows = (1 ... 30).map { "| item-\($0) | value \($0) | \($0 % 3 == 0 ? "done" : "open") |" }
+        let longRows = (1 ... 40).map { "| item-\($0) | value \($0) | \($0 % 3 == 0 ? "done" : "open") |" }
         return """
+        Parse times, median of 50 runs:
+
+        | Input | comrak, parse only | Oppi tonight, full pipeline | swift-cmark alone |
+        | --- | --- | --- | --- |
+        | 6 KB message | 0.03 ms | 0.08 ms | — |
+        | 67 KB report | 0.35 ms | 1.5 ms | — |
+        | 273 KB session | 1.1 ms | 4.1 ms | about 2.0 ms |
+
         Here is how the three options compare.
 
         | Work | Commit | Qualification |
@@ -31,6 +41,15 @@ final class MarkdownTablesPreviewController: PreviewRootController {
         | Timeline fold | 3f9c2a1 | Folds tables past twenty rows behind a bar that opens the full table. |
         | Fit to width | 8d41e7b | Wraps the long column into the room that is left instead of cutting it off. |
         | Overflow cue | c20b5f6 | Fades the edge and counts the columns that are still off screen. |
+
+        Launch and scroll on each test device:
+
+        | Device | OS | Cold launch | Warm launch | Scroll p50 | Scroll p95 | Peak memory | Battery per hour |
+        | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+        | iPhone 16 Pro | iOS 27.1 | 412 ms | 118 ms | 8.1 ms | 14.6 ms | 182 MB | 4.2% |
+        | iPhone 13 mini | iOS 26.4 | 655 ms | 171 ms | 9.8 ms | 21.3 ms | 164 MB | 6.0% |
+        | iPad mini (A17 Pro) | iPadOS 27.1 | 398 ms | 104 ms | 7.9 ms | 13.2 ms | 211 MB | 3.1% |
+        | iPhone SE (3rd generation) | iOS 26.4 | 1,702 ms | 190 ms | 11.4 ms | 26.8 ms | 151 MB | 7.4% |
 
         And the wide one, which cannot fit a phone or an iPad:
 

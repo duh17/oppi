@@ -74,11 +74,11 @@ You are running in Oppi: your Markdown renders in a native iPhone/iPad app.
 | --- | --- |
 | Markdown and thinking text | Text Size, Spacing, Reset View |
 | Code, Graphviz source, plain source text, terminal output, code-mode scripts | Text Size, Wrap Text, Reset View |
-| Diffs, HTML, CSV and TSV tables | Text Size, Reset View |
+| Diffs, HTML, full-screen tables (Markdown, CSV, and TSV) | Text Size, Reset View |
 | Org and LaTeX rendered documents | Text Size, Spacing (text-based), Reset View |
 | Mermaid diagrams, GeoJSON and TopoJSON maps | None when rendered; Source uses the code options |
 
-Options apply to one content family and are stored on this device only: markdown, code, source, diff, terminal, HTML, rendered document. Changing terminal wrapping does not change Markdown spacing. **Reset View** returns the active family to defaults.
+Options apply to one content family and are stored on this device only: markdown, code, source, diff, terminal, HTML, rendered document, table. Changing terminal wrapping does not change Markdown spacing. **Reset View** returns the active family to defaults.
 
 ### Text size
 
@@ -96,11 +96,12 @@ The toolbar toggles Markdown (Reader / Source), HTML (Preview / Source), HTML di
 
 ## Tables
 
-A Markdown table's cells use the message text, so they follow Dynamic Type and **Message Text Size**; only inline code in a cell uses the code font. A table in chat or in the reader keeps short values, such as dates, times, and counts, on one line. A table with long text, such as a column of descriptions, grows as wide as the text around it, the reader's column included, before it wraps that text; a table that needs less width keeps its own. A table wider than the screen wraps its longer columns to fit when every column stays readable and no word breaks in the middle. Otherwise it scrolls sideways, and a fade and an **N more columns** button at its edge count the columns that are out of view.
+A Markdown table's cells use the message text, so they follow Dynamic Type and **Message Text Size**; only inline code in a cell uses the code font. A table in chat or in the reader keeps short values, such as dates, times, and counts, on one line. A long header over short values wraps instead. A table with long text, such as a column of descriptions, grows as wide as the text around it, the reader's column included, before it wraps that text; a table that needs less width keeps its own. A table wider than the screen wraps its longer columns to fit when every column stays readable and no word breaks in the middle. Otherwise it scrolls sideways, with a fade at its edge, and a **Show all N columns** bar under its rows.
 
-- **Long tables.** In chat, a table longer than 20 rows shows its first 20 and a **Show all N rows** bar. The reader and exports show every row.
-- **Table viewer.** **N more columns** and **Show all N rows** open the whole table full screen. Its header row stays at the top while the rows scroll. Tap a cell to read its full text and copy it. **Copy** in the toolbar offers **Copy as Markdown** and **Copy as TSV**. The viewer shows up to 500 rows, 32 columns, and 256 characters per cell, as for CSV and TSV files, and when a table is cut, copy takes only the part shown.
-- **Copy.** Touch and hold **N more columns** for the same two copy actions, which always take every row. Text selected across cells copies as tab-separated cells, ready to paste into a spreadsheet.
+- **Alignment.** A column follows the colons in the table's delimiter row: `:---` left, `:---:` centered, `---:` right. A column without colons that holds only numbers is right-aligned, header included. A number can have a sign, a currency, a short unit, or a word such as "about" ("0.35 ms", "$7.76", "12%", "about 2 s"); a dash or "n/a" counts as an empty cell. Digits in a table all have the same width, so numbers line up.
+- **Long tables.** In chat, a table longer than 20 rows shows its first 20 and a **Show all N rows** bar. When columns are cut as well, the bar reads **Show all N rows · M columns**. The reader and exports show every row.
+- **Full screen.** The bar under a table opens it full screen. Touch and hold any table in chat and choose **View Full Screen** to open one that fits. Where a touch and hold selects text, **View Full Screen** is in the menu for the selection. VoiceOver offers it as an action on every cell. Full screen shows the same table with every row, fit to the screen and centered on a wide one. Its text size follows **Viewing Options**, and a caption gives its size in columns and rows. Its header row stays under the bar while the rows scroll. Touch and hold a cell to select its text. **Copy** in the toolbar offers **Copy as Markdown** and **Copy as TSV**; **Share** shares a TSV file.
+- **Copy.** Touch and hold a table, or its bar, for **Copy as Markdown** and **Copy as TSV**, which always take every row. Text selected across cells copies as tab-separated cells, ready to paste into a spreadsheet.
 - **Formatting.** Bold, italic, strikethrough, `code`, links, and math show in cells.
 
 ## Math

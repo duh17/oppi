@@ -68,10 +68,12 @@ enum MarkdownBlockSerializer {
         case .thematicBreak:
             return "---"
 
-        case .table(let headers, let rows):
+        case .table(let headers, let rows, let alignments):
             guard !headers.isEmpty else { return "" }
             let headerRow = "| " + headers.map { serializeInlines($0) }.joined(separator: " | ") + " |"
-            let separator = "| " + headers.map { _ in "---" }.joined(separator: " | ") + " |"
+            let separator = "| " + headers.indices.map { column in
+                (column < alignments.count ? alignments[column] : nil)?.delimiter ?? "---"
+            }.joined(separator: " | ") + " |"
             let dataRows = rows.map { row in
                 "| " + row.map { serializeInlines($0) }.joined(separator: " | ") + " |"
             }

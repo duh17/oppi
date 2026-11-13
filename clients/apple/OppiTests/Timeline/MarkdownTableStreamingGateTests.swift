@@ -130,7 +130,7 @@ struct MarkdownTableStreamingGateTests {
         )
         func rowCount(_ content: String) -> Int {
             let kept = AssistantMarkdownSegmentSource.droppingUnfinishedTableRow([table], content: content)
-            guard case .table(_, let rows)? = kept.last else { return -1 }
+            guard case .table(_, let rows, _)? = kept.last else { return -1 }
             return rows.count
         }
         #expect(rowCount("| A |\n|---|\n| 1 |\n| 2") == 1)

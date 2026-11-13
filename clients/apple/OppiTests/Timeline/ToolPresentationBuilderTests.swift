@@ -288,7 +288,7 @@ struct ToolPresentationBuilderTests {
         let blocks = parseCommonMark(text)
         #expect(blocks.contains(.codeBlock(language: "text", code: errorMessage)))
         #expect(blocks.contains { block in
-            guard case .table(_, let rows) = block else { return false }
+            guard case .table(_, let rows, _) = block else { return false }
             return rows.contains { $0.map { plainText(from: $0) } == ["text", "https://example.com/private-link"] }
         })
         #expect(config.copyOutputText == errorMessage)
@@ -1774,7 +1774,7 @@ struct ToolPresentationBuilderTests {
             return
         }
         #expect(parseCommonMark(autoJSONText).contains { block in
-            guard case .table(_, let rows) = block else { return false }
+            guard case .table(_, let rows, _) = block else { return false }
             return rows.contains { $0.map { plainText(from: $0) }.contains("EXT-1") }
         })
 

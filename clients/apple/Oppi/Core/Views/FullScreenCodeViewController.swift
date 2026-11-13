@@ -686,10 +686,10 @@ final class FullScreenCodeViewController: UIViewController {
         var offers = makeReaderNavigationItems(palette: palette).merging(hostOffers) { own, _ in own }
 
         let copyImage = UIImage(systemName: "doc.on.doc")
-        let copy = (installedBodyView as? DelimitedTableRenderView).map { table in
-            // A table copies as TSV or Markdown, so Copy asks which.
-            UIBarButtonItem(image: copyImage, menu: table.makeCopyMenu { [weak self] in self?.finishCopy($0) })
-        } ?? UIBarButtonItem(image: copyImage, style: .plain, target: self, action: #selector(copyTapped))
+        // A table copies as TSV or Markdown, so Copy asks which.
+        let copy = installedBodyView?.makeCopyMenu { [weak self] in self?.finishCopy($0) }
+            .map { UIBarButtonItem(image: copyImage, menu: $0) }
+            ?? UIBarButtonItem(image: copyImage, style: .plain, target: self, action: #selector(copyTapped))
         // Titled, so a … menu that holds Copy names it.
         copy.title = ReaderBarAction.copy.label
         copy.tintColor = palette.ui.fgDim

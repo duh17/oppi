@@ -76,6 +76,31 @@ struct TableViewerTests {
         }
     }
 
+    /// The reader's body runs under its floating bar. A table shorter than the
+    /// screen still has to start below the bar, not under the Back button.
+    @Test func shortTableInTheReaderStartsBelowTheBar() throws {
+        let controller = FullScreenCodeViewController(content: .document(.delimitedTable(
+            text: "alpha,beta\nr1,v1\nr2,v2\n",
+            filePath: "short.csv"
+        )))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { hideTestWindow(window) }
+        window.layoutIfNeeded()
+
+        let bar = try #require(timelineFirstView(ofType: UINavigationBar.self, in: window))
+        let grid = try #require(timelineAllViews(in: window).compactMap { $0 as? UICollectionView }.first {
+            $0.accessibilityIdentifier == "delimited-table.grid"
+        })
+        grid.layoutIfNeeded()
+        #expect(grid.contentSize.height < grid.bounds.height, "Fixture: the rows fit without scrolling")
+        let header = try #require(grid.cellForItem(at: IndexPath(item: 0, section: 0)))
+        let headerTop = header.convert(header.bounds, to: window).minY
+        let barBottom = bar.convert(bar.bounds, to: window).maxY
+        #expect(headerTop >= barBottom - 0.5, "Header at \(headerTop) sits under the bar ending at \(barBottom)")
+    }
+
     @Test func headerCellsAreHeadersForVoiceOverAndBodyCellsNameTheirColumnAndRow() throws {
         let (_, grid, window) = try makeGrid(rows: 5)
         defer { window.isHidden = true }

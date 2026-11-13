@@ -973,10 +973,10 @@ final class UserTimelineRowContentView: UIView, UIContentView {
                     extraMarkdownTextViews.append(extra)
                 }
 
-            case .table(let headers, let rows):
+            case .table(let headers, let rows, let alignments):
                 let table = NativeTableBlockView()
                 table.rowFoldLimit = NativeTableBlockView.chatFoldRowLimit
-                table.apply(headers: headers, rows: rows, palette: palette)
+                table.apply(headers: headers, rows: rows, alignments: alignments, palette: palette)
                 bodyStack.addArrangedSubview(table)
                 tableBlockViews.append(table)
             }

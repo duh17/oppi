@@ -28,7 +28,7 @@ extension FullScreenCodeContent {
             return family.filePath
         case .book(let document):
             return document.filePath
-        case .thinking, .terminal, .liveSource, .notebook:
+        case .thinking, .terminal, .liveSource, .notebook, .markdownTable:
             return nil
         }
     }
@@ -49,6 +49,7 @@ extension FullScreenCodeContent {
         case .mermaid: return "mermaid"
         case .graphviz: return "graphviz"
         case .document(let family): return family.kindName
+        case .markdownTable: return "markdownTable"
         case .notebook: return "notebook"
         case .book: return "book"
         }
@@ -61,6 +62,8 @@ extension FullScreenCodeContent {
         switch self {
         case .markdown, .thinking, .orgMode:
             return .markdown
+        case .markdownTable:
+            return .table
         case .code, .graphviz:
             return .code
         case .plainText:
@@ -147,7 +150,7 @@ extension FullScreenCodeContent {
             return family.sourceContent
         case .liveSource(let trace, _):
             return trace.snapshot.readerContent.sourceContent(completeRaw: completeRaw)
-        case .code, .plainText, .thinking, .terminal, .graphviz, .notebook, .book:
+        case .code, .plainText, .thinking, .terminal, .graphviz, .notebook, .book, .markdownTable:
             return nil
         }
     }
@@ -171,7 +174,7 @@ extension FullScreenCodeContent {
             return family.sourceToggleTitle(showingSource: showingSource)
         case .liveSource(let trace, _):
             return trace.snapshot.readerContent.sourceToggleTitle(showingSource: showingSource)
-        case .code, .plainText, .thinking, .terminal, .graphviz, .notebook, .book:
+        case .code, .plainText, .thinking, .terminal, .graphviz, .notebook, .book, .markdownTable:
             return nil
         }
     }
@@ -196,6 +199,8 @@ extension FullScreenCodeContent {
             return trace.snapshot.readerContent.copyText(showingSource: showingSource, completeRaw: completeRaw)
         case .document(let family):
             return family.text
+        case .markdownTable(let document):
+            return document.text(.markdown)
         case .notebook(let plan):
             return plan.readerText
         case .book:
@@ -217,6 +222,7 @@ extension FullScreenCodeContent {
         case .html(let text, let filePath): return .html(text, fileName: filePath)
         case .graphviz(let text, let filePath): return .code(text, language: "dot", fileName: filePath)
         case .document(let family): return family.shareableContent(fileName: family.filePath)
+        case .markdownTable(let document): return .plainText(document.text(.tsv), fileName: "table.tsv")
         case .code(let text, let lang, let filePath, _): return .code(text, language: lang, fileName: filePath)
         case .plainText(let text, let filePath): return .plainText(text, fileName: filePath)
         case .thinking(let text, let trace):
@@ -266,6 +272,8 @@ extension FullScreenCodeContent {
             text = content
         case .document(let family):
             text = family.text
+        case .markdownTable(let document):
+            text = document.text(.markdown)
         case .notebook(let plan):
             text = plan.readerText
         case .book:
@@ -490,6 +498,14 @@ extension FullScreenCodeContent {
             )
         case .document(let family):
             return family.makeFullScreenBody(palette: palette, readerPreferences: readerPreferences)
+        case .markdownTable(let document):
+            return MarkdownTableReaderBody(
+                document: document,
+                palette: palette,
+                readerPreferences: readerPreferences,
+                reviewCommentSelectionRouter: router,
+                reviewCommentSourceContext: context.sourceContext(surface: .fullScreenMarkdown)
+            )
         case .book(let document):
             let body = BookReaderBody(
                 document: document,

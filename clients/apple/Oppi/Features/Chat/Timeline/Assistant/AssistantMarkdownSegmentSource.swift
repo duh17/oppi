@@ -367,6 +367,7 @@ final class AssistantMarkdownSegmentSource {
         let buildContext: SegmentBuildContext
         let headers: [[MarkdownInline]]
         let rows: [[[MarkdownInline]]]
+        let alignments: [MarkdownTableAlignment?]
     }
 
     private var openTableSegment: OpenTableSegment?
@@ -380,8 +381,9 @@ final class AssistantMarkdownSegmentSource {
     ) -> [FlatSegment]? {
         guard let kept = openTableSegment, kept.id == parsed.blockIDs.last, kept.buildContext == buildContext,
               parsed.openTableUnchangedRows >= kept.rows.count,
-              shownTail.count == 1, case .table(_, let rows) = shownTail[0], rows.count >= kept.rows.count else { return nil }
-        guard rows.count > kept.rows.count else { return [.table(headers: kept.headers, rows: kept.rows)] }
+              shownTail.count == 1, case .table(_, let rows, let alignments) = shownTail[0],
+              alignments == kept.alignments, rows.count >= kept.rows.count else { return nil }
+        guard rows.count > kept.rows.count else { return [.table(headers: kept.headers, rows: kept.rows, alignments: kept.alignments)] }
         let built = FlatSegment.build(
             from: [.table(headers: [], rows: Array(rows[kept.rows.count...]))],
             themeID: buildContext.themeID,
@@ -392,8 +394,8 @@ final class AssistantMarkdownSegmentSource {
             sourceDirectory: buildContext.sourceDirectory,
             worktreeId: buildContext.worktreeId
         )
-        guard built.count == 1, case .table(_, let newRows) = built[0] else { return nil }
-        return [.table(headers: kept.headers, rows: kept.rows + newRows)]
+        guard built.count == 1, case .table(_, let newRows, _) = built[0] else { return nil }
+        return [.table(headers: kept.headers, rows: kept.rows + newRows, alignments: kept.alignments)]
     }
 
     private func recordOpenTableSegment(
@@ -403,11 +405,11 @@ final class AssistantMarkdownSegmentSource {
         buildContext: SegmentBuildContext
     ) {
         guard tail.count == 1, case .table = tail[0], segments.count == 1,
-              case .table(let headers, let rows) = segments[0], let id = parsed.blockIDs.last else {
+              case .table(let headers, let rows, let alignments) = segments[0], let id = parsed.blockIDs.last else {
             openTableSegment = nil
             return
         }
-        openTableSegment = OpenTableSegment(id: id, buildContext: buildContext, headers: headers, rows: rows)
+        openTableSegment = OpenTableSegment(id: id, buildContext: buildContext, headers: headers, rows: rows, alignments: alignments)
     }
 
     /// A table at the open tail shows only the rows whose line has ended.
@@ -420,14 +422,14 @@ final class AssistantMarkdownSegmentSource {
         _ blocks: [MarkdownBlock],
         content: String
     ) -> [MarkdownBlock] {
-        guard case .table(let headers, let rows)? = blocks.last, !rows.isEmpty else { return blocks }
+        guard case .table(let headers, let rows, let alignments)? = blocks.last, !rows.isEmpty else { return blocks }
         let newline = UInt8(ascii: "\n")
         let lastLine = content.utf8.reversed().prefix { $0 != newline }
         // Spaces after the last newline start no row.
         guard lastLine.contains(where: { $0 != UInt8(ascii: " ") && $0 != UInt8(ascii: "\t") && $0 != UInt8(ascii: "\r") })
         else { return blocks }
         var dropped = blocks
-        dropped[dropped.count - 1] = .table(headers: headers, rows: Array(rows.dropLast()))
+        dropped[dropped.count - 1] = .table(headers: headers, rows: Array(rows.dropLast()), alignments: alignments)
         return dropped
     }
 

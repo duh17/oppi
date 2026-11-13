@@ -588,7 +588,7 @@ final class AssistantMarkdownSegmentApplier {
             stackView.addArrangedSubview(codeView)
             codeBlockViews[index] = codeView
 
-        case .table(let headers, let rows):
+        case .table(let headers, let rows, let alignments):
             let tableView = NativeTableBlockView()
             tableView.configureReviewCommentSelection(
                 router: config.reviewCommentSelectionRouter,
@@ -602,7 +602,7 @@ final class AssistantMarkdownSegmentApplier {
                 workspaceID: config.resourceAccess.identity.workspaceID
             )
             configureTableChrome(tableView, config: config)
-            tableView.apply(headers: headers, rows: rows, palette: palette)
+            tableView.apply(headers: headers, rows: rows, alignments: alignments, palette: palette)
             stackView.addArrangedSubview(tableView)
             tableViews[index] = tableView
 
@@ -862,9 +862,9 @@ final class AssistantMarkdownSegmentApplier {
         config: AssistantMarkdownContentView.Configuration
     ) {
         for index in max(0, start) ..< max(max(0, start), min(end, segments.count)) {
-            guard case .table(let headers, let rows) = segments[index], let tableView = tableViews[index] else { continue }
+            guard case .table(let headers, let rows, let alignments) = segments[index], let tableView = tableViews[index] else { continue }
             configureTableChrome(tableView, config: config)
-            tableView.apply(headers: headers, rows: rows, palette: config.themeID.palette)
+            tableView.apply(headers: headers, rows: rows, alignments: alignments, palette: config.themeID.palette)
         }
     }
 
@@ -960,7 +960,7 @@ final class AssistantMarkdownSegmentApplier {
                     }
                 }
 
-            case .table(let headers, let rows):
+            case .table(let headers, let rows, let alignments):
                 if let tableView = tableViews[index] {
                     #if DEBUG
                     debugInPlaceTableApplyCountForTesting += 1
@@ -977,7 +977,7 @@ final class AssistantMarkdownSegmentApplier {
                         workspaceID: config.resourceAccess.identity.workspaceID
                     )
                     configureTableChrome(tableView, config: config)
-                    tableView.apply(headers: headers, rows: rows, palette: palette)
+                    tableView.apply(headers: headers, rows: rows, alignments: alignments, palette: palette)
                 }
 
             case .thematicBreak:

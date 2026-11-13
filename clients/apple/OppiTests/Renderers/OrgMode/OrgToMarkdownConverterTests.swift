@@ -21,7 +21,7 @@ struct OrgToMarkdownConverterTests {
 
         // Should produce exactly one table block
         #expect(mdBlocks.count == 1)
-        guard case .table(let headers, let rows) = mdBlocks[0] else {
+        guard case .table(let headers, let rows, _) = mdBlocks[0] else {
             Issue.record("Expected table block, got \(mdBlocks[0])")
             return
         }

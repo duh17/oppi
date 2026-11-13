@@ -657,10 +657,6 @@ struct MarkdownTableGridTests {
         #expect(streamedText.string == settledText.string)
         #expect(streamedText.isEqual(to: settledText), "\(Self.firstDifference(streamedText, settledText))")
         #expect(table.debugMeasuredHeightForTesting == settled.debugMeasuredHeightForTesting)
-        #expect(
-            NativeTableBlockView.makeTableAttributedText(headers: Self.clipHeaders, rows: rows, palette: palette)
-                .isEqual(to: settledText)
-        )
     }
 
     @Test func streamedClipTableRebuildsWhenAColumnWidens() throws {

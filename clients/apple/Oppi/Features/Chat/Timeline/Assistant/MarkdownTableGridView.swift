@@ -32,7 +32,7 @@ final class MarkdownTableGridRenderer: NSObject, CALayerDelegate, @unchecked Sen
         UIGraphicsPushContext(ctx)
         defer { UIGraphicsPopContext() }
 
-        let inset = MarkdownTableColumnLayout.horizontalContentInset
+        let inset = layout.style.gutters.inset
         for row in rows {
             let color: UIColor? = if row == 0 {
                 layout.style.headerBackground
@@ -144,6 +144,10 @@ final class MarkdownTableGridView: UIView {
     var linkTextColor: UIColor = .link
     /// Opens a link from a VoiceOver activation.
     var onOpenLink: ((URL, UIView) -> Void)?
+    /// VoiceOver actions every cell offers after its links' (View Full Screen).
+    var cellAccessibilityActions: [UIAccessibilityCustomAction] = [] {
+        didSet { accessibilityCells = nil }
+    }
 
     private(set) var activeCell: (row: Int, column: Int)?
     private(set) var activeTextView: BaselineSafeTextView?
@@ -368,6 +372,7 @@ final class MarkdownTableGridView: UIView {
                         }
                     }
                 }
+                element.accessibilityCustomActions = (element.accessibilityCustomActions ?? []) + cellAccessibilityActions
                 element.accessibilityTraits = traits
                 elements.append(element)
             }
@@ -396,5 +401,12 @@ extension MarkdownTableGridView: UIAccessibilityContainerDataTable {
     func accessibilityHeaderElements(forColumn column: Int) -> [any UIAccessibilityContainerDataTableCell]? {
         guard let layout, column >= 0, column < layout.columnWidths.count else { return nil }
         return [cellElements()[column]]
+    }
+
+    /// A body row reads with its first cell, which in Markdown tables names the
+    /// row ("273 KB session"), so moving down a column says which row a value is in.
+    func accessibilityHeaderElements(forRow row: Int) -> [any UIAccessibilityContainerDataTableCell]? {
+        guard let layout, row > 0, row < layout.cells.count, layout.columnWidths.count > 1 else { return nil }
+        return [cellElements()[row * layout.columnWidths.count]]
     }
 }

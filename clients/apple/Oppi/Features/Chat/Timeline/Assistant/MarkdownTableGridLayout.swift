@@ -14,6 +14,7 @@ struct MarkdownTableGridStyle: Equatable, @unchecked Sendable {
     let link: UIColor
     let code: UIColor
     let fonts: TableInlineText.Fonts
+    let gutters: MarkdownTableColumnLayout.Gutters
     /// Formula ink. Not compared: the resolved colors above change with it.
     let palette: ThemePalette
     /// What the grid shows under a cell, composited over the card it sits on: an
@@ -22,7 +23,12 @@ struct MarkdownTableGridStyle: Equatable, @unchecked Sendable {
     private let headerCellBackground: UIColor
     private let zebraCellBackground: UIColor
 
-    init(palette: ThemePalette, traits: UITraitCollection, fonts: TableInlineText.Fonts) {
+    init(
+        palette: ThemePalette,
+        traits: UITraitCollection,
+        fonts: TableInlineText.Fonts,
+        gutters: MarkdownTableColumnLayout.Gutters = .message
+    ) {
         let highlight = palette.ui.bgHighlight.resolvedColor(with: traits)
         headerBackground = highlight
         zebraBackground = highlight.withAlphaComponent(0.45)
@@ -32,6 +38,7 @@ struct MarkdownTableGridStyle: Equatable, @unchecked Sendable {
         link = palette.ui.blue.resolvedColor(with: traits)
         code = palette.ui.mdCode.resolvedColor(with: traits)
         self.fonts = fonts
+        self.gutters = gutters
         self.palette = palette
         let card = palette.ui.bgDark.resolvedColor(with: traits)
         plainCellBackground = card
@@ -80,7 +87,7 @@ struct MarkdownTableGridStyle: Equatable, @unchecked Sendable {
         lhs.headerBackground == rhs.headerBackground && lhs.zebraBackground == rhs.zebraBackground
             && lhs.separator == rhs.separator && lhs.headerText == rhs.headerText
             && lhs.bodyText == rhs.bodyText && lhs.link == rhs.link && lhs.code == rhs.code
-            && lhs.fonts == rhs.fonts && lhs.plainCellBackground == rhs.plainCellBackground
+            && lhs.fonts == rhs.fonts && lhs.gutters == rhs.gutters && lhs.plainCellBackground == rhs.plainCellBackground
             && lhs.headerCellBackground == rhs.headerCellBackground
             && lhs.zebraCellBackground == rhs.zebraCellBackground
     }
@@ -106,6 +113,8 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
     static let cellDrawingOptions: NSStringDrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
 
     let columnWidths: [CGFloat]
+    /// Each column's alignment; the header row follows its column.
+    let alignments: [MarkdownTableColumnAlignment]
     let style: MarkdownTableGridStyle
     let scale: CGFloat
     let separatorHeight: CGFloat
@@ -127,19 +136,21 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
         headers: [[MarkdownInline]],
         rows: [[[MarkdownInline]]],
         columnWidths: [CGFloat],
+        alignments: [MarkdownTableColumnAlignment] = [],
         style: MarkdownTableGridStyle,
         scale: CGFloat
     ) {
         self.columnWidths = columnWidths
+        self.alignments = alignments
         self.style = style
         self.scale = max(scale, 1)
         separatorHeight = 1 / max(scale, 1)
 
         var origins: [CGFloat] = []
-        var x = MarkdownTableColumnLayout.horizontalContentInset
+        var x = style.gutters.inset
         for width in columnWidths {
             origins.append(x)
-            x += width + MarkdownTableColumnLayout.columnSpacing
+            x += width + style.gutters.column
         }
         columnOrigins = origins
 
@@ -154,11 +165,11 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
     /// Width of the columns and the gaps between them.
     var gridWidth: CGFloat {
         columnWidths.reduce(0, +)
-            + MarkdownTableColumnLayout.columnSpacing * CGFloat(max(0, columnWidths.count - 1))
+            + style.gutters.column * CGFloat(max(0, columnWidths.count - 1))
     }
 
     var contentWidth: CGFloat {
-        gridWidth + MarkdownTableColumnLayout.horizontalContentInset * 2
+        gridWidth + style.gutters.inset * 2
     }
 
     /// Height of the whole table, padding included.
@@ -172,6 +183,14 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
     /// Y of the separator line.
     var separatorOrigin: CGFloat {
         (rowOrigins.first ?? Self.verticalPadding) + (rowHeights.first ?? 0)
+    }
+
+    /// The header row alone, as drawn here: a copy to pin above the rows.
+    @MainActor
+    var headerOnly: Self {
+        var header = self
+        header.replaceBodyRows(keeping: 0, with: [])
+        return header
     }
 
     /// Keeps the header and the first `keptRows` body rows, then builds the rest
@@ -197,7 +216,8 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
         var tallest: CGFloat = 0
         for (column, width) in columnWidths.enumerated() {
             let cell = column < inlines.count ? inlines[column] : [.text("")]
-            let text = Self.cellText(cell, isHeader: isHeader, style: style)
+            let alignment = column < alignments.count ? alignments[column] : .leading
+            let text = Self.cellText(cell, isHeader: isHeader, alignment: alignment, style: style)
             rowCells.append(text)
             drawnRow.append(Self.withoutLinks(text))
             tallest = max(tallest, Self.cellHeight(text, width: width))
@@ -219,10 +239,15 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
     // MARK: Cell text
 
     @MainActor
-    static func cellParagraphStyle() -> NSParagraphStyle {
+    static func cellParagraphStyle(alignment: MarkdownTableColumnAlignment = .leading) -> NSParagraphStyle {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byWordWrapping
         paragraph.lineSpacing = 2
+        paragraph.alignment = switch alignment {
+        case .leading: .natural
+        case .center: .center
+        case .trailing: .right
+        }
         return paragraph
     }
 
@@ -230,10 +255,11 @@ struct MarkdownTableGridLayout: @unchecked Sendable {
     static func cellText(
         _ inlines: [MarkdownInline],
         isHeader: Bool,
+        alignment: MarkdownTableColumnAlignment = .leading,
         style: MarkdownTableGridStyle
     ) -> NSAttributedString {
         let colors = isHeader ? style.headerColors : style.cellColors
-        let paragraph = cellParagraphStyle()
+        let paragraph = cellParagraphStyle(alignment: alignment)
         let result = NSMutableAttributedString()
         TableInlineText.appendCell(
             inlines,

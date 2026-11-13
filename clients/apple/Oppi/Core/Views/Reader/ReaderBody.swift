@@ -25,6 +25,11 @@ protocol ReaderBody: UIView {
     /// chapter changes under the reader, so its content's text would be stale.
     var liveCopyText: String? { get }
 
+    /// The menu Copy shows when the body's text copies more than one way (a
+    /// table as TSV or Markdown). `didCopy` gets the chosen text; the reader puts
+    /// it on the pasteboard and confirms. Nil: Copy copies on a tap.
+    func makeCopyMenu(didCopy: @escaping (String) -> Void) -> UIMenu?
+
     /// What the reader's Pick menu and Comment button act on (HTML elements,
     /// Mermaid objects).
     var picker: (any ReaderPicking)? { get }
@@ -85,6 +90,8 @@ enum ReaderAnnotateAvailability: Equatable {
 
 extension ReaderBody {
     var liveCopyText: String? { nil }
+
+    func makeCopyMenu(didCopy: @escaping (String) -> Void) -> UIMenu? { nil }
 
     var onImmersiveChromeChange: ((Bool) -> Void)? {
         get { nil }

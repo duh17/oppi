@@ -429,7 +429,22 @@ private func convertCMarkTable(
         rowNode = cmark_node_next(row)
     }
 
-    return .table(headers: headers, rows: rows)
+    return .table(headers: headers, rows: rows, alignments: tableAlignments(node, columns: headers.count))
+}
+
+/// The delimiter row's alignments, or none when no column sets one.
+private func tableAlignments(_ node: UnsafeMutablePointer<cmark_node>, columns: Int) -> [MarkdownTableAlignment?] {
+    let count = min(columns, Int(cmark_gfm_extensions_get_table_columns(node)))
+    guard count > 0, let raw = cmark_gfm_extensions_get_table_alignments(node) else { return [] }
+    let alignments = (0 ..< count).map { index -> MarkdownTableAlignment? in
+        switch UInt8(raw[index]) {
+        case UInt8(ascii: "l"): .left
+        case UInt8(ascii: "c"): .center
+        case UInt8(ascii: "r"): .right
+        default: nil
+        }
+    }
+    return alignments.contains { $0 != nil } ? alignments : []
 }
 
 private func extractCMarkPlainText(

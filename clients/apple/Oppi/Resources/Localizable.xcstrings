@@ -177,6 +177,28 @@
         }
       }
     },
+    "%lld columns" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld column"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld columns"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld files touched" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -206,28 +228,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld 行"
-          }
-        }
-      }
-    },
-    "%lld more columns" : {
-      "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld more column"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld more columns"
-                }
-              }
-            }
           }
         }
       }
@@ -3096,6 +3096,28 @@
     "Show %@ more" : {
 
     },
+    "Show all %lld columns" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Show all %lld column"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Show all %lld columns"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Show all %lld rows" : {
 
     },
@@ -3698,7 +3720,6 @@
       }
     },
     "View Full Screen" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {

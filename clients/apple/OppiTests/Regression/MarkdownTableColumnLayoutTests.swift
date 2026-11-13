@@ -47,9 +47,12 @@ struct MarkdownTableColumnLayoutTests {
     // MARK: - Fit to the viewport
 
     /// `words`: each column's longest unbreakable word; prose of short words by default.
+    /// `values`: each column's widest body cell; by default every column is as
+    /// wide as its values (no header is longer than them).
     private static func plan(
         _ naturals: [CGFloat],
         words: [CGFloat]? = nil,
+        values: [CGFloat]? = nil,
         available: CGFloat?,
         scale: CGFloat = 3
     ) -> MarkdownTableColumnLayout.Plan {
@@ -60,6 +63,7 @@ struct MarkdownTableColumnLayoutTests {
             longestWordWidths: words ?? naturals.map { min($0, 40) },
             clipContentWidth: clipWidth,
             availableWidth: available,
+            valueWidths: values ?? naturals,
             displayScale: scale
         )
     }
@@ -93,8 +97,61 @@ struct MarkdownTableColumnLayoutTests {
         #expect(MarkdownTableColumnLayout.gridContentWidth(columnWidths: plan.columnWidths) <= available)
     }
 
+    // MARK: Long headers over short values
+
+    /// A benchmark table: row labels, then timings under long headers. The
+    /// headers wrap at their words and the timings stay whole, so the table fits
+    /// a phone's chat column instead of scrolling sideways.
+    @Test func longHeadersOverShortValuesWrapInsteadOfScrolling() {
+        let unit = MarkdownTableColumnLayout.characterWidth
+        let protected = MarkdownTableColumnLayout.protectedColumnWidth
+        // "Input" over "273 KB session"; "comrak, parse only" over "0.35 ms"; ...
+        let naturals = [11.4, 14.8, 19.5, 14.0].map { ceil($0 * unit) }
+        let values = [11.4, 6.0, 6.0, 9.7].map { ceil($0 * unit) }
+        let words = [6.7, 6.3, 6.1, 4.9].map { ceil($0 * unit) }
+        let available = MarkdownTableColumnLayout.gridContentWidth(columnWidths: [
+            max(MarkdownTableColumnLayout.minimumFitColumnWidth, words[0]), words[1], words[2], values[3],
+        ]) + 2
+
+        let plan = Self.plan(naturals, words: words, values: values, available: available)
+        #expect(plan.presentation == .grid)
+        #expect(MarkdownTableColumnLayout.gridContentWidth(columnWidths: plan.columnWidths) <= available)
+        for index in 1 ..< 4 {
+            #expect(values[index] <= protected, "Fixture: short values")
+            #expect(plan.columnWidths[index] >= max(values[index], words[index]) - 0.5, "Values and words stay whole: \(plan.columnWidths)")
+            #expect(plan.columnWidths[index] < naturals[index], "The header wraps: \(plan.columnWidths)")
+        }
+        // Room to spare goes to the values first: the row labels stop wrapping
+        // before the headers get any of it.
+        let roomier = Self.plan(naturals, words: words, values: values, available: available + 20)
+        #expect(roomier.columnWidths[0] >= plan.columnWidths[0] + 19.5, "\(roomier.columnWidths)")
+        #expect(zip(roomier.columnWidths.dropFirst(), plan.columnWidths.dropFirst()).allSatisfy { abs($0 - $1) < 1 })
+
+        // Narrower than the values and words allow: scroll rather than break them.
+        let narrower = Self.plan(naturals, words: words, values: values, available: available - 4)
+        #expect(narrower == Self.plan(naturals, words: words, values: values, available: nil))
+    }
+
+    /// The rule is for long headers only: a column whose values are long keeps
+    /// the minimum width, so prose under a short header is not squeezed to a
+    /// word per line.
+    @Test func longValuesKeepTheMinimumWidthWhateverTheirHeader() {
+        let minimum = MarkdownTableColumnLayout.minimumFitColumnWidth
+        let long = MarkdownTableColumnLayout.maxReadableColumnWidth
+        let naturals: [CGFloat] = [long, long]
+        // Too narrow for both columns' natural widths, just room for the minimum.
+        let available = MarkdownTableColumnLayout.gridContentWidth(columnWidths: [minimum, minimum])
+        let plan = Self.plan(naturals, words: [30, 30], values: naturals, available: available)
+        #expect(plan.presentation == .grid)
+        for width in plan.columnWidths {
+            #expect(width >= minimum - 0.5, "\(plan.columnWidths)")
+        }
+        let tighter = Self.plan(naturals, words: [30, 30], values: naturals, available: available - 10)
+        #expect(tighter == Self.plan(naturals, words: [30, 30], values: naturals, available: nil), "Below the minimum it scrolls")
+    }
+
     @Test func tableScrollsWhenColumnsCannotStayReadable() {
-        // Six columns of prose need 6 x 8 characters plus gaps: more than 300pt.
+        // Six columns of prose need 6 x 7 characters plus gaps: more than 300pt.
         let naturals = [CGFloat](repeating: 274, count: 6)
         let plan = Self.plan(naturals, available: 300)
 
@@ -1014,7 +1071,7 @@ struct NativeTableFitAndChromeTests {
         #expect(grid.layout?.cells[1][0] === firstRow, "An unchanged row is not rebuilt")
     }
 
-    // MARK: Overflow cue
+    // MARK: Cut columns
 
     private static func wideTable() -> (headers: [[MarkdownInline]], rows: [[[MarkdownInline]]]) {
         (
@@ -1027,61 +1084,73 @@ struct NativeTableFitAndChromeTests {
         timelineAllViews(in: table).compactMap { $0 as? TableOverflowOverlayView }.first
     }
 
-    private func pill(in table: NativeTableBlockView) -> UIButton? {
+    private func showAllBar(in table: NativeTableBlockView) -> UIButton? {
         timelineAllViews(in: table).compactMap { $0 as? UIButton }.first {
-            $0.accessibilityIdentifier == "markdown.table.moreColumns"
+            $0.accessibilityIdentifier == "markdown.table.showAll" && !$0.isHidden && $0.superview?.isHidden == false
         }
     }
 
-    @Test func scrollingTableShowsAHiddenColumnCountThatFollowsTheScroll() throws {
+    /// A cut table names every column in the bar under its rows, so nothing it
+    /// says covers a cell. The bar is decided by the plan: scrolling sideways moves
+    /// only the fade, never the table's height.
+    @Test func cutTableOffersItsColumnsBelowTheRowsAndOnlyTheFadeFollowsTheScroll() throws {
         let host = Host(width: 320)
         let wide = Self.wideTable()
         host.table.apply(headers: wide.headers, rows: wide.rows, palette: ThemeRuntimeState.currentPalette())
-        host.layout(at: 320)
+        let height = host.layout(at: 320)
 
         let scroll = try #require(timelineAllScrollViews(in: host.table).first { !($0 is UITextView) })
         let overlay = try #require(overlay(in: host.table))
-        let pill = try #require(pill(in: host.table))
-        #expect(scroll.contentSize.width > scroll.bounds.width + 1, "Fixture must overflow")
+        let bar = try #require(showAllBar(in: host.table))
+        #expect(scroll.contentSize.width > scroll.bounds.width + TableChrome.cutThreshold, "Fixture must be cut")
+        #expect(bar.accessibilityLabel == "Show all 5 columns")
+        #expect(bar.accessibilityTraits.contains(.button))
+        #expect(bar.accessibilityHint?.isEmpty == false)
+        let rowsBottom = tableCellFrames(in: host.table).map(\.maxY).max() ?? 0
+        #expect(bar.convert(bar.bounds, to: host.table).minY >= rowsBottom - 0.5, "The bar sits under the last row")
         #expect(overlay.isCueVisible)
-        let atStart = try #require(pill.accessibilityLabel)
-        #expect(atStart.hasSuffix("more columns"), "Got \(atStart)")
 
-        // Scrolling updates the count without a layout pass.
         scroll.contentOffset.x = scroll.contentSize.width - scroll.bounds.width
         #expect(!overlay.isCueVisible, "Nothing is hidden at the right end")
-
-        // Just short of the end, only the last column is cut: singular.
-        scroll.contentOffset.x = scroll.contentSize.width - scroll.bounds.width - 24
-        #expect(overlay.isCueVisible)
-        #expect(pill.accessibilityLabel == "1 more column")
-
-        scroll.contentOffset.x = 0
-        #expect(overlay.isCueVisible)
-        #expect(pill.accessibilityLabel == atStart)
-    }
-
-    @Test func overflowCueAddsNoLayoutAndIsReachableForVoiceOver() throws {
-        let host = Host(width: 320)
-        let wide = Self.wideTable()
-        host.table.apply(headers: wide.headers, rows: wide.rows, palette: ThemeRuntimeState.currentPalette())
-        let heightWithCue = host.layout(at: 320)
-        let scroll = try #require(timelineAllScrollViews(in: host.table).first { !($0 is UITextView) })
-        let overlay = try #require(overlay(in: host.table))
-        let pill = try #require(pill(in: host.table))
-
-        scroll.contentOffset.x = scroll.contentSize.width - scroll.bounds.width
-        #expect(overlay.frame == scroll.frame, "The overlay covers the scroller and takes no space of its own")
-        #expect(abs(host.layout(at: 320) - heightWithCue) <= 1, "The cue must not move the table")
-        #expect(pill.accessibilityTraits.contains(.button))
-        #expect(pill.accessibilityHint?.isEmpty == false)
+        #expect(abs(host.layout(at: 320) - height) <= 1, "Scrolling never changes the table's height")
+        #expect(showAllBar(in: host.table) != nil, "The bar stays while the rows scroll")
+        #expect(overlay.frame == scroll.frame, "The fade covers the scroller and takes no space of its own")
         #expect(
-            overlay.hitTest(CGPoint(x: 2, y: overlay.bounds.midY), with: nil) == nil,
-            "Only the pill takes touches; the table underneath keeps scrolling and selecting"
+            overlay.hitTest(CGPoint(x: overlay.bounds.maxX - 2, y: overlay.bounds.midY), with: nil) == nil,
+            "The fade takes no touches; the table underneath keeps scrolling and selecting"
         )
     }
 
-    @Test func tableThatFitsShowsNoCue() throws {
+    /// A device report: this table scrolled sideways in a 342 pt chat column
+    /// (iPhone 16 Pro, chat style). Its long headers wrap now, its values stay
+    /// on one line, and nothing is cut.
+    @Test func benchmarkTableFitsAPhoneChatColumnByWrappingItsHeaders() throws {
+        let host = Host(width: 342)
+        host.table.apply(
+            headers: ["Input", "comrak, parse only", "Oppi tonight, full pipeline", "swift-cmark alone"].map { [.text($0)] },
+            rows: Self.cells([
+                ["6 KB message", "0.03 ms", "0.08 ms", "—"],
+                ["67 KB report", "0.35 ms", "1.5 ms", "—"],
+                ["273 KB session", "1.1 ms", "4.1 ms", "about 2.0 ms"],
+            ]),
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        host.layout(at: 342)
+
+        let scroll = try #require(timelineAllScrollViews(in: host.table).first { !($0 is UITextView) })
+        #expect(scroll.contentSize.width <= scroll.bounds.width + 0.5, "Fits: \(scroll.contentSize.width) in \(scroll.bounds.width)")
+        #expect(showAllBar(in: host.table) == nil)
+        let cells = visibleTableCells(in: host.table)
+        let timings = cells.filter { timelineRenderedText(of: $0).hasSuffix(" ms") }
+        #expect(timings.count == 7)
+        for cell in timings {
+            #expect(cellIsSingleLine(cell), "A timing wrapped: \(timelineRenderedText(of: cell))")
+        }
+        let header = try #require(cells.first { timelineRenderedText(of: $0) == "Oppi tonight, full pipeline" })
+        #expect(!cellIsSingleLine(header), "The long header wraps instead")
+    }
+
+    @Test func tableThatFitsShowsNoFadeAndNoBar() throws {
         let host = Host(width: 390)
         host.table.apply(
             headers: [[.text("Name")], [.text("Role")]],
@@ -1091,23 +1160,49 @@ struct NativeTableFitAndChromeTests {
         host.layout(at: 390)
         let overlay = try #require(overlay(in: host.table))
         #expect(!overlay.isCueVisible)
+        #expect(showAllBar(in: host.table) == nil)
     }
 
-    @Test func narrowingATableUntilItNoLongerFitsTurnsTheCueOn() throws {
+    @Test func narrowingATableUntilItNoLongerFitsAddsTheBarAndWideningRemovesIt() throws {
         let host = Host(width: 390)
         host.table.apply(
             headers: [[.text("Name")], [.text("Role")], [.text("Team")], [.text("Region")]],
             rows: Self.cells([["Ada Lovelace", "Principal engineer", "Analytical Engines", "London"]]),
             palette: ThemeRuntimeState.currentPalette()
         )
-        host.layout(at: 390)
+        let fitting = host.layout(at: 390)
         let overlay = try #require(overlay(in: host.table))
         #expect(!overlay.isCueVisible)
+        #expect(showAllBar(in: host.table) == nil)
 
-        host.layout(at: 160)
+        let narrow = host.layout(at: 160)
         #expect(overlay.isCueVisible, "At 160pt the columns cannot stay readable, so the table scrolls and says so")
+        #expect(showAllBar(in: host.table)?.accessibilityLabel == "Show all 4 columns")
+        #expect(abs(host.table.bounds.height - narrow) <= 1, "The measured height includes the bar")
         host.layout(at: 390)
         #expect(!overlay.isCueVisible)
+        #expect(showAllBar(in: host.table) == nil)
+        #expect(abs(host.table.bounds.height - fitting) <= 1)
+    }
+
+    /// A table cut by its padding alone hides no column, so the bar stays away.
+    /// Folded and cut, it names both.
+    @Test func barNamesWhatTheCardDoesNotShow() {
+        let card = UIView()
+        let scroll = UIScrollView()
+        card.addSubview(scroll)
+        let chrome = TableChrome(card: card, scrollView: scroll, open: {}, copy: { _ in })
+        chrome.install {}
+        let palette = ThemeRuntimeState.currentPalette()
+        let cut = TableChrome.cutThreshold
+
+        _ = chrome.update(shownRows: 3, totalRows: 3, columns: 4, overflow: cut - 1, palette: palette)
+        #expect(!chrome.showsFooter, "Padding past the edge is not a column")
+        #expect(chrome.update(shownRows: 3, totalRows: 3, columns: 4, overflow: cut + 1, palette: palette))
+        #expect(chrome.showsFooter)
+        #expect(TableShowAllBar.title(foldedRows: nil, cutColumns: 4) == "Show all 4 columns")
+        #expect(TableShowAllBar.title(foldedRows: 30, cutColumns: nil) == "Show all 30 rows")
+        #expect(TableShowAllBar.title(foldedRows: 30, cutColumns: 11) == "Show all 30 rows · 11 columns")
     }
 
     // MARK: Fold
@@ -1143,7 +1238,7 @@ struct NativeTableFitAndChromeTests {
             palette: ThemeRuntimeState.currentPalette()
         )
         let twentyHeight = twenty.layout(at: 390)
-        #expect(abs(foldedHeight - (twentyHeight + TableFoldFooterView.height)) <= 1)
+        #expect(abs(foldedHeight - (twentyHeight + TableShowAllBar.height)) <= 1)
         #expect(abs(folded.table.bounds.height - foldedHeight) <= 1)
 
         // Copy and the viewer take every row.
@@ -1151,12 +1246,6 @@ struct NativeTableFitAndChromeTests {
         #expect(tsv.split(separator: "\n").count == 31)
         #expect(tsv.hasSuffix("item-30\tvalue 30"))
         #expect(folded.table.tableText(.markdown).split(separator: "\n").count == 32)
-    }
-
-    private func showAllIsVisible(in table: NativeTableBlockView) -> Bool {
-        timelineAllViews(in: table).contains {
-            $0.accessibilityIdentifier == "markdown.table.showAll" && !$0.isHidden && $0.superview?.isHidden == false
-        }
     }
 
     @Test func tableAtOrUnderTheLimitDoesNotFoldAndReaderNeverFolds() throws {
@@ -1168,7 +1257,7 @@ struct NativeTableFitAndChromeTests {
             palette: ThemeRuntimeState.currentPalette()
         )
         atLimit.layout(at: 390)
-        #expect(!showAllIsVisible(in: atLimit.table))
+        #expect(showAllBar(in: atLimit.table) == nil)
 
         let reader = Host(width: 390)
         reader.table.rowFoldLimit = nil
@@ -1178,7 +1267,7 @@ struct NativeTableFitAndChromeTests {
             palette: ThemeRuntimeState.currentPalette()
         )
         reader.layout(at: 390)
-        #expect(!showAllIsVisible(in: reader.table))
+        #expect(showAllBar(in: reader.table) == nil)
         #expect(timelineAllTextViews(in: reader.table).map(timelineRenderedText).joined().contains("row-60"))
     }
 
@@ -1198,7 +1287,7 @@ struct NativeTableFitAndChromeTests {
             $0.accessibilityIdentifier == "markdown.table.showAll"
         })
         #expect(footer.accessibilityLabel == "Show all 21 rows")
-        #expect(abs(host.table.bounds.height - (heightAtTwenty + TableFoldFooterView.height)) <= 1)
+        #expect(abs(host.table.bounds.height - (heightAtTwenty + TableShowAllBar.height)) <= 1)
 
         host.table.apply(headers: [[.text("Item")]], rows: rows(25), palette: palette)
         host.layout(at: 390)

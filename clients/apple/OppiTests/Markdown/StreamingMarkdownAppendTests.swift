@@ -408,7 +408,7 @@ struct StreamingMarkdownAppendTests {
                 return String(text.characters)
             case .codeBlock(_, let code):
                 return "code:\(code)"
-            case .table(let headers, let rows):
+            case .table(let headers, let rows, _):
                 return "table:\(headers.count)x\(rows.count)"
             case .thematicBreak:
                 return "break"
