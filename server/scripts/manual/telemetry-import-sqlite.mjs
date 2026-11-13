@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 
 // 7: one `events` table for v2 telemetry records (`app-events-*`, `server-events-*`).
 // Pre-v2 files and the tables built from them are no longer read.
@@ -736,11 +737,22 @@ async function main() {
     return;
   }
 
+  // The compose container bind-mounts this checkout, so a landed change to this
+  // script (schema, parser version) is invisible to the running process. Exit when
+  // the file changes and let the container's restart policy start the new code;
+  // `ensureSchema` then migrates the database.
+  const scriptPath = fileURLToPath(import.meta.url);
+  const loadedMtimeMs = statSync(scriptPath).mtimeMs;
+
   let running = false;
   const runOnceIfIdle = () => {
     if (running) return;
     running = true;
     try {
+      if (statSync(scriptPath).mtimeMs !== loadedMtimeMs) {
+        console.log("[telemetry-import] script changed on disk; exiting to reload");
+        process.exit(0);
+      }
       run();
     } finally {
       running = false;
