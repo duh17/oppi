@@ -347,13 +347,31 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         customize.tap()
         let list = app.descendants(matching: .any)["settings.sshTerminal.bar.list"]
         XCTAssertTrue(list.waitUntilExists(timeout: 5), "Customize Bar did not open")
-        XCTAssertTrue(app.descendants(matching: .any)["settings.sshTerminal.bar.row.switcher"].waitUntilExists(timeout: 5), "A Rex pane's Customize Bar must list the switcher")
-        XCTAssertFalse(app.descendants(matching: .any)["settings.sshTerminal.bar.row.rex"].exists, "A Rex pane's Customize Bar must not list Rex Sessions")
+        let anyRow = list.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "settings.sshTerminal.bar.row.")).firstMatch
+        XCTAssertTrue(anyRow.waitUntilExists(timeout: 5), "Customize Bar listed no rows")
+        // The list only builds the rows near its visible part, and on iPad the
+        // sheet is shorter than the list: walk it from the top to the Rex Panel
+        // section, which follows every bar row, checking each step's rows. A
+        // row's identifier is on its cell, the cell's content, and its reorder
+        // handle, so the queries name cells.
+        let switcherRow = list.cells["settings.sshTerminal.bar.row.switcher"]
+        let rexRow = list.cells["settings.sshTerminal.bar.row.rex"]
+        let herdrRow = list.cells["settings.sshTerminal.bar.row.herdr"]
         let panelChoice = app.descendants(matching: .any)["settings.sshTerminal.bar.rexPanel.thisPane"]
-        scrollUntilHittable(panelChoice)
-        XCTAssertTrue(panelChoice.exists, "A Rex pane's Customize Bar must offer the Rex panel's choices")
-        XCTAssertFalse(app.descendants(matching: .any)["settings.sshTerminal.bar.row.herdr"].exists, "A Rex pane's Customize Bar must not list Herdr")
-        attachScreenshot("rex-customize-bar")
+        var sawSwitcher = false
+        var shotSwitcher = false
+        scrollUntilHittable(panelChoice, through: list) {
+            sawSwitcher = sawSwitcher || switcherRow.exists
+            if !shotSwitcher, switcherRow.exists, list.frame.contains(switcherRow.frame) {
+                shotSwitcher = true
+                attachScreenshot("rex-customize-bar")
+            }
+            XCTAssertFalse(rexRow.exists, "A Rex pane's Customize Bar must not list Rex Sessions")
+            XCTAssertFalse(herdrRow.exists, "A Rex pane's Customize Bar must not list Herdr")
+        }
+        XCTAssertTrue(sawSwitcher, "A Rex pane's Customize Bar must list the switcher")
+        XCTAssertTrue(panelChoice.exists && panelChoice.isHittable, "A Rex pane's Customize Bar must offer the Rex panel's choices")
+        attachScreenshot("rex-customize-bar-panel")
         assertRunning()
     }
 
@@ -630,11 +648,24 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         "\(element.label) \(element.value as? String ?? "")"
     }
 
-    private func scrollUntilHittable(_ element: XCUIElement) {
+    /// Swipes up, a bounded number of times, until `element` is on screen.
+    /// Given `list`, drags it up half its height at a time and holds before
+    /// lifting, so nothing flings past unbuilt: every row of the list is on
+    /// screen at some step, and `visit` runs before the first drag and after
+    /// each one to check the rows built then.
+    private func scrollUntilHittable(_ element: XCUIElement, through list: XCUIElement? = nil, visit: () -> Void = {}) {
         var swipes = 0
-        while !(element.exists && element.isHittable), swipes < 6 {
-            app.swipeUp()
+        visit()
+        while !(element.exists && element.isHittable), swipes < (list == nil ? 6 : 12) {
+            if let list {
+                let lower = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+                let upper = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
+                lower.press(forDuration: 0.05, thenDragTo: upper, withVelocity: .slow, thenHoldForDuration: 0.3)
+            } else {
+                app.swipeUp()
+            }
             swipes += 1
+            visit()
         }
     }
 
