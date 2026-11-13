@@ -39,7 +39,9 @@ enum ToolTimelineRowContextMenuBuilder {
             }
 
         case .output, .expanded:
-            guard hasOutput || opensCurrentFile else {
+            // A running call can have a reader before it prints anything,
+            // such as a script whose code is all there is to show yet.
+            guard hasOutput || canShowFullScreenContent else {
                 return nil
             }
 

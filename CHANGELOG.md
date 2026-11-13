@@ -107,6 +107,7 @@ The file reader gets Org folding and badges, heading links, Outline and Find, ta
 
 ### Fixed
 
+- **Client:** An expanded tool call whose input is code, such as a codemode script, no longer opens with a tall, mostly empty header on iPad. Its long-press menu now offers Open Full Screen while it runs, before it prints anything.
 - **Client:** Sending a message to a busy session no longer leaves the bottom of the chat, such as the busy row, hidden behind the pills above the composer when the queue pill appears as the chat scrolls down.
 - **Server:** A schedule that sends into an existing session with Delivery on Automatic no longer fails with "Prompt requires an idle session" when that session is mid-turn: it queues a follow-up after the turn, and sends a prompt when the session is idle.
 - **Server:** In durable sessions, `read` scales images down to 1568 px on the long edge and re-encodes them, so a session that reads many photos sends far smaller requests. Images over 2000 px are no longer refused.

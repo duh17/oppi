@@ -744,6 +744,62 @@ struct NotebookCellPresentationTests {
         #expect(narrow.height != unsized.height)
     }
 
+    /// A long script while it runs, the way the timeline first sizes a new cell:
+    /// before the cell has bounds. That height sticks, so it must match the
+    /// settled one, or the spare space lands in the one-line header.
+    @Test @MainActor func runningScriptRowSizesToTheRowWidthBeforeItsFirstLayout() {
+        let code = ([
+            #"const names = ["Lake Union loop","Green Lake","Burke-Gilman","Discovery Park","Alki","Interlaken"];"#,
+            "for (let i = 1; i <= 40; i++) {",
+            #"  const pace = `${4 + (i % 3)}:${String(10 + (i * 7) % 50).padStart(2,"0")}`;"#,
+            #"  rows.push(`| ${i} | ${names[i % names.length]} | ${pace} /km | ${138 + (i * 11) % 30} |`);"#,
+            "}",
+            #"const img = ".pi/review/table-view/compare/iphone-light-portrait-4x3-inline.jpg";"#,
+        ] + (1...90).map { "const section\($0) = `## \($0). Notes on the showcase, with enough words to wrap a phone line`;" })
+            .joined(separator: "\n")
+        var config = expanded(
+            tool: "script", args: ["code": .string("const rows = [];\n" + code)], output: "",
+            hints: codeHints(), isDone: false
+        )
+        let width: CGFloat = 700
+        config.rowWidth = width
+
+        // One row for both passes: a separate row could differ by a feature tip.
+        let row = ToolTimelineRowContentView(configuration: config)
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 800))
+        row.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            row.topAnchor.constraint(equalTo: host.topAnchor),
+        ])
+        func fitted() -> CGFloat {
+            row.systemLayoutSizeFitting(
+                CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        }
+        let firstPass = fitted()
+        host.layoutIfNeeded()
+        #expect(abs(firstPass - fitted()) < 1)
+    }
+
+    /// A running script has printed nothing yet; its code is what the reader shows.
+    @Test @MainActor func runningScriptWithoutOutputOffersFullScreen() throws {
+        let config = expanded(
+            tool: "script", args: ["code": .string("const rows = [];\nawait tools.bash({ command: \"ls\" })")],
+            output: "", hints: codeHints(), isDone: false
+        )
+        #expect(config.copyOutputText == nil)
+        let row = ToolTimelineRowContentView(configuration: config)
+        #expect(row.canActivateExpandedContent)
+        let menu = try #require(row.contextMenu(for: .expanded))
+        let titles = menu.children.compactMap { ($0 as? UIAction)?.title }
+        #expect(titles.contains("Open Full Screen"))
+    }
+
     @Test @MainActor func repeatedNotebookApplyDoesNotInvalidateTheTimeline() {
         var invalidations = 0
         ToolTimelineRowPresentationHelpers.enclosingLayoutInvalidationHookForTesting = {

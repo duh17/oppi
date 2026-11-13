@@ -612,8 +612,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         guard case .compactMeasured(let minHeight, let maxHeight) = policy.heightBehavior else {
             return 1
         }
+        // A new cell is measured before it has bounds. Guessing a phone width
+        // there wraps long lines that fit the real row, and the timeline keeps
+        // that taller first height: the spare space stretched the header.
         let fallbackWidth = (superview?.bounds.width).flatMap { $0 > 0 ? $0 : nil } ?? 375
-        let width = max(1, bounds.width > 0 ? bounds.width - 16 : fallbackWidth - 48)
+        let width = max(1, bodyLayoutWidth ?? fallbackWidth - 48)
         let measured = hostedSurface.measuredHeight(width: width)
         let lowerBounded = max(minHeight, ceil(measured))
         guard let maxHeight else { return lowerBounded }
