@@ -105,11 +105,11 @@ extension SSHTerminalBarPill {
     /// One pass of the terminal's: colors and state, then the buttons, with no animation.
     func draw(
         _ slots: [SSHTerminalBarSlot], showsStatus: Bool = false,
-        waiting: [SSHTerminalBarAction: Int] = [:], keysEnabled: Bool = true, selected: SSHTerminalBarAction? = nil
+        waiting: [SSHTerminalBarAction: Int] = [:], keysEnabled: Bool = true
     ) {
         apply(
             themeID: ThemeRuntimeState.currentThemeID(), waiting: waiting, openTerminals: 0,
-            tint: .label, background: .black, selected: selected, keysEnabled: keysEnabled
+            tint: .label, background: .black, keysEnabled: keysEnabled
         )
         show(slots, showsStatus: showsStatus, animated: false)
     }

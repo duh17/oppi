@@ -11,12 +11,15 @@ private func offer(
     overviews: Set<SSHTerminalBarAction> = everyOverview,
     openTerminals: Int = 2,
     canBrowseFiles: Bool = true,
+    canDictate: Bool = true,
+    canAttach: Bool = true,
     program: String = "shell",
     customKeys: [SSHTerminalCustomKey] = [],
     shortcuts: [SSHTerminalKeyAction] = []
 ) -> SSHTerminalBarOffer {
     SSHTerminalBarOffer(
         context: context, overviews: overviews, openTerminals: openTerminals, canBrowseFiles: canBrowseFiles,
+        canDictate: canDictate, canAttach: canAttach,
         program: program, customKeys: customKeys, shortcuts: shortcuts
     )
 }
@@ -34,9 +37,9 @@ private func isolatedDefaults() -> UserDefaults {
 
 @Suite("SSH terminal bottom bar layout")
 struct SSHTerminalBarPlacementTests {
-    @Test func theDefaultBarIsTodaysPlusTypeInTerminalAndChatBarInOnePill() {
+    @Test func theDefaultBarPutsDictateAndAttachNextToTypeInTerminal() {
         let placement = offer().placement(layout: .defaultValue, capacity: 8)
-        #expect(actions(of: placement.slots) == [.keyboard, .chatBar, .herdr, .rex, .switcher])
+        #expect(actions(of: placement.slots) == [.keyboard, .dictate, .attach, .herdr, .rex, .switcher])
         // Turned-off keys and Paste stay out of the menu; Browse Files Here,
         // which the menu always had, stays in it. Program Shortcuts is off and
         // not offered there either.
@@ -45,13 +48,13 @@ struct SSHTerminalBarPlacementTests {
 
     @Test func buttonsThatDoNotFitMoveIntoTheMenuInOrderButPasteNever() {
         let layout = SSHTerminalBarLayout(
-            order: [.action(.escape), .action(.paste), .action(.keyboard), .action(.interrupt), .action(.chatBar)],
-            shown: [.action(.escape), .action(.paste), .action(.keyboard), .action(.interrupt), .action(.chatBar), .action(.switcher)]
+            order: [.action(.escape), .action(.paste), .action(.keyboard), .action(.interrupt), .action(.dictate)],
+            shown: [.action(.escape), .action(.paste), .action(.keyboard), .action(.interrupt), .action(.dictate), .action(.switcher)]
         )
         let placement = offer().placement(layout: layout, capacity: 2)
         #expect(actions(of: placement.slots) == [.escape, .paste])
         // A shown key with no room is offered; a hidden one is not.
-        #expect(actions(of: placement.menu) == [.keyboard, .interrupt, .chatBar, .browseFiles, .herdr, .rex, .switcher])
+        #expect(actions(of: placement.menu) == [.keyboard, .interrupt, .dictate, .attach, .browseFiles, .herdr, .rex, .switcher])
 
         let none = offer().placement(layout: layout, capacity: 0)
         #expect(none.slots.isEmpty)
@@ -59,9 +62,9 @@ struct SSHTerminalBarPlacementTests {
     }
 
     @Test func anActionTheTerminalCannotOfferIsNeitherDrawnNorInTheMenu() {
-        let placement = offer(overviews: [], openTerminals: 1, canBrowseFiles: false)
+        let placement = offer(overviews: [], openTerminals: 1, canBrowseFiles: false, canDictate: false, canAttach: false)
             .placement(layout: .defaultValue, capacity: 8)
-        #expect(actions(of: placement.slots) == [.keyboard, .chatBar])
+        #expect(actions(of: placement.slots) == [.keyboard])
         #expect(placement.menu.isEmpty)
     }
 
@@ -72,10 +75,10 @@ struct SSHTerminalBarPlacementTests {
             offer(context: context).placement(layout: layout, capacity: 8)
         }
         // Rex Sessions is not in a Rex pane's bar at all: the pane switcher's panel holds it.
-        #expect(actions(of: placement(in: .rex).slots) == [.keyboard, .chatBar, .switcher])
-        #expect(actions(of: placement(in: .herdr).slots) == [.keyboard, .chatBar, .herdr, .switcher])
+        #expect(actions(of: placement(in: .rex).slots) == [.keyboard, .dictate, .attach, .switcher])
+        #expect(actions(of: placement(in: .herdr).slots) == [.keyboard, .dictate, .attach, .herdr, .switcher])
         // A plain shell on a host with both keeps both.
-        #expect(actions(of: placement(in: .plain).slots) == [.keyboard, .chatBar, .herdr, .rex, .switcher])
+        #expect(actions(of: placement(in: .plain).slots) == [.keyboard, .dictate, .attach, .herdr, .rex, .switcher])
 
         // The … menu follows: a multiplexer turned off in the layout is offered
         // there only where its terminal can use it (a Rex pane offers no Rex Sessions).
@@ -99,12 +102,12 @@ struct SSHTerminalBarPlacementTests {
 
     @Test func reorderingTheShownRowsKeepsTheHiddenOnesPlaceAndChoice() {
         let saved = SSHTerminalBarLayout(
-            order: [.action(.keyboard), .action(.herdr), .action(.switcher), .action(.rex), .action(.chatBar)],
+            order: [.action(.keyboard), .action(.herdr), .action(.switcher), .action(.rex), .action(.dictate)],
             shown: [.action(.keyboard), .action(.herdr), .action(.switcher)]
         )
         // A Rex terminal's page lists Rex and the switcher; the person drags Rex first.
         let moved = saved.reordering([.action(.rex), .action(.switcher)])
-        #expect(Array(moved.order.prefix(5)) == [.action(.keyboard), .action(.herdr), .action(.rex), .action(.switcher), .action(.chatBar)])
+        #expect(Array(moved.order.prefix(5)) == [.action(.keyboard), .action(.herdr), .action(.rex), .action(.switcher), .action(.dictate)])
         #expect(moved.shown == saved.shown)
         #expect(moved.reordering([.action(.switcher), .action(.rex)]) == saved)
     }
@@ -200,12 +203,12 @@ struct SSHTerminalBarMigrationTests {
     /// The old bar stored one order over both pills, reordered within each
     /// section, and a set of what was shown.
     @Test func anOldTwoSectionLayoutBecomesOneOrderAndKeepsWhatWasShown() {
-        let legacyOrder = ["herdr", "keyboard", "switcher", "interrupt", "chatBar", "rex", "tab", "escape", "up", "down", "enter", "paste", "browseFiles"]
+        let legacyOrder = ["herdr", "keyboard", "switcher", "interrupt", "rex", "tab", "escape", "up", "down", "enter", "paste", "browseFiles"]
         let legacyShown = ["keyboard", "interrupt", "herdr", "switcher"]
         let migrated = SSHTerminalBarLayout.migrating(legacyOrder: legacyOrder, legacyShown: legacyShown)
         // The middle's buttons in their order, then the ones that sat beside … in theirs.
-        #expect(Array(migrated.storedOrder.prefix(13)) == [
-            "keyboard", "interrupt", "chatBar", "tab", "escape", "up", "down", "enter", "paste", "browseFiles",
+        #expect(Array(migrated.storedOrder.prefix(12)) == [
+            "keyboard", "interrupt", "tab", "escape", "up", "down", "enter", "paste", "browseFiles",
             "herdr", "switcher", "rex",
         ])
         #expect(migrated.shown == Set(legacyShown.compactMap(SSHTerminalBarItem.init(rawValue:))))
@@ -217,16 +220,53 @@ struct SSHTerminalBarMigrationTests {
     @Test func theStoreReadsALegacyLayoutAndWritesTheNewOneInItsPlace() {
         let defaults = isolatedDefaults()
         let prefix = AppIdentifiers.subsystem
-        defaults.set(["rex", "keyboard", "chatBar"], forKey: "\(prefix).sshTerminal.barOrder")
+        defaults.set(["rex", "keyboard", "escape"], forKey: "\(prefix).sshTerminal.barOrder")
         defaults.set(["keyboard", "rex"], forKey: "\(prefix).sshTerminal.barShown")
         let store = SSHTerminalBarStore(defaults: defaults)
-        #expect(Array(store.layout.order.prefix(3)) == [.action(.keyboard), .action(.chatBar), .action(.rex)])
+        #expect(Array(store.layout.order.prefix(3)) == [.action(.keyboard), .action(.escape), .action(.rex)])
         #expect(store.layout.shown == [.action(.keyboard), .action(.rex)])
 
         // A change writes the new keys and retires the old ones.
-        store.setLayout(store.layout.setting(.action(.chatBar), shown: true))
+        store.setLayout(store.layout.setting(.action(.escape), shown: true))
         #expect(defaults.stringArray(forKey: "\(prefix).sshTerminal.barOrder") == nil)
-        #expect(SSHTerminalBarStore(defaults: defaults).layout.shown == [.action(.keyboard), .action(.rex), .action(.chatBar)])
+        #expect(SSHTerminalBarStore(defaults: defaults).layout.shown == [.action(.keyboard), .action(.rex), .action(.escape)])
+    }
+
+    /// The terminal had a Chat Bar button; Dictate and Attach took over its
+    /// jobs, so a bar saved with it gets them next to Type in Terminal, shown
+    /// as Chat Bar was, and a later change keeps them there.
+    @Test func aSavedChatBarBecomesDictateAndAttachNextToTypeInTerminal() {
+        let defaults = isolatedDefaults()
+        let prefix = AppIdentifiers.subsystem
+        let eof = SSHTerminalCustomKey(name: "EOF", control: true, key: "d", showFor: .all)
+        let store = SSHTerminalBarStore(defaults: defaults)
+        store.save(eof)
+        let key = SSHTerminalBarItem.customKey(eof.id).rawValue
+        defaults.set(["keyboard", "browseFiles", "chatBar", key, "herdr"], forKey: "\(prefix).sshTerminal.barItemsOrder")
+        defaults.set(["keyboard", "browseFiles", "chatBar", key], forKey: "\(prefix).sshTerminal.barItemsShown")
+
+        let read = store.layout
+        let expected: [SSHTerminalBarItem] = [
+            .action(.keyboard), .action(.dictate), .action(.attach), .action(.browseFiles), .customKey(eof.id), .action(.herdr),
+        ]
+        #expect(Array(read.order.prefix(6)) == expected)
+        #expect(read.shown == [.action(.keyboard), .action(.dictate), .action(.attach), .action(.browseFiles), .customKey(eof.id)])
+        #expect(offer(customKeys: [eof]).placement(layout: read, capacity: 8).slots.map(\.item)
+            == [.action(.keyboard), .action(.dictate), .action(.attach), .action(.browseFiles), .customKey(eof.id)])
+
+        // Turning Attach off is saved, and the next read keeps Dictate beside the keyboard.
+        store.setLayout(read.setting(.action(.attach), shown: false))
+        #expect(defaults.stringArray(forKey: "\(prefix).sshTerminal.barItemsOrder")?.contains("chatBar") == false)
+        let reread = SSHTerminalBarStore(defaults: defaults).layout
+        #expect(Array(reread.order.prefix(6)) == expected)
+        #expect(reread.shown == [.action(.keyboard), .action(.dictate), .action(.browseFiles), .customKey(eof.id)])
+
+        // A bar saved with Chat Bar turned off gets both, turned off.
+        defaults.set(["chatBar", "keyboard"], forKey: "\(prefix).sshTerminal.barItemsOrder")
+        defaults.set(["keyboard"], forKey: "\(prefix).sshTerminal.barItemsShown")
+        let hidden = store.layout
+        #expect(Array(hidden.order.prefix(3)) == [.action(.keyboard), .action(.dictate), .action(.attach)])
+        #expect(!hidden.isShown(.action(.dictate)) && !hidden.isShown(.action(.attach)))
     }
 
     @Test func retiringTheOldKeysAnnouncesTheChangeEvenWhenTheNewLayoutIsTheDefault() {
@@ -462,16 +502,16 @@ struct SSHTerminalBarOfferTests {
 
     @Test func customKeysFollowTheListsOrderAmongTheBuiltInButtons() {
         let layout = SSHTerminalBarLayout(
-            order: [.customKey(eof.id), .action(.keyboard), .action(.chatBar)],
-            shown: [.customKey(eof.id), .action(.keyboard), .action(.chatBar)]
+            order: [.customKey(eof.id), .action(.keyboard), .action(.dictate)],
+            shown: [.customKey(eof.id), .action(.keyboard), .action(.dictate)]
         )
         let placement = offer(customKeys: [eof]).placement(layout: layout, capacity: 20)
-        #expect(placement.slots.map(\.item) == [.customKey(eof.id), .action(.keyboard), .action(.chatBar)])
+        #expect(placement.slots.map(\.item) == [.customKey(eof.id), .action(.keyboard), .action(.dictate)])
     }
 
     @Test func aKeyThatDoesNotFitGoesToTheMenuAndIsStillSent() throws {
         let placement = offer(customKeys: [eof]).placement(layout: shown([eof]), capacity: 2)
-        #expect(placement.slots.map(\.item) == [.action(.keyboard), .action(.chatBar)])
+        #expect(placement.slots.map(\.item) == [.action(.keyboard), .action(.dictate)])
         let overflowed = try #require(placement.menu.first { $0.item == .customKey(eof.id) })
         #expect(overflowed.strokes == eof.strokes)
         #expect(overflowed.title == "EOF")
@@ -503,8 +543,8 @@ struct SSHTerminalBarOfferTests {
         let actions = SSHTerminalKeymap.actions(for: claude, userFile: nil)
         #expect(actions.count == 5)
         let layout = SSHTerminalBarLayout.defaultValue.setting(.programShortcuts, shown: true)
-        // Room for the two input buttons and three of Claude Code's five shortcuts.
-        let crowded = offer(program: "claude", shortcuts: actions).placement(layout: layout, capacity: 5)
+        // Room for Type in Terminal, Dictate, Attach, and three of Claude Code's five shortcuts.
+        let crowded = offer(program: "claude", shortcuts: actions).placement(layout: layout, capacity: 6)
         #expect(crowded.slots.filter { $0.item == .programShortcuts }.count == 3)
         // The two that did not fit are in the menu, with the buttons that were never drawn.
         let overflow = crowded.menu.filter { $0.item == .programShortcuts }
@@ -538,7 +578,7 @@ struct SSHTerminalRexControlTests {
 
         let layout = SSHTerminalBarLayout.defaultValue
         let inRex = offer(context: .rex).placement(layout: layout, capacity: 8)
-        #expect(actions(of: inRex.slots) == [.keyboard, .chatBar, .switcher])
+        #expect(actions(of: inRex.slots) == [.keyboard, .dictate, .attach, .switcher])
         #expect(!(inRex.slots + inRex.menu).contains { $0.item == .action(.rex) || $0.item == .action(.herdr) })
         // The saved layout is untouched: a plain shell shows Rex again as it was left.
         #expect(layout.isShown(.action(.rex)))

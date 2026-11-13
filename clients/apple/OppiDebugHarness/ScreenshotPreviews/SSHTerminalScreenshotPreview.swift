@@ -48,9 +48,8 @@ final class SSHTerminalPreviewController: PreviewRootController {
             ScreenshotVolatileDefaults.applyDarkTheme(true)
         }
         let themeStore = ThemeStore()
-        // A server-scoped connection, as the app root injects, so the input bar
-        // claims the shared dictation manager and shows its mic. The terminal
-        // holds it.
+        // A server-scoped connection, as the app root injects, so the bar offers
+        // Dictate on the shared dictation manager. The terminal holds it.
         let connection = ServerConnection()
         connection.setPreviewServerId("preview-server")
         let channel = try? SSHTerminalChannel()
@@ -72,7 +71,7 @@ final class SSHTerminalPreviewController: PreviewRootController {
                     reconnect: {},
                     editHost: {},
                     hostLabel: hostLabel,
-                    composerConnection: connection,
+                    dictationConnection: connection,
                     // No host to dial: a pane of another session is recorded, not opened.
                     rexPaneOpener: { readout.opened($0.blockID) }
                 )

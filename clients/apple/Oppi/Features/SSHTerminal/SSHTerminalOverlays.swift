@@ -130,14 +130,6 @@ class SSHTerminalPillButton: UIButton {
         configuration?.baseForegroundColor = tint
     }
 
-    /// Swaps the symbol (an input button's filled form while it is selected).
-    func setSymbol(_ systemName: String) {
-        let image = UIImage(systemName: systemName)
-        guard configuration?.image != image else { return }
-        configuration?.image = image
-        largeContentImage = image
-    }
-
     /// Draws a short key cap ("Esc", "^C") instead of the symbol, the way the
     /// keyboard bars label those keys. Large Content Viewer keeps the symbol.
     /// A cap longer than four characters (a chord such as ⌃⇧F5) steps down a

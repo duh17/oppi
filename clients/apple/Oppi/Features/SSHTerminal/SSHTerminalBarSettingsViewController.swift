@@ -6,7 +6,7 @@ import UIKit
 /// shows or hides its button, and its handle drags it into place. A hidden
 /// button moves into the … menu, except keys and Paste, which the keyboard bars
 /// and the grid's hold menu already offer, and Program Shortcuts, which the
-/// chat bar's key strip has.
+/// keyboard bar has.
 ///
 /// The list holds three kinds of row: the built-in buttons, Program Shortcuts
 /// (the detected program's keys, as the key strips show them), and the custom

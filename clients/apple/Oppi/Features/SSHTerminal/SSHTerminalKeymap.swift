@@ -21,9 +21,8 @@ struct SSHTerminalKeyAction: Equatable, Identifiable, Sendable {
 }
 
 /// Per-program key strip actions: each program's documented defaults, then
-/// the user's own keybinding file from the host. The chat bar uses
-/// `composerPages`; the raw keyboard still shows `fixed`. A program without
-/// a profile still gets the default agent keys, arrows, and exit chords.
+/// the user's own keybinding file from the host. The keyboard bar shows
+/// `fixed`, then the program's actions.
 /// To support another program, add a profile; to read its overrides, add a
 /// `Config` case.
 ///
@@ -107,8 +106,7 @@ enum SSHTerminalKeymap {
     }
 
     /// Raw-keyboard keys. Actions bound to exactly one of these are left out
-    /// of the program list rather than shown twice. The chat bar does not
-    /// show the Control and Alt latches; see `composerPages`.
+    /// of the program list rather than shown twice.
     struct FixedKey: Identifiable {
         let id: String
         let label: String
@@ -126,126 +124,6 @@ enum SSHTerminalKeymap {
         .init(id: "up", label: "↑", stroke: stroke(GHOSTTY_KEY_ARROW_UP, label: "↑")),
         .init(id: "right", label: "→", stroke: stroke(GHOSTTY_KEY_ARROW_RIGHT, label: "→")),
     ]
-
-    /// One group in the chat-bar key row. Exit is last so it starts off
-    /// screen, and a miss on the visible keys cannot interrupt or close the
-    /// program.
-    struct ComposerPage: Equatable, Identifiable, Sendable {
-        enum ID: String, Equatable, Sendable {
-            case agent, move, exit
-        }
-
-        let id: ID
-        var title: String {
-            switch id {
-            case .agent: "Agent"
-            case .move: "Move"
-            case .exit: "Exit"
-            }
-        }
-        let items: [ComposerKey]
-    }
-
-    /// A key in a chat-bar group. `send` writes its strokes immediately.
-    /// Arrows keep the hold-and-drag control. Neither kind arms a latch.
-    struct ComposerKey: Equatable, Identifiable, Sendable {
-        enum Kind: Equatable, Sendable {
-            case send, arrow
-        }
-
-        let id: String
-        let label: String
-        let strokes: [SSHTerminalKeyStroke]
-        let kind: Kind
-        let accessibilityLabel: String
-        var hint: String { strokes.map(\.label).joined(separator: " ") }
-    }
-
-    /// The agent group is Thinking, Cycle, and Model, then any other program
-    /// actions that are not themselves exit chords. The move group is the
-    /// arrows. The exit group is Esc, Tab, Ctrl+C, and Ctrl+D, sent as those keys rather than latches.
-    /// A slot whose own binding is an exit chord is omitted. It is not given
-    /// a different key under the same label. Shift+Tab is not an exit chord.
-    static func composerPages(for profile: Profile?, userFile: String?) -> [ComposerPage] {
-        let overrides = userFile.flatMap { file in profile?.config.flatMap { overrides(config: $0, file: file) } } ?? .none
-        var specs = profile?.actions ?? []
-        func contains(_ spec: ActionSpec, _ needle: String) -> Bool {
-            spec.id.range(of: needle, options: .caseInsensitive) != nil
-        }
-        func take(_ matches: (ActionSpec) -> Bool) -> ActionSpec? {
-            guard let index = specs.firstIndex(where: matches) else { return nil }
-            return specs.remove(at: index)
-        }
-        func slot(_ spec: ActionSpec?, id: String, title: String, fallbackSpec: String) -> ComposerKey? {
-            guard let profile, let spec else {
-                return pageOneSlot(fallback(id, title, fallbackSpec), id: id, title: title)
-            }
-            // Present in the profile, including a binding actions() drops because
-            // it matches Esc or Tab. An exit chord omits the slot. No substitute.
-            let strokes = resolvedStrokes(spec, profile: profile, overrides: overrides) ?? []
-            guard !strokes.isEmpty, !isExitChord(strokes) else { return nil }
-            return slotted(SSHTerminalKeyAction(id: id, title: title, strokes: strokes), id: id, title: title)
-        }
-        let thinking = take { contains($0, "thinking") }
-        // Claim Model before Cycle. "mode" is a prefix of "model".
-        let model = take { contains($0, "model") }
-        let cycle = take { contains($0, "cycle") || contains($0, "mode") }
-        let claimed = Set([thinking?.id, cycle?.id, model?.id].compactMap { $0 })
-        let extras = (profile.map { actions(for: $0, userFile: userFile) } ?? [])
-            .filter { !isExitChord($0.strokes) && !claimed.contains($0.id) }
-        let agent = [
-            slot(thinking, id: "thinking", title: "Thinking", fallbackSpec: "shift+tab"),
-            slot(cycle, id: "cycle", title: "Cycle", fallbackSpec: "shift+tab"),
-            slot(model, id: "model", title: "Model", fallbackSpec: "ctrl+l"),
-        ].compactMap { $0 } + extras.map { slotted($0, id: $0.id, title: $0.title) }
-        let arrows = fixed.compactMap { key -> ComposerKey? in
-            guard let stroke = key.stroke, SSHTerminalArrowRepeat.isArrow(stroke.key) else { return nil }
-            return ComposerKey(id: key.id, label: key.label, strokes: [stroke], kind: .arrow,
-                               accessibilityLabel: key.label)
-        }
-        let exit = [
-            immediate("escape", "Esc", "escape", "Escape"),
-            immediate("tab", "Tab", "tab", "Tab"),
-            immediate("ctrl-c", "^C", "ctrl+c", "Control C"),
-            immediate("ctrl-d", "^D", "ctrl+d", "Control D"),
-        ]
-        return [
-            ComposerPage(id: .agent, items: agent),
-            ComposerPage(id: .move, items: arrows),
-            ComposerPage(id: .exit, items: exit),
-        ]
-    }
-
-    private static func pageOneSlot(_ action: SSHTerminalKeyAction, id: String, title: String) -> ComposerKey? {
-        guard !action.strokes.isEmpty, !isExitChord(action.strokes) else { return nil }
-        return slotted(action, id: id, title: title)
-    }
-
-    private static func slotted(_ action: SSHTerminalKeyAction, id: String, title: String) -> ComposerKey {
-        ComposerKey(id: id, label: title, strokes: action.strokes, kind: .send, accessibilityLabel: title)
-    }
-
-    private static func fallback(_ id: String, _ title: String, _ spec: String) -> SSHTerminalKeyAction {
-        SSHTerminalKeyAction(id: id, title: title, strokes: parse(spec, syntax: .plus) ?? [])
-    }
-
-    private static func immediate(_ id: String, _ label: String, _ spec: String, _ accessibilityLabel: String) -> ComposerKey {
-        ComposerKey(id: id, label: label, strokes: parse(spec, syntax: .plus) ?? [], kind: .send,
-                    accessibilityLabel: accessibilityLabel)
-    }
-
-    /// A single unmodified Esc or Tab, or Ctrl+C / Ctrl+D. Shift+Tab is the
-    /// thinking and mode cycle, not an exit chord.
-    private static func isExitChord(_ strokes: [SSHTerminalKeyStroke]) -> Bool {
-        guard strokes.count == 1, let stroke = strokes.first else { return false }
-        if stroke.modifiers == 0, stroke.key == GHOSTTY_KEY_ESCAPE || stroke.key == GHOSTTY_KEY_TAB { return true }
-        return matches(stroke, "ctrl+c") || matches(stroke, "ctrl+d")
-    }
-
-    private static func matches(_ stroke: SSHTerminalKeyStroke, _ spec: String) -> Bool {
-        guard let expected = parse(spec, syntax: .plus)?.first else { return false }
-        return stroke.key == expected.key && stroke.modifiers == expected.modifiers
-    }
 
     /// Resolves a profile against the user's file. Unreadable or invalid
     /// files mean defaults, as the programs themselves fall back.

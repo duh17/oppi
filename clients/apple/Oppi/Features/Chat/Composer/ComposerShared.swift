@@ -27,11 +27,13 @@ enum ComposerShared {
         case reviewCommentMenu = "review_comment_menu_mic_tap"
         case askCard = "ask_card_mic_tap"
         case reviewCommentInline = "review_comment_inline_mic_tap"
+        /// The SSH terminal's Dictate button, which types the take into the shell.
+        case terminal = "terminal_mic_tap"
 
         var isMessageComposer: Bool {
             switch self {
             case .inlineComposer, .expandedComposer, .inboxComposer, .reviewCommentMenu: true
-            case .askCard, .reviewCommentInline: false
+            case .askCard, .reviewCommentInline, .terminal: false
             }
         }
     }

@@ -342,60 +342,6 @@ struct SSHTerminalTests {
         #expect(SSHTerminalKeymap.fixed.map(\.label).prefix(3) == ["Esc", "Ctrl", "Alt"])
     }
 
-    @Test func composerPagesKeepExitChordsOffTheFirstPage() throws {
-        func pages(_ program: String, file: String? = nil) throws -> [SSHTerminalKeymap.ComposerPage] {
-            let profile = try #require(SSHTerminalKeymap.profile(for: program))
-            return SSHTerminalKeymap.composerPages(for: profile, userFile: file)
-        }
-        let pi = try pages("pi")
-        #expect(pi.map(\.title) == ["Agent", "Move", "Exit"])
-        #expect(pi[0].items.map(\.label) == ["Thinking", "Cycle", "Model", "Tools"])
-        #expect(pi[0].items.map(\.hint) == ["\u{21E7}Tab", "\u{21E7}Tab", "^L", "^O"])
-        #expect(pi[1].items.map(\.label) == ["←", "↓", "↑", "→"])
-        #expect(pi[1].items.allSatisfy { $0.kind == .arrow })
-        #expect(pi[2].items.map(\.label) == ["Esc", "Tab", "^C", "^D"])
-        #expect(pi[2].items.allSatisfy { $0.kind == .send && $0.strokes.count == 1 })
-        #expect(pi[0].items.contains { $0.label == "^C" || $0.label == "Esc" } == false)
-        #expect(pi[1].items.contains { $0.label == "^C" } == false)
-
-        let interrupt = try #require(pi[2].items.first { $0.id == "ctrl-c" }?.strokes.first)
-        #expect(interrupt.key == GHOSTTY_KEY_C)
-        #expect(interrupt.modifiers == GhosttyMods(GHOSTTY_MODS_CTRL))
-        #expect(pi[2].items.first { $0.id == "ctrl-c" }?.accessibilityLabel == "Control C")
-
-        // A program interrupt bound to Ctrl+C stays off the agent page.
-        let rebound = try pages("pi", file: #"{"app.interrupt":"ctrl+c"}"#)
-        #expect(rebound[0].items.contains { $0.label == "Stop" || $0.hint == "^C" } == false)
-        #expect(rebound[2].items.map(\.id) == ["escape", "tab", "ctrl-c", "ctrl-d"])
-
-        // A safe label must not hide an exit chord. Those slots are omitted, not retargeted.
-        let modelInterrupt = try pages("pi", file: #"{"app.model.select":"ctrl+c"}"#)
-        #expect(modelInterrupt[0].items.contains { $0.id == "model" || $0.hint == "^C" } == false)
-        let thinkingEof = try pages("pi", file: #"{"app.thinking.cycle":"ctrl+d"}"#)
-        #expect(thinkingEof[0].items.contains { $0.id == "thinking" || $0.hint == "^D" } == false)
-        let cycleInterrupt = """
-        {"bindings":[{"context":"Chat","bindings":{"shift+tab":null,"ctrl+c":"chat:cycleMode"}}]}
-        """
-        let claudeCycle = try pages("claude", file: cycleInterrupt)
-        #expect(claudeCycle[0].items.contains { $0.id == "cycle" || $0.hint == "^C" } == false)
-
-        let claude = try pages("claude")
-        #expect(claude[0].items.map(\.label).prefix(3) == ["Thinking", "Cycle", "Model"])
-        #expect(claude[0].items.first { $0.id == "cycle" }?.hint == "\u{21E7}Tab")
-        #expect(claude[0].items.first { $0.id == "model" }?.hint == "\u{2325}P")
-        #expect(claude[0].items.map(\.label).contains("Transcript"))
-
-        let unknown = SSHTerminalKeymap.composerPages(for: nil, userFile: nil)
-        #expect(unknown[0].items.map(\.label) == ["Thinking", "Cycle", "Model"])
-        #expect(unknown[2].items.map(\.label) == ["Esc", "Tab", "^C", "^D"])
-
-        // Esc or Tab must omit the slot. It must not become Ctrl+L under the Model label.
-        let modelEsc = try pages("pi", file: #"{"app.model.select":"escape"}"#)
-        #expect(modelEsc[0].items.contains { $0.id == "model" || $0.hint == "^L" } == false)
-        let modelTab = try pages("pi", file: #"{"app.model.select":"tab"}"#)
-        #expect(modelTab[0].items.contains { $0.id == "model" || $0.hint == "^L" } == false)
-    }
-
     @Test func arrowHoldDragSelectsDominantAxisAndBoundedSpeed() {
         let held = GHOSTTY_KEY_ARROW_UP
         let idle = SSHTerminalArrowRepeat.plan(heldKey: held, translation: .zero)
@@ -417,74 +363,6 @@ struct SSHTerminalTests {
         #expect(SSHTerminalArrowRepeat.plan(heldKey: held, translation: .zero) == idle) // return to held direction
     }
 
-    @Test func armedModifiersNeverRouteComposerDraftChangesToTheTerminal() async throws {
-        // Mount the real UIKit composer so a draft write runs its text-view
-        // delegate. Programmatic writes model transcript updates at the draft
-        // boundary; this does not exercise microphone capture or ASR.
-        let rewrites = [
-            ("typing", ["c", "cd", "cdx"]),
-            ("paste", ["pasted text\nsecond line"]),
-            ("dictation partials", ["c", "ca", "cat"]),
-            ("unchanged-text stop then typing", ["cat", "cat", "catx"]),
-            ("first write on stop", ["final transcript"]),
-        ]
-        for modifier in [GhosttyMods(GHOSTTY_MODS_CTRL), GhosttyMods(GHOSTTY_MODS_ALT)] {
-            for (scenario, drafts) in rewrites {
-                let fixture = TerminalConnectionFixture()
-                let channel = try SSHTerminalChannel()
-                channel.opened(fixture)
-                channel.event(.writabilityChanged(false))
-                let mounted = try MountedTerminalComposer(channel: channel)
-                defer { mounted.dismiss(); channel.close(reason: "done") }
-                let textView = try #require(mounted.find { $0 is PastableUITextView } as? PastableUITextView)
-                let delegate = try #require(textView.delegate)
-                #expect(
-                    delegate is ComposerBarController,
-                    "Terminal chat bar must use the UIKit composer"
-                )
-                channel.modifierLatch.toggle(modifier)
-                for draft in drafts {
-                    textView.text = draft
-                    delegate.textViewDidChange?(textView)
-                    await mounted.update()
-                    #expect(textView.text == draft, "\(scenario): draft must stay intact")
-                    #expect(channel.modifierLatch.isArmed(modifier), "\(scenario): draft must not spend the latch")
-                }
-                // Queue a real key, then drain: comparing the complete sink
-                // catches hidden input even while SSH was backpressured.
-                #expect(channel.key(GHOSTTY_KEY_X, text: "x"))
-                #expect(channel.modifierLatch.modifiers == 0)
-                channel.event(.writabilityChanged(true))
-                var bytes = fixture.bytes.makeAsyncIterator()
-                let expected = modifier == GhosttyMods(GHOSTTY_MODS_CTRL)
-                    ? Data([0x18]) : Data("\u{1b}x".utf8)
-                #expect(await bytes.next() == expected)
-                #expect(await fixture.sentBytes == expected)
-            }
-        }
-    }
-
-    /// A rotation runs chat-bar chrome updates inside its animation. A hide
-    /// written over an already hidden action row must not leave the stack view
-    /// a pending hide that undoes the next focus.
-    @Test func chatBarActionRowShowsOnFocusAfterAnimatedChromeUpdates() async throws {
-        let channel = try SSHTerminalChannel()
-        let mounted = try MountedTerminalComposer(channel: channel)
-        defer { mounted.dismiss(); channel.close(reason: "done") }
-        let textView = try #require(mounted.find { $0 is PastableUITextView } as? PastableUITextView)
-        let row = try #require(mounted.bar.keyStripContainer.superview as? UIStackView)
-        #expect(row.isHidden, "the action row waits for focus")
-        for _ in 0..<2 {
-            UIView.animate(withDuration: 0.3) { mounted.bar.apply() }
-            try await Task.sleep(for: .milliseconds(600))
-        }
-        textView.delegate?.textViewDidBeginEditing?(textView)
-        try await Task.sleep(for: .milliseconds(600))
-        await mounted.update()
-        #expect(!row.isHidden, "focus shows the action row")
-        #expect(!mounted.bar.keyStripContainer.isHidden, "focus shows the key strip")
-    }
-
     @Test func rawKeyboardAndAccessoryConsumeOnlyAcceptedKeys() async throws {
         for modifier in [GhosttyMods(GHOSTTY_MODS_CTRL), GhosttyMods(GHOSTTY_MODS_ALT)] {
             let fixture = TerminalConnectionFixture()
@@ -499,7 +377,7 @@ struct SSHTerminalTests {
                 $0.accessibilityIdentifier == (modifier == GhosttyMods(GHOSTTY_MODS_CTRL) ? "sshTerminal.control" : "sshTerminal.alt")
             } as? UIButton)
             var bytes = fixture.bytes.makeAsyncIterator()
-            // A latch armed elsewhere (the composer strip) is spent by raw typing.
+            // A latch armed elsewhere (a bar key) is spent by raw typing.
             channel.modifierLatch.toggle(modifier)
             keyboard.insertText("c")
             keyboard.insertText("c")
@@ -632,6 +510,31 @@ struct SSHTerminalTests {
         // The document started over, so the next guess goes after it.
         let whole = try #require(input.textRange(from: input.beginningOfDocument, to: input.endOfDocument))
         #expect(input.text(in: whole) == SSHTerminalTextInputStorage.filler)
+        channel.close(reason: "done")
+    }
+
+    /// The Dictate button's take reaches the shell as typed text: one write,
+    /// no Return, no armed Ctrl. Text that could run a command asks first, and
+    /// the keyboard's document starts over either way.
+    @Test func aDictatedTakeIsTypedIntoTheShellWithoutReturn() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        var pasted = [String?]()
+        let grid = SSHTerminalGridView(channel: channel, paste: { pasted.append($0) }, followChanged: { _ in })
+        let input = grid as UITextInput
+        var bytes = fixture.bytes.makeAsyncIterator()
+        input.insertText("ls ")
+        #expect(await bytes.next() == Data("ls ".utf8))
+        channel.modifierLatch.toggle(GhosttyMods(GHOSTTY_MODS_CTRL))
+        grid.typeDictation("show me the logs")
+        #expect(await bytes.next() == Data("show me the logs".utf8))
+        #expect(channel.modifierLatch.isArmed(GhosttyMods(GHOSTTY_MODS_CTRL)), "a take does not spend the latch")
+        let whole = try #require(input.textRange(from: input.beginningOfDocument, to: input.endOfDocument))
+        #expect(input.text(in: whole) == SSHTerminalTextInputStorage.filler, "the keyboard does not edit the take")
+        grid.typeDictation("first line\nrm -rf build")
+        #expect(pasted == ["first line\nrm -rf build"])
+        #expect(await fixture.sentBytes == Data("ls show me the logs".utf8))
         channel.close(reason: "done")
     }
 
@@ -836,27 +739,11 @@ struct SSHTerminalTests {
         channel.close(reason: "done")
     }
 
-    @Test func chatBarAndAccessoryShareOneKeyStripAndStableIdentifiers() {
-        let composer = SSHTerminalKeyStripView(role: .composer, handlers: .init())
-        composer.apply(
-            profile: SSHTerminalKeymap.profile(for: "pi"),
-            userFile: nil,
-            colors: .placeholder,
-            foreground: .label,
-            background: .black
-        )
-        composer.layoutIfNeeded()
+    @Test func theKeyboardBarKeepsStableIdentifiers() {
         func find(_ root: UIView, _ id: String) -> UIView? {
             if root.accessibilityIdentifier == id { return root }
             for child in root.subviews {
                 if let match = find(child, id) { return match }
-            }
-            return nil
-        }
-        func findType(_ root: UIView, _ match: (UIView) -> Bool) -> UIView? {
-            if match(root) { return root }
-            for child in root.subviews {
-                if let found = findType(child, match) { return found }
             }
             return nil
         }
@@ -866,32 +753,14 @@ struct SSHTerminalTests {
             for child in root.subviews { found.append(contentsOf: collectArrows(child)) }
             return found
         }
-        // One scrolling row: agent keys, arrows, and exit chords together.
-        #expect(find(composer, "sshTerminal.composer.page") == nil)
-        #expect(find(composer, "sshTerminal.composer.rawKeyboard") != nil)
-        #expect(findType(composer) { $0 is SSHTerminalArrowButton } != nil)
-        let composerArrows = collectArrows(composer)
-        #expect(Set(composerArrows.compactMap { $0.configuration?.title }) == ["\u{2190}", "\u{2193}", "\u{2191}", "\u{2192}"])
-        #expect(find(composer, "sshTerminal.composer.escape") != nil)
-        #expect(find(composer, "sshTerminal.composer.tab") != nil)
-        #expect(find(composer, "sshTerminal.composer.ctrl-c") != nil)
-
-        let accessory = SSHTerminalKeyStripView(role: .accessory, handlers: .init())
-        accessory.apply(
-            profile: nil,
-            userFile: nil,
-            colors: .placeholder,
-            foreground: .label,
-            background: .black
-        )
+        let accessory = SSHTerminalKeyStripView(handlers: .init())
+        accessory.apply(colors: .placeholder, foreground: .label, background: .black)
         accessory.layoutIfNeeded()
         #expect(find(accessory, "sshTerminal.escape") != nil)
         #expect(find(accessory, "sshTerminal.control") != nil)
         #expect(find(accessory, "sshTerminal.tab") != nil)
         #expect(find(accessory, "sshTerminal.paste") != nil)
-        #expect(find(accessory, "sshTerminal.useChatBar") != nil)
         #expect(find(accessory, "sshTerminal.hideKeyboard") != nil)
-        #expect(findType(accessory) { $0 is SSHTerminalArrowButton } != nil)
         let accessoryArrows = collectArrows(accessory)
         #expect(Set(accessoryArrows.compactMap { $0.configuration?.title }) == ["\u{2190}", "\u{2193}", "\u{2191}", "\u{2192}"])
     }
@@ -918,19 +787,14 @@ struct SSHTerminalTests {
             return nil
         }
         let claude = SSHTerminalKeymap.profile(for: "claude")!
-        let accessory = SSHTerminalKeyStripView(role: .accessory, handlers: .init())
+        let accessory = SSHTerminalKeyStripView(handlers: .init())
         accessory.apply(
-            profile: claude,
-            userFile: nil,
             actions: SSHTerminalKeymap.actions(for: claude, userFile: nil),
             colors: .placeholder,
             foreground: .label,
             background: .black
         )
         accessory.frame = CGRect(x: 0, y: 0, width: 390, height: accessory.intrinsicContentSize.height)
-        let composer = SSHTerminalKeyStripView(role: .composer, handlers: .init())
-        composer.apply(profile: claude, userFile: nil, colors: .placeholder, foreground: .label, background: .black)
-        composer.frame = CGRect(x: 0, y: 0, width: 320, height: 44)
 
         // The accessory is two rows: fixed keys over Paste and program actions.
         accessory.layoutIfNeeded()
@@ -939,18 +803,13 @@ struct SSHTerminalTests {
         } else {
             Issue.record("missing Esc or Paste")
         }
-        if let chat = find(accessory, "sshTerminal.useChatBar"), let hide = find(accessory, "sshTerminal.hideKeyboard") {
-            #expect(hide.convert(hide.bounds, to: accessory).minY >= chat.convert(chat.bounds, to: accessory).maxY)
-        }
 
         let strips: [(SSHTerminalKeyStripView, first: String, pinned: [String])] = [
-            (accessory, "sshTerminal.escape", ["sshTerminal.useChatBar", "sshTerminal.hideKeyboard"]),
-            (composer, "sshTerminal.composer.escape", ["sshTerminal.composer.rawKeyboard"]),
+            (accessory, "sshTerminal.escape", ["sshTerminal.hideKeyboard"]),
         ]
         for (strip, first, pinned) in strips {
             strip.layoutIfNeeded()
             #expect(find(strip, "sshTerminal.page") == nil)
-            #expect(find(strip, "sshTerminal.composer.page") == nil)
             var ancestor = find(strip, first)?.superview
             while let view = ancestor, !(view is UIScrollView) { ancestor = view.superview }
             guard let scroll = ancestor as? UIScrollView else {
@@ -975,111 +834,6 @@ struct SSHTerminalTests {
                 #expect(strip.bounds.contains(frame), "\(id) at \(frame)")
             }
         }
-    }
-
-    @Test func terminalDictationWritesTheLiveDraftAndKeepsItAfterLeavingTheBar() async throws {
-        let channel = try SSHTerminalChannel()
-        channel.opened(TerminalConnectionFixture())
-        defer { channel.close(reason: "done") }
-        let host = SSHTerminalComposerHost(
-            channel: channel, connection: nil, draftStore: nil,
-            themeID: ThemeRuntimeState.currentThemeID(), showRawKeyboard: {}
-        )
-        let session = MockVoiceSession()
-        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
-        provider.makeSessionHandler = { _, _ in session }
-        let manager = VoiceInputManager(
-            providerRegistry: VoiceProviderRegistry(providers: [provider]),
-            systemAccess: MockVoiceInputSystemAccess()
-        )
-        manager.setEngineMode(.onDevice)
-        _ = manager.beginStandaloneComposer(serverId: "preview", credentials: nil, connection: nil)
-        try await manager.startRecording(keyboardLanguage: "en-US", source: ComposerShared.VoiceInputOwner.inlineComposer.rawValue)
-        host.installVoiceManager(manager)
-        host.setTextBeforeRecording("")
-        session.yieldEvent(.replaceFinalTranscript("hello", committedText: "", activeText: "hello"))
-        #expect(await waitForMainActorCondition { manager.currentTranscript == "hello" })
-        host.applyOwnedVoiceObservation()
-        #expect(host.content.text == "hello")
-        host.releaseVoice()
-        #expect(host.content.text == "hello", "Leaving the chat bar must keep the dictated words")
-        await manager.cancelRecording()
-    }
-
-    @Test func theTerminalComposersMicDiscUsesTheColorsItIsGiven() throws {
-        let channel = try SSHTerminalChannel()
-        channel.opened(TerminalConnectionFixture())
-        defer { channel.close(reason: "done") }
-        let host = SSHTerminalComposerHost(
-            channel: channel, connection: nil, draftStore: nil,
-            themeID: .dark, showRawKeyboard: {}
-        )
-        let manager = VoiceInputManager(
-            providerRegistry: VoiceProviderRegistry(providers: [MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)]),
-            systemAccess: MockVoiceInputSystemAccess()
-        )
-        host.installVoiceManager(manager)
-        let bar = ComposerBarController()
-        host.attach(bar)
-        _ = bar.view
-        func disc() throws -> UIColor {
-            let fill = try #require(bar.micButton.subviews.first {
-                !($0 is OrbMetalView) && !($0 is UIImageView) && !($0 is UILabel) && !($0 is UIActivityIndicatorView)
-            })
-            return try #require(fill.backgroundColor)
-        }
-        func components(_ color: UIColor) -> [CGFloat] {
-            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-            color.getRed(&r, green: &g, blue: &b, alpha: &a)
-            return [r, g, b, a]
-        }
-
-        var given = ComposerThemeColors(palette: ThemeID.dark.palette)
-        given.bgHighlight = UIColor(red: 0.10, green: 0.25, blue: 0.75, alpha: 1)
-        bar.micColors = given
-        bar.apply()
-        #expect(components(try disc()) == components(given.bgHighlight), "a terminal over a Ghostty theme paints the disc with the composer's colors")
-
-        bar.micColors = nil
-        bar.apply()
-        #expect(components(try disc()) == components(ThemeRuntimeState.currentPalette().bgHighlight), "everywhere else it keeps the app theme's")
-    }
-
-    @Test func terminalDictationFailureRestoresThePrefixAndShowsTheRetryBanner() async throws {
-        let channel = try SSHTerminalChannel()
-        channel.opened(TerminalConnectionFixture())
-        defer { channel.close(reason: "done") }
-        let host = SSHTerminalComposerHost(
-            channel: channel, connection: nil, draftStore: nil,
-            themeID: ThemeRuntimeState.currentThemeID(), showRawKeyboard: {}
-        )
-        var banner: String?
-        host.onFailureChange = { banner = $0 }
-        let session = MockVoiceSession()
-        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
-        provider.makeSessionHandler = { _, _ in session }
-        let manager = VoiceInputManager(
-            providerRegistry: VoiceProviderRegistry(providers: [provider]),
-            systemAccess: MockVoiceInputSystemAccess()
-        )
-        manager.setEngineMode(.onDevice)
-        _ = manager.beginStandaloneComposer(serverId: "preview", credentials: nil, connection: nil)
-        try await manager.startRecording(
-            keyboardLanguage: "en-US",
-            source: ComposerShared.VoiceInputOwner.inlineComposer.rawValue,
-            onCaptureFailure: {}
-        )
-        host.installVoiceManager(manager)
-        host.setText("kept ")
-        host.setTextBeforeRecording("kept ")
-        host.setText("kept extra")
-        session.finishEvents(throwing: VoiceInputError.audioCaptureUnavailable)
-        #expect(await waitForMainActorCondition { manager.currentComposerCaptureFailure != nil })
-        host.applyOwnedVoiceObservation()
-        #expect(host.content.text == "kept ")
-        #expect(ComposerShared.captureFailure(manager, owner: .inlineComposer) != nil)
-        await manager.cancelRecording()
-        _ = banner
     }
 
     @Test func floatingNoticesDoNotResizeTheGrid() async throws {
@@ -1107,180 +861,6 @@ struct SSHTerminalTests {
         mounted.host.view.setNeedsLayout()
         mounted.host.view.layoutIfNeeded()
         #expect(grid.bounds.size == before)
-    }
-
-    @Test func cursorShiftKeepsTheCursorRowAboveAGrownChatBar() {
-        // 40 rows of 20 pt; the bar covers the bottom 100 pt.
-        let shift = { (row: Int) in
-            SSHTerminalComposerOverlap.shift(gridHeight: 800, covered: 100, cursorRow: row, cellHeight: 20)
-        }
-        #expect(shift(39) == 100, "cursor on the last row: the whole cover")
-        #expect(shift(36) == 40, "just far enough: row 36 ends at 740, 40 below the bar's top")
-        #expect(shift(34) == 0, "a cursor already above the bar moves nothing")
-        #expect(shift(0) == 0)
-        #expect(
-            shift(43) == 0,
-            "a cursor past the last row belongs to the size before the keyboard; no jump while the terminal catches up"
-        )
-        #expect(SSHTerminalComposerOverlap.shift(gridHeight: 800, covered: 0, cursorRow: 39, cellHeight: 20) == 0)
-        #expect(
-            SSHTerminalComposerOverlap.shift(gridHeight: 810, covered: 30, cursorRow: 39, cellHeight: 20) == 20,
-            "a partial row below the grid's last row counts as space"
-        )
-        #expect(
-            SSHTerminalComposerOverlap.shift(gridHeight: 800, covered: 50, cursorRow: 49, cellHeight: 16) == 64,
-            "whole rows: 50 pt of cover moves four 16 pt rows, so no row is cut at the top"
-        )
-    }
-
-    @Test func chatBarGrowsOverTheGridWithoutResizingTheTerminal() async throws {
-        let fixture = TerminalConnectionFixture()
-        let channel = try SSHTerminalChannel()
-        channel.opened(fixture)
-        let mounted = try MountedTerminalTestController(
-            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
-        )
-        defer { mounted.dismiss(); channel.close(reason: "done") }
-        let resizes = SSHTerminalResizeLog()
-        let collector = Task { @MainActor in
-            for await geometry in fixture.resizes { resizes.sizes.append(geometry) }
-        }
-        defer { collector.cancel() }
-        func settle() async throws {
-            for _ in 0..<4 {
-                await Task.yield()
-                mounted.host.view.setNeedsLayout()
-                mounted.host.view.layoutIfNeeded()
-            }
-            try await Task.sleep(for: .milliseconds(250))
-            mounted.host.view.layoutIfNeeded()
-        }
-
-        // A coding agent reports itself, and Chat Bar is asked for by hand.
-        channel.event(.data(Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)))
-        try mounted.tapChatBar()
-        try await settle()
-        let textView = try #require(mounted.find { $0 is PastableUITextView } as? PastableUITextView)
-        let grid = try #require(mounted.controller.gridView)
-        // Fill the screen so the cursor sits on the bottom row, like an agent's prompt.
-        channel.event(.data(Data(String(repeating: "output\r\n", count: 120).utf8)))
-        channel.event(.data(Data("pi> ".utf8)))
-        try await settle()
-        let gridSize = grid.bounds.size
-        let sentBefore = resizes.sizes.count
-        #expect(sentBefore > 0, "the first layout sized the remote terminal")
-        #expect(grid.transform == .identity, "a resting chat bar covers nothing")
-
-        let container = try #require(sequence(first: textView as UIView, next: \.superview)
-            .first { $0.superview === mounted.controller.view })
-        let delegate = try #require(textView.delegate)
-        for draft in ["one", "one\ntwo\nthree", "one\ntwo\nthree\nfour\nfive\nsix"] {
-            textView.text = draft
-            delegate.textViewDidChange?(textView)
-            try await settle()
-            #expect(grid.bounds.size == gridSize, "\(draft.count) characters: the grid keeps its size")
-            #expect(resizes.sizes.count == sentBefore, "\(draft.count) characters: no remote resize")
-        }
-        let barTop = container.convert(CGPoint.zero, to: mounted.controller.view).y
-        let gridBottom = grid.convert(CGPoint(x: 0, y: grid.bounds.maxY), to: mounted.controller.view).y
-            + -grid.transform.ty
-        #expect(barTop < gridBottom - grid.cellSize.height, "six lines grow over the grid's bottom rows")
-        let cursorRow = channel.engine.cursorCell.row
-        let cursorBottom = grid.convert(
-            CGPoint(x: 0, y: CGFloat(cursorRow + 1) * grid.cellSize.height), to: mounted.controller.view
-        ).y
-        #expect(cursorBottom <= barTop + 0.5, "the cursor row stays above the chat bar")
-        #expect(grid.transform.ty < 0)
-
-        textView.text = ""
-        delegate.textViewDidChange?(textView)
-        try await settle()
-        #expect(grid.transform == .identity, "the picture returns when the bar shrinks")
-        #expect(grid.bounds.size == gridSize)
-        #expect(resizes.sizes.count == sentBefore)
-
-        // Focused, the bar rests with its key strip; a draft still grows over the grid.
-        #expect(textView.becomeFirstResponder())
-        try await settle()
-        try await Task.sleep(for: .milliseconds(600))
-        try await settle()
-        let focusedSize = grid.bounds.size
-        let focusedSent = resizes.sizes.count
-        for draft in ["one\ntwo\nthree\nfour\nfive\nsix", ""] {
-            textView.text = draft
-            delegate.textViewDidChange?(textView)
-            try await settle()
-            #expect(grid.bounds.size == focusedSize, "focused, \(draft.count) characters: the grid keeps its size")
-            #expect(resizes.sizes.count == focusedSent, "focused, \(draft.count) characters: no remote resize")
-        }
-
-        // Leaving and coming back with a long draft brings the key strip back.
-        textView.text = "one\ntwo\nthree\nfour\nfive\nsix"
-        delegate.textViewDidChange?(textView)
-        try await settle()
-        func keyStripShows() throws -> Bool {
-            let key = try #require(mounted.find { $0.accessibilityIdentifier == "sshTerminal.composer.rawKeyboard" })
-            return !sequence(first: key, next: \.superview).contains { $0.isHidden || $0.alpha < 0.01 }
-        }
-        #expect(try keyStripShows())
-        textView.resignFirstResponder()
-        try await settle()
-        try await Task.sleep(for: .milliseconds(600))
-        try await settle()
-        #expect(try !keyStripShows())
-        #expect(textView.becomeFirstResponder())
-        try await settle()
-        try await Task.sleep(for: .milliseconds(600))
-        try await settle()
-        #expect(try keyStripShows(), "refocusing with a draft shows the key strip again")
-        textView.resignFirstResponder()
-    }
-
-    @Test func outputWalkingTheCursorUnderAGrownChatBarKeepsItsRowAboveTheBar() async throws {
-        let terminal = try await GrownChatBarTerminal()
-        defer { terminal.close() }
-        let grid = terminal.grid
-        // A half-empty screen, like after `clear`: the cursor starts at the top.
-        try await terminal.output("\u{1b}[H\u{1b}[2J")
-        #expect(grid.transform == .identity, "a cursor well above the bar moves nothing")
-        let rows = Int(grid.bounds.height / grid.cellSize.height)
-        var walked = 0
-        while terminal.channel.engine.cursorCell.row < rows - 1 {
-            // Each chunk lands in one frame; no layout pass runs in between.
-            try await terminal.output(String(repeating: "line \(walked)\r\n", count: 3))
-            walked += 3
-            let row = terminal.channel.engine.cursorCell.row
-            #expect(
-                terminal.cursorBottom() <= terminal.barTop() + 0.5,
-                "cursor row \(row) of \(rows): its bottom \(terminal.cursorBottom()) is under the bar at \(terminal.barTop())"
-            )
-            if walked > rows + 6 { break }
-        }
-        #expect(grid.transform.ty < 0, "the walk reached the rows the bar covers")
-    }
-
-    @Test func readingHistoryWhileTheChatBarCoversTheCursorKeepsThePictureStill() async throws {
-        let terminal = try await GrownChatBarTerminal()
-        defer { terminal.close() }
-        let grid = terminal.grid
-        let engine = terminal.channel.engine
-        let shifted = terminal.gridTop()
-        #expect(grid.transform.ty < 0, "the cursor on the last row lifts the picture")
-
-        // A drag into history detaches from live; the grid must not jump by the shift.
-        engine.scroll(rows: -3)
-        try await terminal.nextFrame()
-        #expect(!engine.following)
-        #expect(terminal.gridTop() == shifted, "starting to read history")
-        // Output while you read history moves nothing either.
-        try await terminal.output("more\r\nmore\r\n")
-        #expect(terminal.gridTop() == shifted)
-
-        // Dragging back to the bottom follows live again from the same place.
-        engine.scrollToRow(Int(engine.scrollbar.total) - Int(engine.scrollbar.len))
-        try await terminal.nextFrame()
-        #expect(engine.following)
-        #expect(terminal.gridTop() == shifted, "back at live")
     }
 
     @Test func terminalBarsShareOneShotModifiersAndEncodeAllBaseKeys() async throws {
@@ -1440,22 +1020,6 @@ struct SSHTerminalTests {
         await channel.recheckAfterNetworkChange()
         #expect(!channel.connected)
         #expect(channel.reason.contains("network change"))
-    }
-
-    @Test func composerSendIsOnePasteThenEnterInBothPasteModes() async throws {
-        let fixture = TerminalConnectionFixture()
-        let channel = try SSHTerminalChannel()
-        channel.opened(fixture)
-        var bytes = fixture.bytes.makeAsyncIterator()
-        try channel.submit("fix the build\nthen run tests")
-        #expect(await bytes.next() == Data("fix the build\rthen run tests\r".utf8))
-        channel.event(.data(Data("\u{1b}[?2004h".utf8))) // an agent TUI turns on bracketed paste
-        try channel.submit("line one\nline two")
-        #expect(await bytes.next() == Data("\u{1b}[200~line one\nline two\u{1b}[201~\r".utf8))
-        try channel.submit("")
-        #expect(await bytes.next() == Data("\r".utf8))
-        channel.close(reason: "done")
-        #expect(throws: SSHTerminalError.disconnected) { try channel.submit("late") }
     }
 
     @Test func startupCommandExitIsReportedAsTheCommandNotTheShell() throws {
@@ -3023,9 +2587,6 @@ struct SSHTerminalTests {
         #expect(command.hasPrefix("sh -c 'umask 077; "))
         #expect(command.hasSuffix("'"))
         #expect(command.filter { $0 == "'" }.count == 2)
-
-        #expect(SSHTerminalComposerHost.prompt("  what is this?\n", paths: ["/tmp/a.png", "/tmp/b.png"]) == "what is this?\n\n/tmp/a.png\n/tmp/b.png")
-        #expect(SSHTerminalComposerHost.prompt("", paths: ["/tmp/a.png"]) == "/tmp/a.png")
     }
 
     @Test func pasteLineCountIgnoresATrailingTerminator() {
@@ -3494,7 +3055,7 @@ struct SSHTerminalTests {
             ("sshTerminal.herdr", "sshTerminal.herdr"),
             ("sshTerminal.back", "sshTerminal.back"),
             ("sshTerminal.bar.keyboard", "sshTerminal.bar.keyboard"),
-            ("sshTerminal.bar.chatBar", "sshTerminal.bar.chatBar"),
+            ("sshTerminal.bar.attach", "sshTerminal.bar.attach"),
         ] {
             let hit = terminal.view.hitTest(try stripPoint(id), with: nil)
             #expect(
@@ -3610,268 +3171,21 @@ struct SSHTerminalTests {
         }
     }
 
-    @Test func aPasswordPromptMovesTypingOffTheChatBarAndBack() async throws {
+    /// Nothing starts typing on its own; Type in Terminal brings the grid's keyboard.
+    @Test func typeInTerminalBringsTheKeyboard() async throws {
         let channel = try SSHTerminalChannel()
         channel.opened(TerminalConnectionFixture())
         let mounted = try MountedTerminalTestController(
             SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
         )
         defer { mounted.dismiss(); channel.close(reason: "done") }
-        // An agent that reports itself does not bring up the chat bar.
-        channel.event(.data(Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)))
         try await settle(mounted)
         let grid = try #require(mounted.controller.gridView)
-        let draft = { mounted.find { $0 is PastableUITextView } as? PastableUITextView }
-        #expect(draft() == nil, "a pi report alone shows no chat bar")
-        try mounted.tapChatBar()
-        try await settle(mounted)
-        let textView = try #require(draft(), "Chat Bar brings it up")
-        // A later report change does not close a bar the person opened.
-        channel.event(.data(Data("\u{1b}]7501;state=working:app=pi\u{1b}\\".utf8)))
-        try await settle(mounted)
-        #expect(draft() === textView, "a report change leaves the bar open")
-
-        channel.engine.receive(Data("\r\n[sudo] password for alex: ".utf8))
-        grid.drawFrame()
-        try await settle(mounted)
-        #expect(grid.isSecureTextEntry)
-        #expect(grid.isFirstResponder, "the prompt is typed into the terminal")
-        #expect(draft() == nil, "and the password cannot reach the draft")
-
-        // pwfeedback echoes one mark per key; the prompt must stay secure and
-        // the chat bar must not come back for the rest of the secret.
-        for mark in ["*", "**", "***"] {
-            channel.engine.receive(Data(mark.utf8))
-            grid.drawFrame()
-            try await settle(mounted)
-            #expect(grid.isSecureTextEntry, "after \(mark)")
-            #expect(draft() == nil, "the draft stays away after \(mark)")
-        }
-
-        // One half-drawn frame puts the cursor on another row and back, as a
-        // repaint in a neighbouring Herdr pane does. Nothing may switch on it.
-        let promptRow = channel.engine.cursorCell.row
-        channel.engine.receive(Data("\u{1b}[\(promptRow + 2);1H".utf8))
-        grid.drawFrame()
-        try await settle(mounted)
-        #expect(grid.isSecureTextEntry, "one off frame is not a release")
-        #expect(draft() == nil, "and the chat bar does not come back for it")
-        let prompt = "[sudo] password for alex: "
-        channel.engine.receive(Data("\u{1b}[\(promptRow + 1);\(prompt.count + 1)H".utf8))
-        grid.drawFrame()
-        try await settle(mounted)
-        #expect(grid.isSecureTextEntry)
-        #expect(draft() == nil)
-
-        // The hide key during the prompt keeps the keyboard down. Ending the
-        // prompt still puts the chat bar back, just without the keyboard.
-        let strip = try #require(grid.inputAccessoryView)
-        let hide = try #require(mounted.find(in: strip, matching: {
-            $0.accessibilityIdentifier == "sshTerminal.hideKeyboard"
-        }) as? UIButton)
-        hide.sendActions(for: .touchUpInside)
-        try await settle(mounted)
-        #expect(!grid.isFirstResponder, "the hide key sends the keyboard away")
-
-        // Two pictures have to agree before the prompt is over. A layout
-        // picture (here a resize, as a keyboard transition or a rotation
-        // causes) is a picture the renderer draws, but it is not output: it
-        // must not stand in for the second look and end the prompt early.
-        channel.engine.receive(Data("\r\n".utf8))
-        grid.drawFrame()
-        try await settle(mounted)
-        channel.engine.resize(.init(columns: 79, rows: 23))
-        grid.drawFrame()
-        try await settle(mounted)
-        #expect(grid.isSecureTextEntry, "a resize is not the second picture")
-        channel.engine.receive(Data("\r\n".utf8))
-        grid.drawFrame()
-        try await settle(mounted)
-        #expect(!grid.isSecureTextEntry)
-        #expect(draft() === textView, "the chat bar comes back")
-        #expect(!textView.isFirstResponder, "without the keyboard the user hid")
-        #expect(textView.text.isEmpty)
-    }
-
-    /// Type in Terminal during a password prompt brings back the keyboard the
-    /// user hid; it is not a choice to stay in the terminal, so the chat bar
-    /// still returns when the prompt ends, with the keyboard they brought back.
-    @Test func typeInTerminalDuringAPasswordPromptStillReturnsToTheChatBar() async throws {
-        let channel = try SSHTerminalChannel()
-        channel.opened(TerminalConnectionFixture())
-        let mounted = try MountedTerminalTestController(
-            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
-        )
-        defer { mounted.dismiss(); channel.close(reason: "done") }
-        channel.event(.data(Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)))
-        try mounted.tapChatBar()
-        try await settle(mounted)
-        let grid = try #require(mounted.controller.gridView)
-        let draft = { mounted.find { $0 is PastableUITextView } as? PastableUITextView }
-        #expect(draft() != nil, "Chat Bar brings the chat bar")
-
-        channel.engine.receive(Data("\r\n[sudo] password for alex: ".utf8))
-        grid.drawFrame()
-        try await settle(mounted)
-        #expect(await waitForMainActorCondition { grid.isFirstResponder }, "the prompt is typed into the terminal")
-
-        let strip = try #require(grid.inputAccessoryView)
-        let hide = try #require(mounted.find(in: strip, matching: {
-            $0.accessibilityIdentifier == "sshTerminal.hideKeyboard"
-        }) as? UIButton)
-        hide.sendActions(for: .touchUpInside)
-        try await settle(mounted)
         #expect(!grid.isFirstResponder)
-
-        let typeInTerminal = try #require(mounted.find {
-            $0.accessibilityIdentifier == "sshTerminal.bar.keyboard"
-        } as? UIButton)
-        typeInTerminal.sendActions(for: .touchUpInside)
-        try await settle(mounted)
-        #expect(await waitForMainActorCondition { grid.isFirstResponder }, "Type in Terminal brings the keyboard back")
-        #expect(grid.isSecureTextEntry)
-        #expect(draft() == nil, "the password still cannot reach the draft")
-
-        // The prompt ends when two painted pictures agree it has gone.
-        for _ in 0..<2 {
-            channel.engine.receive(Data("\r\n".utf8))
-            grid.drawFrame()
-            try await settle(mounted)
-        }
-        #expect(!grid.isSecureTextEntry)
-        let textView = try #require(draft(), "the chat bar comes back")
-        #expect(textView.isFirstResponder, "with the keyboard the user brought back")
-    }
-
-    /// The chat bar's key strip is wired once, when the screen builds it; the
-    /// property passes and the hide and reshow of the bar that follow must leave
-    /// it sending to the live channel and asking for the raw keyboard.
-    @Test func theChatBarKeyStripKeepsSendingAfterPropertyPassesAndAReshow() async throws {
-        let fixture = TerminalConnectionFixture()
-        let channel = try SSHTerminalChannel()
-        channel.opened(fixture)
-        var bytes = fixture.bytes.makeAsyncIterator()
-        let mounted = try MountedTerminalTestController(
-            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
-        )
-        defer { mounted.dismiss(); channel.close(reason: "done") }
-        channel.event(.data(Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)))
-        try mounted.tapChatBar()
-        try await settle(mounted)
-        let grid = try #require(mounted.controller.gridView)
-
-        func escape() throws -> UIButton {
-            try #require(mounted.find { $0.accessibilityIdentifier == "sshTerminal.composer.escape" } as? UIButton)
-        }
-        func leftArrow() throws -> SSHTerminalArrowButton {
-            try #require(mounted.find {
-                ($0 as? SSHTerminalArrowButton)?.configuration?.title == "\u{2190}"
-            } as? SSHTerminalArrowButton)
-        }
-        try escape().sendActions(for: .touchUpInside)
-        #expect(await bytes.next() == Data("\u{1b}".utf8), "a named key sends its strokes")
-        #expect(try leftArrow().accessibilityActivate())
-        #expect(await bytes.next() == Data("\u{1b}[D".utf8), "an arrow sends through the channel")
-
-        // A pass that re-applies the chat bar's chrome leaves the keys wired.
-        mounted.controller.setNeedsUpdateProperties()
-        try await settle(mounted)
-        try escape().sendActions(for: .touchUpInside)
-        #expect(await bytes.next() == Data("\u{1b}".utf8), "the keys still send after a property pass")
-
-        let rawKeyboard = try #require(mounted.find {
-            $0.accessibilityIdentifier == "sshTerminal.composer.rawKeyboard"
-        } as? UIButton)
-        rawKeyboard.sendActions(for: .touchUpInside)
-        try await settle(mounted)
-        #expect(await waitForMainActorCondition { grid.isFirstResponder }, "the raw-keyboard key asks for the grid's keyboard")
-
-        try mounted.tapChatBar()
-        try await settle(mounted)
-        try escape().sendActions(for: .touchUpInside)
-        #expect(await bytes.next() == Data("\u{1b}".utf8), "the reshown chat bar's keys still send")
-    }
-
-    /// A coding agent's report picks the key strip's program, never the input:
-    /// the chat bar shows only after Chat Bar, and then outlives report changes.
-    @Test func anAgentReportDoesNotShowTheChatBarButTheChatBarActionDoes() async throws {
-        let channel = try SSHTerminalChannel()
-        channel.opened(TerminalConnectionFixture())
-        let mounted = try MountedTerminalTestController(
-            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
-        )
-        defer { mounted.dismiss(); channel.close(reason: "done") }
-        let draft = { mounted.find { $0 is PastableUITextView } as? PastableUITextView }
-        func selected(_ id: String) throws -> Bool {
-            let button = try #require(mounted.find { $0.accessibilityIdentifier == id } as? UIButton, "\(id)")
-            return button.accessibilityTraits.contains(.selected)
-        }
-
-        for report in ["idle", "working", "blocked:kind=permission", "done"] {
-            channel.event(.data(Data("\u{1b}]7501;state=\(report):app=pi\u{1b}\\".utf8)))
-            try await settle(mounted)
-            #expect(draft() == nil, "a \(report) pi report shows no chat bar")
-            #expect(try selected("sshTerminal.bar.keyboard"), "and typing stays in the terminal")
-        }
-
-        // Chat Bar on a pane running pi turns the bar on (it must not toggle it off).
-        try mounted.tapChatBar()
-        try await settle(mounted)
-        let textView = try #require(draft(), "Chat Bar brings the bar up on a pi pane")
-        #expect(textView.isFirstResponder)
-        #expect(try selected("sshTerminal.bar.chatBar"))
-
-        // The choice outlives the program: its report ends and changes.
-        channel.event(.data(Data("\u{1b}]133;A\u{7}".utf8)))
-        try await settle(mounted)
-        #expect(draft() === textView, "the shell coming back does not close it")
-        channel.event(.data(Data("\u{1b}]7501;state=working:app=pi\u{1b}\\".utf8)))
-        try await settle(mounted)
-        #expect(draft() === textView, "a new report does not either")
-
-        // The raw keyboard still wins over the explicit choice.
-        let grid = try #require(mounted.controller.gridView)
-        grid.rawKeyboardChanged(true)
-        try await settle(mounted)
-        #expect(draft() == nil, "the remote raw keyboard hides the bar")
-    }
-
-    /// The bar's input buttons move typing where they say, and the one in use
-    /// carries the selected trait for VoiceOver (and the filled glyph).
-    @Test func theBarsInputButtonsMoveTypingAndMarkTheInputInUse() async throws {
-        let channel = try SSHTerminalChannel()
-        channel.opened(TerminalConnectionFixture())
-        let mounted = try MountedTerminalTestController(
-            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
-        )
-        defer { mounted.dismiss(); channel.close(reason: "done") }
-        try await settle(mounted)
-        let grid = try #require(mounted.controller.gridView)
-        let draft = { mounted.find { $0 is PastableUITextView } as? PastableUITextView }
-        func button(_ id: String) throws -> UIButton {
-            try #require(mounted.find { $0.accessibilityIdentifier == id } as? UIButton, "\(id)")
-        }
-        func selected(_ id: String) throws -> Bool { try button(id).accessibilityTraits.contains(.selected) }
-
-        // A shell types into the terminal, but nothing starts typing on its own.
-        #expect(try selected("sshTerminal.bar.keyboard"))
-        #expect(try !selected("sshTerminal.bar.chatBar"))
-        #expect(!grid.isFirstResponder)
-        #expect(draft() == nil)
-
-        try button("sshTerminal.bar.chatBar").sendActions(for: .touchUpInside)
-        try await settle(mounted)
-        let textView = try #require(draft(), "Chat Bar brings the chat bar")
-        #expect(await waitForMainActorCondition { textView.isFirstResponder }, "and focuses it")
-        #expect(try selected("sshTerminal.bar.chatBar"))
-        #expect(try !selected("sshTerminal.bar.keyboard"))
-
-        try button("sshTerminal.bar.keyboard").sendActions(for: .touchUpInside)
+        let keyboard = try #require(mounted.find { $0.accessibilityIdentifier == "sshTerminal.bar.keyboard" } as? UIButton)
+        keyboard.sendActions(for: .touchUpInside)
         try await settle(mounted)
         #expect(await waitForMainActorCondition { grid.isFirstResponder }, "Type in Terminal types into the terminal")
-        #expect(draft() == nil)
-        #expect(try selected("sshTerminal.bar.keyboard"))
-        #expect(try !selected("sshTerminal.bar.chatBar"))
     }
 
     /// The screen updates its properties on the next runloop pass, and asks for
@@ -4006,156 +3320,12 @@ private final class MountedTerminalTestController {
         }
     }
 
-    /// The person's explicit ask for the chat bar: the bottom bar's button.
-    func tapChatBar() throws {
-        let button = try #require(find { $0.accessibilityIdentifier == "sshTerminal.bar.chatBar" } as? UIButton)
-        button.sendActions(for: .touchUpInside)
-    }
-
     func find(in view: UIView, matching predicate: (UIView) -> Bool) -> UIView? {
         if predicate(view) { return view }
         for child in view.subviews {
             if let match = find(in: child, matching: predicate) { return match }
         }
         return nil
-    }
-}
-
-@MainActor
-private final class MountedTerminalComposer {
-    let session: SSHTerminalComposerHost
-    let bar: ComposerBarController
-    let wrapper: UIViewController
-    let window: UIWindow
-
-    init(channel: SSHTerminalChannel) throws {
-        session = SSHTerminalComposerHost(
-            channel: channel,
-            connection: nil,
-            draftStore: nil,
-            themeID: ThemeRuntimeState.currentThemeID(),
-            showRawKeyboard: {}
-        )
-        bar = ComposerBarController()
-        session.attach(bar)
-        _ = bar.view
-        bar.apply()
-        wrapper = UIViewController()
-        wrapper.addChild(bar)
-        bar.view.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.view.addSubview(bar.view)
-        NSLayoutConstraint.activate([
-            bar.view.leadingAnchor.constraint(equalTo: wrapper.view.leadingAnchor),
-            bar.view.trailingAnchor.constraint(equalTo: wrapper.view.trailingAnchor),
-            bar.view.bottomAnchor.constraint(equalTo: wrapper.view.bottomAnchor),
-        ])
-        bar.didMove(toParent: wrapper)
-        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        window.rootViewController = wrapper
-        window.makeKeyAndVisible()
-        wrapper.view.layoutIfNeeded()
-    }
-
-    func dismiss() {
-        window.endEditing(true)  // a hidden window must not leave its keyboard up
-        window.isHidden = true
-        window.rootViewController = nil
-    }
-
-    func update() async {
-        for _ in 0..<3 {
-            await withCheckedContinuation { continuation in
-                DispatchQueue.main.async { continuation.resume() }
-            }
-            wrapper.view.setNeedsLayout()
-            wrapper.view.layoutIfNeeded()
-        }
-    }
-
-    func find(_ predicate: (UIView) -> Bool) -> UIView? {
-        find(in: wrapper.view, matching: predicate)
-    }
-
-    func find(in view: UIView, matching predicate: (UIView) -> Bool) -> UIView? {
-        if predicate(view) { return view }
-        for child in view.subviews {
-            if let match = find(in: child, matching: predicate) { return match }
-        }
-        return nil
-    }
-}
-
-/// A terminal whose chat bar holds a six-line draft over a screen filled
-/// down to its last row, so the cursor sits under the grown bar.
-@MainActor
-private final class GrownChatBarTerminal {
-    let channel: SSHTerminalChannel
-    let mounted: MountedTerminalTestController
-    let grid: SSHTerminalGridView
-    let bar: UIView
-
-    init() async throws {
-        channel = try SSHTerminalChannel()
-        channel.opened(TerminalConnectionFixture())
-        mounted = try MountedTerminalTestController(
-            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
-        )
-        channel.event(.data(Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)))
-        try mounted.tapChatBar()
-        try await Self.settle(mounted)
-        let textView = try #require(mounted.find { $0 is PastableUITextView } as? PastableUITextView)
-        grid = try #require(mounted.controller.gridView)
-        let controllerView = mounted.controller.view
-        bar = try #require(sequence(first: textView as UIView, next: \.superview).first { $0.superview === controllerView })
-        channel.event(.data(Data(String(repeating: "output\r\n", count: 120).utf8)))
-        channel.event(.data(Data("pi> ".utf8)))
-        textView.text = "one\ntwo\nthree\nfour\nfive\nsix"
-        textView.delegate?.textViewDidChange?(textView)
-        try await Self.settle(mounted)
-    }
-
-    func close() {
-        mounted.dismiss()
-        channel.close(reason: "done")
-    }
-
-    private static func settle(_ mounted: MountedTerminalTestController) async throws {
-        for _ in 0..<4 {
-            await Task.yield()
-            mounted.host.view.setNeedsLayout()
-            mounted.host.view.layoutIfNeeded()
-        }
-        try await Task.sleep(for: .milliseconds(250))
-        mounted.host.view.layoutIfNeeded()
-    }
-
-    /// Writes `text` as one output chunk and waits for the frame that draws it.
-    func output(_ text: String) async throws {
-        channel.event(.data(Data(text.utf8)))
-        try await nextFrame()
-    }
-
-    /// The display link's frame for what changed, without a layout pass. Run
-    /// directly: a loaded simulator can delay real ticks past any timeout.
-    func nextFrame() async throws {
-        await Task.yield()
-        grid.drawFrame()
-    }
-
-    /// Where the grid's picture starts on screen, shift included.
-    func gridTop() -> CGFloat {
-        grid.convert(CGPoint.zero, to: mounted.controller.view).y
-    }
-
-    func barTop() -> CGFloat {
-        bar.convert(CGPoint.zero, to: mounted.controller.view).y
-    }
-
-    func cursorBottom() -> CGFloat {
-        let row = channel.engine.cursorCell.row
-        return grid.convert(CGPoint(x: 0, y: CGFloat(row + 1) * grid.cellSize.height), to: mounted.controller.view).y
     }
 }
 

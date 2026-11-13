@@ -1,18 +1,10 @@
 import Foundation
 import GhosttyVt
 
-/// Which input the terminal offers. Direct typing is the default; the chat bar
-/// (edit, dictate, attach, send as one prompt) shows only after the person asks
-/// for it with the Chat Bar button, and lasts as long as the terminal channel.
-enum SSHTerminalInputMode: Equatable {
-    case chat
-    case terminal
-}
-
 /// Names the coding agent the host declares through the program's own OSC 7501
 /// report, so the key strips offer that agent's bindings. Oppi never inspects
-/// the host's process table to guess, and a report never opens the chat bar or
-/// changes the input mode. Herdr passes no pane's report through, so a Herdr
+/// the host's process table to guess, and a report never changes where typing
+/// goes. Herdr passes no pane's report through, so a Herdr
 /// client keeps the shell's keys.
 enum SSHTerminalAgentDetection {
     /// OSC 7501 `app` ids of coding agents. An id also matches by its first

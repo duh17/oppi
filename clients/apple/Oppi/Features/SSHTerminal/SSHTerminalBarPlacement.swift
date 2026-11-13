@@ -27,11 +27,11 @@ enum SSHTerminalBarItem: BarLayoutAction, Identifiable {
         return items
     }
 
-    /// Today's bar plus the two input buttons: Type in Terminal and Chat Bar,
-    /// then Herdr, Rex, and the switcher (each only where the screen can offer
-    /// it). Keys, Paste, Browse Files Here, and Program Shortcuts start off.
+    /// Type in Terminal, Dictate, and Attach, then Herdr, Rex, and the
+    /// switcher (each only where the screen can offer it). Keys, Paste, Browse
+    /// Files Here, and Program Shortcuts start off.
     static let defaultShown: Set<SSHTerminalBarItem> = [
-        .action(.keyboard), .action(.chatBar), .action(.herdr), .action(.rex), .action(.switcher),
+        .action(.keyboard), .action(.dictate), .action(.attach), .action(.herdr), .action(.rex), .action(.switcher),
     ]
 
     var id: String { rawValue }
@@ -293,12 +293,15 @@ struct SSHTerminalBarOffer: Equatable {
     /// `overviews` are the multiplexers whose overview can open here. `program`
     /// is `SSHTerminalAgentDetection.keymapProgram`: the OSC 7501 root agent,
     /// else `shell`. `shortcuts` is what `SSHTerminalKeymap.actions(for:userFile:)`
-    /// reports for it.
+    /// reports for it. `canDictate` is a paired server and a free microphone
+    /// (no Live Voice call); `canAttach` is a host that takes uploads.
     init(
         context: SSHTerminalBarContext,
         overviews: Set<SSHTerminalBarAction>,
         openTerminals: Int,
         canBrowseFiles: Bool,
+        canDictate: Bool,
+        canAttach: Bool,
         program: String,
         customKeys: [SSHTerminalCustomKey],
         shortcuts: [SSHTerminalKeyAction]
@@ -309,6 +312,8 @@ struct SSHTerminalBarOffer: Equatable {
         }
         if openTerminals < 2 { actions.remove(.switcher) }
         if !canBrowseFiles { actions.remove(.browseFiles) }
+        if !canDictate { actions.remove(.dictate) }
+        if !canAttach { actions.remove(.attach) }
         self.actions = actions
         self.customKeys = Dictionary(
             customKeys.filter { $0.showFor.matches(program: program) }.map { ($0.id, $0) },

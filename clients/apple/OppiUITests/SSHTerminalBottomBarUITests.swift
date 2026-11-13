@@ -121,7 +121,7 @@ final class SSHTerminalBottomBarUITests: XCTestCase, PreviewUITestCase {
         // Program Shortcuts among them.
         XCTAssertFalse(app.staticTexts["Middle"].exists)
         XCTAssertFalse(app.staticTexts["Right"].exists)
-        for id in ["keyboard", "chatBar", "escape", "programShortcuts", "paste", "browseFiles", "herdr"] {
+        for id in ["keyboard", "dictate", "attach", "escape", "programShortcuts", "paste", "browseFiles", "herdr"] {
             let row = element("settings.sshTerminal.bar.row.\(id)")
             scroll { row.exists }
             XCTAssertTrue(row.exists, "The list has no \(id) row")

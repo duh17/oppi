@@ -149,10 +149,6 @@ struct RexTailnetTests {
         await #expect(throws: reason) { _ = try await channel.run("true") }
         await #expect(throws: reason) { _ = try await channel.upload(Data("photo".utf8), fileExtension: "png") }
         await #expect(throws: reason) { _ = try await channel.openStream(command: "herdr", sink: { _ in }) }
-        let composer = SSHTerminalComposerHost(
-            channel: channel, connection: nil, draftStore: nil, themeID: ThemeRuntimeState.currentThemeID(), showRawKeyboard: {}
-        )
-        #expect(!composer.content.allowsAttachments)
         #expect(session.currentProfile?.rexTailnet == Self.rex.url, "the terminal knows it has no saved host to edit")
     }
 

@@ -3,8 +3,9 @@ import UniformTypeIdentifiers
 
 /// The bottom bar's one centred glass pill: the program-status symbol (while a
 /// program has reported), the buttons the layout draws (`SSHTerminalBarPlacement.slots`:
-/// input, keys, Paste, Browse Files Here, the multiplexers' overviews, the
-/// switcher, Program Shortcuts, and custom keys), in the layout's order, then
+/// Type in Terminal, Dictate, Attach, keys, Paste, Browse Files Here, the
+/// multiplexers' overviews, the switcher, Program Shortcuts, and custom keys),
+/// in the layout's order, then
 /// the … menu, which is always last. It sits centred between Back and the Rex
 /// pane switcher's pill, so a button added or taken away grows or shrinks it the
 /// same distance each way.
@@ -32,10 +33,18 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
     let overviews: [SSHTerminalBarAction: SSHTerminalPillButton]
     /// Opens a menu of every open terminal.
     let switcher = SSHTerminalPillButton(
-        systemName: SSHTerminalBarAction.switcher.symbol(),
+        systemName: SSHTerminalBarAction.switcher.symbol,
         label: SSHTerminalBarAction.switcher.accessibilityLabel,
         identifier: SSHTerminalBarAction.switcher.accessibilityIdentifier
     )
+    /// Opens the attachment menu: Photo Library, Camera, Choose File, Canvas.
+    let attach = SSHTerminalPillButton(
+        systemName: SSHTerminalBarAction.attach.symbol,
+        label: SSHTerminalBarAction.attach.accessibilityLabel,
+        identifier: SSHTerminalBarAction.attach.accessibilityIdentifier
+    )
+    /// The mic, which turns into the dictation orb while it listens.
+    let dictate = SSHTerminalDictateButton()
     let more = SSHTerminalPillButton(systemName: "ellipsis", label: "More", identifier: "sshTerminal.more")
 
     /// The buttons the pill draws now, in order.
@@ -43,7 +52,6 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
     private var made: [String: (slot: SSHTerminalBarSlot, view: UIView)] = [:]
     private var tint: UIColor = .label
     private var pasteBackground: UIColor = .black
-    private var selected: SSHTerminalBarAction?
     private var keysEnabled = true
 
     init(status: SSHTerminalStatusGlyphButton) {
@@ -62,12 +70,15 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
         ])
         more.showsMenuAsPrimaryAction = true
         switcher.showsMenuAsPrimaryAction = true
+        attach.showsMenuAsPrimaryAction = true
         for action in SSHTerminalBarAction.overviews {
             overviews[action]?.addAction(UIAction { [weak self] _ in
                 self?.perform(SSHTerminalBarSlot(content: .action(action)))
             }, for: .touchUpInside)
         }
-        let fixed: [UIView] = [status, switcher, more] + SSHTerminalBarAction.overviews.compactMap { overviews[$0] }
+        dictate.onTap = { [weak self] in self?.perform(SSHTerminalBarSlot(content: .action(.dictate))) }
+        let fixed: [UIView] = [status, switcher, attach, dictate, more]
+            + SSHTerminalBarAction.overviews.compactMap { overviews[$0] }
         for view in fixed {
             view.isHidden = view !== more
             stack.addArrangedSubview(view)
@@ -82,7 +93,11 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
     }
 
     func button(for action: SSHTerminalBarAction) -> SSHTerminalPillButton? {
-        action == .switcher ? switcher : overviews[action]
+        switch action {
+        case .switcher: switcher
+        case .attach: attach
+        default: overviews[action]
+        }
     }
 
     /// The button a bar slot draws, made once and kept while the slot stays
@@ -93,7 +108,10 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
     }
 
     private func view(for slot: SSHTerminalBarSlot) -> UIView {
-        if case .action(let action) = slot.content, let persistent = button(for: action) { return persistent }
+        if case .action(let action) = slot.content {
+            if action == .dictate { return dictate }
+            if let persistent = button(for: action) { return persistent }
+        }
         if let existing = made[slot.id], existing.slot == slot { return existing.view }
         let view = makeView(for: slot)
         made[slot.id] = (slot, view)
@@ -181,13 +199,12 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
     }
 
     private func isPersistent(_ view: UIView) -> Bool {
-        view === status || view === more || view === switcher || overviews.values.contains { $0 === view }
+        view === status || view === more || view === switcher || view === attach || view === dictate
+            || overviews.values.contains { $0 === view }
     }
 
     /// `waiting` holds each available multiplexer's count of panes that need
-    /// you; one it does not name has not answered. `selected` is the input
-    /// that typing goes to now (`.keyboard` or `.chatBar`): its button draws
-    /// filled and carries the selected trait. Keys dim while there is no
+    /// you; one it does not name has not answered. Keys dim while there is no
     /// connection to send them on. `background` is the terminal's: the paste
     /// control draws its capsule in it, since iOS will not draw a secure
     /// control on a clear background.
@@ -197,7 +214,6 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
         openTerminals: Int,
         tint: UIColor,
         background: UIColor,
-        selected: SSHTerminalBarAction?,
         keysEnabled: Bool
     ) {
         // Compared resolved: a theme color is a new dynamic UIColor every pass.
@@ -211,7 +227,6 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
         }
         self.tint = tint
         pasteBackground = background
-        self.selected = selected
         self.keysEnabled = keysEnabled
         switcher.accessibilityValue = "\(openTerminals) open"
         switcher.apply(tint: tint)
@@ -225,6 +240,8 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
                 ? "\(action.accessibilityLabel) (\(waitingCount))" : action.accessibilityLabel
         }
         more.apply(tint: tint)
+        attach.apply(tint: tint)
+        dictate.apply(tint: tint)
         refreshButtons()
     }
 
@@ -233,11 +250,6 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
         for (_, entry) in made {
             guard let button = entry.view as? SSHTerminalPillButton else { continue }
             button.apply(tint: tint)
-            if case .action(let action) = entry.slot.content, action == .keyboard || action == .chatBar {
-                let isSelected = action == selected
-                button.setSymbol(action.symbol(selected: isSelected))
-                button.accessibilityTraits = isSelected ? [.button, .selected] : .button
-            }
             if entry.slot.sendsKeys { button.isEnabled = keysEnabled }
         }
     }

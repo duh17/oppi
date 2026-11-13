@@ -231,15 +231,35 @@ struct SSHTerminalBarStore {
     /// yet goes last, shown.
     var layout: SSHTerminalBarLayout {
         var layout: SSHTerminalBarLayout
-        if defaults.stringArray(forKey: Self.preference.orderKey) != nil {
-            layout = Self.preference.layout(in: defaults)
+        if let order = defaults.stringArray(forKey: Self.preference.orderKey) {
+            layout = defaults.stringArray(forKey: Self.preference.shownKey).map { shown in
+                let saved = Self.retiringChatBar(order: order, shown: shown)
+                return SSHTerminalBarLayout(storedOrder: saved.order, storedShown: saved.shown)
+            } ?? .defaultValue
         } else if let order = defaults.stringArray(forKey: Self.legacyOrderKey),
                   let shown = defaults.stringArray(forKey: Self.legacyShownKey) {
-            layout = .migrating(legacyOrder: order, legacyShown: shown)
+            let saved = Self.retiringChatBar(order: order, shown: shown)
+            layout = .migrating(legacyOrder: saved.order, legacyShown: saved.shown)
         } else {
             layout = .defaultValue
         }
         return covering(layout)
+    }
+
+    /// A layout saved while the terminal had a Chat Bar button: Dictate and
+    /// Attach, which took over its jobs, go right after Type in Terminal (where
+    /// Chat Bar was when there is no Type in Terminal), shown if Chat Bar was.
+    /// The next change to the bar saves the layout without it.
+    static func retiringChatBar(order: [String], shown: [String]) -> (order: [String], shown: [String]) {
+        let chatBar = "chatBar"
+        guard let index = order.firstIndex(of: chatBar) else { return (order, shown) }
+        let successors = [SSHTerminalBarAction.dictate, .attach].map(\.rawValue).filter { !order.contains($0) }
+        var next = order
+        next.remove(at: index)
+        let place = next.firstIndex(of: SSHTerminalBarAction.keyboard.rawValue).map { $0 + 1 } ?? index
+        next.insert(contentsOf: successors, at: place)
+        let nextShown = shown.contains(chatBar) ? shown.filter { $0 != chatBar } + successors : shown
+        return (next, nextShown)
     }
 
     /// What Reset to Default restores: the built-in buttons as they start,

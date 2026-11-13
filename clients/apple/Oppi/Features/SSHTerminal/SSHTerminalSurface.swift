@@ -4,7 +4,7 @@ import UIKit
 import UniformTypeIdentifiers
 
 /// What a tap on the terminal grid does. A tap never starts typing: the bottom
-/// bar's Type in Terminal and Chat Bar buttons do, so reading never raises a
+/// bar's Type in Terminal button does, so reading never raises a
 /// keyboard by accident. A mouse-reporting app keeps the tap as a click
 /// (Herdr's switch, a tmux pane), and with the keyboard up it stays; its bar
 /// hides it. Otherwise a tap sends a keyboard or another input's focus away.
@@ -62,20 +62,13 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     var needsPaint = true
     var keyboardRequest = 0
     var resignRequest = 0
-    var rawKeyboardChanged: (Bool) -> Void = { _ in }
     /// A password prompt appeared (true) or ended (false) on the live screen.
     var secureInputChanged: (Bool) -> Void = { _ in }
     /// The Fill Password key on the keyboard bar was tapped.
     var fillPassword: () -> Void = {}
-    /// The user sent the keyboard away with its hide key or a tap: a manual
-    /// choice, so an automatic switch back after a password prompt stands down.
+    /// The user sent the keyboard away with its hide key or a tap: the screen
+    /// stops asking for it.
     var keyboardDismissed: () -> Void = {}
-    var useChatBar: () -> Void = {}
-    /// Runs on every display-link tick, after that tick's frame is encoded:
-    /// output, resize, and scroll are applied, and a move of the grid made
-    /// here commits in the same frame as the picture. Sub-row history moves
-    /// paint without `onPictureChange`; this still sees them.
-    var didDrawFrame: () -> Void = {}
     var paintedChangeCount = -1
     /// Rebuilt when `AppFont` rebuilds (Code Font or Code Text Size change);
     /// a new cell size resizes the remote terminal on the next layout.
@@ -108,10 +101,10 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
     private var securePrompt: SecurePrompt?
     /// The output change count of the first check that no longer saw the
-    /// prompt. The latch and the input switch back only when a check on a later
-    /// picture of the shell's output agrees, so one half-drawn frame (a repaint
-    /// in a neighbouring Herdr pane that moves the cursor away and back) cannot
-    /// drop secure entry and pull the chat bar up under the rest of the secret.
+    /// prompt. The latch ends only when a check on a later picture of the
+    /// shell's output agrees, so one half-drawn frame (a repaint in a
+    /// neighbouring Herdr pane that moves the cursor away and back) cannot
+    /// drop secure entry under the rest of the secret.
     /// Output, not `changeCount`: a resize from a keyboard transition or a
     /// rotation is a picture too, and it must not stand in for the second look
     /// at a prompt that is still live.
@@ -304,8 +297,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     override var inputAccessoryView: UIView? { bar }
     override var keyCommands: [UIKeyCommand]? { shortcutCommands }
 
-    /// A grid moved up past a clipping parent (the chat bar's cursor shift)
-    /// is outlined only where it shows.
+    /// A grid moved past a clipping parent is outlined only where it shows.
     override var accessibilityFrame: CGRect {
         get {
             guard let superview, superview.clipsToBounds else { return super.accessibilityFrame }
@@ -597,6 +589,17 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         applyTextInput(textInputStorage.deleteBackward(hardwareKeysDown: ignoresSoftwareKeyEcho))
     }
 
+    /// Types a finished dictation take into the shell the way the keyboard's
+    /// own dictation does: one write, no Return, no one-shot modifier, and the
+    /// paste confirmation for text that could run a command. The keyboard's
+    /// document then starts over, since the shell's line now holds text it
+    /// did not type.
+    func typeDictation(_ text: String) {
+        resetTextInput()
+        applyTextInput([.edit(deleting: 0, text: text)])
+        resetTextInput()
+    }
+
     /// Writes what the keyboard's document produced. Whenever the shell's
     /// line stops matching the document (Return, Tab, a key a one-shot
     /// modifier changed, a word delete, text sent to paste confirmation),
@@ -701,11 +704,9 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     func showModifiers() {
         keyStrip?.showModifiers()
     }
-    /// Direct typing owns a tap while the keyboard is down, including after
-    /// switching off the chat bar, so it can come back even when the app asked
-    /// for mouse reports. While that keyboard is up, the same app keeps the
-    /// tap as a click and the keyboard stays. Chat mode still clicks, and
-    /// otherwise focuses the chat bar.
+    /// Direct typing owns a tap while the keyboard is down, so it can come back
+    /// even when the app asked for mouse reports. While that keyboard is up, the
+    /// same app keeps the tap as a click and the keyboard stays.
     ///
     /// Single tap does not wait for double-tap failure. The ~300 ms delay
     /// would lag keyboard focus and mouse clicks; tap 1 stays immediate. Tap 2
@@ -799,10 +800,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         // Hide shortcut-bar items such as Write with Siri, which insert text.
         inputAssistantItem.leadingBarButtonGroups = []
         inputAssistantItem.trailingBarButtonGroups = []
-        let became = super.becomeFirstResponder()
-        // Deferred: this can run inside a layout or observation pass.
-        if became { Task { @MainActor [rawKeyboardChanged] in rawKeyboardChanged(true) } }
-        return became
+        return super.becomeFirstResponder()
     }
 
     /// The viewport cell drawn under `point`, including a history scroll that
@@ -924,9 +922,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         _ = trackpadArrows.takePending()
         keyRepeater.stop()
         keyStrip?.stopRepeating()
-        let resigned = super.resignFirstResponder()
-        if resigned { Task { @MainActor [rawKeyboardChanged] in rawKeyboardChanged(false) } }
-        return resigned
+        return super.resignFirstResponder()
     }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
@@ -1746,7 +1742,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         colors.fg = foreground
         colors.bg = barBackgroundColor()
         let strip = SSHTerminalKeyStripView(
-            role: .accessory,
             handlers: SSHTerminalKeyStripView.Handlers(
                 sendStrokes: { [weak self] strokes in
                     guard let self else { return }
@@ -1769,11 +1764,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
                     self?.channel.modifierLatch.isArmed(modifier) ?? false
                 },
                 pasteTarget: self,
-                useChatBar: { [weak self] in
-                    guard let self else { return }
-                    self.useChatBar()
-                    _ = self.resignFirstResponder()
-                },
                 hideKeyboard: { [weak self] in
                     guard let self else { return }
                     self.keyboardDismissed()
@@ -1784,8 +1774,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         )
         strip.setPasswordFill(host: passwordFillHost)
         strip.apply(
-            profile: nil,
-            userFile: nil,
             actions: keyActions,
             colors: colors,
             foreground: foreground,
@@ -1800,8 +1788,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         colors.fg = foreground
         colors.bg = background
         keyStrip?.apply(
-            profile: nil,
-            userFile: nil,
             actions: keyActions,
             colors: colors,
             foreground: foreground,
@@ -1866,7 +1852,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
 
     /// One display-link frame: pending scroll input goes out, the engine is
-    /// snapshotted and drawn if it changed, then `didDrawFrame` runs.
+    /// snapshotted and drawn if it changed.
     func drawFrame() {
         let signposter = SSHTerminalScrollPerf.signposter
         let signpost = signposter.beginInterval("drawFrame")
@@ -1898,7 +1884,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             requestDisplayLink()
         }
         updateSecureEntry()
-        didDrawFrame()
     }
 
     /// One tick of the scroll gesture's measurement (`SSHTerminalScrollMeter`), and
@@ -1945,8 +1930,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// and the frozen painted line would have kept the latch. Turning off waits
     /// for two painted frames of shell output; a resize, scroll, or recolour is
     /// no vote. History and a hidden cursor leave the state alone.
-    /// The keyboard bar shows a lock meanwhile, and the screen moves typing off
-    /// the chat bar.
+    /// The keyboard bar shows a lock meanwhile.
     private func updateSecureEntry() {
         guard channel.connected else {
             securePrompt = nil

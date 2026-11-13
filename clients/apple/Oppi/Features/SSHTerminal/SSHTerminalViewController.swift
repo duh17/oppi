@@ -1,8 +1,9 @@
 import UIKit
 
 /// Live SSH terminal: UIKit owns the screen, floating controls, grid,
-/// notices, lists, and chat bar (`ComposerBarController` in a terminal
-/// configuration). The navigation bar stays hidden while this screen is on
+/// notices, and lists. Dictation (`SSHTerminalDictation`) and attachments
+/// (`SSHTerminalAttachPicker`) type straight into the shell from the bottom
+/// bar. The navigation bar stays hidden while this screen is on
 /// top; Back, status, Herdr or Rex, and the … menu sit in a glass bar at the bottom
 /// edge, below the grid, so they never cover a terminal row.
 @MainActor
@@ -15,9 +16,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// Follows the terminal shown: the switcher changes it.
     private var hostLabel: String
     private weak var session: SSHTerminalConnectSession?
-    /// Screenshot preview only: a server-scoped connection so the hosted
-    /// composer can claim dictation. The live app uses the window's root.
-    private let composerConnection: ServerConnection?
+    /// Screenshot preview only: a server-scoped connection for dictation. The
+    /// live app uses the window's root.
+    private let dictationConnection: ServerConnection?
     /// How a pane of another Rex session opens: the connect session's own way
     /// unless the owner says otherwise (a preview with no host to dial).
     private let rexPaneOpener: ((RexPaneTarget) -> Void)?
@@ -72,31 +73,18 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private var roomEndsAtPanes: NSLayoutConstraint?
     private var roomEndsAtEdge: NSLayoutConstraint?
     private var menuTitle: String?
-    private var composerBar: ComposerBarController?
-    private var composerSession: SSHTerminalComposerHost?
-    private var composerKeyStrip: SSHTerminalKeyStripView?
-    private var composerContainer: UIView?
-    private var sendFailureLabel: UILabel?
-    private var dictationFailureView: ComposerDictationFailureView?
-    private var composerHeightConstraint: NSLayoutConstraint?
-    private var lastAppliedComposerFocus = 0
-    private var voicePrepareTask: Task<Void, Never>?
+    private let dictation = SSHTerminalDictation()
+    /// The take failure last shown as a notice, so each is shown once.
+    private var shownDictationFailure: VoiceCaptureFailure?
+    private let attachPicker = SSHTerminalAttachPicker()
     private let gridClip = UIView()
     private var gridBottom: NSLayoutConstraint?
-    /// Overlay notices and Back to Live stay above a chat bar that grew.
-    private var overlayAboveComposer: NSLayoutConstraint?
-    /// The chat bar's resting height, which the grid leaves free. Changes
-    /// only with focus (the keyboard), width, or text size; never as the
-    /// draft grows.
-    private var composerReservedHeight: CGFloat = 0
     /// Rows the grid leaves free for the bottom bar, from the one rule in
     /// `SSHTerminalFloatingControls`: never with a keyboard up, so reconnecting
     /// never resizes the remote shell.
     private var bottomBarReserve: CGFloat {
         SSHTerminalFloatingControls.bottomBarReserve(keyboardUp: keyboardUp)
     }
-    /// How much of the grid's bottom the chat bar covers right now.
-    private var composerCoveredHeight: CGFloat = 0
 
     private var pendingPaste: String?
     private var pasteNotice: String?
@@ -118,10 +106,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private var copyNoticeText: String?
     private var copyNoticeTask: Task<Void, Never>?
     private var lastCopies = 0
-    /// The terminal on screen and the chat-bar drafts of the ones left, so a
-    /// swap does not lose what was being typed.
-    private var shownIdentity: SSHTerminalIdentity?
-    private var composerDrafts: [SSHTerminalIdentity: SSHTerminalComposerHost.Draft] = [:]
     private var detached = false
     /// A password prompt is up on the live screen (the grid's secure entry).
     private var secureEntryActive = false
@@ -129,19 +113,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private var passwordFillTask: Task<Void, Never>?
     /// The password prompt ended while that task was waiting on the person.
     private var passwordFillPromptEnded = false
-    /// The cursor shift was held for history or a touch on the last update.
-    private var cursorShiftHeld = false
-    private var rawKeyboard = false
     private var herdr = HerdrMonitor()
     private var rex: RexMonitor
     private var keymap = SSHTerminalKeymapLoader()
-    /// What the person chose with Type in Terminal or Chat Bar. It lives with
-    /// this screen: leaving it (Back, then reopening the terminal builds a new
-    /// screen), a terminal switch, a Rex pane, or a reconnect starts over at
-    /// direct typing. A program's report never changes it.
-    private var inputMode: SSHTerminalInputMode = .terminal
-    private var focusComposerAfterRaw = false
-    private var composerFocusRequest = 0
     private var keyboardUp = false
     private var controlsVisible = true
     /// Popped, swiped back, or covered by a push: the navigation bar belongs
@@ -185,7 +159,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         editHost: @escaping () -> Void,
         hostLabel: String = "",
         session: SSHTerminalConnectSession? = nil,
-        composerConnection: ServerConnection? = nil,
+        dictationConnection: ServerConnection? = nil,
         rexPaneOpener: ((RexPaneTarget) -> Void)? = nil,
         barStore: SSHTerminalBarStore = SSHTerminalBarStore()
     ) {
@@ -196,7 +170,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         self.editHost = editHost
         self.hostLabel = hostLabel
         self.session = session
-        self.composerConnection = composerConnection
+        self.dictationConnection = dictationConnection
         rex = Self.makeRexMonitor(for: session?.connectedProfile, hosts: session?.rexHosts)
         let profileID = session?.connectedProfile?.id
         let choice = profileID.map { SSHTerminalColorStore().choice(for: $0) } ?? .host
@@ -215,7 +189,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        shownIdentity = terminalIdentity
         buildLayout()
         barLayoutObserver = NotificationCenter.default.addObserver(
             forName: SSHTerminalBarStore.didChange,
@@ -293,8 +266,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        updateComposerHeight()
-        updateCursorShift()
         // A rotation, a resized iPad window, or a notch moving sides changes
         // how many middle buttons fit.
         if SSHTerminalBarFit(view) != barFit { setNeedsUpdateProperties() }
@@ -349,7 +320,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         // Leaving the screen does not close the terminal: `SSHTerminalRegistry`
         // owns the channel, and Disconnect or the host's lifecycle ends it.
         guard leaving else { return }
-        composerSession?.releaseVoice()
+        dictation.release()
         session?.showsTerminal = false
         if let defaultsObserver {
             NotificationCenter.default.removeObserver(defaultsObserver)
@@ -409,14 +380,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         _ = keymap.profile
         _ = keymap.userFile
         _ = colorLoader.resolution
-        if let manager = composerSession?.voiceManager {
-            _ = manager.transcriptPresentationRevision
-            _ = manager.currentTranscript
-            _ = manager.state
-            _ = manager.currentComposerCaptureFailure
-            composerSession?.applyOwnedVoiceObservation()
-            applyDictationFailure()
-        }
+        let dictationShown = dictation.presentation
+        noticeDictationFailure(dictation.captureFailure)
         let locked = AppLockService.shared.isLocked
         let phase = AppScenePhase.shared.phase
         let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
@@ -469,7 +434,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         updateBanners(connecting: connecting, connected: connected, networkChanged: networkChanged, themeID: chromeID)
         updateNotice(themeID: chromeID)
         updateCopyAndLive(themeID: chromeID)
-        updateComposer()
+        barPill.dictate.apply(
+            presentation: dictationShown,
+            colors: ComposerThemeColors(palette: chromeID.palette, terminal: terminalColors)
+        )
         takeTerminalKeyboard()
         updatePasswordFill(connected: connected)
         if let gridView {
@@ -499,6 +467,15 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         backPill.button.addAction(UIAction { [weak self] _ in self?.goBack() }, for: .touchUpInside)
         barPill.perform = { [weak self] slot in self?.perform(slot) }
         barPill.deliverPaste = { [weak self] items in self?.gridView?.paste(itemProviders: items) }
+        dictation.type = { [weak self] text in self?.gridView?.typeDictation(text) }
+        dictation.startFailed = { [weak self] message in
+            self?.errorAlerts.show(title: "Couldn't Start Dictation", message: message)
+        }
+        attachPicker.presenter = self
+        attachPicker.draftStore = { [weak self] in self.flatMap { AppRootEnvironment.near($0)?.composerDraftStore } }
+        attachPicker.deliver = { [weak self] attachments in self?.attach(attachments) }
+        attachPicker.failed = { [weak self] message in self?.presentPasteFailure(message) }
+        barPill.attach.menu = attachPicker.menu()
         connectionBanner.onReconnect = { [weak self] in self?.reconnect() }
         noticeCard.onDismiss = { [weak self] key in
             self?.attention.dismiss(key)
@@ -632,15 +609,14 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         installGrid(makeGrid())
     }
 
-    /// The grid ends above the bottom bar and the chat bar's resting height;
-    /// a taller chat bar overlaps it. The clip hides rows the cursor shift
-    /// moves above the grid's top.
+    /// The grid ends above the bottom bar. The clip hides what a pane slide
+    /// moves past the grid's edges.
     private func installGrid(_ grid: SSHTerminalGridView) {
         gridView = grid
         gridClip.addSubview(grid)
         let bottom = grid.bottomAnchor.constraint(
             equalTo: view.keyboardLayoutGuide.topAnchor,
-            constant: -(composerReservedHeight + bottomBarReserve)
+            constant: -bottomBarReserve
         )
         gridBottom = bottom
         let overlayBottom = overlay.bottomAnchor.constraint(equalTo: grid.bottomAnchor)
@@ -663,23 +639,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             paste: { [weak self] in self?.requestPaste($0) },
             followChanged: { [weak self] following in
                 self?.detached = !following
-                self?.updateCursorShift()
                 self?.setNeedsUpdateProperties()
             }
         )
         grid.translatesAutoresizingMaskIntoConstraints = false
-        // Output moves the cursor; keep its row above a grown chat bar.
-        grid.didDrawFrame = { [weak self] in self?.cursorMayHaveMoved() }
-        grid.rawKeyboardChanged = { [weak self] raw in
-            guard let self else { return }
-            self.rawKeyboard = raw
-            if !raw, self.focusComposerAfterRaw {
-                self.focusComposerAfterRaw = false
-                if self.inputMode == .chat { self.composerFocusRequest += 1 }
-            }
-            self.setNeedsUpdateProperties()
-        }
-        grid.useChatBar = { [weak self] in self?.showChatBar() }
         grid.keyboardDismissed = { [weak self] in self?.keyboardWasHidden() }
         grid.secureInputChanged = { [weak self] in self?.secureInputChanged($0) }
         grid.fillPassword = { [weak self] in self?.fillPassword() }
@@ -714,7 +677,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         herdr = HerdrMonitor()
         rex = Self.makeRexMonitor(for: session?.connectedProfile, hosts: session?.rexHosts)
         keymap = SSHTerminalKeymapLoader()
-        inputMode = .terminal
         attention = SSHTerminalAttention()
         shownNoticeKey = nil
         pasteNotice = nil
@@ -730,10 +692,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         passwordFillTask?.cancel()
         passwordFillTask = nil
         secureEntryActive = false
-        cursorShiftHeld = false
-        rawKeyboard = false
-        automaticTerminalTyping = false
-        refocusAfterSecurePrompt = true
         sawClosedForBackground = false
         reconnectOnReturn = false
         channel = next
@@ -748,9 +706,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         newPaneTask?.cancel()
         newPaneTask = nil
         rexMinimap.reset()
-        stashComposerDraft()
-        destroyComposer()
-        shownIdentity = terminalIdentity
+        // A take belongs to the terminal it started in.
+        dictation.release()
         gridView?.removeFromSuperview()
         installGrid(makeGrid())
     }
@@ -888,6 +845,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             menu.accessibilityIdentifier = slot.menuIdentifier
             return menu
         }
+        if case .action(.attach) = slot.content {
+            let menu = UIMenu(title: slot.title, image: image, children: attachPicker.menu().children)
+            menu.accessibilityIdentifier = slot.menuIdentifier
+            return menu
+        }
         // A shortcut's menu title carries its key, as its bar button's cap does.
         var title = slot.title
         if case .shortcut(let shortcut) = slot.content { title += " (\(shortcut.keyLabel))" }
@@ -912,6 +874,13 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             // The Files browser over this terminal's folder needs the host to
             // report one and to be a paired Oppi server.
             canBrowseFiles: !channel.workingDirectory.isEmpty && pairedServer != nil,
+            // Dictation needs the paired server (its engine setting and
+            // dictionary) and the microphone, which a Live Voice call holds.
+            canDictate: serverConnection() != nil
+                && ComposerShared.dictation(dictation.manager, near: viewIfLoaded) != nil,
+            // Attachments are saved on the host over SSH, which a Rex reached
+            // over Tailscale alone does not have.
+            canAttach: channel.sideCommandsUnavailable == nil,
             program: keymapProgram,
             customKeys: barCustomKeys,
             shortcuts: keymap.actions
@@ -926,9 +895,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     private var canSendKeys: Bool { channel.connected && !channel.inputClosed }
 
-    /// Where typing goes now: the terminal's keyboard or the chat bar.
-    private var selectedInput: SSHTerminalBarAction {
-        inputMode == .chat && !rawKeyboard ? .chatBar : .keyboard
+    private func serverConnection() -> ServerConnection? {
+        dictationConnection ?? AppRootEnvironment.near(self)?.coordinator.activeConnection
     }
 
     /// One owner for a bar button, whether it came from its button, VoiceOver,
@@ -938,7 +906,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         case .action(let action):
             switch action {
             case .keyboard: showTerminalKeyboard()
-            case .chatBar: focusChatBar()
+            case .dictate:
+                let connection = serverConnection()
+                Task { [weak self] in await self?.dictation.toggle(connection: connection) }
+            case .attach: break // A menu, not an action.
             case .escape, .interrupt, .tab, .up, .down, .enter:
                 channel.keys(slot.strokes)
             case .paste: break // The system paste control delivers through barPill.deliverPaste.
@@ -1032,7 +1003,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             openTerminals: openTerminals,
             tint: tint,
             background: lastTerminalColors?.background.map(UIColor.init) ?? themeID.palette.ui.bg,
-            selected: selectedInput,
             keysEnabled: canSendKeys
         )
         barPill.show(barPlacement.slots, showsStatus: showsStatus, animated: animates)
@@ -1204,10 +1174,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     }
 
     /// One resize per keyboard transition. Layout-driven resizes are held,
-    /// the chat bar's end state is laid out inside the keyboard's animation,
-    /// and the grid size the keyboard settles at is sent once. Layout passes
-    /// in between (the chat bar, the bottom bar, and the keyboard guide move in
-    /// separate passes) are ignored until the transition ends; the release
+    /// the end state is laid out inside the keyboard's animation, and the grid
+    /// size the keyboard settles at is sent once. Layout passes in between
+    /// (the bottom bar and the keyboard guide move in separate passes) are ignored until the transition ends; the release
     /// sends the real size only if the prediction missed. The bottom bar and
     /// the floating controls change the grid's free rows, but inside that same
     /// transition, so they never add a resize of their own.
@@ -1235,9 +1204,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         gridView.holdResize()
         resizeHoldTask?.cancel()
         resizeHoldTask = Task { [weak self, weak gridView] in
-            // The chat bar's text view finishes editing after this
-            // notification and drops its key strip. Lay out and measure once
-            // that has happened, still inside the keyboard's animation.
+            // Lay out and measure on the next turn, once this notification's
+            // own layout has happened, still inside the keyboard's animation.
             await Task.yield()
             guard let self, let gridView, transition == self.keyboardTransition, !self.isLeaving else { return }
             self.settleKeyboardTransition(end: end, grid: gridView, duration: duration, curve: curve)
@@ -1255,7 +1223,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     ) {
         let animation = SSHTerminalKeyboard.animation(duration: duration, curve: curve)
         UIView.animate(withDuration: animation.duration, delay: 0, options: animation.options) {
-            self.updateComposerHeight()
             self.view.layoutIfNeeded()
         }
         let settled = SSHTerminalKeyboard.settledGridSize(
@@ -1374,310 +1341,14 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         backToLive.setVisible(detached)
     }
 
-    // MARK: - Composer
+    // MARK: - Bottom rows
 
-    private func updateComposer() {
-        let show = inputMode == .chat && !rawKeyboard
-        if show {
-            embedComposer()
-            refreshComposerChrome()
-            if composerFocusRequest != lastAppliedComposerFocus {
-                lastAppliedComposerFocus = composerFocusRequest
-                composerSession?.requestFocus()
-            }
-        } else {
-            unembedComposer()
-        }
-    }
-
-    private func serverConnection() -> ServerConnection? {
-        composerConnection ?? AppRootEnvironment.near(self)?.coordinator.activeConnection
-    }
-
-    private func makeComposer() {
-        let session = SSHTerminalComposerHost(
-            channel: channel,
-            connection: serverConnection(),
-            draftStore: AppRootEnvironment.near(self)?.composerDraftStore,
-            themeID: chromeTheme,
-            terminalColors: lastTerminalColors,
-            showRawKeyboard: { [weak self] in self?.showTerminalKeyboard() }
-        )
-        if let identity = terminalIdentity, let draft = composerDrafts[identity] { session.restore(draft) }
-        session.onNeedsLayout = { [weak self] in self?.updateComposerHeight() }
-        session.onFailureChange = { [weak self] message in self?.applySendFailure(message) }
-
-        let bar = ComposerBarController()
-        session.attach(bar)
-        _ = bar.view
-
-        let strip = SSHTerminalKeyStripView(
-            role: .composer,
-            handlers: SSHTerminalKeyStripView.Handlers(
-                sendStrokes: { [weak self] strokes in self?.channel.keys(strokes) },
-                sendKey: { [weak self] key in _ = self?.channel.key(key) },
-                sendArrow: { [weak self] key in self?.channel.key(key) ?? false },
-                showRawKeyboard: { [weak self] in self?.showTerminalKeyboard() },
-                fillPassword: { [weak self] in self?.fillPassword() }
-            )
-        )
-        bar.installKeyStrip(strip)
-
-        let container = UIStackView()
-        container.axis = .vertical
-        container.alignment = .fill
-        container.spacing = 4
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = .clear
-        container.isLayoutMarginsRelativeArrangement = true
-        container.layoutMargins = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
-
-        let dictation = ComposerDictationFailureView()
-        dictation.isHidden = true
-        dictation.connect(manager: { [weak self] in self?.composerSession?.voiceManager }) { [weak session] in
-            session?.retryVoice()
-        }
-
-        let failure = UILabel()
-        failure.font = UIFont.preferredFont(forTextStyle: .caption1)
-        failure.numberOfLines = 0
-        failure.accessibilityIdentifier = "sshTerminal.composer.failure"
-        failure.isHidden = true
-
-        bar.view.translatesAutoresizingMaskIntoConstraints = false
-        bar.view.backgroundColor = .clear
-        let dictationWrap = UIView()
-        dictation.translatesAutoresizingMaskIntoConstraints = false
-        dictationWrap.addSubview(dictation)
-        NSLayoutConstraint.activate([
-            dictation.leadingAnchor.constraint(equalTo: dictationWrap.leadingAnchor, constant: 16),
-            dictation.trailingAnchor.constraint(equalTo: dictationWrap.trailingAnchor, constant: -16),
-            dictation.topAnchor.constraint(equalTo: dictationWrap.topAnchor),
-            dictation.bottomAnchor.constraint(equalTo: dictationWrap.bottomAnchor),
-        ])
-        let failureWrap = UIView()
-        failure.translatesAutoresizingMaskIntoConstraints = false
-        failureWrap.addSubview(failure)
-        NSLayoutConstraint.activate([
-            failure.leadingAnchor.constraint(equalTo: failureWrap.leadingAnchor, constant: 16),
-            failure.trailingAnchor.constraint(equalTo: failureWrap.trailingAnchor, constant: -16),
-            failure.topAnchor.constraint(equalTo: failureWrap.topAnchor),
-            failure.bottomAnchor.constraint(equalTo: failureWrap.bottomAnchor),
-        ])
-        dictationWrap.isHidden = true
-        failureWrap.isHidden = true
-        container.addArrangedSubview(dictationWrap)
-        container.addArrangedSubview(failureWrap)
-        container.addArrangedSubview(bar.view)
-
-        composerSession = session
-        composerBar = bar
-        composerKeyStrip = strip
-        composerContainer = container
-        dictationFailureView = dictation
-        sendFailureLabel = failure
-    }
-
-    private func embedComposer() {
-        if composerBar == nil { makeComposer() }
-        guard let bar = composerBar, let container = composerContainer, bar.parent !== self else {
-            return
-        }
-        addChild(bar)
-        view.addSubview(container)
-        bar.didMove(toParent: self)
-        let height = container.heightAnchor.constraint(equalToConstant: 60)
-        composerHeightConstraint = height
-        let overlayAbove = overlay.bottomAnchor.constraint(lessThanOrEqualTo: container.topAnchor)
-        overlayAboveComposer = overlayAbove
-        NSLayoutConstraint.activate([
-            container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            // Above the bottom bar, so the two never stack on each other and
-            // the bar stays on the screen's bottom edge as the chat bar does
-            // while the keyboard is up (the bar is gone then).
-            container.bottomAnchor.constraint(equalTo: bottomBar.topAnchor),
-            height,
-            overlayAbove,
-        ])
-        voicePrepareTask?.cancel()
-        voicePrepareTask = Task { [weak self] in
-            await self?.composerSession?.prepareVoice()
-            guard !Task.isCancelled else { return }
-            self?.setNeedsUpdateProperties()
-        }
-        updateComposerHeight()
-    }
-
-    private func unembedComposer() {
-        guard let bar = composerBar, bar.parent === self else { return }
-        voicePrepareTask?.cancel()
-        voicePrepareTask = nil
-        composerKeyStrip?.stopRepeating()
-        composerSession?.releaseVoice()
-        bar.view.endEditing(true)
-        composerHeightConstraint?.isActive = false
-        composerHeightConstraint = nil
-        overlayAboveComposer?.isActive = false
-        overlayAboveComposer = nil
-        bar.willMove(toParent: nil)
-        composerContainer?.removeFromSuperview()
-        bar.removeFromParent()
-        composerReservedHeight = 0
-        composerCoveredHeight = 0
-        updateBottomRows()
-        updateCursorShift()
-    }
-
-    /// The bottom rows the grid leaves free: the chat bar's resting height
-    /// above the bottom bar's own. Keeping this in one place is what makes a
-    /// keyboard change one resize: both terms settle before the size is sent.
+    /// The bottom rows the grid leaves free for the bottom bar. Keeping this in
+    /// one place is what makes a keyboard change one resize.
     private func updateBottomRows() {
-        let constant = -(composerReservedHeight + bottomBarReserve)
+        let constant = -bottomBarReserve
         guard abs((gridBottom?.constant ?? 0) - constant) > 0.5 else { return }
         gridBottom?.constant = constant
-    }
-
-    private var terminalIdentity: SSHTerminalIdentity? {
-        guard let session, let profile = session.connectedProfile else { return nil }
-        return SSHTerminalIdentity(profileID: profile.id, folder: session.folder, rexSession: session.rexPane?.sessionID)
-    }
-
-    /// Keeps the chat bar's text and attachments for the terminal being left.
-    private func stashComposerDraft() {
-        guard let identity = shownIdentity, let draft = composerSession?.draftEndingDictation() else { return }
-        composerDrafts[identity] = draft.isEmpty ? nil : draft
-    }
-
-    private func destroyComposer() {
-        voicePrepareTask?.cancel()
-        voicePrepareTask = nil
-        unembedComposer()
-        composerBar = nil
-        composerSession = nil
-        composerKeyStrip = nil
-        composerContainer = nil
-        sendFailureLabel = nil
-        dictationFailureView = nil
-        lastAppliedComposerFocus = 0
-    }
-
-    private func refreshComposerChrome() {
-        let themeID = chromeTheme
-        composerSession?.connection = serverConnection()
-        composerSession?.draftStore = AppRootEnvironment.near(self)?.composerDraftStore
-        composerSession?.refreshChrome(
-            themeID: themeID,
-            terminalColors: lastTerminalColors,
-            reduceMotion: reduceMotion,
-            connected: channel.connected
-        )
-        let colors = ComposerThemeColors(palette: themeID.palette, terminal: lastTerminalColors)
-        composerKeyStrip?.apply(
-            profile: keymap.profile,
-            userFile: keymap.userFile,
-            colors: colors,
-            foreground: colors.fg,
-            background: colors.bg
-        )
-        applySendFailure(composerSession?.sendFailure)
-        applyDictationFailure()
-        composerBar?.micColors = colors
-        composerBar?.apply()
-        updateComposerHeight()
-    }
-
-    private func applySendFailure(_ message: String?) {
-        guard let label = sendFailureLabel else { return }
-        let colors = ComposerThemeColors(palette: chromeTheme.palette, terminal: lastTerminalColors)
-        label.text = message
-        label.textColor = colors.red
-        let hidden = message == nil || message?.isEmpty == true
-        label.isHidden = hidden
-        label.superview?.isHidden = hidden
-        updateComposerHeight()
-    }
-
-    private func applyDictationFailure() {
-        guard let banner = dictationFailureView else { return }
-        let colors = ComposerThemeColors(palette: chromeTheme.palette, terminal: lastTerminalColors)
-        if let failure = ComposerShared.captureFailure(composerSession?.voiceManager, owner: .inlineComposer) {
-            banner.apply(message: failure.message, colors: colors)
-            banner.isHidden = false
-            banner.superview?.isHidden = false
-        } else {
-            banner.isHidden = true
-            banner.superview?.isHidden = true
-        }
-        updateComposerHeight()
-    }
-
-    private func updateComposerHeight() {
-        guard let bar = composerBar, let container = composerContainer,
-              container.superview != nil else { return }
-        let width = max(view.bounds.width, 1)
-        let barHeight = bar.sizeThatFits(width: width).height
-        let dictation: CGFloat = dictationFailureView?.isHidden == false
-            ? (dictationFailureView?.systemLayoutSizeFitting(
-                CGSize(width: max(width - 32, 1), height: UIView.layoutFittingCompressedSize.height),
-                withHorizontalFittingPriority: .required,
-                verticalFittingPriority: .fittingSizeLevel
-            ).height ?? 0) + 4
-            : 0
-        let failure: CGFloat = sendFailureLabel?.isHidden == false
-            ? (sendFailureLabel?.sizeThatFits(CGSize(width: max(width - 32, 1), height: .greatestFiniteMagnitude)).height ?? 0)
-            : 0
-        let height = max(barHeight + dictation + failure, 1)
-        if abs((composerHeightConstraint?.constant ?? 0) - height) > 0.5 {
-            composerHeightConstraint?.constant = height
-        }
-        // The grid keeps only the bar's resting height. A longer draft,
-        // attachments, suggestions, and the failure banners grow over it,
-        // so the remote terminal is not resized while you compose.
-        let reserved = min(bar.restingHeight(fittedHeight: barHeight, width: width), height)
-        composerReservedHeight = reserved
-        composerCoveredHeight = height - reserved
-        updateBottomRows()
-    }
-
-    private func cursorMayHaveMoved() {
-        // A synchronized-output hold still shows the last picture.
-        guard composerCoveredHeight > 0, !channel.engine.renderHeld else { return }
-        updateCursorShift()
-    }
-
-    /// Moves the grid's picture up so the program's cursor row stays above
-    /// a chat bar that grew over the grid. The grid's size does not change.
-    /// The picture holds still while you read history and while a finger is
-    /// on it or it coasts: moving the grid then would move the scroll
-    /// under the finger. It eases to the live position when that ends.
-    private func updateCursorShift() {
-        guard let gridView else { return }
-        let cellHeight = gridView.cellSize.height
-        let held = detached || gridView.isHistoryScrolling
-        let settling = cursorShiftHeld && !held
-        cursorShiftHeld = held
-        let shift = held
-            ? SSHTerminalComposerOverlap.held(
-                -gridView.transform.ty, covered: composerCoveredHeight, cellHeight: cellHeight
-            )
-            : SSHTerminalComposerOverlap.shift(
-                gridHeight: gridView.bounds.height,
-                covered: composerCoveredHeight,
-                cursorRow: channel.engine.cursorCell.row,
-                cellHeight: cellHeight
-            )
-        let scale = max(view.traitCollection.displayScale, 1)
-        let snapped = (shift * scale).rounded(.up) / scale
-        let transform = snapped > 0 ? CGAffineTransform(translationX: 0, y: -snapped) : .identity
-        guard gridView.transform != transform else { return }
-        if settling, !reduceMotion, gridView.window != nil {
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
-                gridView.transform = transform
-            }
-        } else {
-            gridView.transform = transform
-        }
     }
 
     // MARK: - Mode
@@ -1710,89 +1381,34 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     }
 
     private func showTerminalKeyboard() {
-        // During a password prompt typing is already the terminal's: bring its
-        // keyboard back without making that the user's choice, so the chat bar
-        // still returns (with the keyboard) when the prompt ends.
-        if automaticTerminalTyping {
-            refocusAfterSecurePrompt = true
-            askForTerminalKeyboard()
-            return
-        }
-        manualInputChoice()
-        inputMode = .terminal
         askForTerminalKeyboard()
     }
 
-    /// The Chat Bar button: the chat bar, with its keyboard up. From the
-    /// terminal's keyboard the bar focuses once that keyboard has gone.
-    private func focusChatBar() {
-        guard !rawKeyboard else { return showChatBar() }
-        wantsTerminalKeyboard = false
-        manualInputChoice()
-        inputMode = .chat
-        composerFocusRequest += 1
-        setNeedsUpdateProperties()
-    }
-
-    private func showChatBar() {
-        wantsTerminalKeyboard = false
-        manualInputChoice()
-        inputMode = .chat
-        focusComposerAfterRaw = true
-        _ = gridView?.resignFirstResponder()
-        setNeedsUpdateProperties()
-    }
-
-    /// Typing moved off the chat bar automatically for a password prompt; the
-    /// input bar comes back when that prompt ends. Choosing **Chat Bar** in the
-    /// meantime wins over the automatic switch back. **Type in Terminal** only
-    /// brings the keyboard back, and a tap on the grid is never a choice.
-    private var automaticTerminalTyping = false
-    /// Whether ending the automatic switch focuses the chat bar it puts back.
-    /// Hiding the keyboard during the prompt keeps the bar, not the keyboard,
-    /// until Type in Terminal brings it back.
-    private var refocusAfterSecurePrompt = true
-
-    private func manualInputChoice() {
-        automaticTerminalTyping = false
-    }
-
-    /// The terminal is the input, but the grid has not taken the keyboard yet.
-    /// UIKit refuses an ask that lands while the chat bar's text view is still
-    /// resigning, and the pass that unships the bar ends that editing at the
-    /// same moment, so a dropped ask leaves nothing focused — no keyboard at a
-    /// password prompt. The screen asks again on its next pass until the grid
-    /// holds it. Cleared when typing goes back to the chat bar, and when the
-    /// person sends the keyboard away.
+    /// Type in Terminal was asked for, but the grid has not taken the keyboard
+    /// yet: UIKit can refuse an ask that lands while another responder is still
+    /// resigning, and a dropped ask leaves nothing focused. The screen asks
+    /// again on its next pass until the grid holds it. Cleared when the person
+    /// sends the keyboard away.
     private var wantsTerminalKeyboard = false
 
     private func askForTerminalKeyboard() {
         wantsTerminalKeyboard = true
-        // Ask now too: a key strip tap or a prompt should not wait a pass.
+        // Ask now too: a key strip tap should not wait a pass.
         DispatchQueue.main.async { [weak self] in self?.takeTerminalKeyboard() }
         setNeedsUpdateProperties()
     }
 
     private func takeTerminalKeyboard() {
-        guard wantsTerminalKeyboard, inputMode == .terminal,
-              let grid = gridView, grid.window != nil
-        else { return }
+        guard wantsTerminalKeyboard, let grid = gridView, grid.window != nil else { return }
         if !grid.isFirstResponder { _ = grid.becomeFirstResponder() }
         if grid.isFirstResponder { wantsTerminalKeyboard = false }
     }
 
-    /// The user sent the keyboard away. During an automatic switch for a
-    /// password prompt that only keeps the keyboard down when the prompt ends;
-    /// the chat bar still comes back there. Any other hide changes nothing.
     private func keyboardWasHidden() {
         wantsTerminalKeyboard = false
-        guard automaticTerminalTyping else { return }
-        refocusAfterSecurePrompt = false
     }
 
-    /// A password prompt appeared or ended. Oppi never types a secret into the
-    /// chat bar: the bar is a draft the user can read, save, and dictate into,
-    /// so the input moves to the terminal while the prompt is up.
+    /// A password prompt appeared or ended: Fill Password follows it.
     private func secureInputChanged(_ secure: Bool) {
         secureEntryActive = secure
         if !secure, passwordFillTask != nil {
@@ -1800,25 +1416,48 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             passwordFillTask?.cancel()
         }
         setNeedsUpdateProperties()
-        if secure {
-            guard !automaticTerminalTyping, inputMode == .chat, !rawKeyboard else { return }
-            automaticTerminalTyping = true
-            refocusAfterSecurePrompt = true
-            inputMode = .terminal
-            askForTerminalKeyboard()
-        } else {
-            guard automaticTerminalTyping else { return }
-            automaticTerminalTyping = false
-            wantsTerminalKeyboard = false
-            // The prompt only starts from the chat bar, so that is what returns.
-            inputMode = .chat
-            if refocusAfterSecurePrompt { focusComposerAfterRaw = true }
-            // The bar comes back either way; a keyboard the user hid stays down.
-            composerSession?.setSuppressKeyboard(!refocusAfterSecurePrompt)
-            refocusAfterSecurePrompt = true
-            _ = gridView?.resignFirstResponder()
+    }
+
+    // MARK: - Dictation and attachments
+
+    /// A take that failed while it ran shows once, as a notice; Dictate starts
+    /// another.
+    private func noticeDictationFailure(_ failure: VoiceCaptureFailure?) {
+        guard failure != shownDictationFailure else { return }
+        shownDictationFailure = failure
+        guard let failure else { return }
+        showOpenNotice(String(localized: "Dictation stopped. \(failure.message)"))
+    }
+
+    /// Saves each pick on the host, then types the paths, space-separated and
+    /// without Return, as a pasted image's path is typed. Coding agents read an
+    /// image or file by its path.
+    private func attach(_ attachments: [PendingAttachment]) {
+        guard !attachments.isEmpty else { return }
+        let store = AppRootEnvironment.near(self)?.composerDraftStore
+        guard channel.connected else {
+            PhotoLibraryMediaImporter.discardImportedFiles(attachments, store: store)
+            presentPasteFailure("Not connected.")
+            return
         }
-        setNeedsUpdateProperties()
+        let channel = channel
+        showPasteNotice(attachments.count == 1
+            ? "Saving the file on the host\u{2026}"
+            : "Saving \(attachments.count) files on the host\u{2026}")
+        Task { [weak self] in
+            defer { PhotoLibraryMediaImporter.discardImportedFiles(attachments, store: store) }
+            do {
+                var paths: [String] = []
+                for attachment in attachments {
+                    let (data, ext) = try await SSHTerminalAttachPicker.fileContents(attachment)
+                    paths.append(try await channel.upload(data, fileExtension: ext))
+                }
+                try channel.paste(paths.joined(separator: " "))
+                self?.showPasteNotice(paths.count == 1 ? "Pasted the file's path." : "Pasted the files' paths.")
+            } catch {
+                self?.presentPasteFailure("The attachment was not sent. \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - Fill Password
@@ -1841,10 +1480,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         )
     }
 
-    /// One decision for both keys: the chat bar's strip and the keyboard bar's.
     private func updatePasswordFill(connected: Bool) {
         let host = isPasswordFillOffered(connected: connected) ? passwordFillProfile?.endpointLabel : nil
-        composerKeyStrip?.setPasswordFill(host: host)
         gridView?.setPasswordFill(host: host)
     }
 
@@ -2231,7 +1868,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         }
     }
 
-    /// Saves the image on the host like a chat-bar attachment, then pastes
+    /// Saves the image on the host like an attachment, then pastes
     /// its path. Claude Code and pi read a pasted image path as the image.
     private func pasteImage(_ image: SSHTerminalPastedImage) {
         guard channel.connected else { channel.send(Data()); return }

@@ -234,7 +234,7 @@ final class SSHTerminalEventQueue: Sendable {
     }
 }
 
-/// Composer attachments go to the host as files the agent can read by path.
+/// Attached and pasted files go to the host as files the agent can read by path.
 /// They land in `$TMPDIR/oppi-ssh-<uid>`, or `/tmp/oppi-ssh-<uid>` when the
 /// host sets no `TMPDIR`, owner-only.
 enum SSHTerminalUpload {
@@ -938,17 +938,6 @@ final class SSHTerminalChannel {
     func mouse(_ input: SSHTerminalEngine.MouseInput, column: Int, row: Int) {
         guard connected, !inputClosed else { return }
         send(engine.mouse(input, column: column, row: row))
-    }
-
-    /// Composer send: the text as one paste, then Enter. The user wrote it in
-    /// Oppi, so a newline needs no clipboard-style consent; bracketed paste
-    /// keeps a multi-line prompt as one prompt in agent TUIs. Empty text is a
-    /// bare Enter.
-    func submit(_ text: String) throws {
-        guard connected, !inputClosed else { send(Data()); throw SSHTerminalError.disconnected }
-        var bytes = text.isEmpty ? Data() : try engine.paste(text, confirmed: true)
-        bytes.append(engine.key(GHOSTTY_KEY_ENTER))
-        send(bytes)
     }
 
     func paste(_ text: String, confirmed: Bool = false) throws {

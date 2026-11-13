@@ -13,7 +13,8 @@ import UniformTypeIdentifiers
 /// is here.
 enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
     case keyboard
-    case chatBar
+    case dictate
+    case attach
     case escape
     case interrupt
     case tab
@@ -45,7 +46,8 @@ enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .keyboard: String(localized: "Type in Terminal")
-        case .chatBar: String(localized: "Chat Bar")
+        case .dictate: String(localized: "Dictate")
+        case .attach: String(localized: "Attach")
         case .escape: String(localized: "Escape")
         case .interrupt: String(localized: "Control-C")
         case .tab: String(localized: "Tab")
@@ -63,7 +65,6 @@ enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
     /// The … menu item's title: the command, as the menu said before.
     var menuTitle: String {
         switch self {
-        case .chatBar: String(localized: "Use Chat Bar")
         case .escape: String(localized: "Send Escape")
         case .interrupt: String(localized: "Send Control-C")
         case .tab: String(localized: "Send Tab")
@@ -78,7 +79,6 @@ enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
     var accessibilityLabel: String {
         switch self {
         case .keyboard: String(localized: "Type in terminal")
-        case .chatBar: String(localized: "Use chat bar")
         case .herdr: String(localized: "Herdr agents")
         case .rex: String(localized: "Rex sessions")
         case .switcher: String(localized: "Switch terminal")
@@ -109,9 +109,9 @@ enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
     }
 
     /// The action's icon under `configuration` (nil: a menu's own symbol
-    /// size): its logo sized like a symbol there, else `symbol(selected:)`.
+    /// size): its logo sized like a symbol there, else `symbol`.
     @MainActor
-    func image(selected: Bool = false, configuration: UIImage.SymbolConfiguration? = nil) -> UIImage? {
+    func image(configuration: UIImage.SymbolConfiguration? = nil) -> UIImage? {
         if let logo, let image = SymbolSizedLogo.image(
             named: logo,
             reference: "circle.fill",
@@ -121,16 +121,17 @@ enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
         ) {
             return image
         }
-        return UIImage(systemName: symbol(selected: selected), withConfiguration: configuration)
+        return UIImage(systemName: symbol, withConfiguration: configuration)
     }
 
     /// The SF Symbol for the bar (unless `keyCap` is set), the menu, and the
-    /// settings row, where the action has no `logo`. `selected` is the
-    /// filled form an input button shows while typing goes there.
-    func symbol(selected: Bool = false) -> String {
+    /// settings row, where the action has no `logo`. Dictate draws the
+    /// composer's mic, and its dictation orb while it listens.
+    var symbol: String {
         switch self {
-        case .keyboard: selected ? "keyboard.fill" : "keyboard"
-        case .chatBar: selected ? "text.bubble.fill" : "text.bubble"
+        case .keyboard: "keyboard"
+        case .dictate: "mic"
+        case .attach: "paperclip"
         case .escape: "escape"
         case .interrupt: "xmark.octagon"
         case .tab: "arrow.right.to.line"
