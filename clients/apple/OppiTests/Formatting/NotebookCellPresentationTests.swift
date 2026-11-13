@@ -539,9 +539,9 @@ struct NotebookCellPresentationTests {
         #expect(caption.bounds.height > 8)
     }
 
-    /// A running call draws the app's still working mark in its symbol's place; a finished one keeps
+    /// A running call draws the app's static working icon in its symbol's place; a finished one keeps
     /// its symbol.
-    @Test @MainActor func aRunningCallDrawsTheStillWorkingMark() {
+    @Test @MainActor func aRunningCallDrawsTheWorkingIcon() {
         let plan = NotebookCellPlan(
             sources: [.init(label: nil, language: "javascript", code: "await bash('ls')")],
             inputIsCode: true,

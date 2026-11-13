@@ -376,8 +376,8 @@ final class WorkspaceSidebarRowContentView: UIView, UIContentView {
 }
 
 /// A sidebar workspace's session counts: attention, then the working mark with
-/// its count, then done. Working draws the still working mark, as session rows
-/// do; the others are a small glyph and a count. The row's name sits on the
+/// its count, then done. Working draws the app's static working icon
+/// (`WorkingMarkView`); the others are a small glyph and a count. The row's name sits on the
 /// counts' baseline, so the first count shown is the baseline.
 final class WorkspaceSidebarStatusView: UIStackView {
     private let attention = UILabel()
@@ -418,7 +418,7 @@ final class WorkspaceSidebarStatusView: UIStackView {
         }
         working.isHidden = status.workingCount == 0
         if status.workingCount > 0 {
-            mark.apply(tint: colors.blue, palette: palette)
+            mark.apply(palette: palette)
             workingCount.text = SessionFormatting.compactCount(status.workingCount)
             workingCount.textColor = colors.blue
         }

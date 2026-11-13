@@ -119,9 +119,9 @@ struct ExtensionNativeBlockViewsTests {
         #expect(label().contains("Running bash"))
     }
 
-    /// A running row draws the app's still working mark where other states draw their symbol, and a
+    /// A running row draws the app's static working icon where other states draw their symbol, and a
     /// reused row trades them back when the state changes.
-    @Test func aRunningRowDrawsTheStillWorkingMarkInPlaceOfItsSymbol() throws {
+    @Test func aRunningRowDrawsTheWorkingIconInPlaceOfItsSymbol() throws {
         func shownMarks(_ stack: UIView) -> [WorkingMarkView] {
             subviews(of: WorkingMarkView.self, in: stack).filter { !$0.isHidden && $0.image != nil }
         }

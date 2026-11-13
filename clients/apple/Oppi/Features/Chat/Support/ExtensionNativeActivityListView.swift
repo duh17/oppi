@@ -99,9 +99,8 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
     private let control = ActivityRowControl()
     /// The state symbol, on the title's first line rather than centered on the row.
     private let marker = UIImageView()
-    /// A running row's state: the app's still working mark, as session rows draw it, in the
-    /// symbol's place.
-    private let workingMark = WorkingMarkView(textStyle: .subheadline)
+    /// A running row's state: the app's static working icon, in the symbol's place.
+    private let workingMark = WorkingMarkView(textStyle: .body)
     private let content = UIListContentView(configuration: .subtitleCell())
     /// The quiet one-line detail under the content's subtitle.
     private let detailLabel = ExtensionNativeBlockStyle.label(.caption1)
@@ -278,7 +277,7 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
         marker.tintColor = ExtensionNativeBlockStyle.activityColor(tone, palette: palette)
         workingMark.isHidden = !working
         if working {
-            workingMark.apply(tint: ExtensionNativeBlockStyle.activityColor(tone, palette: palette), palette: palette)
+            workingMark.apply(palette: palette)
         }
         var configuration = UIListContentConfiguration.subtitleCell()
         // No hyphens inside names: `catalyst-ghostty-spike` wraps at its own hyphens. An attributed

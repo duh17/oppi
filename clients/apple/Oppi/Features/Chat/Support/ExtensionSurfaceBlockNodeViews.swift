@@ -704,8 +704,8 @@ final class BlocksBadgeView: BlocksTapControl {
     }
 }
 
-/// An icon: an SF Symbol the server allow-lists, or `working`, which draws the app's still working
-/// mark (`WorkingMarkView`) in the style and tint session rows use, whatever the node's tone. A name
+/// An icon: an SF Symbol the server allow-lists, or `working`, which draws the app's static working
+/// icon (`WorkingMarkView`) in the accent blue, whatever the node's tone. A name
 /// this build cannot draw leaves the gap empty rather than failing the node.
 final class BlocksIconView: UIView {
     /// The one icon name that is not an SF Symbol (`extension-native-ui:v2:working`).
@@ -747,7 +747,7 @@ final class BlocksIconView: UIView {
         let working = node.name == Self.workingName
         if working {
             image.image = nil
-            showMark(style: style).apply(tint: environment.palette.ui.blue, palette: environment.palette)
+            showMark(style: style).apply(palette: environment.palette)
         } else {
             image.image = UIImage.scaledSymbol(
                 node.name,

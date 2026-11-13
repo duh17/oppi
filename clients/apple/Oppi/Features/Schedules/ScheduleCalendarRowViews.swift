@@ -518,10 +518,10 @@ enum ScheduleCalendarRowViews {
         return view
     }
 
-    /// The still working mark in the style chosen in Settings.
+    /// The app's static working icon.
     static func workingMark(_ palette: ThemePalette) -> UIView {
         let mark = WorkingMarkView(textStyle: .subheadline)
-        mark.apply(tint: palette.ui.blue, palette: palette)
+        mark.apply(palette: palette)
         return mark
     }
 

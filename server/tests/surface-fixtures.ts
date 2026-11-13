@@ -694,7 +694,7 @@ function blocksElapsedSurface(): unknown {
 }
 
 /**
- * A running row and its pill with the host's still working mark. Only a client that declares
+ * A running row and its pill with the host's working icon. Only a client that declares
  * `v2:working` is sent it so; every other tree client gets the stand-in symbol.
  */
 function blocksWorkingSurface(): unknown {

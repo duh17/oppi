@@ -781,9 +781,9 @@ struct ExtensionSurfaceBlocksViewsTests {
         ]
     }
 
-    /// An `icon` named `working` draws the app's still working mark, in the body and in the pill, and
+    /// An `icon` named `working` draws the app's static working icon, in the body and in the pill, and
     /// speaks "Working"; a symbol name keeps its symbol.
-    @Test func theWorkingIconDrawsTheStillWorkingMark() throws {
+    @Test func theWorkingIconNodeDrawsTheAppsWorkingIcon() throws {
         let view = composites(try surface("blocks-working.json"))
         let icon = try #require(subviews(of: BlocksIconView.self, in: view).first)
         let mark = try #require(subviews(of: WorkingMarkView.self, in: icon).first)
@@ -802,8 +802,8 @@ struct ExtensionSurfaceBlocksViewsTests {
     }
 
     /// A widget's pill wears its most urgent row's tone as a dot; while that is a running row, the
-    /// still working mark takes the dot's place.
-    @Test func aWidgetPillWithARunningRowDrawsTheStillWorkingMarkForItsDot() throws {
+    /// static working icon takes the dot's place.
+    @Test func aWidgetPillWithARunningRowDrawsTheWorkingIconForItsDot() throws {
         func pill(rowState: String) throws -> UIView {
             let json = """
             {"version":1,"id":"widget:agents","source":"widget",
@@ -1024,7 +1024,7 @@ struct ExtensionSurfaceBlocksViewsTests {
             "the header-derived subtitle is replaced by the content row: \(texts)"
         )
         // The content row's icon and its progress ring are drawn.
-        #expect(subviews(of: UIImageView.self, in: pill).contains { $0.image != nil })
+        #expect(subviews(of: UIImageView.self, in: pill).contains { $0.image != nil && !$0.isHidden })
         #expect(
             subviews(of: UIView.self, in: pill).contains { $0.accessibilityValue?.contains("40") == true },
             "the content row's ring is drawn"
@@ -1038,7 +1038,7 @@ struct ExtensionSurfaceBlocksViewsTests {
         #expect(dot.isHidden, "the pill shows a tone dot beside its own icon")
 
         // One inline step: the content row's own spacing is 6 pt in a pill.
-        let icon = testUnwrap(subviews(of: UIImageView.self, in: pill).first { $0.image != nil })
+        let icon = testUnwrap(subviews(of: UIImageView.self, in: pill).first { $0.image != nil && !$0.isHidden })
         let words = testUnwrap(subviews(of: UILabel.self, in: pill).first { $0.text == "web → prod" && !$0.isHidden })
         let step = words.convert(words.bounds, to: pill).minX - icon.convert(icon.bounds, to: pill).maxX
         #expect(abs(step - 6) <= 0.5, "the pill's inline step is \(step) pt")

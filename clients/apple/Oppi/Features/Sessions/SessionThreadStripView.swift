@@ -463,7 +463,7 @@ final class SessionThreadStatusMarksView: UIView {
         overflow.textColor = style.colors.comment
 
         workingMark.isHidden = working == 0
-        if working > 0 { workingMark.apply(tint: style.tint(.working), palette: style.themeID.palette) }
+        if working > 0 { workingMark.apply(palette: style.themeID.palette) }
         workingCount.isHidden = working < 2
         workingCount.text = "×\(working)"
         workingCount.textColor = style.colors.comment

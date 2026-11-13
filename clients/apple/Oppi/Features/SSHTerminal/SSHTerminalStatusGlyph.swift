@@ -3,7 +3,7 @@ import UIKit
 
 /// One program-status symbol for the terminal's floating controls, the
 /// blocked card, Herdr rows, and the status list. A working program draws the
-/// still working mark instead of a symbol, as session rows do.
+/// app's static working icon (`WorkingMarkView`).
 ///
 /// The floating copy is a button that opens the record list. Settle timing for a
 /// just-finished root lives here, so the timer does not invalidate the terminal
@@ -148,7 +148,7 @@ final class SSHTerminalStatusMarkView: UIView {
         let drawsCheck = style == .toolbar && shown == .done && !reduceMotion
         imageView.tintColor = shown.tint(themeID.appTheme)
         showWorkingMark(shown == .working)
-        if shown == .working { workingMark.apply(tint: shown.tint(themeID.appTheme), palette: palette) }
+        if shown == .working { workingMark.apply(palette: palette) }
         let scale: UIImage.SymbolScale = shown == .idle && style == .toolbar ? .small : .medium
         imageView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body, scale: scale)
         imageView.removeAllSymbolEffects()

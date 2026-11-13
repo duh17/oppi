@@ -616,9 +616,9 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         let lineHeight = codeFont.lineHeight
         let icon: UIImageView
         if call.status == "running" {
-            // The app's still working mark, as session rows draw it; it sizes itself to caption type.
+            // The app's static working icon; it sizes itself to caption type.
             let mark = WorkingMarkView(textStyle: .caption2)
-            mark.apply(tint: statusColor(call.status, palette: palette), palette: palette)
+            mark.apply(palette: palette)
             // Centred on the first code line's height below, like the symbols.
             mark.setContentHuggingPriority(.defaultHigh, for: .vertical)
             mark.setContentCompressionResistancePriority(.defaultHigh, for: .vertical)

@@ -638,8 +638,8 @@ private extension ExtensionSurfacePlacementGroup {
 private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
     private let marker = UIImageView()
     private let dot = UIView()
-    /// The tone dot's place while the surface's most urgent row is running: the app's still
-    /// working mark, as session rows show it.
+    /// The tone dot's place while the surface's most urgent row is running: the app's static
+    /// working icon.
     private let workingMark = WorkingMarkView(textStyle: .caption1)
     /// The facts the surface composed for its pill, drawn in place of the header-derived title.
     private let content = ExtensionSurfacePillContentView()
@@ -742,7 +742,7 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
         let working = entry.leadingSystemImage == nil && entry.stateTone == .running
         if working {
             dot.isHidden = true
-            workingMark.apply(tint: tone, palette: palette)
+            workingMark.apply(palette: palette)
         }
         workingMark.isHidden = !working
         applyPill(pill, summaryOnly: summaryOnly)
