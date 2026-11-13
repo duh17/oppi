@@ -3,7 +3,7 @@
 <!--
   The Mac Catalyst build: not sandboxed (Developer ID; it will run the server
   as a launch agent), with Hardened Runtime. Under Hardened Runtime the
-  microphone, camera and Photos each need their resource entitlement.
+  microphone, camera, Photos and Calendars each need their resource entitlement.
   Push, time-sensitive alerts and default data protection mirror the iOS
   file (see project.yml for why each exists); macOS names the push key
   com.apple.developer.aps-environment. They need the Mac Catalyst
@@ -24,6 +24,8 @@
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
 	<key>com.apple.security.device.camera</key>
+	<true/>
+	<key>com.apple.security.personal-information.calendars</key>
 	<true/>
 	<key>com.apple.security.personal-information.photos-library</key>
 	<true/>

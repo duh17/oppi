@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 2026-11-04_
+_Last updated: 2026-11-13_
 
 This policy describes the current Oppi Apple client and the Oppi server that you run yourself. Oppi is a native client for a paired, self-hosted Oppi server. That server runs Pi through its SDK; Pi does not ship a server mode. Oppi provides no hosted account service, central session store, or Oppi-operated external analytics service. Its only hosted service is the optional push relay described under [Push notifications](#push-notifications). Pi may collect its own install or update telemetry outside this policy; see Pi's documentation.
 
@@ -12,6 +12,7 @@ You choose the server, workspace, model providers, speech-to-text service, and t
 - Prompts, session history, workspace metadata, tool results, and attachments can be stored by the paired server and by Pi in the server's data and workspace locations.
 - A selected photo or file is read by the app and uploaded to the paired server with the session turn. The app does not collect photos or files in the background.
 - Dictation uses Apple's on-device speech by default. If you choose **Server** in Settings, dictation audio goes through the paired server to its configured speech-to-text backend.
+- Calendar Events (an experiment, off by default) reads this device's calendar to show events in Schedules. Events stay on the device; an event's details go to your server only when you schedule an agent for it. See [Calendar](#calendar).
 - Live Voice (an experiment, off by default) streams your voice during a call through the paired server to the voice backend the server sets: speech services the server operator chooses, or xAI's Grok Voice, which also receives the text of what the agent says aloud. See [Live Voice](#live-voice).
 - Model, speech, and voice providers can receive the content needed for the operation you choose. Their privacy policies and retention rules apply.
 - Before your content first goes to one of those services, the app names it, says what is sent, and asks; nothing is sent until you tap **Allow**. See [AI sharing consent](#ai-sharing-consent).
@@ -161,6 +162,14 @@ It deletes a registration when Apple reports the token invalid, after 30 days wi
 **Live Activities.** Off by default. With **Live Activities** on for a server (Server Settings, Notifications section), the Lock Screen and Dynamic Island show one card for that server with two numbers: how many agent threads (an agent together with the subagents it started) are running and how many need you, and never session names, tool names, or other text. While Oppi runs, the app updates the card on the device. If push is also on for that server, your server keeps the card current while Oppi is closed by sending the two counts to the relay, which passes them to Apple in a fixed format. These counts are not encrypted, so the relay, Cloudflare, and Apple can see them and when they change. Updates go out at most once a minute and share the relay's 100 pushes a day per device with alerts, which come first: Live Activity updates stop at 70, plus 8 more past the day's 100 for ending a card so a card is never left showing finished work. These limits are preliminary and may change. Starting a card this way shows Apple's required alert, "Oppi: Agents are working." Without push, nothing about the card leaves your device. Turning Live Activities on while push is on, or push on while Live Activities is on, first shows a disclosure of what the counts reveal. The app tells the relay which servers may update a card, and the relay refuses every other server. Dismissing a card keeps it away until nothing is running or waiting on that server, even if Oppi is closed or restarted. Turning Live Activities off for a server ends its card and takes that server off the relay's list; if the relay cannot be reached, the app keeps trying, including each time it opens.
 
 **Turning it off.** Turning push off for a server, or revoking this device on the server, deletes this device's push registration on that server and asks the relay to delete the send permission. Removing the server from the app asks the relay to delete the send permission, and the server deletes its registration the next time it tries to push and the relay refuses it. When that server was the last one with push on through the relay, your device asks the relay to delete this device's relay registration instead, which takes the send permission with it. Your device deletes the server's push keys when you turn push off or remove the server.
+
+## Calendar
+
+Calendar Events is an experiment, off until you turn on **Settings → Experiments → Calendar Events**. Turning it on is the only time Oppi asks for calendar access. With access, the Schedules calendar reads the events of the calendars you choose under **Calendars** (all of them by default) each time it draws a day, week, or month, and shows them beside your runs. Oppi does not copy, store, or sync events, and it never sends them to your server or anyone else just to show them. It reads only; it never adds, changes, or deletes an event.
+
+An event's details leave the device in one case: you touch and hold the event, choose **Schedule Agent…**, and save the schedule. The new schedule's prompt holds the event's title, time, location, calendar name, and notes (cut to 4,000 characters), which you can edit before you save. Saving sends the prompt to your server, which stores it with the schedule. When the schedule runs, the server sends the prompt to its model provider, after the same [AI sharing consent](#ai-sharing-consent) as any other prompt. Deleting the schedule deletes its prompt from the server, not what a run already sent.
+
+Turn the experiment off to stop reading, or remove Oppi's calendar access in iOS Settings → Apps → Oppi → Calendars.
 
 ## Terminal
 

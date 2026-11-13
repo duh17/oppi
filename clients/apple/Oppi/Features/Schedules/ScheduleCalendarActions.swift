@@ -17,12 +17,14 @@ final class ScheduleCalendarActions {
         let perform: () -> Void
     }
 
-    private let root: AppRootEnvironment
-    private let connection: ServerConnection
-    private let model: ScheduleCalendarModel
+    let root: AppRootEnvironment
+    let connection: ServerConnection
+    let model: ScheduleCalendarModel
     /// A change the person asked for failed; the container's composer says why.
-    private let reportError: (String?) -> Void
+    let reportError: (String?) -> Void
     let openSchedule: (String) -> Void
+    /// Schedule Agent… saved a new schedule (`ScheduleCalendarActions+Events`).
+    var onScheduleCreated: (() -> Void)?
     /// The screen consent prompts present from.
     weak var presenter: UIViewController?
 

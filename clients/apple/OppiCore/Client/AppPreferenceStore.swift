@@ -248,6 +248,10 @@ enum AppPreferenceStore {
     enum Experiments {
         static let rexKey = "\(AppIdentifiers.subsystem).experiments.rex"
         static let herdrKey = "\(AppIdentifiers.subsystem).experiments.herdr"
+        static let calendarEventsKey = "\(AppIdentifiers.subsystem).experiments.calendarEvents"
+        /// The calendars Schedules leaves out, by EventKit identifier: a calendar added
+        /// later shows until it is hidden.
+        static let calendarEventsHiddenKey = "\(AppIdentifiers.subsystem).experiments.calendarEvents.hidden"
         /// What nothing stored means; both declarations use it.
         static let enabledDefault = false
 
@@ -256,6 +260,9 @@ enum AppPreferenceStore {
 
         /// Herdr: its bar button, agents and workspaces, and opening a folder inside it.
         static var herdrEnabled: Bool { flag(herdrKey) }
+
+        /// Calendar Events: this device's events in the Schedules calendar.
+        static var calendarEventsEnabled: Bool { flag(calendarEventsKey) }
 
         /// Nothing stored means the default; anything stored reads as a bool, so a
         /// launch argument's `-key YES` (a test's switch) counts too.

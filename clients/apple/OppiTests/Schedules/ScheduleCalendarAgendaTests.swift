@@ -114,6 +114,7 @@ struct ScheduleCalendarAgendaTests {
             case .now: "now"
             case .entry(let item): item.runId ?? item.scheduleId
             case .cluster: "cluster"
+            case .event(let event, _): event.id
             }
         }
         #expect(labels == ["run-mirror", "run-digest", "run-jobs", "run-nanny-manual", "now", "hawaii01", "nanny917", "nanny917"])

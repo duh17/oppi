@@ -9,6 +9,10 @@ import UIKit
 /// merged runs it opens a popover listing them; a long press offers the Day agenda's menu
 /// (`ScheduleCalendarActions`). A day's header opens that day in the Day agenda.
 ///
+/// With the Calendar Events experiment on, this device's timed events sit behind the runs
+/// across their real duration, and all-day ones in a strip under the day headers
+/// (`ScheduleCalendarEventViews`); a tap or a long press on one offers Schedule Agent….
+///
 /// A scroll view of plain views rather than a collection view: there is no horizontal
 /// scrolling, so the day headers sit above the scroll view instead of pinning inside it, and
 /// a week is under a hundred blocks, kept by id so a redraw never pulls a block out from
@@ -26,6 +30,10 @@ final class ScheduleCalendarWeekViewController: UIViewController, UIContextMenuI
     private let titleLabel = UILabel()
     private let summary = UIView()
     private let dayHeaders = UIView()
+    /// The week's all-day events, one line under the day headers; no height without any.
+    private let allDayStrip = UIView()
+    private lazy var allDayHeight = allDayStrip.heightAnchor.constraint(equalToConstant: 0)
+    private var eventViews: [String: (key: AnyHashable, view: ScheduleCalendarWeekEventView)] = [:]
     let scrollView = UIScrollView()
     private let grid = UIView()
     private let ticker = ScheduleCalendarMinuteTicker()
@@ -97,6 +105,9 @@ final class ScheduleCalendarWeekViewController: UIViewController, UIContextMenuI
         view.addSubview(scrollView)
         view.addSubview(stateView)
         view.addSubview(dayHeaders)
+        allDayStrip.translatesAutoresizingMaskIntoConstraints = false
+        allDayStrip.accessibilityIdentifier = "schedules.calendar.allDay"
+        view.addSubview(allDayStrip)
         view.addSubview(top)
         let safe = view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
@@ -107,11 +118,15 @@ final class ScheduleCalendarWeekViewController: UIViewController, UIContextMenuI
             dayHeaders.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             dayHeaders.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             dayHeaders.heightAnchor.constraint(equalToConstant: UIFontMetrics(forTextStyle: .title3).scaledValue(for: 64)),
-            scrollView.topAnchor.constraint(equalTo: dayHeaders.bottomAnchor),
+            allDayStrip.topAnchor.constraint(equalTo: dayHeaders.bottomAnchor),
+            allDayStrip.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            allDayStrip.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            allDayHeight,
+            scrollView.topAnchor.constraint(equalTo: allDayStrip.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            stateView.topAnchor.constraint(equalTo: dayHeaders.bottomAnchor),
+            stateView.topAnchor.constraint(equalTo: allDayStrip.bottomAnchor),
             stateView.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
             stateView.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
             stateView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
@@ -168,12 +183,15 @@ final class ScheduleCalendarWeekViewController: UIViewController, UIContextMenuI
         _ = EntityIcon.loadGeneration
         let agenda = isLoaded ? model.agenda(live: live) : nil
         self.agenda = agenda
+        let events = isLoaded ? weekEvents(week) : []
 
         view.backgroundColor = palette.ui.bg
         applyTitle(week: week, agenda: agenda, now: now)
         guard view.bounds.width > 0, let first = week.first else { return }
         let metrics = metrics
-        let layout = ScheduleCalendarWeekLayout(agenda: agenda, week: week, now: now, calendar: calendar, metrics: metrics)
+        let layout = ScheduleCalendarWeekLayout(
+            agenda: agenda, week: week, now: now, calendar: calendar, metrics: metrics, events: events
+        )
         let todayIndex = week.firstIndex { calendar.isDate($0, inSameDayAs: now) }
 
         let frameKey = AnyHashable([
@@ -186,8 +204,12 @@ final class ScheduleCalendarWeekViewController: UIViewController, UIContextMenuI
             drawGrid(metrics: metrics, week: week, todayIndex: todayIndex, contentHeight: layout.contentHeight)
             blockViews.values.forEach { $0.view.removeFromSuperview() }
             blockViews = [:]
+            eventViews.values.forEach { $0.view.removeFromSuperview() }
+            eventViews = [:]
         }
         drawDayHeaders(week: week, agenda: agenda, now: now, metrics: metrics)
+        drawAllDay(week: week, events: events, metrics: metrics)
+        drawEvents(layout)
         drawBlocks(layout, now: now)
         drawNowLine(now: now, todayIndex: todayIndex, metrics: metrics)
         applyState(isLoaded: isLoaded, failure: failure)
@@ -358,6 +380,68 @@ final class ScheduleCalendarWeekViewController: UIViewController, UIContextMenuI
         }
     }
 
+    /// The week's events from this device's calendar; none while the experiment is off.
+    private func weekEvents(_ week: [Date]) -> [ScheduleCalendarEvent] {
+        guard let first = week.first, let last = week.last,
+              let end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: last)) else { return [] }
+        return root.deviceCalendar.events(in: DateInterval(start: calendar.startOfDay(for: first), end: end), settings: root.settings)
+    }
+
+    /// One line per day under its header: the first all-day event, and "+2" for the rest.
+    private func drawAllDay(week: [Date], events: [ScheduleCalendarEvent], metrics: ScheduleCalendarWeekLayout.Metrics) {
+        allDayStrip.subviews.forEach { $0.removeFromSuperview() }
+        let days = week.map { ScheduleCalendarEvent.on($0, in: events, calendar: calendar).allDay }
+        let height = days.contains { !$0.isEmpty } ? UIFontMetrics(forTextStyle: .caption1).scaledValue(for: 24).rounded() : 0
+        if allDayHeight.constant != height { allDayHeight.constant = height }
+        allDayStrip.backgroundColor = palette.ui.bg
+        guard height > 0 else { return }
+        let palette = palette
+        for (index, allDay) in days.enumerated() {
+            guard let first = allDay.first else { continue }
+            let chip = ScheduleCalendarWeekEventView()
+            let title = allDay.count > 1 ? "\(first.title) +\(allDay.count - 1)" : first.title
+            chip.configureAllDay(first, title: title, calendar: calendar, palette: palette)
+            chip.addAction(UIAction { [weak self] _ in self?.actions.scheduleAgent(for: first) }, for: .touchUpInside)
+            chip.addInteraction(UIContextMenuInteraction(delegate: self))
+            chip.accessibilityCustomActionsBlock = { [weak self] in self?.actions.eventAccessibilityActions(for: first) ?? [] }
+            chip.frame = CGRect(
+                x: gridOrigin + CGFloat(index) * metrics.columnWidth + 1.5, y: 2,
+                width: metrics.columnWidth - 3, height: height - 4
+            )
+            allDayStrip.addSubview(chip)
+        }
+    }
+
+    /// Each event by id, behind the runs in its column: an unchanged one only moves.
+    private func drawEvents(_ layout: ScheduleCalendarWeekLayout) {
+        let palette = palette
+        var seen = Set<String>()
+        for block in layout.eventBlocks {
+            guard block.day < columns.count else { continue }
+            seen.insert(block.id)
+            let key = AnyHashable([AnyHashable(block.event), AnyHashable(block.frame.size.width), AnyHashable(block.frame.size.height), AnyHashable(palette.ui.bg)])
+            let view: ScheduleCalendarWeekEventView
+            if let existing = eventViews[block.id], existing.key == key {
+                view = existing.view
+            } else {
+                eventViews[block.id]?.view.removeFromSuperview()
+                view = ScheduleCalendarWeekEventView()
+                view.configure(block, calendar: calendar, palette: palette, isTall: layout.metrics.isWideColumn)
+                let event = block.event
+                view.addAction(UIAction { [weak self] _ in self?.actions.scheduleAgent(for: event) }, for: .touchUpInside)
+                view.addInteraction(UIContextMenuInteraction(delegate: self))
+                view.accessibilityCustomActionsBlock = { [weak self] in self?.actions.eventAccessibilityActions(for: event) ?? [] }
+                eventViews[block.id] = (key, view)
+            }
+            if view.superview !== columns[block.day] { columns[block.day].insertSubview(view, at: 0) }
+            view.frame = block.frame.insetBy(dx: 1.5, dy: 0.5)
+        }
+        for (id, entry) in eventViews where !seen.contains(id) {
+            entry.view.removeFromSuperview()
+            eventViews[id] = nil
+        }
+    }
+
     /// Each block by id: an unchanged one only moves; a changed one is drawn again.
     private func drawBlocks(_ layout: ScheduleCalendarWeekLayout, now: Date) {
         let palette = palette
@@ -505,6 +589,9 @@ final class ScheduleCalendarWeekViewController: UIViewController, UIContextMenuI
     }
 
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        if let event = (interaction.view as? ScheduleCalendarWeekEventView)?.event {
+            return actions.eventMenu(for: event, width: view.bounds.width)
+        }
         guard let block = (interaction.view as? WeekBlockView)?.block, case .entry(let item) = block.content else { return nil }
         return actions.contextMenu(
             for: item,
@@ -520,6 +607,10 @@ final class ScheduleCalendarWeekViewController: UIViewController, UIContextMenuI
         animator: UIContextMenuInteractionCommitAnimating
     ) {
         guard let id = configuration.identifier as? String else { return }
+        if let event = (interaction.view as? ScheduleCalendarWeekEventView)?.event {
+            animator.addCompletion { [weak self] in self?.actions.scheduleAgent(for: event) }
+            return
+        }
         animator.addCompletion { [weak self] in self?.activate(id) }
     }
 }

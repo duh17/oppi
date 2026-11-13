@@ -11,12 +11,17 @@ import UIKit
 /// A horizontal swipe across the day pages to the next or previous day, and the week strip
 /// follows.
 ///
+/// With the Calendar Events experiment on, the day's events from this device's calendar sit
+/// between the runs by time (all-day ones first), drawn as neutral context
+/// (`ScheduleCalendarEventViews`); a tap or a long press offers Schedule Agent…. When the
+/// experiment is on but calendar access was refused, one row says so and opens Settings.
+///
 /// Month embeds it with `showsWeekStrip` false: the selected day's title, summary, and runs.
 ///
 /// The container (`SchedulesViewController`) owns the model, the composer, and the bar.
 @MainActor
 final class ScheduleCalendarDayViewController: UIViewController, UICollectionViewDelegate, UIGestureRecognizerDelegate {
-    enum Section: Hashable { case summary, night, day, more }
+    enum Section: Hashable { case summary, calendarAccess, allDay, night, day, more }
 
     enum ID: Hashable {
         /// The day's summary, a row only at accessibility sizes (else it sits in the header).
@@ -29,6 +34,11 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         case now
         /// "More runs not shown": the server listed only part of a dense schedule's runs.
         case truncated
+        /// A calendar event, by its id.
+        case event(String)
+        case allDayEvent(String)
+        /// Calendar Events is on but the calendar cannot be read.
+        case calendarAccess
     }
 
     /// What a row draws, keyed so that only a changed row redraws.
@@ -40,6 +50,9 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         case subagents(ScheduleCalendarAgenda.Item, SessionThreadStripSummary)
         case now(Date)
         case truncated([String])
+        case event(ScheduleCalendarEvent, at: Date)
+        case allDayEvent(ScheduleCalendarEvent)
+        case calendarAccess
     }
 
     let model: ScheduleCalendarModel
@@ -195,6 +208,8 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         let live = Self.liveSessions(for: response, sessionStore: connection.sessionStore)
         badges = ScheduleRowBadges(workspaces: connection.workspaceStore.workspaces, agents: agents.agents)
         _ = EntityIcon.loadGeneration
+        let events = events(on: selected)
+        let calendarDenied = root.deviceCalendar.isDenied(settings: root.settings)
 
         view.backgroundColor = palette.ui.bg
         let agenda = model.agenda(live: live)
@@ -214,8 +229,19 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         // old answer's.
         let shown = isLoaded ? agenda : nil
         applySummary(agenda: shown, day: selected, now: now, isAccessibilitySize: isAccessibilitySize)
-        let isEmpty = applyRows(agenda: shown, day: selected, now: now, expanded: expanded, isAccessibilitySize: isAccessibilitySize)
+        let isEmpty = applyRows(
+            agenda: shown, day: selected, now: now, expanded: expanded, isAccessibilitySize: isAccessibilitySize,
+            events: isLoaded ? events : ([], []), calendarDenied: calendarDenied
+        )
         applyState(isLoaded: isLoaded, hasSchedules: response?.schedules.isEmpty == false, isEmpty: isEmpty, failure: failure)
+    }
+
+    /// `day`'s events from this device's calendar; none while the experiment is off.
+    private func events(on day: Date) -> (allDay: [ScheduleCalendarEvent], timed: [ScheduleCalendarEvent]) {
+        let start = calendar.startOfDay(for: day)
+        let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start
+        let events = root.deviceCalendar.events(in: DateInterval(start: start, end: end), settings: root.settings)
+        return ScheduleCalendarEvent.on(day, in: events, calendar: calendar)
     }
 
     /// The app's live copy of the sessions the answer names: running and blocked changes
@@ -258,7 +284,9 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         day: Date,
         now: Date,
         expanded: Set<String>,
-        isAccessibilitySize: Bool
+        isAccessibilitySize: Bool,
+        events: (allDay: [ScheduleCalendarEvent], timed: [ScheduleCalendarEvent]),
+        calendarDenied: Bool
     ) -> Bool {
         var snapshot = NSDiffableDataSourceSnapshot<Section, ID>()
         let sessionStore = connection.sessionStore
@@ -280,8 +308,18 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             ])
         }
 
-        if let agenda, !agenda.items(on: day, calendar: calendar).isEmpty {
-            let (night, later) = agenda.rows(on: day, now: now, calendar: calendar, expandedClusters: expanded)
+        if calendarDenied {
+            snapshot.appendSections([.calendarAccess])
+            add(.calendarAccess, .calendarAccess, to: .calendarAccess, key: AnyHashable(0))
+        }
+        if agenda != nil, !events.allDay.isEmpty {
+            snapshot.appendSections([.allDay])
+            for event in events.allDay {
+                add(.allDayEvent(event.id), .allDayEvent(event), to: .allDay, key: AnyHashable(event))
+            }
+        }
+        if let agenda, !agenda.items(on: day, calendar: calendar).isEmpty || !events.timed.isEmpty {
+            let (night, later) = agenda.rows(on: day, now: now, calendar: calendar, expandedClusters: expanded, events: events.timed)
             let nextTime = agenda.nextUpcomingTime(after: now)
             if isAccessibilitySize {
                 let summary = agenda.summary(on: day, calendar: calendar)
@@ -316,6 +354,9 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
                     case .cluster(let cluster):
                         previousTime = cluster.items.first?.at
                         add(.cluster(cluster.id), .cluster(cluster), to: section, key: AnyHashable(cluster))
+                    case .event(let event, let at):
+                        previousTime = at
+                        add(.event(event.id), .event(event, at: at), to: section, key: AnyHashable([AnyHashable(event), AnyHashable(at)]))
                     case .now(let date):
                         add(.now, .now(date), to: section, key: AnyHashable(date))
                     }
@@ -548,6 +589,41 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             cell.isAccessibilityElement = true
             cell.accessibilityLabel = text
             cell.accessibilityIdentifier = "schedules.calendar.truncated"
+        case .event(let event, let at):
+            let context = context(for: nil)
+            cell.contentConfiguration = ControlViewContent(insets: .init(top: 8, leading: 0, bottom: 8, trailing: 0)) {
+                ScheduleCalendarEventViews.row(event, at: at, context: context)
+            }
+            configureEvent(cell, event)
+        case .allDayEvent(let event):
+            let context = context(for: nil)
+            cell.contentConfiguration = ControlViewContent(insets: .init(top: 6, leading: 0, bottom: 6, trailing: 0)) {
+                ScheduleCalendarEventViews.allDay(event, context: context)
+            }
+            configureEvent(cell, event)
+        case .calendarAccess:
+            let text = String(localized: "Calendar Events is on, but Oppi can't read your calendar. Allow access in Settings.")
+            cell.contentConfiguration = ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
+                ControlRowViews.label(text, style: .footnote, color: palette.ui.fgDim)
+            }
+            cell.isAccessibilityElement = true
+            cell.accessibilityTraits = .button
+            cell.accessibilityLabel = text
+            cell.accessibilityHint = String(localized: "Opens Oppi in Settings")
+            cell.accessibilityIdentifier = "schedules.calendar.calendarAccess"
+        }
+    }
+
+    /// An event row: the neutral wash, one element, and Schedule Agent… for VoiceOver.
+    private func configureEvent(_ cell: ScheduleCalendarCell, _ event: ScheduleCalendarEvent) {
+        cell.fill = ScheduleCalendarEventViews.fill(palette)
+        cell.isAccessibilityElement = true
+        cell.accessibilityTraits = .button
+        cell.accessibilityLabel = ScheduleCalendarEventViews.spoken(event, calendar: calendar)
+        cell.accessibilityHint = String(localized: "Schedules an agent for this event")
+        cell.accessibilityIdentifier = "schedules.calendar.event.\(event.id)"
+        cell.accessibilityCustomActionsBlock = { [weak self] in
+            self?.actions.eventAccessibilityActions(for: event) ?? []
         }
     }
 
@@ -635,7 +711,7 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
 
     func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         switch dataSource.itemIdentifier(for: indexPath) {
-        case .entry, .cluster, .subagents: true
+        case .entry, .cluster, .subagents, .event, .allDayEvent, .calendarAccess: true
         default: false
         }
     }
@@ -653,6 +729,10 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
             actions.open(item)
         case .subagents(let item, _):
             actions.openThread(of: item)
+        case .event(let event, _), .allDayEvent(let event):
+            actions.scheduleAgent(for: event)
+        case .calendarAccess:
+            DeviceCalendar.openSystemSettings(root.opener)
         default:
             break
         }
@@ -663,9 +743,14 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
         contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
         point: CGPoint
     ) -> UIContextMenuConfiguration? {
-        guard indexPaths.count == 1,
-              let id = dataSource.itemIdentifier(for: indexPaths[0]),
-              case .entry(let item, _, _) = rows[id] else { return nil }
+        guard indexPaths.count == 1, let id = dataSource.itemIdentifier(for: indexPaths[0]) else { return nil }
+        switch rows[id] {
+        case .event(let event, _), .allDayEvent(let event):
+            return actions.eventMenu(for: event, width: view.bounds.width)
+        default:
+            break
+        }
+        guard case .entry(let item, _, _) = rows[id] else { return nil }
         return actions.contextMenu(
             for: item,
             agenda: { [weak self] in self?.agenda },
@@ -681,7 +766,8 @@ final class ScheduleCalendarDayViewController: UIViewController, UICollectionVie
     ) {
         // Tapping the preview does what tapping the row does.
         guard let id = configuration.identifier as? String else { return }
-        animator.addCompletion { [weak self] in self?.activate(.entry(id)) }
+        let row: ID = rows[.event(id)] != nil ? .event(id) : rows[.allDayEvent(id)] != nil ? .allDayEvent(id) : .entry(id)
+        animator.addCompletion { [weak self] in self?.activate(row) }
     }
 
     // MARK: - Day paging

@@ -273,6 +273,29 @@ enum SettingsCatalog {
         )
     )
 
+    /// Calendar Events: this device's events beside runs in the Schedules calendar. Turning
+    /// it on asks for calendar access (`DeviceCalendar`); events stay on this device.
+    static let experimentCalendarEvents = SettingDeclaration<Bool>(
+        id: "settings.experiments.calendarEvents",
+        key: AppPreferenceStore.Experiments.calendarEventsKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.Experiments.enabledDefault,
+        copy: SettingCopy(
+            title: String(localized: "Calendar Events"),
+            footer: String(localized: "Shows this device's calendar events beside runs in Schedules. Events stay on this device; touch and hold one to schedule an agent for it, which sends its details to your server in that schedule's prompt.")
+        )
+    )
+
+    /// The calendars whose events Schedules leaves out. Stored as the hidden ones, so a
+    /// calendar added later shows until it is hidden.
+    static let calendarEventsHiddenCalendars = SettingDeclaration<[String]>(
+        id: "settings.experiments.calendarEvents.calendars",
+        key: AppPreferenceStore.Experiments.calendarEventsHiddenKey,
+        storage: .device(perServer: false),
+        default: [],
+        copy: SettingCopy(title: String(localized: "Calendars"))
+    )
+
     // MARK: - Server Metrics
 
     /// Whether the server samples its CPU, memory, and disk, for every device
@@ -344,6 +367,8 @@ enum SettingsCatalog {
         terminalPageMode.descriptor,
         experimentRex.descriptor,
         experimentHerdr.descriptor,
+        experimentCalendarEvents.descriptor,
+        calendarEventsHiddenCalendars.descriptor,
         serverMetricsEnabled.descriptor,
         mobileOutputGuideEnabled.descriptor,
         durableSessionsEnabled.descriptor,

@@ -32,6 +32,8 @@ struct AppRootEnvironment {
     let liveVoiceCalls: LiveVoiceCallCenter
     /// The one owner of every open: a link, a notification, a system control.
     let opener: AppOpener
+    /// This device's calendar events for Schedules (the Calendar Events experiment).
+    let deviceCalendar: DeviceCalendar
 
     /// The app passes its own opener, the one `AppDelegate` wires to the
     /// notification delegate.
@@ -44,7 +46,8 @@ struct AppRootEnvironment {
         chatReaderPayloadStore: ChatReaderPayloadStore,
         sessionRows: SessionRowDisplayStore,
         liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter(),
-        opener: AppOpener
+        opener: AppOpener,
+        deviceCalendar: DeviceCalendar = DeviceCalendar()
     ) {
         self.coordinator = coordinator
         self.navigation = navigation
@@ -56,6 +59,7 @@ struct AppRootEnvironment {
         self.settings = coordinator.deviceSettings
         self.liveVoiceCalls = liveVoiceCalls
         self.opener = opener
+        self.deviceCalendar = deviceCalendar
     }
 
     /// Previews and tests: the root owns an opener built for these services.
@@ -67,7 +71,8 @@ struct AppRootEnvironment {
         composerDraftStore: ComposerDraftStore,
         chatReaderPayloadStore: ChatReaderPayloadStore,
         sessionRows: SessionRowDisplayStore,
-        liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter()
+        liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter(),
+        deviceCalendar: DeviceCalendar = DeviceCalendar()
     ) {
         self.init(
             coordinator: coordinator,
@@ -82,7 +87,8 @@ struct AppRootEnvironment {
                 coordinator: coordinator,
                 navigation: navigation,
                 composerDraftStore: composerDraftStore
-            )
+            ),
+            deviceCalendar: deviceCalendar
         )
     }
 }
@@ -100,6 +106,7 @@ extension AppRootEnvironment: Equatable {
             && lhs.settings === rhs.settings
             && lhs.liveVoiceCalls === rhs.liveVoiceCalls
             && lhs.opener === rhs.opener
+            && lhs.deviceCalendar === rhs.deviceCalendar
     }
 }
 

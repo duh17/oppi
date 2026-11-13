@@ -9,6 +9,10 @@ import UIKit
 ///
 /// `SCREENSHOT_SCHEDULES_OPEN=1` opens Schedules at launch; without it a test opens it
 /// from the sidebar. `SCREENSHOT_COLOR_SCHEME` picks the theme.
+///
+/// `SCREENSHOT_CALENDAR_EVENTS=1` turns the Calendar Events experiment on over a week of
+/// this device's meetings (`PreviewDeviceCalendarStore`); `denied` turns it on with calendar
+/// access refused. Both are held in the launch's argument domain, never saved.
 final class ScheduleCalendarPreviewController: PreviewRootController {
     private let opensSchedules: Bool
     private let shellRoot: AppRootEnvironment
@@ -18,6 +22,13 @@ final class ScheduleCalendarPreviewController: PreviewRootController {
         ScreenshotVolatileDefaults.applyThemeScheme(environment["SCREENSHOT_COLOR_SCHEME"])
         opensSchedules = environment["SCREENSHOT_SCHEDULES_OPEN"] == "1"
         let world = ScheduleCalendarPreviewWorld(now: Self.posedNow())
+        let events = environment["SCREENSHOT_CALENDAR_EVENTS"]
+        if events == "1" || events == "denied" {
+            ScreenshotVolatileDefaults.apply([AppPreferenceStore.Experiments.calendarEventsKey: true])
+        }
+        let deviceCalendar = DeviceCalendar(store: PreviewDeviceCalendarStore(
+            now: world.now, access: events == "denied" ? .denied : .granted
+        ))
         ScheduleCalendarModel.previewOffset = world.now.timeIntervalSince(Date())
         ScheduleCalendarFixtureURLProtocol.world = world
 
@@ -37,7 +48,7 @@ final class ScheduleCalendarPreviewController: PreviewRootController {
         }
         connection.sessionStore.switchServer(to: server.id)
         connection.sessionStore.sessions = world.sessions
-        let root = AppRootEnvironment.preview(coordinator: coordinator)
+        let root = AppRootEnvironment.preview(coordinator: coordinator, deviceCalendar: deviceCalendar)
         root.navigation.app.revealPairedServerShell()
         shellRoot = root
         super.init(root: root, themeStore: root.themeStore, content: QuickSessionOverShellController(root: root))

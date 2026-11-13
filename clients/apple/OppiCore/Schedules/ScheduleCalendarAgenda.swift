@@ -178,6 +178,9 @@ struct ScheduleCalendarAgenda: Sendable {
     enum Row: Hashable, Sendable {
         case entry(Item)
         case cluster(Cluster)
+        /// A timed event from this device's calendar, at its place on the day: its start, or
+        /// the day's start for one that began before it.
+        case event(ScheduleCalendarEvent, at: Date)
         /// The current time, on today only. Not an accessibility element.
         case now(Date)
     }
@@ -273,12 +276,15 @@ struct ScheduleCalendarAgenda: Sendable {
     }
 
     /// `day`'s rows: the night band (clean runs folded into one cluster when there are
-    /// two or more), then the rest by time, with the now line on today.
+    /// two or more), then the rest by time, with the now line on today. `events` are the
+    /// day's timed calendar events (`ScheduleCalendarEvent.on`), merged in by time; they
+    /// never fold.
     func rows(
         on day: Date,
         now: Date,
         calendar: Calendar,
-        expandedClusters: Set<String> = []
+        expandedClusters: Set<String> = [],
+        events: [ScheduleCalendarEvent] = []
     ) -> (night: [Row], day: [Row]) {
         let start = calendar.startOfDay(for: day)
         let bandEnd = calendar.date(bySettingHour: Self.nightBandEndHour, minute: 0, second: 0, of: start) ?? start
@@ -308,6 +314,9 @@ struct ScheduleCalendarAgenda: Sendable {
             night = nightItems.map { .entry($0) }
         }
         var dayRows = later.map { Row.entry($0) }
+        let nightEvents = events.filter { $0.placement(on: day, calendar: calendar) < bandEnd }
+        night = Self.merging(nightEvents, into: night, day: day, calendar: calendar)
+        dayRows = Self.merging(events.filter { !nightEvents.contains($0) }, into: dayRows, day: day, calendar: calendar)
 
         if isToday {
             if now < bandEnd {
@@ -326,6 +335,7 @@ struct ScheduleCalendarAgenda: Sendable {
             switch row {
             case .entry(let item): item.at > now
             case .cluster(let cluster): (cluster.items.first?.at ?? .distantPast) > now
+            case .event(_, let at): at > now
             case .now: false
             }
         } ?? rows.endIndex

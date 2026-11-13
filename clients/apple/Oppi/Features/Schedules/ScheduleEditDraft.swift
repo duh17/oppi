@@ -3,9 +3,16 @@ import Observation
 
 /// What Edit Schedule edits: the draft Save sends and Cancel drops. Fields of
 /// both kinds of schedule live here; the editor shows the ones its action uses.
+///
+/// Made from a calendar event (`init(event:…)`), it is a new one-time schedule
+/// that starts a session: the event's time, its title as the name, and its details
+/// as the prompt's context. Save creates it.
 @MainActor @Observable
 final class ScheduleEditDraft {
-    let schedule: AgentSchedule
+    /// The saved schedule this edits; nil for a new one.
+    let schedule: AgentSchedule?
+    /// The calendar event a new schedule is for.
+    let event: ScheduleCalendarEvent?
     let connection: ServerConnection
     /// The server the schedule runs on, for the page's scope sentence.
     let serverName: String
@@ -34,6 +41,7 @@ final class ScheduleEditDraft {
 
     init(schedule: AgentSchedule, connection: ServerConnection, serverName: String, now: Date = Date()) {
         self.schedule = schedule
+        event = nil
         self.connection = connection
         self.serverName = serverName
         name = schedule.name
@@ -59,9 +67,38 @@ final class ScheduleEditDraft {
         }
     }
 
+    /// A new one-time schedule for `event`, run 30 minutes before it (`ScheduleEventOffset.initialDate`)
+    /// in this device's time zone, in the first workspace the server lists.
+    init(
+        event: ScheduleCalendarEvent,
+        connection: ServerConnection,
+        serverName: String,
+        calendar: Calendar = .autoupdatingCurrent,
+        now: Date = Date()
+    ) {
+        schedule = nil
+        self.event = event
+        self.connection = connection
+        self.serverName = serverName
+        name = event.title
+        triggerDraft = ScheduleTriggerDraft(
+            trigger: .at(ScheduleEventOffset.initialDate(for: event, now: now), timeZone: calendar.timeZone.identifier),
+            now: now
+        )
+        prompt = String(localized: "Help me prepare for this event.") + "\n\n" + event.promptContext(calendar: calendar)
+        workspaceId = connection.workspaceStore.workspaces.first?.id ?? ""
+        agentId = ""
+        model = ""
+        thinkingLevel = nil
+        sessionName = ""
+        targetSessionId = ""
+        streamingBehavior = nil
+    }
+
     // MARK: - What the editor shows
 
     var isNewSessionAction: Bool {
+        guard let schedule else { return true }
         if case .newSession = schedule.action { return true }
         return false
     }
@@ -72,7 +109,21 @@ final class ScheduleEditDraft {
             && !workspaceId.isEmpty
             && (isNewSessionAction || !targetSessionId.isEmpty)
             && triggerDraft.canSave
+            // An event's schedule runs once: a time already past would never run.
+            && (event == nil || triggerDraft.oneTimeDate > Date())
             && !isSaving
+    }
+
+    /// The offset from the event the run time matches, if any; nil once Run At was set
+    /// by hand.
+    var eventOffset: ScheduleEventOffset? {
+        guard let event else { return nil }
+        return ScheduleEventOffset.allCases.first { $0.date(for: event) == triggerDraft.oneTimeDate }
+    }
+
+    func chooseEventOffset(_ offset: ScheduleEventOffset) {
+        guard let event else { return }
+        triggerDraft.oneTimeDate = offset.date(for: event)
     }
 
     /// The sessions an existing-session schedule can target: the workspace's,
@@ -136,6 +187,7 @@ final class ScheduleEditDraft {
             return nil
         }
 
+        guard let schedule else { return await create(trigger: trigger, apiClient: apiClient) }
         let action: AgentScheduleAction
         switch schedule.action {
         case .newSession(_, _, _, _, _, let worktreeId, _):
@@ -178,6 +230,39 @@ final class ScheduleEditDraft {
             return Saved(schedule: updated, summary: summary)
         } catch {
             self.error = RecordVersionConflict.message(for: error) ?? error.localizedDescription
+            return nil
+        }
+    }
+
+    /// A new schedule that starts a session in the chosen workspace.
+    private func create(trigger: AgentScheduleTrigger, apiClient: APIClient) async -> Saved? {
+        let action = AgentScheduleAction.newSession(
+            workspaceId: workspaceId,
+            prompt: prompt,
+            agentId: agentId.managementNilIfBlank,
+            model: model.managementNilIfBlank,
+            thinkingLevel: thinkingLevel,
+            worktreeId: nil,
+            name: sessionName.managementNilIfBlank
+        )
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let summary = try await apiClient.createAgentSchedule(name: name, trigger: trigger, action: action)
+            let created = AgentSchedule(
+                id: summary.id,
+                name: summary.name,
+                status: summary.status,
+                trigger: trigger,
+                action: action,
+                version: summary.version,
+                createdAt: summary.createdAt,
+                updatedAt: summary.updatedAt,
+                archivedAt: summary.archivedAt
+            )
+            return Saved(schedule: created, summary: summary)
+        } catch {
+            self.error = error.localizedDescription
             return nil
         }
     }

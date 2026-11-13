@@ -156,6 +156,77 @@ struct ScheduleEditDraftTests {
         #expect(offline == nil)
         #expect(draft.error == "Server is offline")
     }
+
+    @Test("a calendar event's draft creates a one-time session schedule at the offset chosen")
+    func eventDraftCreatesAOneTimeSchedule() async throws {
+        let host = "schedule-event-\(UUID().uuidString)"
+        let sent = SentRequests()
+        ScheduleSaveStub.register(host: host) { request in
+            await sent.record(request)
+            return """
+            {"schedule":{"id":"new-1","name":"Design review","status":"active","trigger":{"type":"at","at":1,"timeZone":"America/Los_Angeles"},"action":{"type":"new_session","workspaceId":"ws-1","promptChars":7},"createdAt":1000,"updatedAt":1000}}
+            """
+        }
+        defer { ScheduleSaveStub.unregister(host: host) }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? .gmt
+        let start = Date().addingTimeInterval(3 * 3_600).rounded(toMinutes: 1)
+        let event = ScheduleCalendarEvent(
+            id: "review", title: "Design review", start: start, end: start.addingTimeInterval(2_700),
+            isAllDay: false, location: "Zoom", notes: nil, calendarTitle: "Work"
+        )
+        let draft = ScheduleEditDraft(event: event, connection: ServerConnection(), serverName: "mac-studio", calendar: calendar)
+        #expect(draft.name == "Design review")
+        #expect(draft.triggerDraft.cadence == .oneTime)
+        #expect(draft.triggerDraft.timeZone == "America/Los_Angeles")
+        #expect(draft.eventOffset == .minutesBefore(30))
+        #expect(draft.prompt.contains("Location: Zoom"))
+        #expect(!draft.canSave, "no workspace yet")
+        draft.workspaceId = "ws-1"
+        #expect(draft.canSave)
+
+        draft.chooseEventOffset(.minutesBefore(15))
+        #expect(draft.triggerDraft.oneTimeDate == start.addingTimeInterval(-900))
+        draft.triggerDraft.oneTimeDate = start.addingTimeInterval(-7)
+        #expect(draft.eventOffset == nil, "a time set by hand matches no offset")
+        draft.triggerDraft.oneTimeDate = Date().addingTimeInterval(-60)
+        #expect(!draft.canSave, "a time already past would never run")
+        draft.chooseEventOffset(.minutesBefore(15))
+
+        let saved = try #require(await draft.save(apiClient: ScheduleSaveStub.client(host: host)))
+        #expect(saved.schedule.id == "new-1")
+        let request = try #require(await sent.requests.first)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/schedules")
+        let body = try #require(request.httpBody ?? request.httpBodyStream.map { stream -> Data in
+            stream.open()
+            defer { stream.close() }
+            var data = Data()
+            var buffer = [UInt8](repeating: 0, count: 4_096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                data.append(buffer, count: count)
+            }
+            return data
+        })
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let trigger = try #require(json["trigger"] as? [String: Any])
+        #expect(trigger["type"] as? String == "at")
+        #expect((trigger["at"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) } == start.addingTimeInterval(-900))
+        let action = try #require(json["action"] as? [String: Any])
+        #expect(action["type"] as? String == "new_session")
+        #expect(action["workspaceId"] as? String == "ws-1")
+        #expect((action["prompt"] as? String)?.contains("<calendar_event>") == true)
+    }
+}
+
+private extension Date {
+    /// Down to a whole number of minutes, so a time survives the trip through milliseconds.
+    func rounded(toMinutes minutes: Int) -> Date {
+        let step = TimeInterval(minutes * 60)
+        return Date(timeIntervalSince1970: (timeIntervalSince1970 / step).rounded(.down) * step)
+    }
 }
 
 private actor SentRequests {

@@ -15,6 +15,8 @@ import Foundation
 ///   `sideBySideMinWidth` wide; narrower, they merge into one "2 runs" block showing the worst
 ///   outcome.
 /// - A block that would overlap the one above it in its column moves down under it.
+/// - Calendar events (`EventBlock`) sit behind the runs across their real duration; a run
+///   block over one is inset by `runningIndent`, so the event's edge stays visible.
 struct ScheduleCalendarWeekLayout: Sendable {
     struct Metrics: Equatable, Sendable {
         var columnWidth: CGFloat
@@ -72,24 +74,36 @@ struct ScheduleCalendarWeekLayout: Sendable {
 
     let metrics: Metrics
     let blocks: [Block]
+    /// The week's timed calendar events, drawn behind `blocks`.
+    let eventBlocks: [EventBlock]
     let contentHeight: CGFloat
 
+    /// `events` are this device's calendar events for the week; all-day ones are not placed
+    /// in the grid.
     init(
         agenda: ScheduleCalendarAgenda?,
         week: [Date],
         now: Date,
         calendar: Calendar,
-        metrics: Metrics
+        metrics: Metrics,
+        events: [ScheduleCalendarEvent] = []
     ) {
         self.metrics = metrics
         var blocks: [Block] = []
+        var eventBlocks: [EventBlock] = []
         for (index, day) in week.enumerated() {
+            let timed = ScheduleCalendarEvent.on(day, in: events, calendar: calendar).timed
+            let dayEvents = Self.eventColumn(timed, day: day, index: index, calendar: calendar, metrics: metrics)
+            eventBlocks += dayEvents
             blocks += Self.column(
-                agenda: agenda, day: day, index: index, now: now, calendar: calendar, metrics: metrics
+                agenda: agenda, day: day, index: index, now: now, calendar: calendar, metrics: metrics,
+                events: dayEvents.map(\.frame)
             )
         }
         self.blocks = blocks
-        contentHeight = max(metrics.dayHeight, (blocks.map(\.frame.maxY).max() ?? 0) + metrics.gap)
+        self.eventBlocks = eventBlocks
+        let bottom = (blocks.map(\.frame.maxY) + eventBlocks.map(\.frame.maxY)).max() ?? 0
+        contentHeight = max(metrics.dayHeight, bottom + metrics.gap)
     }
 
     /// The y of `date`'s wall-clock time on its day.
@@ -132,7 +146,8 @@ struct ScheduleCalendarWeekLayout: Sendable {
         index: Int,
         now: Date,
         calendar: Calendar,
-        metrics: Metrics
+        metrics: Metrics,
+        events: [CGRect]
     ) -> [Block] {
         guard let agenda else { return [] }
         let items = agenda.items(on: day, calendar: calendar)
@@ -198,7 +213,8 @@ struct ScheduleCalendarWeekLayout: Sendable {
                 }
             }
             let top = max(y0, floor + metrics.gap)
-            let indent = running.contains { $0.frame.minY <= top + height && $0.frame.maxY > top } ? metrics.runningIndent : 0
+            let covers = { (frame: CGRect) in frame.minY <= top + height && frame.maxY > top }
+            let indent = running.map(\.frame).contains(where: covers) || events.contains(where: covers) ? metrics.runningIndent : 0
             let laneWidth = (width - indent) / CGFloat(row.count)
             for (lane, entry) in row.enumerated() {
                 placed.append(Block(

@@ -46,6 +46,8 @@
 	<array>
 		<string>_oppi._tcp</string>
 	</array>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Oppi shows your calendar events beside scheduled runs in Schedules. Events stay on this device unless you schedule an agent for one, which sends that event's details to your server in the schedule's prompt.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Oppi uses the camera to scan pairing QR codes and take photos for agent conversations.</string>
 	<key>NSFaceIDUsageDescription</key>

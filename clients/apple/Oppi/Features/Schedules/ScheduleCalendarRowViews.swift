@@ -260,7 +260,7 @@ enum ScheduleCalendarRowViews {
         return column
     }
 
-    private static var timeColumnWidth: CGFloat {
+    static var timeColumnWidth: CGFloat {
         ("12:00" as NSString).size(withAttributes: [.font: UIFont.scaled(.subheadline, .medium)]).width.rounded(.up) + 2
     }
 

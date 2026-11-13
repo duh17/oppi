@@ -4,12 +4,18 @@ import UIKit
 /// draft form on the settings base: its edits live in `ScheduleEditDraft`, Save
 /// sends them and Cancel drops them. Presented in a navigation controller; the
 /// time zone list and the model picker are sheets over it.
+///
+/// Schedule Agent (`init(event:…)`) is the same form for a new one-time schedule
+/// made from a calendar event: no Cadence, a When row that sets Run At from the
+/// event (at its start, minutes before, at its end), and Save creates it once this
+/// device allows the model's provider (AI sharing consent), since its runs send the
+/// event's details there.
 final class ScheduleNativeEditViewController: ListScreenController<
     ScheduleNativeEditViewController.Section, ScheduleNativeEditViewController.Item
 > {
     enum Section: Hashable, Sendable { case schedule, instructions, target, error }
     enum Item: Hashable, Sendable {
-        case name, cadence, runAt, interval, weekday, time, cron, timeZone
+        case name, cadence, eventOffset, runAt, interval, weekday, time, cron, timeZone
         case prompt
         case workspace, agent, model, useDefaultModel, thinking, sessionName, session, delivery
         case error
@@ -70,20 +76,50 @@ final class ScheduleNativeEditViewController: ListScreenController<
         cell.configure(.failure(self?.draft.error ?? "", retry: nil), identifier: "schedule.nativeEdit.error")
     }
 
-    init(
+    convenience init(
         schedule: AgentSchedule,
         apiClient: APIClient?,
         connection: ServerConnection,
         serverName: String,
         onSaved: @escaping (AgentSchedule, AgentScheduleSummary) -> Void
     ) {
-        draft = ScheduleEditDraft(schedule: schedule, connection: connection, serverName: serverName)
+        self.init(
+            draft: ScheduleEditDraft(schedule: schedule, connection: connection, serverName: serverName),
+            title: "Edit Schedule",
+            apiClient: apiClient,
+            onSaved: onSaved
+        )
+    }
+
+    /// Schedule Agent: a new one-time schedule for `event`.
+    convenience init(
+        event: ScheduleCalendarEvent,
+        apiClient: APIClient?,
+        connection: ServerConnection,
+        serverName: String,
+        onSaved: @escaping (AgentSchedule, AgentScheduleSummary) -> Void
+    ) {
+        self.init(
+            draft: ScheduleEditDraft(event: event, connection: connection, serverName: serverName),
+            title: String(localized: "Schedule Agent"),
+            apiClient: apiClient,
+            onSaved: onSaved
+        )
+    }
+
+    private init(
+        draft: ScheduleEditDraft,
+        title: String,
+        apiClient: APIClient?,
+        onSaved: @escaping (AgentSchedule, AgentScheduleSummary) -> Void
+    ) {
+        self.draft = draft
         self.apiClient = apiClient
         self.onSaved = onSaved
         super.init(
-            title: "Edit Schedule",
+            title: title,
             listIdentifier: "schedule.nativeEdit.list",
-            scope: .server(serverName),
+            scope: .server(draft.serverName),
             headers: true,
             // The prompt editor scrolls above the keyboard.
             endsAtKeyboard: true,
@@ -125,7 +161,16 @@ final class ScheduleNativeEditViewController: ListScreenController<
         guard draft.canSave else { return }
         view.endEditing(true)
         Task { [weak self] in
-            guard let self, let saved = await draft.save(apiClient: apiClient) else { return }
+            guard let self else { return }
+            // A new schedule's runs send its prompt to the model's provider with no app
+            // present, so this device allows that provider before it is saved.
+            if draft.schedule == nil {
+                let allowed = await AISharingConsentPrompt.requestModelSharing(
+                    modelId: draft.model.managementNilIfBlank, serverId: nil, connection: draft.connection, from: self
+                )
+                guard allowed else { return }
+            }
+            guard let saved = await draft.save(apiClient: apiClient) else { return }
             onSaved(saved.schedule, saved.summary)
             Router.finish(self)
         }
@@ -134,7 +179,8 @@ final class ScheduleNativeEditViewController: ListScreenController<
     // MARK: - Sections
 
     override func sections() -> [ListSection<Section, Item>] {
-        var schedule: [Item] = [.name, .cadence]
+        // An event's schedule runs once, so it has no Cadence.
+        var schedule: [Item] = draft.event == nil ? [.name, .cadence] : [.name, .eventOffset]
         switch draft.triggerDraft.cadence {
         case .oneTime: schedule.append(.runAt)
         case .interval: schedule.append(.interval)
@@ -164,6 +210,7 @@ final class ScheduleNativeEditViewController: ListScreenController<
         switch item {
         case .name: return AnyHashable(draft.name)
         case .cadence: return AnyHashable(trigger.cadence)
+        case .eventOffset: return AnyHashable(trigger.oneTimeDate)
         case .runAt: return AnyHashable([AnyHashable(trigger.oneTimeDate), AnyHashable(trigger.timeZone)])
         case .interval: return AnyHashable([AnyHashable(trigger.intervalMs), AnyHashable(draft.intervalOptions)])
         case .weekday: return AnyHashable(trigger.weekday)
@@ -203,7 +250,7 @@ final class ScheduleNativeEditViewController: ListScreenController<
             collectionView.dequeueConfiguredReusableCell(using: cronRow, for: indexPath, item: item)
         case .timeZone, .model:
             collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
-        case .cadence, .interval, .weekday, .workspace, .agent, .thinking, .session, .delivery:
+        case .cadence, .eventOffset, .interval, .weekday, .workspace, .agent, .thinking, .session, .delivery:
             collectionView.dequeueConfiguredReusableCell(using: menuRow, for: indexPath, item: item)
         case .useDefaultModel:
             collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
@@ -290,6 +337,20 @@ final class ScheduleNativeEditViewController: ListScreenController<
                     ScheduleTriggerDraft.Cadence.allCases.map { cadence in
                         SettingsMenuOption(title: cadence.title, selected: trigger.cadence == cadence) { [weak self] in
                             self?.draft.triggerDraft.cadence = cadence
+                        }
+                    }
+                }
+            )
+        case .eventOffset:
+            let current = draft.eventOffset
+            cell.configure(
+                title: String(localized: "When"),
+                identifier: "schedule.nativeEdit.eventOffset",
+                value: current?.title ?? String(localized: "Custom"),
+                menu: { [weak self] in
+                    ScheduleEventOffset.allCases.map { offset in
+                        SettingsMenuOption(title: offset.title, selected: offset == current) { [weak self] in
+                            self?.draft.chooseEventOffset(offset)
                         }
                     }
                 }

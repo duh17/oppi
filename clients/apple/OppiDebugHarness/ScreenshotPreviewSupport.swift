@@ -157,7 +157,8 @@ extension AppRootEnvironment {
     static func preview(
         coordinator: ConnectionCoordinator,
         navigation: SceneNavigation = SceneNavigation(),
-        themeStore: ThemeStore = ThemeStore()
+        themeStore: ThemeStore = ThemeStore(),
+        deviceCalendar: DeviceCalendar = DeviceCalendar()
     ) -> Self {
         AppRootEnvironment(
             coordinator: coordinator,
@@ -166,7 +167,8 @@ extension AppRootEnvironment {
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
             composerDraftStore: ComposerDraftStore(),
             chatReaderPayloadStore: ChatReaderPayloadStore(),
-            sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
+            sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay()),
+            deviceCalendar: deviceCalendar
         )
     }
 }

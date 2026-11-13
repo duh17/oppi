@@ -253,7 +253,7 @@ final class SchedulesViewController: UIViewController {
             return try await apiClient.scheduleCalendar(from: from, to: to)
         }
         func actions() -> ScheduleCalendarActions {
-            ScheduleCalendarActions(
+            let actions = ScheduleCalendarActions(
                 root: root,
                 connection: connection,
                 model: model,
@@ -263,6 +263,9 @@ final class SchedulesViewController: UIViewController {
                 },
                 openSchedule: { [weak self] scheduleId in self?.openSchedule(scheduleId) }
             )
+            // A schedule made for a calendar event joins the list too.
+            actions.onScheduleCreated = { [weak self] in self?.list.setNeedsLoad() }
+            return actions
         }
         let day = ScheduleCalendarDayViewController(root: root, connection: connection, model: model, actions: actions(), agents: agents)
         day.onTitleTap = { [weak self] in self?.choose(.month) }

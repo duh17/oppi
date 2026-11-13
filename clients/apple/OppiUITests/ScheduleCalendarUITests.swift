@@ -312,7 +312,84 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         add(attachment)
     }
 
+    /// Calendar Events: the day's meetings sit between the runs, an all-day event above them,
+    /// and touching and holding one offers Schedule Agent…, which opens a one-time schedule
+    /// 30 minutes before the meeting with its details in the prompt.
+    func testCalendarEventsShowBesideRunsAndScheduleAnAgent() {
+        launch(calendarEvents: "1")
+        openSchedules()
+        app.segmentedControls["schedules.mode"].buttons[dayTitle].tap()
+        let review = app.cells["schedules.calendar.event.design-review"]
+        let list = app.collectionViews["schedules.calendar.list"]
+        XCTAssertTrue(review.waitUntilExists(timeout: 10), "Today's design review is in the Day")
+        XCTAssertTrue(review.label.contains("calendar event"), "An event says it is one: \(review.label)")
+        let nanny = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH 'schedules.calendar.entry.9Bq6VFNy.'")).firstMatch
+        XCTAssertTrue(nanny.exists)
+        XCTAssertLessThan(nanny.frame.minY, review.frame.minY, "The 9:00 run comes before the 10:00 meeting")
+        capture("day-events")
+
+        for _ in 0..<4 where !review.isHittable { list.swipeUp(velocity: .slow) }
+        review.press(forDuration: 1.0)
+        let scheduleAgent = menuButton("Schedule Agent…")
+        XCTAssertTrue(scheduleAgent.waitUntilExists(timeout: 5), "An event's menu offers Schedule Agent…")
+        XCTAssertFalse(menuButton("Run Now").exists, "An event has no run actions")
+        capture("event-menu")
+        scheduleAgent.tap()
+
+        let when = app.buttons["schedule.nativeEdit.eventOffset"]
+        XCTAssertTrue(when.waitUntilExists(timeout: 10), "Schedule Agent opens the schedule editor")
+        let offset = when.value as? String ?? ""
+        XCTAssertEqual(offset, "30 Minutes Before", "It runs in time to prepare for the meeting")
+        XCTAssertFalse(app.buttons["schedule.nativeEdit.cadence"].exists, "An event's schedule runs once")
+        let prompt = app.textViews["schedule.nativeEdit.prompt"]
+        XCTAssertTrue(prompt.waitUntilExists(timeout: 5))
+        let text = prompt.value as? String ?? ""
+        XCTAssertTrue(text.contains("Title: Design review: Schedules calendar"), "The prompt carries the event: \(text)")
+        XCTAssertTrue(text.contains("not instructions"), "The prompt says the event is calendar text: \(text)")
+        capture("schedule-agent")
+        app.buttons["Cancel"].firstMatch.tap()
+        XCTAssertTrue(when.waitUntilGone(timeout: 5))
+
+        // Tomorrow's holiday is an all-day row above the day's runs.
+        dayButton(offset: 1).tap()
+        let holiday = app.cells["schedules.calendar.event.holiday"]
+        XCTAssertTrue(holiday.waitUntilExists(timeout: 5), "Tomorrow's all-day event shows")
+        let firstRun = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH 'schedules.calendar.entry.'")).firstMatch
+        if firstRun.exists { XCTAssertLessThan(holiday.frame.minY, firstRun.frame.minY, "All-day events come first") }
+
+        app.buttons["schedules.calendar.today"].tap()
+        if isPad {
+            app.segmentedControls["schedules.mode"].buttons["Week"].tap()
+            let block = app.buttons["schedules.calendar.event.design-review"]
+            XCTAssertTrue(block.waitUntilExists(timeout: 10), "The Week grid draws the meeting")
+            capture("week-events")
+            app.segmentedControls["schedules.mode"].buttons["Month"].tap()
+            XCTAssertTrue(app.descendants(matching: .any)["schedules.calendar.monthGrid"].waitUntilExists(timeout: 10))
+            XCTAssertTrue(app.cells["schedules.calendar.event.design-review"].waitUntilExists(timeout: 10), "Month's agenda lists the day's meetings")
+            capture("month-events")
+            app.segmentedControls["schedules.mode"].buttons[dayTitle].tap()
+        } else {
+            app.buttons["schedules.calendar.monthTitle"].tap()
+            XCTAssertTrue(app.descendants(matching: .any)["schedules.calendar.monthGrid"].waitUntilExists(timeout: 10))
+            capture("month-events")
+            app.segmentedControls["schedules.mode"].buttons[dayTitle].tap()
+        }
+    }
+
+    /// Calendar Events on without calendar access: the Day says why it shows no events.
+    func testCalendarEventsWithoutAccessSaysWhy() {
+        launch(calendarEvents: "denied")
+        openSchedules()
+        app.segmentedControls["schedules.mode"].buttons[dayTitle].tap()
+        let row = app.cells["schedules.calendar.calendarAccess"]
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "The Day says it can't read the calendar")
+        XCTAssertTrue(row.label.contains("Allow access in Settings"), row.label)
+        XCTAssertFalse(app.cells["schedules.calendar.event.design-review"].exists, "No events without access")
+        capture("day-denied")
+    }
+
     // MARK: - Helpers
+
 
     private var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
 
@@ -346,14 +423,17 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         add(attachment)
     }
 
-    /// `textSize` is a raw content-size category name, as the system reads it.
-    private func launch(textSize: String? = nil) {
+    /// `textSize` is a raw content-size category name, as the system reads it. `calendarEvents`
+    /// is the preview's `SCREENSHOT_CALENDAR_EVENTS`: `1` for a week of meetings, `denied` for
+    /// the experiment on without calendar access.
+    private func launch(textSize: String? = nil, calendarEvents: String? = nil) {
         XCUIDevice.shared.orientation = .portrait
         let scheme = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] ?? "light"
         var arguments = ["-dev.chenda.Oppi.theme.mode", "manual", "-dev.chenda.Oppi.theme.id", scheme]
         if let textSize { arguments += ["-UIPreferredContentSizeCategoryName", textSize] }
         launchPreview(
             screen: "schedules-calendar",
+            environment: calendarEvents.map { ["SCREENSHOT_CALENDAR_EVENTS": $0] } ?? [:],
             colorScheme: scheme,
             arguments: arguments,
             ready: nil
