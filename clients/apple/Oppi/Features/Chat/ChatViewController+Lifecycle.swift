@@ -27,6 +27,9 @@ extension ChatViewController {
         footerStack.alignment = .fill
         footerStack.spacing = 0
         footerStack.translatesAutoresizingMaskIntoConstraints = false
+        footerBacking.translatesAutoresizingMaskIntoConstraints = false
+        footerBacking.isHidden = true
+        view.addSubview(footerBacking)
         view.addSubview(footerStack)
 
         // A drawer grows the footer up from the composer. The footer stops short of the bar, and
@@ -56,6 +59,9 @@ extension ChatViewController {
             footerStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             footerStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             footerStack.bottomAnchor.constraint(equalTo: contentBottomGuide.bottomAnchor),
+            footerBacking.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            footerBacking.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            footerBacking.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
         composer.source = self
@@ -97,6 +103,7 @@ extension ChatViewController {
         let above = ChatFooterAboveView(chat: self)
         footerStack.addArrangedSubview(above)
         footerStack.addArrangedSubview(composer.view)
+        footerBacking.topAnchor.constraint(equalTo: composer.view.centerYAnchor).isActive = true
         footerStack.addArrangedSubview(ChatFooterBelowView(chat: self))
         footerStack.addArrangedSubview(ChatStoppedFooterView(chat: self))
         footerAbove = above
@@ -230,6 +237,7 @@ extension ChatViewController {
             timelineFrame: timelineView.convert(timelineView.bounds, to: nil),
             headerFrame: view.convert(headerFrame, to: nil)
         )
+        updateFooterBacking()
         let bottom = footerStack.frame.height
         let width = timelineView.bounds.width
         if abs(top - timelineTopOverlap) > 0.5 || abs(bottom - footerHeight) > 0.5 || abs(width - timelineWidth) > 0.5 {
@@ -240,11 +248,28 @@ extension ChatViewController {
         }
     }
 
+    /// Moving between a pane above another and one at the window's bottom
+    /// changes the safe area even when the chat's size does not.
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        view.setNeedsLayout()
+    }
+
+    /// The backing shows while the chat stops short of the window's bottom.
+    private func updateFooterBacking() {
+        let reachesBottom = view.window.map { window in
+            view.convert(view.bounds, to: nil).maxY >= window.bounds.maxY - 1
+        } ?? true
+        let hidden = reachesBottom || composer.view.isHidden || composer.view.superview == nil
+        if footerBacking.isHidden != hidden { footerBacking.isHidden = hidden }
+    }
+
     override func updateProperties() {
         super.updateProperties()
         installLeavesIfNeeded()
         let root = root
         view.backgroundColor = root?.themeStore.backgroundColor
+        footerBacking.color = root?.themeStore.backgroundColor
         timeline.contentRoot = root
         _ = model.chatDisplayRefresh
         _ = model.topBarRefresh

@@ -362,7 +362,7 @@ extension PaneHostController {
         let hasPanes = order.count > 1
         var shown: Set<PaneID> = []
         for id in order {
-            reserveGripStrip(inCell: id, height: hasPanes ? PaneGripView.size.height : 0)
+            reserveGripStrip(inCell: id, height: hasPanes ? PaneStripSlot.height : 0)
         }
         layoutChip(cells, presentation)
         let showsGrips = hasPanes && !showsChip(cells)
@@ -380,10 +380,12 @@ extension PaneHostController {
                 isZoomed: zoomed == id,
                 hasWaitingSheet: panes.sheets.waitingOwners.contains(id)
             ))
-            let top = gripTop(ofCell: id, in: frame)
             let size = zoomed == id ? PaneGripView.capsuleSize : PaneGripView.size
+            let top = gripTop(ofCell: id, in: frame) + (PaneStripSlot.height - size.height) / 2
             // A grip being dragged follows the finger by its transform.
             guard grip.transform.isIdentity else { continue }
+            // Under a divider the divider's band takes the touches above the grip.
+            grip.reachesUp = frame.minY <= view.bounds.minY
             grip.frame = CGRect(x: frame.midX - size.width / 2, y: top, width: size.width, height: size.height)
             grip.isHidden = false
             view.bringSubviewToFront(grip)
@@ -414,10 +416,12 @@ extension PaneHostController {
     /// Where a cell's grip or chip goes: its front screen's strip slot, under
     /// the bar and anything the bar carries, never in the bar (a drag there
     /// moves a floating window), and never above the window's own top inset
-    /// (status bar, window controls). The leaf lays out first, so a root it
-    /// just took has its bar.
+    /// (status bar, window controls), which only a pane at the window's top
+    /// meets. The leaf lays out first, so a root it just took has its bar.
     private func gripTop(ofCell id: PaneID, in frame: CGRect) -> CGFloat {
-        let floor = frame.minY + view.safeAreaInsets.top
+        var floor = max(frame.minY, view.safeAreaInsets.top)
+        // Under a divider, clear the half of its grabber that reaches in, with a gap.
+        if frame.minY > view.bounds.minY { floor += PaneSplitDividerView.grabberThickness }
         guard let leaf = leafController(ofCell: id), leaf.view.window != nil else { return floor }
         leaf.view.layoutIfNeeded()
         guard let screen = frontScreen(ofCell: id), let slot = PaneStripSlot.slot(in: screen) else { return floor }
@@ -506,7 +510,8 @@ extension PaneHostController {
         if id == panes.routedLeafID, !primary.view.isHidden { frame = primary.view.frame }
         chip.show(PaneChipView.Shown(title: cellTitle(id), position: index + 1, count: order.count))
         let width = chip.fittingWidth(maximum: frame.width - 32)
-        chip.frame = CGRect(x: frame.midX - width / 2, y: gripTop(ofCell: id, in: frame), width: width, height: PaneChipView.height)
+        let top = gripTop(ofCell: id, in: frame) + (PaneStripSlot.height - PaneChipView.height) / 2
+        chip.frame = CGRect(x: frame.midX - width / 2, y: top, width: width, height: PaneChipView.height)
         chip.isHidden = false
         view.bringSubviewToFront(chip)
     }

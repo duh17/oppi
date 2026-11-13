@@ -40,12 +40,53 @@ struct PaneMenuItem {
     }
 }
 
-/// A leaf's grip: a short bar centred under its pane's navigation bar, never
+/// The capsule the strip controls draw on (the grip, the zoom capsule, the
+/// chip): a thin material with a hairline edge, so it stays legible over
+/// content scrolling under it, and an accent wash when its pane has focus.
+/// Shaped unlike the divider's grabber on purpose: the two sit side by side
+/// in a vertical split.
+final class PaneCapsuleBackground: UIVisualEffectView {
+    private let wash = UIView()
+
+    init() {
+        super.init(effect: UIBlurEffect(style: .systemThinMaterial))
+        isUserInteractionEnabled = false
+        clipsToBounds = true
+        wash.isHidden = true
+        wash.backgroundColor = tintColor.withAlphaComponent(0.22)
+        contentView.addSubview(wash)
+        registerForTraitChanges([UITraitUserInterfaceStyle.self, UITraitDisplayScale.self]) { (self: Self, _) in
+            self.setNeedsLayout()
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    var isTinted = false {
+        didSet { wash.isHidden = !isTinted }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layer.cornerRadius = bounds.height / 2
+        layer.borderWidth = 1 / max(1, traitCollection.displayScale)
+        layer.borderColor = UIColor.separator.resolvedColor(with: traitCollection).cgColor
+        wash.frame = contentView.bounds
+    }
+
+    override func tintColorDidChange() {
+        super.tintColorDidChange()
+        wash.backgroundColor = tintColor.withAlphaComponent(0.22)
+    }
+}
+
+/// A leaf's grip: a … capsule centred under its pane's navigation bar, never
 /// in it, because the system moves a floating window by a drag in the bar
 /// even after a hold. A tap opens the pane menu; while its leaf fills the
 /// window it is the zoom capsule ("1 of 3"), and a tap restores. A drag
-/// moves the pane (the host's pan). The focused leaf's grip takes the accent
-/// colour.
+/// moves the pane (the host's pan). The focused leaf's grip shows the accent
+/// glyph on an accent wash; the others a secondary glyph on the material.
 ///
 /// A plain view, not a menu button: a menu button takes the touch for its
 /// menu as it goes down, so no drag could start. The tap presents the menu
@@ -61,15 +102,25 @@ final class PaneGripView: UIView {
         var hasWaitingSheet = false
     }
 
-    static let size = CGSize(width: 56, height: 22)
-    static let capsuleSize = CGSize(width: 76, height: 22)
+    static let size = CGSize(width: 44, height: 20)
+    static let capsuleSize = CGSize(width: 76, height: 20)
+    /// The touch target's height; the capsule draws shorter, inside its strip.
+    static let hitHeight: CGFloat = 44
 
     let leafID: PaneID
     /// The pane menu as it is when it opens.
     var items: @MainActor () -> [PaneMenuItem] = { [] }
     var onRestore: @MainActor () -> Void = {}
+    /// Whether the touch target may reach above the capsule, into the pane's
+    /// bar. False under a divider, whose own band takes the touches there;
+    /// the target then reaches down instead.
+    var reachesUp = true
 
-    private let mark = UIView()
+    private let background = PaneCapsuleBackground()
+    private let glyph = UIImageView(image: UIImage(
+        systemName: "ellipsis",
+        withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .bold)
+    ))
     private let waitingDot = UIView()
     private let capsule = UILabel()
     private let menuButton = UIButton(type: .custom)
@@ -79,21 +130,19 @@ final class PaneGripView: UIView {
         self.leafID = leafID
         super.init(frame: .zero)
         accessibilityIdentifier = "pane.grip.\(leafID.raw)"
-        mark.isUserInteractionEnabled = false
-        mark.layer.cornerRadius = 2.5
-        addSubview(mark)
-        waitingDot.isUserInteractionEnabled = false
-        waitingDot.backgroundColor = .systemOrange
-        waitingDot.layer.cornerRadius = 3
-        addSubview(waitingDot)
+        addSubview(background)
+        glyph.isUserInteractionEnabled = false
+        glyph.contentMode = .center
+        addSubview(glyph)
         capsule.isUserInteractionEnabled = false
         capsule.font = .preferredFont(forTextStyle: .caption1)
         capsule.adjustsFontForContentSizeCategory = true
         capsule.textAlignment = .center
-        capsule.backgroundColor = .secondarySystemFill
-        capsule.layer.cornerRadius = Self.capsuleSize.height / 2
-        capsule.clipsToBounds = true
         addSubview(capsule)
+        waitingDot.isUserInteractionEnabled = false
+        waitingDot.backgroundColor = .systemOrange
+        waitingDot.layer.cornerRadius = 3
+        addSubview(waitingDot)
         menuButton.isUserInteractionEnabled = false
         menuButton.isAccessibilityElement = false
         menuButton.showsMenuAsPrimaryAction = true
@@ -133,11 +182,11 @@ final class PaneGripView: UIView {
     }
 
     private func apply() {
-        mark.isHidden = shown.isZoomed
+        glyph.isHidden = shown.isZoomed
         waitingDot.isHidden = !shown.hasWaitingSheet
         capsule.isHidden = !shown.isZoomed
         capsule.text = String(localized: "\(shown.position) of \(shown.count)")
-        mark.backgroundColor = shown.isFocused ? tintColor : .tertiaryLabel
+        applyFocus()
         let place = String(localized: "\(shown.position) of \(shown.count)")
         accessibilityLabel = String(localized: "Pane, \(shown.title), \(place)")
         let state = shown.isZoomed
@@ -154,19 +203,34 @@ final class PaneGripView: UIView {
 
     override func tintColorDidChange() {
         super.tintColorDidChange()
-        mark.backgroundColor = shown.isFocused ? tintColor : .tertiaryLabel
+        applyFocus()
+    }
+
+    private func applyFocus() {
+        let focused = shown.isFocused && !shown.isZoomed
+        background.isTinted = focused
+        glyph.tintColor = focused ? tintColor : .secondaryLabel
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let markSize = CGSize(width: 36, height: 5)
-        mark.frame = CGRect(
-            x: (bounds.width - markSize.width) / 2, y: (bounds.height - markSize.height) / 2,
-            width: markSize.width, height: markSize.height
-        )
-        waitingDot.frame = CGRect(x: mark.frame.maxX + 4, y: (bounds.height - 6) / 2, width: 6, height: 6)
+        background.frame = bounds
+        glyph.frame = bounds
         capsule.frame = bounds
         menuButton.frame = bounds
+        // A badge on the capsule's trailing shoulder.
+        waitingDot.frame = CGRect(x: bounds.maxX - 5, y: -1, width: 6, height: 6)
+    }
+
+    /// At least 44 pt to touch, though the capsule draws 20 pt tall.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let width = max(bounds.width, Self.hitHeight)
+        let extra = Self.hitHeight - bounds.height
+        let target = CGRect(
+            x: bounds.midX - width / 2, y: reachesUp ? bounds.minY - extra / 2 : bounds.minY,
+            width: width, height: Self.hitHeight
+        )
+        return target.contains(point)
     }
 
     override var accessibilityTraits: UIAccessibilityTraits {
@@ -191,7 +255,7 @@ final class PaneGripView: UIView {
 
 extension PaneGripView: UIPointerInteractionDelegate {
     func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
-        UIPointerStyle(effect: .highlight(UITargetedPreview(view: shown.isZoomed ? capsule : mark)))
+        UIPointerStyle(effect: .highlight(UITargetedPreview(view: background)))
     }
 }
 
@@ -210,6 +274,10 @@ final class PaneSplitDividerView: UIView {
     var place: Place {
         didSet { applyAxis() }
     }
+
+    /// The grabber's thickness across the divider; half of it reaches into
+    /// each neighbour, and a grip under it keeps clear.
+    static let grabberThickness: CGFloat = 5
 
     var onBegan: (() -> Void)?
     /// The finger's distance along the split's axis since it began.
@@ -265,10 +333,12 @@ final class PaneSplitDividerView: UIView {
         let thickness = PanePresentation.dividerThickness
         if place.axis == .row {
             line.frame = CGRect(x: (bounds.width - thickness) / 2, y: 0, width: thickness, height: bounds.height)
-            grabber.frame = CGRect(x: (bounds.width - 5) / 2, y: (bounds.height - 48) / 2, width: 5, height: 48)
+            let thin = Self.grabberThickness
+            grabber.frame = CGRect(x: (bounds.width - thin) / 2, y: (bounds.height - 48) / 2, width: thin, height: 48)
         } else {
             line.frame = CGRect(x: 0, y: (bounds.height - thickness) / 2, width: bounds.width, height: thickness)
-            grabber.frame = CGRect(x: (bounds.width - 48) / 2, y: (bounds.height - 5) / 2, width: 48, height: 5)
+            let thin = Self.grabberThickness
+            grabber.frame = CGRect(x: (bounds.width - 48) / 2, y: (bounds.height - thin) / 2, width: 48, height: thin)
         }
     }
 
@@ -378,13 +448,14 @@ final class PaneChipView: UIView {
         var count: Int
     }
 
-    static let height: CGFloat = 22
+    static let height = PaneGripView.size.height
 
     /// The pane list as it is when it opens.
     var items: @MainActor () -> [PaneMenuItem] = { [] }
     /// A swipe: +1 the next pane, -1 the previous one.
     var onStep: @MainActor (Int) -> Void = { _ in }
 
+    private let background = PaneCapsuleBackground()
     private let label = UILabel()
     private let menuButton = UIButton(type: .custom)
     private(set) var shown = Shown(title: "", position: 1, count: 1)
@@ -393,8 +464,7 @@ final class PaneChipView: UIView {
         super.init(frame: .zero)
         accessibilityIdentifier = "pane.chip"
         isAccessibilityElement = true
-        backgroundColor = .secondarySystemFill
-        layer.cornerRadius = Self.height / 2
+        addSubview(background)
         label.font = .preferredFont(forTextStyle: .caption1)
         label.adjustsFontForContentSizeCategory = true
         label.textAlignment = .center
@@ -441,8 +511,15 @@ final class PaneChipView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        background.frame = bounds
         label.frame = bounds.insetBy(dx: 10, dy: 0)
         menuButton.frame = bounds
+    }
+
+    /// The whole strip takes the touch, as before the capsule drew shorter.
+    /// Not taller: on a phone the strip sits right under the bar's search.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(dx: 0, dy: -(PaneStripSlot.height - bounds.height) / 2).contains(point)
     }
 
     @objc private func openList() { menuButton.performPrimaryAction() }
@@ -480,7 +557,7 @@ final class PaneChipView: UIView {
 
 extension PaneChipView: UIPointerInteractionDelegate {
     func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
-        UIPointerStyle(effect: .highlight(UITargetedPreview(view: self)))
+        UIPointerStyle(effect: .highlight(UITargetedPreview(view: background)))
     }
 }
 
@@ -491,6 +568,9 @@ extension PaneChipView: UIPointerInteractionDelegate {
 /// no measuring. Draws nothing and takes no touches; the host places the grip
 /// or chip over it, and hears when it moves.
 final class PaneStripSlot: UIView {
+    /// The strip's height: a grip or chip capsule with a point above and below.
+    static let height: CGFloat = 22
+
     private var onMove: () -> Void = {}
 
     static func slot(in screen: UIViewController) -> PaneStripSlot? {
@@ -507,7 +587,7 @@ final class PaneStripSlot: UIView {
         let guide = screen.view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
             slot.bottomAnchor.constraint(equalTo: guide.topAnchor),
-            slot.heightAnchor.constraint(equalToConstant: PaneGripView.size.height),
+            slot.heightAnchor.constraint(equalToConstant: height),
             slot.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
             slot.trailingAnchor.constraint(equalTo: guide.trailingAnchor),
         ])

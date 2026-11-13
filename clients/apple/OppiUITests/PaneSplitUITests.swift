@@ -265,6 +265,29 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         attachScreenCapture("sessions-search-after-scroll")
     }
 
+    /// The routed pane's grip follows its stack: after Sessions pushes the
+    /// chat, the grip sits directly under the chat's bar, not where the
+    /// Sessions search put it, over the transcript.
+    func testTheGripFollowsAPushedScreen() throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("Grips show on a wide window; the iPad mini is the wide simulator")
+        }
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(screen: "pane-restore", environment: ["PANE_RESTORE_SEED": "splits"], ready: nil)
+        let grip = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.' AND label ENDSWITH '1 of 3'")).firstMatch
+        XCTAssertTrue(grip.waitUntilExists(timeout: 10), "The Sessions pane shows its grip")
+        let row = app.descendants(matching: .any)[sessionRow]
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "The fixture session is listed")
+        row.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["chat.input"].waitUntilExists(timeout: 10), "The chat opened")
+        hold()
+        let bar = app.navigationBars.containing(.button, identifier: "chat.toolbar.more").firstMatch
+        XCTAssertTrue(bar.exists, "The chat shows its bar")
+        attachScreenCapture("grip-after-push")
+        XCTAssertEqual(grip.frame.minY, bar.frame.maxY, accuracy: 3,
+                       "The grip sits under the chat's bar: grip \(grip.frame), bar \(bar.frame)")
+    }
+
     /// Landscape on the iPad mini with the sidebar shown: the sidebar floats
     /// over the split view's detail column, so the panes sit beside it. The
     /// leading pane's grip and search are never under the sidebar, and the

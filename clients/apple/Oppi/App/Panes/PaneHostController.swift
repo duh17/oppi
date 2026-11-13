@@ -149,10 +149,20 @@ final class PaneHostController: UIViewController {
         return nil
     }
 
+    /// A leaf's navigation controller is about to show another screen (a
+    /// push, a pop, a back swipe): the panes lay out again, so the screen
+    /// gets its grip strip before it shows and the grip moves to that
+    /// screen's slot instead of keeping the last one's place.
+    func leafWillShowScreen() {
+        view.setNeedsLayout()
+    }
+
     /// A leaf's navigation controller showed another screen: it hears the
-    /// leaf's current visibility, as its siblings did at the transition.
+    /// leaf's current visibility, as its siblings did at the transition, and
+    /// the grip settles on the screen's slot now that its bar is final.
     func leafDidShowScreen() {
         updateVisibility()
+        view.setNeedsLayout()
     }
 
     @available(*, unavailable)

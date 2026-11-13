@@ -289,6 +289,7 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
             }
         }
         applyNavigationBar(forIncoming: viewController, animated: animated)
+        PaneHostController.containing(self)?.leafWillShowScreen()
     }
 
     func navigationController(

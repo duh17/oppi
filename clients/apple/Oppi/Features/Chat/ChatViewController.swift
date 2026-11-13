@@ -141,6 +141,11 @@ final class ChatViewController: UIViewController {
     /// The strip's pill bands reach past the footer's edges, over the timeline (see
     /// `ExtensionStripPillHitBand`); the composer still wins inside its own bounds.
     let footerStack: UIStackView = ExtensionStripPillHitBandStackView()
+    /// The chat's background fading in under the composer, shown only while
+    /// the chat's pane stops short of the window's bottom (a pane above
+    /// another): there is no home-indicator strip there, so the transcript
+    /// would otherwise peek between the composer and the divider.
+    let footerBacking = ChatFooterBackingView()
     /// The one-time "Chat tools are in the menu" hint under the bar, for a chat on the
     /// default bar (`updateTopBarTip`).
     let topBarTip = FeatureEducationTipHostView(

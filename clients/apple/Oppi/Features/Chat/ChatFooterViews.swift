@@ -800,3 +800,30 @@ final class ChatTitleView: UIView {
         }
     }
 }
+
+/// The chat's background fading in from the composer's middle to the chat's
+/// bottom edge, behind the composer (`ChatViewController.footerBacking`).
+/// Draws nothing to touch.
+final class ChatFooterBackingView: UIView {
+    override class var layerClass: AnyClass { CAGradientLayer.self }
+
+    var color: UIColor? {
+        didSet { applyColor() }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        isAccessibilityElement = false
+        (layer as? CAGradientLayer)?.locations = [0, 0.45]
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (self: Self, _) in self.applyColor() }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    private func applyColor() {
+        let solid = (color ?? .systemBackground).resolvedColor(with: traitCollection)
+        (layer as? CAGradientLayer)?.colors = [solid.withAlphaComponent(0).cgColor, solid.cgColor]
+    }
+}

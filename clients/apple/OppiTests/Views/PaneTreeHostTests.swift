@@ -143,6 +143,37 @@ struct PaneTreeHostTests {
         #expect(leafView(host, split)?.frame.minY ?? 0 > 0, "Split Down put the new pane below")
     }
 
+    /// A screen that brings its own controls, as the terminal and a file
+    /// reader do: its stack hides the bar.
+    private final class BarlessScreen: UIViewController, NavigationBarHiding {
+        var hidesNavigationBar: Bool { true }
+    }
+
+    /// A pane below another has its grip right under the divider, clear of
+    /// the divider's grabber, with its strip above the content: only a pane
+    /// at the window's top keeps clear of the status bar.
+    @Test func aLowerPanesGripSitsRightUnderTheDivider() throws {
+        let host = PaneTestHost(width: 744, height: 1133, inNavigation: true)
+        defer { host.hide() }
+        try #require(host.panes.view.safeAreaInsets.top > 0, "the window has a status bar")
+        host.act { host.panes.split(axis: .column) }
+        let split = try #require(host.scenePanes.splitLeaves.first?.id)
+        let leaf = try #require(leafView(host, split))
+        #expect(leaf.frame.minY > host.panes.view.safeAreaInsets.top, "the new pane sits below the chat")
+        let navigation = try #require(host.panes.children.first { $0.view === leaf } as? UINavigationController)
+        let screen = BarlessScreen()
+        host.act { navigation.pushViewController(screen, animated: false) }
+        #expect(navigation.isNavigationBarHidden)
+
+        let grip = try grip(host, split)
+        let divider = try #require(host.panes.view.subviews.lazy.compactMap { $0 as? PaneSplitDividerView }.first)
+        let grabberBottom = divider.frame.midY + PaneSplitDividerView.grabberThickness / 2
+        #expect(grip.frame.minY > grabberBottom, "apart from the divider's grabber: \(grip.frame), divider \(divider.frame)")
+        #expect(grip.frame.minY - leaf.frame.minY <= 8, "right under the divider: \(grip.frame), pane \(leaf.frame)")
+        let contentTop = screen.view.convert(screen.view.safeAreaLayoutGuide.layoutFrame, to: host.panes.view).minY
+        #expect(contentTop == leaf.frame.minY + PaneStripSlot.height, "no status-bar inset in a lower pane")
+    }
+
     /// A held grip over another pane: its edge moves the pane there, its
     /// middle swaps them, and the pane's own cell takes nothing.
     @Test func aLiftedGripMovesToAnEdgeOrSwapsInTheMiddle() throws {

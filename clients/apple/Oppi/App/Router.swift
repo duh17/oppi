@@ -176,6 +176,7 @@ final class RouterNavigationController: UINavigationController, RouterModalConta
     ) {
         // The panel lost its title, Done, and search after a reader popped.
         applyNavigationBar(forIncoming: viewController, animated: animated)
+        PaneHostController.containing(self)?.leafWillShowScreen()
     }
 
     func navigationController(
