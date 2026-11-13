@@ -116,7 +116,9 @@ Quotes and dashes show as typed: `--`, `...`, and straight quotes are not change
 
 ## The reader's bar
 
-The reader's bar holds **Edit**, **Find**, **Outline**, **Copy**, **Share**, the source toggle, **Viewing Options**, and **Previous File** and **Next File** for a file opened from a list (the File Browser or a chat's files), each where the file offers it. On a side toolbar (iPhone Duo), **Annotate** and **Staged Comments** join the bar; elsewhere they float over the page. Every button the reader offers is on the bar until you change it.
+The reader's bar holds **Edit**, **Find**, **Outline**, **Copy**, **Share**, the source toggle, **Viewing Options**, and **Previous File** and **Next File** for a file opened from a list (the File Browser or a chat's files), each where the file offers it. On a side toolbar (iPhone Duo), **Annotate** and **Staged Comments** join the bar; elsewhere they float over the page. Every button the reader offers is on the bar until you change it. When the bar is too narrow for all of them, the buttons at the end of your order move into the **…** menu.
+
+**Share** opens the share sheet with the file in its default format, a PDF for Markdown and Org. To choose PDF, Image, or the source file, touch and hold **Share**, or use **Share As** in the **…** menu. The source toggle stays highlighted while the source shows; in the **…** menu it has a checkmark.
 
 **Settings → Editor → Reader Bar**, also **Customize Bar…** in the reader's **…** menu, chooses which buttons the bar shows and their order. A button turned off moves into the **…** menu, which also holds **Edit with Session** where a document offers it. **Reset to Default** shows every button again. While you edit a file, the editor's own controls take the bar. The layout is kept on this device.
 

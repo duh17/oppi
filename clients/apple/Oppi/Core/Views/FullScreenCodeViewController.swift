@@ -690,6 +690,8 @@ final class FullScreenCodeViewController: UIViewController {
             // A table copies as TSV or Markdown, so Copy asks which.
             UIBarButtonItem(image: copyImage, menu: table.makeCopyMenu { [weak self] in self?.finishCopy($0) })
         } ?? UIBarButtonItem(image: copyImage, style: .plain, target: self, action: #selector(copyTapped))
+        // Titled, so a … menu that holds Copy names it.
+        copy.title = ReaderBarAction.copy.label
         copy.tintColor = palette.ui.fgDim
         copy.accessibilityIdentifier = "fullscreen-code.copy"
         copyButton = copy
@@ -698,19 +700,8 @@ final class FullScreenCodeViewController: UIViewController {
             offers[.share] = [FullScreenViewerNavigationChrome.makeShareButton(for: shareable, from: self, palette: palette)]
         }
 
-        if let toggleTitle = presentation.sourceToggleTitle {
-            let toggle = UIBarButtonItem(
-                title: toggleTitle,
-                style: .plain,
-                target: self,
-                action: #selector(toggleSource)
-            )
-            if sideRail {
-                toggle.image = UIImage(systemName: Self.sourceToggleSymbol(for: toggleTitle))
-            }
-            toggle.accessibilityIdentifier = "fullscreen-code.source-toggle"
-            toggle.tintColor = palette.ui.blue
-            offers[.sourceToggle] = [toggle]
+        if presentation.sourceToggleTitle != nil, let sourceTitle = content.sourceToggleTitle(showingSource: false) {
+            offers[.sourceToggle] = [makeSourceToggle(title: sourceTitle, palette: palette)]
         }
 
         viewingOptionsBarItem = nil
@@ -760,15 +751,24 @@ final class FullScreenCodeViewController: UIViewController {
         applyContentSurface()
     }
 
-    /// The title is the mode the control switches to. The symbol matches that mode.
-    private static func sourceToggleSymbol(for title: String) -> String {
-        if title == String(localized: "Source") || title == String(localized: "Raw") {
-            return "curlybraces"
+    /// The source toggle: an icon like the bar's other buttons, so they stay
+    /// one glass group (a text button starts a group of its own), titled with
+    /// the view it shows ("Source", "Raw", or an HTML diff's "Render") and
+    /// selected while it shows it. In a … menu it is the same toggle with a
+    /// checkmark, so its title reads the same either way.
+    private func makeSourceToggle(title: String, palette: ThemePalette) -> UIBarButtonItem {
+        let image = UIImage(systemName: title == String(localized: "Render") ? "text.page" : "curlybraces")
+        let toggle = UIBarButtonItem(image: image, style: .plain, target: self, action: #selector(toggleSource))
+        toggle.title = title
+        toggle.isSelected = showSource
+        toggle.accessibilityIdentifier = "fileViewer.sourceToggle"
+        toggle.tintColor = palette.ui.fgDim
+        let menuToggle = UIAction(title: title, image: image, state: showSource ? .on : .off) { [weak self] _ in
+            self?.toggleSource()
         }
-        if title == String(localized: "Table") {
-            return "tablecells"
-        }
-        return "text.page"
+        menuToggle.accessibilityIdentifier = "fileViewer.sourceToggle"
+        toggle.menuRepresentation = menuToggle
+        return toggle
     }
 
     /// Viewing Options is a reader bar item (`installRightBarItems`); this

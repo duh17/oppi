@@ -141,10 +141,9 @@ protocol FileRendererHost: UIViewController {
 }
 
 extension ShareableFile {
-    /// The viewer's titled Share item, for `screen`'s bar.
+    /// The viewer's Share item, for `screen`'s bar.
     @MainActor func barItem(from screen: UIViewController) -> UIBarButtonItem {
         let item = FileSharePresenter.makeShareBarButtonItem(for: self, from: screen)
-        item.title = String(localized: "Share")
         item.accessibilityIdentifier = "fileViewer.share"
         return item
     }

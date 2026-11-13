@@ -663,14 +663,16 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             reader.view.translatesAutoresizingMaskIntoConstraints = false
             page.addSubview(reader.view)
             let safe = page.safeAreaLayoutGuide
-            // The reader's own glass bar sits at the top of a pushed screen.
+            // The reader's own glass bar sits at the top of a pushed screen,
+            // and its side rail (the Duo's) at the screen's edge: the reader
+            // spans the page and keeps its text and controls in its own safe area.
             NSLayoutConstraint.activate([
                 reader.view.topAnchor.constraint(
                     equalTo: showsEmbeddedNavigationChrome ? page.topAnchor : safe.topAnchor
                 ),
                 reader.view.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
-                reader.view.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
-                reader.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
+                reader.view.leadingAnchor.constraint(equalTo: page.leadingAnchor),
+                reader.view.trailingAnchor.constraint(equalTo: page.trailingAnchor),
             ])
         }
         self.reader = reader

@@ -667,6 +667,11 @@ enum FullScreenViewerNavigationChrome {
         button.tintColor = palette.ui.cyan
         button.accessibilityLabel = mode.accessibilityLabel
         button.accessibilityIdentifier = accessibilityIdentifier
+        // The way out never folds into …, even on the Duo's rail, where it
+        // shares the column with the reader's buttons.
+        if #available(iOS 27.0, *) {
+            button.visibilityPriority = .high
+        }
         return button
     }
 
@@ -675,11 +680,14 @@ enum FullScreenViewerNavigationChrome {
         from screen: UIViewController,
         palette: ThemePalette
     ) -> UIBarButtonItem {
-        FileSharePresenter.makeShareBarButtonItem(
+        let item = FileSharePresenter.makeShareBarButtonItem(
             for: content,
             from: screen,
             tintColor: palette.ui.fgDim
         )
+        // The one Share identifier in every file reader's bar.
+        item.accessibilityIdentifier = "fileViewer.share"
+        return item
     }
 }
 

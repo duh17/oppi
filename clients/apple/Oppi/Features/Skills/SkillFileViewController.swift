@@ -192,7 +192,9 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
         embed(reader)
     }
 
-    /// The page takes the whole screen under the reader's own glass bar.
+    /// The page takes the whole screen under the reader's own glass bar, side
+    /// to side, so its side rail (the Duo's) sits at the screen's edge; the
+    /// reader keeps its text in its safe area.
     private func embed(_ content: UIViewController) {
         addChild(content)
         content.view.translatesAutoresizingMaskIntoConstraints = false
@@ -200,8 +202,8 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
         NSLayoutConstraint.activate([
             content.view.topAnchor.constraint(equalTo: view.topAnchor),
             content.view.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            content.view.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            content.view.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            content.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            content.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         content.didMove(toParent: self)
         embeddedContent = content

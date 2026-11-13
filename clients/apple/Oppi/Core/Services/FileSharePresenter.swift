@@ -174,18 +174,12 @@ enum FileSharePresenter {
 
     // MARK: - UIKit Bar Button Factory
 
-    /// Create a fully-wired share bar button item.
-    ///
-    /// Single-format content (images, PDFs): tap exports directly.
-    /// Multi-format content (code, markdown, etc.): tap opens format picker menu.
-    /// Shows a spinner in-place while the export renders.
-    ///
-    /// Used by ``FullScreenCodeViewController``, ``FullScreenImageViewController``,
-    /// and any UIKit surface that needs a share button.
-    /// The Share item for a file: its format menu or direct export when its
-    /// bytes are in hand, else a download and the share sheet.
-    /// `screen` is the screen whose bar holds the item: the share sheet
-    /// opens in its window.
+    static let shareTitle = String(localized: "Share")
+    static let shareImage = UIImage(systemName: "square.and.arrow.up")
+
+    /// The Share item for a file: the share sheet for its bytes when they are
+    /// in hand, else a download and then the share sheet. `screen` is the
+    /// screen whose bar holds the item: the share sheet opens in its window.
     static func makeShareBarButtonItem(for file: ShareableFile, from screen: UIViewController) -> UIBarButtonItem {
         switch file {
         case .loaded(let content):
@@ -193,10 +187,12 @@ enum FileSharePresenter {
         case .remote(let remote):
             let box = Weak<UIBarButtonItem>()
             let button = UIBarButtonItem(
-                image: UIImage(systemName: "square.and.arrow.up"),
-                primaryAction: UIAction { [weak screen] _ in
+                title: shareTitle,
+                image: shareImage,
+                primaryAction: UIAction(title: shareTitle, image: shareImage) { [weak screen] action in
                     guard let screen else { return }
-                    Task { @MainActor in await share(remote, from: screen, sourceItem: box.value) }
+                    let anchor = shareAnchor(sender: action.sender, item: box.value)
+                    Task { @MainActor in await share(remote, from: screen, sourceItem: anchor) }
                 }
             )
             box.value = button
@@ -204,78 +200,56 @@ enum FileSharePresenter {
         }
     }
 
+    /// A titled Share item whose tap presents the share sheet in the content's
+    /// default format (`FileShareService.defaultFormat`). Content with more
+    /// than one format keeps the choice as "Share As": the button's long-press
+    /// menu, and a row after Share when the item sits in a "…" menu
+    /// (`menuRepresentation`), so a crowded-out or turned-off Share still
+    /// reads "Share", runs at once, and offers every format. The button shows
+    /// a spinner while an export renders.
     static func makeShareBarButtonItem(
         for content: FileShareService.ShareableContent,
         from screen: UIViewController,
         tintColor: UIColor? = nil
     ) -> UIBarButtonItem {
-        let formats = FileShareService.availableFormats(for: content)
-        let shareImage = UIImage(systemName: "square.and.arrow.up")
-        let button: UIBarButtonItem
-
-        if formats.count <= 1 {
-            // Single format — tap exports directly with spinner.
-            // Can't capture button weakly before it's initialized, so use
-            // an intermediary box that gets populated after init.
-            let buttonBox = Weak<UIBarButtonItem>()
-            button = UIBarButtonItem(
-                image: shareImage,
-                primaryAction: UIAction { [weak screen] _ in
-                    guard let btn = buttonBox.value, let screen else { return }
-                    let token = BarButtonLoadingToken(button: btn, tintColor: tintColor)
-                    Task { @MainActor in
-                        await shareDefault(content, from: screen, loadingToken: token, sourceItem: btn)
-                    }
-                }
-            )
-            buttonBox.value = button
-        } else {
-            // Multiple formats — tap opens format picker menu.
-            // Create button first, then set menu with a weak ref so the
-            // spinner can replace the button's content during export.
-            button = UIBarButtonItem(image: shareImage, menu: nil)
-            let weakButton = Weak(button)
-            button.menu = buildFormatMenu(
-                for: content,
-                from: screen,
-                tintColor: tintColor,
-                buttonRef: { weakButton.value }
-            )
+        let box = Weak<UIBarButtonItem>()
+        let run: @MainActor (FileShareService.ExportFormat, Any?) -> Void = { [weak screen] format, sender in
+            guard let screen else { return }
+            let button = box.value
+            let token = button.map { BarButtonLoadingToken(button: $0, tintColor: tintColor) }
+            let anchor = shareAnchor(sender: sender, item: button)
+            Task { @MainActor in
+                await share(content, format: format, from: screen, loadingToken: token, sourceItem: anchor)
+            }
         }
+        let defaultFormat = FileShareService.defaultFormat(for: content)
+        let shareAction = UIAction(title: shareTitle, image: shareImage) { run(defaultFormat, $0.sender) }
+        shareAction.accessibilityIdentifier = "share.menu.share"
+        let formats = FileShareService.availableFormats(for: content)
+        let formatMenu: UIMenu? = formats.count > 1 ? UIMenu(
+            title: String(localized: "Share As"),
+            image: UIImage(systemName: "square.and.arrow.up.on.square"),
+            children: formats.map { format in
+                let info = FileShareService.formatDisplayInfo(format, for: content)
+                return UIAction(title: info.label, image: UIImage(systemName: info.icon)) { run(format, $0.sender) }
+            }
+        ) : nil
+        formatMenu?.accessibilityIdentifier = "share.menu.shareAs"
 
+        let button = UIBarButtonItem(title: shareTitle, image: shareImage, primaryAction: shareAction, menu: formatMenu)
+        box.value = button
+        if let formatMenu {
+            button.menuRepresentation = UIMenu(options: .displayInline, children: [shareAction, formatMenu])
+        }
         button.tintColor = tintColor
         return button
     }
 
-    // MARK: - Format Menu
-
-    /// Build a UIMenu with format options for the given content.
-    ///
-    /// Each menu item renders the content in that format and presents
-    /// the system share sheet. Shared between bar button items and
-    /// any other UIKit surface that needs a format picker.
-    static func buildFormatMenu(
-        for content: FileShareService.ShareableContent,
-        from screen: UIViewController,
-        tintColor: UIColor? = nil,
-        buttonRef: (@MainActor () -> UIBarButtonItem?)? = nil
-    ) -> UIMenu {
-        let formats = FileShareService.availableFormats(for: content)
-        let actions = formats.map { format in
-            let info = FileShareService.formatDisplayInfo(format, for: content)
-            return UIAction(
-                title: info.label,
-                image: UIImage(systemName: info.icon)
-            ) { [weak screen] _ in
-                guard let screen else { return }
-                let button = buttonRef?()
-                let token: ExportLoadingToken? = button.map { BarButtonLoadingToken(button: $0, tintColor: tintColor) }
-                Task { @MainActor in
-                    await share(content, format: format, from: screen, loadingToken: token, sourceItem: button)
-                }
-            }
-        }
-        return UIMenu(children: actions)
+    /// What the share sheet's iPad popover points at: the control that was
+    /// tapped (a "…" menu reports its button), else the bar item, which
+    /// `presentActivityController` skips when the bar is not showing it.
+    private static func shareAnchor(sender: Any?, item: UIBarButtonItem?) -> (any UIPopoverPresentationControllerSourceItem)? {
+        (sender as? any UIPopoverPresentationControllerSourceItem) ?? item
     }
 
     // MARK: - Activity Controller Presentation
@@ -301,8 +275,9 @@ enum FileSharePresenter {
             FileShareService.cleanupTempFiles()
         }
         if let popover = ac.popoverPresentationController {
-            // A row that scrolled away during its download is no anchor.
-            if let sourceItem, (sourceItem as? UIView).map({ $0.window != nil }) ?? true {
+            // A row that scrolled away during its download, or a bar item
+            // the bar crowded into its "…", is no anchor.
+            if let sourceItem, Self.isOnScreen(sourceItem, in: topVC.view) {
                 popover.sourceItem = sourceItem
             } else {
                 popover.sourceView = topVC.view
@@ -315,5 +290,12 @@ enum FileSharePresenter {
             }
         }
         topVC.present(ac, animated: true)
+    }
+
+    private static func isOnScreen(_ item: any UIPopoverPresentationControllerSourceItem, in view: UIView) -> Bool {
+        if let anchor = item as? UIView { return anchor.window != nil }
+        // Nil for a bar item the bar is not drawing.
+        guard let frame = item.frame(in: view) else { return false }
+        return !frame.isNull && !frame.isEmpty
     }
 }

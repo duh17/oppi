@@ -68,11 +68,13 @@ final class ServerExtensionReaderViewController: UIViewController, NavigationBar
         addChild(reader)
         reader.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(reader.view)
+        // Side to side, so the reader's own side rail (the Duo's) sits at the
+        // screen's edge; the reader keeps its text in its safe area.
         NSLayoutConstraint.activate([
             reader.view.topAnchor.constraint(equalTo: view.topAnchor),
             reader.view.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            reader.view.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            reader.view.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            reader.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            reader.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         reader.didMove(toParent: self)
         self.reader = reader

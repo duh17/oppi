@@ -1050,8 +1050,12 @@ struct FullScreenReviewCommentSelectionTests {
         let controller = makeController(content: .diff(document))
         #expect(controller.installedBodyViewForTesting is NativeFullScreenDiffBody)
         let navigationController = try #require(controller.children.first as? UINavigationController)
-        let titlesBefore = navigationController.topViewController?.navigationItem.rightBarButtonItems?.compactMap(\.title) ?? []
-        #expect(titlesBefore.contains("Render"))
+        func renderToggle() -> UIBarButtonItem? {
+            navigationController.topViewController?.navigationItem.rightBarButtonItems?
+                .first { $0.accessibilityIdentifier == "fileViewer.sourceToggle" }
+        }
+        #expect(renderToggle()?.title == "Render")
+        #expect(renderToggle()?.isSelected == false)
 
         controller.toggleSourceForTesting()
         controller.view.layoutIfNeeded()
@@ -1066,8 +1070,7 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(html != document.copyText)
         #expect(filePath == "index.html")
 
-        let titlesAfter = navigationController.topViewController?.navigationItem.rightBarButtonItems?.compactMap(\.title) ?? []
-        #expect(titlesAfter.contains("Diff"))
+        #expect(renderToggle()?.isSelected == true, "the toggle shows that the render is on")
     }
 
     @Test func diffLineAnchorNoticeUsesReconstructedNewSideNotCopyText() async throws {

@@ -18,11 +18,6 @@ extension FullScreenCodeViewController {
             let outline = railItem(symbol: "list.bullet.indent", title: String(localized: "Outline"), action: #selector(showOutline))
             outline.accessibilityIdentifier = "fileViewer.outline.button"
             outline.tintColor = palette.ui.fgDim
-            // On a narrow bar Outline is the first to fold into the system's
-            // "…" (it still opens from there), so Find and the pencil stay one tap.
-            if #available(iOS 27.0, *) {
-                outline.visibilityPriority = .low
-            }
             // Folded into the "…", Outline keeps its identifier and its action.
             let menuAction = UIAction(title: String(localized: "Outline"), image: outline.image) { [weak self] _ in
                 self?.showOutline()
@@ -36,14 +31,12 @@ extension FullScreenCodeViewController {
     }
 
     /// A reader control as a bar item: Find, Outline, and the side rail's
-    /// floating controls.
+    /// floating controls. Which ones a narrow bar keeps is the Reader Bar
+    /// order's call (`ReaderBar.trailingItems`).
     func railItem(symbol: String, title: String, action: Selector) -> UIBarButtonItem {
         let item = UIBarButtonItem(image: UIImage(systemName: symbol), style: .plain, target: self, action: action)
         item.title = title
         item.accessibilityLabel = title
-        if #available(iOS 27.0, *) {
-            item.visibilityPriority = .high
-        }
         return item
     }
 

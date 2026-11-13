@@ -120,8 +120,23 @@ final class ReaderBar {
 
     /// The shown actions' buttons in `rightBarButtonItems` order: the first is
     /// the trailing-most.
+    ///
+    /// A bar too narrow for all of them crowds the rest into the system's …
+    /// from the end of the person's order: each button's visibility priority
+    /// falls from standard with its place, so the first stays longest and
+    /// Back or Close (high) outlasts them all on the Duo's shared rail. Every
+    /// button is titled with an icon, so UIKit's crowded-out rows read like
+    /// the turned-off ones (`menuElement`), and none is a text button, which
+    /// would split the bar into two glass groups.
     var trailingItems: [UIBarButtonItem] {
-        layout.bar(available: Set(offers.keys)).flatMap { offers[$0] ?? [] }.reversed()
+        let items = layout.bar(available: Set(offers.keys)).flatMap { offers[$0] ?? [] }
+        if #available(iOS 27.0, *) {
+            let first = UIBarButtonItemVisibilityPriority.standard.rawValue
+            for (place, item) in items.enumerated() {
+                item.visibilityPriority = UIBarButtonItemVisibilityPriority(rawValue: first - place)
+            }
+        }
+        return items.reversed()
     }
 
     /// The … menu, built once: what it lists is read when it opens, so a
@@ -158,9 +173,12 @@ final class ReaderBar {
             .presentSheet(from: presenter)
     }
 
-    /// A turned-off button as a menu item that does what the button does: its
-    /// own menu (Share's formats, a table's Copy) as a submenu, else its action.
+    /// A turned-off button as a menu item that does what the button does: the
+    /// row it shows when the bar crowds it into the … (`menuRepresentation`:
+    /// Share, Outline, the source toggle), else its own menu (a table's Copy)
+    /// as a submenu, else its action.
     private static func menuElement(for action: ReaderBarAction, item: UIBarButtonItem) -> UIMenuElement {
+        if let representation = item.menuRepresentation { return representation }
         let image = UIImage(systemName: action.systemImage)
         if item.primaryAction == nil, item.action == nil, let menu = item.menu {
             let submenu = UIMenu(title: action.label, image: image, children: menu.children)

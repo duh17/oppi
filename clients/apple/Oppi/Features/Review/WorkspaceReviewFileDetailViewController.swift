@@ -787,7 +787,6 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         let key = ShareKey(path: currentFile.path, tab: selectedTab, diff: diff)
         if let shareItem, shareItemKey == key { return shareItem }
         let item = FileSharePresenter.makeShareBarButtonItem(for: content, from: self)
-        item.title = String(localized: "Share")
         shareItem = item
         shareItemKey = key
         return item

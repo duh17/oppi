@@ -10,7 +10,9 @@ import UIKit
 ///
 /// `OPPI_READER_TASK_FILE` picks the file (`tasks.org` by default, `notebook.org`,
 /// or `notes.md`), and `OPPI_READER_TASK_LONG=1` adds a screenful of prose and a
-/// last task under the Org seed. "Change file on disk" is a second writer, for
+/// last task under the Org seed. `OPPI_READER_TASK_CHROME=pushed` opens the file
+/// as a pushed reader that draws its own bar, as from a chat link, instead of a
+/// tree pane under the stack's bar. "Change file on disk" is a second writer, for
 /// the conflict path.
 enum ReaderTaskEditFixture {
     static let workspaceId = "preview-tasks"
@@ -261,7 +263,8 @@ final class ReaderTaskEditPreviewController: PreviewRootController {
                             serverId: "preview-server",
                             filePath: name,
                             fileName: name,
-                            chromeMode: .treePane
+                            chromeMode: ProcessInfo.processInfo.environment["OPPI_READER_TASK_CHROME"] == "pushed"
+                                ? .pushed : .treePane
                         ),
                         services: .init(apiClient: client)
                     )

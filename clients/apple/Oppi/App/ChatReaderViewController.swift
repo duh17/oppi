@@ -343,10 +343,12 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
                 mounted.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             ])
         } else {
+            // Side to side, so the reader's own side rail (the Duo's) sits at
+            // the screen's edge; the reader keeps its text in its safe area.
             NSLayoutConstraint.activate([
                 mounted.view.topAnchor.constraint(equalTo: view.topAnchor),
-                mounted.view.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
-                mounted.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
+                mounted.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                mounted.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
                 mounted.view.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
             ])
         }
