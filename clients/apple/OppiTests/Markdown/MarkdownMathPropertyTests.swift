@@ -66,6 +66,44 @@ struct MarkdownMathPropertyTests {
         }
     }
 
+    /// A table at the open tail resumes from its last finished row; every tick
+    /// must still read exactly as a fresh parse of the text so far, including
+    /// lazy rows, cells with math, escaped pipes and wiki links, and a table
+    /// that a heading or a blank line ends.
+    @Test(arguments: [1, 7, 64])
+    func streamedTableReadsLikeAFreshParseOnEveryTick(chunk: Int) {
+        let rows = (0 ..< 30).map { "| `src/f\($0).swift` | $\($0).50 | $x_{\($0)}$ | [[docs/n\($0).md|n\($0)]] \\| x |" }
+        let source = """
+        | File | Cost | Formula | Note |
+        | --- | ---: | :---: | --- |
+        \(rows.joined(separator: "\n"))
+        lazy row without pipes
+        | after | lazy | row | here |
+        ## A heading ends it
+
+        Prose before.
+
+        Tree | Files
+        —— | ——
+        \(rows.prefix(8).joined(separator: "\n"))
+
+        After the blank line.
+        """
+        var parser = CommonMarkStreamingParser()
+        let bytes = Array(source.utf8)
+        var end = 0
+        while end < bytes.count {
+            end = min(bytes.count, end + chunk)
+            while end < bytes.count, bytes[end] & 0xC0 == 0x80 { end += 1 }
+            let prefix = String(decoding: bytes[..<end], as: UTF8.self)
+            let streamed = parser.parse(prefix).blocks
+            guard streamed == parseCommonMarkTail(prefix).blocks else {
+                Issue.record("chunk \(chunk): tick at byte \(end) differs from a fresh parse")
+                return
+            }
+        }
+    }
+
     // MARK: - No math in code
 
     @Test func noCorpusLineFindsMathInsideACodeSpanOrFence() {

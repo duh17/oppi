@@ -53,6 +53,8 @@ final class NativeLatexBlockView: UIView {
     /// Active only while showing the rendered formula. A direct self-height
     /// constraint makes stack/scroll relayout more reliable after async renders.
     private var formulaHeightConstraint: NSLayoutConstraint?
+    /// Pins the code block to this view's edges while it is in the view.
+    private var codeBlockConstraints: [NSLayoutConstraint] = []
 
     /// Cap formula height in the timeline to keep cells reasonable.
     private static let maxInlineHeight: CGFloat = 400
@@ -152,12 +154,13 @@ final class NativeLatexBlockView: UIView {
         formulaHeight.isActive = false
         formulaHeightConstraint = formulaHeight
 
-        NSLayoutConstraint.activate([
+        codeBlockConstraints = [
             codeBlockView.topAnchor.constraint(equalTo: topAnchor),
             codeBlockView.leadingAnchor.constraint(equalTo: leadingAnchor),
             codeBlockView.trailingAnchor.constraint(equalTo: trailingAnchor),
             codeBlockView.bottomAnchor.constraint(equalTo: bottomAnchor),
-
+        ]
+        NSLayoutConstraint.activate(codeBlockConstraints + [
             formulaScrollView.topAnchor.constraint(equalTo: topAnchor),
             formulaScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             formulaScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -188,7 +191,7 @@ final class NativeLatexBlockView: UIView {
         currentPalette = palette
         currentRenderIdentity = nil
 
-        codeBlockView.isHidden = false
+        setShowsCodeBlock(true)
         formulaScrollView.isHidden = true
         formulaHeightConstraint?.isActive = false
         isShowingFormula = false
@@ -373,7 +376,7 @@ final class NativeLatexBlockView: UIView {
         formulaHeightConstraint?.isActive = true
         formulaScrollView.backgroundColor = palette.ui.bgHighlight
         formulaCanvas.backgroundColor = palette.ui.bgHighlight
-        codeBlockView.isHidden = true
+        setShowsCodeBlock(false)
         formulaScrollView.isHidden = false
         isShowingFormula = true
         invalidateIntrinsicContentSize()
@@ -402,7 +405,7 @@ final class NativeLatexBlockView: UIView {
         formulaCanvas.backgroundColor = palette.ui.bgHighlight
         formulaImageView.image = image
 
-        codeBlockView.isHidden = true
+        setShowsCodeBlock(false)
         formulaScrollView.isHidden = false
         isShowingFormula = true
         configureFormulaAccessibility(code: currentCode)
@@ -432,8 +435,21 @@ final class NativeLatexBlockView: UIView {
         return true
     }
 
+    /// The code block is in the view only while it shows. Hidden, it would
+    /// stay in Auto Layout's engine, and every measure of the row around a
+    /// rendered formula would measure its source text again.
+    private func setShowsCodeBlock(_ shows: Bool) {
+        codeBlockView.isHidden = !shows
+        if shows, codeBlockView.superview !== self {
+            insertSubview(codeBlockView, at: 0)
+            NSLayoutConstraint.activate(codeBlockConstraints)
+        } else if !shows, codeBlockView.superview === self {
+            codeBlockView.removeFromSuperview()
+        }
+    }
+
     private func showAsCodeFallback(code: String, palette: ThemePalette) {
-        codeBlockView.isHidden = false
+        setShowsCodeBlock(true)
         formulaScrollView.isHidden = true
         formulaHeightConstraint?.isActive = false
         isShowingFormula = false

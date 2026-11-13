@@ -215,11 +215,7 @@ private func endsInOpenFence(_ node: UnsafeMutablePointer<cmark_node>, input: St
         let start = Int(cmark_node_get_start_line(node))
         let end = Int(cmark_node_get_end_line(node))
         guard end > start, let line = line(end, of: input) else { return true }
-        let body = line.drop { $0 == UInt8(ascii: " ") || $0 == UInt8(ascii: "\t") }
-        let fence = body.prefix { $0 == UInt8(bitPattern: character) }
-        let isClosingFence = fence.count >= Int(length)
-            && body.dropFirst(fence.count).allSatisfy { $0 == UInt8(ascii: " ") || $0 == UInt8(ascii: "\t") || $0 == UInt8(ascii: "\r") }
-        return !isClosingFence
+        return !MarkdownFence.closes(line, byte: UInt8(bitPattern: character), count: Int(length))
     default:
         return false
     }
@@ -531,46 +527,24 @@ private func convertCMarkInline(
 /// backtick/tilde fences. Preserves the trailing fence when there's a matching
 /// opening fence elsewhere in the content (e.g., markdown tutorials).
 private func stripTrailingInnerFence(_ code: String) -> String {
+    /// A line of only a 3+ fence and blanks.
+    func isFenceLine(_ line: Substring) -> Bool {
+        guard let fence = MarkdownFence.opening(line.utf8) else { return false }
+        return MarkdownFence.closes(line.utf8, byte: fence.byte, count: 3)
+    }
     guard let lastNewline = code.lastIndex(of: "\n") else {
-        return isFenceLine(code) ? "" : code
+        return isFenceLine(code[...]) ? "" : code
     }
     let lastLine = code[code.index(after: lastNewline)...]
     guard isFenceLine(lastLine) else { return code }
 
-    // Check if any earlier line starts with 3+ backticks/tildes (an opening
-    // fence). If so, the trailing fence is paired content — preserve it.
+    // An earlier line that opens a fence ("```python") pairs with the
+    // trailing one: it is content, as in a Markdown tutorial. Keep it.
     let prefix = code[..<lastNewline]
-    for line in prefix.split(separator: "\n", omittingEmptySubsequences: false) {
-        if startsWithFenceChars(line) { return code }
+    for line in prefix.split(separator: "\n", omittingEmptySubsequences: false)
+        where MarkdownFence.opening(line.utf8) != nil {
+        return code
     }
 
     return String(prefix)
-}
-
-/// True if `line` starts with 3+ backticks or tildes (may have info string after).
-/// Used to detect opening fences like "```python" inside code content.
-private func startsWithFenceChars<S: StringProtocol>(_ line: S) -> Bool {
-    let trimmed = line.drop(while: { $0 == " " })
-    guard let fenceChar = trimmed.first,
-          fenceChar == "`" || fenceChar == "~" else { return false }
-    var count = 0
-    for char in trimmed {
-        if char == fenceChar { count += 1 }
-        else { break }
-    }
-    return count >= 3
-}
-
-/// True if `line` consists ONLY of 3+ backticks or tildes (optional whitespace).
-private func isFenceLine<S: StringProtocol>(_ line: S) -> Bool {
-    let trimmed = line.drop(while: { $0 == " " })
-    guard let fenceChar = trimmed.first,
-          fenceChar == "`" || fenceChar == "~" else { return false }
-    var count = 0
-    for char in trimmed {
-        if char == fenceChar { count += 1 }
-        else if char == " " { break }
-        else { return false }
-    }
-    return count >= 3
 }

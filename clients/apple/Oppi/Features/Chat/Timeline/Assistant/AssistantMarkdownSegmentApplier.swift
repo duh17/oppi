@@ -340,6 +340,20 @@ final class AssistantMarkdownSegmentApplier {
     /// their ordinary bounds/window width resolution.
     var preparationWidth: CGFloat?
 
+    /// Text blocks are sized by their host, not by their own intrinsic size
+    /// (`BaselineSafeTextView.isScrollingOnlyForSizing`): it calls
+    /// `fitTextBlocks(toWidth:)` before it measures or lays out the stack, so a
+    /// block whose text did not change is not measured again on the next
+    /// streaming tick. Set before the first apply.
+    var sizesTextBlocks = false
+
+    func fitTextBlocks(toWidth width: CGFloat) {
+        guard sizesTextBlocks else { return }
+        for textView in textViews.values {
+            textView.fitHeight(toWidth: width)
+        }
+    }
+
     /// The host learned the width it lays this content out at after the
     /// segments were applied. Later applies prepare at it, and diagrams that
     /// were waiting for a width lay out now, before the host measures.
@@ -1284,6 +1298,7 @@ final class AssistantMarkdownSegmentApplier {
         textView.isEditable = false
         textView.isSelectable = true
         textView.isScrollEnabled = false
+        textView.isScrollingOnlyForSizing = sizesTextBlocks
         textView.alwaysBounceVertical = false
         textView.alwaysBounceHorizontal = false
         textView.bounces = false

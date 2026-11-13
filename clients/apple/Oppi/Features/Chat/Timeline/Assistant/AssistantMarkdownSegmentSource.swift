@@ -79,6 +79,7 @@ final class AssistantMarkdownSegmentSource {
     func reset() {
         streamingParser.reset()
         streamingSegmentState = nil
+        openTableSegment = nil
         streamingTextTail = nil
         lastStreamingTextEdit = nil
         lastBuildHasUnclosedCodeFence = false
@@ -312,16 +313,19 @@ final class AssistantMarkdownSegmentSource {
             #endif
         }
 
-        let tailSegments = FlatSegment.build(
-            from: Self.droppingUnfinishedTableRow(parsed.tailBlocks, content: config.content),
-            themeID: config.themeID,
-            serverID: identity.serverID,
-            workspaceID: identity.workspaceID,
-            sessionID: identity.sessionID,
-            serverBaseURL: identity.serverBaseURL,
-            sourceDirectory: config.sourceDirectory,
-            worktreeId: identity.worktreeId
-        )
+        let shownTail = Self.droppingUnfinishedTableRow(parsed.tailBlocks, content: config.content)
+        let tailSegments = openTableSegments(shownTail, parsed: parsed, buildContext: buildContext)
+            ?? FlatSegment.build(
+                from: shownTail,
+                themeID: config.themeID,
+                serverID: identity.serverID,
+                workspaceID: identity.workspaceID,
+                sessionID: identity.sessionID,
+                serverBaseURL: identity.serverBaseURL,
+                sourceDirectory: config.sourceDirectory,
+                worktreeId: identity.worktreeId
+            )
+        recordOpenTableSegment(tailSegments, tail: shownTail, parsed: parsed, buildContext: buildContext)
         let buildEnd = MarkdownStreamingPerf.timestampNs()
 
         streamingSegmentState = StreamingSegmentState(
@@ -351,6 +355,59 @@ final class AssistantMarkdownSegmentSource {
             frozen: frozen,
             readerPreferences: config.readerPreferences
         )
+    }
+
+    // MARK: - Open table
+
+    /// The built segment of a table that is the whole open tail, kept so the
+    /// next tick builds only the rows its parse reports new
+    /// (`openTableUnchangedRows`) instead of the whole table.
+    private struct OpenTableSegment {
+        let id: Int
+        let buildContext: SegmentBuildContext
+        let headers: [[MarkdownInline]]
+        let rows: [[[MarkdownInline]]]
+    }
+
+    private var openTableSegment: OpenTableSegment?
+
+    /// The tail's table segment from the kept rows plus the new ones, or nil
+    /// when the tail is not the kept table growing by rows.
+    private func openTableSegments(
+        _ shownTail: [MarkdownBlock],
+        parsed: CommonMarkStreamingParseResult,
+        buildContext: SegmentBuildContext
+    ) -> [FlatSegment]? {
+        guard let kept = openTableSegment, kept.id == parsed.blockIDs.last, kept.buildContext == buildContext,
+              parsed.openTableUnchangedRows >= kept.rows.count,
+              shownTail.count == 1, case .table(_, let rows) = shownTail[0], rows.count >= kept.rows.count else { return nil }
+        guard rows.count > kept.rows.count else { return [.table(headers: kept.headers, rows: kept.rows)] }
+        let built = FlatSegment.build(
+            from: [.table(headers: [], rows: Array(rows[kept.rows.count...]))],
+            themeID: buildContext.themeID,
+            serverID: buildContext.serverID,
+            workspaceID: buildContext.workspaceID,
+            sessionID: buildContext.sessionID,
+            serverBaseURL: buildContext.serverBaseURL,
+            sourceDirectory: buildContext.sourceDirectory,
+            worktreeId: buildContext.worktreeId
+        )
+        guard built.count == 1, case .table(_, let newRows) = built[0] else { return nil }
+        return [.table(headers: kept.headers, rows: kept.rows + newRows)]
+    }
+
+    private func recordOpenTableSegment(
+        _ segments: [FlatSegment],
+        tail: [MarkdownBlock],
+        parsed: CommonMarkStreamingParseResult,
+        buildContext: SegmentBuildContext
+    ) {
+        guard tail.count == 1, case .table = tail[0], segments.count == 1,
+              case .table(let headers, let rows) = segments[0], let id = parsed.blockIDs.last else {
+            openTableSegment = nil
+            return
+        }
+        openTableSegment = OpenTableSegment(id: id, buildContext: buildContext, headers: headers, rows: rows)
     }
 
     /// A table at the open tail shows only the rows whose line has ended.

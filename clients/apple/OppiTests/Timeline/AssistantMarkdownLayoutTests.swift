@@ -887,6 +887,51 @@ struct AssistantMarkdownLayoutTests {
         )
     }
 
+    /// Frozen text blocks keep their measured height between streaming ticks;
+    /// a new width must still re-measure them, to the height a fresh view gets.
+    @Test func frozenTextBlockRemeasuresWhenTheWidthChanges() throws {
+        let paragraph = "Frozen prose that wraps across several lines at a narrow width, so its height depends on the width it is measured at."
+        let content = "\(paragraph)\n\n\(paragraph) Second block.\n\nThe open tail"
+
+        func host(width: CGFloat) -> (UIView, AssistantMarkdownContentView) {
+            let markdownView = AssistantMarkdownContentView()
+            let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 900))
+            markdownView.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(markdownView)
+            NSLayoutConstraint.activate([
+                markdownView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                markdownView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                markdownView.topAnchor.constraint(equalTo: container.topAnchor),
+            ])
+            markdownView.apply(configuration: .make(content: content, isStreaming: true, themeID: .dark))
+            container.layoutIfNeeded()
+            return (container, markdownView)
+        }
+        func fittedHeight(_ view: UIView, width: CGFloat) -> CGFloat {
+            view.systemLayoutSizeFitting(
+                CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        }
+
+        let (container, markdownView) = host(width: 350)
+        let frozen = try #require(timelineAllTextViews(in: markdownView).first)
+        let wideHeight = frozen.frame.height
+        _ = fittedHeight(markdownView, width: 350)
+
+        container.frame.size.width = 200
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        let (_, fresh) = host(width: 200)
+        let freshFrozen = try #require(timelineAllTextViews(in: fresh).first)
+
+        #expect(frozen.frame.width == 200)
+        #expect(frozen.frame.height > wideHeight + 10, "narrower frozen block kept its wide height \(wideHeight)")
+        #expect(abs(frozen.frame.height - freshFrozen.frame.height) < 1)
+        #expect(abs(fittedHeight(markdownView, width: 200) - fittedHeight(fresh, width: 200)) < 1)
+    }
+
     @Test func streamingHeadingBelowThematicBreakStaysPinned() throws {
         let markdownView = AssistantMarkdownContentView()
         let container = UIView(frame: CGRect(x: 0, y: 0, width: 350, height: 1_400))

@@ -54,6 +54,7 @@ final class BaselineSafeTextView: UITextView, ReviewCommentSourceLineRangeResolv
 
     @objc private func textStorageDidProcessEditing() {
         invalidateTaskControls()
+        fittedHeights.removeAll()
     }
 
     /// A control gets the touch ahead of the text view's own gestures.
@@ -82,10 +83,73 @@ final class BaselineSafeTextView: UITextView, ReviewCommentSourceLineRangeResolv
         reviewCommentSourceLineRangeResolver?(range)
     }
 
-    /// Scrolling is on only so the view has no intrinsic size (its owner sizes
-    /// it); it never scrolls, and keeps its text at the top like a view with
-    /// scrolling off.
-    var isScrollingOnlyForSizing = false
+    /// Scrolling is on only so UIKit does not size the text itself: its owner
+    /// fits it to a width (`fitHeight(toWidth:)`) and that size is the
+    /// intrinsic size. It never scrolls (its own pan is off, so the list
+    /// around it takes the drag) and keeps its text at the top like a view
+    /// with scrolling off.
+    ///
+    /// UIKit drops a non-scrolling text view's measurement whenever the view
+    /// is laid out, so every measure of a streaming row laid out all of its
+    /// text again.
+    var isScrollingOnlyForSizing = false {
+        didSet {
+            guard isScrollingOnlyForSizing != oldValue else { return }
+            isScrollEnabled = isScrollingOnlyForSizing
+            panGestureRecognizer.isEnabled = !isScrollingOnlyForSizing
+            showsVerticalScrollIndicator = !isScrollingOnlyForSizing
+            showsHorizontalScrollIndicator = !isScrollingOnlyForSizing
+            scrollsToTop = !isScrollingOnlyForSizing
+            contentInsetAdjustmentBehavior = isScrollingOnlyForSizing ? .never : .automatic
+            if isScrollingOnlyForSizing { observeTextEdits() }
+        }
+    }
+
+    /// Heights the text fits at, for the last widths asked: a row is measured
+    /// at its width and at a fallback before its first layout. Dropped when
+    /// the text changes (`textStorageDidProcessEditing`); the text size and
+    /// Dynamic Type size are part of the key, since fonts follow them.
+    private struct FittedHeight {
+        let width: CGFloat
+        let contentSizeCategory: UIContentSizeCategory
+        let typographyRevision: UInt64
+        let height: CGFloat
+    }
+
+    private var fittedHeights: [FittedHeight] = []
+    /// The width last fitted to and the height the text needs there.
+    private var fittedSize: CGSize?
+
+    /// The fitted size while owner-sized. Its width keeps a row that is
+    /// measured with a loose width from growing without bound.
+    override var intrinsicContentSize: CGSize {
+        guard isScrollingOnlyForSizing, let fittedSize else { return super.intrinsicContentSize }
+        return fittedSize
+    }
+
+    /// Sizes this owner-sized view for `width`, measuring only when the text,
+    /// the width or the text size changed since.
+    func fitHeight(toWidth width: CGFloat) {
+        guard isScrollingOnlyForSizing, width > 0 else { return }
+        let category = traitCollection.preferredContentSizeCategory
+        let typography = AppFont.revision
+        let height: CGFloat
+        if let known = fittedHeights.first(where: {
+            $0.width == width && $0.contentSizeCategory == category && $0.typographyRevision == typography
+        }) {
+            height = known.height
+        } else {
+            height = ceil(sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height)
+            fittedHeights.append(FittedHeight(
+                width: width, contentSizeCategory: category, typographyRevision: typography, height: height
+            ))
+            if fittedHeights.count > 2 { fittedHeights.removeFirst() }
+        }
+        let size = CGSize(width: width, height: height)
+        guard size != fittedSize else { return }
+        fittedSize = size
+        invalidateIntrinsicContentSize()
+    }
 
     private var holdsTextAtTop: Bool { !isScrollEnabled || isScrollingOnlyForSizing }
 

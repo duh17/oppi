@@ -22,6 +22,10 @@ struct CommonMarkStreamingParseResult: Equatable, Sendable {
     /// The text ends inside a fenced code or math block whose closing line has
     /// not arrived, as cmark parsed it.
     let endsInOpenBlock: Bool
+    /// Leading rows of the open table at the end that the previous tick
+    /// already had, unchanged: a row is final once its line ends. Zero unless
+    /// this tick resumed that table from its last finished row.
+    var openTableUnchangedRows = 0
 }
 
 /// Incrementally parses a monotonically growing CommonMark document.
@@ -59,12 +63,31 @@ struct CommonMarkStreamingParser: Sendable {
     /// references after it: every tick parses the whole document.
     private var holdsReferenceDefinitions = false
 
+    /// A table that is the open tail, parsed up to its last finished row (a
+    /// row is one line, final once the line ends). Each tick parses only the
+    /// rows after it, under the table's own header and delimiter rows, so a
+    /// streamed table costs O(new rows) per tick instead of O(table).
+    private struct OpenTable: Sendable {
+        /// UTF-8 offset of the header row: the table's identity and the tail start.
+        let start: Int
+        /// The header and delimiter rows, newline included.
+        let head: String
+        let headers: [[MarkdownInline]]
+        /// Rows whose line has ended.
+        var finishedRows: [[[MarkdownInline]]]
+        /// UTF-8 offset just past the last finished row.
+        var finishedEnd: Int
+    }
+
+    private var openTable: OpenTable?
+
     mutating func reset() {
         state = nil
         trailingSample = []
         lastContentUTF8ByteCount = nil
         referenceMarkerOffset = nil
         holdsReferenceDefinitions = false
+        openTable = nil
     }
 
     mutating func parse(_ content: String) -> CommonMarkStreamingParseResult {
@@ -78,9 +101,16 @@ struct CommonMarkStreamingParser: Sendable {
             }
         } else {
             state = nil
+            openTable = nil
             referenceMarkerOffset = Self.lastReferenceMarker(in: contentUTF8, appended: 0 ..< contentUTF8.count)
             holdsReferenceDefinitions = false
         }
+
+        if appended != nil, referenceMarkerOffset == nil, !holdsReferenceDefinitions,
+           let resumed = resumeOpenTable(content: content, contentUTF8: contentUTF8) {
+            return resumed
+        }
+        defer { checkpointOpenTable(content: content) }
 
         if let current = state,
            appended != nil,
@@ -104,6 +134,7 @@ struct CommonMarkStreamingParser: Sendable {
                 tail: tail,
                 tailIDs: tailIDs
             )
+            lastBlock = (tail.blocks.last, tailIDs.last)
 
             return CommonMarkStreamingParseResult(
                 blocks: current.prefixBlocks + tail.blocks,
@@ -132,6 +163,7 @@ struct CommonMarkStreamingParser: Sendable {
             )
         }
         state = split.state
+        lastBlock = (parsed.blocks.last, ids.last)
         // A `]:` in a frozen block that defined nothing can no longer start a
         // definition.
         if let marker = referenceMarkerOffset, let frozen = split.state?.prefixUTF8ByteCount, marker < frozen {
@@ -146,6 +178,87 @@ struct CommonMarkStreamingParser: Sendable {
             strategy: .full,
             tailUTF8Offset: split.state?.prefixUTF8ByteCount ?? 0,
             endsInOpenBlock: parsed.endsInOpenBlock
+        )
+    }
+
+    /// The last block this tick parsed and its identity, for `checkpointOpenTable`.
+    private var lastBlock: (block: MarkdownBlock?, id: Int?) = (nil, nil)
+
+    /// This tick's result when the open tail is the table `openTable` holds and
+    /// the new text only adds rows to it; nil when anything else may have
+    /// changed, which drops the checkpoint and parses as usual.
+    private mutating func resumeOpenTable(
+        content: String,
+        contentUTF8: String.UTF8View
+    ) -> CommonMarkStreamingParseResult? {
+        guard var table = openTable else { return nil }
+        openTable = nil
+        let tailStart = state?.prefixUTF8ByteCount ?? 0
+        guard table.start == tailStart, table.finishedEnd <= contentUTF8.count else { return nil }
+
+        let rest = String(content[contentUTF8.index(contentUTF8.startIndex, offsetBy: table.finishedEnd)...])
+        let restUTF8 = rest.utf8
+        let finishedLines = restUTF8.reduce(0) { $1 == 0x0A ? $0 + 1 : $0 }
+        let lastNewline = restUTF8.lastIndex(of: 0x0A)
+        let hasOpenLine = (lastNewline.map { restUTF8.index(after: $0) } ?? restUTF8.startIndex) != restUTF8.endIndex
+        let parsed = parseCommonMarkTail(table.head + rest)
+        // Every new line must still be a row of this one table: a blank line,
+        // a new block or a definition ends the fast path.
+        guard parsed.blocks.count == 1, !parsed.hasReferenceDefinitions,
+              case .table(_, let newRows) = parsed.blocks[0],
+              newRows.count == finishedLines + (hasOpenLine ? 1 : 0) else { return nil }
+
+        let unchangedRows = table.finishedRows.count
+        let block = MarkdownBlock.table(headers: table.headers, rows: table.finishedRows + newRows)
+        if let lastNewline {
+            table.finishedRows += newRows.prefix(finishedLines)
+            table.finishedEnd += restUTF8.distance(from: restUTF8.startIndex, to: lastNewline) + 1
+        }
+        openTable = table
+        let prefixBlocks = state?.prefixBlocks ?? []
+        return CommonMarkStreamingParseResult(
+            blocks: prefixBlocks + [block],
+            blockIDs: (state?.prefixBlockIDs ?? []) + [tailStart],
+            prefixBlocks: prefixBlocks,
+            tailBlocks: [block],
+            strategy: .tailOnly,
+            tailUTF8Offset: tailStart,
+            endsInOpenBlock: false,
+            openTableUnchangedRows: unchangedRows
+        )
+    }
+
+    /// Keeps a checkpoint when this tick's open tail is one table that starts
+    /// it: its header and delimiter rows have ended, and each line after them
+    /// is one of its rows.
+    private mutating func checkpointOpenTable(content: String) {
+        defer { lastBlock = (nil, nil) }
+        openTable = nil
+        let tailStart = state?.prefixUTF8ByteCount ?? 0
+        guard referenceMarkerOffset == nil, !holdsReferenceDefinitions,
+              lastBlock.id == tailStart,
+              case .table(let headers, let rows)? = lastBlock.block else { return }
+        let utf8 = content.utf8
+        let start = utf8.index(utf8.startIndex, offsetBy: tailStart)
+        guard let headerEnd = utf8[start...].firstIndex(of: 0x0A),
+              let delimiterEnd = utf8[utf8.index(after: headerEnd)...].firstIndex(of: 0x0A) else { return }
+        let rowsStart = utf8.index(after: delimiterEnd)
+        let rowText = utf8[rowsStart...]
+        let finishedLines = rowText.reduce(0) { $1 == 0x0A ? $0 + 1 : $0 }
+        let lastNewline = rowText.lastIndex(of: 0x0A)
+        let hasOpenLine = (lastNewline.map { utf8.index(after: $0) } ?? rowsStart) != utf8.endIndex
+        guard rows.count == finishedLines + (hasOpenLine ? 1 : 0) else { return }
+        let head = String(content[start ..< rowsStart])
+        // The rows must read the same under the header alone: a table whose
+        // header came off the end of a paragraph would not.
+        guard parseCommonMarkTail(head).blocks == [.table(headers: headers, rows: [])] else { return }
+        let finishedEnd = lastNewline.map { utf8.index(after: $0) } ?? rowsStart
+        openTable = OpenTable(
+            start: tailStart,
+            head: head,
+            headers: headers,
+            finishedRows: Array(rows.prefix(finishedLines)),
+            finishedEnd: utf8.distance(from: utf8.startIndex, to: finishedEnd)
         )
     }
 

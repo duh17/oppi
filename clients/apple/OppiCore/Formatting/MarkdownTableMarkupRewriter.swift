@@ -48,13 +48,13 @@ enum MarkdownTableMarkupRewriter {
                 let line = UnsafeBufferPointer(rebasing: bytes[first ..< end])
 
                 if let fence = openFence {
-                    if isClosingFence(line, matching: fence) { openFence = nil }
+                    if MarkdownFence.closes(line, byte: fence.byte, count: fence.count) { openFence = nil }
                     previous = nil
                     inTable = false
                     continue
                 }
-                if let fence = openingFence(line) {
-                    openFence = fence
+                if let fence = MarkdownFence.opening(line) {
+                    openFence = (fence.byte, fence.count)
                     previous = nil
                     inTable = false
                     continue
@@ -189,15 +189,15 @@ enum MarkdownTableMarkupRewriter {
             let suffix = index < lines.count - 1 || source.hasSuffix("\n") ? "\n" : ""
             if let fence = openFence {
                 buffer += text + suffix
-                if isClosingFence(text.utf8, matching: fence) {
+                if MarkdownFence.closes(text.utf8, byte: fence.byte, count: fence.count) {
                     flush(transform: false)
                     openFence = nil
                 }
                 continue
             }
-            if let fence = openingFence(text.utf8) {
+            if let fence = MarkdownFence.opening(text.utf8) {
                 flush(transform: true)
-                openFence = fence
+                openFence = (fence.byte, fence.count)
                 buffer += text + suffix
                 continue
             }
@@ -495,21 +495,5 @@ enum MarkdownTableMarkupRewriter {
             .replacingOccurrences(of: "&quot;", with: "\"")
             .replacingOccurrences(of: "&#39;", with: "'")
             .replacingOccurrences(of: "&apos;", with: "'")
-    }
-
-    // MARK: - Fences
-
-    /// A line whose first non-blank bytes are three or more backticks or tildes.
-    private static func openingFence(_ line: some Collection<UInt8>) -> (byte: UInt8, count: Int)? {
-        let trimmed = line.drop { $0 == 0x20 || $0 == 0x09 }
-        guard let first = trimmed.first, first == UInt8(ascii: "`") || first == UInt8(ascii: "~") else { return nil }
-        let count = trimmed.prefix { $0 == first }.count
-        return count >= 3 ? (first, count) : nil
-    }
-
-    private static func isClosingFence(_ line: some Collection<UInt8>, matching fence: (byte: UInt8, count: Int)) -> Bool {
-        let trimmed = line.drop { $0 == 0x20 || $0 == 0x09 }
-        let count = trimmed.prefix { $0 == fence.byte }.count
-        return count >= fence.count && trimmed.dropFirst(count).allSatisfy { $0 == 0x20 || $0 == 0x09 || $0 == 0x0D }
     }
 }

@@ -4364,6 +4364,9 @@ struct NativeLatexBlockViewTests {
         let view = NativeLatexBlockView()
         view.frame = CGRect(x: 16, y: 100, width: 320, height: 240)
         outer.addSubview(view)
+        // The view lays itself out with constraints; a stack pins its width in
+        // the timeline, so pin it here too rather than leave it ambiguous.
+        view.widthAnchor.constraint(equalToConstant: 320).isActive = true
         view.applyAsFormulaSync(code: wideDeviceFormula, palette: ThemeID.dark.palette)
         outer.layoutIfNeeded()
         view.layoutIfNeeded()

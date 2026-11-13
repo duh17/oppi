@@ -218,10 +218,13 @@ final class AssistantMarkdownContentView: UIView {
     }()
 
     private let segmentSource = AssistantMarkdownSegmentSource()
-    private lazy var segmentApplier = AssistantMarkdownSegmentApplier(
-        stackView: stackView,
-        textViewDelegate: self
-    )
+    private lazy var segmentApplier: AssistantMarkdownSegmentApplier = {
+        let applier = AssistantMarkdownSegmentApplier(stackView: stackView, textViewDelegate: self)
+        // Each measure and layout below fits the text blocks to its width
+        // first, so only a block whose text changed is measured again.
+        applier.sizesTextBlocks = true
+        return applier
+    }()
 
     private var currentConfig: Configuration?
     /// Host-owned link routing. Extension surfaces route classified taps through
@@ -261,6 +264,7 @@ final class AssistantMarkdownContentView: UIView {
     private var intrinsicCapturedWidth: CGFloat = -1
 
     override func layoutSubviews() {
+        segmentApplier.fitTextBlocks(toWidth: bounds.width)
         super.layoutSubviews()
         guard abs(intrinsicCapturedWidth - bounds.width) > 0.5 else { return }
         intrinsicCapturedWidth = bounds.width
@@ -357,6 +361,7 @@ final class AssistantMarkdownContentView: UIView {
 
     override var intrinsicContentSize: CGSize {
         let width = bounds.width > 0 ? bounds.width : 320
+        segmentApplier.fitTextBlocks(toWidth: width)
         let size = stackView.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
@@ -373,6 +378,7 @@ final class AssistantMarkdownContentView: UIView {
         let width = targetSize.width.isFinite && targetSize.width > 0
             ? targetSize.width
             : max(1, bounds.width)
+        segmentApplier.fitTextBlocks(toWidth: width)
         let size = stackView.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
