@@ -59,7 +59,7 @@ import type {
  * `panel` placement; every other audience gets the surface without them, placed as `strip`
  * (`withoutPanelHints`). `elapsed` draws every node kind; `blocks` draws a tree but predates the elapsed node and the strip's pill type sizes, so it
  * is sent each elapsed node as static text and a pill's `headline` as `caption`
- * (`surfaceForAudience`); `composites` draws only the closed set, so it gets the v1 projection of
+ * (`STAND_INS`); `composites` draws only the closed set, so it gets the v1 projection of
  * a surface that uses a tree; and a client that has said nothing draws v1 widgets, as every client
  * did before surfaces existed.
  */
@@ -101,41 +101,53 @@ export function audienceDrawsWhole(
   );
 }
 
-/** Whether a `blocks` client is sent a rewritten copy of this surface. */
-function rewritesForBlocks(surface: ExtensionUISurface): boolean {
-  return extensionUISurfaceUsesElapsed(surface) || extensionUISurfacePillUsesHeadline(surface);
-}
-
-/** Whether this audience is sent a rewritten copy of this surface rather than the surface itself. */
-function rewritesFor(audience: ExtensionUISurfaceAudience, surface: ExtensionUISurface): boolean {
-  if (audience === "working") return false;
-  if (extensionUISurfaceUsesWorkingIcon(surface)) return true;
-  if (audience === "panel") return false;
-  if (extensionUISurfaceUsesPanelHints(surface)) return true;
-  return audience === "blocks" && rewritesForBlocks(surface);
+/** A feature the listed audiences predate, and the shape they are sent instead. */
+interface StandIn {
+  readonly audiences: readonly ExtensionUISurfaceAudience[];
+  readonly uses: (surface: ExtensionUISurface) => boolean;
+  readonly rewrite: (surface: ExtensionUISurface, now: number) => ExtensionUISurface;
 }
 
 /**
- * A surface in the shape this audience draws. Every audience but `working` gets the working icon
- * as its stand-in symbol, and every audience but `working` and `panel` loses the pane hints.
- * `blocks` also gets a node kind newer than its build as the static shape it can draw, formatted
- * at `now`, and a pill's `headline` as the `caption` it draws at the strip's size. A surface that
- * needs none of that is returned as it is.
+ * Every stand-in, applied in this order. Both whether an audience gets a rewritten copy and the
+ * copy itself come from here, so a patch never reaches a client holding a copy it would not
+ * apply to. A new node kind or feature adds one row naming the audiences below its rung; a
+ * rung added later is never in an earlier row.
  */
+const STAND_INS: readonly StandIn[] = [
+  {
+    audiences: ["panel", "elapsed", "blocks", "composites", "v1-projection"],
+    uses: extensionUISurfaceUsesWorkingIcon,
+    rewrite: withWorkingIconStandIn,
+  },
+  {
+    audiences: ["elapsed", "blocks", "composites", "v1-projection"],
+    uses: extensionUISurfaceUsesPanelHints,
+    rewrite: withoutPanelHints,
+  },
+  { audiences: ["blocks"], uses: extensionUISurfaceUsesElapsed, rewrite: withStaticElapsed },
+  {
+    audiences: ["blocks"],
+    uses: extensionUISurfacePillUsesHeadline,
+    rewrite: withPillHeadlinesAsCaption,
+  },
+];
+
+/** Whether this audience is sent a rewritten copy of this surface rather than the surface itself. */
+function rewritesFor(audience: ExtensionUISurfaceAudience, surface: ExtensionUISurface): boolean {
+  return STAND_INS.some((standIn) => standIn.audiences.includes(audience) && standIn.uses(surface));
+}
+
+/** A surface with each stand-in this audience needs applied in order; else the surface itself. */
 export function surfaceForAudience(
   surface: ExtensionUISurface,
   audience: ExtensionUISurfaceAudience,
   now: number,
 ): ExtensionUISurface {
-  if (!rewritesFor(audience, surface)) return surface;
-  let shaped = extensionUISurfaceUsesWorkingIcon(surface)
-    ? withWorkingIconStandIn(surface)
-    : surface;
-  if (audience === "panel") return shaped;
-  if (extensionUISurfaceUsesPanelHints(shaped)) shaped = withoutPanelHints(shaped);
-  if (audience !== "blocks") return shaped;
-  if (extensionUISurfaceUsesElapsed(shaped)) shaped = withStaticElapsed(shaped, now);
-  if (extensionUISurfacePillUsesHeadline(shaped)) shaped = withPillHeadlinesAsCaption(shaped);
+  let shaped = surface;
+  for (const standIn of STAND_INS)
+    if (standIn.audiences.includes(audience) && standIn.uses(shaped))
+      shaped = standIn.rewrite(shaped, now);
   return shaped;
 }
 
