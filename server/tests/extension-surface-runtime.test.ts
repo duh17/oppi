@@ -862,6 +862,80 @@ describe("who can draw a blocks surface", () => {
     expect(calls).toBe(0);
   });
 
+  it("clears a dismissed surface in every shape, and a composites widget only for a tree", () => {
+    const h = harness();
+    h.runtime.publish(surfaceValue("blocks-panel.json"));
+    h.runtime.publish(surfaceValue());
+    const shapes = (from: number) =>
+      h.frames.slice(from).map(({ message, audience }) => {
+        if (message.type === "extension_ui_patch")
+          return `${audience} removed ${message.surfaceId}@${message.revision}`;
+        if (message.type === "extension_ui_notification")
+          return `${audience} cleared ${message.widgetKey}`;
+        return `${audience} ${message.type}`;
+      });
+
+    let before = h.frames.length;
+    h.runtime.dismiss("blocks-panel");
+    // A composites client held the tree's widget, so that slot is emptied too.
+    expect(shapes(before)).toEqual([
+      "working removed blocks-panel@2",
+      "panel removed blocks-panel@2",
+      "elapsed removed blocks-panel@2",
+      "blocks removed blocks-panel@2",
+      "composites removed blocks-panel@2",
+      "v1-projection cleared surface:blocks-panel",
+      "composites cleared surface:blocks-panel",
+    ]);
+
+    before = h.frames.length;
+    h.runtime.dismiss("deploy");
+    // A card every v2 client drew leaves no widget behind but the v1 one.
+    expect(shapes(before)).toEqual([
+      "working removed deploy@2",
+      "panel removed deploy@2",
+      "elapsed removed deploy@2",
+      "blocks removed deploy@2",
+      "composites removed deploy@2",
+      "v1-projection cleared surface:deploy",
+    ]);
+  });
+
+  it("takes the card back from a composites client when a patch swaps a tree in", async () => {
+    const h = harness({
+      runAction: async () => ({
+        patch: { pill: surfaceValue("blocks-panel.json").pill },
+      }),
+    });
+    h.runtime.publish(surfaceValue());
+    const before = h.frames.length;
+
+    await h.act(action("retry"), "phone-1", "blocks");
+
+    const after = h.frames.slice(before);
+    const composites = after
+      .filter((frame) => frame.audience === "composites")
+      .map((frame) => frame.message);
+    // The card it drew cannot show a tree: it is removed, and the projection takes its place.
+    expect(composites).toEqual([
+      expect.objectContaining({
+        type: "extension_ui_patch",
+        surfaceId: "deploy",
+        revision: 2,
+        removed: true,
+      }),
+      expect.objectContaining({ type: "extension_ui_notification", widgetKey: "surface:deploy" }),
+    ]);
+    expect(composites[0]).not.toHaveProperty("patch");
+    // Every client that draws trees is patched in place.
+    expect(h.patches("blocks")).toEqual([
+      expect.objectContaining({
+        revision: 2,
+        patch: expect.objectContaining({ pill: expect.objectContaining({ tap: "drawer" }) }),
+      }),
+    ]);
+  });
+
   it("hands the whole card to a composites client when a surface stops using a tree", async () => {
     const h = harness({
       runAction: async () => ({

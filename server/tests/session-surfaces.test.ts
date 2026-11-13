@@ -363,6 +363,66 @@ describe("SessionSurfaces", () => {
     expect(resent?.surface.panel).toBeUndefined();
   });
 
+  it("resends the whole surface to a client whose copy was rewritten, even when a patch drops the hints", async () => {
+    const h = harness();
+    const read = readExtensionUISurface(JSON.parse(JSON.stringify(fixtures["panel-hints.json"])));
+    if ("problem" in read) throw new Error(read.problem);
+    const current = [
+      EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+      EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+      EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+    ];
+    h.surfaces.declare("pane-phone", [...current, EXTENSION_NATIVE_UI_PANEL_CAPABILITY]);
+    h.surfaces.declare("older-phone", current);
+    // After this answer the surface needs no rewrite, but the older client still holds the copy
+    // that was rewritten before it, which the patch was not written against.
+    h.surfaces.publisher.publish(read.surface, async () => ({
+      patch: { placement: { kind: "strip", preferred: "aboveComposer" }, panel: null },
+    }));
+
+    await h.surfaces.act(
+      tap({ surfaceId: "jobs", compositeId: "list", actionId: "refresh", revision: 1 }),
+      "pane-phone",
+    );
+    expect(h.of("extension_ui_patch", "panel")).toHaveLength(1);
+    expect(h.of("extension_ui_patch", "elapsed")).toEqual([]);
+    expect(h.of("extension_ui_surface", "elapsed").at(-1)?.surface.revision).toBe(2);
+  });
+
+  it("resends the whole surface to a client whose copy a patch would rewrite", async () => {
+    const h = harness();
+    const value = JSON.parse(JSON.stringify(fixtures["panel-hints.json"]));
+    value.placement = { kind: "strip", preferred: "aboveComposer" };
+    delete value.panel;
+    const read = readExtensionUISurface(value);
+    if ("problem" in read) throw new Error(read.problem);
+    const current = [
+      EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+      EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+      EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+    ];
+    h.surfaces.declare("pane-phone", [...current, EXTENSION_NATIVE_UI_PANEL_CAPABILITY]);
+    h.surfaces.declare("older-phone", current);
+    // The answer moves a strip surface into a pane, hints the older client cannot be sent.
+    h.surfaces.publisher.publish(read.surface, async () => ({
+      patch: {
+        placement: { kind: "panel", preferred: "aboveComposer" },
+        panel: { icon: "terminal", size: "wide" },
+      },
+    }));
+
+    await h.surfaces.act(
+      tap({ surfaceId: "jobs", compositeId: "list", actionId: "refresh", revision: 1 }),
+      "pane-phone",
+    );
+    expect(h.of("extension_ui_patch", "panel")).toHaveLength(1);
+    expect(h.of("extension_ui_patch", "elapsed")).toEqual([]);
+    const resent = h.of("extension_ui_surface", "elapsed").at(-1)?.surface;
+    expect(resent?.revision).toBe(2);
+    expect(resent?.placement.kind).toBe("strip");
+    expect(resent?.panel).toBeUndefined();
+  });
+
   it("sends the working mark only to a client that draws it, and a symbol to the rest", async () => {
     const h = harness();
     const read = readExtensionUISurface(

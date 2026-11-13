@@ -478,7 +478,7 @@ export class ExtensionSurfaceRuntime {
         });
         return;
       }
-      this.commit(read.surface);
+      this.emitSurface(this.commit(read.surface));
       return;
     }
     if (Object.keys(answer.patch).length === 0) return;
@@ -492,7 +492,7 @@ export class ExtensionSurfaceRuntime {
       });
       return;
     }
-    this.commit(merged, answer.patch);
+    this.sendPatch(current, this.commit(merged), answer.patch);
   }
 
   /** Draw a failure on the card that offered the action, unless that card is already gone. */
@@ -510,7 +510,7 @@ export class ExtensionSurfaceRuntime {
       },
     };
     const merged = applyExtensionUISurfacePatch(surface, patch);
-    if (merged) this.commit(merged, patch);
+    if (merged) this.sendPatch(surface, this.commit(merged), patch);
   }
 
   /** A refused action is drawn by the card that offered it, when that card is still there. */
@@ -530,22 +530,16 @@ export class ExtensionSurfaceRuntime {
     this.options.emit(buildExtensionUISettledMessage(this.options.sessionId, requestId), audience);
   }
 
-  /** Store the new state, advance the revision, and send the change. */
-  private commit(next: ExtensionUISurface, patch?: Record<string, unknown>): void {
-    const previous = this.surfaces.get(next.id);
-    const revision = this.nextRevision(next.id, previous);
+  /** Store the new state and advance the revision; the caller sends the change. */
+  private commit(next: ExtensionUISurface): ExtensionUISurface {
     const surface: ExtensionUISurface = {
       ...next,
-      revision,
+      revision: this.nextRevision(next.id, this.surfaces.get(next.id)),
       publishedAt: this.now(),
     };
     this.surfaces.set(surface.id, surface);
     this.scheduleDeadline(surface);
-    if (patch === undefined) {
-      this.emitSurface(surface);
-      return;
-    }
-    this.sendPatch(surface.id, revision, { patch }, previous);
+    return surface;
   }
 
   // ── frames ──
@@ -555,15 +549,7 @@ export class ExtensionSurfaceRuntime {
     if (!queued) return;
     clearTimeout(queued.timer);
     this.publishes.delete(surfaceId);
-    const previous = this.surfaces.get(surfaceId);
-    const surface: ExtensionUISurface = {
-      ...queued.surface,
-      revision: this.nextRevision(surfaceId, previous),
-      publishedAt: this.now(),
-    };
-    this.surfaces.set(surfaceId, surface);
-    this.scheduleDeadline(surface);
-    this.emitSurface(surface);
+    this.emitSurface(this.commit(queued.surface));
   }
 
   private emitSurface(surface: ExtensionUISurface): void {
@@ -591,49 +577,30 @@ export class ExtensionSurfaceRuntime {
    */
   private patchReaches(
     audience: ExtensionUISurfaceAudience,
-    previous: ExtensionUISurface | undefined,
+    previous: ExtensionUISurface,
     next: ExtensionUISurface,
   ): boolean {
-    return !(
-      rewritesFor(audience, next) ||
-      (previous !== undefined && rewritesFor(audience, previous))
-    );
+    return !(rewritesFor(audience, next) || rewritesFor(audience, previous));
   }
 
   /**
-   * One patch, or a removal, to every audience that holds the surface. A surface can change shape
-   * (a patch that swaps a tree in), so the client that drew it as a card and can no longer draw it
-   * is told the card is gone as well as handed the projection.
+   * One patch, already committed as `next`, to every audience that holds `previous`. A surface can
+   * change shape (a patch that swaps a tree in), so the client that drew it as a card and can no
+   * longer draw it is told the card is gone as well as handed the projection.
    */
   private sendPatch(
-    surfaceId: string,
-    revision: number,
-    change: { patch?: Record<string, unknown>; removed?: boolean },
-    previous?: ExtensionUISurface,
+    previous: ExtensionUISurface,
+    next: ExtensionUISurface,
+    patch: Record<string, unknown>,
   ): void {
-    const next = change.removed ? undefined : this.surfaces.get(surfaceId);
-    const message = buildExtensionUIPatchMessage(
-      this.options.sessionId,
-      surfaceId,
-      revision,
-      change,
-    );
-    if (!next) {
-      // Removed: whichever shape a client drew is cleared, and its widget slot is emptied.
-      for (const audience of TREE_AUDIENCES) this.options.emit(message, audience);
-      this.options.emit(message, "composites");
-      const clear = buildExtensionUINotificationMessage(
-        extensionUISurfaceProjectionClearRequest(surfaceId),
-      );
-      this.options.emit(clear, "v1-projection");
-      // A composites-only client only ever held a widget for a surface that used a tree.
-      if (previous && extensionUISurfaceUsesBlocks(previous))
-        this.options.emit(clear, "composites");
-      return;
-    }
+    const surfaceId = next.id;
+    const revision = next.revision;
+    const message = buildExtensionUIPatchMessage(this.options.sessionId, surfaceId, revision, {
+      patch,
+    });
     // A surface can change shape between a tree and the closed composites, and a client that held
     // one shape holds nothing the other one can patch.
-    const wasBlocks = previous !== undefined && extensionUISurfaceUsesBlocks(previous);
+    const wasBlocks = extensionUISurfaceUsesBlocks(previous);
     const usesBlocks = extensionUISurfaceUsesBlocks(next);
     // Only a client that held the card is patched; one that held a projection gets the shape it
     // can draw now: a whole surface, or a cleared widget while the tree is its projection.
@@ -660,8 +627,19 @@ export class ExtensionSurfaceRuntime {
     this.emitProjection(next);
   }
 
-  private sendRemoved(surfaceId: string, revision: number, previous?: ExtensionUISurface): void {
-    this.sendPatch(surfaceId, revision, { removed: true }, previous);
+  /** A removal: whichever shape a client drew of `previous` is cleared, and its widget slot too. */
+  private sendRemoved(surfaceId: string, revision: number, previous: ExtensionUISurface): void {
+    const message = buildExtensionUIPatchMessage(this.options.sessionId, surfaceId, revision, {
+      removed: true,
+    });
+    for (const audience of TREE_AUDIENCES) this.options.emit(message, audience);
+    this.options.emit(message, "composites");
+    const clear = buildExtensionUINotificationMessage(
+      extensionUISurfaceProjectionClearRequest(surfaceId),
+    );
+    this.options.emit(clear, "v1-projection");
+    // A composites-only client only ever held a widget for a surface that used a tree.
+    if (extensionUISurfaceUsesBlocks(previous)) this.options.emit(clear, "composites");
   }
 
   /** The v1 widget a client that cannot draw this surface holds instead of it. */
