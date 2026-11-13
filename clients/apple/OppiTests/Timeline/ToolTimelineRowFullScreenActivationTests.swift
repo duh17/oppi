@@ -101,6 +101,58 @@ struct ToolTimelineRowFullScreenActivationTests {
         harness.window.isHidden = true
     }
 
+    /// A double tap on a formula in an expanded write row opened the formula's
+    /// own viewer on the first tap and the file on the second: two screens
+    /// pushed in a row, read as the reader flickering in. A single tap inside
+    /// the row's Markdown waits until the row's double tap has failed.
+    @Test("a formula's tap in an expanded Markdown row waits for the row's double tap")
+    func formulaTapWaitsForTheRowDoubleTap() async throws {
+        let harness = makeHostHarness()
+        defer { harness.window.isHidden = true }
+        let markdown = "# Math\n\nDisplay math:\n\n$$\n\\int_0^1 x\\,dx = \\frac{1}{2}\n$$\n"
+        var configuration = makeTimelineToolConfiguration(
+            expandedContent: .markdown(text: markdown, filePath: "docs/math.md"),
+            copyOutputText: markdown,
+            toolNamePrefix: "write",
+            isExpanded: true
+        )
+        configuration.currentFileOpenIntent = .init(path: "docs/math.md")
+        configuration.openCurrentFile = { _ in }
+        let view = ToolTimelineRowContentView(configuration: configuration)
+        harness.host.view.addSubview(view)
+        view.frame = harness.host.view.bounds
+
+        var formula: NativeLatexBlockView?
+        for _ in 0 ..< 50 where formula == nil {
+            view.layoutIfNeeded()
+            formula = timelineFirstView(ofType: NativeLatexBlockView.self, in: view)
+            if formula == nil { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        let latex = try #require(formula, "the expanded row draws the display math")
+
+        let formulaTaps = Self.recognizers(in: latex).compactMap { $0 as? UITapGestureRecognizer }
+            .filter { $0.numberOfTapsRequired == 1 }
+        #expect(!formulaTaps.isEmpty, "the formula opens on a tap")
+        var rowDoubleTaps: [UITapGestureRecognizer] = []
+        var ancestor = latex.superview
+        while let current = ancestor, current !== harness.host.view {
+            rowDoubleTaps += (current.gestureRecognizers ?? []).compactMap { $0 as? UITapGestureRecognizer }
+                .filter { $0.numberOfTapsRequired == 2 && $0.isEnabled }
+            ancestor = current.superview
+        }
+        #expect(!rowDoubleTaps.isEmpty, "the expanded row opens its reader on a double tap")
+        for tap in formulaTaps {
+            let waits = rowDoubleTaps.contains { doubleTap in
+                doubleTap.delegate?.gestureRecognizer?(doubleTap, shouldBeRequiredToFailBy: tap) == true
+            }
+            #expect(waits, "the formula's tap waits for the row's double tap to fail")
+        }
+    }
+
+    private static func recognizers(in root: UIView) -> [UIGestureRecognizer] {
+        (root.gestureRecognizers ?? []) + root.subviews.flatMap { recognizers(in: $0) }
+    }
+
     @Test("expanded code activation opens full screen")
     func expandedCodeActivationOpensFullScreen() throws {
         let harness = makeHostHarness()

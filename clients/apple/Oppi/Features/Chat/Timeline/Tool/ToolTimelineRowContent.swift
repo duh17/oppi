@@ -1091,6 +1091,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         commandContainer.addGestureRecognizer(commandDoubleTapGesture)
         outputContainer.addGestureRecognizer(outputDoubleTapGesture)
         expandedScrollView.addGestureRecognizer(expandedDoubleTapGesture)
+        expandedDoubleTapGesture.delegate = self
         // The notebook cell sits outside the scroll view. A permanent
         // require-to-fail would wait on a hidden gesture and never open the
         // reader. The delegate waits only while that scroll view is visible.
@@ -2456,6 +2457,22 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         gestureRecognizer === expandedContainerDoubleTapGesture
             && otherGestureRecognizer === expandedDoubleTapGesture
             && !expandedScrollView.isHidden
+    }
+
+    /// A single tap inside the expanded content (a formula, an image, a
+    /// table's bar) waits for the row's double tap to fail. Otherwise the
+    /// first tap of a double tap opens that block's own viewer and the second
+    /// opens the row's reader over it: two screens in a row.
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        guard gestureRecognizer === expandedDoubleTapGesture || gestureRecognizer === expandedContainerDoubleTapGesture,
+              let tap = otherGestureRecognizer as? UITapGestureRecognizer,
+              tap.numberOfTapsRequired == 1,
+              let ownView = gestureRecognizer.view,
+              let tapView = tap.view else { return false }
+        return tapView !== ownView && tapView.isDescendant(of: ownView)
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
