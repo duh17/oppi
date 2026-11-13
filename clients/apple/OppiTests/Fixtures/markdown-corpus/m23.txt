@@ -1,0 +1,9 @@
+m23 inline double-dollar
+@@@@ source
+Inline $$a_1 * b * c_1 * d$$ display in a sentence.
+@@@@ tree
+P: T(Inline )DMATH(a_1 * b * c_1 * d)T( display in a sentence.)
+@@@@ render
+TEXT: Inline 
+LATEX: a_1 * b * c_1 * d
+TEXT:  display in a sentence.

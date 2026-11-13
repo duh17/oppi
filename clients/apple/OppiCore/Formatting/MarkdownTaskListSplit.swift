@@ -91,7 +91,7 @@ enum MarkdownTaskListSplit {
     /// Whether `block` is, or holds at any depth, a code block, table or rule.
     private static func holdsSegmentBlock(_ block: MarkdownBlock) -> Bool {
         switch block {
-        case .codeBlock, .table, .thematicBreak:
+        case .codeBlock, .table, .thematicBreak, .math:
             true
         case .taskList(let items):
             items.contains { $0.content.contains(where: holdsSegmentBlock) }

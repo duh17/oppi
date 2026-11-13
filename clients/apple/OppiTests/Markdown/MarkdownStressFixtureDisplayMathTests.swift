@@ -56,14 +56,14 @@ struct MarkdownStressFixtureDisplayMathTests {
     $$
     """#
 
-    @Test func parsePromotesFixtureDisplaysToLatexCodeBlocks() {
+    @Test func parseMakesFixtureDisplaysMathOrLatexBlocks() {
         let blocks = parseCommonMark(Self.mathSection)
         let latexBlocks = blocks.compactMap { block -> String? in
-            guard case .codeBlock(let language, let code) = block,
-                  language == "latex" else {
-                return nil
+            switch block {
+            case .math(let math, _): math.latex
+            case .codeBlock("latex", let code): code
+            default: nil
             }
-            return code
         }
         let paragraphText = blocks.compactMap { block -> String? in
             guard case .paragraph(let inlines) = block else { return nil }

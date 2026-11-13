@@ -1,0 +1,7 @@
+m08 shell vars 2
+@@@@ source
+Copy $SRC/file to $DST/file now.
+@@@@ tree
+P: T(Copy $SRC/file to $DST/file now.)
+@@@@ render
+TEXT: Copy $SRC/file to $DST/file now.

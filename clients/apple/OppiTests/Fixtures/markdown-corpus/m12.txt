@@ -1,0 +1,13 @@
+m12 table row without leading pipe, math crossing pipe
+@@@@ source
+Name | Formula
+---|---
+cost $a | b$ end
+@@@@ tree
+TABLE
+  hdr: T(Name) ‖ T(Formula)
+  row: T(cost $a) ‖ T(b$ end)
+@@@@ render
+TABLE
+  hdr: <b>Name</b> ‖ <b>Formula</b>
+  row: cost $a ‖ b$ end

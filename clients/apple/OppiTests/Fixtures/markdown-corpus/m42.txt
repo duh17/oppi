@@ -1,0 +1,12 @@
+m42 fenced latex vs real latex doc
+@@@@ source
+```latex
+\documentclass{article}
+\begin{document}
+Hi
+\end{document}
+```
+@@@@ tree
+CODEBLOCK[latex]: \documentclass{article}⏎\begin{document}⏎Hi⏎\end{document}
+@@@@ render
+LATEX: \documentclass{article}⏎\begin{document}⏎Hi⏎\end{document}

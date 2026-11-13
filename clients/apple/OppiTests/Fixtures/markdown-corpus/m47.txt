@@ -1,0 +1,7 @@
+m47 math with less-than
+@@@@ source
+If $a<b$ and $c>d$ then <b>x</b>.
+@@@@ tree
+P: T(If )MATH(a<b)T( and )MATH(c>d)T( then )HTML(<b>)T(x)HTML(</b>)T(.)
+@@@@ render
+TEXT: If ⟦a < b⟧ and ⟦c > d⟧ then <b>x</b>.

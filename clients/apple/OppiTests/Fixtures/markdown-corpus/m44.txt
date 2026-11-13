@@ -1,0 +1,8 @@
+m44 link dest with dollars
+@@@@ source
+[pay](https://x.com/?a=$1&b=$2) and ![i](a$b$.png)
+@@@@ tree
+P: LINK[T(pay)→https://x.com/?a=$1&b=$2]T( and )IMG(i→a$b$.png)
+@@@@ render
+TEXT: <a>pay</a> and 
+IMAGE(i → https://oppi.invalid/workspaces/ws/raw/a$b$.png)

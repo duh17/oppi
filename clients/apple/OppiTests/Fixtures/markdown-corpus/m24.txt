@@ -1,0 +1,13 @@
+m24 stray backtick suppresses later math across paragraphs
+@@@@ source
+Press the ` key.
+
+Then $a*b*c$ holds.
+
+Later `code` here.
+@@@@ tree
+P: T(Press the ` key.)
+P: T(Then )MATH(a*b*c)T( holds.)
+P: T(Later )CODE(code)T( here.)
+@@@@ render
+TEXT: Press the ` key.⏎⏎Then ⟦a * b * c⟧ holds.⏎⏎Later <code>code</code> here.

@@ -1,0 +1,13 @@
+n20 html block with math after
+@@@@ source
+<div>
+$a*b*c$
+</div>
+
+$d*e*f$
+
+@@@@ tree
+HTMLBLOCK: <div>⏎$a*b*c$⏎</div>⏎
+P: MATH(d*e*f)
+@@@@ render
+TEXT: <div>⏎$a*b*c$⏎</div>⏎⏎⟦d * e * f⟧

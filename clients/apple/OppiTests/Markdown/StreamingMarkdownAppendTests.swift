@@ -157,18 +157,6 @@ struct StreamingMarkdownAppendTests {
 
     // MARK: - Canonical-path triggers
 
-    @Test func displayMathSplitAcrossTicksForcesCanonicalParse() {
-        var parser = CommonMarkStreamingParser()
-        _ = parser.parse("Before math.\n\n$")
-
-        let complete = "Before math.\n\n$$x^2$$"
-        let parsed = parser.parse(complete)
-
-        #expect(parsed.strategy == .full)
-        #expect(parsed.prefixBlocks.isEmpty)
-        #expect(parsed.blocks == parseCommonMark(complete))
-    }
-
     @Test func referenceDefinitionSplitAcrossTicksForcesCanonicalParse() {
         var parser = CommonMarkStreamingParser()
         _ = parser.parse("Read [the guide][ref].\n\nAn unrelated paragraph.\n\n[ref]")
@@ -262,33 +250,18 @@ struct StreamingMarkdownAppendTests {
         ),
     ]
 
-    /// Streaming reads only the open tail for fence parity. The frozen prefix
-    /// ends at a top-level block boundary, so the tail decides on its own — and
-    /// it has to agree with cmark, not just with the whole-document scan.
-    @Test func tailFenceScanMatchesWhatCmarkParses() {
+    /// Streaming reads fence state from the open tail's parse. The frozen
+    /// prefix ends at a top-level block boundary, so the tail decides on its
+    /// own, and it has to agree with cmark on the whole document.
+    @Test func openFenceVerdictMatchesWhatCmarkParses() {
         for fixture in Self.fixtures + Self.fenceFixtures {
             var parser = CommonMarkStreamingParser()
 
             for prefix in Self.prefixes(of: fixture.source, chunkSize: 17) {
                 let parsed = parser.parse(prefix)
-                let verdict = AssistantMarkdownSegmentSource.hasUnclosedCodeFence(
-                    prefix,
-                    fromUTF8Offset: parsed.tailUTF8Offset,
-                    endsInCodeBlock: AssistantMarkdownSegmentSource.endsInCodeBlock(parsed.tailBlocks.last)
-                )
                 #expect(
-                    verdict == Self.cmarkEndsInsideAFence(prefix),
-                    "\(fixture.name) fence parity diverged at \(prefix.utf8.count) UTF-8 bytes"
-                )
-                // Reading from the open tail must agree with reading the whole
-                // document under the same parse verdict.
-                #expect(
-                    verdict == AssistantMarkdownSegmentSource.hasUnclosedCodeFence(
-                        prefix,
-                        fromUTF8Offset: 0,
-                        endsInCodeBlock: AssistantMarkdownSegmentSource.endsInCodeBlock(parsed.tailBlocks.last)
-                    ),
-                    "\(fixture.name) tail offset changed the fence verdict at \(prefix.utf8.count) UTF-8 bytes"
+                    parsed.endsInOpenBlock == Self.cmarkEndsInsideAFence(prefix),
+                    "\(fixture.name) fence state diverged at \(prefix.utf8.count) UTF-8 bytes"
                 )
             }
         }
@@ -333,7 +306,7 @@ struct StreamingMarkdownAppendTests {
             return trailingCodeBlockText(items.last ?? [])
         case .taskList(let items):
             return trailingCodeBlockText(items.last?.content ?? [])
-        case .heading, .paragraph, .blockQuote, .thematicBreak, .table, .htmlBlock:
+        case .heading, .paragraph, .blockQuote, .thematicBreak, .table, .htmlBlock, .math:
             return nil
         }
     }

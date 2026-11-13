@@ -101,7 +101,18 @@ A Markdown table's cells use the message text, so they follow Dynamic Type and *
 - **Long tables.** In chat, a table longer than 20 rows shows its first 20 and a **Show all N rows** bar. The reader and exports show every row.
 - **Table viewer.** **N more columns** and **Show all N rows** open the whole table full screen. Its header row stays at the top while the rows scroll. Tap a cell to read its full text and copy it. **Copy** in the toolbar offers **Copy as Markdown** and **Copy as TSV**. The viewer shows up to 500 rows, 32 columns, and 256 characters per cell, as for CSV and TSV files, and when a table is cut, copy takes only the part shown.
 - **Copy.** Touch and hold **N more columns** for the same two copy actions, which always take every row. Text selected across cells copies as tab-separated cells, ready to paste into a spreadsheet.
-- **Formatting.** Bold, italic, strikethrough, `code`, and links show in cells.
+- **Formatting.** Bold, italic, strikethrough, `code`, links, and math show in cells.
+
+## Math
+
+Markdown in chat and in the reader draws TeX math in paragraphs, headings, table cells, quotes, and lists.
+
+- **Inline.** `$…$`, `\(…\)`, and `$$…$$` inside a line. A `$` opens math only when a non-space follows it. It closes math only when a non-space comes before it and no letter or digit comes after it, so `$5 and $10`, `$PATH:$HOME`, and `$n$th` stay text. `\$` is always a dollar sign.
+- **Blocks.** A line that is only `$$` or `\[` starts a block, and the next line that ends in `$$` or `\]` closes it. `$$…$$` or `\[…\]` alone on a line is a one-line block. Until the closing line arrives, the block shows its TeX as text. A block with no closing line runs to the end of its quote, list item, or message, as a code fence does.
+- **Code.** Code spans and code blocks never contain math.
+- **Fallback.** TeX that Oppi cannot draw shows as written.
+
+Quotes and dashes show as typed: `--`, `...`, and straight quotes are not changed to typographic characters.
 
 ## The reader's bar
 

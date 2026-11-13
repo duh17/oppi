@@ -1,0 +1,7 @@
+n05 regex prose with backslash-parens
+@@@@ source
+Match \(foo|bar\) then \[0-9\]+ and \\(literal\\).
+@@@@ tree
+P: T(Match )MATH(foo|bar)T( then [0-9]+ and \(literal\).)
+@@@@ render
+TEXT: Match ⟦foo|bar⟧ then [0-9]+ and \(literal\).

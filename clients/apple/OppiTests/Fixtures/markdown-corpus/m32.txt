@@ -1,0 +1,7 @@
+m32 paren math with escaped paren and pipe
+@@@@ source
+Value \(f(x) = x_1 * y_1 * z\) and \(a\) end.
+@@@@ tree
+P: T(Value )MATH(f(x) = x_1 * y_1 * z)T( and )MATH(a)T( end.)
+@@@@ render
+TEXT: Value ⟦f(x) = x_1 * y_1 * z⟧ and ⟦a⟧ end.

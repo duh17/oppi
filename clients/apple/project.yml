@@ -3,9 +3,12 @@
 # See CONTRIBUTING.md for full setup instructions.
 name: Oppi
 packages:
+  # Pinned by revision (0.7.1): `MarkdownMathExtension` reads cmark's parser and
+  # node structs, which are not stable API. Bump deliberately and rerun the
+  # Markdown golden corpus (`MarkdownCorpusTests`).
   swift-cmark:
     url: https://github.com/swiftlang/swift-cmark.git
-    from: "0.7.1"
+    revision: 5d9bdaa4228b381639fff09403e39a04926e2dbe
   swift-tree-sitter:
     url: https://github.com/tree-sitter/swift-tree-sitter
     from: "0.25.0"
@@ -712,6 +715,12 @@ targets:
     sources:
       - path: OppiTests
         type: group
+        excludes:
+          - "Fixtures/markdown-corpus"
+      # The Markdown golden corpus keeps its directory: `MarkdownCorpusTests` lists it.
+      - path: OppiTests/Fixtures/markdown-corpus
+        type: folder
+        buildPhase: resources
       # Cross-language contract fixtures: tests read them from the bundle, never by source path.
       - path: ../../protocol
         type: folder

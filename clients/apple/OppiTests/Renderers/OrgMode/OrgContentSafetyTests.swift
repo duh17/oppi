@@ -117,16 +117,22 @@ struct OrgContentSafetyTests {
     // MARK: - Markdown escaping
 
     @Test func latexFragmentsReachTheReaderAsMath() {
-        // Org's `\(…\)`, `\[…\]` and `$…$` are the reader's own math syntax:
-        // escaping a backslash or `*` inside one would change the TeX, and an
-        // escaped `\(` shows as literal text instead of math.
+        // Org's `\(…\)` and `$…$` are the reader's own math syntax: escaping a
+        // backslash or `*` inside one would change the TeX, and an escaped
+        // `\(` shows as literal text instead of math. Inside a line, `\[…\]`
+        // is a CommonMark escape, so its TeX stays readable text.
         let org = #"Inline \(a*b\), display \[x_1 < y\] and $\alpha$ hold."#
         let parsed = parseCommonMark(DocumentRenderPipeline.orgToMarkdown(org))
         guard case .paragraph(let inlines)? = parsed.first else {
             Issue.record("Expected a paragraph, got \(parsed)")
             return
         }
-        #expect(plainText(from: inlines) == org)
+        let formulas = inlines.compactMap { inline -> String? in
+            if case .math(let math) = inline { return math.latex }
+            return nil
+        }
+        #expect(formulas == ["a*b", #"\alpha"#])
+        #expect(plainText(from: inlines).contains("x_1 < y"))
     }
 
     @Test func backslashOutsideMathIsKept() {

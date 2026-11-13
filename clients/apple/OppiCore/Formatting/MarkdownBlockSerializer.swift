@@ -79,6 +79,9 @@ enum MarkdownBlockSerializer {
 
         case .htmlBlock(let html):
             return html
+
+        case .math(let math, _):
+            return "$$\n\(math.latex)\n$$"
         }
     }
 
@@ -158,6 +161,8 @@ enum MarkdownBlockSerializer {
             return raw
         case .strikethrough(let children):
             return "~~\(serializeInlines(children))~~"
+        case .math(let math):
+            return math.source
         }
     }
 

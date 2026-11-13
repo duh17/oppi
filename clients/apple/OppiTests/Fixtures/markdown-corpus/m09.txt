@@ -1,0 +1,7 @@
+m09 math in heading
+@@@@ source
+## Solving $x^2 + y^2 = z^2$ quickly
+@@@@ tree
+H2: T(Solving )MATH(x^2 + y^2 = z^2)T( quickly)
+@@@@ render
+TEXT: Solving ⟦x^2 + y^2 = z^2⟧ quickly

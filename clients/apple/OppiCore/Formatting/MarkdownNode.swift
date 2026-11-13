@@ -15,6 +15,10 @@ indirect enum MarkdownBlock: Equatable, Sendable {
     case thematicBreak
     case table(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]])
     case htmlBlock(String)
+    /// A `$$` or `\[` display-math fence. `isClosed` is false while its
+    /// closing line has not arrived (streaming) or never does; the block then
+    /// runs to the end of its container.
+    case math(MarkdownMath, isClosed: Bool)
 
     struct TaskItem: Equatable, Sendable {
         let checked: Bool
@@ -61,6 +65,21 @@ indirect enum MarkdownInline: Equatable, Sendable {
     case hardBreak
     case html(String)
     case strikethrough([Self])
+    /// `$…$`, `$$…$$` or `\(…\)` inside a line. The parser decides what is math;
+    /// renderers draw it and never scan text for delimiters again.
+    case math(MarkdownMath)
+}
+
+/// A formula the parser found. The renderer draws `latex`, or shows `source`
+/// unchanged when the TeX parser rejects it.
+struct MarkdownMath: Equatable, Sendable {
+    /// The TeX between the delimiters.
+    let latex: String
+    /// The exact text as written, delimiters included: fallback text, copy,
+    /// search and Markdown output.
+    let source: String
+    /// `$$…$$` or `\[…\]`, as opposed to `$…$` or `\(…\)`.
+    let isDisplay: Bool
 }
 
 /// Extract plain text from inline nodes, stripping all formatting.
@@ -82,6 +101,7 @@ func plainText(from inlines: [MarkdownInline]) -> String {
         case .hardBreak: return "\n"
         case .html(let s): return MarkdownBadge(markup: s)?.text ?? s
         case .strikethrough(let children): return plainText(from: children)
+        case .math(let math): return math.source
         }
     }.joined()
 }

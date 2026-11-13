@@ -1,0 +1,10 @@
+n03 blockquote display math with stars
+@@@@ source
+> $$
+> a*b*c + d_1*e_1*f
+> $$
+@@@@ tree
+QUOTE
+  MATHBLOCK[closed]: a*b*c + d_1*e_1*f
+@@@@ render
+LATEX: a*b*c + d_1*e_1*f

@@ -1,0 +1,15 @@
+n06 nested-list display math with stars
+@@@@ source
+1. step
+
+    $$
+    a*b*c
+    $$
+@@@@ tree
+OL
+  •
+    P: T(step)
+    MATHBLOCK[closed]: a*b*c
+@@@@ render
+TEXT:   1. step
+LATEX: a*b*c

@@ -695,7 +695,8 @@ enum MarkdownWikiLinkRewriter {
         fileprivate let labelSeparatorToken: String?
 
         func restore(_ literal: String) -> String {
-            guard let labelSeparatorToken else { return literal }
+            guard let labelSeparatorToken,
+                  UTF8Search.range(of: labelSeparatorToken, in: literal) != nil else { return literal }
             return literal.replacingOccurrences(of: labelSeparatorToken, with: "|")
         }
     }
@@ -729,9 +730,7 @@ enum MarkdownWikiLinkRewriter {
                   candidate.utf8.allSatisfy(isASCIILetterOrDigit) else {
                 continue
             }
-            if !source.contains(candidate) {
-                return candidate
-            }
+            if UTF8Search.range(of: candidate, in: source) == nil { return candidate }
         }
         return nil
     }
@@ -748,11 +747,8 @@ enum MarkdownWikiLinkRewriter {
     /// amplification is at most 9/7. Token selection is capped at eight checks;
     /// exhaustion returns the original source with no restoration context.
     static func parserInput(_ source: String) -> ParserInput {
-        guard source.contains("[["), source.contains("|"),
-              let token = selectParserBoundaryToken(
-                absentFrom: source,
-                candidates: parserBoundaryTokens
-              ) else {
+        guard UTF8Search.range(of: "[[", in: source) != nil, UTF8Search.range(of: "|", in: source) != nil,
+              let token = selectParserBoundaryToken(absentFrom: source, candidates: parserBoundaryTokens) else {
             return unchangedParserInput(source)
         }
 
@@ -762,7 +758,7 @@ enum MarkdownWikiLinkRewriter {
         var replacedSeparator = false
 
         while cursor < source.endIndex,
-              let open = source.range(of: "[[", range: cursor ..< source.endIndex) {
+              let open = UTF8Search.range(of: "[[", in: source, from: cursor) {
             guard let candidate = parserBoundaryCandidate(in: source, opening: open) else {
                 result.append(contentsOf: source[cursor ..< source.endIndex])
                 cursor = source.endIndex
@@ -1015,7 +1011,7 @@ enum MarkdownWikiLinkRewriter {
                 headers: headers.map { rewrite(inlines: $0, context: context) },
                 rows: rows.map { row in row.map { rewrite(inlines: $0, context: context) } }
             )
-        case .codeBlock, .thematicBreak, .htmlBlock:
+        case .codeBlock, .thematicBreak, .htmlBlock, .math:
             return block
         }
     }
@@ -1046,7 +1042,7 @@ enum MarkdownWikiLinkRewriter {
                     source: source,
                     context: context
                 ))
-            case .code, .videoEmbed, .audioEmbed, .usdzEmbed, .softBreak, .hardBreak, .html:
+            case .code, .videoEmbed, .audioEmbed, .usdzEmbed, .softBreak, .hardBreak, .html, .math:
                 result.append(inline)
             }
         }

@@ -51,7 +51,8 @@ final class MarkdownTableClipText {
             text: palette.ui.fg,
             link: palette.ui.blue,
             code: palette.ui.mdCode,
-            codeBackground: palette.ui.bgHighlight
+            codeBackground: palette.ui.bgHighlight,
+            palette: palette
         )
         altRowBackground = palette.ui.bgHighlight.withAlphaComponent(0.45)
 
@@ -131,7 +132,8 @@ final class MarkdownTableClipText {
             text: headerColor,
             link: cellColors.link,
             code: cellColors.code,
-            codeBackground: cellColors.codeBackground
+            codeBackground: cellColors.codeBackground,
+            palette: palette
         )
         for (index, header) in headers.enumerated() {
             // Leading pad for the first column; tab-to-separator for the rest.

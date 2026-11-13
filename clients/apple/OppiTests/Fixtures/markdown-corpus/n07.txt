@@ -1,0 +1,11 @@
+n07 inline $$ with stars
+@@@@ source
+Inline $$a*b*c$$ in a sentence, and also $$x_1*y_1*z$$.
+@@@@ tree
+P: T(Inline )DMATH(a*b*c)T( in a sentence, and also )DMATH(x_1*y_1*z)T(.)
+@@@@ render
+TEXT: Inline 
+LATEX: a*b*c
+TEXT:  in a sentence, and also 
+LATEX: x_1*y_1*z
+TEXT: .

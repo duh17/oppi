@@ -1,0 +1,7 @@
+m13 math in link label
+@@@@ source
+See [the $x^2$ proof](https://example.com/a_b_c) now.
+@@@@ tree
+P: T(See )LINK[T(the )MATH(x^2)T( proof)→https://example.com/a_b_c]T( now.)
+@@@@ render
+TEXT: See <a>the </a>⟦x^2⟧<a> proof</a> now.

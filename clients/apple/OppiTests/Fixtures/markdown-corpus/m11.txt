@@ -1,0 +1,13 @@
+m11 abs value in table cell
+@@@@ source
+| Name | Formula |
+|---|---|
+| Norm | $|x| + |y|$ |
+@@@@ tree
+TABLE
+  hdr: T(Name) ‖ T(Formula)
+  row: T(Norm) ‖ T($)
+@@@@ render
+TABLE
+  hdr: <b>Name</b> ‖ <b>Formula</b>
+  row: Norm ‖ $

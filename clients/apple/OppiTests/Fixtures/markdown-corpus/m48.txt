@@ -1,0 +1,7 @@
+m48 CJK currency
+@@@@ source
+价格 $5 到 $10，公式 $x^2$。
+@@@@ tree
+P: T(价格 $5 到 $10，公式 )MATH(x^2)T(。)
+@@@@ render
+TEXT: 价格 $5 到 $10，公式 ⟦x^2⟧。

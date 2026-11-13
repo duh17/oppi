@@ -1,0 +1,22 @@
+m21 display math in list item (2-space indent, blank lines)
+@@@@ source
+- item one
+
+  $$
+  a * b * c
+  $$
+
+  after math
+- item two
+@@@@ tree
+UL
+  •
+    P: T(item one)
+    MATHBLOCK[closed]: a * b * c
+    P: T(after math)
+  •
+    P: T(item two)
+@@@@ render
+TEXT:   • item one
+LATEX: a * b * c
+TEXT:     after math⏎  • item two

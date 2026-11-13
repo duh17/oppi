@@ -1,0 +1,7 @@
+m16 escaped dollars
+@@@@ source
+Costs \$5 and \$6 total, but $a+b$ is math.
+@@@@ tree
+P: T(Costs $5 and $6 total, but )MATH(a+b)T( is math.)
+@@@@ render
+TEXT: Costs $5 and $6 total, but ⟦a + b⟧ is math.

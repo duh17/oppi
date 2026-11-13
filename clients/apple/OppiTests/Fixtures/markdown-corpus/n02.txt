@@ -1,0 +1,7 @@
+n02 currency pair codes
+@@@@ source
+The $USD/$EUR rate and $x,$y pairs.
+@@@@ tree
+P: T(The $USD/$EUR rate and $x,$y pairs.)
+@@@@ render
+TEXT: The $USD/$EUR rate and $x,$y pairs.

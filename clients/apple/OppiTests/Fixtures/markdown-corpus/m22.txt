@@ -1,0 +1,20 @@
+m22 display math in nested list (4+ indent)
+@@@@ source
+1. step
+    - sub
+
+        $$
+        a * b * c
+        $$
+@@@@ tree
+OL
+  •
+    P: T(step)
+    UL
+      •
+        P: T(sub)
+        MATHBLOCK[closed]: a * b * c
+@@@@ render
+TEXT:   1. step
+TEXT:     • sub
+LATEX: a * b * c

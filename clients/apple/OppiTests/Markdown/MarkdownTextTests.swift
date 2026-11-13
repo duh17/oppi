@@ -280,7 +280,7 @@ struct FlatSegmentBuildTests {
 
     @Test func multipleInlineFormulasRenderWhileCodeLinksCurrencyAndEscapesStayLiteral() {
         let markdown = #"""
-        A $x$ B \(y_0\) C $z^2$; keep `$code^2$`, [price](https://example.com/$value$), \$escaped$, and $5.00$.
+        A $x$ B \(y_0\) C $z^2$; keep `$code^2$`, [price](https://example.com/$value$), \$escaped$, and $5.00 to $6.
         """#
         let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
         guard let first = segments.first, case .text(let attributed) = first else {
@@ -292,7 +292,7 @@ struct FlatSegmentBuildTests {
         #expect(inlineMathAttachments(in: segments).count == 3)
         #expect(rendered.contains("$code^2$"))
         #expect(rendered.contains("$escaped$"))
-        #expect(rendered.contains("$5.00$"))
+        #expect(rendered.contains("$5.00 to $6"))
     }
 
     @Test func physicalDevicePayloadRendersBothInlineFormsAndPromotesDisplayMath() throws {
@@ -492,12 +492,6 @@ struct FlatSegmentBuildTests {
         #expect(textSegmentString(segments) == "\u{FFFC}")
     }
 
-    @Test func bareLatexTextChainRendersPlainly() {
-        let blocks = parseCommonMark("\\text{Alpha} \\rightarrow \\text{Beta}\n")
-        let segments = FlatSegment.build(from: blocks, themeID: .dark)
-        #expect(textSegmentString(segments) == "Alpha → Beta")
-    }
-
     @Test func inlineLatexAttachmentPreservesNonLatinText() {
         let blocks = parseCommonMark("$\\text{第一步} \\rightarrow \\text{第二步}$\n")
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
@@ -517,10 +511,10 @@ struct FlatSegmentBuildTests {
     }
 
     @Test func escapedInlineDelimitersRemainLiteralText() {
-        let markdown = #"Literal \\(not math\\), escaped \$x^2$, and $5.00$."#
+        let markdown = #"Literal \\(not math\\), escaped \$x^2$, and $5.00 to $6."#
         let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
         #expect(inlineMathAttachments(in: segments).isEmpty)
-        #expect(textSegmentString(segments) == #"Literal \(not math\), escaped $x^2$, and $5.00$."#)
+        #expect(textSegmentString(segments) == #"Literal \(not math\), escaped $x^2$, and $5.00 to $6."#)
     }
 
     @Test func unmatchedDollarLatexRemainsPlainText() {
@@ -927,7 +921,7 @@ struct WorkspaceWikiLinkRenderingTests {
                 for item in items {
                     if let table = firstTable(in: item.content) { return table }
                 }
-            case .heading, .paragraph, .codeBlock, .thematicBreak, .htmlBlock:
+            case .heading, .paragraph, .codeBlock, .thematicBreak, .htmlBlock, .math:
                 continue
             }
         }
@@ -949,7 +943,7 @@ struct WorkspaceWikiLinkRenderingTests {
                 for item in items {
                     if let code = firstCodeBlock(in: item.content) { return code }
                 }
-            case .heading, .paragraph, .table, .thematicBreak, .htmlBlock:
+            case .heading, .paragraph, .table, .thematicBreak, .htmlBlock, .math:
                 continue
             }
         }

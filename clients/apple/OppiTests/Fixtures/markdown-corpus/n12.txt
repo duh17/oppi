@@ -1,0 +1,7 @@
+n12 literal token collision
+@@@@ source
+The word opmathaz0z and q0q appear, with $x^2$ and [[docs/a.md|A]] in | a | table.
+@@@@ tree
+P: T(The word opmathaz0z and q0q appear, with )MATH(x^2)T( and )LINK[T(A)→oppi-resource-reference://resolve?target=docs/a.md&workspaceId=ws&fileCandidate=docs/a.md&sourceServerId=srv&sourceSessionId=s1&label=A]T( in | a | table.)
+@@@@ render
+TEXT: The word opmathaz0z and q0q appear, with ⟦x^2⟧ and <a>A</a> in | a | table.

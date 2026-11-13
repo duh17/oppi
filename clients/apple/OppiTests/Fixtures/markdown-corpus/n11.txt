@@ -1,0 +1,13 @@
+n11 escaped pipe abs in table
+@@@@ source
+| A | B |
+|---|---|
+| $\|x\|$ | $\lvert y \rvert$ |
+@@@@ tree
+TABLE
+  hdr: T(A) ‖ T(B)
+  row: MATH(|x|) ‖ MATH(\lvert y \rvert)
+@@@@ render
+TABLE
+  hdr: <b>A</b> ‖ <b>B</b>
+  row: ⟦|x|⟧ ‖ ⟦|y|⟧

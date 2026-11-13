@@ -1,0 +1,7 @@
+m34 math-like with spaces (pandoc would reject)
+@@@@ source
+I have $ 5 and you have $ 6 dollars.
+@@@@ tree
+P: T(I have $ 5 and you have $ 6 dollars.)
+@@@@ render
+TEXT: I have $ 5 and you have $ 6 dollars.

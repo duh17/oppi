@@ -1,0 +1,13 @@
+m46 escaped pipe wiki in table
+@@@@ source
+| A |
+|---|
+| [[docs/a.md\|Alpha]] |
+@@@@ tree
+TABLE
+  hdr: T(A)
+  row: LINK[T(Alpha)→oppi-resource-reference://resolve?target=docs/a.md&workspaceId=ws&fileCandidate=docs/a.md&sourceServerId=srv&sourceSessionId=s1&label=Alpha]
+@@@@ render
+TABLE
+  hdr: <b>A</b>
+  row: <a>Alpha</a>

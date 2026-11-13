@@ -1,0 +1,7 @@
+m07 shell vars
+@@@@ source
+Set $HOME and $PATH before running.
+@@@@ tree
+P: T(Set $HOME and $PATH before running.)
+@@@@ render
+TEXT: Set $HOME and $PATH before running.

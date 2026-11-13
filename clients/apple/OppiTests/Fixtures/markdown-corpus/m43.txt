@@ -1,0 +1,13 @@
+m43 math in task list and ordered list
+@@@@ source
+- [ ] solve $a*b*c$ now
+1. first $x_1*y_1*z$ done
+@@@@ tree
+TASKS
+  [ ]
+    P: T(solve )MATH(a*b*c)T( now)
+OL
+  •
+    P: T(first )MATH(x_1*y_1*z)T( done)
+@@@@ render
+TEXT: ◆solve ⟦a * b * c⟧ now⏎⏎  1. first ⟦x_1 * y_1 * z⟧ done

@@ -39,26 +39,23 @@ enum TableInlineText {
         }
     }
 
-    /// How enclosing inline markup restyles a cell run.
-    struct Traits: OptionSet {
-        let rawValue: Int
-        static let bold = Self(rawValue: 1 << 0)
-        static let italic = Self(rawValue: 1 << 1)
-        static let strikethrough = Self(rawValue: 1 << 2)
-    }
-
-    /// The colors a cell is drawn in.
+    /// The colors a cell is drawn in. Formulas take their ink from `palette`.
     struct Colors {
         let text: UIColor
         let link: UIColor
         let code: UIColor
         let codeBackground: UIColor
+        let palette: ThemePalette
 
         /// For measuring only: colors do not change a width.
-        static let measuring = Self(text: .label, link: .label, code: .label, codeBackground: .clear)
+        static let measuring = Self(
+            text: .label, link: .label, code: .label, codeBackground: .clear, palette: ThemeID.dark.palette
+        )
     }
 
-    /// Append a cell's inline content to the result, rendering links with `.link` attribute.
+    /// Append a cell's inline content to the result, through the one inline
+    /// renderer (`MarkdownInlineRenderer`): emphasis as font faces, formulas
+    /// as attachments, links with the `.link` attribute.
     static func appendCell(
         _ inlines: [MarkdownInline],
         to result: NSMutableAttributedString,
@@ -67,34 +64,53 @@ enum TableInlineText {
         colors: Colors,
         paragraph: NSParagraphStyle
     ) {
-        let traits: Traits = isHeader ? .bold : []
         // Fast path: single plain text (most common table cell).
         if inlines.count == 1, case .text(let s) = inlines[0] {
             result.append(NSAttributedString(string: s, attributes: [
-                .font: font(fonts, traits),
+                .font: isHeader ? fonts.bold : fonts.body,
                 .foregroundColor: colors.text,
                 .paragraphStyle: paragraph,
             ]))
             return
         }
-        for inline in inlines {
-            appendInline(inline, to: result, fonts: fonts, colors: colors, paragraph: paragraph, traits: traits)
-        }
+        MarkdownInlineRenderer.append(inlines, to: result, style: MarkdownInlineRenderer.Style(
+            font: fonts.body,
+            color: colors.text,
+            linkColor: colors.link,
+            codeFont: fonts.code,
+            codeColor: colors.code,
+            codeBackground: colors.codeBackground,
+            mutedColor: colors.text,
+            palette: colors.palette,
+            paragraph: paragraph,
+            faces: fonts,
+            traits: isHeader ? .bold : []
+        ))
     }
 
     /// A cell's single-line width and the width of its widest run that line
-    /// breaking cannot split (`unbreakableRuns`), both as drawn.
+    /// breaking cannot split (`unbreakableRuns`), both as drawn. CoreText
+    /// gives an attachment (a formula, a file icon) no width of its own, so
+    /// its bounds stand in for the replacement character's advance, and an
+    /// attachment is an unbreakable run by itself.
     static func measure(_ inlines: [MarkdownInline], fonts: Fonts, isHeader: Bool) -> (natural: CGFloat, word: CGFloat) {
         let text = NSMutableAttributedString()
         appendCell(inlines, to: text, fonts: fonts, isHeader: isHeader, colors: .measuring, paragraph: NSParagraphStyle.default)
         guard text.length > 0 else { return (0, 0) }
         let line = CTLineCreateWithAttributedString(text)
-        let natural = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        var natural = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
         var word: CGFloat = 0
         for run in unbreakableRuns(in: text.string as NSString) {
             let start = CTLineGetOffsetForStringIndex(line, run.location, nil)
             let end = CTLineGetOffsetForStringIndex(line, NSMaxRange(run), nil)
             word = max(word, abs(end - start))
+        }
+        text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+            guard let attachment = value as? NSTextAttachment else { return }
+            let start = CTLineGetOffsetForStringIndex(line, range.location, nil)
+            let end = CTLineGetOffsetForStringIndex(line, NSMaxRange(range), nil)
+            natural += attachment.bounds.width * CGFloat(range.length) - abs(end - start)
+            word = max(word, attachment.bounds.width)
         }
         return (ceil(natural), ceil(word))
     }
@@ -121,107 +137,5 @@ enum TableInlineText {
         }
         if let begin = start { runs.append(NSRange(location: begin, length: text.length - begin)) }
         return runs
-    }
-
-    private static func font(_ fonts: Fonts, _ traits: Traits) -> UIFont {
-        switch (traits.contains(.bold), traits.contains(.italic)) {
-        case (true, true): fonts.boldItalic ?? fonts.bold
-        case (true, false): fonts.bold
-        case (false, true): fonts.italic ?? fonts.body
-        case (false, false): fonts.body
-        }
-    }
-
-    private static func appendInline(
-        _ inline: MarkdownInline,
-        to result: NSMutableAttributedString,
-        fonts: Fonts,
-        colors: Colors,
-        paragraph: NSParagraphStyle,
-        traits: Traits
-    ) {
-        let font = font(fonts, traits)
-        let defaultColor = colors.text
-        let linkColor = colors.link
-        // A family without an italic face slants the regular one.
-        let slanted = traits.contains(.italic)
-            && (traits.contains(.bold) ? fonts.boldItalic : fonts.italic) == nil
-        func styled(_ color: UIColor) -> [NSAttributedString.Key: Any] {
-            var attrs: [NSAttributedString.Key: Any] = [
-                .font: font, .foregroundColor: color, .paragraphStyle: paragraph,
-            ]
-            if slanted { attrs[.obliqueness] = 0.2 }
-            if traits.contains(.strikethrough) {
-                attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-            }
-            return attrs
-        }
-        func embedAttributes(_ reference: ResourceReference) -> [NSAttributedString.Key: Any] {
-            var attrs = styled(linkColor)
-            if let url = ResourceReferenceURL.make(reference) {
-                attrs[.link] = url
-            } else {
-                attrs[.foregroundColor] = defaultColor
-            }
-            return attrs
-        }
-
-        switch inline {
-        case .text(let s):
-            result.append(NSAttributedString(string: s, attributes: styled(defaultColor)))
-        case .link(let children, let destination):
-            let text = plainText(from: children)
-            var attrs = styled(linkColor)
-            if let dest = destination, let url = URL(string: dest), url.scheme != nil {
-                attrs[.link] = url
-                // File links skip the underline; it breaks around `_` glyphs.
-                if !ResourceReferenceURL.isReference(url) {
-                    attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
-                }
-            }
-            result.append(NSAttributedString(string: text, attributes: attrs))
-        case .code(let s):
-            // As in a paragraph (`MarkdownText`): code font, color, and background.
-            var attrs = styled(colors.code)
-            attrs[.font] = fonts.code
-            attrs[.obliqueness] = nil
-            attrs[.backgroundColor] = colors.codeBackground
-            result.append(NSAttributedString(string: s, attributes: attrs))
-        case .emphasis(let children):
-            appendChildren(children, to: result, fonts: fonts, colors: colors, paragraph: paragraph, traits: traits.union(.italic))
-        case .strong(let children):
-            appendChildren(children, to: result, fonts: fonts, colors: colors, paragraph: paragraph, traits: traits.union(.bold))
-        case .strikethrough(let children):
-            appendChildren(children, to: result, fonts: fonts, colors: colors, paragraph: paragraph, traits: traits.union(.strikethrough))
-        case .softBreak, .hardBreak:
-            result.append(NSAttributedString(string: " ", attributes: [
-                .font: font, .paragraphStyle: paragraph,
-            ]))
-        case .html(let raw):
-            result.append(NSAttributedString(string: raw, attributes: styled(defaultColor)))
-        case .image(let alt, _):
-            if !alt.isEmpty {
-                result.append(NSAttributedString(string: "[\(alt)]", attributes: styled(defaultColor)))
-            }
-        case .videoEmbed(let embed):
-            result.append(NSAttributedString(string: embed.displayLabel, attributes: embedAttributes(embed.reference)))
-        case .audioEmbed(let embed):
-            result.append(NSAttributedString(string: embed.displayLabel, attributes: embedAttributes(embed.reference)))
-        case .usdzEmbed(let embed):
-            result.append(NSAttributedString(string: embed.displayLabel, attributes: embedAttributes(embed.reference)))
-        }
-    }
-
-    private static func appendChildren(
-        _ children: [MarkdownInline],
-        to result: NSMutableAttributedString,
-        fonts: Fonts,
-        colors: Colors,
-        paragraph: NSParagraphStyle,
-        traits: Traits
-    ) {
-        for child in children {
-            appendInline(child, to: result, fonts: fonts, colors: colors, paragraph: paragraph, traits: traits)
-        }
     }
 }

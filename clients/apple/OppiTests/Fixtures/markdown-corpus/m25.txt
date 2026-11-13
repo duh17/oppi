@@ -1,0 +1,7 @@
+m25 smart punctuation inside failed math / wiki target
+@@@@ source
+See [[notes/it's--done.md]] and [[a...b.md|label]].
+@@@@ tree
+P: T(See )LINK[T(notes/it's--done.md)→oppi-resource-reference://resolve?target=notes/it's--done.md&workspaceId=ws&fileCandidate=notes/it's--done.md&sourceServerId=srv&sourceSessionId=s1&label=notes/it's--done.md]T( and )LINK[T(label)→oppi-resource-reference://resolve?target=a...b.md&workspaceId=ws&fileCandidate=a...b.md&sourceServerId=srv&sourceSessionId=s1&label=label]T(.)
+@@@@ render
+TEXT: See <a>notes/it's--done.md</a> and <a>label</a>.

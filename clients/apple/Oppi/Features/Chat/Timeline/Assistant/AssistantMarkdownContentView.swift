@@ -359,6 +359,8 @@ final class AssistantMarkdownContentView: UIView {
             config: config,
             sourceLineRanges: build.sourceLineRanges,
             hasUnclosedCodeFence: segmentSource.lastBuildHasUnclosedCodeFence,
+            replacesFrozenSegments: segmentSource.lastBuildReplacedFrozenSegments,
+            openSegmentStart: segmentSource.lastBuildOpenSegmentStart,
             streamingTextEdit: segmentSource.lastStreamingTextEdit
         )
         segmentApplier.applyLeadingHang(

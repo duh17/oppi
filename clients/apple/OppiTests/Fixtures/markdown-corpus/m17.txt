@@ -1,0 +1,7 @@
+m17 nested emphasis around math
+@@@@ source
+This is **bold $a_1 + b_1$ text** and *it $x*y$ ends*.
+@@@@ tree
+P: T(This is )B[T(bold )MATH(a_1 + b_1)T( text)]T( and )EM[T(it )MATH(x*y)T( ends)]T(.)
+@@@@ render
+TEXT: This is <b>bold </b>⟦a_1 + b_1⟧<b> text</b> and <i>it </i>⟦x * y⟧<i> ends</i>.

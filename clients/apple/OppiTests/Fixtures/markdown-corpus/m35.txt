@@ -1,0 +1,7 @@
+m35 opening $ followed by space / closing preceded by space
+@@@@ source
+a $x + y $ b and c $ x+y$ d.
+@@@@ tree
+P: T(a $x + y $ b and c $ x+y$ d.)
+@@@@ render
+TEXT: a $x + y $ b and c $ x+y$ d.

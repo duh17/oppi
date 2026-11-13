@@ -1,0 +1,10 @@
+m31 wiki link inside emphasis and heading
+@@@@ source
+# Title [[docs/a.md]]
+
+**see [[docs/b.md|B]]** and ~~[[docs/c.md]]~~
+@@@@ tree
+H1: T(Title )LINK[T(docs/a.md)→oppi-resource-reference://resolve?target=docs/a.md&workspaceId=ws&fileCandidate=docs/a.md&sourceServerId=srv&sourceSessionId=s1&label=docs/a.md]
+P: B[T(see )LINK[T(B)→oppi-resource-reference://resolve?target=docs/b.md&workspaceId=ws&fileCandidate=docs/b.md&sourceServerId=srv&sourceSessionId=s1&label=B]]T( and )S[LINK[T(docs/c.md)→oppi-resource-reference://resolve?target=docs/c.md&workspaceId=ws&fileCandidate=docs/c.md&sourceServerId=srv&sourceSessionId=s1&label=docs/c.md]]
+@@@@ render
+TEXT: Title <a>docs/a.md</a>⏎⏎<b>see </b><b><a>B</a></b> and <s><a>docs/c.md</a></s>

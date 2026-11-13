@@ -1,0 +1,13 @@
+m02 fixed: table prices
+@@@@ source
+| Run | Before | After |
+|---|---|---|
+| Night | $7.76 | **$49.56** |
+@@@@ tree
+TABLE
+  hdr: T(Run) ‖ T(Before) ‖ T(After)
+  row: T(Night) ‖ T($7.76) ‖ B[T($49.56)]
+@@@@ render
+TABLE
+  hdr: <b>Run</b> ‖ <b>Before</b> ‖ <b>After</b>
+  row: Night ‖ $7.76 ‖ <b>$49.56</b>

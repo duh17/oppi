@@ -1,0 +1,7 @@
+m14 math with brackets and stars
+@@@@ source
+Compute $x[1]*y[2]*z$ here.
+@@@@ tree
+P: T(Compute )MATH(x[1]*y[2]*z)T( here.)
+@@@@ render
+TEXT: Compute ⟦x[1] * y[2] * z⟧ here.

@@ -1,0 +1,9 @@
+m38 bracket display math
+@@@@ source
+\[
+a_1 * b * c_1 * d
+\]
+@@@@ tree
+MATHBLOCK[closed]: a_1 * b * c_1 * d
+@@@@ render
+LATEX: a_1 * b * c_1 * d

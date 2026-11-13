@@ -1,0 +1,7 @@
+m40 math containing dollar-digit after close
+@@@@ source
+Take $x$2 times and $n$th item.
+@@@@ tree
+P: T(Take $x$2 times and $n$th item.)
+@@@@ render
+TEXT: Take $x$2 times and $n$th item.

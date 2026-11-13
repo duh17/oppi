@@ -1411,7 +1411,7 @@ final class NativeTableBlockView: UIView {
                  .strong(let children),
                  .strikethrough(let children):
                 return containsLink(children)
-            case .text, .code, .image, .videoEmbed, .audioEmbed, .usdzEmbed, .softBreak, .hardBreak, .html:
+            case .text, .code, .image, .videoEmbed, .audioEmbed, .usdzEmbed, .softBreak, .hardBreak, .html, .math:
                 return false
             }
         }
@@ -1541,33 +1541,9 @@ final class NativeTableBlockView: UIView {
         return lines.joined(separator: "\n")
     }
 
-    /// Reconstruct markdown source text from inlines (preserves link syntax).
+    /// A cell as Markdown source, through the serializer documents use.
     private func markdownText(from inlines: [MarkdownInline]) -> String {
-        inlines.map { inline -> String in
-            switch inline {
-            case .text(let s): return s
-            case .link(let children, let dest):
-                let text = plainText(from: children)
-                if let dest { return "[\(text)](\(dest))" }
-                return text
-            case .emphasis(let children): return "*\(markdownText(from: children))*"
-            case .strong(let children): return "**\(markdownText(from: children))**"
-            case .code(let s): return "`\(s)`"
-            case .strikethrough(let children): return "~~\(markdownText(from: children))~~"
-            case .softBreak: return " "
-            case .hardBreak: return "\n"
-            case .html(let s): return s
-            case .image(let alt, let src):
-                if let src { return "![\(alt)](\(src))" }
-                return alt
-            case .videoEmbed(let embed):
-                return "![[\(embed.reference.target)]]"
-            case .audioEmbed(let embed):
-                return "![[\(embed.reference.target)]]"
-            case .usdzEmbed(let embed):
-                return "![[\(embed.reference.target)]]"
-            }
-        }.joined()
+        MarkdownBlockSerializer.serializeInlines(inlines)
     }
 
     private func showCopiedFlash() {

@@ -595,6 +595,21 @@ enum FlatSegment: Sendable {
                         appendCodeSegment(language: language, code: code, lineRange: lineRange)
                         emittedAnyRenderable = true
 
+                    case .math(let math, let isClosed):
+                        let segment = mathSegment(math, isClosed: isClosed, palette: palette)
+                        if case .text(let attributed) = segment {
+                            appendItemText(attributed)
+                            continue
+                        }
+                        if !itemHasPrefix {
+                            textLines.append(markerForItem(itemIndex))
+                            itemHasPrefix = true
+                        }
+                        flushListTextLines()
+                        flushPendingText()
+                        appendSegment(segment, lineRange: lineRange)
+                        emittedAnyRenderable = true
+
                     case .table(let headers, let rows):
                         if !itemHasPrefix {
                             textLines.append(markerForItem(itemIndex))
@@ -675,48 +690,18 @@ enum FlatSegment: Sendable {
                             worktreeId: worktreeId
                            ) {
                             for segment in imageSegments {
-                                switch segment {
-                                case .video(let embed):
-                                    if !itemHasPrefix {
-                                        textLines.append(markerForItem(itemIndex))
-                                        itemHasPrefix = true
-                                    }
-                                    flushListTextLines()
-                                    flushPendingText()
-                                    appendSegment(.video(embed), lineRange: lineRange)
-                                    emittedAnyRenderable = true
-                                case .audio(let embed):
-                                    if !itemHasPrefix {
-                                        textLines.append(markerForItem(itemIndex))
-                                        itemHasPrefix = true
-                                    }
-                                    flushListTextLines()
-                                    flushPendingText()
-                                    appendSegment(.audio(embed), lineRange: lineRange)
-                                    emittedAnyRenderable = true
-                                case .usdz(let embed):
-                                    if !itemHasPrefix {
-                                        textLines.append(markerForItem(itemIndex))
-                                        itemHasPrefix = true
-                                    }
-                                    flushListTextLines()
-                                    flushPendingText()
-                                    appendSegment(.usdz(embed), lineRange: lineRange)
-                                    emittedAnyRenderable = true
-                                case .image(let alt, let url):
-                                    if !itemHasPrefix {
-                                        textLines.append(markerForItem(itemIndex))
-                                        itemHasPrefix = true
-                                    }
-                                    flushListTextLines()
-                                    flushPendingText()
-                                    appendSegment(.image(alt: alt, url: url), lineRange: lineRange)
-                                    emittedAnyRenderable = true
-                                case .text(let attributed):
+                                if case .text(let attributed) = segment {
                                     appendItemText(attributed)
-                                case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .geoJSONMap, .latexBlock:
-                                    break
+                                    continue
                                 }
+                                if !itemHasPrefix {
+                                    textLines.append(markerForItem(itemIndex))
+                                    itemHasPrefix = true
+                                }
+                                flushListTextLines()
+                                flushPendingText()
+                                appendSegment(segment, lineRange: lineRange)
+                                emittedAnyRenderable = true
                             }
                         } else {
                             appendItemText(Self.attributedString(for: itemBlock, palette: palette))
@@ -751,16 +736,19 @@ enum FlatSegment: Sendable {
                 flushPendingText()
                 appendSegment(.thematicBreak, lineRange: lineRange)
 
-            case .paragraph(let inlines):
-                // Promote standalone display-math paragraphs to `.latexBlock`
-                // so assistant responses using `\[ ... \]` or `$$ ... $$`
-                // render as formulas in the timeline.
-                // Promote image-only paragraphs to a standalone `.image` segment
-                // when the source is a resolvable URL (absolute or workspace-relative).
-                if let latexSource = resolveStandaloneLatex(inlines: inlines) {
+            case .math(let math, let isClosed):
+                let segment = mathSegment(math, isClosed: isClosed, palette: palette)
+                if case .text(let attributed) = segment {
+                    appendTextBlock(attributed, lineRange: lineRange)
+                } else {
                     flushPendingText()
-                    appendSegment(.latexBlock(code: latexSource), lineRange: lineRange)
-                } else if let imageSegments = resolveParagraphImageSegments(
+                    appendSegment(segment, lineRange: lineRange)
+                }
+
+            case .paragraph(let inlines):
+                // Images, media embeds and display formulas become segments of
+                // their own; the text around them stays text.
+                if let imageSegments = resolveParagraphImageSegments(
                     inlines: inlines,
                     palette: palette,
                     serverID: serverID,
@@ -771,23 +759,11 @@ enum FlatSegment: Sendable {
                     worktreeId: worktreeId
                 ) {
                     for segment in imageSegments {
-                        switch segment {
-                        case .text(let attributed):
+                        if case .text(let attributed) = segment {
                             appendTextBlock(attributed, lineRange: lineRange)
-                        case .image(let alt, let url):
+                        } else {
                             flushPendingText()
-                            appendSegment(.image(alt: alt, url: url), lineRange: lineRange)
-                        case .video(let embed):
-                            flushPendingText()
-                            appendSegment(.video(embed), lineRange: lineRange)
-                        case .audio(let embed):
-                            flushPendingText()
-                            appendSegment(.audio(embed), lineRange: lineRange)
-                        case .usdz(let embed):
-                            flushPendingText()
-                            appendSegment(.usdz(embed), lineRange: lineRange)
-                        case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .geoJSONMap, .latexBlock:
-                            break
+                            appendSegment(segment, lineRange: lineRange)
                         }
                     }
                 } else {
@@ -829,7 +805,15 @@ enum FlatSegment: Sendable {
             case .blockQuote(let children):
                 if children.contains(where: Self.containsStandaloneListBlock) {
                     for child in children {
-                        if case .paragraph(let inlines) = child,
+                        if case .math(let math, let isClosed) = child {
+                            let segment = mathSegment(math, isClosed: isClosed, palette: palette)
+                            if case .text(let attributed) = segment {
+                                appendTextBlock(Self.applyingQuoteChrome(to: attributed, palette: palette), lineRange: lineRange)
+                            } else {
+                                flushPendingText()
+                                appendSegment(segment, lineRange: lineRange)
+                            }
+                        } else if case .paragraph(let inlines) = child,
                            Self.inlinesContainPromotedMediaEmbed(inlines),
                            let imageSegments = resolveParagraphImageSegments(
                             inlines: inlines,
@@ -842,26 +826,14 @@ enum FlatSegment: Sendable {
                             worktreeId: worktreeId
                            ) {
                             for segment in imageSegments {
-                                switch segment {
-                                case .video(let embed):
-                                    flushPendingText()
-                                    appendSegment(.video(embed), lineRange: lineRange)
-                                case .audio(let embed):
-                                    flushPendingText()
-                                    appendSegment(.audio(embed), lineRange: lineRange)
-                                case .usdz(let embed):
-                                    flushPendingText()
-                                    appendSegment(.usdz(embed), lineRange: lineRange)
-                                case .image(let alt, let url):
-                                    flushPendingText()
-                                    appendSegment(.image(alt: alt, url: url), lineRange: lineRange)
-                                case .text(let attributed):
+                                if case .text(let attributed) = segment {
                                     appendTextBlock(
                                         Self.applyingQuoteChrome(to: attributed, palette: palette),
                                         lineRange: lineRange
                                     )
-                                case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .geoJSONMap, .latexBlock:
-                                    break
+                                } else {
+                                    flushPendingText()
+                                    appendSegment(segment, lineRange: lineRange)
                                 }
                             }
                         } else {
@@ -902,7 +874,7 @@ enum FlatSegment: Sendable {
 
     private static func containsStandaloneListBlock(_ block: MarkdownBlock) -> Bool {
         switch block {
-        case .codeBlock, .table, .thematicBreak:
+        case .codeBlock, .table, .thematicBreak, .math:
             true
         case .paragraph(let inlines):
             inlinesContainPromotedMediaEmbed(inlines)
@@ -922,6 +894,8 @@ enum FlatSegment: Sendable {
             switch inline {
             case .videoEmbed, .audioEmbed, .usdzEmbed:
                 return true
+            case .math(let math):
+                return math.isDisplay
             case .emphasis(let children),
                  .strong(let children),
                  .strikethrough(let children),
@@ -977,453 +951,17 @@ enum FlatSegment: Sendable {
         return quoted
     }
 
-    // MARK: - Display Math Paragraph Detection
+    // MARK: - Formulas
 
-    /// Detect standalone display-math paragraphs and extract the inner TeX.
-    ///
-    /// Supported wrappers:
-    /// - `$$ ... $$`
-    /// - `\[ ... \]` (after CommonMark parsing this often appears as `[ ... ]`)
-    ///
-    /// We intentionally require the inner content to look math-like to avoid
-    /// treating plain bracketed prose as LaTeX.
-    private static func resolveStandaloneLatex(inlines: [MarkdownInline]) -> String? {
-        let source = inlineSourcePreservingBreaks(inlines)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !source.isEmpty else { return nil }
-
-        if let inner = unwrapDisplayMathByDollars(source) {
-            return inner
-        }
-
-        if let inner = unwrapDisplayMathByBrackets(source) {
-            return inner
-        }
-
-        return nil
-    }
-
-    /// Flatten inline nodes to plain text while preserving line breaks.
-    ///
-    /// Used only for structural detection (not display), so formatting marks
-    /// are collapsed to their text content.
-    private static func inlineSourcePreservingBreaks(_ inlines: [MarkdownInline]) -> String {
-        var result = ""
-        result.reserveCapacity(128)
-
-        for inline in inlines {
-            switch inline {
-            case .text(let string):
-                result.append(string)
-            case .emphasis(let children),
-                 .strong(let children),
-                 .strikethrough(let children):
-                result.append(inlineSourcePreservingBreaks(children))
-            case .code(let code):
-                result.append(code)
-            case .link(let children, _):
-                result.append(inlineSourcePreservingBreaks(children))
-            case .image(let alt, _):
-                result.append(alt)
-            case .videoEmbed(let embed):
-                result.append(embed.displayLabel)
-            case .audioEmbed(let embed):
-                result.append(embed.displayLabel)
-            case .usdzEmbed(let embed):
-                result.append(embed.displayLabel)
-            case .softBreak, .hardBreak:
-                result.append("\n")
-            case .html(let raw):
-                result.append(raw)
-            }
-        }
-
-        return result
-    }
-
-    private static func unwrapDisplayMathByDollars(_ source: String) -> String? {
-        guard let inner = stripWrapping(source, open: "$$", close: "$$") else { return nil }
-        guard isLikelyDisplayLatexMath(inner) else { return nil }
-        return inner
-    }
-
-    private static func unwrapDisplayMathByBrackets(_ source: String) -> String? {
-        // Multiline display math commonly arrives as:
-        // [
-        //   \\frac{...}{...}
-        // ]
-        let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
-        guard let firstNonEmpty = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
-              let lastNonEmpty = lines.lastIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
-              firstNonEmpty < lastNonEmpty else {
-            return nil
-        }
-
-        let opening = String(lines[firstNonEmpty]).trimmingCharacters(in: .whitespaces)
-        let closing = String(lines[lastNonEmpty]).trimmingCharacters(in: .whitespaces)
-        guard opening == "\\[", closing == "\\]" else {
-            return nil
-        }
-
-        let inner = lines[(firstNonEmpty + 1) ..< lastNonEmpty]
-            .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isLikelyDisplayLatexMath(inner) else { return nil }
-        return inner
-    }
-
-    private static func stripWrapping(_ source: String, open: String, close: String) -> String? {
-        guard source.hasPrefix(open), source.hasSuffix(close) else { return nil }
-
-        let start = source.index(source.startIndex, offsetBy: open.count)
-        let end = source.index(source.endIndex, offsetBy: -close.count)
-        guard start <= end else { return nil }
-
-        let inner = source[start ..< end].trimmingCharacters(in: .whitespacesAndNewlines)
-        return inner.isEmpty ? nil : inner
-    }
-
-    private static func isLikelyDisplayLatexMath(_ source: String) -> Bool {
-        TeXMathParser().parseValidated(source).isRenderable
-    }
-
-    private static func isLikelyLatexMath(_ source: String) -> Bool {
-        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed == source, hasBalancedLatexBraces(trimmed) else { return false }
-
-        if trimmed.contains("\\") || trimmed.contains("^") || trimmed.contains("_")
-            || (trimmed.contains("{") && trimmed.contains("}")) {
-            return true
-        }
-        if trimmed.contains(where: { "=+-*/<>".contains($0) })
-            && trimmed.contains(where: { $0.isLetter || $0.isNumber }) {
-            return true
-        }
-        if trimmed.allSatisfy({ $0.isNumber || ".,".contains($0) }) {
-            return false
-        }
-        return trimmed.first?.isLetter == true
-    }
-
-    private static func hasBalancedLatexBraces(_ source: String) -> Bool {
-        var depth = 0
-        for index in source.indices {
-            var slashCount = 0
-            var cursor = index
-            while cursor > source.startIndex {
-                let previous = source.index(before: cursor)
-                guard source[previous] == "\\" else { break }
-                slashCount += 1
-                cursor = previous
-            }
-            guard slashCount % 2 == 0 else { continue }
-            if source[index] == "{" {
-                depth += 1
-            } else if source[index] == "}" {
-                depth -= 1
-                if depth < 0 { return false }
-            }
-        }
-        return depth == 0
-    }
-
-    // MARK: - Inline Math Rendering
-
-    private struct InlineLatexRender {
-        var attributed = AttributedString()
-        var handledDelimiter = false
-    }
-
-    /// Render formulas as baseline-aligned text attachments while preserving
-    /// the surrounding CommonMark runs. The previous plain-text conversion
-    /// flattened the whole paragraph, dropping links, code styling, emphasis,
-    /// and the mathematical layout users expected from LaTeX.
-    private static func renderInlineLatexParagraph(
-        _ inlines: [MarkdownInline],
-        palette: ThemePalette,
-        bodyColor: UIColor,
-        bodyFont: UIFont
-    ) -> AttributedString? {
-        let render = renderInlineLatexInlines(
-            inlines,
-            palette: palette,
-            bodyColor: bodyColor,
-            bodyFont: bodyFont
-        )
-        return render.handledDelimiter ? render.attributed : nil
-    }
-
-    private static func renderInlineLatexInlines(
-        _ inlines: [MarkdownInline],
-        palette: ThemePalette,
-        bodyColor: UIColor,
-        bodyFont: UIFont
-    ) -> InlineLatexRender {
-        var result = InlineLatexRender()
-
-        for inline in inlines {
-            switch inline {
-            case .text(let source):
-                let rendered = renderInlineLatexText(
-                    source,
-                    palette: palette,
-                    bodyColor: bodyColor,
-                    bodyFont: bodyFont
-                )
-                result.attributed.append(rendered.attributed)
-                result.handledDelimiter = result.handledDelimiter || rendered.handledDelimiter
-
-            case .emphasis(let children):
-                var rendered = renderInlineLatexInlines(
-                    children,
-                    palette: palette,
-                    bodyColor: bodyColor,
-                    bodyFont: bodyFont
-                )
-                rendered.attributed.inlinePresentationIntent = .emphasized
-                result.attributed.append(rendered.attributed)
-                result.handledDelimiter = result.handledDelimiter || rendered.handledDelimiter
-
-            case .strong(let children):
-                var rendered = renderInlineLatexInlines(
-                    children,
-                    palette: palette,
-                    bodyColor: bodyColor,
-                    bodyFont: bodyFont
-                )
-                rendered.attributed.inlinePresentationIntent = .stronglyEmphasized
-                result.attributed.append(rendered.attributed)
-                result.handledDelimiter = result.handledDelimiter || rendered.handledDelimiter
-
-            case .code(let code):
-                var rendered = AttributedString(code)
-                rendered.uiKit.font = AppFont.messageInlineCode
-                rendered.uiKit.foregroundColor = palette.ui.mdCode
-                rendered.uiKit.backgroundColor = palette.ui.bgHighlight
-                result.attributed.append(rendered)
-
-            case .link(let children, let destination):
-                var rendered = renderInlineLatexInlines(
-                    children,
-                    palette: palette,
-                    bodyColor: bodyColor,
-                    bodyFont: bodyFont
-                )
-                rendered.attributed.uiKit.foregroundColor = palette.ui.mdLink
-                rendered.attributed.uiKit.underlineStyle = linkUnderline(destination: destination)
-                let decorated = applyLink(
-                    destination: destination,
-                    to: prependWikiIcon(to: rendered.attributed, destination: destination)
-                )
-                result.attributed.append(decorated)
-                result.handledDelimiter = result.handledDelimiter || rendered.handledDelimiter
-
-            case .image(let alt, _):
-                var rendered = AttributedString(imageFallbackText(alt: alt))
-                rendered.uiKit.font = bodyFont
-                rendered.uiKit.foregroundColor = palette.ui.comment
-                result.attributed.append(rendered)
-
-            case .videoEmbed(let embed):
-                var rendered = videoFallbackAttributedString(embed, palette: palette)
-                rendered.uiKit.font = bodyFont
-                result.attributed.append(rendered)
-
-            case .audioEmbed(let embed):
-                var rendered = audioFallbackAttributedString(embed, palette: palette)
-                rendered.uiKit.font = bodyFont
-                result.attributed.append(rendered)
-
-            case .usdzEmbed(let embed):
-                var rendered = usdzFallbackAttributedString(embed, palette: palette)
-                rendered.uiKit.font = bodyFont
-                result.attributed.append(rendered)
-
-            case .softBreak, .hardBreak:
-                var rendered = AttributedString("\n")
-                rendered.uiKit.font = bodyFont
-                rendered.uiKit.foregroundColor = bodyColor
-                result.attributed.append(rendered)
-
-            case .html(let raw):
-                var rendered = AttributedString(raw)
-                rendered.uiKit.font = bodyFont
-                rendered.uiKit.foregroundColor = palette.ui.comment
-                result.attributed.append(rendered)
-
-            case .strikethrough(let children):
-                var rendered = renderInlineLatexInlines(
-                    children,
-                    palette: palette,
-                    bodyColor: bodyColor,
-                    bodyFont: bodyFont
-                )
-                rendered.attributed.uiKit.strikethroughStyle = .single
-                result.attributed.append(rendered.attributed)
-                result.handledDelimiter = result.handledDelimiter || rendered.handledDelimiter
-            }
-        }
-
-        return result
-    }
-
-    private static func renderInlineLatexText(
-        _ source: String,
-        palette: ThemePalette,
-        bodyColor: UIColor,
-        bodyFont: UIFont
-    ) -> InlineLatexRender {
-        var result = InlineLatexRender()
-        var plain = ""
-        var cursor = source.startIndex
-
-        func flushPlain() {
-            guard !plain.isEmpty else { return }
-            var attributed = AttributedString(plain)
-            attributed.uiKit.font = bodyFont
-            attributed.uiKit.foregroundColor = bodyColor
-            result.attributed.append(attributed)
-            plain.removeAll(keepingCapacity: true)
-        }
-
-        while cursor < source.endIndex {
-            if source[cursor...].hasPrefix(#"\\("#) {
-                plain += #"\("#
-                cursor = source.index(cursor, offsetBy: 3)
-                result.handledDelimiter = true
-                continue
-            }
-
-            if source[cursor...].hasPrefix(#"\\)"#) {
-                plain += #"\)"#
-                cursor = source.index(cursor, offsetBy: 3)
-                result.handledDelimiter = true
-                continue
-            }
-
-            if source[cursor...].hasPrefix(#"\$"#), isEscapedDollar(at: source.index(after: cursor), in: source) {
-                plain.append("$")
-                cursor = source.index(cursor, offsetBy: 2)
-                result.handledDelimiter = true
-                continue
-            }
-
-            if source[cursor...].hasPrefix(#"\("#),
-               let closeRange = source.range(
-                   of: #"\)"#,
-                   range: source.index(cursor, offsetBy: 2) ..< source.endIndex
-               ) {
-                let latexStart = source.index(cursor, offsetBy: 2)
-                let latex = String(source[latexStart ..< closeRange.lowerBound])
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !latex.isEmpty,
-                   let attachment = inlineLatexAttachment(
-                       source: latex,
-                       palette: palette,
-                       bodyFont: bodyFont
-                   ) {
-                    flushPlain()
-                    result.attributed.append(attachment)
-                    result.handledDelimiter = true
-                    cursor = closeRange.upperBound
-                    continue
-                }
-            }
-
-            if source[cursor] == "$",
-               !isEscapedDollar(at: cursor, in: source),
-               !isDisplayMathDollar(at: cursor, in: source) {
-                let latexStart = source.index(after: cursor)
-                if let close = nextInlineMathDelimiter(in: source, from: latexStart) {
-                    let latex = String(source[latexStart ..< close])
-                    if !isDollarFollowedByDigit(at: close, in: source),
-                       isLikelyLatexMath(latex),
-                       let attachment = inlineLatexAttachment(
-                           source: latex,
-                           palette: palette,
-                           bodyFont: bodyFont
-                       ) {
-                        flushPlain()
-                        result.attributed.append(attachment)
-                        result.handledDelimiter = true
-                        cursor = source.index(after: close)
-                        continue
-                    }
-                }
-            }
-
-            plain.append(source[cursor])
-            cursor = source.index(after: cursor)
-        }
-
-        flushPlain()
-        return result
-    }
-
-    private static func inlineLatexAttachment(
-        source: String,
-        palette: ThemePalette,
-        bodyFont: UIFont
-    ) -> AttributedString? {
-        guard hasBalancedLatexBraces(source),
-              let rendered = DocumentRenderPipeline.renderInlineLatexImage(
-            text: source,
-            config: RenderConfiguration(
-                fontSize: bodyFont.pointSize,
-                maxWidth: 1_000,
-                theme: palette.renderTheme,
-                displayMode: .inline
-            )
-        ) else { return nil }
-
-        let attachment = InlineLatexTextAttachment(formulaLabel: formulaAccessibilityLabel(for: source))
-        attachment.image = rendered.image
-        attachment.bounds = CGRect(
-            x: 0,
-            y: -(rendered.size.height - rendered.baseline),
-            width: rendered.size.width,
-            height: rendered.size.height
-        )
-        return AttributedString(NSAttributedString(attachment: attachment))
-    }
-
-    private static func renderBareInlineLatexText(_ inlines: [MarkdownInline]) -> String? {
-        guard inlines.count == 1, case .text(let source) = inlines[0] else { return nil }
-        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.contains("$"), trimmed.hasPrefix("\\text{") else { return nil }
-        let rendered = renderInlineLatexPlainText(trimmed)
-        return rendered.isEmpty ? nil : rendered
-    }
-
-    private static func nextInlineMathDelimiter(in source: String, from start: String.Index) -> String.Index? {
-        var index = start
-        while index < source.endIndex {
-            if source[index] == "$",
-               !isEscapedDollar(at: index, in: source),
-               !isDisplayMathDollar(at: index, in: source) {
-                return index
-            }
-            index = source.index(after: index)
-        }
-        return nil
-    }
-
-    private static func isEscapedDollar(at index: String.Index, in source: String) -> Bool {
-        guard index > source.startIndex else { return false }
-        var slashCount = 0
-        var cursor = source.index(before: index)
-        while source[cursor] == "\\" {
-            slashCount += 1
-            guard cursor > source.startIndex else { break }
-            cursor = source.index(before: cursor)
-        }
-        return slashCount % 2 == 1
-    }
-
-    private static func isDisplayMathDollar(at index: String.Index, in source: String) -> Bool {
-        let previousIsDollar = index > source.startIndex && source[source.index(before: index)] == "$"
-        let nextIsDollar = source.index(after: index) < source.endIndex && source[source.index(after: index)] == "$"
-        return previousIsDollar || nextIsDollar
+    /// A display formula's segment, or its source as text when the block is
+    /// still open (streaming, or a closer that never came) or the TeX parser
+    /// rejects it: what was written stays readable.
+    private static func mathSegment(_ math: MarkdownMath, isClosed: Bool, palette: ThemePalette) -> Self {
+        if isClosed, TeXMathParser().parseValidated(math.latex).isRenderable { return .latexBlock(code: math.latex) }
+        var container = AttributeContainer()
+        container.uiKit.foregroundColor = palette.ui.fg
+        container.uiKit.font = AppFont.messageBody
+        return .text(AttributedString(math.source, attributes: container))
     }
 
     static func formulaAccessibilityLabel(for source: String) -> String {
@@ -1442,13 +980,6 @@ enum FlatSegment: Sendable {
             )
         }
         return String(format: String(localized: "Math formula: %@"), accessibleValue)
-    }
-
-    private static func renderInlineLatexPlainText(_ source: String) -> String {
-        let parsed = TeXMathParser().parse(source.trimmingCharacters(in: .whitespacesAndNewlines))
-        return mathPlainText(from: parsed)
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func mathPlainText(from nodes: [MathNode]) -> String {
@@ -1795,7 +1326,11 @@ enum FlatSegment: Sendable {
         }
 
         for inline in inlines {
-            if case .videoEmbed(let embed) = inline {
+            if case .math(let math) = inline, math.isDisplay {
+                flushPendingInlines()
+                segments.append(mathSegment(math, isClosed: true, palette: palette))
+                promotedAnyImage = true
+            } else if case .videoEmbed(let embed) = inline {
                 flushPendingInlines()
                 segments.append(.video(embed))
                 promotedAnyImage = true
@@ -1857,7 +1392,7 @@ enum FlatSegment: Sendable {
                 if !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     return true
                 }
-            case .image, .videoEmbed, .audioEmbed, .usdzEmbed:
+            case .image, .videoEmbed, .audioEmbed, .usdzEmbed, .math:
                 return true
             case .emphasis(let children),
                  .strong(let children),
@@ -2038,40 +1573,17 @@ enum FlatSegment: Sendable {
                 return AttributedString(heading)
             }
 
-            // Inline code is the only inline that sets a font. It keeps its
-            // chip (code ink and background), scaled from the body to the
-            // heading as body inline code is; every other run takes the
-            // heading font and colour.
-            var rendered = renderInlines(inlines, palette: palette)
-            let codeScale = font.pointSize / AppFont.messageBody.pointSize
-            for run in rendered.runs {
-                if let codeFont = run.uiKit.font {
-                    rendered[run.range].uiKit.font = codeFont.withSize(codeFont.pointSize * codeScale)
-                } else {
-                    rendered[run.range].uiKit.font = font
-                    rendered[run.range].uiKit.foregroundColor = color
-                }
-            }
-            rendered.setParagraphStyle(paragraphStyle)
-            return rendered
+            // Inline code keeps its chip, scaled from the body to the heading
+            // as body inline code is.
+            let codeFont = AppFont.messageInlineCode
+            var style = inlineStyle(palette: palette, font: font, color: color)
+            style.codeFont = codeFont.withSize(codeFont.pointSize * font.pointSize / AppFont.messageBody.pointSize)
+            style.paragraph = paragraphStyle
+            return MarkdownInlineRenderer.attributedString(inlines, style: style)
 
         case .paragraph(let inlines):
             let bodyFont = AppFont.messageBody
             let bodyColor = defaultTextColor ?? palette.ui.fg
-            if let renderedLatex = renderInlineLatexParagraph(
-                inlines,
-                palette: palette,
-                bodyColor: bodyColor,
-                bodyFont: bodyFont
-            ) {
-                return renderedLatex
-            }
-            if let renderedLatex = renderBareInlineLatexText(inlines) {
-                var container = AttributeContainer()
-                container.uiKit.foregroundColor = bodyColor
-                container.uiKit.font = bodyFont
-                return AttributedString(renderedLatex, attributes: container)
-            }
             // Fast path: single text inline (most common paragraph shape).
             if inlines.count == 1, case .text(let string) = inlines[0] {
                 var container = AttributeContainer()
@@ -2079,15 +1591,10 @@ enum FlatSegment: Sendable {
                 container.uiKit.font = bodyFont
                 return AttributedString(string, attributes: container)
             }
-            // Build with foreground baked into initial construction,
-            // then override specific inline colors (code, links) by range.
-            var result = renderInlinesWithDefaultColor(inlines, palette: palette, defaultColor: bodyColor)
-            // Set body font on runs that don't have an explicit font (plain text).
-            // Inline code already has monospace font set; this preserves it.
-            for run in result.runs where run.uiKit.font == nil {
-                result[run.range].uiKit.font = bodyFont
-            }
-            return result
+            return MarkdownInlineRenderer.attributedString(
+                inlines,
+                style: inlineStyle(palette: palette, font: bodyFont, color: bodyColor)
+            )
 
         case .blockQuote(let children):
             var result = AttributedString("▎ ")
@@ -2169,568 +1676,33 @@ enum FlatSegment: Sendable {
             result.uiKit.foregroundColor = palette.ui.comment
             return result
 
+        case .math(let math, _):
+            // Reached only where a block cannot stand alone (a task item):
+            // the formula as written.
+            var container = AttributeContainer()
+            container.uiKit.foregroundColor = defaultTextColor ?? palette.ui.fg
+            container.uiKit.font = AppFont.messageBody
+            return AttributedString(math.source, attributes: container)
+
         case .codeBlock, .table, .thematicBreak:
             return AttributedString()
         }
     }
 
-    // MARK: - Inline → AttributedString (range-based construction)
-
-    /// Attribute overlay to apply to a substring range.
-    private struct InlineAttr {
-        let utf8Start: Int
-        let utf8End: Int
-        let apply: (inout AttributedSubstring) -> Void
-    }
-
-    /// Build an AttributedString from inlines by extracting plain text first,
-    /// then applying attributes by range. Avoids creating N intermediate
-    /// AttributedString objects and the overhead of N append operations.
-    private static func renderInlines(_ inlines: [MarkdownInline], palette: ThemePalette) -> AttributedString {
-        return renderInlinesCore(inlines, palette: palette, defaultColor: nil)
-    }
-
-    /// Like `renderInlines` but bakes a default foreground color into the
-    /// initial AttributedString construction, avoiding an O(runs) post-set.
-    private static func renderInlinesWithDefaultColor(
-        _ inlines: [MarkdownInline],
-        palette: ThemePalette,
-        defaultColor: UIColor
-    ) -> AttributedString {
-        return renderInlinesCore(inlines, palette: palette, defaultColor: defaultColor)
-    }
-
-    private static func renderInlinesCore(
-        _ inlines: [MarkdownInline],
-        palette: ThemePalette,
-        defaultColor: UIColor?
-    ) -> AttributedString {
-        // Wiki links to non-text files (image/audio/video/PDF/binary) render a
-        // leading file icon, and badges draw as attachments. Attachments can't
-        // be emitted by the range-based plain-text path below, so route such
-        // paragraphs through a direct-append renderer instead.
-        if containsAttachmentInline(inlines) {
-            return renderInlinesDirectAppend(inlines, palette: palette, defaultColor: defaultColor)
-        }
-        // Fast path: single text inline (most common paragraph).
-        if inlines.count == 1, case .text(let string) = inlines[0] {
-            if let color = defaultColor {
-                var container = AttributeContainer()
-                container.uiKit.foregroundColor = color
-                return AttributedString(string, attributes: container)
-            }
-            return AttributedString(string)
-        }
-        // Fast path: single non-text inline.
-        if inlines.count == 1 {
-            var result = renderInlineFallback(inlines[0], palette: palette)
-            if let color = defaultColor {
-                result.uiKit.foregroundColor = color
-            }
-            return result
-        }
-
-        // Build plain text and collect attribute overlays.
-        var plainText = ""
-        var attrs: [InlineAttr] = []
-        collectInlineText(inlines, palette: palette, into: &plainText, attrs: &attrs, depth: 0)
-
-        guard !plainText.isEmpty else { return AttributedString() }
-
-        // Create with default color baked in if provided.
-        var result: AttributedString
-        if let color = defaultColor {
-            var container = AttributeContainer()
-            container.uiKit.foregroundColor = color
-            result = AttributedString(plainText, attributes: container)
-        } else {
-            result = AttributedString(plainText)
-        }
-
-        // Apply overlays by range.
-        let utf8View = plainText.utf8
-        for attr in attrs {
-            let startIdx = utf8View.index(utf8View.startIndex, offsetBy: attr.utf8Start)
-            let endIdx = utf8View.index(utf8View.startIndex, offsetBy: attr.utf8End)
-            let startStrIdx = String.Index(startIdx, within: plainText) ?? plainText.startIndex
-            let endStrIdx = String.Index(endIdx, within: plainText) ?? plainText.endIndex
-            guard let attrStart = AttributedString.Index(startStrIdx, within: result),
-                  let attrEnd = AttributedString.Index(endStrIdx, within: result) else { continue }
-            if attrStart < attrEnd {
-                attr.apply(&result[attrStart ..< attrEnd])
-            }
-        }
-
-        return result
-    }
-
-    private static func imageFallbackText(alt: String) -> String {
-        let trimmed = alt.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "[image]" : "[\(trimmed)]"
-    }
-
-    private static func videoFallbackText(_ embed: MarkdownVideoEmbed) -> String {
-        embed.displayLabel
-    }
-
-    private static func audioFallbackText(_ embed: MarkdownAudioEmbed) -> String {
-        embed.displayLabel
-    }
-
-    private static func usdzFallbackText(_ embed: MarkdownUSDZEmbed) -> String {
-        embed.displayLabel
-    }
-
-    private static func audioFallbackAttributedString(
-        _ embed: MarkdownAudioEmbed,
-        palette: ThemePalette
-    ) -> AttributedString {
-        var result = AttributedString(audioFallbackText(embed))
-        if let url = ResourceReferenceURL.make(embed.reference) {
-            result.uiKit.foregroundColor = palette.ui.mdLink
-            result.link = url
-        } else {
-            result.uiKit.foregroundColor = palette.ui.comment
-        }
-        return result
-    }
-
-    private static func videoFallbackAttributedString(
-        _ embed: MarkdownVideoEmbed,
-        palette: ThemePalette
-    ) -> AttributedString {
-        var result = AttributedString(videoFallbackText(embed))
-        if let url = ResourceReferenceURL.make(embed.reference) {
-            result.uiKit.foregroundColor = palette.ui.mdLink
-            result.link = url
-        } else {
-            result.uiKit.foregroundColor = palette.ui.comment
-        }
-        return result
-    }
-
-    private static func usdzFallbackAttributedString(
-        _ embed: MarkdownUSDZEmbed,
-        palette: ThemePalette
-    ) -> AttributedString {
-        var result = AttributedString(usdzFallbackText(embed))
-        if let url = ResourceReferenceURL.make(embed.reference) {
-            result.uiKit.foregroundColor = palette.ui.mdLink
-            result.link = url
-        } else {
-            result.uiKit.foregroundColor = palette.ui.comment
-        }
-        return result
-    }
-
-    /// Recursively extract plain text from inlines and record attribute ranges.
-    private static func collectInlineText(
-        _ inlines: [MarkdownInline],
-        palette: ThemePalette,
-        into text: inout String,
-        attrs: inout [InlineAttr],
-        depth: Int
-    ) {
-        for inline in inlines {
-            let start = text.utf8.count
-            switch inline {
-            case .text(let string):
-                text += string
-            case .emphasis(let children):
-                collectInlineText(children, palette: palette, into: &text, attrs: &attrs, depth: depth + 1)
-                let end = text.utf8.count
-                if end > start {
-                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.inlinePresentationIntent = .emphasized
-                    })
-                }
-            case .strong(let children):
-                collectInlineText(children, palette: palette, into: &text, attrs: &attrs, depth: depth + 1)
-                let end = text.utf8.count
-                if end > start {
-                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.inlinePresentationIntent = .stronglyEmphasized
-                    })
-                }
-            case .code(let code):
-                text += code
-                let end = text.utf8.count
-                let codeFont = AppFont.messageInlineCode
-                let codeFg = palette.ui.mdCode
-                let codeBg = palette.ui.bgHighlight
-                attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                    sub.uiKit.font = codeFont
-                    sub.uiKit.foregroundColor = codeFg
-                    sub.uiKit.backgroundColor = codeBg
-                })
-            case .link(let children, let destination):
-                collectInlineText(children, palette: palette, into: &text, attrs: &attrs, depth: depth + 1)
-                let end = text.utf8.count
-                if end > start {
-                    let resolvedURL: URL? = {
-                        guard let destination, let url = URL(string: destination), url.scheme != nil else { return nil }
-                        return url
-                    }()
-                    let linkColor = palette.ui.mdLink
-                    let underline = linkUnderline(destination: destination)
-                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.foregroundColor = linkColor
-                        sub.uiKit.underlineStyle = underline
-                        if let url = resolvedURL {
-                            sub.link = url
-                        }
-                    })
-                }
-            case .image(let alt, _):
-                text += imageFallbackText(alt: alt)
-                let end = text.utf8.count
-                attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                    sub.uiKit.foregroundColor = palette.ui.comment
-                })
-            case .videoEmbed(let embed):
-                text += videoFallbackText(embed)
-                let end = text.utf8.count
-                if let url = ResourceReferenceURL.make(embed.reference) {
-                    let linkColor = palette.ui.mdLink
-                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.foregroundColor = linkColor
-                        sub.link = url
-                    })
-                } else {
-                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.foregroundColor = palette.ui.comment
-                    })
-                }
-            case .audioEmbed(let embed):
-                text += audioFallbackText(embed)
-                let end = text.utf8.count
-                if let url = ResourceReferenceURL.make(embed.reference) {
-                    let linkColor = palette.ui.mdLink
-                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.foregroundColor = linkColor
-                        sub.link = url
-                    })
-                } else {
-                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.foregroundColor = palette.ui.comment
-                    })
-                }
-            case .usdzEmbed(let embed):
-                text += usdzFallbackText(embed)
-                let end = text.utf8.count
-                if let url = ResourceReferenceURL.make(embed.reference) {
-                    let linkColor = palette.ui.mdLink
-                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.foregroundColor = linkColor
-                        sub.link = url
-                    })
-                } else {
-                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.foregroundColor = palette.ui.comment
-                    })
-                }
-            case .softBreak, .hardBreak:
-                text += "\n"
-            case .html(let raw):
-                text += raw
-                let end = text.utf8.count
-                attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                    sub.uiKit.foregroundColor = palette.ui.comment
-                })
-            case .strikethrough(let children):
-                collectInlineText(children, palette: palette, into: &text, attrs: &attrs, depth: depth + 1)
-                let end = text.utf8.count
-                if end > start {
-                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.strikethroughStyle = .single
-                    })
-                }
-            }
-        }
-    }
-
-    /// Fallback for single complex inlines (non-text). Uses the old append-based path.
-    private static func renderInlineFallback(_ inline: MarkdownInline, palette: ThemePalette) -> AttributedString {
-        switch inline {
-        case .text(let string):
-            return AttributedString(string)
-        case .emphasis(let children):
-            var result = renderInlines(children, palette: palette)
-            result.inlinePresentationIntent = .emphasized
-            return result
-        case .strong(let children):
-            var result = renderInlines(children, palette: palette)
-            result.inlinePresentationIntent = .stronglyEmphasized
-            return result
-        case .code(let code):
-            var result = AttributedString(code)
-            result.uiKit.font = AppFont.messageInlineCode
-            result.uiKit.foregroundColor = palette.ui.mdCode
-            result.uiKit.backgroundColor = palette.ui.bgHighlight
-            return result
-        case .link(let children, let destination):
-            var result = renderInlines(children, palette: palette)
-            result.uiKit.foregroundColor = palette.ui.mdLink
-            result.uiKit.underlineStyle = linkUnderline(destination: destination)
-            if let destination,
-               let url = URL(string: destination),
-               url.scheme != nil {
-                result.link = url
-            }
-            return result
-        case .image(let alt, _):
-            var result = AttributedString(imageFallbackText(alt: alt))
-            result.uiKit.foregroundColor = palette.ui.comment
-            return result
-        case .videoEmbed(let embed):
-            return videoFallbackAttributedString(embed, palette: palette)
-        case .audioEmbed(let embed):
-            return audioFallbackAttributedString(embed, palette: palette)
-        case .usdzEmbed(let embed):
-            return usdzFallbackAttributedString(embed, palette: palette)
-        case .softBreak, .hardBreak:
-            return AttributedString("\n")
-        case .html(let raw):
-            var result = AttributedString(raw)
-            result.uiKit.foregroundColor = palette.ui.comment
-            return result
-        case .strikethrough(let children):
-            var result = renderInlines(children, palette: palette)
-            result.uiKit.strikethroughStyle = .single
-            return result
-        }
-    }
-
-    /// Web and session links keep the underline. File links (resource
-    /// references) skip it: the link color and file icon already mark them, and
-    /// TextKit's underline skips around `_` glyphs that sit lower than the
-    /// underline, so names like `Alex_Doe_Resume.pdf` draw a stepped, broken line.
-    /// UIKit scope: these strings render in UITextViews, and SwiftUI's
-    /// `underlineStyle` does not survive the `NSAttributedString` conversion.
-    private static func linkUnderline(destination: String?) -> NSUnderlineStyle? {
-        guard let destination,
-              let url = URL(string: destination),
-              ResourceReferenceURL.isReference(url) else {
-            return .single
-        }
-        return nil
-    }
-
-    // MARK: - Wiki-link file icon decoration
-
-    /// A non-text file preview category renders a recognizable leading icon,
-    /// reusing `FileIcon.forPath` and `FileKind.previewCategory`. Text-like
-    /// files (code, markdown, JSON, plain) stay icon-free.
-    private static func wikiLinkFileIcon(for destination: String?) -> FileIcon? {
-        guard let destination,
-              let url = URL(string: destination),
-              let reference = ResourceReferenceURL.parse(url) else {
-            return nil
-        }
-        let path = reference.fileCandidatePath ?? reference.target
-        guard FileKind.detect(from: path).previewCategory != .text else {
-            return nil
-        }
-        return FileIcon.forPath(path)
-    }
-
-    /// Renders the leading inline file icon as a tinted SF Symbol attachment.
-    /// Non-text file icons resolve to SF Symbols in `FileIcon`, so the asset
-    /// catalog fallback isn't needed here; an unknown symbol fails closed to
-    /// no icon.
-    private static func wikiIconAttachment(for icon: FileIcon) -> AttributedString? {
-        let bodyFont = AppFont.messageBody
-        let side = round(bodyFont.capHeight * 1.25)
-        guard side > 0 else { return nil }
-        let configuration = UIImage.SymbolConfiguration(
-            pointSize: side * 0.72,
-            weight: .medium
-        )
-        guard let image = UIImage(systemName: icon.symbolName, withConfiguration: configuration)?
-            .withTintColor(icon.color, renderingMode: .alwaysOriginal) else {
-            return nil
-        }
-        let attachment = NSTextAttachment()
-        attachment.image = image
-        // Center the square icon on the body font's cap height.
-        attachment.bounds = CGRect(
-            x: 0,
-            y: (bodyFont.capHeight - side) / 2,
-            width: side,
-            height: side
-        )
-        return AttributedString(NSAttributedString(attachment: attachment))
-    }
-
-    /// Applies the link destination to every run of `text` except text
-    /// attachments (wiki file icons, inline math).
-    ///
-    /// A link must never cover an attachment. On long-press, UIKit's text drag
-    /// (`-[_UITextStorageDraggableGeometry draggableObjectsForTextRange:]`)
-    /// collects image-attachment ranges and link ranges separately, then deletes
-    /// each one from a single substring. An attachment inside a link is deleted
-    /// twice and the app aborts with `NSRangeException` ("NSMutableRLEArray
-    /// replaceObjectsInRange:withObject:length:: Out of bounds").
-    private static let attachmentCharacter: Character = "\u{FFFC}"
-
-    private static func applyLink(destination: String?, to text: AttributedString) -> AttributedString {
-        guard let destination,
-              let url = URL(string: destination),
-              url.scheme != nil else {
-            return text
-        }
-        // Find attachments by their U+FFFC character: the attachment attribute's
-        // NSTextAttachment value is not Sendable, so AttributedString can't read it.
-        guard text.characters.contains(attachmentCharacter) else {
-            var linked = text
-            linked.link = url
-            return linked
-        }
-        var linked = AttributedString()
-        for run in text.runs {
-            var piece = AttributedString(text[run.range])
-            if !piece.characters.contains(attachmentCharacter) {
-                piece.link = url
-            }
-            linked.append(piece)
-        }
-        return linked
-    }
-
-    /// Prepends the wiki-link file icon (plus a single space) to already-rendered
-    /// link text. Returns the text unchanged when the link has no icon. The icon
-    /// stays outside the link run; see `applyLink(destination:to:)`.
-    private static func prependWikiIcon(
-        to linkText: AttributedString,
-        destination: String?
-    ) -> AttributedString {
-        guard let icon = wikiLinkFileIcon(for: destination),
-              let attachment = wikiIconAttachment(for: icon) else {
-            return linkText
-        }
-        var decorated = attachment
-        decorated.append(AttributedString(" "))
-        decorated.append(linkText)
-        return decorated
-    }
-
-    /// Whether any inline (at any nesting depth) draws as an attachment: a wiki
-    /// link with a leading file icon, or a badge.
-    private static func containsAttachmentInline(_ inlines: [MarkdownInline]) -> Bool {
-        for inline in inlines {
-            switch inline {
-            case .link(_, let destination):
-                if wikiLinkFileIcon(for: destination) != nil { return true }
-            case .emphasis(let children),
-                 .strong(let children),
-                 .strikethrough(let children):
-                if containsAttachmentInline(children) { return true }
-            case .html(let raw):
-                if MarkdownBadge(markup: raw) != nil { return true }
-            case .text, .code, .image, .videoEmbed, .audioEmbed, .usdzEmbed, .softBreak, .hardBreak:
-                continue
-            }
-        }
-        return false
-    }
-
-    /// Direct-append inline renderer used only when a paragraph contains an
-    /// attachment inline. Mirrors `renderInlineLatexInlines` (minus math
-    /// parsing) so attachments can be emitted; the range-based path in
-    /// `renderInlinesCore` builds from plain text and cannot carry attachments.
-    private static func renderInlinesDirectAppend(
-        _ inlines: [MarkdownInline],
-        palette: ThemePalette,
-        defaultColor: UIColor?
-    ) -> AttributedString {
-        var result = AttributedString()
-        // Badges written back to back join into one bar.
-        var previousSegment: MarkdownBadge?
-        for (index, inline) in inlines.enumerated() {
-            guard case .html(let raw) = inline, let badge = MarkdownBadge(markup: raw) else {
-                previousSegment = nil
-                result.append(renderInlineDirectAppend(inline, palette: palette, defaultColor: defaultColor))
-                continue
-            }
-            let next = inlines.index(after: index) < inlines.endIndex
-                ? inlines[inlines.index(after: index)] : nil
-            let nextIsSegment: Bool = {
-                guard case .html(let nextRaw) = next else { return false }
-                return MarkdownBadge(markup: nextRaw)?.shape == .segment
-            }()
-            result.append(MarkdownBadgeAttachment.attributedString(
-                badge,
-                joiningAfter: badge.shape == .segment ? previousSegment : nil,
-                endsBar: badge.shape == .segment && !nextIsSegment,
-                palette: palette
-            ))
-            previousSegment = badge.shape == .segment ? badge : nil
-        }
-        return result
-    }
-
-    private static func renderInlineDirectAppend(
-        _ inline: MarkdownInline,
-        palette: ThemePalette,
-        defaultColor: UIColor?
-    ) -> AttributedString {
-        switch inline {
-        case .text(let string):
-            var result = AttributedString(string)
-            if let color = defaultColor {
-                result.uiKit.foregroundColor = color
-            }
-            return result
-        case .emphasis(let children):
-            var result = renderInlinesDirectAppend(children, palette: palette, defaultColor: defaultColor)
-            result.inlinePresentationIntent = .emphasized
-            return result
-        case .strong(let children):
-            var result = renderInlinesDirectAppend(children, palette: palette, defaultColor: defaultColor)
-            result.inlinePresentationIntent = .stronglyEmphasized
-            return result
-        case .strikethrough(let children):
-            var result = renderInlinesDirectAppend(children, palette: palette, defaultColor: defaultColor)
-            result.uiKit.strikethroughStyle = .single
-            return result
-        case .code(let code):
-            var result = AttributedString(code)
-            result.uiKit.font = AppFont.messageInlineCode
-            result.uiKit.foregroundColor = palette.ui.mdCode
-            result.uiKit.backgroundColor = palette.ui.bgHighlight
-            return result
-        case .link(let children, let destination):
-            var result = renderInlinesDirectAppend(children, palette: palette, defaultColor: nil)
-            result.uiKit.foregroundColor = palette.ui.mdLink
-            result.uiKit.underlineStyle = linkUnderline(destination: destination)
-            return applyLink(
-                destination: destination,
-                to: prependWikiIcon(to: result, destination: destination)
-            )
-        case .image(let alt, _):
-            var result = AttributedString(imageFallbackText(alt: alt))
-            result.uiKit.foregroundColor = palette.ui.comment
-            return result
-        case .videoEmbed(let embed):
-            return videoFallbackAttributedString(embed, palette: palette)
-        case .audioEmbed(let embed):
-            return audioFallbackAttributedString(embed, palette: palette)
-        case .usdzEmbed(let embed):
-            return usdzFallbackAttributedString(embed, palette: palette)
-        case .softBreak, .hardBreak:
-            var result = AttributedString("\n")
-            if let color = defaultColor {
-                result.uiKit.foregroundColor = color
-            }
-            return result
-        case .html(let raw):
-            var result = AttributedString(raw)
-            result.uiKit.foregroundColor = palette.ui.comment
-            return result
-        }
-    }
-
     // MARK: - UIFont Helpers
+
+    private static func inlineStyle(palette: ThemePalette, font: UIFont, color: UIColor) -> MarkdownInlineRenderer.Style {
+        MarkdownInlineRenderer.Style(
+            font: font,
+            color: color,
+            linkColor: palette.ui.mdLink,
+            codeFont: AppFont.messageInlineCode,
+            codeColor: palette.ui.mdCode,
+            codeBackground: palette.ui.bgHighlight,
+            mutedColor: palette.ui.comment,
+            palette: palette
+        )
+    }
 
     private static func headingColor(level: Int, palette: ThemePalette) -> UIColor {
         switch level {

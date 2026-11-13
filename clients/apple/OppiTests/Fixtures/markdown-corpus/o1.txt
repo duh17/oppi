@@ -1,0 +1,11 @@
+org: o1 dollars and stars
+known-wrong: the Org serializer leaves $5*2 or (2*$3) for cmark to read as emphasis
+@@@@ source
+* Heading
+Costs $5*2 or (2*$3) total and $x_1$ math.
+@@@@ tree
+ORG→MD: # Heading⏎⏎Costs $5*2 or (2*$3) total and $x_1$ math.
+H1: T(Heading)
+P: T(Costs $5)EM[T(2 or (2)]T($3) total and )MATH(x_1)T( math.)
+@@@@ render
+TEXT: Heading⏎⏎Costs $5<i>2 or (2</i>$3) total and ⟦x_1⟧ math.

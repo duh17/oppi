@@ -1,0 +1,11 @@
+m19 unclosed display math (streaming partial)
+@@@@ source
+Result:
+
+$$
+a_1 * b_1 * c
+@@@@ tree
+P: T(Result:)
+MATHBLOCK[open]: a_1 * b_1 * c
+@@@@ render
+TEXT: Result:⏎⏎$$⏎a_1 * b_1 * c

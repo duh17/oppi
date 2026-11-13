@@ -1,0 +1,7 @@
+m03 currency then word then currency (closing $ followed by letter/space)
+@@@@ source
+It costs $5 for a and $b for the rest.
+@@@@ tree
+P: T(It costs $5 for a and $b for the rest.)
+@@@@ render
+TEXT: It costs $5 for a and $b for the rest.

@@ -1,0 +1,13 @@
+n10 table cell math with stars and bold
+@@@@ source
+| A | B |
+|---|---|
+| $a*b*c$ | **$x_1$** and $\frac{1}{2}$ |
+@@@@ tree
+TABLE
+  hdr: T(A) ‖ T(B)
+  row: MATH(a*b*c) ‖ B[MATH(x_1)]T( and )MATH(\frac{1}{2})
+@@@@ render
+TABLE
+  hdr: <b>A</b> ‖ <b>B</b>
+  row: ⟦a * b * c⟧ ‖ ⟦x_1⟧ and ⟦1/2⟧

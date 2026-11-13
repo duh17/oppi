@@ -100,6 +100,29 @@ struct MarkdownTableStreamingGateTests {
         #expect(rowCount == rows.count)
     }
 
+    /// A lone `|` under a delimiter row may still become a row, so the table
+    /// stays open while that line streams as text below it. When the row
+    /// arrives with the next block, the table view gets it although a text
+    /// segment, not the table, is the streaming tail.
+    @Test func tableHeldOpenAboveTheStreamingTextGetsItsRow() throws {
+        let view = AssistantMarkdownContentView()
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 370, height: 800))
+        view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+        let table = "Intro.\n\n| Case | Cost |\n| --- | --- |\n|"
+        for content in [table, table + " A8 | $8.50 |\n\n- The bound holds"] {
+            view.apply(configuration: .make(content: content, isStreaming: true, themeID: .dark))
+            container.layoutIfNeeded()
+        }
+        let tableView = try #require(timelineFirstView(ofType: NativeTableBlockView.self, in: view))
+        #expect(tableView.debugClipTextForTesting?.string.contains("A8") == true)
+    }
+
     @Test func tailTableHidesItsRowUntilTheLineEnds() {
         let table: MarkdownBlock = .table(
             headers: [[.text("A")]],

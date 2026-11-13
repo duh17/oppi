@@ -1,0 +1,7 @@
+m41 html inline with dollars
+@@@@ source
+<span>$a_1$</span> and <kbd>$</kbd> key $b$.
+@@@@ tree
+P: HTML(<span>)MATH(a_1)HTML(</span>)T( and )HTML(<kbd>)T($)HTML(</kbd>)T( key )MATH(b)T(.)
+@@@@ render
+TEXT: <span>⟦a_1⟧</span> and <kbd>$</kbd> key ⟦b⟧.

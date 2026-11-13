@@ -1,0 +1,7 @@
+n14 dollar before closing bold
+@@@@ source
+Total: **$5** and **$6** and *$7*.
+@@@@ tree
+P: T(Total: )B[T($5)]T( and )B[T($6)]T( and )EM[T($7)]T(.)
+@@@@ render
+TEXT: Total: <b>$5</b> and <b>$6</b> and <i>$7</i>.

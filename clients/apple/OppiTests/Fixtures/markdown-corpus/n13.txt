@@ -1,0 +1,9 @@
+n13 single-quote primes and dashes in unprotected math-ish
+@@@@ source
+Let f'(x) -- the derivative -- be "nice"; $f'(x) = 2x$ and $$g''(x)--h$$.
+@@@@ tree
+P: T(Let f'(x) -- the derivative -- be "nice"; )MATH(f'(x) = 2x)T( and )DMATH(g''(x)--h)T(.)
+@@@@ render
+TEXT: Let f'(x) -- the derivative -- be "nice"; ⟦f'(x) = 2x⟧ and 
+LATEX: g''(x)--h
+TEXT: .

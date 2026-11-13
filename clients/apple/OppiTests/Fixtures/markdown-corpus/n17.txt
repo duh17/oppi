@@ -1,0 +1,11 @@
+n17 image with wiki-like alt
+@@@@ source
+![[weird]name.png]] and ![a|b](img/x.png) and ![[img/y.png|alt | more]]
+@@@@ tree
+P: IMG(weird]name.png→weird]name.png)T( and )IMG(a|b→img/x.png)T( and )IMG(alt | more→img/y.png)
+@@@@ render
+IMAGE(weird]name.png → https://oppi.invalid/workspaces/ws/raw/weird%5Dname.png)
+TEXT:  and 
+IMAGE(a|b → https://oppi.invalid/workspaces/ws/raw/img/x.png)
+TEXT:  and 
+IMAGE(alt | more → https://oppi.invalid/workspaces/ws/raw/img/y.png)

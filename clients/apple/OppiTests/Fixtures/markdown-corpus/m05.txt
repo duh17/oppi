@@ -1,0 +1,7 @@
+m05 currency pair with trailing punctuation
+@@@@ source
+Between $5 and $10, or (USD$3 - USD$4).
+@@@@ tree
+P: T(Between $5 and $10, or (USD$3 - USD$4).)
+@@@@ render
+TEXT: Between $5 and $10, or (USD$3 - USD$4).

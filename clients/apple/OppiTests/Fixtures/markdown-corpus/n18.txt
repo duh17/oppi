@@ -1,0 +1,14 @@
+n18 embed alone in list and quote
+@@@@ source
+- ![[clips/a.mp4]]
+> ![[img/y.png]]
+@@@@ tree
+UL
+  •
+    P: VIDEO(clips/a.mp4)
+QUOTE
+  P: IMG(img/y.png→img/y.png)
+@@@@ render
+TEXT:   • 
+VIDEO(clips/a.mp4)
+TEXT: ▎ [img/y.png]

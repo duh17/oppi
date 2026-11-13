@@ -19,6 +19,8 @@ final class AssistantMarkdownSegmentSource {
     /// rebuilding.
     private struct StreamingSegmentState {
         var prefixBlocks: [MarkdownBlock]
+        /// Identities of `prefixBlocks` (`CommonMarkStreamingParseResult.blockIDs`).
+        var prefixBlockIDs: [Int]
         var prefixSegments: [FlatSegment]
         var buildContext: SegmentBuildContext
     }
@@ -54,11 +56,19 @@ final class AssistantMarkdownSegmentSource {
     /// How the last build's final text segment differs from the previous
     /// build's. Nil when the segment was rebuilt or the build context changed.
     private(set) var lastStreamingTextEdit: StreamingTextEdit?
-    /// Whether the content of the last build ends inside an unclosed fence.
-    /// Only live streaming rendering reads it. The streaming path reads only the
-    /// open tail, which is the only place an unclosed fence can start: a frozen
-    /// prefix ends at a block boundary.
+    /// Whether the content of the last build ends inside an unclosed code or
+    /// math fence, as the streaming parse reported it. Only live streaming
+    /// rendering reads it.
     private(set) var lastBuildHasUnclosedCodeFence = false
+    /// The last streaming build could not extend the segments it had: a block
+    /// it had frozen changed (a replacement, or a link definition that resolved
+    /// an earlier link). Every segment may differ, so the views rebuild.
+    private(set) var lastBuildReplacedFrozenSegments = false
+    /// Index of the last streaming build's first segment drawn from blocks that
+    /// are still open. Segments before it are frozen; any from it on can
+    /// change, not only the last one (a table held open below a paragraph
+    /// that may yet become a row).
+    private(set) var lastBuildOpenSegmentStart = 0
 
     #if DEBUG
     /// Frozen-prefix blocks built since `reset()`. A steady stream builds each
@@ -72,6 +82,8 @@ final class AssistantMarkdownSegmentSource {
         streamingTextTail = nil
         lastStreamingTextEdit = nil
         lastBuildHasUnclosedCodeFence = false
+        lastBuildReplacedFrozenSegments = false
+        lastBuildOpenSegmentStart = 0
         #if DEBUG
         debugPrefixBlockBuildCountForTesting = 0
         #endif
@@ -87,8 +99,6 @@ final class AssistantMarkdownSegmentSource {
         lastStreamingTextEdit = nil
 
         if config.isStreaming {
-            // The incremental path reads fence parity from the parse's open
-            // tail. Scanning the whole answer here would undo its work.
             return Self.applyReaderPreferences(to: buildSegmentsIncremental(config), config: config)
         }
 
@@ -96,6 +106,7 @@ final class AssistantMarkdownSegmentSource {
         // path above already answered; no other caller reads it. The text a
         // canonical build hands the applier is not the streamed tail.
         lastBuildHasUnclosedCodeFence = false
+        lastBuildReplacedFrozenSegments = false
         streamingTextTail = nil
 
         if mergeAdjacentTextSegments,
@@ -182,7 +193,12 @@ final class AssistantMarkdownSegmentSource {
         lastStreamingTextEdit = nil
         streamingTextTail = nil
         let parseStart = MarkdownStreamingPerf.timestampNs()
-        let blocks = parseCommonMarkLocated(content)
+        // One parse gives the blocks and, while streaming, whether the text
+        // ends in an open fence.
+        let parsed = parseCommonMarkTail(content)
+        let blocks = zip(parsed.blocks, parsed.blockLineRanges).map { LocatedMarkdownBlock(block: $0, lineRange: $1) }
+        lastBuildHasUnclosedCodeFence = config.isStreaming && parsed.endsInOpenBlock
+        lastBuildReplacedFrozenSegments = false
         let parseEnd = MarkdownStreamingPerf.timestampNs()
         let build = FlatSegment.buildWithSourceLineRanges(
             from: blocks,
@@ -218,87 +234,6 @@ final class AssistantMarkdownSegmentSource {
         )
     }
 
-    /// Whether the whole document ends inside an unclosed fenced code block,
-    /// from the source bytes alone. Callers that have a parse result use the
-    /// overload below: cmark closes a fence that opened inside a container when
-    /// the container ends, which a line scan cannot see.
-    static func hasUnclosedCodeFence(_ content: String) -> Bool {
-        endsInsideOpenFence(content.utf8[...])
-    }
-
-    /// Fence parity of the region starting at `offset`. The frozen streaming
-    /// prefix ends at a top-level block boundary, so it holds no open fence and
-    /// the tail alone decides; scanning it keeps a tick O(appended text).
-    ///
-    /// `endsInCodeBlock` is what cmark parsed for the end of the region: only a
-    /// document whose last top-level block is a code block can still be inside
-    /// one. The scan then answers whether that fence marker closed.
-    static func hasUnclosedCodeFence(
-        _ content: String,
-        fromUTF8Offset offset: Int,
-        endsInCodeBlock: Bool
-    ) -> Bool {
-        guard endsInCodeBlock else { return false }
-        let bytes = content.utf8
-        let start = bytes.index(bytes.endIndex, offsetBy: offset - bytes.count)
-        return endsInsideOpenFence(bytes[start...])
-    }
-
-    /// Whether the region's last renderable block is a code block, following the
-    /// last item of a trailing list: a fence inside the final list item still
-    /// streams as a `.codeBlock` segment, so the region ends inside one even
-    /// though its last *top-level* block is a list.
-    ///
-    /// Block quotes are not followed: `FlatSegment` renders a code block inside
-    /// a quote as quoted text, so no trailing code view depends on the verdict.
-    /// Internal so the streaming suite can check the production verdict instead
-    /// of a copy.
-    static func endsInCodeBlock(_ block: MarkdownBlock?) -> Bool {
-        guard let block else { return false }
-        switch block {
-        case .codeBlock:
-            return true
-        case .unorderedList(let items):
-            return endsInCodeBlock(items.last?.last)
-        case .orderedList(_, let items):
-            return endsInCodeBlock(items.last?.last)
-        case .taskList(let items):
-            return endsInCodeBlock(items.last?.content.last)
-        case .heading, .paragraph, .blockQuote, .thematicBreak, .table, .htmlBlock:
-            return false
-        }
-    }
-
-    /// Walks fence lines tracking the open marker: a closing fence repeats the
-    /// opener's character, is at least as long, and carries nothing else, so a
-    /// `~~~` fence keeps ``` lines as content instead of closing on them.
-    private static func endsInsideOpenFence<Bytes: Collection>(_ region: Bytes) -> Bool
-    where Bytes.Element == UInt8 {
-        let backtick = UInt8(ascii: "`")
-        let tilde = UInt8(ascii: "~")
-        let space = UInt8(ascii: " ")
-        let tab = UInt8(ascii: "\t")
-
-        var openFence: (marker: UInt8, length: Int)?
-        for line in region.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false) {
-            let body = line.drop(while: { $0 == space || $0 == tab })
-            guard let marker = body.first, marker == backtick || marker == tilde else { continue }
-            let length = body.prefix { $0 == marker }.count
-            guard length >= 3 else { continue }
-            let rest = body.dropFirst(length)
-            if let open = openFence {
-                guard open.marker == marker,
-                      length >= open.length,
-                      !rest.contains(where: { $0 != space && $0 != tab })
-                else { continue }
-                openFence = nil
-            } else {
-                openFence = (marker, length)
-            }
-        }
-        return openFence != nil
-    }
-
     // MARK: - Incremental streaming parse (tail-only)
 
     private func buildSegmentsIncremental(
@@ -322,11 +257,8 @@ final class AssistantMarkdownSegmentSource {
         let parseStart = MarkdownStreamingPerf.timestampNs()
         let parsed = streamingParser.parse(config.content)
         let parseEnd = MarkdownStreamingPerf.timestampNs()
-        lastBuildHasUnclosedCodeFence = Self.hasUnclosedCodeFence(
-            config.content,
-            fromUTF8Offset: parsed.tailUTF8Offset,
-            endsInCodeBlock: Self.endsInCodeBlock(parsed.tailBlocks.last)
-        )
+        lastBuildHasUnclosedCodeFence = parsed.endsInOpenBlock
+        let prefixBlockIDs = Array(parsed.blockIDs.prefix(parsed.prefixBlocks.count))
 
         let prefixSegments: [FlatSegment]
         let frozen: FrozenSuffix?
@@ -334,7 +266,8 @@ final class AssistantMarkdownSegmentSource {
            cached.buildContext == buildContext,
            let newlyFrozenCount = Self.newlyFrozenBlockCount(
                parsed.prefixBlocks,
-               after: cached.prefixBlocks,
+               ids: prefixBlockIDs,
+               after: cached,
                carriedForward: parsed.strategy == .tailOnly
            ) {
             // The frozen prefix only ever grows by appending blocks, so the
@@ -357,6 +290,7 @@ final class AssistantMarkdownSegmentSource {
             let extended = Self.appending(suffix, to: cached.prefixSegments)
             prefixSegments = extended.segments
             frozen = FrozenSuffix(segments: suffix, joinedClosingText: extended.grewClosingText)
+            lastBuildReplacedFrozenSegments = false
             #if DEBUG
             debugPrefixBlockBuildCountForTesting += newlyFrozenCount
             #endif
@@ -372,6 +306,7 @@ final class AssistantMarkdownSegmentSource {
                 worktreeId: identity.worktreeId
             )
             frozen = nil
+            lastBuildReplacedFrozenSegments = streamingSegmentState.map { !$0.prefixSegments.isEmpty } ?? false
             #if DEBUG
             debugPrefixBlockBuildCountForTesting += parsed.prefixBlocks.count
             #endif
@@ -391,6 +326,7 @@ final class AssistantMarkdownSegmentSource {
 
         streamingSegmentState = StreamingSegmentState(
             prefixBlocks: parsed.prefixBlocks,
+            prefixBlockIDs: prefixBlockIDs,
             prefixSegments: prefixSegments,
             buildContext: buildContext
         )
@@ -441,20 +377,24 @@ final class AssistantMarkdownSegmentSource {
     // MARK: - Prefix extension
 
     /// Blocks `blocks` grew by since `cached`, or nil when `blocks` does not
-    /// extend it. `carriedForward` says the parser kept its own frozen prefix
-    /// (it only ever appends to it), so the shared blocks need no comparison;
-    /// every other tick compares them before trusting the cached segments.
+    /// extend it. Identities (start offsets) must match first. `carriedForward`
+    /// says the parser kept its own frozen prefix (it only ever appends to it),
+    /// so the shared blocks need no comparison; after a whole-document parse
+    /// their content is compared too, since a link definition can change a
+    /// block in place.
     private static func newlyFrozenBlockCount(
         _ blocks: [MarkdownBlock],
-        after cached: [MarkdownBlock],
+        ids: [Int],
+        after cached: StreamingSegmentState,
         carriedForward: Bool
     ) -> Int? {
-        guard blocks.count >= cached.count else { return nil }
-        guard !carriedForward else { return blocks.count - cached.count }
-        for index in cached.indices where cached[index] != blocks[index] {
-            return nil
+        guard ids.count >= cached.prefixBlockIDs.count, ids.starts(with: cached.prefixBlockIDs) else { return nil }
+        if !carriedForward {
+            for index in cached.prefixBlocks.indices where cached.prefixBlocks[index] != blocks[index] {
+                return nil
+            }
         }
-        return blocks.count - cached.count
+        return blocks.count - cached.prefixBlocks.count
     }
 
     /// Append segments for newly frozen blocks to the cached prefix.
@@ -493,6 +433,7 @@ final class AssistantMarkdownSegmentSource {
     ) -> [FlatSegment] {
         guard case .text(let tailText)? = tail.first else {
             streamingTextTail = nil
+            lastBuildOpenSegmentStart = prefix.count
             return prefix + tail
         }
         let closingText: AttributedString?
@@ -562,7 +503,7 @@ final class AssistantMarkdownSegmentSource {
                         length: candidateNS.length - openedLength
                     ))
                 streamingTextTail = state
-                return Self.assemble(
+                return assemble(
                     prefix: prefix,
                     merged: state.merged,
                     closesWithText: closingText != nil,
@@ -587,7 +528,7 @@ final class AssistantMarkdownSegmentSource {
                 readerPreferences: readerPreferences
             )
             : nil
-        return Self.assemble(prefix: prefix, merged: merged, closesWithText: closingText != nil, tail: tail)
+        return assemble(prefix: prefix, merged: merged, closesWithText: closingText != nil, tail: tail)
     }
 
     /// Text this tick froze that now sits in the emitted segment between the
@@ -637,12 +578,13 @@ final class AssistantMarkdownSegmentSource {
         return true
     }
 
-    private static func assemble(
+    private func assemble(
         prefix: [FlatSegment],
         merged: AttributedString,
         closesWithText: Bool,
         tail: [FlatSegment]
     ) -> [FlatSegment] {
+        lastBuildOpenSegmentStart = closesWithText ? prefix.count - 1 : prefix.count
         var result = closesWithText ? Array(prefix.dropLast()) : prefix
         result.append(.text(merged))
         result.append(contentsOf: tail.dropFirst())

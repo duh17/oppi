@@ -1,0 +1,14 @@
+m29 embed in table (audio/video/image)
+known-wrong: embeds in table cells draw as a link and [alt]
+@@@@ source
+| Clip | Pic |
+|---|---|
+| ![[clips/a.mp4]] | ![alt](img/p.png) |
+@@@@ tree
+TABLE
+  hdr: T(Clip) ‖ T(Pic)
+  row: VIDEO(clips/a.mp4) ‖ IMG(alt→img/p.png)
+@@@@ render
+TABLE
+  hdr: <b>Clip</b> ‖ <b>Pic</b>
+  row: <a>clips/a.mp4</a> ‖ [alt]

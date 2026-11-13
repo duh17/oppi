@@ -1,0 +1,7 @@
+m18 unclosed inline math (streaming partial)
+@@@@ source
+The value $x_1 + y_1 and then *more* text
+@@@@ tree
+P: T(The value $x_1 + y_1 and then )EM[T(more)]T( text)
+@@@@ render
+TEXT: The value $x_1 + y_1 and then <i>more</i> text

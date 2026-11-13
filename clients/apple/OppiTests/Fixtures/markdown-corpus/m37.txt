@@ -1,0 +1,8 @@
+m37 display math one-line with trailing text
+@@@@ source
+$$a_1 * b * c_1 * d$$ (eq. 1)
+@@@@ tree
+P: DMATH(a_1 * b * c_1 * d)T( (eq. 1))
+@@@@ render
+LATEX: a_1 * b * c_1 * d
+TEXT:  (eq. 1)

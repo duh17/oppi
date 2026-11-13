@@ -1,0 +1,7 @@
+n19 autolink-ish wiki
+@@@@ source
+[[https://example.com]] and [[docs/a.md#L10-L20|lines]] and [[docs/a.md#Heading One]]
+@@@@ tree
+P: T([[https://example.com]])T( and )LINK[T(lines)→oppi-resource-reference://resolve?target=docs/a.md%23L10-L20&workspaceId=ws&fileCandidate=docs/a.md&sourceServerId=srv&sourceSessionId=s1&lineAnchor=%23L10-L20&label=lines]T( and )T([[docs/a.md#Heading One]])
+@@@@ render
+TEXT: [[https://example.com]] and <a>lines</a> and [[docs/a.md#Heading One]]

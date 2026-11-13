@@ -1,0 +1,8 @@
+org: o2 math fragments
+@@@@ source
+Euler \(e^{i\pi} + 1 = 0\) and $a*b*c$ and price $5 and $10.
+@@@@ tree
+ORG→MD: Euler \(e^{i\pi} + 1 = 0\) and $a*b*c$ and price $5 and $10.
+P: T(Euler )MATH(e^{i\pi} + 1 = 0)T( and )MATH(a*b*c)T( and price $5 and $10.)
+@@@@ render
+TEXT: Euler ⟦e^(iπ) + 1 = 0⟧ and ⟦a * b * c⟧ and price $5 and $10.

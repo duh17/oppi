@@ -1,0 +1,14 @@
+m27 wiki link in table with pipe label
+known-wrong: ![[img|300]] reads the size as alt text
+@@@@ source
+| File | Note |
+|---|---|
+| [[docs/a.md|Alpha]] | ![[img/pic.png|300]] |
+@@@@ tree
+TABLE
+  hdr: T(File) ‖ T(Note)
+  row: LINK[T(Alpha)→oppi-resource-reference://resolve?target=docs/a.md&workspaceId=ws&fileCandidate=docs/a.md&sourceServerId=srv&sourceSessionId=s1&label=Alpha] ‖ IMG(300→img/pic.png)
+@@@@ render
+TABLE
+  hdr: <b>File</b> ‖ <b>Note</b>
+  row: <a>Alpha</a> ‖ [300]

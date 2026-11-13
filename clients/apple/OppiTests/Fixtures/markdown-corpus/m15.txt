@@ -1,0 +1,7 @@
+m15 dollar in code span
+@@@@ source
+Run `echo $HOME` and `$x^2$` literally, then $a_1$.
+@@@@ tree
+P: T(Run )CODE(echo $HOME)T( and )CODE($x^2$)T( literally, then )MATH(a_1)T(.)
+@@@@ render
+TEXT: Run <code>echo $HOME</code> and <code>$x^2$</code> literally, then ⟦a_1⟧.

@@ -1,0 +1,10 @@
+m20 display math in blockquote
+@@@@ source
+> $$
+> a_1 * b * c_2 * d
+> $$
+@@@@ tree
+QUOTE
+  MATHBLOCK[closed]: a_1 * b * c_2 * d
+@@@@ render
+LATEX: a_1 * b * c_2 * d

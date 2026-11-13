@@ -14,6 +14,8 @@ struct MarkdownTableGridStyle: Equatable, @unchecked Sendable {
     let link: UIColor
     let code: UIColor
     let fonts: TableInlineText.Fonts
+    /// Formula ink. Not compared: the resolved colors above change with it.
+    let palette: ThemePalette
     /// What the grid shows under a cell, composited over the card it sits on: an
     /// opaque color a view can paint to cover the drawn cell exactly.
     private let plainCellBackground: UIColor
@@ -30,6 +32,7 @@ struct MarkdownTableGridStyle: Equatable, @unchecked Sendable {
         link = palette.ui.blue.resolvedColor(with: traits)
         code = palette.ui.mdCode.resolvedColor(with: traits)
         self.fonts = fonts
+        self.palette = palette
         let card = palette.ui.bgDark.resolvedColor(with: traits)
         plainCellBackground = card
         headerCellBackground = Self.composite(highlight, over: card)
@@ -66,11 +69,20 @@ struct MarkdownTableGridStyle: Equatable, @unchecked Sendable {
     }
 
     var cellColors: TableInlineText.Colors {
-        TableInlineText.Colors(text: bodyText, link: link, code: code, codeBackground: headerBackground)
+        TableInlineText.Colors(text: bodyText, link: link, code: code, codeBackground: headerBackground, palette: palette)
     }
 
     var headerColors: TableInlineText.Colors {
-        TableInlineText.Colors(text: headerText, link: link, code: code, codeBackground: headerBackground)
+        TableInlineText.Colors(text: headerText, link: link, code: code, codeBackground: headerBackground, palette: palette)
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.headerBackground == rhs.headerBackground && lhs.zebraBackground == rhs.zebraBackground
+            && lhs.separator == rhs.separator && lhs.headerText == rhs.headerText
+            && lhs.bodyText == rhs.bodyText && lhs.link == rhs.link && lhs.code == rhs.code
+            && lhs.fonts == rhs.fonts && lhs.plainCellBackground == rhs.plainCellBackground
+            && lhs.headerCellBackground == rhs.headerCellBackground
+            && lhs.zebraCellBackground == rhs.zebraCellBackground
     }
 }
 

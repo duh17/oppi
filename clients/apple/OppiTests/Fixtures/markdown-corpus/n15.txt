@@ -1,0 +1,8 @@
+n15 code span containing backtick-dollar across lines
+@@@@ source
+Use ``a ` b $x$`` and $y^2$ then `multi
+line $z$ span` end $w^2$.
+@@@@ tree
+P: T(Use )CODE(a ` b $x$)T( and )MATH(y^2)T( then )CODE(multi line $z$ span)T( end )MATH(w^2)T(.)
+@@@@ render
+TEXT: Use <code>a ` b $x$</code> and ⟦y^2⟧ then <code>multi line $z$ span</code> end ⟦w^2⟧.

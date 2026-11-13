@@ -7,24 +7,38 @@ enum CommonMarkStreamingParseStrategy: Equatable, Sendable {
 
 struct CommonMarkStreamingParseResult: Equatable, Sendable {
     let blocks: [MarkdownBlock]
+    /// Each block's identity: the UTF-8 offset where it starts. An append never
+    /// moves it, so a block keeps its identity while it grows, and also when it
+    /// changes kind (a paragraph that becomes a setext heading or a table).
+    let blockIDs: [Int]
     let prefixBlocks: [MarkdownBlock]
     let tailBlocks: [MarkdownBlock]
     let strategy: CommonMarkStreamingParseStrategy
     /// UTF-8 byte offset where the open tail starts. The frozen prefix ends at a
-    /// top-level block boundary, so tail-only work (fence parity, line counts)
-    /// can start here instead of re-reading the whole answer. Zero when the
-    /// whole document was the tail.
+    /// top-level block boundary, so tail-only work (line counts) can start here
+    /// instead of re-reading the whole answer. Zero when the whole document was
+    /// the tail.
     let tailUTF8Offset: Int
+    /// The text ends inside a fenced code or math block whose closing line has
+    /// not arrived, as cmark parsed it.
+    let endsInOpenBlock: Bool
+
+    /// The block still receiving bytes.
+    var openBlockID: Int? { blockIDs.last }
 }
 
 /// Incrementally parses a monotonically growing CommonMark document.
 ///
-/// The parser keeps finalized top-level blocks and reparses only the open tail
-/// while the frozen UTF-8 prefix still belongs to this content. It also owns the
-/// single "was this tick an append?" verdict for the streaming path: an append is
-/// proved from the last bytes of the previous content, never from the whole
+/// A top-level block is frozen once a later top-level block has started; each
+/// tick reparses only the open tail from the first unfrozen block, while the
+/// frozen UTF-8 prefix still belongs to this content. The parser also owns the
+/// single "was this tick an append?" verdict for the streaming path: an append
+/// is proved from the last bytes of the previous content, never from the whole
 /// document, so a tick costs O(appended bytes). Anything else is a replacement:
-/// the frozen state is dropped and the canonical full-document parser runs.
+/// the frozen state is dropped and the whole document is parsed.
+///
+/// Unclosed inline syntax (`**bold`, `$x`) stays text until it closes; the
+/// parser never guesses a closer.
 struct CommonMarkStreamingParser: Sendable {
     /// Bytes kept from the end of the previous content. Longer content is an
     /// append only when it repeats them at the same offset.
@@ -33,23 +47,27 @@ struct CommonMarkStreamingParser: Sendable {
     private struct State: Sendable {
         var prefixUTF8ByteCount: Int
         var prefixBlocks: [MarkdownBlock]
-    }
-
-    private struct SuffixScanState: Sendable {
-        var scannedUTF8ByteCount: Int
-        var hasCanonicalTrigger: Bool
+        var prefixBlockIDs: [Int]
     }
 
     private var state: State?
-    private var suffixScanState: SuffixScanState?
     private var trailingSample: [UInt8] = []
     private var lastContentUTF8ByteCount: Int?
+    /// A link-reference definition (`[label]: url`) can change blocks before
+    /// it. The offset of the newest `]:` the stream added keeps whole-document
+    /// parses running until the block holding it is frozen, so a definition
+    /// that completes over several ticks is still seen.
+    private var referenceMarkerOffset: Int?
+    /// The document holds a definition, so a frozen prefix would hide it from
+    /// references after it: every tick parses the whole document.
+    private var holdsReferenceDefinitions = false
 
     mutating func reset() {
         state = nil
-        suffixScanState = nil
         trailingSample = []
         lastContentUTF8ByteCount = nil
+        referenceMarkerOffset = nil
+        holdsReferenceDefinitions = false
     }
 
     mutating func parse(_ content: String) -> CommonMarkStreamingParseResult {
@@ -57,27 +75,20 @@ struct CommonMarkStreamingParser: Sendable {
         let appended = appendedRange(in: contentUTF8)
         defer { recordTrailingSample(contentUTF8) }
 
-        if appended == nil {
+        if let appended {
+            if let marker = Self.lastReferenceMarker(in: contentUTF8, appended: appended) {
+                referenceMarkerOffset = marker
+            }
+        } else {
             state = nil
-        }
-
-        // Display-math delimiters can combine earlier CommonMark blocks, and
-        // link-reference definitions can resolve links in finalized blocks.
-        // False positives intentionally choose the slower canonical path.
-        if requiresCanonicalFullParse(contentUTF8, appendedRange: appended) {
-            state = nil
-            let blocks = parseCommonMark(content)
-            return CommonMarkStreamingParseResult(
-                blocks: blocks,
-                prefixBlocks: [],
-                tailBlocks: blocks,
-                strategy: .full,
-                tailUTF8Offset: 0
-            )
+            referenceMarkerOffset = Self.lastReferenceMarker(in: contentUTF8, appended: 0 ..< contentUTF8.count)
+            holdsReferenceDefinitions = false
         }
 
         if let current = state,
            appended != nil,
+           referenceMarkerOffset == nil,
+           !holdsReferenceDefinitions,
            current.prefixUTF8ByteCount > 0,
            current.prefixUTF8ByteCount < contentUTF8.count {
             let boundary = contentUTF8.index(
@@ -85,43 +96,59 @@ struct CommonMarkStreamingParser: Sendable {
                 offsetBy: current.prefixUTF8ByteCount
             )
             let tailContent = String(content[boundary...])
-            let (tailBlocks, tailLastBlockLine) = tailContent.isEmpty
-                ? ([], 1)
-                : parseCommonMarkWithLastLine(tailContent)
-            let blocks = current.prefixBlocks + tailBlocks
+            let tail = parseCommonMarkTail(tailContent)
+            let tailIDs = Self.byteOffsets(ofLines: tail.blockStartLines, in: tailContent)
+                .map { $0 + current.prefixUTF8ByteCount }
 
             advanceState(
                 contentUTF8: contentUTF8,
                 previousState: current,
                 tailContent: tailContent,
-                tailBlocks: tailBlocks,
-                tailLastBlockLine: tailLastBlockLine
+                tail: tail,
+                tailIDs: tailIDs
             )
 
             return CommonMarkStreamingParseResult(
-                blocks: blocks,
+                blocks: current.prefixBlocks + tail.blocks,
+                blockIDs: current.prefixBlockIDs + tailIDs,
                 prefixBlocks: current.prefixBlocks,
-                tailBlocks: tailBlocks,
+                tailBlocks: tail.blocks,
                 strategy: .tailOnly,
-                tailUTF8Offset: current.prefixUTF8ByteCount
+                tailUTF8Offset: current.prefixUTF8ByteCount,
+                endsInOpenBlock: tail.endsInOpenBlock
             )
         }
 
-        let (blocks, lastBlockLine) = parseCommonMarkWithLastLine(content)
-        let split = splitStablePrefix(
-            content: content,
-            contentUTF8: contentUTF8,
-            blocks: blocks,
-            lastBlockLine: lastBlockLine
-        )
+        let parsed = parseCommonMarkTail(content)
+        let ids = Self.byteOffsets(ofLines: parsed.blockStartLines, in: content)
+        holdsReferenceDefinitions = parsed.hasReferenceDefinitions
+        let split: (state: State?, prefixBlocks: [MarkdownBlock], tailBlocks: [MarkdownBlock])
+        if holdsReferenceDefinitions {
+            split = (nil, [], parsed.blocks)
+        } else {
+            split = splitStablePrefix(
+                content: content,
+                contentUTF8: contentUTF8,
+                blocks: parsed.blocks,
+                ids: ids,
+                lastBlockLine: parsed.lastBlockStartLine
+            )
+        }
         state = split.state
+        // A `]:` in a frozen block that defined nothing can no longer start a
+        // definition.
+        if let marker = referenceMarkerOffset, let frozen = split.state?.prefixUTF8ByteCount, marker < frozen {
+            referenceMarkerOffset = nil
+        }
 
         return CommonMarkStreamingParseResult(
-            blocks: blocks,
+            blocks: parsed.blocks,
+            blockIDs: ids,
             prefixBlocks: split.prefixBlocks,
             tailBlocks: split.tailBlocks,
             strategy: .full,
-            tailUTF8Offset: split.state?.prefixUTF8ByteCount ?? 0
+            tailUTF8Offset: split.state?.prefixUTF8ByteCount ?? 0,
+            endsInOpenBlock: parsed.endsInOpenBlock
         )
     }
 
@@ -129,19 +156,20 @@ struct CommonMarkStreamingParser: Sendable {
         contentUTF8: String.UTF8View,
         previousState: State,
         tailContent: String,
-        tailBlocks: [MarkdownBlock],
-        tailLastBlockLine: Int
+        tail: CommonMarkTailParse,
+        tailIDs: [Int]
     ) {
-        guard tailBlocks.count >= 2, tailLastBlockLine > 1 else {
+        let tailLastBlockLine = tail.lastBlockStartLine
+        guard tail.blocks.count >= 2, tailLastBlockLine > 1 else {
             state = previousState
             return
         }
         if Self.shouldHoldTableOpen(
-            blocks: tailBlocks,
+            blocks: tail.blocks,
             content: tailContent,
             lastBlockLine: tailLastBlockLine
         ) || Self.shouldHoldOrderedListOpen(
-            blocks: tailBlocks,
+            blocks: tail.blocks,
             content: tailContent,
             lastBlockLine: tailLastBlockLine
         ) {
@@ -162,7 +190,8 @@ struct CommonMarkStreamingParser: Sendable {
 
         state = State(
             prefixUTF8ByteCount: newPrefixByteCount,
-            prefixBlocks: previousState.prefixBlocks + tailBlocks.dropLast()
+            prefixBlocks: previousState.prefixBlocks + tail.blocks.dropLast(),
+            prefixBlockIDs: previousState.prefixBlockIDs + tailIDs.dropLast()
         )
     }
 
@@ -170,6 +199,7 @@ struct CommonMarkStreamingParser: Sendable {
         content: String,
         contentUTF8: String.UTF8View,
         blocks: [MarkdownBlock],
+        ids: [Int],
         lastBlockLine: Int
     ) -> (state: State?, prefixBlocks: [MarkdownBlock], tailBlocks: [MarkdownBlock]) {
         guard blocks.count >= 2, lastBlockLine > 1 else {
@@ -196,7 +226,8 @@ struct CommonMarkStreamingParser: Sendable {
         return (
             State(
                 prefixUTF8ByteCount: byteOffset,
-                prefixBlocks: prefixBlocks
+                prefixBlocks: prefixBlocks,
+                prefixBlockIDs: Array(ids.dropLast())
             ),
             prefixBlocks,
             Array(blocks.suffix(1))
@@ -229,56 +260,48 @@ struct CommonMarkStreamingParser: Sendable {
         trailingSample = Array(contentUTF8.suffix(Self.appendSampleByteCount))
     }
 
-    /// One pass over the appended UTF-8 bytes for every delimiter that can make
-    /// an earlier block stale: display math, LaTeX delimiters, and link-reference
-    /// definitions. One overlap byte catches a pair split across ticks, and the
-    /// trigger is sticky because content only grows while streaming. A
-    /// replacement rescans from the start.
-    private mutating func requiresCanonicalFullParse(
-        _ contentUTF8: String.UTF8View,
-        appendedRange: Range<Int>?
-    ) -> Bool {
-        // Sticky only while the document grows: a replacement rescans from the
-        // start, so an earlier delimiter no longer forces the canonical path.
-        if appendedRange != nil, suffixScanState?.hasCanonicalTrigger == true {
-            return true
+    /// The offset of the last `]:` in `appended`, one byte of overlap included
+    /// so a pair split across ticks is found. O(appended bytes).
+    private static func lastReferenceMarker(in contentUTF8: String.UTF8View, appended: Range<Int>) -> Int? {
+        let scanStart = max(0, appended.lowerBound - 1)
+        var offset = scanStart
+        var previous: UInt8?
+        var marker: Int?
+        for byte in contentUTF8[contentUTF8.index(contentUTF8.startIndex, offsetBy: scanStart)...] {
+            if previous == UInt8(ascii: "]"), byte == UInt8(ascii: ":") { marker = offset }
+            previous = byte
+            offset += 1
         }
-
-        let resumedByteCount = appendedRange == nil ? 0 : suffixScanState?.scannedUTF8ByteCount ?? 0
-        let scanStartOffset = max(0, resumedByteCount - 1)
-        let start = contentUTF8.index(
-            contentUTF8.endIndex,
-            offsetBy: scanStartOffset - contentUTF8.count
-        )
-
-        var previousByte: UInt8?
-        for byte in contentUTF8[start...] {
-            if let previousByte, Self.isCanonicalTriggerPair(previousByte, byte) {
-                suffixScanState = SuffixScanState(
-                    scannedUTF8ByteCount: contentUTF8.count,
-                    hasCanonicalTrigger: true
-                )
-                return true
-            }
-            previousByte = byte
-        }
-
-        suffixScanState = SuffixScanState(
-            scannedUTF8ByteCount: contentUTF8.count,
-            hasCanonicalTrigger: false
-        )
-        return false
+        return marker
     }
 
-    private static func isCanonicalTriggerPair(_ previous: UInt8, _ byte: UInt8) -> Bool {
-        let dollar = UInt8(ascii: "$")
-        let backslash = UInt8(ascii: "\\")
-        let openBracket = UInt8(ascii: "[")
-        let closeBracket = UInt8(ascii: "]")
-        let colon = UInt8(ascii: ":")
-        return (previous == dollar && byte == dollar)
-            || (previous == backslash && (byte == openBracket || byte == closeBracket))
-            || (previous == closeBracket && byte == colon)
+    /// UTF-8 offsets of the 1-based `lines` (ascending) in `text`, in one pass.
+    private static func byteOffsets(ofLines lines: [Int], in text: String) -> [Int] {
+        var offsets: [Int] = []
+        offsets.reserveCapacity(lines.count)
+        var next = lines.makeIterator()
+        var wanted = next.next()
+        var line = 1
+        var offset = 0
+        while let target = wanted, target <= line {
+            offsets.append(offset)
+            wanted = next.next()
+        }
+        for byte in text.utf8 {
+            offset += 1
+            guard byte == UInt8(ascii: "\n") else { continue }
+            line += 1
+            while let target = wanted, target <= line {
+                offsets.append(offset)
+                wanted = next.next()
+            }
+            if wanted == nil { break }
+        }
+        while wanted != nil {
+            offsets.append(offset)
+            wanted = next.next()
+        }
+        return offsets
     }
 
     /// A mid-row chunk can make cmark emit a short table plus a pipe paragraph.

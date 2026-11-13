@@ -256,6 +256,9 @@ final class AssistantMarkdownSegmentApplier {
 
     /// Segment types currently rendered — used for structural diff.
     private var renderedSegmentSignatures: [SegmentSignature] = []
+    /// The first open segment of the last apply: blocks frozen since then were
+    /// still open when their views were last given content.
+    private var renderedOpenSegmentStart = 0
     /// Scope-sensitive inputs embedded into links and rendered prefix views.
     private var renderedBuildContext: SegmentRenderContext?
     /// References to text views in the stack for in-place content updates.
@@ -514,9 +517,16 @@ final class AssistantMarkdownSegmentApplier {
         segments: [FlatSegment],
         config: AssistantMarkdownContentView.Configuration,
         sourceLineRanges: [ClosedRange<Int>?] = [],
-        hasUnclosedCodeFence knownFenceState: Bool? = nil,
+        hasUnclosedCodeFence: Bool = false,
+        replacesFrozenSegments: Bool = false,
+        openSegmentStart: Int? = nil,
         streamingTextEdit: StreamingTextEdit? = nil
     ) {
+        // Without a streaming source, only the last segment is open. A segment
+        // that was open at the last apply may have changed as it froze.
+        let currentOpenStart = openSegmentStart ?? max(0, segments.count - 1)
+        let openSegmentStart = min(currentOpenStart, renderedOpenSegmentStart)
+        renderedOpenSegmentStart = currentOpenStart
         self.sourceLineRanges = sourceLineRanges
         if !config.isStreaming {
             chunkSettleAnimator.cancelAndSnap()
@@ -524,12 +534,9 @@ final class AssistantMarkdownSegmentApplier {
 
         let signatures = segments.map(SegmentSignature.init)
         let buildContext = SegmentRenderContext(config)
-        // One fence scan per apply. Per-segment scans starve the 50ms streaming
-        // clock on mermaid-heavy documents. The segment source already read it
-        // from the open tail while streaming; callers without a source scan here.
-        let hasUnclosedCodeFence = knownFenceState
-            ?? AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
-        if renderedBuildContext != buildContext {
+        // A frozen segment changed (the source could not extend its own), so
+        // no view can be assumed current.
+        if renderedBuildContext != buildContext || (config.isStreaming && replacesFrozenSegments) {
             rebuild(
                 segments: segments,
                 signatures: signatures,
@@ -540,6 +547,9 @@ final class AssistantMarkdownSegmentApplier {
         }
 
         if signatures == renderedSegmentSignatures {
+            if config.isStreaming {
+                applyOpenTables(segments, from: openSegmentStart, upTo: segments.count - 1, config: config)
+            }
             updateInPlace(
                 segments: segments,
                 config: config,
@@ -555,7 +565,8 @@ final class AssistantMarkdownSegmentApplier {
                 segments: segments,
                 signatures: signatures,
                 config: config,
-                hasUnclosedCodeFence: hasUnclosedCodeFence
+                hasUnclosedCodeFence: hasUnclosedCodeFence,
+                openSegmentStart: openSegmentStart
             )
         } else {
             // Non-streaming structural change: full rebuild.
@@ -837,7 +848,8 @@ final class AssistantMarkdownSegmentApplier {
         segments: [FlatSegment],
         signatures: [SegmentSignature],
         config: AssistantMarkdownContentView.Configuration,
-        hasUnclosedCodeFence: Bool
+        hasUnclosedCodeFence: Bool,
+        openSegmentStart: Int
     ) {
         chunkSettleAnimator.cancelAndSnap()
         let oldSigs = renderedSegmentSignatures
@@ -868,17 +880,11 @@ final class AssistantMarkdownSegmentApplier {
             return
         }
 
-        // A table kept in the prefix stops being the streaming tail here, and the
-        // flush that started the next block may also have ended its last rows.
-        // Give it those rows now: once frozen it is not applied again until the
-        // message settles, so its rows and "Show all N rows" would lag until then.
-        let oldTail = oldSigs.count - 1
-        if oldTail >= 0, oldTail < commonPrefix,
-           case .table(let headers, let rows) = segments[oldTail],
-           let tableView = tableViews[oldTail] {
-            configureTableChrome(tableView, config: config)
-            tableView.apply(headers: headers, rows: rows, palette: config.themeID.palette)
-        }
+        // A table kept as a view here may still have gained rows: the old tail,
+        // which the flush that started the next block may have finished, and
+        // any table still open. Once frozen a table is not applied again until
+        // the message settles, so its rows and "Show all N rows" would lag.
+        applyOpenTables(segments, from: min(oldSigs.count - 1, openSegmentStart), upTo: commonPrefix, config: config)
 
         // Earlier prefix views are already configured. Skip re-assigning them.
         // incrementalRebuild is only called during streaming; non-streaming
@@ -925,6 +931,23 @@ final class AssistantMarkdownSegmentApplier {
         renderedSegmentSignatures = signatures
 
         ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: stackView)
+    }
+
+    /// Applies the tables in `start ..< end` that already have views: a table
+    /// among the open blocks can gain rows while a later segment is the
+    /// streaming tail. `NativeTableBlockView.apply` returns early when nothing
+    /// changed.
+    private func applyOpenTables(
+        _ segments: [FlatSegment],
+        from start: Int,
+        upTo end: Int,
+        config: AssistantMarkdownContentView.Configuration
+    ) {
+        for index in max(0, start) ..< max(max(0, start), min(end, segments.count)) {
+            guard case .table(let headers, let rows) = segments[index], let tableView = tableViews[index] else { continue }
+            configureTableChrome(tableView, config: config)
+            tableView.apply(headers: headers, rows: rows, palette: config.themeID.palette)
+        }
     }
 
     private func updateInPlace(

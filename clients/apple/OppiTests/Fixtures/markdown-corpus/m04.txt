@@ -1,0 +1,7 @@
+m04 two currencies with units
+@@@@ source
+Pay $5/month or $50/year, whichever.
+@@@@ tree
+P: T(Pay $5/month or $50/year, whichever.)
+@@@@ render
+TEXT: Pay $5/month or $50/year, whichever.

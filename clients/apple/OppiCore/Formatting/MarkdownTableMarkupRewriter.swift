@@ -20,7 +20,7 @@ enum MarkdownTableMarkupRewriter {
     // MARK: - Delimiter rows
 
     private static func normalizeDelimiterRows(_ source: String) -> String {
-        guard source.contains("|") else { return source }
+        guard mayHaveNearMissDelimiterRow(source) else { return source }
 
         var openFence: (character: Character, count: Int)?
         var awaitingDelimiter = false
@@ -63,6 +63,33 @@ enum MarkdownTableMarkupRewriter {
         return lines.joined(separator: "\n")
     }
 
+    /// Whether some line could be a delimiter row this rewrite changes: only
+    /// pipes, colons, dashes and spaces, with at least one pipe and at least
+    /// one org `+` or non-ASCII dash (every one in `dashLike` starts with byte
+    /// `E2`). One pass over the bytes; prose fails on its first letter, so most
+    /// documents never reach the line split below.
+    private static func mayHaveNearMissDelimiterRow(_ source: String) -> Bool {
+        UTF8Search.withBytes(of: source) { bytes in
+            var isCandidate = true
+            var hasPipe = false
+            var hasMark = false
+            for byte in bytes {
+                switch byte {
+                case 0x0A:
+                    if isCandidate, hasPipe, hasMark { return true }
+                    isCandidate = true
+                    hasPipe = false
+                    hasMark = false
+                case 0x7C: hasPipe = true
+                case 0x2B, 0xE2: hasMark = true
+                case 0x2D, 0x3A, 0x20, 0x09, 0x0D, 0x80 ... 0xBF: break
+                default: isCandidate = false
+                }
+            }
+            return isCandidate && hasPipe && hasMark
+        }
+    }
+
     private static func normalizedDelimiterRow(_ line: String) -> String? {
         guard line.contains("|") else { return nil }
         let cells = line.split(separator: "|", omittingEmptySubsequences: false)
@@ -94,9 +121,7 @@ enum MarkdownTableMarkupRewriter {
     // MARK: - HTML tables
 
     private static func replaceHTMLTables(inUnfencedRegionsOf source: String) -> String {
-        guard source.range(of: "<table", options: .caseInsensitive) != nil else {
-            return source
-        }
+        guard containsTableTag(source) else { return source }
 
         var result = ""
         result.reserveCapacity(source.utf8.count)
@@ -131,6 +156,21 @@ enum MarkdownTableMarkupRewriter {
         }
         flush(transform: openFence == nil)
         return result
+    }
+
+    /// `<table` in any letter case, by bytes: a case-insensitive Foundation
+    /// search cost more than parsing the whole document.
+    private static func containsTableTag(_ source: String) -> Bool {
+        UTF8Search.withBytes(of: source) { bytes in
+            let tag: [UInt8] = Array("table".utf8)
+            var index = 0
+            while index < bytes.count, let base = bytes.baseAddress,
+                  let open = memchr(base + index, Int32(UInt8(ascii: "<")), bytes.count - index) {
+                index = UnsafeRawPointer(base).distance(to: open) + 1
+                if bytes[index...].starts(with: tag, by: { $0 | 0x20 == $1 }) { return true }
+            }
+            return false
+        }
     }
 
     private static func replaceSimpleHTMLTables(in source: String) -> String {

@@ -1,0 +1,7 @@
+m01 fixed: prices in prose
+@@@@ source
+Cost went from $7.76 to $49.56 (+$41.80).
+@@@@ tree
+P: T(Cost went from $7.76 to $49.56 (+$41.80).)
+@@@@ render
+TEXT: Cost went from $7.76 to $49.56 (+$41.80).

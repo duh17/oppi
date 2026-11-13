@@ -186,7 +186,8 @@ final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextViewDeleg
         textViewDelegate: any UITextViewDelegate,
         doubleTapActivation: (() -> Void)?,
         canonicalWidth: CGFloat? = nil,
-        preparesImagesForDisplay: Bool = true
+        preparesImagesForDisplay: Bool = true,
+        hasUnclosedCodeFence: Bool = false
     ) {
         // Source-line chrome overlays the cell; arranged content always uses
         // the canonical width, less the reading-column inset `bindReaderChrome`
@@ -206,7 +207,8 @@ final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextViewDeleg
         segmentApplier.apply(
             segments: [segment],
             config: config,
-            sourceLineRanges: [sourceLineRange]
+            sourceLineRanges: [sourceLineRange],
+            hasUnclosedCodeFence: hasUnclosedCodeFence
         )
         stackView.invalidateIntrinsicContentSize()
         contentView.invalidateIntrinsicContentSize()

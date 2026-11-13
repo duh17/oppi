@@ -1,0 +1,7 @@
+m45 image embeds: markdown and wiki, unknown type
+@@@@ source
+![[data/report.pdf]] and ![[data/table.csv|Table]] and ![chart](data/chart.html)
+@@@@ tree
+P: LINK[T(data/report.pdf)→oppi-resource-reference://resolve?target=data/report.pdf&workspaceId=ws&fileCandidate=data/report.pdf&sourceServerId=srv&sourceSessionId=s1&label=data/report.pdf]T( and )LINK[T(Table)→oppi-resource-reference://resolve?target=data/table.csv&workspaceId=ws&fileCandidate=data/table.csv&sourceServerId=srv&sourceSessionId=s1&label=Table]T( and )LINK[T(chart)→oppi-resource-reference://resolve?target=data/chart.html&workspaceId=ws&fileCandidate=data/chart.html&sourceServerId=srv&sourceSessionId=s1&label=chart]
+@@@@ render
+TEXT: ◆ <a>data/report.pdf</a> and <a>Table</a> and <a>chart</a>

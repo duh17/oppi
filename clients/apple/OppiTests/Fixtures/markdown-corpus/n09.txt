@@ -1,0 +1,7 @@
+n09 math in heading with stars
+@@@@ source
+## The $a*b*c$ rule
+@@@@ tree
+H2: T(The )MATH(a*b*c)T( rule)
+@@@@ render
+TEXT: The ⟦a * b * c⟧ rule

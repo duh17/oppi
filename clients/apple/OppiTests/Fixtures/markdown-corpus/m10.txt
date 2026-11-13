@@ -1,0 +1,13 @@
+m10 math in table cell
+@@@@ source
+| Name | Formula |
+|---|---|
+| Circle | $\pi r^2$ |
+@@@@ tree
+TABLE
+  hdr: T(Name) ‖ T(Formula)
+  row: T(Circle) ‖ MATH(\pi r^2)
+@@@@ render
+TABLE
+  hdr: <b>Name</b> ‖ <b>Formula</b>
+  row: Circle ‖ ⟦πr^2⟧

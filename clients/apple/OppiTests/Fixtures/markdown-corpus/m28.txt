@@ -1,0 +1,8 @@
+m28 wiki link label containing pipe and bracket
+known-wrong: the first ]] closes the link: label [c then ]
+@@@@ source
+See [[docs/a.md|A | B]] and [[docs/b.md|x]y]] and [[docs/c.md|[c]]].
+@@@@ tree
+P: T(See )LINK[T(A | B)→oppi-resource-reference://resolve?target=docs/a.md&workspaceId=ws&fileCandidate=docs/a.md&sourceServerId=srv&sourceSessionId=s1&label=A%20%7C%20B]T( and )LINK[T(x]y)→oppi-resource-reference://resolve?target=docs/b.md&workspaceId=ws&fileCandidate=docs/b.md&sourceServerId=srv&sourceSessionId=s1&label=x%5Dy]T( and )LINK[T([c)→oppi-resource-reference://resolve?target=docs/c.md&workspaceId=ws&fileCandidate=docs/c.md&sourceServerId=srv&sourceSessionId=s1&label=%5Bc]T(].)
+@@@@ render
+TEXT: See <a>A | B</a> and <a>x]y</a> and <a>[c</a>].

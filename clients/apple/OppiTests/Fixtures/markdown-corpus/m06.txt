@@ -1,0 +1,7 @@
+m06 price range with dash
+@@@@ source
+A $20-$30 fee applies.
+@@@@ tree
+P: T(A $20-$30 fee applies.)
+@@@@ render
+TEXT: A $20-$30 fee applies.

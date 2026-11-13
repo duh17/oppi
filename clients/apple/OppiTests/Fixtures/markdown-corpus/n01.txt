@@ -1,0 +1,7 @@
+n01 PATH in prose
+@@@@ source
+Then export PATH=$PATH:$HOME/bin in your shell.
+@@@@ tree
+P: T(Then export PATH=$PATH:$HOME/bin in your shell.)
+@@@@ render
+TEXT: Then export PATH=$PATH:$HOME/bin in your shell.

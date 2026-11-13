@@ -1,0 +1,7 @@
+n04 brackets + emphasis in math
+@@@@ source
+Compute $x[1]*y*z$ here.
+@@@@ tree
+P: T(Compute )MATH(x[1]*y*z)T( here.)
+@@@@ render
+TEXT: Compute ⟦x[1] * y * z⟧ here.

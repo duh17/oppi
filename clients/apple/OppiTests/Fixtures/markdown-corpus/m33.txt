@@ -1,0 +1,7 @@
+m33 math followed by underscore word
+@@@@ source
+$x$_foo_ and **$x$** done
+@@@@ tree
+P: MATH(x)EM[T(foo)]T( and )B[MATH(x)]T( done)
+@@@@ render
+TEXT: ⟦x⟧<i>foo</i> and ⟦x⟧ done

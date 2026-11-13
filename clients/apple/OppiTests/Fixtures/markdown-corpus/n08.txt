@@ -1,0 +1,11 @@
+n08 unclosed display with stars (stream)
+@@@@ source
+Result:
+
+$$
+a*b*c + d*e
+@@@@ tree
+P: T(Result:)
+MATHBLOCK[open]: a*b*c + d*e
+@@@@ render
+TEXT: Result:⏎⏎$$⏎a*b*c + d*e

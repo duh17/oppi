@@ -1004,7 +1004,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                 textViewDelegate: self,
                 doubleTapActivation: viewportDoubleTapActivation,
                 canonicalWidth: preparedCanonicalWidth,
-                preparesImagesForDisplay: true
+                preparesImagesForDisplay: true,
+                hasUnclosedCodeFence: endsInOpenFence(item: indexPath.item)
             )
             #if DEBUG
             let visibleApplyDuration = MarkdownStreamingPerf.timestampNs() - visibleApplyStart
@@ -1097,6 +1098,12 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             targetY: targetY,
             generation: heightFlushGeneration
         )
+    }
+
+    /// Whether item `item` is the streamed document's last segment and the
+    /// text ends inside an open fence there.
+    private func endsInOpenFence(item: Int) -> Bool {
+        item == renderedSegments.count - 1 && segmentSource.lastBuildHasUnclosedCodeFence
     }
 
     private func parkSegmentViews(from cell: FullScreenMarkdownSegmentCell) {
@@ -1372,7 +1379,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
             canonicalWidth: canonicalWidth,
-            preparesImagesForDisplay: false
+            preparesImagesForDisplay: false,
+            hasUnclosedCodeFence: endsInOpenFence(item: item)
         )
         return cell.measuredFittingHeight(width: canonicalWidth)
     }
@@ -1572,7 +1580,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
             canonicalWidth: canonicalWidth,
-            preparesImagesForDisplay: false
+            preparesImagesForDisplay: false,
+            hasUnclosedCodeFence: endsInOpenFence(item: item)
         )
         isConfiguringCell = false
         let height = cell.measuredFittingHeight(width: canonicalWidth)
@@ -2536,7 +2545,8 @@ extension NativeFullScreenMarkdownBody {
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
             canonicalWidth: canonicalWidth,
-            preparesImagesForDisplay: false
+            preparesImagesForDisplay: false,
+            hasUnclosedCodeFence: endsInOpenFence(item: item)
         )
         return measuringCell.measuredFittingHeight(width: canonicalWidth)
     }

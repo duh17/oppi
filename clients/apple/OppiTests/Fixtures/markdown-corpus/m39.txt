@@ -1,0 +1,7 @@
+m39 backslash-bracket prose
+@@@@ source
+Use regex \[a-z\] and \(group\) literally.
+@@@@ tree
+P: T(Use regex [a-z] and )MATH(group)T( literally.)
+@@@@ render
+TEXT: Use regex [a-z] and ⟦group⟧ literally.

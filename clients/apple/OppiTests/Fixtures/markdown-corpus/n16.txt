@@ -1,0 +1,7 @@
+n16 footnote-ish/link-ish math
+@@@@ source
+Take $a[i](j)$ and [$5](https://a.b) or [$6](https://c.d).
+@@@@ tree
+P: T(Take )MATH(a[i](j))T( and )LINK[T($5)→https://a.b]T( or )LINK[T($6)→https://c.d]T(.)
+@@@@ render
+TEXT: Take ⟦a[i](j)⟧ and <a>$5</a> or <a>$6</a>.
