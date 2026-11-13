@@ -39,19 +39,70 @@ struct PaneDividerMathTests {
         #expect(landscape.ideal == 400)
     }
 
-    /// A window too narrow for both minimums: the companion has no ordinary
-    /// range and opens over the leaf instead of a sliver beside it.
-    @Test func aCompanionThatDoesNotFitBesideStaysFull() {
-        let narrow = PaneWidthPolicy.resolved(minWidth: 320, idealWidth: 400, maxWidth: 640, window: 680)
-        #expect(!narrow.fitsBeside)
-        let outcome = PaneSnapResolver.resolve(
-            rawWidth: 300, widthVelocity: 0, policy: narrow, rememberedWidth: 300, wasFull: true
+    // MARK: No room beside: the divider drag is a dismiss swipe
+
+    /// A reader over the chat on the iPad mini in portrait: full is 724 pt.
+    private let miniPortrait = PaneWidthPolicy.resolved(
+        minWidth: PaneMinimumSize.attached.width, idealWidth: 520, maxWidth: 820, window: 744
+    )
+
+    /// Releases a drag `travel` points toward closing from full.
+    private func releaseNoRoom(
+        travel: CGFloat,
+        velocity: CGFloat = 0,
+        verticalTravel: CGFloat = 0,
+        verticalVelocity: CGFloat = 0
+    ) -> PaneSnapOutcome {
+        PaneSnapResolver.resolve(
+            rawWidth: miniPortrait.full - travel,
+            widthVelocity: -velocity,
+            policy: miniPortrait,
+            rememberedWidth: miniPortrait.ideal,
+            wasFull: false,
+            verticalTravel: verticalTravel,
+            verticalVelocity: verticalVelocity
         )
-        #expect(outcome == .full)
-        let closing = PaneSnapResolver.resolve(
-            rawWidth: 0, widthVelocity: 0, policy: narrow, rememberedWidth: 300, wasFull: true
+    }
+
+    /// A slow drag closes once it is a third of the way across, and the
+    /// haptic tick announces that same point.
+    @Test func aSlowDragClosesAThirdOfTheWayAcross() {
+        #expect(!miniPortrait.fitsBeside)
+        let third = miniPortrait.full / 3
+        #expect(releaseNoRoom(travel: third - 1) == .full)
+        #expect(releaseNoRoom(travel: third + 1) == .closed)
+        #expect(PaneSnapResolver.zone(for: miniPortrait.full - third + 1, policy: miniPortrait) == .expanding)
+        #expect(PaneSnapResolver.zone(for: miniPortrait.full - third - 1, policy: miniPortrait) == .closing)
+        #expect(releaseNoRoom(travel: miniPortrait.full) == .closed, "all the way across still closes")
+        #expect(releaseNoRoom(travel: -80) == .full, "a drag toward the leading edge keeps it full")
+    }
+
+    @Test func aLightFlickClosesButASmallOrSlowReleaseDoesNot() {
+        let flick = PaneSnapResolver.noRoomFlickVelocity
+        let minimumTravel = PaneSnapResolver.noRoomFlickMinimumTravel
+        #expect(releaseNoRoom(travel: minimumTravel, velocity: flick) == .closed)
+        #expect(releaseNoRoom(travel: minimumTravel - 1, velocity: flick * 3) == .full, "a touch that barely moved")
+        #expect(releaseNoRoom(travel: 120, velocity: flick - 1) == .full, "a slow release short of a third")
+        #expect(
+            releaseNoRoom(travel: miniPortrait.full / 2, velocity: -flick) == .full,
+            "a flick back toward full keeps it, however far the drag went"
         )
-        #expect(closing == .closed, "it still closes")
+    }
+
+    @Test func aMostlyVerticalDragOrFlickKeepsItFull() {
+        let flick = PaneSnapResolver.noRoomFlickVelocity
+        #expect(releaseNoRoom(travel: 300, verticalTravel: 300) == .full)
+        #expect(releaseNoRoom(travel: 300, verticalTravel: 200) == .closed, "horizontal still dominates")
+        #expect(releaseNoRoom(travel: 100, velocity: flick * 2, verticalTravel: 40, verticalVelocity: flick * 4) == .full)
+    }
+
+    /// With room beside, the same drag resizes: the ordinary close rule
+    /// (half the minimum) still applies.
+    @Test func aCompanionBesideItsLeafKeepsTheResizeCloseRule() {
+        #expect(PaneSnapResolver.resolve(
+            rawWidth: policy.minimum - 1, widthVelocity: -PaneSnapResolver.noRoomFlickVelocity,
+            policy: policy, rememberedWidth: 320, wasFull: false
+        ) == .width(policy.minimum))
     }
 
     // MARK: Following the finger
@@ -201,7 +252,7 @@ struct PaneDividerPhysicsTests {
         divider.onBegan?()
         divider.onChanged?(-170)
         #expect(host.companionWidth == 520)
-        host.act { divider.onEnded?(-170, 0) }
+        host.act { divider.onEnded?(CGPoint(x: -170, y: 0), .zero) }
         #expect(host.companionWidth == 500)
 
         // Below the minimum, short of the close threshold: resists, then
@@ -211,7 +262,7 @@ struct PaneDividerPhysicsTests {
         let resisted = try #require(host.companionWidth)
         #expect(resisted < 200)
         #expect(resisted > 100)
-        host.act { divider.onEnded?(350, 0) }
+        host.act { divider.onEnded?(CGPoint(x: 350, y: 0), .zero) }
         #expect(host.companionWidth == 200)
     }
 
@@ -246,7 +297,7 @@ struct PaneDividerPhysicsTests {
         // Past the threshold: full is the window but its grab edge, the
         // leaf covered there, and VoiceOver kept in the companion.
         divider.onChanged?(-800)
-        host.act { divider.onEnded?(-800, 0) }
+        host.act { divider.onEnded?(CGPoint(x: -800, y: 0), .zero) }
         host.window.layoutIfNeeded()
         #expect(host.scenePanes.isCompanionZoomed)
         #expect(host.companionWidth == full)
@@ -282,7 +333,7 @@ struct PaneDividerPhysicsTests {
         // Dragging back out of full and releasing mid-range returns to
         // the remembered width (500), not wherever the drag stopped.
         divider.onChanged?(600)
-        host.act { divider.onEnded?(600, 0) }
+        host.act { divider.onEnded?(CGPoint(x: 600, y: 0), .zero) }
         #expect(host.scenePanes.isCompanionZoomed == false)
         #expect(host.companionWidth == 500)
     }
@@ -351,7 +402,7 @@ struct PaneDividerPhysicsTests {
         host.screen.hidePanel()
         divider.onBegan?()
         divider.onChanged?(-100)
-        divider.onEnded?(-100, 0)
+        divider.onEnded?(CGPoint(x: -100, y: 0), .zero)
         #expect(
             await waitForMainActorCondition(timeout: .seconds(3)) { host.companion == nil },
             "the close ran to its end and took the companion off"

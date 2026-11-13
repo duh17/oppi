@@ -128,7 +128,22 @@ enum PaneSnapZone: Equatable {
 }
 
 enum PaneSnapResolver {
+    /// A companion with no room beside its leaf (the iPad mini in portrait)
+    /// covers it with nothing between full and closed, so its divider drag is
+    /// a dismiss swipe and reads like a back swipe: a third of the way across
+    /// closes it. The resize rule (`closeThreshold`, half the minimum) would
+    /// ask for about three quarters of the mini's width.
+    static let noRoomDismissFraction: CGFloat = 1.0 / 3.0
+    /// A light flick toward closing closes it from anywhere past
+    /// `noRoomFlickMinimumTravel`; a flick back toward full keeps it.
+    static let noRoomFlickVelocity: CGFloat = 500
+    /// A touch that barely moved before its release is not a flick.
+    static let noRoomFlickMinimumTravel: CGFloat = 40
+
     static func zone(for width: CGFloat, policy: PaneWidthPolicy) -> PaneSnapZone {
+        if !policy.fitsBeside {
+            return policy.full - width >= policy.full * noRoomDismissFraction ? .closing : .expanding
+        }
         if width <= policy.closeThreshold { return .closing }
         if width >= policy.expandThreshold { return .expanding }
         return .ordinary
@@ -142,20 +157,55 @@ enum PaneSnapResolver {
     /// a clean toggle and not a second free-resize range. `rawWidth` is the
     /// finger's own target, the same one `zone` ticks the haptic for, so a
     /// release decides exactly what the last tick announced. A companion that
-    /// does not fit beside its leaf has no ordinary range: it stays full.
+    /// does not fit beside its leaf has no ordinary range: it closes or stays
+    /// full (`resolveNoRoom`). `verticalTravel` and `verticalVelocity` let a
+    /// mostly vertical drag on the divider count as no swipe there.
     static func resolve(
         rawWidth: CGFloat,
         widthVelocity: CGFloat,
         policy: PaneWidthPolicy,
         rememberedWidth: CGFloat,
         wasFull: Bool,
+        verticalTravel: CGFloat = 0,
+        verticalVelocity: CGFloat = 0,
         projectionSeconds: CGFloat = 0.12
     ) -> PaneSnapOutcome {
+        guard policy.fitsBeside else {
+            return resolveNoRoom(
+                travel: policy.full - rawWidth,
+                closingVelocity: -widthVelocity,
+                verticalTravel: verticalTravel,
+                verticalVelocity: verticalVelocity,
+                policy: policy
+            )
+        }
         let projected = rawWidth + widthVelocity * projectionSeconds
         if projected <= policy.closeThreshold { return .closed }
-        if projected >= policy.expandThreshold || !policy.fitsBeside { return .full }
+        if projected >= policy.expandThreshold { return .full }
         if wasFull { return .width(policy.clampedToOrdinaryRange(rememberedWidth)) }
         return .width(policy.clampedToOrdinaryRange(projected))
+    }
+
+    /// The dismiss swipe of a companion with no room beside its leaf.
+    /// `travel` is how far the divider moved toward closing from full;
+    /// `closingVelocity` is positive toward closing. Horizontal must dominate
+    /// by the ratio every back swipe uses (`NavigationSwipeGesturePolicy`).
+    private static func resolveNoRoom(
+        travel: CGFloat,
+        closingVelocity: CGFloat,
+        verticalTravel: CGFloat,
+        verticalVelocity: CGFloat,
+        policy: PaneWidthPolicy
+    ) -> PaneSnapOutcome {
+        let dominance = NavigationSwipeGesturePolicy.dominanceRatio
+        guard travel > abs(verticalTravel) * dominance else { return .full }
+        let horizontalFlick = abs(closingVelocity) >= noRoomFlickVelocity
+            && abs(closingVelocity) > abs(verticalVelocity) * dominance
+        if horizontalFlick {
+            // The flick's direction decides, as a back swipe's does.
+            return closingVelocity > 0 && travel >= noRoomFlickMinimumTravel ? .closed : .full
+        }
+        return travel >= policy.full * noRoomDismissFraction ? .closed : .full
     }
 }
 
@@ -175,7 +225,7 @@ final class PaneDividerView: UIView {
 
     var onBegan: (() -> Void)?
     var onChanged: ((_ translationX: CGFloat) -> Void)?
-    var onEnded: ((_ translationX: CGFloat, _ velocityX: CGFloat) -> Void)?
+    var onEnded: ((_ translation: CGPoint, _ velocity: CGPoint) -> Void)?
     var onStep: ((_ delta: CGFloat) -> Void)?
     var onExpandRequested: (() -> Void)?
     var onRestoreRequested: (() -> Void)?
@@ -299,7 +349,7 @@ final class PaneDividerView: UIView {
         case .changed:
             onChanged?(recognizer.translation(in: self).x)
         case .ended, .cancelled:
-            onEnded?(recognizer.translation(in: self).x, recognizer.velocity(in: self).x)
+            onEnded?(recognizer.translation(in: self), recognizer.velocity(in: self))
         default:
             break
         }

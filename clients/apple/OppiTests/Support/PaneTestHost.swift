@@ -68,7 +68,7 @@ struct PaneTestHost {
         let divider = divider
         divider.onBegan?()
         divider.onChanged?(translationX)
-        act { divider.onEnded?(translationX, 0) }
+        act { divider.onEnded?(CGPoint(x: translationX, y: 0), .zero) }
     }
 
     func settle() {

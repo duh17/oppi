@@ -13,7 +13,7 @@
       "compiler": 242
     },
     "OppiUITests": {
-      "compiler": 25
+      "compiler": 23
     },
     "QAVerificationSupport": {
       "compiler": 10
@@ -134,7 +134,6 @@
       "OppiTests/Views/UnifiedDiffVirtualizationTests.swift": 1,
       "OppiTests/Workspaces/ServerListRepeatedIdTests.swift": 1,
       "OppiTests/Workspaces/WorkspaceCreateTests.swift": 1,
-      "OppiUITests/FileBrowserTreeToggleUITests.swift": 2,
       "OppiUITests/FullScreenReviewCommentUITests.swift": 1,
       "OppiUITests/MarkdownTablesUITests.swift": 10,
       "OppiUITests/ModelProvidersUITests.swift": 2,

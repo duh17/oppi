@@ -124,7 +124,7 @@ struct PaneLiveResizeTimelineTests {
         let rebuilds = ChatTimelinePerf.layoutRebuildCount
         let measured = ChatTimelinePerf.rowMeasureCount
         // Animations off: the release's spring lands at once.
-        UIView.performWithoutAnimation { handle.onEnded?(translation, 0) }
+        UIView.performWithoutAnimation { handle.onEnded?(CGPoint(x: translation, y: 0), .zero) }
         host.window.layoutIfNeeded()
         return (ChatTimelinePerf.layoutRebuildCount - rebuilds, ChatTimelinePerf.rowMeasureCount - measured)
     }

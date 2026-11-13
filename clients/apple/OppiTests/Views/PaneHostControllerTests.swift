@@ -135,7 +135,7 @@ struct PaneHostControllerTests {
         host.resize(width: 800)
         #expect(host.companionWidth == 320, "0.4 of the new width")
         divider.onChanged?(-200)
-        host.act { divider.onEnded?(-200, 0) }
+        host.act { divider.onEnded?(CGPoint(x: -200, y: 0), .zero) }
         #expect(host.companionWidth == 320, "the cancelled drag moves nothing")
         #expect(abs((host.scenePanes.companionShare ?? 0) - 0.4) < 1e-9)
     }

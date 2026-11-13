@@ -269,8 +269,8 @@ final class PaneHostController: UIViewController {
         view.addSubview(divider)
         divider.onBegan = { [weak self] in self?.dragBegan() }
         divider.onChanged = { [weak self] translationX in self?.dragChanged(translationX: translationX) }
-        divider.onEnded = { [weak self] translationX, velocityX in
-            self?.dragEnded(translationX: translationX, velocityX: velocityX)
+        divider.onEnded = { [weak self] translation, velocity in
+            self?.dragEnded(translation: translation, velocity: velocity)
         }
         divider.onStep = { [weak self] delta in self?.step(by: delta) }
         divider.onExpandRequested = { [weak self] in self?.settle(.full, initialVelocityPointsPerSecond: 0) }
@@ -857,17 +857,19 @@ final class PaneHostController: UIViewController {
         }
     }
 
-    private func dragEnded(translationX: CGFloat, velocityX: CGFloat) {
+    private func dragEnded(translation: CGPoint, velocity: CGPoint) {
         guard let policy, let dragStartWidth else { return }
         self.dragStartWidth = nil
         dragZone = nil
-        let widthVelocity = -velocityX
+        let widthVelocity = -velocity.x
         let outcome = PaneSnapResolver.resolve(
-            rawWidth: dragStartWidth - translationX,
+            rawWidth: dragStartWidth - translation.x,
             widthVelocity: widthVelocity,
             policy: policy,
             rememberedWidth: rememberedWidth(policy: policy),
-            wasFull: isFull
+            wasFull: isFull,
+            verticalTravel: translation.y,
+            verticalVelocity: velocity.y
         )
         resizeHold.dragEnded()
         settle(outcome, initialVelocityPointsPerSecond: widthVelocity)
