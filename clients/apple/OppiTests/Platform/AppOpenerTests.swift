@@ -1934,6 +1934,23 @@ struct AppOpenerTests {
         #expect(harness.recorder.systemURLs == [url])
     }
 
+    /// `oppi://browser?url=` opens its page as a tapped web link does, by the
+    /// Browser setting, and never moves the window to another server; a
+    /// loopback page is no link at all.
+    @Test func browserLinkOpensItsPageLikeAWebLinkWithoutSwitchingServers() async throws {
+        let harness = await OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
+        harness.opener._browserLinkPreferenceForTesting = .inApp
+        let link = try #require(URL(string: "oppi://browser?url=https%3A%2F%2Fexample.com%2Fdocs%3Fq%3D1&server=server-b"))
+
+        harness.opener.open(AppOpenRequest(url: link, origin: .externalURL))
+        await harness.settle()
+
+        #expect(harness.recorder.browserURLs == [try #require(URL(string: "https://example.com/docs?q=1"))])
+        #expect(harness.coordinator.activeServerId == "server-a")
+        let loopback = try #require(URL(string: "oppi://browser?url=http%3A%2F%2Flocalhost%3A5173%2F"))
+        #expect(AppOpenRequest(url: loopback, origin: .externalURL) == .invalidLink(loopback))
+    }
+
     @Test func webLinkAndSystemLinkNeverWaitForLaunch() async throws {
         let harness = await OpenerHarness(servers: [], launch: false)
         let web = try #require(URL(string: "https://example.com/docs"))

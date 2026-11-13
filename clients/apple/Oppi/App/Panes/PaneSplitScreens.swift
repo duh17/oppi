@@ -46,9 +46,20 @@ enum PaneSplitScreens {
         /// The leaf's screen is ready in place of a leaf state.
         var replaceRoot: (UIViewController) -> Void
         var close: () -> Void
+        /// The leaf's screen moved on to `entry` by itself (a browser
+        /// followed a link): the tree records it, the screen stays.
+        var follow: (PaneStackEntry) -> Void = { _ in }
     }
 
-    static func make(_ entry: PaneStackEntry, root: AppRootEnvironment?, actions: Actions) -> UIViewController {
+    /// `restored`: the leaf came back with a relaunch and mounts for the
+    /// first time, so a web page waits for a tap before it loads.
+    static func make(_ entry: PaneStackEntry, root: AppRootEnvironment?, restored: Bool = false, actions: Actions) -> UIViewController {
+        if case .browser(let url) = entry.route {
+            // A page needs no server: it shows whatever its server's state.
+            let browser = BrowserPaneViewController(url: url, paused: restored, root: root)
+            browser.onNavigate = { url in actions.follow(PaneStackEntry(serverId: entry.serverId, route: .browser(url))) }
+            return browser
+        }
         if case .local(let token) = entry.route, let screen = PaneLocalScreen(token) {
             switch screen {
             case .launcher(let workspaceId):

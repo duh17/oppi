@@ -26,12 +26,14 @@ enum PaneLinkError: Error, Hashable, Sendable {
 /// `terminal` links are not pane links and decode to nil.
 ///
 /// Every pane link only opens and takes an optional `server=`. On the pane
-/// links new in v1 (sessions, file, files, git, panel) an unknown or repeated
+/// links new in v1 (sessions, file, files, git, panel, browser) an unknown or repeated
 /// parameter, user-info or a port makes the link invalid; only a file link
 /// takes a fragment, `#L<line>`. Session and thread links keep their older
 /// rule and ignore everything but `server` (a `?workspaceId=` most of all: a
 /// URL never chooses a session's workspace). Route and parameter names are
-/// case-insensitive; encoding writes them lowercase.
+/// case-insensitive; encoding writes them lowercase. A browser link's `url`
+/// follows `PaneWebAddress`: http or https, no user-info, at most 2 KiB, not
+/// loopback; a page that breaks them has no link.
 enum PaneLinkCodec {
     static func decode(_ url: URL) -> Result<PaneLink, PaneLinkError>? {
         guard url.scheme?.lowercased() == "oppi",
@@ -49,7 +51,7 @@ enum PaneLinkCodec {
         switch name {
         case "session", "thread":
             return decodeSession(name: name, path: path, query: query)
-        case "sessions", "file", "files", "git", "panel":
+        case "sessions", "file", "files", "git", "panel", "browser":
             if let component = [
                 ("user", components.user), ("password", components.password),
                 ("port", components.port.map(String.init)),
@@ -105,6 +107,10 @@ enum PaneLinkCodec {
             path = "panel"
             query.append(("session", session))
             query.append(("id", id))
+        case .browser(let url):
+            guard case .success = PaneWebAddress.check(url.absoluteString) else { return nil }
+            path = "browser"
+            query.append(("url", url.absoluteString))
         case .local, .unsupported:
             return nil
         }
@@ -140,6 +146,7 @@ enum PaneLinkCodec {
         case "file": ["workspace", "worktree", "host", "session", "path"]
         case "files": ["workspace", "path"]
         case "git": path.isEmpty ? ["workspace", "worktree"] : ["workspace"]
+        case "browser": ["url"]
         default: ["session", "id"]
         }
         var values: [String: String] = [:]
@@ -180,6 +187,11 @@ enum PaneLinkCodec {
                 route = required("workspace").map { .commit(workspace: $0, sha: sha) }
             default:
                 return .failure(.unexpectedPath)
+            }
+        case "browser":
+            guard path.isEmpty else { return .failure(.unexpectedPath) }
+            route = required("url").flatMap { value in
+                PaneWebAddress.check(value).map(PaneRoute.browser).mapError { _ in .invalidValue("url") }
             }
         default:
             guard path.isEmpty else { return .failure(.unexpectedPath) }

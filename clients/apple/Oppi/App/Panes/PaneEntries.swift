@@ -119,7 +119,7 @@ enum PaneEntries {
                 scope: .workspace(workspaceId: workspaceId, worktreeId: nil),
                 path: path ?? ""
             ))
-        case .sessions(nil), .thread, .git, .commit, .panel, .local, .unsupported:
+        case .sessions(nil), .thread, .git, .commit, .panel, .browser, .local, .unsupported:
             return nil
         }
     }

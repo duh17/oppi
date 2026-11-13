@@ -329,7 +329,8 @@ extension PaneHostController {
 
     private func makeScreen(_ entry: PaneStackEntry, leaf id: PaneID) -> UIViewController {
         if let screen = openingScreens.removeValue(forKey: id) { return screen }
-        return PaneSplitScreens.make(entry, root: AppRootEnvironment.near(self), actions: PaneSplitScreens.Actions(
+        let restored = panes.takeRestored(id)
+        return PaneSplitScreens.make(entry, root: AppRootEnvironment.near(self), restored: restored, actions: PaneSplitScreens.Actions(
             show: { [weak self] entry in
                 self?.panes.show(entry, in: id)
                 self?.focus(cell: id)
@@ -337,7 +338,8 @@ extension PaneHostController {
             replaceRoot: { [weak self] screen in
                 self?.splitLeaves[id]?.controller.setViewControllers([screen], animated: false)
             },
-            close: { [weak self] in self?.closePane(id) }
+            close: { [weak self] in self?.closePane(id) },
+            follow: { [weak self] entry in self?.leaf(id, follows: entry) }
         ))
     }
 

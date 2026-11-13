@@ -115,6 +115,8 @@ enum PaneMinimumSize {
     /// over the chat by the fit rule, and landscape (813 pt beside the
     /// sidebar) puts it beside the chat.
     static let attached = CGSize(width: 390, height: 280)
+    /// A web page: the narrowest width sites lay out for.
+    static let browser = CGSize(width: 320, height: 320)
 
     /// The minimum for a linkable route; nil for `.local`, which only the app can size.
     static func standard(for route: PaneRoute) -> CGSize? {
@@ -122,6 +124,7 @@ enum PaneMinimumSize {
         case .session, .thread: chat
         case .sessions, .files, .git, .panel, .unsupported: list
         case .file, .commit: document
+        case .browser: browser
         case .local: nil
         }
     }

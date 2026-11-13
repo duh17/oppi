@@ -7,9 +7,15 @@ import Foundation
 // paired, a server still connecting, a session it must look up, content
 // behind a scoped lock) opens as the entry's leaf state
 // (`PaneLeafStateViewController`), which turns into the content when it can.
-// A panel opens beside its session's chat (`ScenePanes.openPanel`).
+// A panel opens beside its session's chat (`ScenePanes.openPanel`). A
+// browser link opens its page as a tapped web link does: needing no server,
+// it never switches one.
 extension AppOpener {
     func performPane(_ link: PaneLink, sourceServerID: String?, generation: UInt64) async -> AppOpenOutcome {
+        if case .browser(let url) = link.route {
+            presentWebLink(url)
+            return .finished
+        }
         guard let serverId = link.server ?? sourceServerID ?? windowServerId else {
             toast(String(localized: "No server to open this link on"))
             return .finished

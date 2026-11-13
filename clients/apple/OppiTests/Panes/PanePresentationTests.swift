@@ -46,6 +46,21 @@ struct PanePresentationTests: PaneFixtureBuilding {
         #expect(twoChats.overflow == ids("one"))
     }
 
+    /// A link tapped in the chat opens its page beside it in portrait too, and
+    /// a page held under 320 pt high (a third pane down a column) does not fit.
+    @Test func aWebPageFitsBesideTheChatInMiniPortraitAtItsMinimum() throws {
+        let page = leaf("web", .browser(try #require(URL(string: "https://example.com/"))))
+        let beside = resolve(row([(chat("chat"), 0.5), (page, 0.5)], focus: "web"), size: Self.miniPortrait)
+        #expect(beside.frames[id("chat")]?.width == 375)
+        #expect(beside.frames[id("web")] == CGRect(x: 376, y: 0, width: 368, height: 1133))
+
+        let short = PaneLayout(
+            root: .split(axis: .column, children: [.leaf(chat("chat")), .leaf(page)], weights: [0.5, 0.5]),
+            focus: id("chat"), recency: ids("chat", "web")
+        )
+        #expect(resolve(short, size: CGSize(width: 744, height: 640)).overflow == ids("web"), "320 + 1 + 320 is over 640")
+    }
+
     @Test func miniLandscapeHoldsThreePanesUntilTheSidebarShows() {
         // WA2: 375 + 1 + 320 + 1 + 320 fits 1,133 pt; with a 320 pt sidebar, 813 pt holds two.
         let layout = row([(chat("chat"), 0.5), (list("git"), 0.25), (list("files"), 0.25)], recency: ["chat", "files", "git"])

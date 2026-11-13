@@ -12,8 +12,8 @@ struct PaneChatScroll: Hashable, Sendable, Codable {
 /// What a window saves of its panes so a relaunch shows them again: the tree
 /// with its weights, focus, recency, zoom and collapse, each stack entry as
 /// its server and link, and the chat leaves' reading positions. Screens with
-/// no link (`.local`) are not saved, and a leaf left with no restorable entry
-/// is dropped with the leaves attached to it.
+/// no link (`.local`, a web page no link may name) are not saved, and a leaf
+/// left with no restorable entry is dropped with the leaves attached to it.
 ///
 /// The JSON is versioned (`schemaVersion`); a different version, a link that
 /// no longer decodes as a pane link, or a tree that breaks an invariant
@@ -54,12 +54,15 @@ struct PaneLayoutArchive: Hashable, Sendable {
         return Self(restorable: layout, chatScroll: stored.chatScrollByLeaf, companionFraction: stored.companionFraction)
     }
 
-    /// Drops `.local` entries, then each leaf with nothing left, closing the
-    /// leaves attached to it as Close Pane would.
+    /// Drops entries with no link, then each leaf with nothing left, closing
+    /// the leaves attached to it as Close Pane would.
     private static func restorable(_ layout: PaneLayout) -> PaneLayout? {
         func isLocal(_ entry: PaneStackEntry) -> Bool {
-            if case .local = entry.route { return true }
-            return false
+            switch entry.route {
+            case .local: true
+            case .unsupported: false
+            default: PaneLinkCodec.encode(PaneLink(server: nil, route: entry.route)) == nil
+            }
         }
         guard var layout = try? layout.normalised() else { return nil }
         // Closed while their stacks are whole, so `close` sees a valid tree.

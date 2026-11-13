@@ -51,6 +51,10 @@ enum PaneRoute: Hashable, Sendable {
     case git(workspace: String, worktree: String?)
     case commit(workspace: String, sha: String)
     case panel(session: String, id: String)
+    /// A web page (http or https). A link or a layout names one by the
+    /// `PaneWebAddress` rules; a page the person opened directly may be any
+    /// http or https page, and one with no link is not restored.
+    case browser(URL)
     case local(PaneLocalToken)
     /// A leaf kind from a newer layout file: kept and restored, never written.
     case unsupported(kind: String, raw: [String: JSONValue])

@@ -34,6 +34,10 @@ final class ScenePanes {
     /// companion settled at, in this window or (restored) before relaunch.
     @ObservationIgnored private var rememberedShare: Double?
     @ObservationIgnored private var nextLeafNumber = 1
+    /// Split leaves a relaunch brought back that have not mounted yet. A
+    /// browser among them opens paused, its page loading only on a tap
+    /// (build plan §1.8).
+    @ObservationIgnored private var restoredLeaves: Set<PaneID> = []
     /// One sheet at a time across the window's panes.
     @ObservationIgnored let sheets = PaneSheetArbiter()
 
@@ -357,9 +361,15 @@ final class ScenePanes {
             return coordinator?.connection(for: entry.serverId)?.sessionStore.session(id: id)?.workspaceId
         case .local(let token):
             return PaneLocalScreen(token)?.workspaceId
-        case .thread, .file(.host, _, _), .unsupported:
+        case .thread, .file(.host, _, _), .browser, .unsupported:
             return nil
         }
+    }
+
+    /// Whether `id` came back with a relaunch and mounts for the first time;
+    /// true once.
+    func takeRestored(_ id: PaneID) -> Bool {
+        restoredLeaves.remove(id) != nil
     }
 
     /// A split leaf shows `entry` in place of what it showed.
@@ -642,6 +652,7 @@ final class ScenePanes {
         }
         restored.zoomed = restored.zoomed.flatMap { layout.leaf($0)?.attachedTo == nil ? $0 : nil }
         tree = restored
+        restoredLeaves = Set(restored.leaves.map(\.id)).subtracting([primary.id])
         var elements: [WorkspaceStackRouteElement] = []
         for (index, entry) in primary.stack.enumerated() {
             if index == 0 {

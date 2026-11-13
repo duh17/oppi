@@ -43,6 +43,9 @@ final class PaneRestorePreviewController: PreviewRootController {
         ScreenshotPreviewOrientation.applyRequested()
         guard !connected, let scene = view.window?.windowScene?.session.persistentIdentifier else { return }
         connected = true
+        // The window the scene delegate hands the app: an open with no screen
+        // of its own (a web link) presents in it.
+        root.navigation.window = view.window
         let panes = root.navigation.panes
         switch ProcessInfo.processInfo.environment["PANE_RESTORE_SEED"] {
         case "missing": PaneTreeStore().save(Self.missingTree(), scene: scene)

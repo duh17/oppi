@@ -23,7 +23,7 @@ enum AppOpenRequest: Equatable, Sendable {
     case createWorkspace(WorkspaceDeepLink.Payload)
     /// `oppi://terminal/rex?session=&block=`: opens one Rex pane. Open-only.
     case terminal(TerminalOpen)
-    /// `oppi://sessions`, `file`, `files`, `git` or `panel` (`PaneLinkCodec`):
+    /// `oppi://sessions`, `file`, `files`, `git`, `panel` or `browser` (`PaneLinkCodec`):
     /// opens the place it names. `sourceServerID` is an in-app link's server.
     case pane(PaneLink, sourceServerID: String?)
     /// An `oppi://` pane link the codec refused: an unknown or repeated
@@ -333,7 +333,11 @@ final class AppOpener {
         scopedLock: ScopedLockService = .shared,
         intentSessionOpenTrigger: IntentSessionOpenTrigger = .shared,
         browserPresent: @escaping BrowserPresent = { url, window in
-            guard let screen = window.flatMap({ Router.focusedScreen(in: $0) ?? $0.rootViewController }) else { return }
+            guard let window else { return }
+            // A wide window opens the page in a pane beside the focused one;
+            // a compact window, or a link from a sheet, keeps Safari's modal.
+            if PaneHostController.focused(in: window)?.openBrowser(url) == true { return }
+            guard let screen = Router.focusedScreen(in: window) ?? window.rootViewController else { return }
             InAppBrowserPresenter.present(url: url, from: screen)
         },
         systemOpen: @escaping SystemOpen = { UIApplication.shared.open($0) }
@@ -1321,7 +1325,9 @@ final class AppOpener {
 
     // MARK: - Web and system
 
-    private func presentWebLink(_ url: URL) {
+    /// An http(s) page, by the Browser setting: Oppi's browser (a pane beside
+    /// the focused one on a wide window), or the system's.
+    func presentWebLink(_ url: URL) {
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
             systemOpen(url)
             return

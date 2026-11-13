@@ -119,7 +119,9 @@ enum PaneLeafState: Hashable, Sendable {
         case .session, .thread, .panel: .session
         case .file: .file
         case .sessions, .files, .git, .commit: .workspace
-        case .local, .unsupported: .session
+        // A browser leaf shows its page whatever its server's state, so it
+        // never asks; nor do screens with no content to miss.
+        case .browser, .local, .unsupported: .session
         }
     }
 }

@@ -82,6 +82,23 @@ struct PaneLayoutArchiveTests: PaneFixtureBuilding {
         #expect(PaneLayoutArchive(restorable: onlyLocal) == nil, "nothing restorable is nothing saved")
     }
 
+    /// A web page comes back as its link; one no link may name (loopback)
+    /// leaves with its pane, and the rest of the window still restores.
+    @Test func aWebPageComesBackAndOneNoLinkMayNameLeavesWithItsPane() throws {
+        let page = try #require(URL(string: "https://example.com/docs?q=1#top"))
+        let local = try #require(URL(string: "http://localhost:5173/"))
+        let layout = row([
+            (leaf("main", .sessions(workspace: nil)), 0.4),
+            (leaf("web", .browser(page)), 0.3),
+            (leaf("dev", .browser(local)), 0.3),
+        ], focus: "dev")
+
+        let archive = try #require(PaneLayoutArchive(restorable: layout))
+        let decoded = try #require(PaneLayoutArchive.decode(try archive.encoded()))
+        #expect(decoded.layout.leaves.map(\.id) == ids("main", "web"))
+        #expect(decoded.layout.leaves[1].stack == [entry(.browser(page))])
+    }
+
     @Test func aLeafKindFromANewerOppiIsKeptThroughRestoration() throws {
         let raw: [String: JSONValue] = ["web": "https://example.com", "zoom": 1.5]
         let layout = PaneLayout(single: PaneLeaf(

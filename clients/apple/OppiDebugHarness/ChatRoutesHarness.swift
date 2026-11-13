@@ -657,6 +657,10 @@ enum ChatRoutesFixture {
         if let turns = environment["CHAT_ROUTES_LONG_TURNS"].flatMap(Int.init) {
             events += longSessionEvents(turns: turns)
         }
+        // `CHAT_ROUTES_WEB_LINK=<url>`: a reply linking a page (a UI test's own server).
+        if let link = environment["CHAT_ROUTES_WEB_LINK"] {
+            events.append(traceEvent(id: "chat-routes-web-link", type: .assistant, text: "The preview is up: [Open the preview](\(link))."))
+        }
         reducer.loadSession(events)
     }
 

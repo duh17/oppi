@@ -1,12 +1,13 @@
 import UIKit
 
-/// What a fresh split shows: the workspace's Sessions, Files or a Terminal,
-/// as large choices. Picking one replaces the launcher in its leaf. New
-/// Session waits for two live chats per server, so a new chat never takes the
-/// place of the one already open. Files and Terminal need a workspace.
+/// What a fresh split shows: the workspace's Sessions, Files, a Terminal or
+/// a Web Page, as large choices. Picking one replaces the launcher in its
+/// leaf; Web Page first asks for the address. New Session waits for two live
+/// chats per server, so a new chat never takes the place of the one already
+/// open. Files and Terminal need a workspace.
 final class PaneLauncherViewController: UIViewController {
     enum Choice: CaseIterable {
-        case sessions, files, terminal
+        case sessions, files, terminal, web
     }
 
     private let serverId: String
@@ -72,18 +73,55 @@ final class PaneLauncherViewController: UIViewController {
         })
         button.contentHorizontalAlignment = .leading
         button.accessibilityIdentifier = "pane.launcher.\(choice)"
-        button.isEnabled = entry(for: choice) != nil
+        button.isEnabled = choice == .web || entry(for: choice) != nil
         return button
     }
 
     private func pick(_ choice: Choice) {
+        if choice == .web { return askForAddress() }
         guard let entry = entry(for: choice) else { return }
         choose(entry)
     }
 
-    /// The entry a choice opens; nil for Files and Terminal outside a workspace.
+    /// The page the person types loads at once (owner decision D3). A bare
+    /// name gets `https://`.
+    private func askForAddress() {
+        TextPrompt(
+            title: String(localized: "Open Web Page"),
+            placeholder: "example.com",
+            actionTitle: String(localized: "Open"),
+            fieldIdentifier: "pane.launcher.web.address",
+            actionIdentifier: "pane.launcher.web.open",
+            keyboardType: .URL
+        ).present(from: self) { [weak self] text in
+            guard let self else { return }
+            guard let url = Self.webAddress(text) else {
+                self.errorAlerts.show(
+                    title: String(localized: "Can\u{2019}t Open This Address"),
+                    message: String(localized: "Enter a web address, such as example.com or https://example.com.")
+                )
+                return
+            }
+            self.choose(PaneStackEntry(serverId: self.serverId, route: .browser(url)))
+        }
+    }
+
+    /// `text` as an http or https page; one with no scheme is https.
+    static func webAddress(_ text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let candidate = trimmed.contains("://") ? trimmed : "https://" + trimmed
+        guard let url = URL(string: candidate), PaneWebAddress.isHTTP(url),
+              url.host(percentEncoded: false)?.isEmpty == false else { return nil }
+        return url
+    }
+
+    /// The entry a choice opens; nil for Files and Terminal outside a
+    /// workspace. A web page's entry waits for its address.
     private func entry(for choice: Choice) -> PaneStackEntry? {
         switch choice {
+        case .web:
+            return nil
         case .sessions:
             return PaneStackEntry(serverId: serverId, route: .sessions(workspace: workspaceId))
         case .files:
@@ -100,6 +138,7 @@ private extension PaneLauncherViewController.Choice {
         case .sessions: String(localized: "Sessions")
         case .files: String(localized: "Files")
         case .terminal: String(localized: "Terminal")
+        case .web: String(localized: "Web Page")
         }
     }
 
@@ -108,6 +147,7 @@ private extension PaneLauncherViewController.Choice {
         case .sessions: String(localized: "This workspace's sessions")
         case .files: String(localized: "Browse this workspace's files")
         case .terminal: String(localized: "A shell in this workspace's folder")
+        case .web: String(localized: "A website, such as a dev server")
         }
     }
 
@@ -116,6 +156,7 @@ private extension PaneLauncherViewController.Choice {
         case .sessions: "list.bullet.rectangle"
         case .files: "folder"
         case .terminal: "apple.terminal"
+        case .web: "safari"
         }
     }
 }
