@@ -2144,17 +2144,8 @@ enum FlatSegment: Sendable {
                         result.append(paragraph)
                         paragraph = AttributedString("\n")
                     }
-                    var content = attributedString(for: block, palette: palette, defaultTextColor: defaultTextColor)
-                    // A done item strikes its own text, not the sub-items under
-                    // it, which draw their own state.
-                    let isSubList: Bool = switch block {
-                    case .taskList, .unorderedList, .orderedList: true
-                    default: false
-                    }
-                    if item.checked, !isSubList {
-                        content.uiKit.foregroundColor = palette.ui.comment
-                        content.uiKit.strikethroughStyle = .single
-                    }
+                    // A checked item reads like any other: the box shows the state.
+                    let content = attributedString(for: block, palette: palette, defaultTextColor: defaultTextColor)
                     paragraph.append(content)
                 }
                 paragraph.setParagraphStyle(item.content.count > 1 ? layout.laterParagraph : layout.firstParagraph)

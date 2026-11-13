@@ -806,18 +806,17 @@ struct FlatSegmentBuildTests {
         }
     }
 
-    @Test func checkedTaskListItemHasStrikethrough() {
-        let blocks: [MarkdownBlock] = [
-            .taskList([
-                .init(checked: true, content: [.paragraph([.text("Done task")])]),
-            ])
-        ]
-        let segments = FlatSegment.build(from: blocks, themeID: .dark)
-        guard case .text(let attr) = segments[0] else {
-            Issue.record("Expected .text segment")
-            return
-        }
-        #expect(hasUIKitStrikethrough(attr), "Checked task item text should have strikethrough")
+    /// A checked item reads like GitHub's: the box shows the state and the text
+    /// is neither struck nor dimmed.
+    @Test func checkedTaskListItemKeepsPlainText() throws {
+        let rendered = NSAttributedString(try firstTextSegment("- [ ] Open task\n- [x] Done task"))
+        let text = rendered.string as NSString
+        let open = text.range(of: "Open task").location
+        let done = text.range(of: "Done task").location
+        #expect(!hasUIKitStrikethrough(AttributedString(rendered)))
+        let openColor = rendered.attribute(.foregroundColor, at: open, effectiveRange: nil) as? UIColor
+        let doneColor = rendered.attribute(.foregroundColor, at: done, effectiveRange: nil) as? UIColor
+        #expect(doneColor == openColor)
     }
 
     /// What the text view draws is the `NSAttributedString` the segment converts to.

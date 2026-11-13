@@ -140,12 +140,16 @@ struct ReaderTaskControlTests {
         #expect(lines == [1, 5, 7])
     }
 
-    @Test func aDoneItemDoesNotStrikeItsOpenSubItems() throws {
+    @Test func aDoneItemKeepsPlainTextBesideItsOpenSubItems() throws {
         let text = try rendered("- [X] parent\n  - [ ] open child")
-        let child = (text.string as NSString).range(of: "open child")
+        let ns = text.string as NSString
+        let child = ns.range(of: "open child")
+        let parent = ns.range(of: "parent")
         #expect(text.attribute(.strikethroughStyle, at: child.location, effectiveRange: nil) == nil)
-        let parent = (text.string as NSString).range(of: "parent")
-        #expect(text.attribute(.strikethroughStyle, at: parent.location, effectiveRange: nil) != nil)
+        #expect(text.attribute(.strikethroughStyle, at: parent.location, effectiveRange: nil) == nil)
+        let parentColor = text.attribute(.foregroundColor, at: parent.location, effectiveRange: nil) as? UIColor
+        let childColor = text.attribute(.foregroundColor, at: child.location, effectiveRange: nil) as? UIColor
+        #expect(parentColor == childColor)
     }
 
     // MARK: - Text view
