@@ -30,7 +30,7 @@ Usage:
   bun scripts/periphery-scan.ts [options] [-- <extra periphery args>]
 
 Defaults:
-  - scans the tracked Oppi.xcodeproj as is (run xcodegen yourself after a project.yml change)
+  - scans Oppi.xcodeproj, generated first by scripts/generate-project.sh
   - scans schemes: ${DEFAULT_SCHEMES.join(", ")}
   - reports only app sources: ${DEFAULT_REPORT_INCLUDES.join(", ")}
   - retains ObjC-accessible declarations, Codable properties, and SwiftUI previews
@@ -171,6 +171,12 @@ function main(): void {
   const resultPath = options.writeResults
     ? resolve(cwd, options.writeResults)
     : join(defaultReportDir, options.json ? "periphery-results.json" : "periphery-results.txt");
+
+  const generated = spawnSync("/bin/bash", [join(repoRoot, "clients/apple/scripts/generate-project.sh")], { stdio: ["ignore", 2, 2] });
+  if (generated.status !== 0) {
+    process.stderr.write("error: generate-project.sh failed; see its output above\n");
+    process.exit(generated.status ?? 1);
+  }
 
   try {
     const args = buildPeripheryArgs(options, resultPath);

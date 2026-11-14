@@ -23,7 +23,7 @@
 //   - Xcode 27.1 at /Applications/Xcode-27.1.app, or DEVELOPER_DIR, with automatic signing (team AZAQMY4SPZ)
 //   - ASC API key: ~/.appstoreconnect/AuthKey_<KEY_ID>.p8
 //   - ASC issuer ID: ~/.appstoreconnect/issuer_id
-//   - XcodeGen installed (brew install xcodegen)
+//   - XcodeGen at the version in clients/apple/scripts/xcodegen-version.txt
 
 import * as crypto from "crypto";
 import * as fs from "fs";
@@ -902,7 +902,7 @@ async function cmdBuild(opts: {
   // Step 3: Generate Xcode project. DEVELOPER_DIR was set above; xcodegen inherits it.
   console.log("--- Step 3: Generating Xcode project ---");
   $.cwd(APPLE_DIR);
-  await $`xcodegen generate`.quiet();
+  await $`/bin/bash ${path.join(APPLE_DIR, "scripts", "generate-project.sh")}`;
   console.log("Done.");
   // The source this archive is built from; it must still be the checkout after verification.
   const archiveSourceCommit = cleanSourceCommit();
@@ -925,6 +925,9 @@ async function cmdBuild(opts: {
       "Release",
       "-destination",
       "generic/platform=iOS",
+      // Ship exactly the tracked pins (clients/apple/Package.resolved): a project.yml change
+      // they do not satisfy fails here instead of resolving new versions into the archive.
+      "-onlyUsePackageVersionsFromResolvedFile",
       // The archive signs too: a new capability (Time Sensitive) needs the App Store Connect key
       // to update the App ID and profile, since this Mac has no Xcode account.
       "-allowProvisioningUpdates",

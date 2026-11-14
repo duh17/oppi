@@ -9,7 +9,7 @@
 | iOS code, unit-level | `clients/apple/scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests` (add `--root <worktree>` for a worktree) | [iOS unit tests](apple.md#ios-unit-tests), [Swift Testing filters](apple.md#swift-testing-filters) |
 | iOS build only | `sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build` | [Simulator build](apple.md#simulator-build) |
 | iOS user journey | The E2E lane | [iOS E2E tests](apple.md#ios-e2e-tests) |
-| Coverage, privacy manifest, project file | Coverage gate, archive report, `xcodegen generate` | [Apple](apple.md) |
+| Coverage, privacy manifest, project file | Coverage gate, archive report, `clients/apple/scripts/generate-project.sh` | [Apple](apple.md) |
 | `dev/**/*.md` | `bun scripts/dev-docs-guard.ts` | [dev/README.md](../README.md#what-belongs-in-dev) |
 | A red pre-push or land gate | Read the summary lines | [Gate reports](#gate-reports) |
 

@@ -2,6 +2,10 @@
 
 Part of [Testing Guide](README.md). Commands run from `clients/apple/` unless noted.
 
+## Generated project
+
+`Oppi.xcodeproj` is untracked: `scripts/generate-project.sh` writes it with the xcodegen pinned in `scripts/xcodegen-version.txt`. Every lane runs it; run it before a bare `xcodebuild` or Xcode. Pins live in the tracked `Package.resolved`; pins Xcode re-resolves are copied back there to commit.
+
 ## Prebuilt frameworks
 
 - The Oppi target links two untracked XCFrameworks under `Vendor/` (TailscaleKit, libghostty-vt), checked while Xcode plans the build, so a fresh worktree fails with `There is no XCFramework found at …/Vendor/…`. `sim-pool.sh run` and Xcode Cloud run `scripts/ensure-prebuilt-frameworks.sh` first; run it yourself before a bare `xcodebuild` or GUI build (it copies from `~/Library/Caches/oppi-*/<build-id>/`, building only on a miss).

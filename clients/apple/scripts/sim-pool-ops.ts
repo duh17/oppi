@@ -321,7 +321,7 @@ export function normalizeOppiRoot(raw: string, cwd = process.cwd()): string {
   if (existsSync(join(resolved, "clients", "apple"))) {
     return resolved;
   }
-  if (basename(resolved) === "apple" && existsSync(join(resolved, "Oppi.xcodeproj"))) {
+  if (basename(resolved) === "apple" && existsSync(join(resolved, "project.yml"))) {
     const clients = dirname(resolved);
     if (basename(clients) === "clients") {
       return dirname(clients);
@@ -365,10 +365,7 @@ export function ensureOppiTestsInfoPlist(appleDir: string): string {
 }
 
 export function applyRunCheckout(config: PoolConfig): string {
-  const pbx = join(config.appleDir, "Oppi.xcodeproj", "project.pbxproj");
-  if (!existsSync(pbx)) {
-    die(`Apple checkout is missing Oppi.xcodeproj: ${config.appleDir}`);
-  }
+  generateProject(config.appleDir);
   let current = process.cwd();
   let target = config.appleDir;
   try {
@@ -386,6 +383,20 @@ export function applyRunCheckout(config: PoolConfig): string {
   ensurePrebuiltFrameworks(config.appleDir);
   ensureServerDeps(config.oppiRoot);
   return process.cwd();
+}
+
+// Oppi.xcodeproj is generated, not tracked: every run regenerates it (a no-op while project.yml
+// and the file list are unchanged). A --root checkout based before the script existed tracks it.
+function generateProject(appleDir: string): void {
+  const script = join(appleDir, "scripts", "generate-project.sh");
+  if (!existsSync(script)) {
+    if (!existsSync(join(appleDir, "Oppi.xcodeproj", "project.pbxproj"))) die(`Apple checkout is missing Oppi.xcodeproj: ${appleDir}`);
+    return;
+  }
+  const result = spawnSync("/bin/bash", [script], { cwd: appleDir, stdio: ["ignore", 2, 2] });
+  if (result.status !== 0) {
+    die(`Oppi.xcodeproj could not be generated (${script} ${result.error?.message ?? `exited ${result.status ?? result.signal}`}); see its output above`);
+  }
 }
 
 // The Oppi target's architecture-check build phase runs server/ tooling, so a fresh worktree

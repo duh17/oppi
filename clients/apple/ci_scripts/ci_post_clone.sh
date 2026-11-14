@@ -113,6 +113,28 @@ ensure_go() {
   go_is_new_enough
 }
 
+# Oppi.xcodeproj is generated, not tracked, so the clone has none until this script makes it.
+# The release zip of the xcodegen version scripts/generate-project.sh pins, checksummed.
+ensure_xcodegen() {
+  local pin sha
+  pin="$(head -n 1 "$ROOT/scripts/xcodegen-version.txt" | tr -d '[:space:]')"
+  case "$pin" in
+    2.46.0) sha=4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806 ;;
+    *)
+      echo "error: no checksum for xcodegen $pin; add the release zip's SHA-256 to ensure_xcodegen" >&2
+      exit 1
+      ;;
+  esac
+  echo "Installing xcodegen $pin"
+  curl -fsSL "https://github.com/yonaskolb/XcodeGen/releases/download/${pin}/xcodegen.zip" -o "$TOOL_ROOT/xcodegen.zip"
+  echo "$sha  $TOOL_ROOT/xcodegen.zip" | shasum -a 256 -c -
+  rm -rf "$TOOL_ROOT/xcodegen"
+  unzip -q "$TOOL_ROOT/xcodegen.zip" -d "$TOOL_ROOT"
+  # On PATH in place, not symlinked: xcodegen finds its setting presets (share/xcodegen) next to
+  # the path it was started from, and without them it writes a project missing the base settings.
+  export PATH="$TOOL_ROOT/xcodegen/bin:$PATH"
+}
+
 # Sourcing defines oppi_ci_select_xcode and does not install tools or build.
 # Executing the script selects the Xcode Cloud toolchain, then vendors frameworks.
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
@@ -128,3 +150,6 @@ oppi_ci_select_xcode
 ensure_go
 "$ROOT/scripts/ensure-prebuilt-frameworks.sh"
 echo "Vendored iOS frameworks are ready."
+ensure_xcodegen
+"$ROOT/scripts/generate-project.sh"
+echo "Generated Oppi.xcodeproj."

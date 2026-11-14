@@ -36,6 +36,7 @@ function selfTest(): number {
     "./clients/apple/scripts/sim-pool-lifecycle.test.ts",
     "./clients/apple/scripts/sim-slim.test.ts",
     "./clients/apple/scripts/xcode-toolchain.test.ts",
+    "./clients/apple/scripts/generate-project.test.ts",
   ];
   for (const path of files) {
     if (!existsSync(join(repoRoot, path))) {

@@ -27,6 +27,7 @@ describe("pre-push gate planning", () => {
     ["Apple protocol model", ["clients/apple/OppiCore/Models/ServerMessage.swift"], ["full", "unit", false]],
     ["shared Apple source", ["clients/apple/Shared/SharedConstants.swift"], ["none", "unit", false]],
     ["Apple project", ["clients/apple/project.yml"], ["none", "all", false]],
+    ["Apple package pins", ["clients/apple/Package.resolved"], ["none", "all", false]],
     ["Apple xcconfig", ["clients/apple/Base.xcconfig"], ["none", "unit", false]],
     ["architecture guard", ["server/scripts/check-architecture-boundaries.ts"], ["full", "unit", false]],
     ["gate policy", [".githooks/pre-push"], ["none", "none", true]],

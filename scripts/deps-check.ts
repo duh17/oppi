@@ -412,7 +412,7 @@ async function swiftScan(): Promise<void> {
   const base = "clients/apple";
   const yml = readFileSync(join(root, base, "project.yml"), "utf8");
   const decls = parseProjectYmlPackages(yml);
-  const resolvedPath = join(root, base, "Oppi.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved");
+  const resolvedPath = join(root, base, "Package.resolved");
   const resolved = JSON.parse(readFileSync(resolvedPath, "utf8")) as {
     pins: { identity: string; location: string; state: { version?: string; revision: string; branch?: string } }[];
   };

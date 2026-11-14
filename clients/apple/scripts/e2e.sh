@@ -643,7 +643,7 @@ echo "[e2e] Invite URL written to $INVITE_FILE"
 
 echo "[e2e] Running E2E tests..."
 cd "$IOS_DIR"
-xcodegen generate
+"$IOS_DIR/scripts/generate-project.sh"
 
 # Build and test in a single xcodebuild invocation to share derived data.
 # sim-pool.sh auto-injects -destination and -derivedDataPath.

@@ -29,7 +29,7 @@
 // [pre-push], and the summary leads with its row.
 //
 // `--build-cache` prints, one BUILD_CACHE_LINE each, the ignored paths a reused queue worktree keeps
-// between batches (the DerivedData of the Oppi build, and the prebuilt Vendor
+// between batches (the DerivedData of the Oppi build, the generated project, and the prebuilt Vendor
 // frameworks), then one BUILD_CACHE_KEY_LINE naming the pinned Xcode: a queue that sees the key
 // change throws the worktree away instead of building incrementally over another toolchain's state.
 //
@@ -119,6 +119,9 @@ export const BUILD_CACHE_KEY_LINE = "batch-gate: build-cache-key";
 /** What a reused queue worktree keeps: everything the Apple builds can build incrementally from. */
 export const BUILD_CACHE_PATHS = [
   "clients/apple/.build/dd",
+  // Generated, not tracked: kept, its xcodegen cache skips regenerating an unchanged spec, so the
+  // project file keeps its mtime and the next build plans incrementally.
+  "clients/apple/Oppi.xcodeproj",
   // Not pre-push-release: its whole-module Release compile rebuilds the Oppi module whatever is kept.
   // Installed from a host cache by `cp -R`: new copies would carry new mtimes and re-link the app.
   // ensure-prebuilt-frameworks.sh replaces them when their BUILD_ID pin changes.

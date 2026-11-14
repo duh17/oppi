@@ -430,6 +430,7 @@ describe("sim-pool checkout targeting", () => {
     temps.push(root);
     mkdirSync(join(root, "clients", "apple", "Oppi.xcodeproj"), { recursive: true });
     writeFileSync(join(root, "clients", "apple", "Oppi.xcodeproj", "project.pbxproj"), "// fixture\n");
+    writeFileSync(join(root, "clients", "apple", "project.yml"), "name: Oppi\n");
     return root;
   }
 

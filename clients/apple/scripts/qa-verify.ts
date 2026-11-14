@@ -234,14 +234,15 @@ async function runLane(
   try {
     console.error(`qa-verify run ${lane} nonce=${nonce}`);
     const env = bindingEnv({ receiptDir, nonce, source, lane });
-    const xcodegen = await runOwned(session, "xcodegen", ["generate"], {
+    const generateProject = join(appleDir(), "scripts/generate-project.sh");
+    const xcodegen = await runOwned(session, "bash", [generateProject], {
       cwd: appleDir(),
       env,
       stdoutPath: join(logDir, "xcodegen.stdout.log"),
       stderrPath: join(logDir, "xcodegen.stderr.log"),
       timeoutMs: XCODEGEN_DEADLINE_MS,
     });
-    commands.push(["xcodegen", "generate"]);
+    commands.push(["bash", generateProject]);
     exitCodes.push(xcodegen.code);
     if (xcodegen.timedOut) timedOut = true;
     stopOwned = stopOwned && xcodegen.stop.quiescent;

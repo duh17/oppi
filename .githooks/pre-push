@@ -876,6 +876,9 @@ run_compile_lane() {
   developer_dir="$(pinned_developer_dir)"
   # .build may live under OPPI_BUILD_ROOT (clients/apple/scripts/build-root.ts); a no-op when it is unset.
   bun "$REPO_ROOT/clients/apple/scripts/build-root.ts" "$REPO_ROOT/clients/apple"
+  # The project is generated, not tracked. A no-op once the Apple build's sim-pool run generated it;
+  # the script's lock keeps the two lanes from writing it at once.
+  "$REPO_ROOT/clients/apple/scripts/generate-project.sh" || return $?
   # sim-pool's shared SwiftPM clone and compilation cache, keyed by this Xcode: a fresh worktree
   # compiles from the cache instead of from source, and clones no packages over the network.
   while IFS= read -r -d '' cache_arg; do cache_args+=("$cache_arg"); done < <(

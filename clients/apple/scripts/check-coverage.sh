@@ -167,6 +167,8 @@ run_coverage_tests() {
 }
 
 cd "$IOS_DIR"
+# Package resolution below reads the project before sim-pool would generate it.
+"$IOS_DIR/scripts/generate-project.sh"
 if [[ -n "$PACKAGE_CACHE_ROOT" ]]; then
   mkdir -p "$PACKAGE_CACHE_ROOT/cache" "$PACKAGE_CACHE_ROOT/source-packages"
   echo "Validating the bounded Swift package cache (restored=${OPPI_SWIFT_PACKAGE_CACHE_HIT:-unknown})..."

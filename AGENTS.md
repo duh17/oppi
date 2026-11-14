@@ -25,6 +25,6 @@ Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone,
 
 ## Build and Test Rules
 
-- `Oppi.xcodeproj` is generated. Edit `project.yml`, put plist keys under `info.properties`, and run `xcodegen generate`.
+- `Oppi.xcodeproj` is generated and untracked. Edit `project.yml`, put plist keys under `info.properties`, and run `clients/apple/scripts/generate-project.sh` (pinned xcodegen; it also copies in the tracked `Package.resolved`).
 - Use `dev/testing/README.md` for commands, schemes, and Swift Testing filters. Run the smallest documented check that proves the change; record video only for UI appearance, animation, or interaction.
 - Simulator builds use `clients/apple/scripts/sim-pool.sh`; bare `xcodebuild` needs a unique `-derivedDataPath`. Preserve the runner's summary and log paths. On failure or a stall, inspect the log and active build processes before retrying.

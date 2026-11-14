@@ -156,7 +156,7 @@ export const SOURCE_TREES = [
 export const SOURCE_EXTRA_FILES = [
   "clients/apple/project.yml",
   "clients/apple/Base.xcconfig",
-  "clients/apple/Oppi.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+  "clients/apple/Package.resolved",
   "dev/testing/qa-verification.md",
   "dev/testing/README.md",
   "dev/testing/apple.md",

@@ -88,7 +88,6 @@ function appleMode(path: string): AppleGateMode {
     || path.startsWith("clients/apple/OppiE2ETests/")
     || path.startsWith("clients/apple/OppiPerfTests/")
     || path.startsWith("clients/apple/scripts/")
-    || path.includes(".xcodeproj/")
     || path.endsWith("/project.yml")
     || path.endsWith("Package.resolved")
     || path.includes("Extension/")
