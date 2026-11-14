@@ -1,19 +1,23 @@
 # Pane layouts
 
-A pane layout is a small JSON document that arranges Oppi's panes: for example a chat beside a file, with an extension's panel above it. An agent writes one to offer the owner an arrangement for the next step. The owner opens it with one tap, or ignores it.
+A pane layout is a small JSON document that arranges Oppi's panes: for example a chat beside a file, with an extension's panel above it. An agent writes one to offer the owner an arrangement for the next step. Once the app supports layouts, the owner opens one with a tap, or ignores it.
+
+**Status:** the server reads, checks, and lists layout files, and prepares their cards. Agents can write layouts and check them with `oppi layout check`. The app does not yet show layout cards, open a layout, or offer Save Layout, so a layout changes nothing on screen for now. The version 1 format on this page is complete.
 
 A layout only opens screens. It never runs a command, edits a file, sends a message, or connects a terminal by itself, and nothing changes on screen until the owner taps Open.
 
-A server that reads layouts says so in `GET /server/info` with `capabilities.paneLayouts`. An app that does not draw layout cards is never sent one.
+A server that reads layouts says so in `GET /server/info` with `capabilities.paneLayouts`. An app that does not draw layout cards is never sent one, and no release of the app draws them yet.
 
 ## For agents
 
 Offer a layout when the owner will want to see several things at once for the next step, such as the chat, the diff, and the file under review. Offer each arrangement once; the owner decides.
 
+The app does not show layout cards or open layouts yet. Write and check layouts as below, but do not tell the owner a card will appear or that one tap opens it; say what the layout arranges, and link the file.
+
 There are two ways to offer one:
 
-- **A one-off arrangement:** put the JSON in your reply as a fenced code block whose info string is exactly `oppi-layout`. The app shows it as a card when your reply is complete. Nothing is written to disk unless the owner saves it.
-- **A layout to reuse or share:** write it to `.oppi/layouts/<name>.json` at the top of the checkout you work in, with your `write` or `edit` tool, and link the file when you mention it. Only a `write` or `edit` makes a card in your chat. A file written by a shell command (`cat >`, `cp`, a script) gets no card; a link to it in your reply shows the same preview.
+- **A one-off arrangement:** put the JSON in your reply as a fenced code block whose info string is exactly `oppi-layout`. Nothing is written to disk.
+- **A layout to reuse or share:** write it to `.oppi/layouts/<name>.json` at the top of the checkout you work in, with your `write` or `edit` tool, and link the file when you mention it. The server records only a `write` or `edit` as a proposal for a card; a file written by a shell command (`cat >`, `cp`, a script) is listed but never becomes a card.
 
 Check a layout before you offer it:
 
@@ -95,7 +99,7 @@ When a document repeats a key, the last one wins, as in any JSON parser.
 
 ### Paths and pages
 
-- A relative `file` path, and a `git` leaf, read from the checkout of the chat that opens the layout. A chat in a worktree shows that worktree's files. Opened with no chat (from the Layouts list), they read from the checkout that holds the layout file.
+- A relative `file` path, and a `git` leaf, read from the checkout of the chat that opens the layout. A chat in a worktree shows that worktree's files. Opened with no chat, they read from the checkout that holds the layout file.
 - A relative path must not contain a `..` part, and must not start with `~`.
 - An absolute `file` path is valid. It opens under the same rules as any host file the app opens, and `oppi layout check` warns that it ties the layout to one machine.
 - A `web` URL is `http` or `https`, at most 2 KiB, with no user name or password, on a host other than loopback (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`). The app also refuses a page at the address of a server it has paired with, when the pane opens.
@@ -109,7 +113,7 @@ Layout files live in `.oppi/layouts/` at the top of a workspace checkout: the wo
 - `.oppi` and `.oppi/layouts` must be real folders, not links. A file whose real path leaves the folder through a link is ignored.
 - A file over 16 KiB is refused without being read further. A file that is not UTF-8 is refused; a UTF-8 byte order mark is accepted.
 - Two checkouts can each have a file with the same name. Both are listed, each with its checkout.
-- A missing folder means no layouts. Saving a layout from the app creates the folder.
+- A missing folder means no layouts. Creating a layout file through the file editor creates the folder (see [Server API](#server-api)).
 - Whether `.oppi/layouts/` is committed is up to each repository. A layout that came with the repository is listed but never makes a card.
 - A sandbox workspace keeps its layouts in its mount, which the server reads like any checkout.
 
@@ -117,14 +121,16 @@ The server looks at a folder again when it is read and its last look is more tha
 
 ## Cards
 
-The app shows a layout as a card in the chat: its title, a map of the panes, one line per pane, any warnings, and Open.
+No release of the app shows these cards yet. This section describes the cards the server prepares, and how the app is to show them once it does.
+
+A card shows a layout in the chat: its title, a map of the panes, one line per pane, any warnings, and Open.
 
 A card comes from one of two places:
 
 - **A layout file** that a session's `write` or `edit` tool left in a layouts folder. The card appears in that session's chat when the tool call ends without an error, and again whenever that chat's history loads. A child session's write makes a card in the child's chat.
 - **An `oppi-layout` block** in a completed assistant reply. The app reads it from the transcript, so it appears again whenever that history loads.
 
-Files written by a shell command, a script, a background job, another program, or a person never make a card. They are still listed in the workspace's Layouts, and a link to one in an agent's reply shows the same preview as a card.
+Files written by a shell command, a script, a background job, another program, or a person never make a card. They are still listed by `GET /workspaces/{id}/layouts`, and a link to one in an agent's reply shows the same preview as a card.
 
 Every card shows the file as it is now. Each write makes its own card, and a card whose file no longer holds what its write left says so. The app keeps one live card per file in a chat and folds earlier ones. Open reads the file again and opens only if it still matches what the card shows; if it changed, the card refreshes instead. A card with a problem names the first problem and has no Open.
 
@@ -138,7 +144,7 @@ review.json: valid (layout version 1) · Review auth fix
   chat         Chat      this chat
   agents       Panel     widget:subagents
   code         File      server/src/storage/device-auth.ts:208
-Written with your write or edit tool, this shows as a card in your chat; a file written any other way shows only when you link it. Nothing opens until the owner taps Open.
+This layout is valid and saved. The app does not open layout cards yet, so nothing changes on screen; link the file when you mention it.
 ```
 
 - A problem prints the JSON path, what is wrong, and what is allowed there, such as `root: a split needs 2 to 8 children, found 1`. The command then exits 1. A layout that needs a newer Oppi also exits 1.
@@ -210,4 +216,4 @@ A page of documentation beside the chat:
 
 `source` is `session` (with the `sessionId` whose `write` or `edit` left the file as it is now, while the server remembers it), `repository` (tracked and unmodified in git), or `folder` (anything else). `hash` is `sha256-<hex>` of the file's bytes, the same value as the file editor's ETag. The canonical document drops unknown fields from known objects and cleans the title and names; a leaf of a newer kind keeps its fields.
 
-To save a layout, the app writes `.oppi/layouts/<name>.json` through the file editor (`PUT /files/current?origin=workspace`): `If-None-Match: *` creates the file and any missing `.oppi` and `layouts` folders, and `If-Match` replaces it. This is the only workspace file the editor creates.
+The app does not offer Save Layout yet. A layout file can be created through the file editor, which writes `.oppi/layouts/<name>.json` (`PUT /files/current?origin=workspace`): `If-None-Match: *` creates the file and any missing `.oppi` and `layouts` folders, and `If-Match` replaces it. This is the only workspace file the editor creates.

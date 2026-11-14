@@ -104,35 +104,63 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
     private var rows: [FeatureRow] = []
     private var hasAppeared = false
 
-    /// Build 57 · Changes since Build 56
+    /// Build 58 · Changes since Build 57
     private static let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            id: "uikit",
-            icon: .symbol("bolt"),
+            id: "panes",
+            icon: .symbol("rectangle.split.2x1"),
             iconColor: \.blue,
-            title: String(localized: "Fully UIKit"),
-            description: String(localized: "Every screen is now built with UIKit, Apple’s native framework, so Oppi looks and behaves like the rest of iOS. If something feels off, tell us in TestFlight feedback.")
+            title: String(localized: "Panes on iPad"),
+            description: String(localized: "Split the window with ⌘D or the chat’s … menu to keep chats, files, and terminals side by side. Drag a pane’s … grip to move it, drag a divider to resize or fold a pane, and your panes come back after a relaunch.")
         ),
         WhatsNewFeature(
-            id: "threads",
-            icon: .symbol("list.bullet.indent"),
-            iconColor: \.green,
-            title: String(localized: "Subagent sessions, grouped"),
-            description: String(localized: "Subagent sessions now appear grouped under the session that started them. Tap the group to open it in place.")
+            id: "browser",
+            icon: .symbol("safari"),
+            iconColor: \.cyan,
+            title: String(localized: "Web pages beside the chat"),
+            description: String(localized: "On iPad, a link you tap opens in a pane next to the chat, with an address bar like Safari’s. Choose Web Page in a new pane to type an address.")
         ),
         WhatsNewFeature(
-            id: "durable",
-            icon: .symbol("infinity"),
+            id: "math-tables",
+            icon: .symbol("function"),
             iconColor: \.purple,
-            title: String(localized: "Durable sessions"),
-            description: String(localized: "Durable sessions save every turn on your server and pick up where they left off after a restart. Turn on Server Settings → Durable Sessions, then tap Classic in Quick Session to switch to ∞ Durable.")
+            title: String(localized: "Math and tables"),
+            description: String(localized: "Formulas are typeset like TeX, in the STIX Two Math font, and work in headings, tables, and lists. Tables fit the screen and open full screen from their bar or a long press.")
         ),
         WhatsNewFeature(
-            id: "rex",
-            icon: .symbol("terminal"),
+            id: "reader",
+            icon: .symbol("doc.text.magnifyingglass"),
+            iconColor: \.green,
+            title: String(localized: "A better file reader"),
+            description: String(localized: "Fold Org headings, jump with Outline, search with Find, check off tasks, and read EPUB books. Choose the reader bar’s buttons, and share the file itself from any viewer.")
+        ),
+        WhatsNewFeature(
+            id: "schedules-calendar",
+            icon: .symbol("calendar"),
             iconColor: \.orange,
-            title: String(localized: "Rex in Terminal"),
-            description: String(localized: "An experiment: turn on Settings → Experiments → Rex, and the Terminal tab lists each computer’s Rex sessions and panes. Tap a pane to open it as a live terminal.")
+            title: String(localized: "Schedules calendar"),
+            description: String(localized: "Schedules opens on a calendar of past runs and what comes next: failed runs, runs waiting on you, and what each run cost, subagents included. On iPad, Week and Month show more.")
+        ),
+        WhatsNewFeature(
+            id: "subagents",
+            icon: .symbol("person.2"),
+            iconColor: \.yellow,
+            title: String(localized: "Subagents at a glance"),
+            description: String(localized: "The Subagents pill shows which children need you, what the working ones are doing, and what the finished ones sent back.")
+        ),
+        WhatsNewFeature(
+            id: "terminal-dictate",
+            icon: .symbol("terminal"),
+            iconColor: \.red,
+            title: String(localized: "Dictate in the terminal"),
+            description: String(localized: "Dictate types what you say at the cursor, and Attach saves a photo or file on the host and types its path. With the keyboard up, the bar’s buttons stay on the keyboard bar.")
+        ),
+        WhatsNewFeature(
+            id: "server-network",
+            icon: .symbol("network"),
+            iconColor: \.comment,
+            title: String(localized: "Server on Tailscale only"),
+            description: String(localized: "After its update, a server with no host set listens only on its own computer and on Tailscale. If this device reaches it over Wi-Fi without Tailscale, run oppi config set host 0.0.0.0 on the server and restart it.")
         ),
     ]
 

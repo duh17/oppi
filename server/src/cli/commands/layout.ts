@@ -202,8 +202,8 @@ function report(
   if (result.kind !== "valid") return lines;
   lines.push(
     inline
-      ? "In your reply as an oppi-layout code block, this shows as a card. Nothing opens until the owner taps Open."
-      : "Written with your write or edit tool, this shows as a card in your chat; a file written any other way shows only when you link it. Nothing opens until the owner taps Open.",
+      ? "This layout is valid. The app does not open layout cards yet, so an oppi-layout block in your reply changes nothing on screen."
+      : "This layout is valid and saved. The app does not open layout cards yet, so nothing changes on screen; link the file when you mention it.",
   );
   return lines;
 }
