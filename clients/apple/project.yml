@@ -717,8 +717,13 @@ targets:
         type: group
         excludes:
           - "Fixtures/markdown-corpus"
+          - "Fixtures/markdown-spec"
       # The Markdown golden corpus keeps its directory: `MarkdownCorpusTests` lists it.
       - path: OppiTests/Fixtures/markdown-corpus
+        type: folder
+        buildPhase: resources
+      # CommonMark and GFM spec examples for `MarkdownSpecConformanceTests` (CC BY-SA 4.0; see its README).
+      - path: OppiTests/Fixtures/markdown-spec
         type: folder
         buildPhase: resources
       # Cross-language contract fixtures: tests read them from the bundle, never by source path.
