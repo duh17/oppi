@@ -111,7 +111,7 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
             icon: .symbol("rectangle.split.2x1"),
             iconColor: \.blue,
             title: String(localized: "Panes on iPad"),
-            description: String(localized: "Split the window with ⌘D or the chat’s … menu to keep chats, files, and terminals side by side. Drag a pane’s … grip to move it, drag a divider to resize or fold a pane, and your panes come back after a relaunch. Panes are an experiment you can turn off in Settings → Experiments.")
+            description: String(localized: "Split the window with ⌘D or the chat’s … menu to keep chats, files, and terminals side by side. Drag a pane’s … grip to move it, or a divider to resize or fold a pane. Choose Zoom in a pane’s … menu to fill the window with it; Restore at the top of that menu, Restore Panes in the chat’s … menu, or Escape brings the others back. Split Panes is an experiment you can turn off in Settings → Experiments, where Godot Pane, off by default, plays a workspace’s Godot game in a pane.")
         ),
         WhatsNewFeature(
             id: "browser",
@@ -124,15 +124,15 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
             id: "math-tables",
             icon: .symbol("function"),
             iconColor: \.purple,
-            title: String(localized: "Math and tables"),
-            description: String(localized: "Formulas are typeset like TeX, in the STIX Two Math font, and work in headings, tables, and lists. Tables fit the screen and open full screen from their bar or a long press.")
+            title: String(localized: "Math, tables, and HTML"),
+            description: String(localized: "Formulas are typeset like TeX, in the STIX Two Math font, and work in headings, tables, and lists. Tables fit the screen and open full screen from their bar or a long press. Markdown draws common inline HTML tags such as <b>, <sup>, <kbd>, and <br>, as GitHub does.")
         ),
         WhatsNewFeature(
             id: "reader",
             icon: .symbol("doc.text.magnifyingglass"),
             iconColor: \.green,
             title: String(localized: "A better file reader"),
-            description: String(localized: "Fold Org headings, jump with Outline, search with Find, check off tasks, and read EPUB books. Choose the reader bar’s buttons, and share the file itself from any viewer.")
+            description: String(localized: "Org headings get Emacs-style bullets and colors by level and fold with a tap. Jump with Outline, search with Find, check off tasks, and read EPUB books. A file the reader can’t show, such as a zip, opens as a card you can share or save to Files, and its download resumes after a dropped connection.")
         ),
         WhatsNewFeature(
             id: "schedules-calendar",
@@ -153,7 +153,7 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
             icon: .symbol("terminal"),
             iconColor: \.red,
             title: String(localized: "Dictate in the terminal"),
-            description: String(localized: "Dictate types what you say at the cursor, and Attach saves a photo or file on the host and types its path. With the keyboard up, the bar’s buttons stay on the keyboard bar.")
+            description: String(localized: "Dictate types your words at the cursor as you speak and never presses Return; words still settling show above the bar. Attach saves a photo or file on the host and types its path. With the keyboard up, the bar’s buttons stay on the keyboard bar.")
         ),
         WhatsNewFeature(
             id: "server-network",
