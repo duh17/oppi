@@ -131,6 +131,9 @@ final class PaneHostController: UIViewController {
     var routedCell: CGRect = .zero
     /// The zone a drag over the panes would drop into (`+Drop`).
     let dropHighlight = UIView()
+    /// The software keyboard's overlap with the host's bottom edge; the fit
+    /// rule draws a field's cell over its column when that leaves it short.
+    var keyboardHeight: CGFloat = 0
 
     init(primary: UIViewController, panes: ScenePanes = ScenePanes(), parkedViewLifetime: TimeInterval = 10) {
         self.primary = primary
@@ -234,7 +237,7 @@ final class PaneHostController: UIViewController {
         DispatchQueue.main.async { [weak self] in self?.isMovingBetweenLayouts = false }
     }
 
-    private static func firstResponder(in view: UIView) -> UIView? {
+    static func firstResponder(in view: UIView) -> UIView? {
         if view.isFirstResponder { return view }
         for subview in view.subviews {
             if let found = firstResponder(in: subview) { return found }
@@ -295,6 +298,10 @@ final class PaneHostController: UIViewController {
                 self, selector: #selector(inputBeganEditing(_:)), name: name, object: nil
             )
         }
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(keyboardWillChangeFrame(_:)),
+            name: UIResponder.keyboardWillChangeFrameNotification, object: nil
+        )
     }
 
     override func updateProperties() {
@@ -789,6 +796,31 @@ final class PaneHostController: UIViewController {
         if let leaf { focus(leaf) }
     }
 
+    /// The keyboard moves: the panes lay out again with its overlap, in its
+    /// animation, so a field's cell that it would leave short takes its
+    /// column (`presentation(of:)`) as the keyboard rises, and gives it back
+    /// as it falls. One pane has nothing to give way to: its screens follow
+    /// the keyboard themselves.
+    @objc private func keyboardWillChangeFrame(_ notification: Notification) {
+        guard let space = view.window?.windowScene?.screen.coordinateSpace,
+              let end = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        let frame = space.convert(end, to: view)
+        // Only a keyboard docked at the bottom takes room; a floating one
+        // (or a split one) sits over the panes.
+        let docked = frame.intersects(view.bounds) && frame.maxY >= view.bounds.maxY - 1
+        let overlap = docked ? max(0, view.bounds.maxY - frame.minY) : 0
+        guard overlap != keyboardHeight else { return }
+        keyboardHeight = overlap
+        guard panes.cellLayout.leaves.count > 1 else { return }
+        let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? TimeInterval ?? 0.25
+        let curve = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int ?? UIView.AnimationCurve.easeInOut.rawValue
+        UIView.animate(withDuration: duration, delay: 0, options: UIView.AnimationOptions(rawValue: UInt(curve) << 16)) {
+            self.view.setNeedsLayout()
+            self.view.layoutIfNeeded()
+        }
+        updateVisibility()
+    }
+
     private func applyKeyboardFollowing(firstResponderIn leaf: Leaf?) {
         for screen in PaneLeafScreens.adopters(in: primary, as: (any PaneKeyboardFollowing).self) {
             screen.followsKeyboard = leaf != .companion
@@ -801,18 +833,25 @@ final class PaneHostController: UIViewController {
     /// Tells each leaf's screens what they can see now, once per change.
     func updateVisibility() {
         let routedShown = routedCell.width > 0 || cellPresentation == nil
+        // A cell the keyboard's zoom hides for a moment is covered, not
+        // parked: it comes back as the keyboard falls.
+        let hiddenByKeyboard: (PaneID) -> Bool = { [cellPresentation] id in
+            cellPresentation.map { $0.zoomedForKeyboard != nil && $0.frames[id] == nil && !$0.overflow.contains(id) } ?? false
+        }
+        let routedHidden: PaneVisibility = hiddenByKeyboard(panes.routedLeafID) ? .covered : .parked
         let covered = companion != nil && showsFull
         report(
-            !routedShown ? .parked : covered ? .covered : .visible(focused: focusedLeaf == .primary),
+            !routedShown ? routedHidden : covered ? .covered : .visible(focused: focusedLeaf == .primary),
             to: primary
         )
         if let companion {
-            report(routedShown ? .visible(focused: focusedLeaf == .companion) : .parked, to: companion.controller)
+            report(routedShown ? .visible(focused: focusedLeaf == .companion) : routedHidden, to: companion.controller)
         }
         let collapsed = panes.collapsedCells
         for (id, leaf) in splitLeaves {
             let shown = cellPresentation?.frames[id] != nil && !collapsed.contains(id)
-            report(shown ? .visible(focused: focusedLeaf == .split(id)) : .parked, to: leaf.controller)
+            let hidden: PaneVisibility = !collapsed.contains(id) && hiddenByKeyboard(id) ? .covered : .parked
+            report(shown ? .visible(focused: focusedLeaf == .split(id)) : hidden, to: leaf.controller)
         }
     }
 

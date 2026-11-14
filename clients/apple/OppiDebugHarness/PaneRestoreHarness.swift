@@ -24,6 +24,8 @@ final class PaneRestorePreviewController: PreviewRootController {
     private var connected = false
 
     init() {
+        // `SCREENSHOT_COLOR_SCHEME` pins the theme, before the preview's ThemeStore reads it.
+        ScreenshotVolatileDefaults.applyThemeScheme(ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"])
         let topBar = ChatTopBarLayout(order: ChatTopBarAction.allCases, shown: [.files, .git, .outline, .context])
         ScreenshotVolatileDefaults.apply([
             AppPreferences.ChatTopBar.orderKey: topBar.storedOrder,

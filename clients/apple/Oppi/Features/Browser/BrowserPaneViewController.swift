@@ -2,10 +2,19 @@ import UIKit
 import WebKit
 
 /// A web page in a pane (`PaneRoute.browser`): a `WKWebView` under the pane's
-/// own bar with Back, Forward, Reload (Stop while loading), Share and Open in
-/// Safari; the page's title and host name the pane. The pane's grip closes
-/// it. `SFSafariViewController` cannot be a pane: Apple allows it only as a
-/// modal, which is how a compact window still opens a tapped link.
+/// own bar, laid out as Safari's on iPad: Back and Forward, the address field
+/// (`BrowserAddressField`, with Reload or Stop in it), then Share and Open in
+/// Safari, which fold into a … menu in a narrow pane. The page's title names
+/// the pane (its grip). The grip closes it. `SFSafariViewController` cannot
+/// be a pane: Apple allows it only as a modal, which is how a compact window
+/// still opens a tapped link.
+///
+/// - The launcher's Web Page opens it with no page and the address field up
+///   (`PaneLocalScreen.browser`); the first page it loads becomes the leaf's
+///   entry, as every page it moves to does.
+/// - An address typed into the field loads where it was typed: only http
+///   and https with a host (`PaneWebAddress.typed`). The navigation policy
+///   below still refuses a paired server's own origin.
 ///
 /// - Pages load at once, whoever opened them (owner decision D3). A pane a
 ///   relaunch brought back opens paused and loads on a tap, so a relaunch
@@ -25,42 +34,68 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
     /// entry follows, so a relaunch shows this page.
     var onNavigate: ((URL) -> Void)?
 
+    /// Below this width Share and Open in Safari fold into one … menu, so
+    /// the address field keeps room in a 375 pt pane.
+    static let foldedBarWidth: CGFloat = 500
+
     private let root: AppRootEnvironment?
-    /// The page the pane shows, or will load when it unpauses.
-    private(set) var url: URL
+    /// The page the pane shows, or will load when it unpauses; nil while it
+    /// waits for its first address.
+    private(set) var url: URL?
     private(set) var isPaused: Bool
     private(set) var webView: WKWebView?
+    let addressField = BrowserAddressField()
     private var observations: [NSKeyValueObservation] = []
     private let stateView = UIContentUnavailableView(loadState: .loading(nil))
     private var failure: (title: String, message: String)?
     private var parkedRelease: Timer?
     private var isVisible = true
+    /// A pane opened with no page puts its field up once, as it appears.
+    private var editsAddressOnAppear: Bool
+    private var isBarFolded: Bool?
+    /// Whether the … menu was last built with a page to act on.
+    private var menuHasPage: Bool?
 
     /// One store for every browser pane, so a sign-in survives a relaunch.
     private static let dataStoreID = UUID(uuidString: "6F1D0B52-0C2E-4C59-9C3E-7A0B5E0D9B11") ?? UUID()
 
     private lazy var backItem = barItem("chevron.backward", String(localized: "Back"), "browser.back") { $0.webView?.goBack() }
     private lazy var forwardItem = barItem("chevron.forward", String(localized: "Forward"), "browser.forward") { $0.webView?.goForward() }
-    private lazy var reloadItem = barItem("arrow.clockwise", String(localized: "Reload"), "browser.reload") { $0.reloadOrStop() }
     private lazy var shareItem = barItem("square.and.arrow.up", String(localized: "Share"), "browser.share") { $0.share() }
     private lazy var safariItem = barItem("safari", String(localized: "Open in Safari"), "browser.openInSafari") {
-        $0.root?.opener.open(.system($0.url))
+        $0.openInSafari()
     }
+    /// Share and Open in Safari in a narrow pane.
+    private lazy var moreItem: UIBarButtonItem = {
+        let item = UIBarButtonItem(
+            title: String(localized: "More"), image: UIImage(systemName: "ellipsis"),
+            menu: UIMenu(children: moreActions(hasPage: url != nil))
+        )
+        item.accessibilityIdentifier = "browser.more"
+        return item
+    }()
+    private lazy var cancelItem: UIBarButtonItem = {
+        let item = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in
+            self?.addressField.cancelEditing()
+        })
+        item.accessibilityIdentifier = "browser.address.cancel"
+        return item
+    }()
 
-    init(url: URL, paused: Bool, root: AppRootEnvironment?) {
+    /// `url` nil opens the pane waiting for an address, its field up.
+    init(url: URL?, paused: Bool, root: AppRootEnvironment?) {
         self.url = url
-        self.isPaused = paused
+        self.isPaused = paused && url != nil
+        self.editsAddressOnAppear = url == nil
         self.root = root
         super.init(nibName: nil, bundle: nil)
         navigationItem.largeTitleDisplayMode = .never
         navigationItem.leftBarButtonItems = [backItem, forwardItem]
-        // Right to left. On a narrow bar Share and Open in Safari fold into
-        // the system's "…" first, so Reload stays one tap.
-        if #available(iOS 27.0, *) {
-            shareItem.visibilityPriority = .low
-            safariItem.visibilityPriority = .low
-        }
-        navigationItem.rightBarButtonItems = [safariItem, shareItem, reloadItem]
+        navigationItem.titleView = addressField
+        addressField.onSubmit = { [weak self] text in self?.submit(text) ?? true }
+        addressField.onEditingChanged = { [weak self] _ in self?.updateTrailingItems() }
+        addressField.onReloadOrStop = { [weak self] in self?.reloadOrStop() }
+        updateTrailingItems()
         updateBar()
     }
 
@@ -84,7 +119,51 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
             stateView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             stateView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
-        if !isPaused { load(url) }
+        if !isPaused, let url { load(url) }
+    }
+
+    /// The bar has placed the field in the window by now, so it can take
+    /// the keyboard.
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard editsAddressOnAppear else { return }
+        editsAddressOnAppear = false
+        addressField.beginEditing()
+    }
+
+    override func viewWillLayoutSubviews() {
+        super.viewWillLayoutSubviews()
+        let folded = view.bounds.width < Self.foldedBarWidth
+        guard folded != isBarFolded else { return }
+        isBarFolded = folded
+        updateTrailingItems()
+    }
+
+    /// Cancel while the address is edited; else Share and Open in Safari,
+    /// or their … menu in a narrow pane.
+    private func updateTrailingItems() {
+        let items: [UIBarButtonItem] = if addressField.isEditing {
+            [cancelItem]
+        } else if isBarFolded == true {
+            [moreItem]
+        } else {
+            [safariItem, shareItem]
+        }
+        guard navigationItem.rightBarButtonItems != items else { return }
+        navigationItem.rightBarButtonItems = items
+    }
+
+    /// Share and Open in Safari, shown unavailable until the pane has a page.
+    private func moreActions(hasPage: Bool) -> [UIMenuElement] {
+        let attributes: UIMenuElement.Attributes = hasPage ? [] : .disabled
+        return [
+            UIAction(title: String(localized: "Share"), image: UIImage(systemName: "square.and.arrow.up"), attributes: attributes) { [weak self] _ in
+                self?.share()
+            },
+            UIAction(title: String(localized: "Open in Safari"), image: UIImage(systemName: "safari"), attributes: attributes) { [weak self] _ in
+                self?.openInSafari()
+            },
+        ]
     }
 
     override func updateProperties() {
@@ -96,10 +175,25 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
 
     // MARK: Loading
 
-    /// Shows `url` here, unpausing the pane.
+    /// Shows `url` here, unpausing the pane, and makes it the leaf's entry.
     func open(_ url: URL) {
         isPaused = false
         load(url)
+        onNavigate?(url)
+    }
+
+    /// Go in the address field: the typed address loads, or the field stays
+    /// up and says why it cannot.
+    private func submit(_ text: String) -> Bool {
+        guard let url = PaneWebAddress.typed(text) else {
+            errorAlerts.show(
+                title: String(localized: "Can’t Open This Address"),
+                message: String(localized: "Enter a web address, such as example.com or https://example.com.")
+            )
+            return false
+        }
+        open(url)
+        return true
     }
 
     private func load(_ url: URL) {
@@ -112,10 +206,12 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
     }
 
     @objc private func stateTapped() {
-        if isPaused { open(url) }
+        if isPaused, let url { open(url) }
+        if url == nil { addressField.beginEditing() }
     }
 
     private func reloadOrStop() {
+        guard let url else { return }
         guard let webView else { return open(url) }
         if webView.isLoading {
             webView.stopLoading()
@@ -124,6 +220,11 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
         } else {
             webView.reload()
         }
+    }
+
+    private func openInSafari() {
+        guard let url else { return }
+        root?.opener.open(.system(url))
     }
 
     private func makeWebView() -> WKWebView {
@@ -187,7 +288,7 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
             isVisible = true
             parkedRelease?.invalidate()
             parkedRelease = nil
-            if webView == nil, !isPaused, isViewLoaded { load(url) }
+            if webView == nil, !isPaused, isViewLoaded, let url { load(url) }
         case .covered, .parked:
             isVisible = false
             guard webView != nil, parkedRelease == nil else { return }
@@ -217,23 +318,28 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
     }
 
     private func updateBar() {
-        let host = url.host(percentEncoded: false) ?? url.absoluteString
+        let host = url.map(BrowserAddressField.idleText)
         let pageTitle = webView?.title.flatMap { $0.isEmpty ? nil : $0 }
-        navigationItem.title = pageTitle ?? host
-        navigationItem.subtitle = pageTitle == nil ? nil : host
+        // The pane's name for its grip and VoiceOver; the bar shows the field.
+        navigationItem.title = pageTitle ?? host ?? String(localized: "Web Page")
         backItem.isEnabled = webView?.canGoBack == true
         forwardItem.isEnabled = webView?.canGoForward == true
-        let loading = webView?.isLoading == true
-        reloadItem.image = UIImage(systemName: loading ? "xmark" : "arrow.clockwise")
-        reloadItem.title = loading ? String(localized: "Stop") : String(localized: "Reload")
-        reloadItem.accessibilityLabel = reloadItem.title
+        shareItem.isEnabled = url != nil
+        safariItem.isEnabled = url != nil
+        // Only when it changes: a menu replaced while open would close.
+        if menuHasPage != (url != nil) {
+            menuHasPage = url != nil
+            moreItem.menu = UIMenu(children: moreActions(hasPage: url != nil))
+        }
+        addressField.show(address: url, loading: webView?.isLoading == true)
         // Observed by the pane's grip, which names the pane by its title.
         PaneHostController.containing(self)?.view.setNeedsLayout()
     }
 
     private func share() {
+        guard let url else { return }
         let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-        activity.popoverPresentationController?.sourceItem = shareItem
+        activity.popoverPresentationController?.sourceItem = isBarFolded == true ? moreItem : shareItem
         Router.topPresenter(from: self).present(activity, animated: true)
     }
 
@@ -241,10 +347,16 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
 
     private func updateState() {
         let palette = root?.themeStore.activeThemeID.palette ?? ThemeRuntimeState.currentPalette()
-        let host = url.host(percentEncoded: false) ?? url.absoluteString
+        let host = url.map { $0.host(percentEncoded: false) ?? $0.absoluteString } ?? ""
         var config: UIContentUnavailableConfiguration?
         var kind = "page"
-        if isPaused {
+        if url == nil {
+            kind = "empty"
+            config = .loadState(.empty(
+                title: String(localized: "Web Page"), systemImage: "safari",
+                message: String(localized: "Type an address above, such as example.com.")
+            ), palette: palette)
+        } else if isPaused {
             kind = "paused"
             config = .loadState(.empty(
                 title: host, systemImage: "pause.circle",
@@ -255,7 +367,10 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
             kind = "failed"
             config = .loadState(.failed(
                 title: failure.title, message: failure.message,
-                retry: RetryAction { [weak self] in self.map { $0.load($0.url) } }
+                retry: RetryAction { [weak self] in
+                    guard let self, let url = self.url else { return }
+                    self.load(url)
+                }
             ), palette: palette)
         }
         stateView.accessibilityValue = kind
@@ -343,7 +458,32 @@ extension BrowserPaneViewController: WKNavigationDelegate, WKUIDelegate {
         // A cancelled load, or one this pane's policy stopped, is not a failure.
         if error.domain == NSURLErrorDomain, error.code == NSURLErrorCancelled { return }
         if error.domain == "WebKitErrorDomain", error.code == 102 { return }
+        if error.domain == NSURLErrorDomain, Self.certificateErrors.contains(error.code) {
+            let failing = (error.userInfo[NSURLErrorFailingURLErrorKey] as? URL) ?? url
+            return show(failure: String(localized: "Can\u{2019}t Open This Page Securely"), Self.certificateMessage(host: failing?.host(percentEncoded: false)))
+        }
         show(failure: String(localized: "Can\u{2019}t Open This Page"), error.localizedDescription)
+    }
+
+    /// The secure connection failed: no TLS there, or a certificate for
+    /// another name, expired, or from an authority this device does not
+    /// trust. The pane never bypasses the check.
+    static let certificateErrors: Set<Int> = [
+        NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateHasBadDate,
+        NSURLErrorServerCertificateUntrusted, NSURLErrorServerCertificateHasUnknownRoot,
+        NSURLErrorServerCertificateNotYetValid, NSURLErrorClientCertificateRejected,
+        NSURLErrorClientCertificateRequired,
+    ]
+
+    /// What a failed secure connection to `host` means and what to try. A
+    /// short machine name (`mac-mini`) is the usual cause: a tailnet's HTTPS
+    /// certificate names the full name, so the short one fails the check.
+    static func certificateMessage(host: String?) -> String {
+        let name = host ?? String(localized: "This site")
+        let reason = String(localized: "\(name) didn\u{2019}t offer a secure connection this device trusts: its certificate is for another name, or isn\u{2019}t trusted. Oppi doesn\u{2019}t skip that check.")
+        guard let host, !host.contains("."), !host.contains(":") else { return reason }
+        let hint = String(localized: "Try the full name its certificate is for, such as \(host).your-tailnet.ts.net on Tailscale, or http:// if it doesn\u{2019}t use HTTPS.")
+        return reason + " " + hint
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

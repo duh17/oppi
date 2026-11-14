@@ -11,11 +11,12 @@ struct PanePresentationTests: PaneFixtureBuilding {
     static let sidebar: CGFloat = 320
 
     func resolve(
-        _ layout: PaneLayout, size: CGSize, sidebar: CGFloat = 0, keyboard: CGFloat = 0,
+        _ layout: PaneLayout, size: CGSize, sidebar: CGFloat = 0, bottomInset: CGFloat = 0, keyboard: CGFloat = 0,
         firstResponder: PaneID? = nil, liveCap: Int = 4
     ) -> PanePresentation {
         PanePresentation.resolve(
-            layout, size: size, sidebarWidth: sidebar, keyboardHeight: keyboard, firstResponderLeaf: firstResponder,
+            layout, size: size, sidebarWidth: sidebar, bottomInset: bottomInset,
+            keyboardHeight: keyboard, firstResponderLeaf: firstResponder,
             minimumSize: { $0.stack.last.flatMap { PaneMinimumSize.standard(for: $0.route) } ?? .zero },
             liveCap: liveCap
         )
@@ -59,6 +60,58 @@ struct PanePresentationTests: PaneFixtureBuilding {
             focus: id("chat"), recency: ids("chat", "web")
         )
         #expect(resolve(short, size: CGSize(width: 744, height: 640)).overflow == ids("web"), "320 + 1 + 320 is over 640")
+    }
+
+    // MARK: The home indicator
+
+    /// Split Down in mini portrait: the lower pane keeps its whole minimum
+    /// above the home indicator's 20 pt, however far its weight shrinks.
+    @Test func aLowerLeafKeepsItsMinimumAboveTheHomeIndicator() {
+        let layout = PaneLayout(
+            root: .split(axis: .column, children: [.leaf(chat("chat")), .leaf(list("git"))], weights: [0.95, 0.05]),
+            focus: id("chat"), recency: ids("chat", "git")
+        )
+        let presentation = resolve(layout, size: Self.miniPortrait, bottomInset: 20)
+        #expect(presentation.frames[id("git")] == CGRect(x: 0, y: 1133 - 300, width: 744, height: 300))
+        #expect(presentation.frames[id("chat")] == CGRect(x: 0, y: 0, width: 744, height: 832))
+
+        // Only the bottom row pays it: a leaf above another keeps its plain minimum.
+        let flipped = PaneLayout(
+            root: .split(axis: .column, children: [.leaf(list("git")), .leaf(chat("chat"))], weights: [0.05, 0.95]),
+            focus: id("chat"), recency: ids("chat", "git")
+        )
+        #expect(resolve(flipped, size: Self.miniPortrait, bottomInset: 20).frames[id("git")]?.height == 280)
+    }
+
+    /// A lower pane collapsed to its strip keeps the strip above the home
+    /// indicator: its cell is the strip and the inset under it.
+    @Test func aCollapsedLowerLeafsStripSitsAboveTheHomeIndicator() throws {
+        let layout = try PaneLayout(
+            root: .split(axis: .column, children: [.leaf(chat("chat")), .leaf(list("git"))], weights: [0.5, 0.5]),
+            focus: id("chat"), recency: ids("chat", "git")
+        ).collapse(id("git"))
+        let presentation = resolve(layout, size: Self.miniPortrait, bottomInset: 20)
+        #expect(presentation.frames[id("git")] == CGRect(x: 0, y: 1133 - 40, width: 744, height: 40))
+        #expect(presentation.frames[id("chat")] == CGRect(x: 0, y: 0, width: 744, height: 1092))
+
+        // Collapsed beside another in a row, it is a full-height strip as before.
+        let sideBySide = try row([(chat("chat"), 0.5), (list("git"), 0.5)]).collapse(id("git"))
+        #expect(resolve(sideBySide, size: Self.miniLandscape, bottomInset: 20).frames[id("git")] == CGRect(x: 1133 - 20, y: 0, width: 20, height: 744))
+    }
+
+    /// Two panes that cannot both keep their minimums above the home
+    /// indicator do not squeeze: the least recent goes to Hidden Panes.
+    @Test func panesThatCannotClearTheHomeIndicatorOverflowInsteadOfSqueezing() {
+        let layout = PaneLayout(
+            root: .split(axis: .column, children: [.leaf(chat("chat")), .leaf(list("git"))], weights: [0.5, 0.5]),
+            focus: id("git"), recency: ids("git", "chat")
+        )
+        // 320 + 1 + 280 fits 610 pt; with the 20 pt inset it does not.
+        let size = CGSize(width: 744, height: 610)
+        #expect(resolve(layout, size: size).overflow.isEmpty)
+        let tight = resolve(layout, size: size, bottomInset: 20)
+        #expect(tight.overflow == ids("chat"))
+        #expect(tight.frames == [id("git"): CGRect(x: 0, y: 0, width: 744, height: 610)])
     }
 
     @Test func miniLandscapeHoldsThreePanesUntilTheSidebarShows() {

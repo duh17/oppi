@@ -1,13 +1,17 @@
 import UIKit
 
 /// The screens a split leaf shows that have no link (`PaneRoute.local`), so a
-/// relaunch does not bring them back: the launcher a fresh split opens, and a
-/// folder terminal. The token carries the workspace each one works in.
+/// relaunch does not bring them back: the launcher a fresh split opens, a
+/// folder terminal, and a web page still waiting for its address (it becomes
+/// a `.browser` entry once it loads one). The token carries the workspace
+/// each one works in.
 enum PaneLocalScreen: Equatable {
-    /// Sessions, Files and Terminal as large choices.
+    /// Sessions, Files, Terminal and Web Page as large choices.
     case launcher(workspaceId: String?)
     /// The folder terminal for a workspace's root.
     case terminal(workspaceId: String)
+    /// A browser with its address field up and no page yet.
+    case browser
 
     init?(_ token: PaneLocalToken) {
         let parts = token.raw.split(separator: "/", maxSplits: 1).map(String.init)
@@ -15,6 +19,7 @@ enum PaneLocalScreen: Equatable {
         case ("launcher", 1): self = .launcher(workspaceId: nil)
         case ("launcher", 2): self = .launcher(workspaceId: parts[1])
         case ("terminal", 2): self = .terminal(workspaceId: parts[1])
+        case ("browser", 1): self = .browser
         default: return nil
         }
     }
@@ -24,6 +29,7 @@ enum PaneLocalScreen: Equatable {
         case .launcher(let workspaceId?): PaneLocalToken(raw: "launcher/\(workspaceId)")
         case .launcher(nil): PaneLocalToken(raw: "launcher")
         case .terminal(let workspaceId): PaneLocalToken(raw: "terminal/\(workspaceId)")
+        case .browser: PaneLocalToken(raw: "browser")
         }
     }
 
@@ -31,6 +37,7 @@ enum PaneLocalScreen: Equatable {
         switch self {
         case .launcher(let workspaceId): workspaceId
         case .terminal(let workspaceId): workspaceId
+        case .browser: nil
         }
     }
 }
@@ -55,10 +62,7 @@ enum PaneSplitScreens {
     /// first time, so a web page waits for a tap before it loads.
     static func make(_ entry: PaneStackEntry, root: AppRootEnvironment?, restored: Bool = false, actions: Actions) -> UIViewController {
         if case .browser(let url) = entry.route {
-            // A page needs no server: it shows whatever its server's state.
-            let browser = BrowserPaneViewController(url: url, paused: restored, root: root)
-            browser.onNavigate = { url in actions.follow(PaneStackEntry(serverId: entry.serverId, route: .browser(url))) }
-            return browser
+            return browser(url, serverId: entry.serverId, paused: restored, root: root, actions: actions)
         }
         if case .local(let token) = entry.route, let screen = PaneLocalScreen(token) {
             switch screen {
@@ -66,6 +70,8 @@ enum PaneSplitScreens {
                 return PaneLauncherViewController(serverId: entry.serverId, workspaceId: workspaceId, root: root, choose: actions.show)
             case .terminal(let workspaceId):
                 return terminal(serverId: entry.serverId, workspaceId: workspaceId, root: root)
+            case .browser:
+                return browser(nil, serverId: entry.serverId, paused: false, root: root, actions: actions)
             }
         }
         guard let root else { return PaneLauncherViewController(serverId: entry.serverId, workspaceId: nil, root: nil, choose: actions.show) }
@@ -79,6 +85,17 @@ enum PaneSplitScreens {
         state.onOpen = { element in actions.replaceRoot(screen(for: element, root: root)) }
         state.onClose = actions.close
         return state
+    }
+
+    /// A web page needs no server: it shows whatever its server's state. The
+    /// page it moves to, by a link or a typed address, becomes the leaf's
+    /// entry without rebuilding it.
+    private static func browser(
+        _ url: URL?, serverId: String, paused: Bool, root: AppRootEnvironment?, actions: Actions
+    ) -> BrowserPaneViewController {
+        let browser = BrowserPaneViewController(url: url, paused: paused, root: root)
+        browser.onNavigate = { url in actions.follow(PaneStackEntry(serverId: serverId, route: .browser(url))) }
+        return browser
     }
 
     /// The screen the shell would show for `element`, as a leaf's root.

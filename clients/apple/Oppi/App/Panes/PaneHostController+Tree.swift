@@ -89,15 +89,18 @@ extension PaneHostController {
         // A compact window shows one pane at a time, the focused one, and the
         // chip lists the rest (build plan §1.5). The tree is unchanged.
         if showsChip(cells) { cells.zoomed = cells.focus }
-        let resolved = presentation(of: cells)
+        let resolved = presentation(of: cells, keyboardHeight: keyboardHeight, firstResponderCell: keyboardHeight > 0 ? firstResponderCell() : nil)
         cellPresentation = resolved
         // A collapsed routed leaf is its strip: the primary and its companion park.
         let routedCollapsed = cells.collapsed[panes.routedLeafID] != nil
         routedCell = routedCollapsed ? .zero : resolved.frames[panes.routedLeafID] ?? .zero
     }
 
-    /// Where `cells` would sit in the host now, by the fit rule.
-    func presentation(of cells: PaneLayout) -> PanePresentation {
+    /// Where `cells` would sit in the host now, by the fit rule. With the
+    /// keyboard up, the cell holding the first responder is drawn over its
+    /// column when the keyboard would leave it under its minimum height
+    /// (build plan §1.3), so a field in a short lower pane stays in sight.
+    func presentation(of cells: PaneLayout, keyboardHeight: CGFloat = 0, firstResponderCell: PaneID? = nil) -> PanePresentation {
         // The split view's sidebar floats over the host's leading edge and
         // reaches it as the leading safe area: several panes fit and sit
         // beside it, never under it. One pane fills the host, as before, and
@@ -109,17 +112,31 @@ extension PaneHostController {
             cells,
             size: view.bounds.size,
             sidebarWidth: sideInsets.leading + sideInsets.trailing,
-            keyboardHeight: 0,
-            firstResponderLeaf: nil,
-            minimumSize: { [panes] leaf in
-                leaf.id == panes.routedLeafID
-                    ? PaneMinimumSize.chat
-                    : PaneMinimumSize.standard(for: leaf.stack.last?.route ?? .sessions(workspace: nil)) ?? PaneMinimumSize.list
-            },
+            bottomInset: view.safeAreaInsets.bottom,
+            keyboardHeight: keyboardHeight,
+            firstResponderLeaf: firstResponderCell,
+            minimumSize: { [weak self] leaf in self?.minimumSize(of: leaf) ?? PaneMinimumSize.list },
             liveCap: PlatformCapabilities.livePaneLimit
         )
         presentation.frames = presentation.frames.mapValues { $0.offsetBy(dx: sideInsets.leading, dy: 0) }
         return presentation
+    }
+
+    /// A cell's minimum by what it shows: the routed leaf is a chat; a
+    /// screen with no link is a list, but for a page waiting for its address.
+    private func minimumSize(of leaf: PaneLeaf) -> CGSize {
+        if leaf.id == panes.routedLeafID { return PaneMinimumSize.chat }
+        let route = leaf.stack.last?.route ?? .sessions(workspace: nil)
+        if case .local(let token) = route, case .browser? = PaneLocalScreen(token) { return PaneMinimumSize.browser }
+        return PaneMinimumSize.standard(for: route) ?? PaneMinimumSize.list
+    }
+
+    /// The cell whose leaf holds the first responder (a field in its bar or
+    /// content); nil when it is outside the panes (a sheet).
+    private func firstResponderCell() -> PaneID? {
+        guard let responder = Self.firstResponder(in: view) else { return nil }
+        if let (id, _) = splitLeaves.first(where: { responder.isDescendant(of: $0.value.controller.view) }) { return id }
+        return responder.isDescendant(of: view) ? panes.routedLeafID : nil
     }
 
     func layoutSplitLeaves() {
@@ -225,19 +242,15 @@ extension PaneHostController {
 
     // MARK: Divider drags
 
-    private func minimumLength(_ node: PaneNode, axis: PaneAxis) -> CGFloat {
-        switch node {
-        case .leaf(let leaf):
-            let size = leaf.id == panes.routedLeafID
-                ? PaneMinimumSize.chat
-                : PaneMinimumSize.standard(for: leaf.stack.last?.route ?? .sessions(workspace: nil)) ?? PaneMinimumSize.list
-            return axis == .row ? size.width : size.height
-        case .split(let splitAxis, let children, _):
-            let lengths = children.map { minimumLength($0, axis: axis) }
-            return splitAxis == axis
-                ? lengths.reduce(0, +) + PanePresentation.dividerThickness * CGFloat(children.count - 1)
-                : lengths.max() ?? 0
-        }
+    /// The least `node`, drawn at `frame`, may take along `axis`: at the
+    /// window's bottom that is above the home indicator, as the fit rule has it.
+    private func minimumLength(_ node: PaneNode, axis: PaneAxis, frame: CGRect) -> CGFloat {
+        PanePresentation.minimumLength(
+            of: node, along: axis, in: panes.cellLayout,
+            bottomInset: view.safeAreaInsets.bottom,
+            reachesBottom: frame.maxY >= view.bounds.maxY - 0.5,
+            minimumSize: { [weak self] leaf in self?.minimumSize(of: leaf) ?? PaneMinimumSize.list }
+        )
     }
 
     private func splitDragBegan(_ place: PaneSplitDividerView.Place) {
@@ -251,8 +264,8 @@ extension PaneHostController {
             place: place,
             before: length(before),
             after: length(after),
-            minimumBefore: minimumLength(children[place.index], axis: place.axis),
-            minimumAfter: minimumLength(children[place.index + 1], axis: place.axis),
+            minimumBefore: minimumLength(children[place.index], axis: place.axis, frame: before),
+            minimumAfter: minimumLength(children[place.index + 1], axis: place.axis, frame: after),
             weights: weights,
             beforeLeaf: leafID(children[place.index]),
             afterLeaf: leafID(children[place.index + 1])
@@ -560,7 +573,10 @@ extension PaneHostController {
 
     // MARK: Strips
 
-    /// A collapsed cell is a 20 pt strip in its place; a tap expands it.
+    /// A collapsed cell is a 20 pt strip in its place; a tap expands it. A
+    /// strip at the window's bottom sits above the home indicator: its cell
+    /// reaches under it (the fit rule adds the inset), and the strip's part
+    /// there only paints.
     private func layoutStrips(_ presentation: PanePresentation) {
         let collapsed = panes.collapsedCells
         for (id, strip) in strips where !collapsed.contains(id) || presentation.frames[id] == nil {
@@ -579,6 +595,8 @@ extension PaneHostController {
             }()
             strip.show(title: cellTitle(id), axis: axis)
             strip.frame = frame
+            let reachesBottom = axis == .column && frame.maxY >= view.bounds.maxY - 0.5
+            strip.bottomInset = reachesBottom ? max(0, frame.height - PanePresentation.collapsedThickness) : 0
             view.bringSubviewToFront(strip)
         }
     }
@@ -607,6 +625,7 @@ extension PaneHostController {
         case .local(let token):
             switch PaneLocalScreen(token) {
             case .terminal?: String(localized: "Terminal")
+            case .browser?: String(localized: "Web Page")
             case .launcher?, nil: String(localized: "New Pane")
             }
         default: String(localized: "Pane")

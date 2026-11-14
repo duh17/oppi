@@ -78,8 +78,10 @@ struct PaneOpenChoices: Equatable {
         switch leaf.stack.last?.route {
         case .browser?: return false
         case .local(let token)?:
-            if case .terminal? = PaneLocalScreen(token) { return false }
-            return true
+            switch PaneLocalScreen(token) {
+            case .terminal?, .browser?: return false
+            case .launcher?, nil: return true
+            }
         default: return true
         }
     }

@@ -5,8 +5,10 @@ import XCTest
 /// (`SCREENSHOT_SCREEN=pane-restore`) on the iPad mini. The pages come from a
 /// server this test runs on the simulator's loopback (`BrowserFixtureServer`),
 /// never the internet: a link in the chat opens its page in a pane beside the
-/// chat, the launcher opens a typed address, the bar goes back and forward,
-/// the grip closes the pane, and a relaunch brings the pane back paused.
+/// chat, the launcher's Web Page opens the browser with its address field up
+/// (also in a short lower pane in portrait), the address field shows the host
+/// and edits the whole address, the bar goes back and forward, the grip
+/// closes the pane, and a relaunch brings the pane back paused.
 @MainActor
 final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
     var app: XCUIApplication!
@@ -47,7 +49,8 @@ final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
         let pane = app.descendants(matching: .any)["browser.pane"]
         XCTAssertTrue(pane.waitUntilExists(timeout: 10), "The link opened a browser pane")
         XCTAssertTrue(app.webViews.staticTexts["First fixture page"].waitUntilExists(timeout: 15), "The page loaded")
-        XCTAssertTrue(app.navigationBars.staticTexts["Page One"].waitUntilExists(timeout: 5), "The bar names the page")
+        XCTAssertTrue(paneGrip(named: "Page One").waitUntilExists(timeout: 5), "The grip names the page")
+        XCTAssertEqual(app.textFields["browser.address"].value as? String, pages.host, "The address field shows the host")
         XCTAssertFalse(app.descendants(matching: .any)["inAppBrowser.view"].exists, "Safari's modal stays closed")
         for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
             XCUIDevice.shared.orientation = orientation
@@ -62,8 +65,8 @@ final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
         }
     }
 
-    /// The launcher's Web Page opens a typed address; Back, Forward and the
-    /// grip's Close Pane work on it.
+    /// The launcher's Web Page opens a typed address; Back, Forward, the
+    /// address field and the grip's Close Pane work on it.
     func testTheLauncherOpensAPageAndTheBarGoesBackAndForward() throws {
         try startPages()
         openChat(orientation: .landscapeLeft)
@@ -76,7 +79,7 @@ final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
 
         webView.links["Go to page two"].tap()
         XCTAssertTrue(webView.staticTexts["Second fixture page"].waitUntilExists(timeout: 10), "The link loaded in the pane")
-        XCTAssertTrue(app.navigationBars.staticTexts["Page Two"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(paneGrip(named: "Page Two").waitUntilExists(timeout: 5), "The grip names the page")
         XCTAssertTrue(waitFor(back.isEnabled), "Back is offered after a link")
         attachScreenCapture("launcher-page-two")
 
@@ -85,6 +88,20 @@ final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(waitFor(forward.isEnabled), "Forward is offered after Back")
         forward.tap()
         XCTAssertTrue(webView.staticTexts["Second fixture page"].waitUntilExists(timeout: 10), "Forward went to page two again")
+
+        // The address field: the host at rest, the whole address to edit;
+        // Cancel puts the host back, and Go loads what was typed.
+        let field = app.textFields["browser.address"]
+        XCTAssertEqual(field.value as? String, pages.host, "At rest the field shows the host")
+        field.tap()
+        XCTAssertTrue(waitFor((field.value as? String) == self.pages.url("two").absoluteString), "Editing shows the whole address")
+        attachScreenCapture("address-editing")
+        app.buttons["browser.address.cancel"].tap()
+        XCTAssertTrue(waitFor((field.value as? String) == self.pages.host), "Cancel put the host back")
+        field.tap()
+        XCTAssertTrue(waitFor((field.value(forKey: "hasKeyboardFocus") as? Bool) == true))
+        field.typeText(pages.url("one").absoluteString + "\n")
+        XCTAssertTrue(webView.staticTexts["First fixture page"].waitUntilExists(timeout: 10), "Go loaded the typed address")
 
         let grip = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.' AND label ENDSWITH '2 of 2'")).firstMatch
         XCTAssertTrue(grip.waitUntilExists(timeout: 5), "The page's pane has a grip")
@@ -126,13 +143,76 @@ final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(webView.waitUntilExists(timeout: 5), "The page's web view is back")
     }
 
+    /// The owner's portrait report: Split Down, the lower pane dragged as
+    /// short as it goes. The launcher's choices sit apart, Web Page opens the
+    /// browser with its address field focused (no alert), the pane rises over
+    /// the chat while the keyboard is up, and the typed page loads there. The
+    /// pane dragged to the very bottom collapses to a strip above the home
+    /// indicator, which expands it.
+    func testAShortLowerPaneOpensAWebPageFromItsAddressField() throws {
+        try startPages()
+        let scheme = ProcessInfo.processInfo.environment["OPPI_PANE_SHOTS_SCHEME"] ?? "light"
+        openChat(orientation: .portrait, colorScheme: scheme)
+        let window = app.windows.firstMatch
+        app.typeKey("d", modifierFlags: [.command, .shift])
+        let launcher = app.descendants(matching: .any)["pane.launcher"]
+        XCTAssertTrue(launcher.waitUntilExists(timeout: 5), "⇧⌘D opened the launcher below the chat")
+        let divider = app.descendants(matching: .any)["pane.divider.1"]
+        divider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.84)))
+        XCTAssertTrue(waitFor(launcher.frame.height < window.frame.height / 3), "The lower pane is short")
+        XCTAssertGreaterThanOrEqual(window.frame.maxY - launcher.frame.minY, 300 - 1, "280 pt above the home indicator")
+        let choices = ["sessions", "files", "terminal", "web"].map { app.buttons["pane.launcher.\($0)"] }
+        for (index, choice) in choices.enumerated() {
+            for other in choices[(index + 1)...] {
+                XCTAssertFalse(choice.frame.intersects(other.frame), "\(choice.identifier) overlaps \(other.identifier)")
+            }
+        }
+        attachScreenCapture("portrait-short-launcher-\(scheme)")
+
+        divider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.995)))
+        let strip = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'pane.strip.'")).firstMatch
+        XCTAssertTrue(strip.waitUntilExists(timeout: 5), "Dragged to the bottom, the pane collapsed to its strip")
+        attachScreenCapture("portrait-collapsed-strip-\(scheme)")
+        // Tapped on its upper part, clear of the home indicator's 20 pt.
+        strip.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 8)).tap()
+        XCTAssertTrue(launcher.waitUntilExists(timeout: 5), "The strip expanded the pane")
+
+        app.buttons["pane.launcher.web"].tap()
+        let field = app.textFields["browser.address"]
+        XCTAssertTrue(field.waitUntilExists(timeout: 5), "Web Page opened the browser")
+        XCTAssertFalse(app.alerts.firstMatch.exists, "No address alert")
+        XCTAssertTrue(waitFor((field.value(forKey: "hasKeyboardFocus") as? Bool) == true), "The address field is focused")
+        if app.keyboards.firstMatch.waitUntilExists(timeout: 3) {
+            XCTAssertLessThan(field.frame.maxY, app.keyboards.firstMatch.frame.minY, "The field sits above the keyboard")
+        }
+        attachScreenCapture("portrait-address-editing-\(scheme)")
+        field.typeText(pages.url("one").absoluteString + "\n")
+        XCTAssertTrue(app.webViews.staticTexts["First fixture page"].waitUntilExists(timeout: 15), "The typed page loaded")
+        XCTAssertTrue(waitFor((field.value as? String) == self.pages.host), "At rest the field shows the host")
+        XCTAssertTrue(waitFor(!app.keyboards.firstMatch.exists), "The keyboard went down")
+        hold()
+        attachScreenCapture("portrait-browser-idle-\(scheme)")
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(waitFor(window.frame.width > window.frame.height))
+        hold(for: 1.5)
+        attachScreenCapture("landscape-browser-\(scheme)")
+    }
+
     // MARK: Steps
 
-    private func openChat(orientation: UIDeviceOrientation, link: URL? = nil) {
+    /// A pane's grip, found by the page title it names.
+    private func paneGrip(named title: String) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.' AND label CONTAINS %@", title)).firstMatch
+    }
+
+    private func openChat(orientation: UIDeviceOrientation, link: URL? = nil, colorScheme: String? = nil) {
         XCUIDevice.shared.orientation = orientation
         var environment: [String: String] = [:]
         if let link { environment["CHAT_ROUTES_WEB_LINK"] = link.absoluteString }
-        launchPreview(screen: "pane-restore", environment: environment, ready: nil)
+        launchPreview(screen: "pane-restore", environment: environment, colorScheme: colorScheme, ready: nil)
         let row = app.descendants(matching: .any)[sessionRow]
         XCTAssertTrue(row.waitUntilExists(timeout: 10), "The fixture session is listed")
         row.tap()
@@ -144,11 +224,10 @@ final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
         let web = app.buttons["pane.launcher.web"]
         XCTAssertTrue(web.waitUntilExists(timeout: 5), "⌘D opened the launcher")
         web.tap()
-        let field = app.textFields["pane.launcher.web.address"]
-        XCTAssertTrue(field.waitUntilExists(timeout: 5), "Web Page asks for the address")
-        field.typeText(address)
-        // The alert's action shows up twice in the tree (its view and its label).
-        app.buttons["pane.launcher.web.open"].firstMatch.tap()
+        let field = app.textFields["browser.address"]
+        XCTAssertTrue(field.waitUntilExists(timeout: 5), "Web Page opened the browser")
+        XCTAssertTrue(waitFor((field.value(forKey: "hasKeyboardFocus") as? Bool) == true), "Its address field is up")
+        field.typeText(address + "\n")
     }
 
     /// The screen's capture: in landscape `app.screenshot()` draws the iPad
@@ -159,10 +238,18 @@ final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
-        // A copy for review outside the result bundle, when asked for.
+        // A copy for review outside the result bundle, when asked for. The
+        // image carries the screen's orientation; drawing it bakes that into
+        // the pixels, so a landscape PNG is upright with no orientation tag.
         if let folder = ProcessInfo.processInfo.environment["OPPI_BROWSER_PANE_SHOTS"] {
             try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
-            try? screenshot.pngRepresentation.write(to: URL(filePath: folder).appending(path: "\(name).png"))
+            let image = screenshot.image
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = image.scale
+            let upright = UIGraphicsImageRenderer(size: image.size, format: format).pngData { _ in
+                image.draw(in: CGRect(origin: .zero, size: image.size))
+            }
+            try? upright.write(to: URL(filePath: folder).appending(path: "\(name).png"))
         }
     }
 }
@@ -197,6 +284,9 @@ final class BrowserFixtureServer: @unchecked Sendable {
     func url(_ page: String) -> URL {
         URL(string: "http://127.0.0.1:\(port)/\(page)") ?? URL(filePath: "/")
     }
+
+    /// What the address field shows at rest for these pages.
+    var host: String { "127.0.0.1:\(port)" }
 
     func stop() { listener.cancel() }
 

@@ -378,6 +378,12 @@ extension PaneSplitDividerView: UIPointerInteractionDelegate {
 /// share it had.
 final class PaneStripView: UIView {
     var onExpand: @MainActor () -> Void = {}
+    /// The part of the strip under its bottom edge's home indicator: it
+    /// paints there but neither draws its mark nor takes a touch, so the
+    /// system's swipe up never lands on it.
+    var bottomInset: CGFloat = 0 {
+        didSet { if bottomInset != oldValue { setNeedsLayout() } }
+    }
 
     private let mark = UIView()
     private var axis = PaneAxis.row
@@ -415,10 +421,15 @@ final class PaneStripView: UIView {
         super.layoutSubviews()
         // The mark runs along the strip, as the divider's grabber does.
         let size = axis == .row ? CGSize(width: 5, height: 48) : CGSize(width: 48, height: 5)
+        let height = bounds.height - bottomInset
         mark.frame = CGRect(
-            x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2,
+            x: (bounds.width - size.width) / 2, y: (height - size.height) / 2,
             width: size.width, height: size.height
         )
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        super.point(inside: point, with: event) && point.y < bounds.height - bottomInset
     }
 
     @objc private func expand() { onExpand() }

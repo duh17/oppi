@@ -38,6 +38,18 @@ enum PaneWebAddress {
         return .success(url)
     }
 
+    /// What a person typed into a browser pane's address field, as the page
+    /// it opens: http or https with a host; text with no scheme gets
+    /// `https://`, as Safari's address field does. Nil when it is not an address.
+    static func typed(_ text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let candidate = trimmed.contains("://") ? trimmed : "https://" + trimmed
+        guard let url = URL(string: candidate), isHTTP(url),
+              url.host(percentEncoded: false)?.isEmpty == false else { return nil }
+        return url
+    }
+
     /// Whether `url` is http or https, the only pages a browser leaf loads.
     static func isHTTP(_ url: URL) -> Bool {
         let scheme = url.scheme?.lowercased()

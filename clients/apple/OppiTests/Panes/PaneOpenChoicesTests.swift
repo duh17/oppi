@@ -17,6 +17,7 @@ struct PaneOpenChoicesTests: PaneFixtureBuilding {
                 layout,
                 size: CGSize(width: width, height: 700),
                 sidebarWidth: 0,
+                bottomInset: 0,
                 keyboardHeight: 0,
                 firstResponderLeaf: nil,
                 minimumSize: { PaneMinimumSize.standard(for: $0.stack.last?.route ?? .sessions(workspace: nil)) ?? PaneMinimumSize.list },
