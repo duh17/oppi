@@ -110,15 +110,8 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
             id: "panes",
             icon: .symbol("rectangle.split.2x1"),
             iconColor: \.blue,
-            title: String(localized: "Panes on iPad"),
-            description: String(localized: "Split the window with ⌘D or the chat’s … menu to keep chats, files, and terminals side by side. Drag a pane’s … grip to move it, or a divider to resize or fold a pane. Choose Zoom in a pane’s … menu to fill the window with it; Restore at the top of that menu, Restore Panes in the chat’s … menu, or Escape brings the others back. Split Panes is an experiment you can turn off in Settings → Experiments, where Godot Pane, off by default, plays a workspace’s Godot game in a pane.")
-        ),
-        WhatsNewFeature(
-            id: "browser",
-            icon: .symbol("safari"),
-            iconColor: \.cyan,
-            title: String(localized: "Web pages beside the chat"),
-            description: String(localized: "On iPad, a link you tap opens in a pane next to the chat, with an address bar like Safari’s. Choose Web Page in a new pane to type an address.")
+            title: String(localized: "Better iPad support with panes"),
+            description: String(localized: "On iPad, split the window with ⌘D or the chat’s … menu to keep chats, files, terminals, and web pages side by side, and a link you tap opens beside the chat. Zoom fills the window with one pane, and Restore brings the others back. Split Panes is an experiment you can turn off in Settings → Experiments. Godot Pane there, off by default, plays a Godot game you are building in a workspace.")
         ),
         WhatsNewFeature(
             id: "math-tables",
@@ -145,22 +138,22 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
             id: "subagents",
             icon: .symbol("person.2"),
             iconColor: \.yellow,
-            title: String(localized: "Subagents at a glance"),
-            description: String(localized: "The Subagents pill shows which children need you, what the working ones are doing, and what the finished ones sent back.")
+            title: String(localized: "Subagents in durable sessions"),
+            description: String(localized: "The built-in subagents extension, inspired by how Pi’s subagents work, shows which children need you, what the working ones are doing, and what the finished ones sent back. Tap a child in the Subagents pill or in the chat to jump into its session. It comes with Durable Sessions, which are off by default; turn them on in Server Settings → Durable Sessions.")
         ),
         WhatsNewFeature(
-            id: "terminal-dictate",
+            id: "terminal",
             icon: .symbol("terminal"),
             iconColor: \.red,
-            title: String(localized: "Dictate in the terminal"),
-            description: String(localized: "Dictate types your words at the cursor as you speak and never presses Return; words still settling show above the bar. Attach saves a photo or file on the host and types its path. With the keyboard up, the bar’s buttons stay on the keyboard bar.")
+            title: String(localized: "Terminal improvements"),
+            description: String(localized: "Scrolling a Rex terminal stays smooth while other panes stream output. Dictate types your words at the cursor as you speak, and Attach saves a photo or file on the host and types its path.")
         ),
         WhatsNewFeature(
-            id: "server-network",
-            icon: .symbol("network"),
-            iconColor: \.comment,
-            title: String(localized: "Server on Tailscale only"),
-            description: String(localized: "After its update, a server with no host set listens only on its own computer and on Tailscale. If this device reaches it over Wi-Fi without Tailscale, run oppi config set host 0.0.0.0 on the server and restart it.")
+            id: "resources",
+            icon: .symbol("gauge.with.dots.needle.33percent"),
+            iconColor: \.cyan,
+            title: String(localized: "Less memory and CPU"),
+            description: String(localized: "The app and the server use less memory and CPU, with fewer spikes. Long Markdown parses about 30% faster, and a streaming reply with long tables or math redoes only the parts that changed. Long files, photos in closed chats, and closed settings screens no longer hold memory. A server with many durable sessions no longer spikes in memory at startup or when a turn ends.")
         ),
     ]
 
