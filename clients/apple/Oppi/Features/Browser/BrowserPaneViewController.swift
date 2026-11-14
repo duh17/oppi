@@ -13,8 +13,11 @@ import WebKit
 ///   (`PaneLocalScreen.browser`); the first page it loads becomes the leaf's
 ///   entry, as every page it moves to does.
 /// - An address typed into the field loads where it was typed: only http
-///   and https with a host (`PaneWebAddress.typed`). The navigation policy
-///   below still refuses a paired server's own origin.
+///   and https with a host (`PaneTypedAddress`). Without a scheme it loads
+///   over https, and once over http if the secure connection fails or
+///   nothing answers on it, as Safari's field does; the field then shows
+///   the page is not secure. The navigation policy below still refuses a
+///   paired server's own origin, on either scheme.
 ///
 /// - Pages load at once, whoever opened them (owner decision D3). A pane a
 ///   relaunch brought back opens paused and loads on a tap, so a relaunch
@@ -48,6 +51,10 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
     private var observations: [NSKeyValueObservation] = []
     private let stateView = UIContentUnavailableView(loadState: .loading(nil))
     private var failure: (title: String, message: String)?
+    /// The address the person typed, while its load has not begun to arrive:
+    /// it may move from https to http once. Cleared by the first byte of any
+    /// page and by every other way of loading one.
+    private var typedAddress: PaneTypedAddress?
     private var parkedRelease: Timer?
     private var isVisible = true
     /// A pane opened with no page puts its field up once, as it appears.
@@ -178,6 +185,7 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
     /// Shows `url` here, unpausing the pane, and makes it the leaf's entry.
     func open(_ url: URL) {
         isPaused = false
+        typedAddress = nil
         load(url)
         onNavigate?(url)
     }
@@ -185,14 +193,15 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
     /// Go in the address field: the typed address loads, or the field stays
     /// up and says why it cannot.
     private func submit(_ text: String) -> Bool {
-        guard let url = PaneWebAddress.typed(text) else {
+        guard let typed = PaneTypedAddress(text) else {
             errorAlerts.show(
                 title: String(localized: "Can’t Open This Address"),
                 message: String(localized: "Enter a web address, such as example.com or https://example.com.")
             )
             return false
         }
-        open(url)
+        open(typed.url)
+        typedAddress = typed
         return true
     }
 
@@ -216,10 +225,21 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
         if webView.isLoading {
             webView.stopLoading()
         } else if webView.url == nil || failure != nil {
-            load(url)
+            loadAgain(url)
         } else {
             webView.reload()
         }
+    }
+
+    /// Loads the page again after it failed. A typed address that went on to
+    /// http starts over from its first load, so a server that now has https
+    /// gets it.
+    private func loadAgain(_ url: URL) {
+        guard var typed = typedAddress, typed.triedInsecure else { return load(url) }
+        let first = typed.restart()
+        typedAddress = typed
+        load(first)
+        onNavigate?(first)
     }
 
     private func openInSafari() {
@@ -369,7 +389,7 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
                 title: failure.title, message: failure.message,
                 retry: RetryAction { [weak self] in
                     guard let self, let url = self.url else { return }
-                    self.load(url)
+                    self.loadAgain(url)
                 }
             ), palette: palette)
         }
@@ -445,45 +465,69 @@ extension BrowserPaneViewController: WKNavigationDelegate, WKUIDelegate {
         view.setNeedsUpdateProperties()
     }
 
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
+        typedAddress = nil
+    }
+
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation?, withError error: any Error) {
-        failed(error)
+        failed(error, beforeCommit: true)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation?, withError error: any Error) {
-        failed(error)
+        failed(error, beforeCommit: false)
     }
 
-    private func failed(_ error: any Error) {
+    private func failed(_ error: any Error, beforeCommit: Bool) {
         let error = error as NSError
         // A cancelled load, or one this pane's policy stopped, is not a failure.
         if error.domain == NSURLErrorDomain, error.code == NSURLErrorCancelled { return }
         if error.domain == "WebKitErrorDomain", error.code == 102 { return }
-        if error.domain == NSURLErrorDomain, Self.certificateErrors.contains(error.code) {
-            let failing = (error.userInfo[NSURLErrorFailingURLErrorKey] as? URL) ?? url
-            return show(failure: String(localized: "Can\u{2019}t Open This Page Securely"), Self.certificateMessage(host: failing?.host(percentEncoded: false)))
+        // An address typed with no scheme that could not be reached over
+        // https goes once to http, as Safari's field does.
+        if beforeCommit, var typed = typedAddress, let retry = typed.retry(after: error) {
+            typedAddress = typed
+            load(retry)
+            onNavigate?(retry)
+            return
         }
-        show(failure: String(localized: "Can\u{2019}t Open This Page"), error.localizedDescription)
+        let failing = (error.userInfo[NSURLErrorFailingURLErrorKey] as? URL) ?? url
+        let secureFailure = typedAddress?.secureError
+        let host = failing?.host(percentEncoded: false)
+        if PaneTypedAddress.isSecureConnectionError(error) {
+            show(failure: Self.certificateTitle, Self.certificateMessage(host: host, triedHTTP: secureFailure != nil))
+        } else if let secureFailure, PaneTypedAddress.isSecureConnectionError(secureFailure) {
+            // The certificate says more than a refusal on the http port.
+            let secureHost = (secureFailure.userInfo[NSURLErrorFailingURLErrorKey] as? URL)?.host(percentEncoded: false) ?? host
+            show(failure: Self.certificateTitle, Self.certificateMessage(host: secureHost, triedHTTP: true))
+        } else if secureFailure != nil {
+            show(failure: String(localized: "Can\u{2019}t Open This Page"), Self.bothFailedMessage(error))
+        } else {
+            show(failure: String(localized: "Can\u{2019}t Open This Page"), error.localizedDescription)
+        }
     }
 
-    /// The secure connection failed: no TLS there, or a certificate for
-    /// another name, expired, or from an authority this device does not
-    /// trust. The pane never bypasses the check.
-    static let certificateErrors: Set<Int> = [
-        NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateHasBadDate,
-        NSURLErrorServerCertificateUntrusted, NSURLErrorServerCertificateHasUnknownRoot,
-        NSURLErrorServerCertificateNotYetValid, NSURLErrorClientCertificateRejected,
-        NSURLErrorClientCertificateRequired,
-    ]
+    static var certificateTitle: String { String(localized: "Can\u{2019}t Open This Page Securely") }
 
     /// What a failed secure connection to `host` means and what to try. A
     /// short machine name (`mac-mini`) is the usual cause: a tailnet's HTTPS
     /// certificate names the full name, so the short one fails the check.
-    static func certificateMessage(host: String?) -> String {
+    /// `triedHTTP`: an address typed with no scheme was also tried over http,
+    /// which did not open either, so that is no longer a thing to try. The
+    /// pane never bypasses the check.
+    static func certificateMessage(host: String?, triedHTTP: Bool) -> String {
         let name = host ?? String(localized: "This site")
-        let reason = String(localized: "\(name) didn\u{2019}t offer a secure connection this device trusts: its certificate is for another name, or isn\u{2019}t trusted. Oppi doesn\u{2019}t skip that check.")
-        guard let host, !host.contains("."), !host.contains(":") else { return reason }
-        let hint = String(localized: "Try the full name its certificate is for, such as \(host).your-tailnet.ts.net on Tailscale, or http:// if it doesn\u{2019}t use HTTPS.")
-        return reason + " " + hint
+        var message = String(localized: "\(name) didn\u{2019}t offer a secure connection this device trusts: its certificate is for another name, or isn\u{2019}t trusted. Oppi doesn\u{2019}t skip that check.")
+        if triedHTTP { message += " " + String(localized: "Oppi also tried http://, which didn\u{2019}t open either.") }
+        guard let host, !host.contains("."), !host.contains(":") else { return message }
+        let hint = triedHTTP
+            ? String(localized: "Try the full name its certificate is for, such as \(host).your-tailnet.ts.net on Tailscale.")
+            : String(localized: "Try the full name its certificate is for, such as \(host).your-tailnet.ts.net on Tailscale, or http:// if it doesn\u{2019}t use HTTPS.")
+        return message + " " + hint
+    }
+
+    /// An address typed with no scheme failed over https and then over http.
+    static func bothFailedMessage(_ error: NSError) -> String {
+        error.localizedDescription + " " + String(localized: "Oppi tried https:// and then http://.")
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

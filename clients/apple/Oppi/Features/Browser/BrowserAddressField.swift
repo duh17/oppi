@@ -3,7 +3,9 @@ import UIKit
 /// The browser pane's address field, as Safari's: idle, it shows the page's
 /// host (and port, which tells dev servers apart) centred, with Reload, or
 /// Stop while the page loads, at its trailing end. A tap shows the whole
-/// address, selected, with the keyboard up. Go hands the text to the pane;
+/// address, selected, with the keyboard up. A page over http carries a
+/// warning mark before its host (Safari's "Not Secure"); the whole address,
+/// editing, shows `http://`. Go hands the text to the pane;
 /// Cancel, Escape, or leaving the field puts the host back.
 ///
 /// It sits in the pane's bar as its title view and takes the width the bar's
@@ -19,6 +21,7 @@ final class BrowserAddressField: UIView {
 
     let textField = UITextField()
     private let reloadButton = UIButton(type: .system)
+    private let notSecureMark = UIImageView(image: UIImage(systemName: "exclamationmark.triangle.fill"))
     private var address: URL?
     private var isLoading = false
 
@@ -45,6 +48,13 @@ final class BrowserAddressField: UIView {
         textField.accessibilityIdentifier = "browser.address"
         textField.accessibilityLabel = String(localized: "Address")
         textField.delegate = self
+        notSecureMark.tintColor = .systemOrange
+        notSecureMark.contentMode = .scaleAspectFit
+        notSecureMark.isAccessibilityElement = true
+        notSecureMark.accessibilityLabel = String(localized: "Not Secure")
+        notSecureMark.accessibilityIdentifier = "browser.notSecure"
+        notSecureMark.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .footnote, scale: .small)
+        textField.leftView = notSecureMark
         textField.translatesAutoresizingMaskIntoConstraints = false
         addSubview(textField)
 
@@ -88,6 +98,7 @@ final class BrowserAddressField: UIView {
         reloadButton.setImage(UIImage(systemName: loading ? "xmark" : "arrow.clockwise"), for: .normal)
         reloadButton.accessibilityLabel = loading ? String(localized: "Stop") : String(localized: "Reload")
         reloadButton.isHidden = address == nil || textField.isEditing
+        textField.leftViewMode = address?.scheme?.lowercased() == "http" ? .unlessEditing : .never
         guard !textField.isEditing else { return }
         textField.text = address.map(Self.idleText)
     }

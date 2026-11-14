@@ -7,8 +7,9 @@ import XCTest
 /// never the internet: a link in the chat opens its page in a pane beside the
 /// chat, the launcher's Web Page opens the browser with its address field up
 /// (also in a short lower pane in portrait), the address field shows the host
-/// and edits the whole address, the bar goes back and forward, the grip
-/// closes the pane, and a relaunch brings the pane back paused.
+/// and edits the whole address (a bare one tries https, then http), the bar
+/// goes back and forward, the grip closes the pane, and a relaunch brings
+/// the pane back paused.
 @MainActor
 final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
     var app: XCUIApplication!
@@ -115,6 +116,25 @@ final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
             app.collectionViews["chat.timeline"].frame.maxX, app.windows.firstMatch.frame.maxX, accuracy: 2,
             "The chat has the window to itself again"
         )
+    }
+
+    /// An address typed with no scheme tries https first. The test's server
+    /// speaks only http, so the secure connection fails and the pane goes to
+    /// http once, as Safari does: the page loads, and the field says it is
+    /// not secure.
+    func testABareAddressFallsBackToHTTPWhenHTTPSFails() throws {
+        try startPages()
+        openChat(orientation: .landscapeLeft)
+        openFromLauncher("\(pages.host)/one")
+        XCTAssertTrue(app.webViews.staticTexts["First fixture page"].waitUntilExists(timeout: 20), "The bare address loaded over http")
+        let field = app.textFields["browser.address"]
+        XCTAssertTrue(waitFor((field.value as? String) == self.pages.host), "The field shows the host")
+        XCTAssertTrue(app.images["browser.notSecure"].waitUntilExists(timeout: 5), "The field marks the page not secure")
+        attachScreenCapture("bare-address-not-secure")
+        field.tap()
+        XCTAssertTrue(waitFor((field.value as? String) == self.pages.url("one").absoluteString), "Editing shows the http address")
+        attachScreenCapture("bare-address-http-fallback")
+        app.buttons["browser.address.cancel"].tap()
     }
 
     /// A relaunch brings the page's pane back paused: nothing loads until a

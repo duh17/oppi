@@ -6,8 +6,8 @@ import Foundation
 /// and both pass the web vectors of `protocol/layouts/vectors.json`.
 ///
 /// A page the person opens directly (a link tapped in a chat, an address
-/// typed into a pane) only has to be http or https: it loads on the device
-/// where it was tapped. Loopback is refused here because a link or a layout
+/// typed into a pane, see `PaneTypedAddress`) only has to be http or https: it
+/// loads on the device where it was tapped. Loopback is refused here because a link or a layout
 /// travels: `localhost` is the Mac on the Mac and the iPad on the iPad.
 enum PaneWebAddress {
     /// The most UTF-8 bytes an address may take.
@@ -36,18 +36,6 @@ enum PaneWebAddress {
         if components.user?.isEmpty == false || components.password?.isEmpty == false { return .failure(.userInfo) }
         if isLoopback(host: host) { return .failure(.loopback) }
         return .success(url)
-    }
-
-    /// What a person typed into a browser pane's address field, as the page
-    /// it opens: http or https with a host; text with no scheme gets
-    /// `https://`, as Safari's address field does. Nil when it is not an address.
-    static func typed(_ text: String) -> URL? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let candidate = trimmed.contains("://") ? trimmed : "https://" + trimmed
-        guard let url = URL(string: candidate), isHTTP(url),
-              url.host(percentEncoded: false)?.isEmpty == false else { return nil }
-        return url
     }
 
     /// Whether `url` is http or https, the only pages a browser leaf loads.
