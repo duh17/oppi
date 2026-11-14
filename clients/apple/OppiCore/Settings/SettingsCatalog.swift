@@ -286,6 +286,20 @@ enum SettingsCatalog {
         )
     )
 
+    /// Split Panes: Split Right and Down, Open in New Pane, the launcher, web pages
+    /// beside the chat and the pane keys on a wide window. On by default; while off,
+    /// a saved split layout is kept and comes back when it is turned on again.
+    static let experimentSplitPanes = SettingDeclaration<Bool>(
+        id: "settings.experiments.splitPanes",
+        key: AppPreferenceStore.Experiments.splitPanesKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.Experiments.splitPanesDefault,
+        copy: SettingCopy(
+            title: String(localized: "Split Panes"),
+            footer: String(localized: "Split the window into panes beside the chat, and open files, terminals and web pages in them. While off, the window shows one chat and its side panel, and web links open in a sheet; panes you had come back when you turn it on.")
+        )
+    )
+
     /// The calendars whose events Schedules leaves out. Stored as the hidden ones, so a
     /// calendar added later shows until it is hidden.
     static let calendarEventsHiddenCalendars = SettingDeclaration<[String]>(
@@ -368,6 +382,7 @@ enum SettingsCatalog {
         experimentRex.descriptor,
         experimentHerdr.descriptor,
         experimentCalendarEvents.descriptor,
+        experimentSplitPanes.descriptor,
         calendarEventsHiddenCalendars.descriptor,
         serverMetricsEnabled.descriptor,
         mobileOutputGuideEnabled.descriptor,

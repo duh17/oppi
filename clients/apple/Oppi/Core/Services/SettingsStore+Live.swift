@@ -72,6 +72,9 @@ extension SettingsStore {
                     SSHTerminalRegistry.shared.closeRexTerminals(reason: String(localized: "The Rex experiment was turned off."))
                 }
                 NotificationCenter.default.post(name: AppPreferences.Experiments.didChangeNotification, object: nil)
+            case SettingsCatalog.experimentSplitPanes.id:
+                // Every window's panes (`ScenePanes`) follow at once.
+                NotificationCenter.default.post(name: AppPreferences.Experiments.didChangeNotification, object: nil)
             default:
                 break
             }

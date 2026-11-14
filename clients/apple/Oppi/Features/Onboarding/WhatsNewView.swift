@@ -111,7 +111,7 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
             icon: .symbol("rectangle.split.2x1"),
             iconColor: \.blue,
             title: String(localized: "Panes on iPad"),
-            description: String(localized: "Split the window with ⌘D or the chat’s … menu to keep chats, files, and terminals side by side. Drag a pane’s … grip to move it, drag a divider to resize or fold a pane, and your panes come back after a relaunch.")
+            description: String(localized: "Split the window with ⌘D or the chat’s … menu to keep chats, files, and terminals side by side. Drag a pane’s … grip to move it, drag a divider to resize or fold a pane, and your panes come back after a relaunch. Panes are an experiment you can turn off in Settings → Experiments.")
         ),
         WhatsNewFeature(
             id: "browser",

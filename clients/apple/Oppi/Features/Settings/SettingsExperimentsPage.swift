@@ -1,8 +1,10 @@
 import UIKit
 
-/// Settings > Experiments: opt-in features, each off by default and saved on
-/// this device. Rex, Herdr, and Calendar Events are declared in `SettingsCatalog`
-/// (`experimentRex`, `experimentHerdr`, `experimentCalendarEvents`) and read and
+/// Settings > Experiments: features on trial, saved on this device, each off by
+/// default but Split Panes, which ships on and is listed only on a wide window
+/// (a compact one never splits). Split Panes, Rex, Herdr, and Calendar Events are
+/// declared in `SettingsCatalog` (`experimentSplitPanes`, `experimentRex`,
+/// `experimentHerdr`, `experimentCalendarEvents`) and read and
 /// written through the app's device `SettingsStore`, so a switch saves as it flips
 /// and the feature follows without a relaunch. Live Voice still writes its own
 /// default key here, as it did before the settings kit; it is the one row this page
@@ -13,9 +15,9 @@ import UIKit
 /// access, its section offers Calendars (which ones Schedules shows); refused, it
 /// offers the system Settings page where access is given back.
 final class SettingsExperimentsViewController: ListScreenController<SettingsExperimentsViewController.Section, SettingsExperimentsViewController.Item> {
-    enum Section: Hashable, Sendable { case liveVoice, rex, herdr, calendarEvents }
+    enum Section: Hashable, Sendable { case splitPanes, liveVoice, rex, herdr, calendarEvents }
     enum Item: Hashable, Sendable {
-        case liveVoice, rex, herdr, calendarEvents
+        case splitPanes, liveVoice, rex, herdr, calendarEvents
         /// Which calendars Schedules shows; with access only.
         case calendars
         /// Access was refused: opens Oppi's page in the system Settings.
@@ -65,9 +67,11 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
     }
 
     /// How many experiments are currently on, for the root row summary.
+    /// Split Panes counts only where the page lists it (`wide`).
     @MainActor
-    static func enabledCount() -> Int {
+    static func enabledCount(wide: Bool) -> Int {
         [
+            wide && AppPreferenceStore.Experiments.splitPanesEnabled,
             AppPreferences.Experiments.liveVoiceEnabled,
             AppPreferenceStore.Experiments.rexEnabled,
             AppPreferenceStore.Experiments.herdrEnabled,
@@ -88,7 +92,12 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
         let rex = SettingsCatalog.experimentRex
         let herdr = SettingsCatalog.experimentHerdr
         let calendarEvents = SettingsCatalog.experimentCalendarEvents
-        return [
+        let splitPanes = SettingsCatalog.experimentSplitPanes
+        // Reading the traits here redraws the page as the window turns wide or compact.
+        let splitSection: [ListSection<Section, Item>] = AdaptiveWidth.isWide(traitCollection) ? [
+            ListSection(.splitPanes, footer: splitPanes.copy.footer, items: settingRows(splitPanes, .splitPanes) { .failure($0) }),
+        ] : []
+        return splitSection + [
             ListSection(
                 .liveVoice,
                 footer: String(localized: "Adds Live Voice to the composer's mic menu and Quick Session, to talk to a session hands-free. Needs a server with a voice backend."),
@@ -131,6 +140,7 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .liveVoice: AnyHashable(isOn(AppPreferences.Experiments.liveVoiceKey))
+        case .splitPanes: settingInputs(SettingsCatalog.experimentSplitPanes)
         case .rex: settingInputs(SettingsCatalog.experimentRex)
         case .herdr: settingInputs(SettingsCatalog.experimentHerdr)
         case .calendarEvents: settingInputs(SettingsCatalog.experimentCalendarEvents)
@@ -181,7 +191,7 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         switch item {
-        case .liveVoice, .rex, .herdr, .calendarEvents: super.dequeue(item, at: indexPath)
+        case .splitPanes, .liveVoice, .rex, .herdr, .calendarEvents: super.dequeue(item, at: indexPath)
         case .calendars: collectionView.dequeueConfiguredReusableCell(using: calendarsRow, for: indexPath, item: item)
         case .calendarAccess: collectionView.dequeueConfiguredReusableCell(using: calendarAccessRow, for: indexPath, item: item)
         case .failure(let id): dequeueSettingFailure(id, at: indexPath)
@@ -200,6 +210,8 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
 
     override func configure(_ cell: UICollectionViewListCell, item: Item) {
         switch item {
+        case .splitPanes:
+            settingToggleRow(cell, SettingsCatalog.experimentSplitPanes)
         case .rex:
             settingToggleRow(cell, SettingsCatalog.experimentRex)
         case .herdr:

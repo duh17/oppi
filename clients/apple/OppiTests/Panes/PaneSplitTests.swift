@@ -126,6 +126,50 @@ struct PaneSplitTests: PaneFixtureBuilding {
         #expect(after.routedLeafID.raw == "leaf-1")
     }
 
+    /// The Split Panes experiment off at launch: a saved split layout comes
+    /// back as the chat and its panel alone, nothing changes the cells, and
+    /// the tree (and so what is saved) keeps the split leaves until the switch
+    /// turns back on and they return where they were.
+    @Test func splitPanesOffKeepsASavedSplitLayoutAndOnBringsItBack() async throws {
+        let store = try makeStore()
+        let before = try await chatWindow()
+        defer { withExtendedLifetime(before) {} }
+        let saved = before.navigation.panes
+        saved.companionDidOpen(entry(.git(workspace: "ws-1", worktree: nil)))
+        let files = try #require(saved.split(saved.routedLeafID, axis: .row))
+        saved.show(entry(.files(workspace: "ws-1", path: nil)), in: files)
+        saved.focus(files)
+        store.save(PaneLayoutArchive(restorable: saved.layout(navigation: before.navigation, rootServerId: serverId)), scene: "a")
+
+        let root = try await makeRoot()
+        defer { withExtendedLifetime(root) {} }
+        let panes = root.navigation.panes
+        panes.splitsEnabled = false
+        panes.connect(scene: "a", store: store)
+        panes.restore(navigation: root.navigation, coordinator: root.coordinator)
+        #expect(panes.pendingPanel(for: "s-1") == .git(workspace: "ws-1", worktree: nil), "the chat's panel still opens beside it")
+        panes.companionDidOpen(entry(.git(workspace: "ws-1", worktree: nil)))
+        let companion = try #require(panes.companionID)
+        #expect(panes.splitLeaves.isEmpty, "no split leaf mounts")
+        #expect(shape(panes.cellLayout.root) == "leaf-1")
+        #expect(panes.cellLayout.focus == panes.routedLeafID, "the chat has focus while it is the only pane")
+
+        #expect(panes.split(panes.routedLeafID, axis: .row) == nil, "no split")
+        #expect(panes.open(entry(.files(workspace: "ws-1", path: "Sources")), besideCell: panes.routedLeafID, full: false) == nil,
+                "no Open in New Pane")
+        panes.close(files)
+        panes.resetPanes()
+        #expect(panes.undoAction == nil)
+        let kept = panes.layout(navigation: root.navigation, rootServerId: serverId)
+        #expect(kept.leaf(files)?.stack == [entry(.files(workspace: "ws-1", path: nil))], "what is saved keeps the Files pane")
+        #expect(kept.leaf(companion)?.attachedTo == panes.routedLeafID)
+
+        panes.splitsEnabled = true
+        #expect(panes.splitLeaves.map(\.id) == [files])
+        #expect(shape(panes.cellLayout.root) == "row[leaf-1 0.5, \(files.raw) 0.5]")
+        #expect(panes.cellLayout.focus == files, "focus is where it was")
+    }
+
     @Test func aDropOnAPaneEdgeOpensTheEntryOnThatSide() async throws {
         let root = try await chatWindow()
         defer { withExtendedLifetime(root) {} }

@@ -58,9 +58,10 @@ enum AppPreferences {
 
     // MARK: - Experiments
 
-    /// Opt-in features, saved on this device. Every flag defaults to off.
+    /// Features on trial, saved on this device. Every flag but Split Panes
+    /// defaults to off.
     ///
-    /// Live Voice keeps its flag and getter here. Rex and Herdr live in
+    /// Live Voice keeps its flag and getter here. The others live in
     /// `AppPreferenceStore.Experiments` (both clients read them), declared in
     /// `SettingsCatalog` so Settings draws them with the kit's rows and writes them
     /// through `SettingsStore`, whose write posts `didChangeNotification` on the

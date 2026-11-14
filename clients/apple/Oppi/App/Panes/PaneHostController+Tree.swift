@@ -67,9 +67,12 @@ enum PaneDirection: CaseIterable, Hashable, Sendable {
 extension PaneHostController {
     /// Split, Move and Move Divider need a wide window (build plan §1.5); a
     /// compact one keeps one pane. The host is the window's pane area and
-    /// takes the window's traits, never a leaf's forced ones.
+    /// takes the window's traits, never a leaf's forced ones. The Split Panes
+    /// experiment off takes splits away too: then no Split, web page beside
+    /// the chat, or terminal or drop in a new pane is offered.
     var canSplit: Bool {
-        AdaptiveWidth.isWide(traitCollection) && panes.tree.leaves.count < PaneLayout.maximumLeaves
+        panes.splitsEnabled && AdaptiveWidth.isWide(traitCollection)
+            && panes.tree.leaves.count < PaneLayout.maximumLeaves
     }
 
     /// Whether `id` can collapse to a strip: another cell stays open beside it.

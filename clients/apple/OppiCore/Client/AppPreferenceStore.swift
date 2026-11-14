@@ -242,9 +242,9 @@ enum AppPreferenceStore {
 
     // MARK: - Experiments
 
-    /// Opt-in features, kept on this device (Settings → Experiments). Every flag
-    /// defaults to off, and this is the one place their keys live, so iOS
-    /// `AppPreferences.Experiments` and `SettingsCatalog` read one value.
+    /// Features on trial, kept on this device (Settings → Experiments). Every flag
+    /// but Split Panes defaults to off, and this is the one place their keys live,
+    /// so iOS `AppPreferences.Experiments` and `SettingsCatalog` read one value.
     enum Experiments {
         static let rexKey = "\(AppIdentifiers.subsystem).experiments.rex"
         static let herdrKey = "\(AppIdentifiers.subsystem).experiments.herdr"
@@ -252,8 +252,11 @@ enum AppPreferenceStore {
         /// The calendars Schedules leaves out, by EventKit identifier: a calendar added
         /// later shows until it is hidden.
         static let calendarEventsHiddenKey = "\(AppIdentifiers.subsystem).experiments.calendarEvents.hidden"
+        static let splitPanesKey = "\(AppIdentifiers.subsystem).experiments.splitPanes"
         /// What nothing stored means; both declarations use it.
         static let enabledDefault = false
+        /// Split Panes ships on: the switch is the way out of it, not in.
+        static let splitPanesDefault = true
 
         /// Rex: the Terminal tab's Rex sections, Rex screens, panes and tailnet list.
         static var rexEnabled: Bool { flag(rexKey) }
@@ -264,10 +267,14 @@ enum AppPreferenceStore {
         /// Calendar Events: this device's events in the Schedules calendar.
         static var calendarEventsEnabled: Bool { flag(calendarEventsKey) }
 
+        /// Split Panes: a wide window's split leaves and every way to make one.
+        /// While off, a window is its chat and that chat's panel (`ScenePanes`).
+        static var splitPanesEnabled: Bool { flag(splitPanesKey, default: splitPanesDefault) }
+
         /// Nothing stored means the default; anything stored reads as a bool, so a
         /// launch argument's `-key YES` (a test's switch) counts too.
-        private static func flag(_ key: String) -> Bool {
-            UserDefaults.standard.object(forKey: key) == nil ? enabledDefault : UserDefaults.standard.bool(forKey: key)
+        private static func flag(_ key: String, default value: Bool = enabledDefault) -> Bool {
+            UserDefaults.standard.object(forKey: key) == nil ? value : UserDefaults.standard.bool(forKey: key)
         }
     }
 

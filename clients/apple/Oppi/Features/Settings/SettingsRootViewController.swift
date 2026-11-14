@@ -294,7 +294,7 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
     }
 
     private var experimentsSummary: String {
-        let count = SettingsExperimentsViewController.enabledCount()
+        let count = SettingsExperimentsViewController.enabledCount(wide: AdaptiveWidth.isWide(traitCollection))
         return "\(count) on"
     }
 

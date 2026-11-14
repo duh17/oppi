@@ -143,6 +143,58 @@ struct PaneTreeHostTests {
         #expect(leafView(host, split)?.frame.minY ?? 0 > 0, "Split Down put the new pane below")
     }
 
+    /// The Split Panes experiment turned off with a pane open: the window is
+    /// the chat and its panel again, at the panel's width, with no grip, and
+    /// offers no split, item menu, web page beside, drop zone or Undo. Turned
+    /// back on, the pane returns with its grip and its Undo.
+    @Test func splitPanesOffLeavesTheChatAndItsPanelAndOnBringsThePaneBack() throws {
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer { host.hide() }
+        let routed = host.scenePanes.routedLeafID
+        host.showPanel(minWidth: 320, idealWidth: 360, maxWidth: 640)
+        host.act { host.panes.split(axis: .column) }
+        let kept = try #require(host.scenePanes.splitLeaves.first?.id)
+        // Open in Pane, for an Undo.
+        let files = PaneStackEntry(serverId: "s", route: .files(workspace: "ws", path: nil))
+        host.act {
+            host.scenePanes.open(files, inCell: kept)
+            host.panes.updatePropertiesIfNeeded()
+        }
+        #expect(host.scenePanes.undoAction == ScenePanes.openInPaneAction)
+        let companion = try #require(host.companion?.view)
+        let splitHeight = companion.frame.height
+
+        host.act {
+            host.scenePanes.splitsEnabled = false
+            host.panes.updatePropertiesIfNeeded()
+        }
+        #expect(leafView(host, kept) == nil, "the split pane leaves the window")
+        #expect(try grip(host, routed).isHidden)
+        #expect(host.screen.additionalSafeAreaInsets.top == 0, "no grip strip")
+        #expect(companion.frame.maxX == 1133, "the panel stays beside the chat")
+        #expect(abs(host.screenWidth + 1 + companion.frame.width - 1133) <= 1, "the two share the window")
+        #expect(companion.frame.height > splitHeight, "the chat's cell is the whole window again")
+        #expect(host.panes.splitItems(for: host.screen).isEmpty, "no Split Right or Down")
+        #expect(host.panes.openChoices(from: routed) == nil, "no Open in New Pane or Open in Pane")
+        #expect(!host.panes.openBrowser(try #require(URL(string: "https://example.com"))), "web links keep Safari's sheet")
+        let chat = try #require(host.panes.cellFrame(routed))
+        let file = PaneDragPayload.Content.entry(PaneStackEntry(serverId: "s", route: .file(.host, path: "/tmp/a", line: nil)))
+        #expect(host.panes.dropTarget(at: CGPoint(x: chat.minX + 10, y: chat.midY), payload: file) == nil, "no drop zone splits")
+        #expect(host.scenePanes.undoAction == nil)
+        host.act { host.panes.split(axis: .column) }
+        #expect(host.scenePanes.tree.leaves.count == 3, "⌘D does nothing")
+        #expect(host.scenePanes.topEntry(of: kept) == files, "the tree keeps the pane")
+
+        host.act {
+            host.scenePanes.splitsEnabled = true
+            host.panes.updatePropertiesIfNeeded()
+        }
+        let leaf = try #require(leafView(host, kept), "the pane is back")
+        #expect(leaf.frame.maxY == 744, "below the chat, where it was")
+        #expect(!(try grip(host, kept)).isHidden)
+        #expect(host.scenePanes.undoAction == ScenePanes.openInPaneAction)
+    }
+
     /// A screen that brings its own controls, as the terminal and a file
     /// reader do: its stack hides the bar.
     private final class BarlessScreen: UIViewController, NavigationBarHiding {
