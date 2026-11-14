@@ -2002,6 +2002,7 @@
 		DC7BAC525A2B5793095D5531 /* ReviewableControlMarkdownTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B4FC7599C52AD4251C28C5 /* ReviewableControlMarkdownTests.swift */; };
 		DC7D9D149A1195305DB353B7 /* USDZRealityCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = 276431066DEB727F2EEEB6E4 /* USDZRealityCanvas.swift */; };
 		DCB25B5EC600C8FD953ED3C3 /* SSHTerminalSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB9F8C1EACF4890606F51379 /* SSHTerminalSettingsTests.swift */; };
+		DCB7F228BB3CB442E931B399 /* FormulaAccessibilityText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FEA7ACAE6BA95973899955E /* FormulaAccessibilityText.swift */; };
 		DCB830E07158E3E434B7919F /* ScheduleCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4A8AAC96962976E2367824F /* ScheduleCalendar.swift */; };
 		DCCC3A1E404FC3955F1828D1 /* ReviewCommentWKWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC3C0B6547CA7DA54FF9389F /* ReviewCommentWKWebView.swift */; };
 		DCDD3E6B321A75DCF39C047A /* WorkspaceContextBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 616CEA6079EEFED1B1822038 /* WorkspaceContextBar.swift */; };
@@ -3692,6 +3693,7 @@
 		8FBB435E8B6D537C17533A8C /* ModelPickerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPickerViewController.swift; sourceTree = "<group>"; };
 		8FCA2AF51C1A8FE5480B00FD /* WorkspaceDetailViewController+Chrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceDetailViewController+Chrome.swift"; sourceTree = "<group>"; };
 		8FCA984427877BE0D63DBC46 /* SSHPreflightTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHPreflightTests.swift; sourceTree = "<group>"; };
+		8FEA7ACAE6BA95973899955E /* FormulaAccessibilityText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormulaAccessibilityText.swift; sourceTree = "<group>"; };
 		90069E7B878E7B0C700D6595 /* ChatCoveredLifetimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatCoveredLifetimeTests.swift; sourceTree = "<group>"; };
 		90229E1A8ADF9F5099B3F2B1 /* PaneLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneLayout.swift; sourceTree = "<group>"; };
 		9053FD2615A63B0FEF6742AC /* ExtensionSurfaceReducerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionSurfaceReducerTests.swift; sourceTree = "<group>"; };
@@ -6731,6 +6733,7 @@
 				F2B18EB2886F3CE88C3C28A3 /* FileShareProgressOverlay.swift */,
 				61C3420826E1FBDC89FA7B83 /* FlatSegmentBuildResult.swift */,
 				BD132131766760180A3BDB72 /* FloatingProgressPanel.swift */,
+				8FEA7ACAE6BA95973899955E /* FormulaAccessibilityText.swift */,
 				95B3589E8059066D1C93C3AF /* FullScreenCodeBodies.swift */,
 				6598CC67F49112C7E21F80C8 /* FullScreenCodeSupport.swift */,
 				25E1EAB7B3DB387C15E7E1E8 /* FullScreenCodeView.swift */,
@@ -10034,6 +10037,7 @@
 				8F4D99AFB56CAF5E53863D03 /* FocusedSessionStreamBinder.swift in Sources */,
 				B37BAAE3AEED514E22D6CFE3 /* FontPreferenceStore.swift in Sources */,
 				517EDD27A52A16097375D39A /* FontPreferences.swift in Sources */,
+				DCB7F228BB3CB442E931B399 /* FormulaAccessibilityText.swift in Sources */,
 				4C1034D8699222893E905E3F /* FrameHitchCounter.swift in Sources */,
 				101D616AAEB69B4638217DFD /* FreshnessState.swift in Sources */,
 				99064FF37F463580F1829BD0 /* FullScreenCodeBodies.swift in Sources */,

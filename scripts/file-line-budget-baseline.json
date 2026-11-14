@@ -45,11 +45,6 @@
       "owner": "media (M1)",
       "reason": "Grab-bag of image, raster, preview, and player helpers; a move-only split."
     },
-    "clients/apple/Oppi/Core/Views/MarkdownText.swift": {
-      "budget": 1800,
-      "owner": "client markdown (M2)",
-      "reason": "Segment cache, file URL identities, and the flat renderer; the URL identities move out first."
-    },
     "clients/apple/Oppi/Features/Chat/Support/WorkspaceContextBar.swift": {
       "budget": 2000,
       "owner": "WB1 commit graph",

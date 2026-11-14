@@ -24,6 +24,9 @@ struct LayoutBox: Equatable, Sendable {
     /// Slant overhang of a box that ends in an italic glyph; a superscript
     /// moves right by it.
     var italicCorrection: CGFloat = 0
+    /// \color for this box and what it holds, unless a child sets its own.
+    /// A theme token, resolved when drawing, so layout stays theme-free.
+    var color: MathColor?
 
     var ascent: CGFloat { baseline }
     var descent: CGFloat { size.height - baseline }
@@ -133,6 +136,23 @@ struct MathLayoutEngine: Sendable {
         case .doubleLeftarrow: return "\u{21D0}" // ⇐
         case .doubleLeftrightarrow: return "\u{21D4}" // ⇔
         case .leftrightarrow: return "\u{2194}" // ↔
+        case .notin: return "\u{2209}" // ∉
+        case .perp: return "\u{22A5}" // ⊥
+        case .ll: return "\u{226A}" // ≪
+        case .gg: return "\u{226B}" // ≫
+        case .longrightarrow: return "\u{27F6}" // ⟶
+        case .longleftarrow: return "\u{27F5}" // ⟵
+        case .longleftrightarrow: return "\u{27F7}" // ⟷
+        case .doubleLongRightarrow: return "\u{27F9}" // ⟹
+        case .doubleLongLeftarrow: return "\u{27F8}" // ⟸
+        case .doubleLongLeftrightarrow: return "\u{27FA}" // ⟺
+        case .longmapsto: return "\u{27FC}" // ⟼
+        case .setminus: return "\u{2216}" // ∖
+        case .circ: return "\u{2218}" // ∘
+        case .oplus: return "\u{2295}" // ⊕
+        case .otimes: return "\u{2297}" // ⊗
+        case .wedge: return "\u{2227}" // ∧
+        case .vee: return "\u{2228}" // ∨
         case .colon: return ":"
         case .comma: return ","
         case .semicolon: return ";"
@@ -146,7 +166,9 @@ struct MathLayoutEngine: Sendable {
              .approx, .equiv, .sim, .propto, .mid, .in, .subset, .supset,
              .subseteq, .supseteq, .to, .rightarrow, .leftarrow, .mapsto,
              .iff, .doubleRightarrow, .doubleLeftarrow, .doubleLeftrightarrow,
-             .leftrightarrow, .colon:
+             .leftrightarrow, .colon, .notin, .perp, .ll, .gg, .longrightarrow,
+             .longleftarrow, .longleftrightarrow, .doubleLongRightarrow,
+             .doubleLongLeftarrow, .doubleLongLeftrightarrow, .longmapsto:
             return true
         default:
             return false
@@ -155,7 +177,8 @@ struct MathLayoutEngine: Sendable {
 
     static func isBinaryOperator(_ op: MathOperator) -> Bool {
         switch op {
-        case .plus, .minus, .times, .div, .cdot, .pm, .mp, .star, .cup, .cap:
+        case .plus, .minus, .times, .div, .cdot, .pm, .mp, .star, .cup, .cap,
+             .setminus, .circ, .oplus, .otimes, .wedge, .vee:
             return true
         default:
             return false
@@ -220,6 +243,7 @@ struct MathLayoutEngine: Sendable {
         case .ddots: return "\u{22F1}"
         case .prime: return "\u{2032}"
         case .top: return "\u{22A4}"
+        case .aleph: return "\u{2135}"
         }
     }
 
@@ -276,6 +300,10 @@ struct MathLayoutEngine: Sendable {
         case .doublePipe: return "\u{2016}" // ‖
         case .angle: return "\u{27E8}"      // ⟨
         case .closeAngle: return "\u{27E9}" // ⟩
+        case .floor: return "\u{230A}" // ⌊
+        case .closeFloor: return "\u{230B}" // ⌋
+        case .ceil: return "\u{2308}" // ⌈
+        case .closeCeil: return "\u{2309}" // ⌉
         case .none: return ""
         }
     }
@@ -302,6 +330,7 @@ private struct Style {
     var level: Level
     var baseSize: CGFloat
     var fontStyle: MathFontStyle?
+    var color: MathColor?
     var cramped = false
     let scriptScale: CGFloat
     let scriptScriptScale: CGFloat
@@ -316,13 +345,18 @@ private struct Style {
     var isDisplay: Bool { level == .display }
     var isScript: Bool { level.rawValue >= Level.script.rawValue }
 
+    /// Smallest size, in points, a script or a script's script sets in: TeX's
+    /// 50% scriptscript size reads as specks beside phone body text. A
+    /// formula set smaller than this keeps its scripts at its own size.
+    static let minimumScriptSize: CGFloat = 11
+
     var size: CGFloat {
         let scale: CGFloat = switch level {
         case .display, .text: 1
         case .script: scriptScale
         case .scriptScript: scriptScriptScale
         }
-        return max(baseSize * scale, 6)
+        return max(baseSize * scale, min(Self.minimumScriptSize, baseSize), 6)
     }
 
     func with(_ level: Level, cramped: Bool? = nil) -> Self {
@@ -401,9 +435,15 @@ private struct Typesetter {
 
     private func flatten(_ nodes: [MathNode], _ style: Style, into items: inout [Item]) {
         for node in nodes {
-            if case .style(let kind, let body) = node {
+            switch node {
+            case .style(let kind, let body):
                 flatten(body, style.restyled(kind), into: &items)
-            } else {
+            case .color(let color, let body):
+                // Colour does not group: its atoms space with their neighbours.
+                var colored = style
+                colored.color = color
+                flatten(body, colored, into: &items)
+            default:
                 items.append(Item(node: node, style: style))
             }
         }
@@ -415,6 +455,11 @@ private struct Typesetter {
     func list(_ nodes: [MathNode], _ style: Style, leadingOrd: Bool = false) -> LayoutBox {
         var items: [Item] = []
         flatten(nodes, style, into: &items)
+        // A \tag goes after everything else in its formula.
+        let tags = items.filter { if case .tag = $0.node { true } else { false } }
+        if !tags.isEmpty {
+            items.removeAll { if case .tag = $0.node { true } else { false } }
+        }
 
         // Atom classes, with TeX's rule that a binary operator with nothing
         // to bind on its left (or right) is an ordinary atom: −b, (−x).
@@ -456,28 +501,51 @@ private struct Typesetter {
                 cursor += leftClass.space(before: atom, inScript: item.style.isScript) * item.style.size / 18
             }
             var box = node(item.node, item.style)
+            if box.color == nil { box.color = item.style.color }
             box.origin.x = cursor
             cursor += box.size.width
             lastItalicCorrection = box.italicCorrection
             children.append(box)
             leftClass = atom
         }
+        for item in tags {
+            cursor += Self.tagGap * item.style.size
+            var box = node(item.node, item.style)
+            if box.color == nil { box.color = item.style.color }
+            box.origin.x = cursor
+            cursor += box.size.width
+            lastItalicCorrection = 0
+            children.append(box)
+        }
         var result = hbox(children, width: cursor)
         result.italicCorrection = lastItalicCorrection
         return result
     }
 
+    /// Room before a \tag, in em.
+    private static let tagGap: CGFloat = 2
+
+    /// A tag's label: upright, in parentheses unless starred.
+    private func tagLabel(_ body: [MathNode], parenthesized: Bool) -> [MathNode] {
+        [.font(.roman, body: parenthesized ? [.variable("(")] + body + [.variable(")")] : body)]
+    }
+
     private func atomClass(_ node: MathNode) -> AtomClass? {
         switch node {
-        case .space, .style:
+        case .space, .style, .color, .tag:
             return nil
-        case .number, .text, .font, .accent, .sqrt, .group:
+        case .number, .text, .font, .accent, .sqrt, .group, .substack, .phantom:
             return .ord
+        case .operatorName:
+            return .op
+        case .stack(let base, _, _, let isRelation):
+            if isRelation { return .rel }
+            return base.count == 1 ? atomClass(base[0]) ?? .ord : .ord
         case .symbol(let symbol):
             return symbol == .cdots || symbol == .ldots ? .inner : .ord
         case .variable(let name):
-            if ["(", "[", "{", "\u{27E8}"].contains(name) { return .open }
-            if [")", "]", "}", "\u{27E9}"].contains(name) { return .close }
+            if ["(", "[", "{", "\u{27E8}", "\u{230A}", "\u{2308}"].contains(name) { return .open }
+            if [")", "]", "}", "\u{27E9}", "\u{230B}", "\u{2309}"].contains(name) { return .close }
             return .ord
         case .operator(let op):
             if MathLayoutEngine.isRelationOperator(op) { return .rel }
@@ -499,8 +567,8 @@ private struct Typesetter {
             return base.count == 1 ? atomClass(base[0]) : .ord
         case .sizedDelimiter(let delimiter, _):
             switch delimiter {
-            case .paren, .bracket, .brace, .angle: return .open
-            case .closeParen, .closeBracket, .closeBrace, .closeAngle: return .close
+            case .paren, .bracket, .brace, .angle, .floor, .ceil: return .open
+            case .closeParen, .closeBracket, .closeBrace, .closeAngle, .closeFloor, .closeCeil: return .close
             default: return .ord
             }
         }
@@ -580,6 +648,40 @@ private struct Typesetter {
             return list(body, styled)
         case .style(let kind, let body):
             return list(body, style.restyled(kind))
+        case .color(let color, let body):
+            var colored = style
+            colored.color = color
+            return list(body, colored)
+        case .stack(let base, let over, let under, _):
+            return limitStack(list(base, style), upper: over, lower: under, style)
+        case .operatorName(let name, let limits, let starred):
+            var roman = style
+            roman.fontStyle = .roman
+            var op = list(name, roman)
+            op.italicCorrection = 0
+            guard let limits, limits.lower != nil || limits.upper != nil else { return op }
+            let stacks = switch limits.placement {
+            case .stacked: true
+            case .beside: false
+            case .automatic: starred && style.isDisplay
+            }
+            if stacks { return limitStack(op, upper: limits.upper, lower: limits.lower, style) }
+            return scripts(base: op, baseIsCharacter: true, sup: limits.upper, sub: limits.lower, style)
+        case .substack(let rows):
+            return grid(rows.map { [$0] }, style, alignment: .centered, columnGap: 0, rowGap: 0.1, strut: false)
+        case .tag(let body, let parenthesized):
+            return list(tagLabel(body, parenthesized: parenthesized), style)
+        case .phantom(let kind, let body):
+            let content = list(body, style)
+            return LayoutBox(
+                origin: .zero,
+                size: CGSize(
+                    width: kind == .vertical ? 0 : content.size.width,
+                    height: kind == .horizontal ? 0 : content.size.height
+                ),
+                baseline: kind == .horizontal ? 0 : content.baseline,
+                content: .container([])
+            )
         case .sizedDelimiter(let delimiter, let size):
             let heights: [CGFloat] = [1.2, 1.8, 2.4, 3.0]
             let height = heights[min(max(size, 1), 4) - 1] * style.size
@@ -963,12 +1065,14 @@ private struct Typesetter {
             return extensibleArrow(kind, limits: limits, style)
         }
 
-        let lower = limits?.lower.flatMap { $0.isEmpty ? nil : list($0, style.subscript) }
-        let upper = limits?.upper.flatMap { $0.isEmpty ? nil : list($0, style.superscript) }
         let isIntegral = [.int, .iint, .iiint, .oint].contains(kind)
-        let stacksLimits: Bool = switch kind {
-        case .int, .iint, .iiint, .oint, .log, .ln, .sin, .cos, .tan, .exp: false
-        default: style.isDisplay
+        let stacksLimits: Bool = switch (limits?.placement ?? .automatic, kind) {
+        case (.stacked, _): true
+        case (.beside, _): false
+        case (.automatic, .int), (.automatic, .iint), (.automatic, .iiint), (.automatic, .oint),
+             (.automatic, .log), (.automatic, .ln), (.automatic, .sin), (.automatic, .cos),
+             (.automatic, .tan), (.automatic, .exp): false
+        case (.automatic, _): style.isDisplay
         }
 
         var op: LayoutBox
@@ -992,7 +1096,7 @@ private struct Typesetter {
             op.italicCorrection = glyphBox.italicCorrection
         }
 
-        guard lower != nil || upper != nil else { return op }
+        guard limits?.lower?.isEmpty == false || limits?.upper?.isEmpty == false else { return op }
         guard stacksLimits else {
             var sideBase = op
             if !isIntegral { sideBase.italicCorrection = 0 }
@@ -1007,6 +1111,16 @@ private struct Typesetter {
             )
         }
 
+        return limitStack(op, upper: limits?.upper, lower: limits?.lower, style)
+    }
+
+    /// Limits centred over and under a base, at TeX's limit gaps: big
+    /// operators in display style, \overset and kin, and labelled braces.
+    /// An italic base's limits shift by half its slant, each its own way.
+    private func limitStack(_ op: LayoutBox, upper upperNodes: [MathNode]?, lower lowerNodes: [MathNode]?, _ style: Style) -> LayoutBox {
+        let size = style.size
+        let lower = lowerNodes.flatMap { $0.isEmpty ? nil : list($0, style.subscript) }
+        let upper = upperNodes.flatMap { $0.isEmpty ? nil : list($0, style.superscript) }
         let width = max(op.size.width, upper?.size.width ?? 0, lower?.size.width ?? 0)
         let correction = op.italicCorrection
         var placed = [Placed(box: op, x: (width - op.size.width) / 2, shift: 0)]
@@ -1101,6 +1215,8 @@ private struct Typesetter {
         case .vec: "\u{20D7}"
         case .dot: "\u{0307}"
         case .ddot: "\u{0308}"
+        case .check: "\u{030C}"
+        case .breve: "\u{0306}"
         default: "\u{0302}"
         }
         let accentBox: LayoutBox
@@ -1124,8 +1240,11 @@ private struct Typesetter {
         if case .glyphID(let id, _) = accentBox.content, let attachment = font.topAccentAttachment(id) {
             accentAnchor = attachment * size
         }
-        // Marks are drawn to sit over an x-height base; raise them over taller ones.
-        let raise = max(0, base.ascent - c.accentBaseHeight * size)
+        // Marks are drawn to sit over an x-height base; raise them over taller
+        // ones. The outline stroke grows the base up and the mark down by half
+        // its width each, so the mark also rises by one stroke to keep the
+        // font's gap.
+        let raise = max(0, base.ascent - c.accentBaseHeight * size) + font.strokeWidth * size
         var result = vbox([
             Placed(box: base, x: 0, shift: 0),
             Placed(box: accentBox, x: baseAnchor - accentAnchor, shift: raise),
@@ -1152,16 +1271,30 @@ private struct Typesetter {
     }
 
     /// Matrix-like rows. Each row is at least a strut tall (TeX arrays use
-    /// 1.2 em rows) plus `rowGap` em; the grid centres on the axis.
+    /// 1.2 em rows) unless `strut` is off (\substack), plus `rowGap` em; the
+    /// grid centres on the axis. A row's \tag moves out of its cells to a
+    /// column of its own after the grid.
     private func grid(
-        _ rows: [[[MathNode]]],
+        _ taggedRows: [[[MathNode]]],
         _ style: Style,
         alignment: ColumnAlignment,
         columnGap: CGFloat,
-        rowGap: CGFloat
+        rowGap: CGFloat,
+        strut: Bool = true
     ) -> LayoutBox {
-        guard !rows.isEmpty else { return emptyBox(width: 0) }
+        guard !taggedRows.isEmpty else { return emptyBox(width: 0) }
         let size = style.size
+        func isTag(_ node: MathNode) -> Bool { if case .tag = node { true } else { false } }
+        let rows = taggedRows.map { row in row.map { $0.filter { !isTag($0) } } }
+        let tags: [LayoutBox?] = taggedRows.map { row in
+            let labels = row.flatMap { cell in
+                cell.flatMap { node -> [MathNode] in
+                    guard case .tag(let body, let parenthesized) = node else { return [] }
+                    return tagLabel(body, parenthesized: parenthesized)
+                }
+            }
+            return labels.isEmpty ? nil : list(labels, style)
+        }
         let columns = rows.map(\.count).max() ?? 0
         let cells: [[LayoutBox]] = rows.map { row in
             (0 ..< columns).map { column in
@@ -1175,8 +1308,8 @@ private struct Typesetter {
         for row in cells {
             for (column, cell) in row.enumerated() { widths[column] = max(widths[column], cell.size.width) }
         }
-        let strutAscent = 0.85 * size
-        let strutDescent = 0.35 * size
+        let strutAscent = strut ? 0.85 * size : 0
+        let strutDescent = strut ? 0.35 * size : 0
         let gaps: [CGFloat] = (0 ..< columns).map { column in
             guard column + 1 < columns else { return 0 }
             if alignment == .alternatingRightLeft { return column.isMultiple(of: 2) ? 0 : columnGap * size }
@@ -1186,9 +1319,12 @@ private struct Typesetter {
         var placed: [Placed] = []
         var y: CGFloat = 0
         var rowBaselines: [CGFloat] = []
-        for row in cells {
-            let ascent = max(strutAscent, row.map(\.ascent).max() ?? 0)
-            let descent = max(strutDescent, row.map(\.descent).max() ?? 0)
+        let cellsWidth = widths.reduce(0, +) + gaps.reduce(0, +)
+        let tagWidth = tags.compactMap { $0?.size.width }.max()
+        let tagX = cellsWidth + Self.tagGap * size
+        for (row, tag) in zip(cells, tags) {
+            let ascent = max(strutAscent, row.map(\.ascent).max() ?? 0, tag?.ascent ?? 0)
+            let descent = max(strutDescent, row.map(\.descent).max() ?? 0, tag?.descent ?? 0)
             if !rowBaselines.isEmpty { y += rowGap * size }
             y += ascent
             rowBaselines.append(y)
@@ -1202,9 +1338,12 @@ private struct Typesetter {
                 placed.append(Placed(box: cell, x: x + offset, shift: -y))
                 x += widths[column] + gaps[column]
             }
+            if let tag, let tagWidth {
+                placed.append(Placed(box: tag, x: tagX + tagWidth - tag.size.width, shift: -y))
+            }
             y += descent
         }
-        let width = widths.reduce(0, +) + gaps.reduce(0, +)
+        let width = tagWidth.map { tagX + $0 } ?? cellsWidth
         // Rows hang below a baseline at the top; centre the whole on the axis.
         let axis = c.axisHeight * size
         let shiftToAxis = y / 2 + axis
@@ -1293,6 +1432,13 @@ enum MathAlphabet {
             default: return scalar
             }
         case .roman?:
+            return scalar
+        case .boldItalic?:
+            if let upper { return code(0x1D468 + upper) }
+            if let lower { return code(0x1D482 + lower) }
+            if let digit { return code(0x1D7CE + digit) }
+            if let greekUpper { return code(0x1D71C + greekUpper) }
+            if let greekLower { return code(0x1D736 + greekLower) }
             return scalar
         case .bold?:
             if let upper { return code(0x1D400 + upper) }

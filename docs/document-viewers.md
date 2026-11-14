@@ -60,7 +60,7 @@ You are running in Oppi: your Markdown renders in a native iPhone/iPad app.
 - Session link: [label](oppi://session/<full-session-id>).
 - ```mermaid renders only flowchart/graph, sequence, class, state, ER, gantt, pie, timeline, mindmap, xychart, journey, quadrantChart, gitGraph, sankey, and kanban.
 - ```geojson or ```topojson renders an interactive map.
-- Inline and display math render. Use aligned, cases, or matrices; align, \color, and \textcolor show as source.
+- Inline and display math render, including align, gather, cases, matrices, \color, \overset, \substack, and \tag. \newcommand, array, multline, \cancel, \not, and \textbf show as source.
 - Inline HTML renders only <b> <strong> <i> <em> <code> <s> <del> <strike> <u> <ins> <sub> <sup> <kbd> <mark> <a href>, <br> (also in table cells), an <hr> line, and hidden <!-- comments -->. Other HTML, footnotes, and callouts show as text.
 - Linked CSV, HTML, Org, .mmd, GeoJSON, and PDF files open in rendered viewers.
 - Never link, embed, or quote secrets, credentials, or private runtime state.
@@ -111,6 +111,8 @@ Markdown in chat and in the reader draws TeX math in paragraphs, headings, table
 - **Inline.** `$…$`, `\(…\)`, and `$$…$$` inside a line. A `$` opens math only when a non-space follows it. It closes math only when a non-space comes before it and no letter or digit comes after it, so `$5 and $10`, `$PATH:$HOME`, and `$n$th` stay text. `\$` is always a dollar sign.
 - **Blocks.** A line that is only `$$` or `\[` starts a block, and the next line that ends in `$$` or `\]` closes it. `$$…$$` or `\[…\]` alone on a line is a one-line block. Until the closing line arrives, the block shows its TeX as text. A block with no closing line runs to the end of its quote, list item, or message, as a code fence does.
 - **Code.** Code spans and code blocks never contain math.
+- **Environments.** `aligned`, `align`, `split`, `gather`, `cases`, `equation`, and the matrices. Rows are not numbered; `\tag{…}` labels a row and `\tag*{…}` labels it without parentheses.
+- **Colour.** `\color` and `\textcolor` take a name such as `red`, `blue`, or `teal`, or a hex value such as `#ff8800`. Oppi draws the theme's nearest accent colour, so coloured math stays readable in light and dark themes. Black, white, gray, and names Oppi does not know draw in the text colour or its dimmed shade.
 - **Fallback.** TeX that Oppi cannot draw shows as written.
 
 Quotes and dashes show as typed: `--`, `...`, and straight quotes are not changed to typographic characters.

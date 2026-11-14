@@ -69,6 +69,117 @@ enum MathNode: Equatable, Sendable {
 
     /// \bigl( … \Biggr): a delimiter at a fixed size, 1 (\big) to 4 (\Bigg).
     case sizedDelimiter(Delimiter, size: Int)
+
+    /// \color{name} (the rest of its list) and \textcolor{name}{body}.
+    case color(MathColor, body: [Self])
+
+    /// \overset, \underset, \stackrel, and a brace with its label: a base
+    /// with script-size material centred over and under it. `isRelation`
+    /// spaces it as a relation (\stackrel); otherwise it takes its base's class.
+    case stack(base: [Self], over: [Self]?, under: [Self]?, isRelation: Bool)
+
+    /// \operatorname{…} and \operatorname*{…}: an upright name spaced as an
+    /// operator. The starred form stacks its limits in display style.
+    case operatorName([Self], limits: MathLimits?, starred: Bool)
+
+    /// \substack{a \\ b}: centred rows for a limit.
+    case substack(rows: [[Self]])
+
+    /// \tag{…} (parenthesised) and \tag*{…}: a label set after its row.
+    case tag([Self], parenthesized: Bool)
+
+    /// \phantom and kin: the room their body takes, drawn empty.
+    case phantom(MathPhantomKind, body: [Self])
+}
+
+/// Which of a phantom's dimensions are kept.
+enum MathPhantomKind: String, Equatable, Sendable {
+    case both = "phantom"
+    case horizontal = "hphantom"
+    case vertical = "vphantom"
+}
+
+/// The colours \color and \textcolor can name, as the theme's tokens.
+///
+/// Math draws on the reader's and chat's own backgrounds in light and dark
+/// themes, so a literal colour (TeX's `blue` on a dark page, `yellow` on a
+/// light one) could vanish. Each named or hex colour maps to the nearest of
+/// the theme's accents instead, which every theme tunes for contrast; black,
+/// white and colours with no clear hue draw as ordinary text.
+enum MathColor: Equatable, Sendable {
+    case red, orange, yellow, green, cyan, blue, purple
+    /// Gray: the theme's dimmed text colour.
+    case dim
+    /// Ordinary text colour (black, white, unknown names).
+    case foreground
+
+    /// xcolor's and KaTeX's common names. Unknown names draw as text.
+    init(name: String) {
+        switch name.lowercased() {
+        case "red", "darkred", "crimson", "maroon", "brickred", "rubinered", "bittersweet", "salmon":
+            self = .red
+        case "orange", "darkorange", "brown", "burntorange", "redorange", "peach", "tan", "sepia":
+            self = .orange
+        case "yellow", "olive", "gold", "goldenrod", "dandelion", "apricot":
+            self = .yellow
+        case "green", "darkgreen", "lime", "forestgreen", "limegreen", "seagreen", "junglegreen", "emerald", "pinegreen", "olivegreen", "yellowgreen":
+            self = .green
+        case "cyan", "teal", "aqua", "turquoise", "tealblue", "skyblue", "processblue":
+            self = .cyan
+        case "blue", "darkblue", "navy", "navyblue", "royalblue", "midnightblue", "cornflowerblue", "cerulean", "bluegreen":
+            self = .blue
+        case "purple", "magenta", "violet", "pink", "fuchsia", "orchid", "plum", "mulberry", "lavender", "rhodamine", "redviolet", "blueviolet", "royalpurple", "darkorchid", "thistle":
+            self = .purple
+        case "gray", "grey", "darkgray", "darkgrey", "lightgray", "lightgrey", "silver":
+            self = .dim
+        default:
+            self = .foreground
+        }
+    }
+
+    /// The accent nearest a literal colour by hue. Colours without a clear
+    /// hue are text, or dimmed text when mid-gray.
+    init(red: Double, green: Double, blue: Double) {
+        let high = max(red, green, blue)
+        let low = min(red, green, blue)
+        let chroma = high - low
+        guard chroma >= 0.15 else {
+            self = high > 0.2 && high < 0.8 ? .dim : .foreground
+            return
+        }
+        var hue: Double
+        if high == red {
+            hue = (green - blue) / chroma
+        } else if high == green {
+            hue = (blue - red) / chroma + 2
+        } else {
+            hue = (red - green) / chroma + 4
+        }
+        hue = (hue * 60).truncatingRemainder(dividingBy: 360)
+        if hue < 0 { hue += 360 }
+        switch hue {
+        case ..<15, 335...: self = .red
+        case ..<45: self = .orange
+        case ..<70: self = .yellow
+        case ..<160: self = .green
+        case ..<195: self = .cyan
+        case ..<255: self = .blue
+        default: self = .purple
+        }
+    }
+
+    /// `#RRGGBB`, `RRGGBB` or `#RGB`; nil when not hex.
+    init?(hex: String) {
+        var digits = Substring(hex)
+        if digits.first == "#" { digits = digits.dropFirst() }
+        if digits.count == 3 { digits = Substring(digits.flatMap { [$0, $0] }) }
+        guard digits.count == 6, let value = UInt32(digits, radix: 16) else { return nil }
+        self.init(
+            red: Double((value >> 16) & 0xFF) / 255,
+            green: Double((value >> 8) & 0xFF) / 255,
+            blue: Double(value & 0xFF) / 255
+        )
+    }
 }
 
 /// TeX's four math styles, as \displaystyle … \scriptscriptstyle name them.
@@ -121,6 +232,24 @@ enum MathOperator: String, Equatable, Sendable {
     case doubleLeftarrow = "\\Leftarrow"
     case doubleLeftrightarrow = "\\Leftrightarrow"
     case leftrightarrow = "\\leftrightarrow"
+    case notin = "\\notin"
+    case perp = "\\perp"
+    case ll = "\\ll"
+    case gg = "\\gg"
+    case longrightarrow = "\\longrightarrow"
+    case longleftarrow = "\\longleftarrow"
+    case longleftrightarrow = "\\longleftrightarrow"
+    case doubleLongRightarrow = "\\Longrightarrow"
+    case doubleLongLeftarrow = "\\Longleftarrow"
+    case doubleLongLeftrightarrow = "\\Longleftrightarrow"
+    case longmapsto = "\\longmapsto"
+    // Binary
+    case setminus = "\\setminus"
+    case circ = "\\circ"
+    case oplus = "\\oplus"
+    case otimes = "\\otimes"
+    case wedge = "\\wedge"
+    case vee = "\\vee"
     case colon = ":"
     case comma = ","
     case semicolon = ";"
@@ -188,6 +317,7 @@ enum MathSymbol: String, Equatable, Sendable {
     case ddots = "\\ddots"
     case prime = "\\prime"
     case top = "\\top"
+    case aleph = "\\aleph"
 }
 
 /// Delimiter symbols for \left / \right.
@@ -202,6 +332,10 @@ enum Delimiter: String, Equatable, Sendable {
     case doublePipe = "\\|"
     case angle = "\\langle"
     case closeAngle = "\\rangle"
+    case floor = "\\lfloor"
+    case closeFloor = "\\rfloor"
+    case ceil = "\\lceil"
+    case closeCeil = "\\rceil"
     case none = "."
 }
 
@@ -241,6 +375,8 @@ enum MathAccentKind: String, Equatable, Sendable {
     case widetilde = "\\widetilde"
     case overbrace = "\\overbrace"
     case underbrace = "\\underbrace"
+    case check = "\\check"
+    case breve = "\\breve"
 }
 
 /// Font style commands.
@@ -253,6 +389,7 @@ enum MathFontStyle: String, Equatable, Sendable {
     case italic = "\\mathit"
     case sansSerif = "\\mathsf"
     case typewriter = "\\mathtt"
+    case boldItalic = "\\boldsymbol"
 }
 
 /// Big operator kinds.
@@ -289,4 +426,13 @@ enum BigOpKind: String, Equatable, Sendable {
 struct MathLimits: Equatable, Sendable {
     let lower: [MathNode]?
     let upper: [MathNode]?
+    /// \limits or \nolimits after the operator; `.automatic` follows TeX's
+    /// default for the operator and style.
+    var placement: MathLimitPlacement = .automatic
+}
+
+enum MathLimitPlacement: Equatable, Sendable {
+    case automatic
+    case stacked
+    case beside
 }

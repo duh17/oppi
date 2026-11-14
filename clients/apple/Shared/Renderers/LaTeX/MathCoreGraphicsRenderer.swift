@@ -54,7 +54,25 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
         // (y down). Glyphs flip locally around their baseline.
         context.translateBy(x: origin.x, y: origin.y)
 
-        drawBox(layout.rootBox, in: context, foreground: layout.configuration.theme.foreground)
+        let theme = layout.configuration.theme
+        drawBox(layout.rootBox, in: context, theme: theme, foreground: theme.foreground)
+    }
+
+    /// The theme's ink for a \color token. Accents are tuned per theme for
+    /// contrast on its background, so coloured math stays readable in light
+    /// and dark.
+    static func ink(_ color: MathColor, theme: RenderTheme) -> CGColor {
+        switch color {
+        case .red: theme.accentRed
+        case .orange: theme.accentOrange
+        case .yellow: theme.accentYellow
+        case .green: theme.accentGreen
+        case .cyan: theme.accentCyan
+        case .blue: theme.accentBlue
+        case .purple: theme.accentPurple
+        case .dim: theme.foregroundDim
+        case .foreground: theme.foreground
+        }
     }
 
     // MARK: - Bounding Box
@@ -68,8 +86,10 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
     private func drawBox(
         _ box: LayoutBox,
         in context: CGContext,
-        foreground: CGColor
+        theme: RenderTheme,
+        foreground inherited: CGColor
     ) {
+        let foreground = box.color.map { Self.ink($0, theme: theme) } ?? inherited
         context.saveGState()
         context.translateBy(x: box.origin.x, y: box.origin.y)
 
@@ -82,6 +102,12 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
             context.translateBy(x: 0, y: box.baseline)
             context.scaleBy(x: 1, y: -1)
             context.setFillColor(foreground)
+            let stroke = MathFont.shared.strokeWidth * fontSize
+            if stroke > 0 {
+                context.setTextDrawingMode(.fillStroke)
+                context.setStrokeColor(foreground)
+                context.setLineWidth(stroke)
+            }
             // The text matrix is not graphics state: a CTLineDraw before
             // this one leaves its pen position in it.
             context.textMatrix = .identity
@@ -92,15 +118,19 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
             context.restoreGState()
 
         case .line(let from, let to, let thickness):
+            // A rule is at least one device pixel thick, so a fraction bar in
+            // small or script-size math does not fade to a faint smear.
+            let scale = context.userSpaceToDeviceSpaceTransform
+            let pixel = 1 / max(hypot(scale.a, scale.b), 1)
             context.setStrokeColor(foreground)
-            context.setLineWidth(thickness)
+            context.setLineWidth(max(thickness, pixel))
             context.move(to: from)
             context.addLine(to: to)
             context.strokePath()
 
         case .container(let children):
             for child in children {
-                drawBox(child, in: context, foreground: foreground)
+                drawBox(child, in: context, theme: theme, foreground: foreground)
             }
         }
 
@@ -154,10 +184,14 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
         if let hit = Self.glyphLineStore.cache.object(forKey: key) {
             line = hit.line
         } else {
-            let attributes: [NSAttributedString.Key: Any] = [
+            var attributes: [NSAttributedString.Key: Any] = [
                 NSAttributedString.Key(kCTFontAttributeName as String): MathFont.shared.font(size: fontSize),
                 NSAttributedString.Key(kCTForegroundColorAttributeName as String): foreground,
             ]
+            if MathFont.shared.strokeWidth > 0 {
+                // Negative: fill and stroke, in percent of the font size.
+                attributes[NSAttributedString.Key(kCTStrokeWidthAttributeName as String)] = -100 * MathFont.shared.strokeWidth
+            }
             let attrString = NSAttributedString(string: text, attributes: attributes)
             line = CTLineCreateWithAttributedString(attrString)
             Self.glyphLineStore.cache.setObject(

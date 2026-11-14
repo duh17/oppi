@@ -67,7 +67,27 @@ struct MathLayoutTests {
         let alpha: [UInt8]
         let boxSize: CGSize
 
+        /// RGBA bytes, premultiplied, row by row.
+        let rgba: [UInt8]
+
         func painted(_ x: Int, _ y: Int) -> Bool { alpha[y * width + x] > 64 }
+
+        /// Mean colour (0...1) of the fully covered pixels in `columns`, or nil.
+        func color(inColumns columns: Range<Int>) -> (red: Double, green: Double, blue: Double)? {
+            var sum = (0.0, 0.0, 0.0)
+            var count = 0.0
+            for y in 0 ..< height {
+                for x in columns where x >= 0 && x < width && alpha[y * width + x] == 255 {
+                    let index = (y * width + x) * 4
+                    sum.0 += Double(rgba[index]) / 255
+                    sum.1 += Double(rgba[index + 1]) / 255
+                    sum.2 += Double(rgba[index + 2]) / 255
+                    count += 1
+                }
+            }
+            guard count > 0 else { return nil }
+            return (sum.0 / count, sum.1 / count, sum.2 / count)
+        }
 
         /// Painted extent within `columns`, as (minY, maxY), or nil.
         func rows(inColumns columns: Range<Int>) -> (min: Int, max: Int)? {
@@ -133,7 +153,8 @@ struct MathLayoutTests {
         renderer.draw(result, in: context, at: CGPoint(x: Raster.margin, y: Raster.margin))
         let pixels = try #require(context.data).bindMemory(to: UInt8.self, capacity: width * height * 4)
         let alpha = (0 ..< width * height).map { pixels[$0 * 4 + 3] }
-        return Raster(width: width, height: height, alpha: alpha, boxSize: size)
+        let rgba = Array(UnsafeBufferPointer(start: pixels, count: width * height * 4))
+        return Raster(width: width, height: height, alpha: alpha, boxSize: size, rgba: rgba)
     }
 
     // MARK: - Empty input
@@ -155,6 +176,8 @@ struct MathLayoutTests {
         (#"\mathfrak{J}"#, "\u{1D50D}"),
         (#"\mathrm{d}"#, "d"),
         (#"\operatorname{sgn}"#, "sgn"),
+        (#"\boldsymbol{x}"#, "\u{1D499}"),
+        (#"\boldsymbol{\alpha}"#, "\u{1D736}"),
     ])
     func lettersDrawInTheirMathAlphabet(tex: String, glyph: String) {
         let drawn = leaves(tex).leaves.compactMap(\.text).joined()
@@ -269,6 +292,8 @@ struct MathLayoutTests {
         #"\begin{pmatrix}1\\2\\3\end{pmatrix}"#,
         #"\begin{bmatrix}1\\2\\3\\4\end{bmatrix}"#,
         #"\begin{cases}1 & a\\2 & b\\3 & c\end{cases}"#,
+        #"\left\lfloor\frac{a}{b}\right\rfloor"#,
+        #"\left\lceil\frac{a}{b}\right\rceil"#,
     ])
     func leftEdgeCoversTheContent(tex: String) throws {
         let picture = try raster(tex)
@@ -307,7 +332,7 @@ struct MathLayoutTests {
 
     /// The accent's ink centres over its base's ink (the hat on f once
     /// floated off to the left).
-    @Test(arguments: [#"\hat{f}"#, #"\hat{x}"#, #"\vec{a}"#, #"\tilde{d}"#, #"\hat{H}"#])
+    @Test(arguments: [#"\hat{f}"#, #"\hat{x}"#, #"\vec{a}"#, #"\tilde{d}"#, #"\hat{H}"#, #"\check{x}"#, #"\breve{a}"#])
     func accentCentresOverItsBase(tex: String) throws {
         let picture = try raster(tex)
         let rows = try #require(picture.rows(inColumns: 0 ..< picture.width))
@@ -340,5 +365,272 @@ struct MathLayoutTests {
         let margin = Raster.margin
         #expect(columns.min >= margin - 1 && columns.max <= margin + Int(ceil(picture.boxSize.width)))
         #expect(rows.min >= margin - 1 && rows.max <= margin + Int(ceil(picture.boxSize.height)))
+    }
+
+    // MARK: - Readability floors
+
+    /// Every glyph size in a layout at `size` points.
+    private func glyphSizes(_ tex: String, size: CGFloat) -> [CGFloat] {
+        let root = renderer.layout(
+            parser.parse(tex),
+            configuration: RenderConfiguration(fontSize: size, maxWidth: 4_000, theme: .fallback, displayMode: .inline)
+        ).rootBox
+        var sizes: [CGFloat] = []
+        func walk(_ box: LayoutBox) {
+            switch box.content {
+            case .glyph(_, let size), .glyphID(_, let size): sizes.append(size)
+            case .container(let children): children.forEach(walk)
+            case .line: break
+            }
+        }
+        walk(root)
+        return sizes
+    }
+
+    /// Scripts of scripts at phone text size stay readable (11 pt), while a
+    /// large formula keeps TeX's proportions and a tiny one never grows its
+    /// scripts past its own size.
+    @Test func scriptsNeverDrawBelowTheMinimumSize() throws {
+        let phone = glyphSizes(#"x^{y^{z}}"#, size: 16)
+        #expect(phone.min() == 11, "sizes \(phone)")
+        let large = glyphSizes(#"x^{y^{z}}"#, size: 40)
+        let smallest = try #require(large.min())
+        #expect(smallest < 40 * 0.6 && smallest > 11, "sizes \(large)")
+        let tiny = glyphSizes(#"x^{y^{z}}"#, size: 9)
+        #expect(tiny.max() == 9 && tiny.min() == 9, "sizes \(tiny)")
+    }
+
+    /// A fraction bar in small math covers at least one whole device pixel
+    /// of ink, instead of a faint fraction of one.
+    @Test func rulesDrawAtLeastOneDevicePixel() throws {
+        let result = renderer.layout(
+            parser.parse(#"\frac{\phantom{xxxx}}{\phantom{xxxx}}"#),
+            configuration: RenderConfiguration(fontSize: 6, maxWidth: 400, theme: .fallback, displayMode: .inline)
+        )
+        let size = renderer.boundingBox(result)
+        let width = Int(ceil(size.width)) + 8
+        let height = Int(ceil(size.height)) + 8
+        let context = try #require(CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1, y: -1)
+        renderer.draw(result, in: context, at: CGPoint(x: 4, y: 4))
+        let pixels = try #require(context.data).bindMemory(to: UInt8.self, capacity: width * height * 4)
+        let column = width / 2
+        let ink = (0 ..< height).reduce(0) { $0 + Int(pixels[($1 * width + column) * 4 + 3]) }
+        #expect(ink >= 240, "the bar's column holds \(ink) / 255 of a pixel's ink")
+    }
+
+    // MARK: - Alignment environments
+
+    /// align, align* and split line their `&` columns up as aligned does;
+    /// \tag and \nonumber in a row leave the columns where they were.
+    @Test(arguments: [
+        #"\begin{align} a &= b \\ ccc &= d \end{align}"#,
+        #"\begin{align*} a &= b \\ ccc &= d \end{align*}"#,
+        #"\begin{equation}\begin{split} a &= b \\ ccc &= d \end{split}\end{equation}"#,
+        #"\begin{align} a &= b \tag{1} \\ ccc &= d \nonumber \end{align}"#,
+    ])
+    func alignmentEnvironmentsLineUpTheirRelations(tex: String) {
+        let parts = leaves(tex).leaves
+        let equals = parts.filter { $0.text == "=" }
+        #expect(equals.count == 2, "\(tex) drew \(parts.compactMap(\.text))")
+        // \nonumber and \end leave nothing behind.
+        #expect(!parts.contains { $0.text?.contains("\\") == true }, "\(tex) drew \(parts.compactMap(\.text))")
+        #expect(parts.compactMap(\.text).count <= 11, "\(tex) drew \(parts.compactMap(\.text))")
+        guard equals.count == 2 else { return }
+        #expect(abs(equals[0].frame.minX - equals[1].frame.minX) < 0.5)
+        #expect(equals[1].frame.minY > equals[0].frame.maxY)
+    }
+
+    @Test func gatherCentresEachRow() throws {
+        let parts = leaves(#"\begin{gather} a \\ b + c \end{gather}"#).leaves
+        let a = try #require(leaf("\u{1D44E}", in: parts))
+        let b = try #require(leaf("\u{1D44F}", in: parts))
+        let c = try #require(leaf("\u{1D450}", in: parts))
+        #expect(abs(a.frame.midX - (b.frame.minX + c.frame.maxX) / 2) < fontSize * 0.1)
+        #expect(b.frame.minY > a.frame.maxY)
+    }
+
+    /// A tag sits in parentheses after the formula with room before it;
+    /// \tag* drops the parentheses.
+    @Test func tagSetsItsLabelAfterTheFormula() throws {
+        let parts = leaves(#"x = 1 \tag{2}"#).leaves
+        #expect(parts.compactMap(\.text).suffix(3) == ["(", "2", ")"], "drew \(parts.compactMap(\.text))")
+        let one = try #require(leaf("1", in: parts))
+        let open = try #require(leaf("(", in: parts))
+        #expect(open.frame.minX - one.frame.maxX >= fontSize * 0.9)
+
+        let starred = leaves(#"x \tag*{A}"#).leaves.compactMap(\.text)
+        #expect(starred == ["\u{1D465}", "A"], "drew \(starred)")
+    }
+
+    // MARK: - Symbols
+
+    @Test(arguments: [
+        (#"\notin"#, "\u{2209}"), (#"\setminus"#, "\u{2216}"), (#"\circ"#, "\u{2218}"),
+        (#"\oplus"#, "\u{2295}"), (#"\otimes"#, "\u{2297}"), (#"\wedge"#, "\u{2227}"),
+        (#"\vee"#, "\u{2228}"), (#"\perp"#, "\u{22A5}"), (#"\ll"#, "\u{226A}"), (#"\gg"#, "\u{226B}"),
+        (#"\aleph"#, "\u{2135}"), (#"\longrightarrow"#, "\u{27F6}"), (#"\longleftarrow"#, "\u{27F5}"),
+        (#"\longleftrightarrow"#, "\u{27F7}"), (#"\Longrightarrow"#, "\u{27F9}"),
+        (#"\Longleftarrow"#, "\u{27F8}"), (#"\Longleftrightarrow"#, "\u{27FA}"), (#"\longmapsto"#, "\u{27FC}"),
+        (#"\lfloor x \rfloor"#, "\u{230A}\u{1D465}\u{230B}"), (#"\lceil x \rceil"#, "\u{2308}\u{1D465}\u{2309}"),
+    ])
+    func symbolCommandsDrawTheirGlyph(tex: String, glyph: String) {
+        let drawn = leaves(tex).leaves.compactMap(\.text).joined()
+        #expect(drawn == glyph, "\(tex) drew \(drawn.unicodeScalars.map { String($0.value, radix: 16) })")
+    }
+
+    /// Relations take a thick space (5 mu) each side, binary operators a
+    /// medium one (4 mu).
+    @Test(arguments: [
+        (#"a \notin b"#, "\u{2209}", 5.0), (#"a \perp b"#, "\u{22A5}", 5.0), (#"a \ll b"#, "\u{226A}", 5.0),
+        (#"a \longrightarrow b"#, "\u{27F6}", 5.0), (#"a \oplus b"#, "\u{2295}", 4.0),
+        (#"a \setminus b"#, "\u{2216}", 4.0), (#"a \wedge b"#, "\u{2227}", 4.0), (#"a \circ b"#, "\u{2218}", 4.0),
+    ])
+    func operatorsTakeTheirClassSpacing(tex: String, glyph: String, mu: Double) throws {
+        let parts = leaves(tex).leaves
+        let a = try #require(leaf("\u{1D44E}", in: parts))
+        let op = try #require(leaf(glyph, in: parts))
+        let gap = op.frame.minX - a.frame.maxX
+        #expect(abs(gap - CGFloat(mu) * fontSize / 18) < 0.5, "\(tex): gap is \(gap * 18 / fontSize) mu")
+    }
+
+    /// `\dots` is low between commas and centred between operators, as
+    /// amsmath picks from what follows it.
+    @Test(arguments: [
+        (#"a_1, \dots, a_n"#, "\u{2026}"),
+        (#"a_1 + \dots + a_n"#, "\u{22EF}"),
+        (#"x_1 = \dots = x_n"#, "\u{22EF}"),
+        (#"1, 2, \ldots, n"#, "\u{2026}"),
+        (#"\dotsb"#, "\u{22EF}"),
+    ])
+    func dotsPickTheirHeightFromWhatFollows(tex: String, glyph: String) {
+        let drawn = leaves(tex).leaves.compactMap(\.text)
+        #expect(drawn.contains(glyph), "\(tex) drew \(drawn)")
+    }
+
+    // MARK: - Over, under and limits
+
+    /// \overset and \stackrel put a small label centred over a relation that
+    /// keeps its spacing; \underset hangs it below.
+    @Test(arguments: [#"a \overset{!}{=} b"#, #"a \stackrel{!}{=} b"#])
+    func oversetStacksItsLabelOverTheBase(tex: String) throws {
+        let parts = leaves(tex).leaves
+        let mark = try #require(leaf("!", in: parts))
+        let equals = try #require(leaf("=", in: parts))
+        let a = try #require(leaf("\u{1D44E}", in: parts))
+        #expect(mark.frame.maxY < equals.frame.minY)
+        #expect(abs(mark.frame.midX - equals.frame.midX) < fontSize * 0.1)
+        #expect(equals.frame.minX - a.frame.maxX > fontSize * 0.2, "the stack is still a relation")
+    }
+
+    @Test func undersetHangsItsLabelUnderTheBase() throws {
+        let parts = leaves(#"a \underset{n}{=} b"#).leaves
+        let label = try #require(leaf("\u{1D45B}", in: parts))
+        let equals = try #require(leaf("=", in: parts))
+        #expect(label.frame.minY > equals.frame.maxY)
+        #expect(abs(label.frame.midX - equals.frame.midX) < fontSize * 0.1)
+    }
+
+    @Test func substackStacksLimitRowsUnderTheOperator() throws {
+        let parts = leaves(#"\sum_{\substack{i < n \\ j < m}} a"#).leaves
+        let body = try #require(leaf("\u{1D44E}", in: parts))
+        let first = try #require(leaf("\u{1D456}", in: parts))
+        let second = try #require(leaf("\u{1D457}", in: parts))
+        #expect(first.frame.minY > body.frame.maxY)
+        #expect(second.frame.minY > first.frame.maxY)
+        #expect(first.frame.maxX < body.frame.minX, "the rows sit under the sum, before its body")
+    }
+
+    /// \limits stacks an integral's limits; \nolimits puts a display sum's
+    /// beside it.
+    @Test func limitsAndNolimitsOverrideWhereLimitsGo() throws {
+        let stacked = leaves(#"\int\limits_0^1 f"#).leaves
+        let f = try #require(leaf("\u{1D453}", in: stacked))
+        let lower = try #require(leaf("0", in: stacked))
+        let upper = try #require(leaf("1", in: stacked))
+        #expect(lower.frame.minY > f.frame.maxY)
+        #expect(upper.frame.maxY < f.frame.minY)
+
+        let normal = try #require(leaf("\u{1D458}", in: leaves(#"\sum_{k} a"#).leaves))
+        let beside = leaves(#"\sum\nolimits_{k} a"#)
+        let moved = try #require(leaf("\u{1D458}", in: beside.leaves))
+        #expect(moved.frame.minX > normal.frame.minX + fontSize * 0.3)
+        #expect(beside.root.size.height < leaves(#"\sum_{k} a"#).root.size.height)
+    }
+
+    /// \operatorname* takes limits under the name in display and beside it
+    /// in a line of text, as \max does.
+    @Test func starredOperatorNameStacksLimitsInDisplay() throws {
+        let tex = #"\operatorname*{arg\,min}_{\theta} f"#
+        let display = leaves(tex).leaves
+        let theta = try #require(leaf("\u{1D703}", in: display))
+        let a = try #require(leaf("a", in: display))
+        let n = try #require(leaf("n", in: display))
+        #expect(theta.frame.minY > a.frame.maxY)
+        #expect(theta.frame.maxX < n.frame.maxX)
+
+        let inline = leaves(tex, inline: true).leaves
+        let inlineTheta = try #require(leaf("\u{1D703}", in: inline))
+        let inlineN = try #require(leaf("n", in: inline))
+        #expect(inlineTheta.frame.minX >= inlineN.frame.maxX - 0.5)
+    }
+
+    /// A brace's script labels the brace: centred over (or under) it, not
+    /// beside it as an exponent.
+    @Test(arguments: [(#"\overbrace{a+b}^{n}"#, true), (#"\underbrace{a+b}_{n}"#, false)])
+    func braceScriptsLabelTheBrace(tex: String, over: Bool) throws {
+        let parts = leaves(tex).leaves
+        let a = try #require(leaf("\u{1D44E}", in: parts))
+        let b = try #require(leaf("\u{1D44F}", in: parts))
+        let label = try #require(leaf("\u{1D45B}", in: parts))
+        #expect(abs(label.frame.midX - (a.frame.minX + b.frame.maxX) / 2) < fontSize * 0.1)
+        if over {
+            #expect(label.frame.maxY < a.frame.minY)
+        } else {
+            #expect(label.frame.minY > a.frame.maxY)
+        }
+    }
+
+    // MARK: - Phantom and colour
+
+    @Test func phantomTakesItsContentsRoomButDrawsNothing() throws {
+        let parts = leaves(#"a\phantom{bb}c"#).leaves
+        #expect(!parts.contains { $0.text == "\u{1D44F}" })
+        let a = try #require(leaf("\u{1D44E}", in: parts))
+        let c = try #require(leaf("\u{1D450}", in: parts))
+        let bees = leaves("bb").leaves.filter { $0.text != nil }
+        let width = (bees.last?.frame.maxX ?? 0) - (bees.first?.frame.minX ?? 0)
+        #expect(abs((c.frame.minX - a.frame.maxX) - width) < 0.5)
+    }
+
+    /// Named and hex colours draw in the theme's matching accent, so they keep
+    /// the palette's contrast; the colour ends with its group.
+    @Test(arguments: [
+        (#"\textcolor{blue}{x}\quad y"#, RenderTheme.fallback.accentBlue),
+        (#"{\color{red} x}\quad y"#, RenderTheme.fallback.accentRed),
+        (#"\textcolor{#1a8f2e}{x}\quad y"#, RenderTheme.fallback.accentGreen),
+        (#"\color[HTML]{FF8800} x\quad\color{black} y"#, RenderTheme.fallback.accentOrange),
+    ])
+    func colorDrawsInThePaletteAccent(tex: String, expected: CGColor) throws {
+        let parts = leaves(tex).leaves
+        let x = try #require(leaf("\u{1D465}", in: parts))
+        let y = try #require(leaf("\u{1D466}", in: parts))
+        let picture = try raster(tex)
+        let columns = { (frame: CGRect) in Raster.margin + Int(frame.minX) ..< Raster.margin + Int(ceil(frame.maxX)) }
+        let colored = try #require(picture.color(inColumns: columns(x.frame)))
+        let plain = try #require(picture.color(inColumns: columns(y.frame)))
+        let want = try #require(expected.converted(to: CGColorSpaceCreateDeviceRGB(), intent: .defaultIntent, options: nil)?.components)
+        let foreground = try #require(
+            RenderTheme.fallback.foreground.converted(to: CGColorSpaceCreateDeviceRGB(), intent: .defaultIntent, options: nil)?.components
+        )
+        func near(_ color: (red: Double, green: Double, blue: Double), _ target: [CGFloat]) -> Bool {
+            abs(color.red - target[0]) < 0.06 && abs(color.green - target[1]) < 0.06 && abs(color.blue - target[2]) < 0.06
+        }
+        #expect(near(colored, want), "\(tex): x drew \(colored), want \(want)")
+        #expect(near(plain, foreground), "\(tex): y drew \(plain), want the foreground")
     }
 }

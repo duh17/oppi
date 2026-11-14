@@ -16,8 +16,10 @@ enum TeXMathLimits {
 ///
 /// Supports the common KaTeX subset: variables, numbers, operators, relations,
 /// fractions and binomials, sub/superscripts, Greek letters, delimiters (sized
-/// and stretchy), roots, text, big operators, matrices, cases, aligned,
-/// accents, fonts, spaces and the style switches (\displaystyle …).
+/// and stretchy), roots, text, big operators and \limits, matrices, cases,
+/// aligned, align, gather, split and equation, \tag, accents, fonts, colour,
+/// over/under stacks, \substack, phantoms, spaces and the style switches
+/// (\displaystyle …).
 struct TeXMathParser: DocumentParser, Sendable {
     nonisolated func parse(_ source: String) -> [MathNode] {
         parseValidated(source).nodes
@@ -89,7 +91,10 @@ enum TeXMathDiagnostic: Equatable, Sendable {
 /// renderer's explicit subset falls back to exact source rather than being
 /// approximated misleadingly.
 private enum TeXMathValidator {
-    private static let rowEnvironments = Set(["cases", "aligned", "gathered"])
+    private static let rowEnvironments = Set(["cases"])
+        .union(ParserState.alignedEnvironments)
+        .union(ParserState.gatheredEnvironments)
+        .union(ParserState.equationEnvironments)
 
     static func validate(_ source: String) -> [TeXMathDiagnostic] {
         guard source.utf8.count <= TeXMathLimits.maxSourceUTF8Bytes else {
@@ -248,7 +253,7 @@ private enum TeXMathValidator {
                         after: argumentStart,
                         append: append
                     )
-                } else if command == "operatorname" {
+                } else if command == "operatorname" || command == "tag" {
                     var argumentStart = skipWhitespace(in: source, from: commandEnd)
                     if argumentStart < source.endIndex, source[argumentStart] == "*" {
                         argumentStart = source.index(after: argumentStart)
@@ -258,6 +263,31 @@ private enum TeXMathValidator {
                         count: 1,
                         source: source,
                         after: argumentStart,
+                        append: append
+                    )
+                } else if command == "color" || command == "textcolor" {
+                    // An optional colour model: \color[HTML]{FF8800}.
+                    var argumentStart = skipWhitespace(in: source, from: commandEnd)
+                    if argumentStart < source.endIndex, source[argumentStart] == "[" {
+                        if let close = matchingDelimiter(in: source, from: argumentStart, open: "[", close: "]") {
+                            argumentStart = source.index(after: close)
+                        } else {
+                            append(.unclosedGroup)
+                        }
+                    }
+                    validateArguments(
+                        command: command,
+                        count: command == "color" ? 1 : 2,
+                        source: source,
+                        after: argumentStart,
+                        append: append
+                    )
+                } else if oneArgumentExtraCommands.contains(command) {
+                    validateArguments(
+                        command: command,
+                        count: 1,
+                        source: source,
+                        after: commandEnd,
                         append: append
                     )
                 }
@@ -587,19 +617,37 @@ private enum TeXMathValidator {
     }
 
     /// \dfrac, \tfrac and \cfrac are a fraction in a fixed style; the
-    /// binomials are a bar-less stack in parentheses.
+    /// binomials are a bar-less stack in parentheses; \overset, \underset
+    /// and \stackrel put their first argument over or under the second.
     private static let twoArgumentExtraCommands: Set<String> = [
         "dfrac", "tfrac", "cfrac", "binom", "dbinom", "tbinom",
+        "overset", "underset", "stackrel",
+    ]
+
+    private static let oneArgumentExtraCommands: Set<String> = [
+        "substack", "phantom", "hphantom", "vphantom",
+    ]
+
+    /// Commands that take no argument and change what is around them:
+    /// \limits and \nolimits place an operator's limits, \notag and
+    /// \nonumber drop a row's number (rows are not numbered), and \dots
+    /// picks its dots from what follows.
+    private static let bareExtraCommands: Set<String> = [
+        "limits", "nolimits", "notag", "nonumber", "dots",
     ]
 
     /// Commands the parser builds from existing nodes rather than the symbol
     /// table: `\boxed` wraps one argument, `\operatorname*` is an upright
     /// name, `\xrightarrow`/`\xleftarrow` reuse big-operator limit layout,
-    /// and the style switches restyle the rest of their list.
+    /// the style switches restyle the rest of their list, and the commands
+    /// in the sets above.
     private static func isSupportedExtraCommand(_ name: String) -> Bool {
-        name == "boxed" || name == "operatorname"
+        name == "boxed" || name == "operatorname" || name == "tag"
+            || name == "color" || name == "textcolor"
             || name == "xrightarrow" || name == "xleftarrow"
             || twoArgumentExtraCommands.contains(name)
+            || oneArgumentExtraCommands.contains(name)
+            || bareExtraCommands.contains(name)
             || MathStyleKind(rawValue: name) != nil
     }
 }
@@ -761,6 +809,13 @@ private struct ParserState {
                 nodes.append(.style(kind, body: parseNodeList(until: stop)))
                 break
             }
+            // So does \color.
+            if case .command("color") = tok {
+                pos += 1
+                let color = parseColor()
+                nodes.append(.color(color, body: parseNodeList(until: stop)))
+                break
+            }
             let before = pos
             if let node = parseAtom() {
                 let result = attachScripts(base: node)
@@ -851,6 +906,14 @@ private struct ParserState {
         if let literal = MathSymbolTable.escapedLiteral(for: name) {
             pos += 1
             return .text(literal)
+        }
+
+        // \limits after an operator is read with its scripts; elsewhere these
+        // change nothing that is drawn. (parseExtraCommand's nil means "not
+        // mine", so they are consumed here.)
+        if ["limits", "nolimits", "notag", "nonumber"].contains(name) {
+            pos += 1
+            return nil
         }
 
         if let extra = parseExtraCommand(name) {
@@ -944,10 +1007,35 @@ private struct ParserState {
             return .group(parseBraceArg())
         case "operatorname":
             pos += 1
-            if case .literal("*") = peek() {
-                pos += 1
-            }
-            return .font(.roman, body: parseBraceArg())
+            let starred = expect(.literal("*"))
+            return .operatorName(parseBraceArg(), limits: nil, starred: starred)
+        case "textcolor":
+            pos += 1
+            let color = parseColor()
+            return .color(color, body: parseBraceArg())
+        case "overset", "underset", "stackrel":
+            pos += 1
+            let label = parseBraceArg()
+            let base = parseBraceArg()
+            return .stack(
+                base: base,
+                over: name == "underset" ? nil : label,
+                under: name == "underset" ? label : nil,
+                isRelation: name == "stackrel"
+            )
+        case "substack":
+            pos += 1
+            return parseSubstack()
+        case "tag":
+            pos += 1
+            let starred = expect(.literal("*"))
+            return .tag(parseBraceArg(), parenthesized: !starred)
+        case "phantom", "hphantom", "vphantom":
+            pos += 1
+            return .phantom(MathPhantomKind(rawValue: name) ?? .both, body: parseBraceArg())
+        case "dots":
+            pos += 1
+            return .symbol(nextIsOperator() ? .cdots : .ldots)
         case "xrightarrow":
             return parseExtensibleArrow(.xrightarrow)
         case "xleftarrow":
@@ -955,6 +1043,69 @@ private struct ParserState {
         default:
             return nil
         }
+    }
+
+    /// amsmath's \dots: centred before a binary operator or relation, low
+    /// otherwise (before a comma, a closing delimiter, the end).
+    func nextIsOperator() -> Bool {
+        guard pos < tokens.count else { return false }
+        switch tokens[pos] {
+        case .literal(let character):
+            return "+-=<>*".contains(character)
+        case .command(let name):
+            guard case .operator(let op) = MathSymbolTable.lookup(name) else { return false }
+            return MathLayoutEngine.isBinaryOperator(op) || MathLayoutEngine.isRelationOperator(op)
+        default:
+            return false
+        }
+    }
+
+    /// A colour argument: `{name}`, `{#hex}`, or `[model]{value}` with
+    /// xcolor's HTML, rgb, RGB and gray models. Anything else draws as text.
+    mutating func parseColor() -> MathColor {
+        var model: String?
+        if peek() == .openBracket {
+            pos += 1
+            var text = ""
+            while let tok = peek(), tok != .closeBracket {
+                pos += 1
+                if case .literal(let character) = tok { text.append(character) }
+                if case .command(let name) = tok { text.append(name) }
+            }
+            _ = expect(.closeBracket)
+            model = text
+        }
+        let value = parseBraceText()
+        let components = value.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        switch model {
+        case "HTML"?:
+            return MathColor(hex: value) ?? .foreground
+        case "rgb"? where components.count == 3:
+            return MathColor(red: components[0], green: components[1], blue: components[2])
+        case "RGB"? where components.count == 3:
+            return MathColor(red: components[0] / 255, green: components[1] / 255, blue: components[2] / 255)
+        case "gray"? where components.count == 1:
+            return MathColor(red: components[0], green: components[0], blue: components[0])
+        case nil:
+            if value.hasPrefix("#") { return MathColor(hex: value) ?? .foreground }
+            return MathColor(name: value)
+        default:
+            return .foreground
+        }
+    }
+
+    /// `\substack{a \\ b}`: rows of a limit, one cell each.
+    mutating func parseSubstack() -> MathNode {
+        guard expect(.openBrace) else { return .substack(rows: [parseBraceArg()]) }
+        var rows: [[MathNode]] = []
+        while true {
+            rows.append(parseNodeList { $0 == .closeBrace || $0 == .doubleBslash })
+            if expect(.doubleBslash) { continue }
+            _ = expect(.closeBrace)
+            break
+        }
+        if rows.count > 1, rows.last?.isEmpty == true { rows.removeLast() }
+        return .substack(rows: rows)
     }
 
     /// `\xrightarrow[under]{over}` / `\xleftarrow[under]{over}`.
@@ -1028,8 +1179,14 @@ private struct ParserState {
     mutating func attachScripts(base: MathNode) -> MathNode {
         var sub: [MathNode]?
         var sup: [MathNode]?
+        var placement = MathLimitPlacement.automatic
+        let takesLimits: Bool = switch base {
+        case .bigOperator, .operatorName: true
+        default: false
+        }
 
-        // Handle _ and ^ in either order, and handle combined
+        // Handle _ and ^ in either order, and handle combined; an operator
+        // also takes \limits or \nolimits before its scripts.
         while let tok = peek() {
             if tok == .subscriptOp, sub == nil {
                 pos += 1
@@ -1037,17 +1194,30 @@ private struct ParserState {
             } else if tok == .superscriptOp, sup == nil {
                 pos += 1
                 sup = parseBraceArg()
+            } else if takesLimits, tok == .command("limits") || tok == .command("nolimits") {
+                pos += 1
+                placement = tok == .command("limits") ? .stacked : .beside
             } else {
                 break
             }
         }
+        let limits = sub != nil || sup != nil
+            ? MathLimits(lower: sub, upper: sup, placement: placement)
+            : nil
 
-        // BigOperator with limits gets special handling
-        if case .bigOperator(let kind, _) = base {
-            if sub != nil || sup != nil {
-                return .bigOperator(kind, limits: MathLimits(lower: sub, upper: sup))
-            }
-            return base
+        // Operators keep their scripts as limits.
+        switch base {
+        case .bigOperator(let kind, _):
+            return limits.map { .bigOperator(kind, limits: $0) } ?? base
+        case .operatorName(let name, _, let starred):
+            return limits.map { .operatorName(name, limits: $0, starred: starred) } ?? base
+        case .accent(let kind, _) where kind == .overbrace || kind == .underbrace:
+            // A brace's scripts label it, over and under, as TeX's \overbrace
+            // (an operator with limits) does.
+            guard sub != nil || sup != nil else { return base }
+            return .stack(base: [base], over: sup, under: sub, isRelation: false)
+        default:
+            break
         }
 
         if let sub, let sup {
@@ -1185,6 +1355,10 @@ private struct ParserState {
         case .doublePipe: return .variable("\u{2016}")
         case .angle: return .variable("\u{27E8}")
         case .closeAngle: return .variable("\u{27E9}")
+        case .floor: return .variable("\u{230A}")
+        case .closeFloor: return .variable("\u{230B}")
+        case .ceil: return .variable("\u{2308}")
+        case .closeCeil: return .variable("\u{2309}")
         case .none: return .variable("")
         }
     }
@@ -1222,16 +1396,32 @@ private struct ParserState {
             return .matrix(rows: rows, style: style)
         }
 
-        // Cases and other row-based environments
-        if name == "cases" || name == "aligned" || name == "gathered" {
-            let rows = parseMatrixRows(endName: name)
-            return .environment(name, rows: rows)
+        // Cases and other row-based environments. align and split lay out as
+        // aligned, gather as gathered; rows are not numbered (only \tag labels).
+        if name == "cases" {
+            return .environment(name, rows: parseMatrixRows(endName: name))
+        }
+        if Self.alignedEnvironments.contains(name) {
+            return .environment("aligned", rows: parseMatrixRows(endName: name))
+        }
+        if Self.gatheredEnvironments.contains(name) {
+            return .environment("gathered", rows: parseMatrixRows(endName: name))
+        }
+        // equation is one formula: its body, which may hold a split.
+        if Self.equationEnvironments.contains(name) {
+            let body = parseNodeList { $0 == .command("end") }
+            if expect(.command("end")) { _ = parseBraceText() }
+            return .group(body)
         }
 
         // Unknown environment — skip to \end{name}
         skipToEnd(name: name)
         return nil
     }
+
+    static let alignedEnvironments: Set<String> = ["aligned", "align", "align*", "split"]
+    static let gatheredEnvironments: Set<String> = ["gathered", "gather", "gather*"]
+    static let equationEnvironments: Set<String> = ["equation", "equation*"]
 
     mutating func parseMatrixRows(endName: String) -> [[[MathNode]]] {
         var rows: [[[MathNode]]] = []

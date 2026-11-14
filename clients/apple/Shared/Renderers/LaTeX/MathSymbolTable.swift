@@ -104,6 +104,25 @@ enum MathSymbolTable {
         "Leftarrow": .doubleLeftarrow,
         "Leftrightarrow": .doubleLeftrightarrow,
         "leftrightarrow": .leftrightarrow,
+        "notin": .notin,
+        "perp": .perp,
+        "ll": .ll,
+        "gg": .gg,
+        "longrightarrow": .longrightarrow,
+        "longleftarrow": .longleftarrow,
+        "longleftrightarrow": .longleftrightarrow,
+        "Longrightarrow": .doubleLongRightarrow,
+        "Longleftarrow": .doubleLongLeftarrow,
+        "Longleftrightarrow": .doubleLongLeftrightarrow,
+        "longmapsto": .longmapsto,
+        "setminus": .setminus,
+        "circ": .circ,
+        "oplus": .oplus,
+        "otimes": .otimes,
+        "wedge": .wedge,
+        "land": .wedge,
+        "vee": .vee,
+        "lor": .vee,
     ]
 
     // MARK: - Symbol Table
@@ -166,8 +185,17 @@ enum MathSymbolTable {
         "ldots": .ldots,
         "vdots": .vdots,
         "ddots": .ddots,
+        // amsmath's semantic dots: c(omma) and o(ther) sit low, b(inary),
+        // m(ultiplication) and i(ntegral) on the axis. Bare \dots is the
+        // parser's: it looks at what follows.
+        "dotsc": .ldots,
+        "dotso": .ldots,
+        "dotsb": .cdots,
+        "dotsm": .cdots,
+        "dotsi": .cdots,
         "prime": .prime,
         "top": .top,
+        "aleph": .aleph,
     ]
 
     // MARK: - Big Operator Table
@@ -213,6 +241,8 @@ enum MathSymbolTable {
         "widetilde": .widetilde,
         "overbrace": .overbrace,
         "underbrace": .underbrace,
+        "check": .check,
+        "breve": .breve,
     ]
 
     // MARK: - Font Table
@@ -226,6 +256,8 @@ enum MathSymbolTable {
         "mathit": .italic,
         "mathsf": .sansSerif,
         "mathtt": .typewriter,
+        "boldsymbol": .boldItalic,
+        "bm": .boldItalic,
     ]
 
     // MARK: - Space Table
@@ -255,6 +287,10 @@ enum MathSymbolTable {
         "lVert": .doublePipe,
         "rVert": .doublePipe,
         "Vert": .doublePipe,
+        "lfloor": .floor,
+        "rfloor": .closeFloor,
+        "lceil": .ceil,
+        "rceil": .closeCeil,
     ]
 
     // MARK: - Sized Delimiter Prefixes

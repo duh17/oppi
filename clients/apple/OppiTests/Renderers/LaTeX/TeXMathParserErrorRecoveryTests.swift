@@ -228,8 +228,8 @@ struct TeXMathParserErrorRecoveryTests {
     }
 
     @Test func unsupportedAndMismatchedEnvironmentsAreDiagnosed() {
-        let unsupported = parser.parseValidated("\\begin{equation}x\\end{equation}")
-        #expect(unsupported.diagnostics.contains(.unsupportedEnvironment("equation")))
+        let unsupported = parser.parseValidated("\\begin{multline}x\\end{multline}")
+        #expect(unsupported.diagnostics.contains(.unsupportedEnvironment("multline")))
         #expect(!unsupported.isRenderable)
 
         let mismatched = parser.parseValidated("\\begin{matrix}x\\end{cases}")

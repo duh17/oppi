@@ -14,6 +14,19 @@ import Foundation
 final class MathFont: @unchecked Sendable {
     static let shared = MathFont()
 
+    /// SF Regular's stem (0.085 em) in math ems once math matches the body
+    /// text's x-height. STIX's stems are about 28% thinner, so beside body
+    /// text formulas read lighter, most in dark mode; glyphs and rules draw
+    /// at this weight instead.
+    private static let bodyStemWidth: CGFloat = 0.079
+    /// STIX's own stem, in ems.
+    private static let stixStemWidth: CGFloat = 0.057
+
+    /// Outline stroke drawn with every glyph, in ems, that brings STIX's
+    /// stems to the body text's weight; 0 (the Times fallback) draws fill
+    /// only. A stroke adds half its width to each side of a stem.
+    let strokeWidth: CGFloat
+
     /// Typesetting constants as fractions of the font size (1 = 1 em).
     struct Constants: Sendable {
         var scriptScale: CGFloat = 0.70
@@ -99,14 +112,20 @@ final class MathFont: @unchecked Sendable {
 
     private init() {
         let math = CTFontCreateWithName("STIXTwoMath-Regular" as CFString, 16, nil)
-        let name = CTFontCopyPostScriptName(math) as String
-        let table = name == "STIXTwoMath-Regular"
+        let table = CTFontCopyPostScriptName(math) as String == "STIXTwoMath-Regular"
             ? CTFontCopyTable(math, CTFontTableTag(0x4D41_5448), []) as Data?
             : nil
-        let mathUnitsPerEm = CGFloat(CTFontGetUnitsPerEm(math))
-        if let table, let parsed = MathTableReader(data: table, unitsPerEm: mathUnitsPerEm) {
+        if let table,
+           let parsed = MathTableReader(data: table, unitsPerEm: CGFloat(CTFontGetUnitsPerEm(math))) {
             base = math
-            constants = parsed.constants
+            var constants = parsed.constants
+            let stem = Self.bodyStemWidth
+            constants.fractionRuleThickness = max(constants.fractionRuleThickness, stem)
+            constants.overbarRuleThickness = max(constants.overbarRuleThickness, stem)
+            constants.underbarRuleThickness = max(constants.underbarRuleThickness, stem)
+            constants.radicalRuleThickness = max(constants.radicalRuleThickness, stem)
+            self.constants = constants
+            strokeWidth = Self.bodyStemWidth - Self.stixStemWidth
             minConnectorOverlap = parsed.minConnectorOverlap
             vertical = parsed.vertical
             horizontal = parsed.horizontal
@@ -115,6 +134,7 @@ final class MathFont: @unchecked Sendable {
         } else {
             base = CTFontCreateWithName("TimesNewRomanPSMT" as CFString, 16, nil)
             constants = Constants()
+            strokeWidth = 0
             minConnectorOverlap = 0
             vertical = [:]
             horizontal = [:]

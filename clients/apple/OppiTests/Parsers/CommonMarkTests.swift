@@ -249,6 +249,18 @@ struct CommonMarkTests {
         #expect(inQuote.latex == "x")
     }
 
+    /// `$$ $$` holds no formula, so it stays the four dollars and the space
+    /// between them as written.
+    @Test(arguments: ["Empty: $$ $$. Done.", "$$ $$", "a $$  $$ b", "Empty: $$ $$ and $x$."])
+    func emptyInlineDisplayMathStaysItsSource(_ markdown: String) {
+        let blocks = parseCommonMark(markdown + "\n")
+        let visible = blocks.compactMap { block -> String? in
+            guard case .paragraph(let inlines) = block else { return nil }
+            return plainText(from: inlines)
+        }.joined(separator: "\n")
+        #expect(visible == markdown, "\(blocks)")
+    }
+
     @Test func repeatedUnmatchedBracketOpenersRemainBoundedLiteralMarkdown() {
         let markdown = (0..<2_000).map { "\\[ unmatched-\($0)" }.joined(separator: "\n")
         let blocks = parseCommonMark(markdown)

@@ -69,6 +69,46 @@ struct TeXMathParserStressFixtureTests {
         #expect(result.isRenderable)
     }
 
+    /// Section 13 of the LaTeX stress file: alignment environments, colour,
+    /// over/under stacks, limits control, tags, phantoms, the dots family, and
+    /// the symbols, arrows and delimiters agents write most.
+    @Test(arguments: [
+        #"a \notin B,\ A \setminus B,\ f \circ g,\ u \oplus v,\ u \otimes v,\ p \wedge q,\ p \vee q,\ u \perp v"#,
+        #"\epsilon \ll 1,\ N \gg 1,\ \aleph_0,\ \lfloor x \rfloor,\ \lceil x \rceil"#,
+        #"a_1, \dots, a_n,\ a_1 + \dots + a_n,\ 1, 2, \ldots, n,\ x_1 \cdots x_n"#,
+        #"A \longrightarrow B \longleftarrow C \longleftrightarrow D \Longrightarrow E \Longleftarrow F \Longleftrightarrow G,\ x \longmapsto x^2"#,
+        #"\check{x},\ \breve{a},\ \boldsymbol{x} = \boldsymbol{\alpha} + \mathbf{x},\ a\phantom{bb}c\hphantom{x}\vphantom{\int}"#,
+        #"""
+        \begin{align}
+        f(x) &= (x + 1)^2 \\
+        &= x^2 + 2x + 1 \tag{1} \\
+        &\ge 0 \nonumber
+        \end{align}
+        """#,
+        #"\begin{align*} \lVert u + v \rVert^2 &= \lVert u \rVert^2 + \lVert v \rVert^2 & u \perp v &\Longrightarrow \langle u, v \rangle = 0 \end{align*}"#,
+        #"\begin{gather} a^2 + b^2 = c^2 \\ e^{i\pi} + 1 = 0 \notag \end{gather}"#,
+        #"\begin{equation*} \begin{split} (a + b)^3 &= (a + b)(a + b)^2 \\ &= a^3 + 3a^2 b + 3ab^2 + b^3 \end{split} \end{equation*}"#,
+        #"{\color{red} F = ma}, \quad \textcolor{green}{\nabla \cdot \mathbf{B} = 0}, \quad \textcolor{#ff8800}{\text{hex}}, \quad \color[HTML]{6A5ACD} \phi"#,
+        #"x \overset{\text{def}}{=} \lim_{n \to \infty} x_n, \qquad A \underset{n \to \infty}{\longrightarrow} B, \qquad a \stackrel{?}{=} b"#,
+        #"\sum_{\substack{0 \le i \le m \\ 0 < j < n}} P(i, j), \qquad \int\limits_0^1 f(x)\,dx, \qquad \sum\nolimits_{k=1}^{n} k, \qquad \operatorname*{arg\,max}_{x \in X} f(x)"#,
+        #"\overbrace{1 + 2 + \cdots + n}^{n \text{ terms}} = \underbrace{\frac{n(n+1)}{2}}_{\text{Gauss}} \tag*{(G)}"#,
+        #"\left\lfloor \frac{n}{2} \right\rfloor + \left\lceil \frac{n}{2} \right\rceil = n, \qquad \aleph_0 < 2^{\aleph_0}"#,
+        #"\dotsc \dotsb \dotsm \dotsi \dotso \vdots \ddots \land \lor"#,
+    ])
+    func batchTwoFormulasRender(_ source: String) {
+        let result = parser.parseValidated(source)
+        #expect(result.diagnostics.isEmpty, "Unexpected diagnostics for \(source): \(result.diagnostics)")
+        #expect(result.isRenderable)
+    }
+
+    @Test(arguments: [
+        #"\textcolor{red}"#, #"\color"#, #"\overset{a}"#, #"\stackrel{a}"#, #"\tag"#,
+        #"\phantom"#, #"\substack"#, #"\begin{align} a &= b"#,
+    ])
+    func batchTwoCommandsNeedTheirArguments(_ source: String) {
+        #expect(!parser.parseValidated(source).isRenderable, "\(source) should fall back to source")
+    }
+
     @Test(arguments: [#"\binom{n}"#, #"\dfrac{1}"#])
     func twoArgumentCommandsNeedBothArguments(_ source: String) {
         #expect(!parser.parseValidated(source).isRenderable)
@@ -114,7 +154,7 @@ struct TeXMathParserStressFixtureTests {
         #expect(!result.contains(.variable(#"\operatorname"#)))
         #expect(result.contains { node in
             switch node {
-            case .font(.roman, _), .subscript, .subSuperscript, .bigOperator:
+            case .operatorName(_, .some, true):
                 return true
             default:
                 return false
