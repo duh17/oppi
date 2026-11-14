@@ -13,6 +13,7 @@ import { inviteHostForTlsMode, proveSameTailscaleUser } from "../tailscale-whois
 import { SourceRateLimiter } from "../source-rate-limit.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
 import { readyVoiceFeatures } from "../voice-backend-health.js";
+import { GODOT_CAPABILITY_VERSION } from "../godot/godot-protocol.js";
 import { MAX_WORKSPACE_FILE_EDIT_BYTES } from "../file-serving-policy.js";
 import { isDeviceAccessPrincipal, type RequestPrincipal } from "../request-principal.js";
 import { checkPushRegistration } from "../push/registration.js";
@@ -513,6 +514,9 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         // `layout_proposal` cards to sockets that declare `pane-layouts:v1`, and Save Layout…
         // creating `.oppi/layouts/<name>.json` through the file editor.
         paneLayouts: { version: 1 },
+        // Godot pane (`types/godot.ts`): `/godot` routes and `WS /godot/{id}/link` for players that
+        // declare `godot-pane:v1`.
+        godot: { version: GODOT_CAPABILITY_VERSION },
         extensionNativeUI: {
           version: 1,
           capabilities: [...EXTENSION_NATIVE_UI_SERVER_CAPABILITIES],

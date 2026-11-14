@@ -4,10 +4,10 @@
  * and the socket still closes at its old deadline.
  */
 import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
-import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket, type RawData } from "ws";
@@ -187,6 +187,28 @@ async function sessionStreamPath(device: Device): Promise<string> {
   return `/workspaces/${workspace.id}/sessions/${created.session.id}/stream`;
 }
 
+/** A follower link to a game the server found in a workspace. */
+async function gameLinkPath(device: Device): Promise<string> {
+  const folder = join(makeTempDir("oppi-renew-game-"), "tide");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "project.godot"), 'config/name="Tide"\n');
+  storage.createWorkspace({ name: "Games", hostMount: dirname(folder) });
+  const list = await new Promise<{ projects: Array<{ id: string }> }>((resolve, reject) => {
+    const req = httpsRequest(
+      `${baseUrl}/godot`,
+      { rejectUnauthorized: false, headers: { Authorization: `Bearer ${device.token}` } },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk: Buffer) => (data += chunk.toString("utf8")));
+        res.on("end", () => resolve(JSON.parse(data)));
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+  return `/godot/${list.projects[0]?.id ?? ""}/link?role=follower`;
+}
+
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("in-band stream access renewal", { timeout: 60_000 }, () => {
@@ -194,6 +216,7 @@ describe("in-band stream access renewal", { timeout: 60_000 }, () => {
     { name: "app events", path: async () => "/app/events/stream", ready: "app_events_connected" },
     { name: "focused session", path: sessionStreamPath, ready: "connected" },
     { name: "dictation", path: async () => "/dictation/stream", ready: undefined },
+    { name: "game link", path: gameLinkPath, ready: "attached" },
   ] as const;
 
   for (const stream of streams) {

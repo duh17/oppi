@@ -24,6 +24,7 @@ import { createHostFileRoutes } from "./host-files.js";
 import { createProviderAuthRoutes } from "./provider-auth.js";
 import { createMcpRoutes } from "./mcp.js";
 import { createScheduleRoutes } from "./schedules.js";
+import { createGodotRoutes } from "./godot.js";
 import { createE2EUIHarnessRoutes } from "./e2e-ui-harness.js";
 import { createServerResourceRoutes } from "./server-resources.js";
 import { registeredMethodsForPath } from "./registry.js";
@@ -59,6 +60,7 @@ export class RouteHandler {
       createProviderAuthRoutes(this.ctx, this.helpers),
       createMcpRoutes(this.ctx, this.helpers),
       createScheduleRoutes(this.ctx, this.helpers),
+      createGodotRoutes(this.ctx, this.helpers),
     ];
     this.e2eUIHarness = createE2EUIHarnessRoutes(this.ctx, this.helpers);
   }

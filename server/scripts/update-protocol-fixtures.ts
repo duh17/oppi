@@ -23,6 +23,7 @@ import {
   SCHEDULE_CALENDAR_SNAPSHOT_FILE,
   serializeScheduleCalendarFixture,
 } from "../tests/schedule-calendar-fixtures.js";
+import { GODOT_SNAPSHOT_FILE, serializeGodotFixture } from "../tests/godot-fixtures.js";
 import {
   buildSurfaceFixtures,
   serializeSurfaceFixture,
@@ -69,6 +70,8 @@ const fixtures = [
   { path: MEDIA_INFO_SNAPSHOT_FILE, content: serializeMediaInfoFixture() },
   // One schedule calendar answer, every entry shape.
   { path: SCHEDULE_CALENDAR_SNAPSHOT_FILE, content: serializeScheduleCalendarFixture() },
+  // Every Godot pane body and link message.
+  { path: GODOT_SNAPSHOT_FILE, content: serializeGodotFixture() },
   // One surface per composite, plus the action, patch, and unknown-composite messages, decoded
   // by the server's tests and the Apple Codable tests from these same bytes.
   ...Object.entries(buildSurfaceFixtures()).map(([name, value]) => ({

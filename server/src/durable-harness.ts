@@ -80,6 +80,7 @@ import { OPPI_CALLER_SESSION_ID_ENV } from "./session-caller-identity.js";
 import { properLockfile } from "./pi-lockfile.js";
 import { DURABLE_STORE_LOCK_STALE_MS } from "./durable-store-lock.js";
 import { DurableSessionDoc } from "./durable-session-doc.js";
+import { godotForConversation } from "./godot/godot-sessions.js";
 import { requireDurableStoreId } from "./session-runtime-capabilities.js";
 import type { ConversationStreamServerMessage, Session } from "./types.js";
 
@@ -298,7 +299,7 @@ export interface DurableSessionNaming {
  * conversation that runs a tool call's env, and the file tools over the host or a sandbox VM. One object for
  * every runtime of the process, bound once before the first package loads.
  */
-const durableHost: OppiDurableHost = {
+const durableHost: Omit<OppiDurableHost, "godot"> = {
   sessions: (env) => {
     const caller = conversationOfEnv(env);
     return caller?.host.runtime.boundThreads?.forCaller(caller.host, caller.conversationId);
@@ -1858,7 +1859,7 @@ export class DurableHarness {
     // Once per process, before any plugin loads: built-ins read the host when their facet is
     // evaluated, and the slot cannot be bound again, so no plugin can replace it.
     if (!durableHostBound) {
-      bindOppiHost(durableHost);
+      bindOppiHost({ ...durableHost, godot: godotForConversation });
       durableHostBound = true;
     }
     const plugins = new PluginHost({

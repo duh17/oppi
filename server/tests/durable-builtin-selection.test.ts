@@ -27,6 +27,7 @@ import { makeTempDir } from "./harness/temp-dir.js";
 import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 import { DurableNotify } from "../plugins/notify/server.js";
 import { DurableLiveVoice } from "../plugins/live-voice/server.js";
+import { serveGodotToSessions } from "../src/godot/godot-sessions.js";
 
 // What each kind of durable session selects, pinned by name: the built-in extensions, the tools
 // offered, and the prompt sections, in order, when the conversation is created and after it
@@ -99,7 +100,7 @@ const PINNED = {
           "sql-explorer",
           "codemode",
         ],
-        remove: ["oppi.notify"],
+        remove: ["oppi.notify", "oppi.godot"],
       },
       extensions: [
         "coding-tools",
@@ -189,7 +190,7 @@ const PINNED = {
           "sql-explorer",
           "codemode",
         ],
-        remove: ["oppi.notify"],
+        remove: ["oppi.notify", "oppi.godot"],
       },
       extensions: [
         "coding-tools",
@@ -274,7 +275,7 @@ const PINNED = {
           "sql-explorer",
           "codemode",
         ],
-        remove: ["oppi.sessions", "oppi.notify"],
+        remove: ["oppi.sessions", "oppi.notify", "oppi.godot"],
       },
       extensions: [
         "coding-tools",
@@ -729,6 +730,32 @@ describe("durable built-in selection", () => {
     expect(reattached.extensions).not.toContain("oppi.notify");
     expect(reattached.tools).not.toContain("notify");
     await f.manager.stopSession(session.id);
+  });
+
+  it("offers the game tools only while the session's workspace has a game", async () => {
+    const f = await fixture();
+    const { session, workspace } = workspaceSession(f, "host");
+    let gamesIn: string | undefined = workspace.id;
+    serveGodotToSessions({ hasGodotProjects: (id) => id === gamesIn, forSession: () => undefined });
+    try {
+      await f.manager.startSession(session.id, workspace);
+      const created = await selection(f, session.id);
+      expect(created.extensions).toContain("oppi.godot");
+      expect(created.tools).toEqual(expect.arrayContaining(["godot_status", "godot_capture"]));
+      expect(created.sections).toContain("godot-guidelines");
+      await f.manager.stopSession(session.id);
+
+      // The game left the workspace: the next attach drops the tools and their guideline.
+      gamesIn = "another-workspace";
+      await f.manager.startSession(session.id, workspace);
+      const reattached = await selection(f, session.id);
+      expect(reattached.extensions).not.toContain("oppi.godot");
+      expect(reattached.tools.filter((tool) => tool.startsWith("game_"))).toEqual([]);
+      expect(reattached.sections).not.toContain("godot-guidelines");
+      await f.manager.stopSession(session.id);
+    } finally {
+      serveGodotToSessions(undefined);
+    }
   });
 
   it("gives speak only during a Live Voice call and says each reply's opening as it is written", async () => {

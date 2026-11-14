@@ -325,7 +325,7 @@ const TAGS = {
   },
   stream: {
     kind: "enum",
-    values: ["session", "dictation", "app_events"],
+    values: ["session", "dictation", "app_events", "godot"],
     description: "Server WebSocket stream.",
   },
   message_type: {

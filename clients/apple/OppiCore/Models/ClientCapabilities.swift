@@ -39,4 +39,8 @@ enum ClientCapability {
     /// app's static working icon (`BlocksIconView`). A client that does not name it is sent a
     /// symbol in its place.
     static let extensionNativeUIWorking = "extension-native-ui:v2:working"
+
+    /// `godot-pane:v1`: named in a Godot link's `attach.capabilities` (`GodotLinkPlayerMessage`).
+    /// The server serves a player link only when it is there (`protocol/godot.json`).
+    static let godotPane = "godot-pane:v1"
 }

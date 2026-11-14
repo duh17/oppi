@@ -352,6 +352,57 @@
       "error": { "code": "unexpectedComponent", "detail": "fragment" }
     },
     {
+      "name": "godot",
+      "input": "oppi://godot?project=tide-3fa9c2b1",
+      "server": null,
+      "route": { "kind": "godot", "project": "tide-3fa9c2b1" },
+      "canonical": "oppi://godot?project=tide-3fa9c2b1"
+    },
+    {
+      "name": "godot names its server",
+      "input": "oppi://godot?server=sha256:9f86d081884c7d65&project=tide-3fa9c2b1",
+      "server": "sha256:9f86d081884c7d65",
+      "route": { "kind": "godot", "project": "tide-3fa9c2b1" },
+      "canonical": "oppi://godot?project=tide-3fa9c2b1&server=sha256:9f86d081884c7d65"
+    },
+    {
+      "name": "godot route and parameter names are case-insensitive, the project id is not",
+      "input": "oppi://Godot?Project=CI-Runner",
+      "server": null,
+      "route": { "kind": "godot", "project": "CI-Runner" },
+      "canonical": "oppi://godot?project=CI-Runner"
+    },
+    {
+      "name": "godot without a project",
+      "input": "oppi://godot",
+      "error": { "code": "missing", "detail": "project" }
+    },
+    {
+      "name": "godot with an empty project",
+      "input": "oppi://godot?project=",
+      "error": { "code": "missing", "detail": "project" }
+    },
+    {
+      "name": "godot with an unknown parameter",
+      "input": "oppi://godot?project=tide-3fa9c2b1&level=2",
+      "error": { "code": "unknownParameter", "detail": "level" }
+    },
+    {
+      "name": "godot with project twice",
+      "input": "oppi://godot?project=tide-3fa9c2b1&project=ci-runner",
+      "error": { "code": "duplicateParameter", "detail": "project" }
+    },
+    {
+      "name": "godot with the project as a path",
+      "input": "oppi://godot/tide-3fa9c2b1",
+      "error": { "code": "unexpectedPath" }
+    },
+    {
+      "name": "godot with a fragment",
+      "input": "oppi://godot?project=tide-3fa9c2b1#L3",
+      "error": { "code": "unexpectedComponent", "detail": "fragment" }
+    },
+    {
       "name": "terminal links keep their own parser",
       "input": "oppi://terminal/rex?session=session:1&block=block:2",
       "notPaneLink": true

@@ -18,6 +18,7 @@ The docs have two tracks: **daily use** and **extension authoring**. Pi owns the
 - [Provider quotas](provider-quotas.md): remaining quota and pace
 - [Deep links](deeplinks.md): `oppi://` links
 - [Pane layouts](layouts.md): layout files and `oppi-layout` blocks that arrange panes, for agents and people
+- [Godot](godot.md) (experiment): play a Godot game from a workspace in a Godot pane, and the `godot_*` agent tools
 - [Support](support.md) and [Privacy](privacy.md)
 - [Screenshots](https://github.com/duh17/oppi/tree/main/docs/demo)
 

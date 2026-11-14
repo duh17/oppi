@@ -23,6 +23,7 @@ import type { DevicePairing } from "../device-pairing.js";
 import type { ServerResourceRecord } from "../server-metrics-history.js";
 import type { SttGetAuth } from "../create-stt-provider.js";
 import type { VoiceBackendHealth } from "../voice-backend-health.js";
+import type { GodotService } from "../godot/godot-service.js";
 
 /** The resource sampler behind the Server Metrics page. */
 export interface ServerMetricsControl {
@@ -113,6 +114,8 @@ export interface RouteContext {
   metrics?: ServerTelemetry;
   /** Resource sampler control. Optional so route tests can omit it. */
   serverMetrics?: ServerMetricsControl;
+  /** The Godot pane's games. Optional so route tests can omit it. */
+  godot?: GodotService;
 }
 
 export interface RouteHelpers {

@@ -376,6 +376,7 @@ enum TelemetryTag {
         case session
         case dictation
         case appEvents = "app_events"
+        case godot
     }
 
     /// Client focused-stream connection state before a wait began; `no_stream` when no stream existed.

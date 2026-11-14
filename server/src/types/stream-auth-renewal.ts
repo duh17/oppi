@@ -1,7 +1,7 @@
 // Live stream access renewal (capabilities.streamAuthRenewal).
 //
 // A control exchange on every live device stream (`/app/events/stream`, the focused session
-// streams, `/dictation/stream`), outside each stream's own message set. Sent only by clients
+// streams, `/dictation/stream`, `/godot/{id}/link`), outside each stream's own message set. Sent only by clients
 // that read the capability, so older builds never see a result frame.
 
 /**

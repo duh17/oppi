@@ -23,6 +23,7 @@ import { SessionManager } from "./sessions.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
 import { AppEventStreamMux } from "./app-event-stream.js";
 import { LayoutFiles } from "./layout-files.js";
+import { GodotService } from "./godot/godot-service.js";
 import { BoundSessionStreamMux, DictationStreamMux } from "./stream.js";
 import { SocketAccessDeadlines, type RenewStreamAccess } from "./stream-auth-renewal.js";
 import { RouteHandler } from "./routes/index.js";
@@ -528,6 +529,7 @@ export class Server {
   private sessionRuntimes!: SessionRuntimes;
   // REST route handler (dispatch + all HTTP handlers)
   private routes!: RouteHandler;
+  private godot!: GodotService;
   private readonly serverUpdate: ServerUpdateService;
   // WebSocket message command dispatcher for full-session commands
   private wsMessageHandler!: WsMessageHandler;
@@ -754,6 +756,7 @@ export class Server {
       authModule: this.authModule,
     });
     this.sessions.layoutFiles = new LayoutFiles(this.storage, this.appEventStreamMux);
+    this.godot = new GodotService(this.storage, { renewAccess });
     this.boundSessionStreamMux = new BoundSessionStreamMux(streamContext);
     this.dictationStreamMux = new DictationStreamMux(streamContext);
 
@@ -984,6 +987,7 @@ export class Server {
       serverResources: this.serverResources,
       providerAuth: this.providerAuth,
       mcp: this.mcp,
+      godot: this.godot,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
       refreshModelCatalog: (options) => this.refreshModelCatalog(options),
@@ -1058,6 +1062,7 @@ export class Server {
     }
 
     await this.sessions.expectDurableModelRuntime();
+    this.godot.start();
     await this.initializeModelServices();
 
     // Prime model catalog so first picker open is fast.
@@ -1214,6 +1219,7 @@ export class Server {
     this.resourceSampler.stop();
     this.stopBonjourAdvertisement();
     this.skillRegistry.stopWatching();
+    this.godot.close();
 
     let shutdownError: unknown;
     try {
@@ -1988,7 +1994,8 @@ export class Server {
     const sessionStreamMatch = matchFocusedSessionStreamPath(url.pathname);
     const appEventStreamMatch = url.pathname === "/app/events/stream";
     const dictationStreamMatch = url.pathname === "/dictation/stream";
-    if (!sessionStreamMatch && !appEventStreamMatch && !dictationStreamMatch) {
+    const godotLink = this.godot.linkTarget(url);
+    if (!sessionStreamMatch && !appEventStreamMatch && !dictationStreamMatch && !godotLink) {
       writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
         Connection: "close",
         "Content-Length": "0",
@@ -2023,6 +2030,7 @@ export class Server {
         this.forgetPresenceSocket(ws, code);
       });
       this.socketAccess.track(ws, gateRequest);
+      if (godotLink) return this.godot.serveLink(ws, godotLink);
       this.routeAuthenticatedUpgrade(ws, {
         sessionStreamMatch,
         appEventStreamMatch,

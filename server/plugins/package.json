@@ -13,7 +13,8 @@
       "./sql-explorer",
       "./notify",
       "./live-voice",
-      "./control"
+      "./control",
+      "./godot"
     ]
   }
 }

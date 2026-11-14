@@ -1,3 +1,6 @@
+// The Godot pane's rows live beside it; inlined they would take this file past its line budget.
+import { godotRouteSpecs } from "../godot/godot-route-specs.js";
+
 export type HttpMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type RouteSurface = "core" | "admin" | "internal";
 export type RouteAuth = "none" | "owner";
@@ -1372,6 +1375,7 @@ const rawApiRouteSpecs = [
     surface: "admin",
     auth: "owner",
   },
+  ...godotRouteSpecs,
 ] as const satisfies readonly ApiRouteSpec[];
 
 export const apiRouteSpecs: readonly ApiRouteSpec[] = rawApiRouteSpecs;

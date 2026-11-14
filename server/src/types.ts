@@ -24,3 +24,4 @@ export type * from "./types/push.js";
 export type * from "./types/invite.js";
 export type * from "./types/mcp.js";
 export type * from "./types/layout.js";
+export type * from "./types/godot.js";

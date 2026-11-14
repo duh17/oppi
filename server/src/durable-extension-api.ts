@@ -16,7 +16,14 @@ import type { SubagentWorktree, SubagentWorktreeState } from "../plugins/subagen
 import type { NotifyInput, NotifyOutcome } from "../plugins/notify/contract.js";
 import type { SchemeReader } from "./internal-urls.js";
 import type { TraceEvent } from "./trace.js";
-import type { Session } from "./types.js";
+import type {
+  GodotCommandRequest,
+  GodotCommandResult,
+  GodotLogPage,
+  GodotProject,
+  GodotProjectDetail,
+  Session,
+} from "./types.js";
 
 export type { InternalTarget, SchemeReader } from "./internal-urls.js";
 
@@ -166,6 +173,15 @@ export interface OppiDurableHost {
     api: DocumentReader & { readonly conversationId: ConversationId },
     context: Context,
   ): Promise<DurableSessionName | undefined>;
+  /**
+   * The games of the Session the conversation `api` is for, read like `sessionName`. Undefined
+   * for a conversation without a Session, a Session without a workspace, or while the server
+   * serves no games.
+   */
+  godot(
+    api: DocumentReader & { readonly conversationId: ConversationId },
+    context: Context,
+  ): Promise<OppiGodotHost | undefined>;
   /** Pi's file tools over the host or a sandbox session's Gondolin VM. */
   readonly files: OppiFileToolsHost;
 }
@@ -496,4 +512,33 @@ export interface OppiInternalUrlsHost {
   ): Promise<Pick<ToolExecutionResult, "output" | "structuredOutput"> | undefined>;
   /** Serve `scheme://` with `reader`, replacing an earlier registration. Throws for a server scheme. */
   register(scheme: string, reader: SchemeReader): void;
+}
+
+// --- godot (`godot_*` tools) -------------------------------------------------------------------
+
+/**
+ * The Godot pane's games for the `godot_*` tools, as one Session sees them: only the games
+ * discovered in that Session's workspace. Any other id, a game of another workspace or one only
+ * a publish created, is not found.
+ */
+export interface OppiGodotHost {
+  /**
+   * The game a tool means: `ref` as an id or a name, else the only game with a player attached,
+   * else the only game in the Session's checkout, else the only one in its workspace.
+   */
+  resolve(
+    ref: string | undefined,
+  ): Promise<{ project: GodotProject } | { error: string; projects: GodotProject[] }>;
+  detail(projectId: string): Promise<GodotProjectDetail | undefined>;
+  /** Undefined for a game this Session cannot see. */
+  logs(
+    projectId: string,
+    query: { since?: number; limit?: number; level?: string },
+  ): GodotLogPage | undefined;
+  /** One command to one player; a failure, `not_found` included, is a result, never a throw. */
+  command(projectId: string, request: GodotCommandRequest): Promise<GodotCommandResult>;
+  captureBytes(
+    projectId: string,
+    captureId: string,
+  ): Promise<{ data: Uint8Array; mimeType: string } | undefined>;
 }

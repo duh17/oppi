@@ -6,6 +6,7 @@
   "files": [
     "tests/protocol-fixtures.ts",
     "tests/route-fixtures.ts",
+    "tests/godot-fixtures.ts",
     "tests/conversation-stream-fixtures.ts",
     "tests/conversation-stream-golden.ts",
     "tests/session-lifecycle-wire.ts",

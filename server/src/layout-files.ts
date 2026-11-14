@@ -46,7 +46,8 @@ import type {
   WorkspaceLayoutSummary,
 } from "./types.js";
 import { resolveWorkspaceUserPath } from "./workspace-user-path.js";
-import { listWorkspaceWorktrees, MAIN_WORKTREE_ID } from "./worktrees.js";
+import { listWorkspaceCheckouts, type WorkspaceCheckout } from "./workspace-checkouts.js";
+import { MAIN_WORKTREE_ID } from "./worktrees.js";
 
 const log = createLogger({ base: { component: "layout_files" } });
 
@@ -57,13 +58,7 @@ const SWEEP_INTERVAL_MS = 60_000;
 /** A lexical layouts-file path in a tool call's arguments, before anything is resolved. */
 const LAYOUTS_PATH = /(?:^|[/\\])\.oppi[/\\]layouts[/\\][^/\\]+$/;
 
-interface Checkout {
-  worktreeId: string;
-  /** Display name: the worktree's, or the main checkout's. */
-  label: string;
-  /** Host directory: the workspace mount, or a worktree. */
-  root: string;
-}
+type Checkout = WorkspaceCheckout;
 
 interface FileSnapshot {
   name: string;
@@ -286,32 +281,7 @@ export class LayoutFiles {
     const now = this.now();
     const cached = this.checkouts.get(workspace.id);
     if (cached && now - cached.at < LOOK_AGAIN_AFTER_MS) return cached.list;
-    let worktrees: Awaited<ReturnType<typeof listWorkspaceWorktrees>> = [];
-    try {
-      worktrees = await listWorkspaceWorktrees(workspace, {
-        dataDir: this.storage.getDataDir(),
-      });
-    } catch (error: unknown) {
-      log.warn("layout_files.worktrees_failed", {
-        workspaceId: workspace.id,
-        error: safeErrorMessage(error),
-      });
-    }
-    const main = worktrees.find((worktree) => worktree.isMain);
-    const list: Checkout[] = [
-      {
-        worktreeId: MAIN_WORKTREE_ID,
-        label: main?.name ?? "Main checkout",
-        root: resolve(expandHome(workspace.hostMount)),
-      },
-      ...worktrees
-        .filter((worktree) => !worktree.isMain)
-        .map((worktree) => ({
-          worktreeId: worktree.id,
-          label: worktree.name,
-          root: worktree.path,
-        })),
-    ];
+    const list = await listWorkspaceCheckouts(workspace, this.storage.getDataDir(), "layout_files");
     this.checkouts.set(workspace.id, { at: now, list });
     return list;
   }

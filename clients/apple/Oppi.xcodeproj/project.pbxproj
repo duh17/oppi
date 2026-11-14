@@ -1112,6 +1112,7 @@
 		7902E16033A225A8FBA3AE08 /* ConversationStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = C99DED7DD4341DAE446E8F5C /* ConversationStream.swift */; };
 		7903A5F5476583995B8012EE /* QuickCommentTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0030872E17F5A3AB36FC58DE /* QuickCommentTemplate.swift */; };
 		79043837D700701B2752494C /* FeatureEducationTipHostViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 567661C277C399DECFA280B1 /* FeatureEducationTipHostViewTests.swift */; };
+		793ED3359FDF94DBED762EE0 /* GodotModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F4AD17AA5399A5685D5544A /* GodotModels.swift */; };
 		795A739B33D1C138DD9A0BEC /* FileViewerBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD62EEE86DE14C8CB6AE9C4A /* FileViewerBar.swift */; };
 		79B3655D5958E90682FC6BA7 /* MarkdownReaderRenderAhead.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24EB557504322E89E70F7427 /* MarkdownReaderRenderAhead.swift */; };
 		79BE515B99EB8516C0B46B90 /* FileShareServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 009E54D13C906CCB2E5CCB63 /* FileShareServiceTests.swift */; };
@@ -1459,6 +1460,7 @@
 		9F1D967560AF6FA88C83BE9F /* SettingsCatalogContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 208ACB81B661F23E0224E3EF /* SettingsCatalogContractTests.swift */; };
 		9F20D32B0C6024CF313DCE76 /* ServerResourceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD6B85E5C48F11C50A56BE2C /* ServerResourceStore.swift */; };
 		9F48EC38BA4B07C99D1F796F /* MessageQueueComposerRestore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 508B2CA610F83F81F2908694 /* MessageQueueComposerRestore.swift */; };
+		9F510E92F977FEA459CE2FDA /* GodotLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 655C2EDC8A24AF84983CBBBB /* GodotLink.swift */; };
 		9F5F6BD1A52DC6B2392E2EFD /* MermaidGitGraphRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1641221B2836B1AA655BF0E0 /* MermaidGitGraphRenderer.swift */; };
 		9F82F8C99D784ECB43181CAC /* QuickCommentsPageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E5C0F7263C0C928B87DD51E /* QuickCommentsPageTests.swift */; };
 		9FA06C83B51C624816681BC3 /* MermaidPieParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5EDBC6083F73C1F0E766584 /* MermaidPieParser.swift */; };
@@ -1753,6 +1755,7 @@
 		BE9410F2AC20682C3B6DCCAA /* ExtensionUINativeSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74343B20957C6BCACDE5A263 /* ExtensionUINativeSurface.swift */; };
 		BE9ADEEFDDE8ABEFFEC6D40E /* ClientLogUploadQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12EAD93E7AB90E9DDC589076 /* ClientLogUploadQueueTests.swift */; };
 		BEB112494828033EF43CE6EA /* ServerExtensionDetailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C53B31985EBE5D6920270657 /* ServerExtensionDetailViewController.swift */; };
+		BEC0234075EB0E003422FA39 /* GodotProtocolContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 772ECB3CC00AD85B3D301B83 /* GodotProtocolContractTests.swift */; };
 		BEF12307DE8C44DDE511C913 /* MermaidStateConformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0274D4BD1B78CA851FC5269 /* MermaidStateConformanceTests.swift */; };
 		BF178941278BA0EE28F362F6 /* ExtensionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 793EFBB66D0D22AC99C69A7E /* ExtensionTests.swift */; };
 		BF1A899194C80C845D43C96C /* PaneDivider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A37B844EE902483B2BBD28 /* PaneDivider.swift */; };
@@ -3330,6 +3333,7 @@
 		64FE028F519687D9B5E6E9A8 /* ExtensionDialogQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDialogQueue.swift; sourceTree = "<group>"; };
 		6542F0F690C9AE040DBC39D7 /* SSHTerminalExperimentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalExperimentsTests.swift; sourceTree = "<group>"; };
 		6549E37C65989DA529841ACB /* ResumableFileDownload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResumableFileDownload.swift; sourceTree = "<group>"; };
+		655C2EDC8A24AF84983CBBBB /* GodotLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GodotLink.swift; sourceTree = "<group>"; };
 		656988A407C7427E6C187B26 /* ScheduleListOverview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleListOverview.swift; sourceTree = "<group>"; };
 		658CA553D9FA00CE4481C751 /* RexTailnet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexTailnet.swift; sourceTree = "<group>"; };
 		6598CC67F49112C7E21F80C8 /* FullScreenCodeSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenCodeSupport.swift; sourceTree = "<group>"; };
@@ -3497,6 +3501,7 @@
 		76E5B571EB4BA2F672469DCC /* WorkspaceFileEditorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFileEditorViewController.swift; sourceTree = "<group>"; };
 		76EDC243034FF18BF55765A5 /* QuickSessionModelPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickSessionModelPicker.swift; sourceTree = "<group>"; };
 		771768B2C346D60809635A50 /* MermaidSequenceConformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidSequenceConformanceTests.swift; sourceTree = "<group>"; };
+		772ECB3CC00AD85B3D301B83 /* GodotProtocolContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GodotProtocolContractTests.swift; sourceTree = "<group>"; };
 		7747D21079361CEEF3827D17 /* ChatReviewCommentsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatReviewCommentsController.swift; sourceTree = "<group>"; };
 		775563D045CC49C43732B34D /* SSHTerminalGhosttyThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalGhosttyThemeTests.swift; sourceTree = "<group>"; };
 		776AE8C837C63B110792EC2D /* DiffEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffEngineTests.swift; sourceTree = "<group>"; };
@@ -3580,6 +3585,7 @@
 		7EC81C3FAB6DA878007E3A47 /* SSHTerminalRexPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalRexPanel.swift; sourceTree = "<group>"; };
 		7ECC52FC2B2C6A2794A69298 /* SSHTerminalRexList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalRexList.swift; sourceTree = "<group>"; };
 		7F28AABCE4427B183948D99F /* AgentDetailViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentDetailViewController.swift; sourceTree = "<group>"; };
+		7F4AD17AA5399A5685D5544A /* GodotModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GodotModels.swift; sourceTree = "<group>"; };
 		7F54ED7A5B2FB1CB02A99B67 /* ServerListRepeatedIdTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListRepeatedIdTests.swift; sourceTree = "<group>"; };
 		7F69390322324DBB0B5A5DD9 /* IPhoneSessionsFirstScreenshotE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPhoneSessionsFirstScreenshotE2ETests.swift; sourceTree = "<group>"; };
 		7F7425251D8A345D3EF8E04D /* SegmentRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentRenderer.swift; sourceTree = "<group>"; };
@@ -4745,6 +4751,7 @@
 				29452A53714399D6EA0C7888 /* ClientMessageTests.swift */,
 				46FC611DD7114F5511B7665B /* ConversationStreamTests.swift */,
 				0165358A8A80525B6ED33F35 /* ExtensionUISurfaceTests.swift */,
+				772ECB3CC00AD85B3D301B83 /* GodotProtocolContractTests.swift */,
 				4DD2520B9AD59561B7F4886D /* JSONUnpairedSurrogateRepairTests.swift */,
 				2445EEEB90AA9624B1D6F669 /* MediaInfoContractTests.swift */,
 				E78C467EE80223936BAEF56D /* ModelCodableTests.swift */,
@@ -5993,6 +6000,8 @@
 				25E0843A5FB36A83E7AA0940 /* FuzzyMatch.swift */,
 				6D1CDA45D436D2B30E3C8588 /* GitCommitDetail.swift */,
 				6F39F71544939CACEB47798D /* GitStatus.swift */,
+				655C2EDC8A24AF84983CBBBB /* GodotLink.swift */,
+				7F4AD17AA5399A5685D5544A /* GodotModels.swift */,
 				7DDA13930E1A4560D57462C8 /* HTMLDOMElementAnchor.swift */,
 				1FAE287873789BDD815BB217 /* IconAsset.swift */,
 				AD4079E35B9FD141D4843888 /* IconChoice.swift */,
@@ -9186,6 +9195,7 @@
 				34C06DA73C0365AA915DB511 /* GeoJSONMapUnavailableTests.swift in Sources */,
 				92E2878C810E7F95F9E5D8B7 /* GitPanelPaneRoutingTests.swift in Sources */,
 				4E15EDFA6FC4C072990A0C92 /* GitStatusStoreTests.swift in Sources */,
+				BEC0234075EB0E003422FA39 /* GodotProtocolContractTests.swift in Sources */,
 				1C0EC3705F9EE6E3AA83BD44 /* GraphLayoutTests.swift in Sources */,
 				88542CBD3DFB05D273DF9921 /* GuidedControlComposerModelTests.swift in Sources */,
 				61B308E6EA46BBF21665D93A /* GuidedControlComposerPresentationTests.swift in Sources */,
@@ -10128,6 +10138,8 @@
 				EF31D3864A7463AA226E338E /* GitStatus.swift in Sources */,
 				0413385FF47CC0DB1E864FEF /* GitStatusStore+Environment.swift in Sources */,
 				82BA8028E8E1DEEF77D8A5F8 /* GitStatusStore.swift in Sources */,
+				9F510E92F977FEA459CE2FDA /* GodotLink.swift in Sources */,
+				793ED3359FDF94DBED762EE0 /* GodotModels.swift in Sources */,
 				7ADE8174B66DEEFDC78C8F49 /* GraphicalRendererView.swift in Sources */,
 				09A66EBDDC5802DDE35D45A4 /* GuidedControlComposerController+Source.swift in Sources */,
 				8583957070AD267A048F7CEC /* GuidedControlComposerController.swift in Sources */,

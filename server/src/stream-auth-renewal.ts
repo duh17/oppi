@@ -23,7 +23,7 @@ import type {
 const log = createLogger({ base: { component: "stream_auth_renewal" } });
 
 /** The live streams that take `auth_renew`; also their `stream` telemetry tag. */
-export type RenewableStream = "session" | "app_events" | "dictation";
+export type RenewableStream = "session" | "app_events" | "dictation" | "godot";
 
 export type RenewStreamAccess = (
   ws: WebSocket,

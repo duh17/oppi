@@ -133,6 +133,9 @@ struct ServerInfo: Codable, Sendable, Equatable {
         /// `GET /schedules/calendar`: past runs with their outcomes and upcoming occurrences.
         /// Missing means Schedules shows only its list.
         var scheduleCalendar: CapabilityVersion? = nil
+        /// The Godot pane's `/godot` routes and `WS /godot/{id}/link` (`protocol/godot.json`).
+        /// Missing means the server lists and serves no games.
+        var godot: CapabilityVersion? = nil
 
         /// The relay origin, when the server pushes and names an https relay (http only on
         /// loopback, for local testing).

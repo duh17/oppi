@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Every HTTP and WebSocket route server/src/routes/registry.ts declares: method, path template, path params, operationId, surface, auth, and transport. Generated from the registry by server/tests/route-fixtures.ts; server/tests/route-fixtures.test.ts fails when the committed bytes differ. The Apple client's APIClientRouteContractTests requires every request an APIClient endpoint method builds to match a row, so a client path the server does not serve fails there.",
-    "routeCount": 189
+    "routeCount": 200
   },
   "routes": [
     {
@@ -1972,6 +1972,130 @@
       "params": [],
       "operationId": "uploadClientLogs",
       "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/godot",
+      "params": [],
+      "operationId": "listGodotProjects",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/godot/{projectId}",
+      "params": [
+        "projectId"
+      ],
+      "operationId": "getGodotProject",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/godot/{projectId}/link",
+      "params": [
+        "projectId"
+      ],
+      "operationId": "openGodotLink",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "websocket"
+    },
+    {
+      "method": "HEAD",
+      "path": "/godot/{projectId}/packs/{sha256}",
+      "params": [
+        "projectId",
+        "sha256"
+      ],
+      "operationId": "headGodotPack",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/godot/{projectId}/packs/{sha256}",
+      "params": [
+        "projectId",
+        "sha256"
+      ],
+      "operationId": "getGodotPack",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/godot/{projectId}/packs/{sha256}",
+      "params": [
+        "projectId",
+        "sha256"
+      ],
+      "operationId": "uploadGodotPack",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/godot/{projectId}/releases",
+      "params": [
+        "projectId"
+      ],
+      "operationId": "publishGodotRelease",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/godot/{projectId}/commands",
+      "params": [
+        "projectId"
+      ],
+      "operationId": "runGodotCommand",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/godot/{projectId}/logs",
+      "params": [
+        "projectId"
+      ],
+      "operationId": "getGodotLogs",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/godot/{projectId}/captures/{captureId}",
+      "params": [
+        "projectId",
+        "captureId"
+      ],
+      "operationId": "uploadGodotCapture",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/godot/{projectId}/captures/{captureId}",
+      "params": [
+        "projectId",
+        "captureId"
+      ],
+      "operationId": "getGodotCapture",
+      "surface": "core",
       "auth": "owner",
       "transport": "http"
     }

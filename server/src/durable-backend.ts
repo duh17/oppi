@@ -125,6 +125,20 @@ import { safeErrorMessage } from "./log-utils.js";
 import { managedProjectTrustContext, resolveManagedProjectTrust } from "./project-trust.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { MAIN_WORKTREE_ID } from "./worktrees.js";
+import { GODOT_EXTENSION, workspaceHasGodot } from "./godot/godot-sessions.js";
+
+/**
+ * The built-ins without `oppi.godot` unless the workspace has a Godot project, so a session pays
+ * for the `godot_*` tools and their guideline only where they can work. Asked again on every attach.
+ */
+function offeredGodot(
+  extensions: readonly Extension[],
+  workspaceId: string | undefined,
+): Extension[] {
+  return workspaceHasGodot(workspaceId)
+    ? [...extensions]
+    : extensions.filter((extension) => extension.name !== GODOT_EXTENSION);
+}
 
 const log = createLogger({ base: { component: "durable-backend" } });
 
@@ -508,7 +522,7 @@ export class DurableBackend implements AgentBackend {
       ...(session.launch?.tools ? { policy: session.launch.tools } : {}),
       runtime,
       base: [
-        ...host.runtime.builtInsFor(runtime),
+        ...offeredGodot(host.runtime.builtInsFor(runtime), options.workspace?.id),
         ...host.runtime.packageExtensionsFor(runtime, target.hostExtensionIds),
       ],
       loaded: host.runtime.loadedPackages,
@@ -558,10 +572,12 @@ export class DurableBackend implements AgentBackend {
     const notifies = host.runtime.offersNotify(session.id);
     // A saved Agent's exact Extension selection without `builtin:codemode` has none.
     const codemode = launched?.doc?.extensions?.codemode !== false;
+    const attached = host.runtime.attachedBuiltIns(spawn, notifies);
     const builtIns = [
-      ...host.runtime.attachedBuiltIns(spawn, notifies),
+      ...offeredGodot(attached, workspace?.id),
       ...(codemode ? [host.runtime.codemode] : []),
     ];
+    const unofferedGodot = attached.filter((extension) => !builtIns.includes(extension));
     let conversation: Conversation;
     if (id !== undefined) {
       const existing = await harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
@@ -613,6 +629,7 @@ export class DurableBackend implements AgentBackend {
                 remove: [
                   ...(spawn ? [] : [host.runtime.sessionsExtension]),
                   ...(notifies ? [] : [host.runtime.notifyExtension]),
+                  ...unofferedGodot,
                   ...(codemode ? [] : [host.runtime.codemode]),
                 ],
               },
