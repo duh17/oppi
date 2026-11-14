@@ -700,7 +700,8 @@ final class FullScreenCodeViewController: UIViewController {
         copy.accessibilityIdentifier = "fullscreen-code.copy"
         copyButton = copy
         offers[.copy] = [copy]
-        if let shareable = shareableContent() {
+        // The host's Share sends the file it read, which outranks the reader's text.
+        if offers[.share] == nil, let shareable = shareableContent() {
             offers[.share] = [FullScreenViewerNavigationChrome.makeShareButton(for: shareable, from: self, palette: palette)]
         }
 

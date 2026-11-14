@@ -6,9 +6,9 @@ import UIKit
 /// in the `FileRenderer` its preview category names (`FileRendererRegistry`).
 /// Large text files ask before loading.
 ///
-/// `.pushed` is a screen of its own: a text file shows the reader's glass bar
-/// and hides the stack's (`readerHostNavigationBar` behavior), host files keep
-/// the stack's bar. `.treePane` sits beside a list or under a review header;
+/// `.pushed` is a screen of its own: a file the reader shows (text, a book)
+/// shows the reader's glass bar and hides the stack's, so the screen has one
+/// bar (`readerOwnsBar`); other kinds and host files keep the stack's bar. `.treePane` sits beside a list or under a review header;
 /// its Edit control is a bar item for the embedding screen (`bar`).
 ///
 /// Re-showing the viewer (a full-screen modal over it, or a pop back from a
@@ -340,10 +340,21 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         )
     }
 
-    /// Text is loaded and the reader (not the editor) shows it.
-    private var isUsingFileViewer: Bool {
-        if case .text = content { return !editOwner.isEditing }
-        return false
+    /// The reader shows the file: loaded text (not the editor), or the reader a
+    /// renderer mounted for its kind (a book, `mountReader(_:)`).
+    private var showsReader: Bool {
+        switch content {
+        case .text: !editOwner.isEditing
+        case .rendered: reader != nil
+        case .loading, .sizeWarning, .error, .missing: false
+        }
+    }
+
+    /// The reader draws the screen's one bar: a pushed reader showing the file.
+    /// The stack's bar hides, and what it would carry (Share, the previous and
+    /// next file) goes on the reader's (`readerHostOffers`).
+    private var readerOwnsBar: Bool {
+        sharesReaderBar && showsReader
     }
 
     private func readerPresentationMode(
@@ -414,10 +425,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         )
     }
 
-    private var shouldHideHostNavigationBar: Bool {
-        showsEmbeddedNavigationChrome && isUsingFileViewer
-    }
-
     /// Text and renderers that say so own the back swipe; the viewer handles it for the rest.
     private var parentOwnsBackSwipe: Bool {
         switch content {
@@ -460,10 +467,15 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         return item
     }
 
-    /// What this viewer adds to a reader that draws its own bar: Edit, and
-    /// the previous and next file.
+    /// What this viewer adds to a reader that draws its own bar: Edit, the
+    /// previous and next file, and for a renderer's reader the file's own Share
+    /// (a book shares its archive, which only this viewer read).
     private var readerHostOffers: [ReaderBarAction: [UIBarButtonItem]] {
-        editOwner.readerOffers.merging(isUsingFileViewer && sharesReaderBar ? adjacentOffers : [:]) { own, _ in own }
+        var offers = editOwner.readerOffers
+        guard readerOwnsBar else { return offers }
+        offers.merge(adjacentOffers) { own, _ in own }
+        if case .rendered = content, let share = shareBarItem() { offers[.share] = [share] }
+        return offers
     }
 
     // MARK: Content
@@ -758,7 +770,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             // Share and the previous and next file are on every file's bar. A
             // pushed reader has its own bar with them on it; everywhere else it
             // is this one.
-            if !(isUsingFileViewer && sharesReaderBar) {
+            if !readerOwnsBar {
                 if let share = shareBarItem() { offers[.share] = [share] }
                 offers.merge(adjacentOffers) { own, _ in own }
             }
@@ -835,18 +847,18 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         return shareItem
     }
 
-    /// The stack's bar hides while the reader shows its own (pushed text). The
+    /// The stack's bar hides while the reader shows its own (`readerOwnsBar`). The
     /// stack asks as this viewer's screen comes forward; content that changes
     /// the answer while it is in front calls `updateHostNavigationBar`.
     var hidesNavigationBar: Bool {
         guard configuration.chromeMode == .pushed else { return false }
         if case .loading = content { return settledHidesHostBar }
-        return shouldHideHostNavigationBar
+        return readerOwnsBar
     }
 
     private func updateHostNavigationBar(animated: Bool) {
         guard configuration.chromeMode == .pushed else { return }
-        if case .loading = content {} else { settledHidesHostBar = shouldHideHostNavigationBar }
+        if case .loading = content {} else { settledHidesHostBar = readerOwnsBar }
         navigationController?.updateNavigationBar(for: self, animated: animated && isOnScreen)
     }
 

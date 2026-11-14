@@ -253,9 +253,10 @@ extension FullScreenCodeContent {
         }
     }
 
-    /// Share's payload.
+    /// Share's payload; nil for a book, whose Share is its archive, which only
+    /// the file viewer that read it holds (its host offer).
     @MainActor
-    func shareableContent(showingSource: Bool, completeRaw: String?) -> FileShareService.ShareableContent {
+    func shareableContent(showingSource: Bool, completeRaw: String?) -> FileShareService.ShareableContent? {
         switch self {
         case .mermaid(let text, let filePath): return .mermaid(text, fileName: filePath)
         case .latex(let text, let filePath): return .latex(text, fileName: filePath)
@@ -289,8 +290,8 @@ extension FullScreenCodeContent {
             return trace.snapshot.readerContent.shareableContent(showingSource: showingSource, completeRaw: completeRaw)
         case .notebook(let plan):
             return .plainText(plan.readerText)
-        case .book(let document):
-            return .plainText(document.title, fileName: document.filePath)
+        case .book:
+            return nil
         }
     }
 

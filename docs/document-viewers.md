@@ -187,6 +187,7 @@ Each tap saves at once, whatever Auto-Save says, and rewrites only the lines it 
 An `.epub` file opens as a book in the file viewer. The server sends books of up to 100 MB.
 
 - **Pages.** Each chapter is set as screen-sized pages. Swipe or tap the edge of the page to turn it. A turn past the first or last page opens the previous or next chapter. While you read, the controls hide; tap the middle of the page to show them. A line at the bottom shows the page and the time left in the chapter.
+- **Bar.** A book shows one bar, whose **Share** sends the `.epub` file. The book's header under it names the chapter.
 - **Table of Contents**, in the header, lists the chapters and marks the one on screen.
 - **Aa** sets the text size, theme (**Original**, **Sepia**, **Gray**, **Dark**), typeface (**New York**, **System**, **Georgia**, **Palatino**), line spacing, margins, justification, and **Pages** or **Scrolling**. Changes apply at once and are kept on this device. **Scrolling** shows one chapter at a time, with **Previous** and **Next** at its end.
 - **Position.** Oppi keeps your place in each book on this device. A change of size, theme, or layout keeps the paragraph you were reading on screen.

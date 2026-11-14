@@ -149,7 +149,9 @@ protocol FileRendererHost: UIViewController {
     /// For a page that keeps the back swipe (`ownsBackSwipe`) but shows a
     /// view without its own gesture.
     func installOwnBackSwipe(on view: UIView)
-    /// The reader page for content the viewer does not edit.
+    /// The reader page for content the viewer does not edit. Where the reader
+    /// draws a bar, it is the screen's only one: the stack's hides, and the
+    /// viewer's Share (this renderer's `share`) moves onto it.
     func mountReader(_ content: FullScreenCodeContent) -> UIView
     func navigateBack()
 }

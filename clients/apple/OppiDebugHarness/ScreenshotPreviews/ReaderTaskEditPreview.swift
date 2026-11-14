@@ -9,11 +9,14 @@ import UIKit
 /// strip shows what that file holds, so a UI test checks the bytes on disk.
 ///
 /// `OPPI_READER_TASK_FILE` picks the file (`tasks.org` by default, `notebook.org`,
-/// or `notes.md`), and `OPPI_READER_TASK_LONG=1` adds a screenful of prose and a
-/// last task under the Org seed. `OPPI_READER_TASK_CHROME=pushed` opens the file
-/// as a pushed reader that draws its own bar, as from a chat link, instead of a
-/// tree pane under the stack's bar. "Change file on disk" is a second writer, for
-/// the conflict path.
+/// `notes.md`, or one of `seedKinds`' files), and `OPPI_READER_TASK_LONG=1` adds a
+/// screenful of prose and a last task under the Org seed.
+/// `OPPI_READER_TASK_CHROME` picks where the viewer sits, instead of a tree pane
+/// under the stack's bar: `pushed` at the root of a stack, as the router presents
+/// a chat's file pill; `linked` embedded in a screen pushed over a Files page, as
+/// the shell's linked-file route shows a chat or wiki link, a tool row's file, or
+/// a pane leaf; `pane` as the root of the chat's side panel. "Change file on
+/// disk" is a second writer, for the conflict path.
 enum ReaderTaskEditFixture {
     static let workspaceId = "preview-tasks"
     static let host = "preview-tasks.oppi"
@@ -156,6 +159,48 @@ enum ReaderTaskEditFixture {
 
     static let flatSeed = "Just prose, with no headings at all.\n\nA second paragraph.\n"
 
+    /// One small file of each kind the viewer opens beside the edit fixtures,
+    /// for its one-bar check (`FileViewerSingleBarUITests`): every reader kind
+    /// and every renderer.
+    private static func seedKinds() {
+        func write(_ data: Data, _ name: String) { try? data.write(to: url(for: name), options: .atomic) }
+        write(Data("""
+        import Foundation
+
+        /// Greets whoever is reading.
+        func greet(_ name: String) -> String {
+            "Hello, " + name
+        }
+
+        print(greet("reader"))
+
+        """.utf8), "main.swift")
+        write(Data("city,country,population\nLisbon,Portugal,545000\nOslo,Norway,709000\nQuito,Ecuador,2800000\n".utf8), "table.csv")
+        write(Data("""
+        <!doctype html><html><head><title>Page</title></head>
+        <body><h1>A small page</h1><p>Some prose in a paragraph.</p></body></html>
+
+        """.utf8), "page.html")
+        write(UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792)).pdfData { context in
+            context.beginPage()
+            ("A one-page guide" as NSString).draw(
+                at: CGPoint(x: 72, y: 72),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 28, weight: .semibold)]
+            )
+        }, "guide.pdf")
+        write(UIGraphicsImageRenderer(size: CGSize(width: 480, height: 320)).pngData { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 480, height: 320))
+            UIColor.systemYellow.setFill()
+            context.cgContext.fillEllipse(in: CGRect(x: 180, y: 100, width: 120, height: 120))
+        }, "photo.png")
+        // Not a playable video: the fixture serves no ranged reads, so the
+        // player shows its unavailable state under the viewer's chrome.
+        write(Data("not a video".utf8), "clip.mp4")
+        write(EPUBFixture.epub3(title: "A Quiet Book", paragraphsPerChapter: 30), "book.epub")
+        write(EPUBFixture.archive(files: [.init(name: "readme.txt", text: "An archive.")]), "archive.zip")
+    }
+
     static let markdownSeed = """
     # Release plan [1/3]
 
@@ -191,6 +236,7 @@ enum ReaderTaskEditFixture {
         try? Data(handbookSeed.utf8).write(to: url(for: "handbook.org"), options: .atomic)
         try? Data(outlineSeed.utf8).write(to: url(for: "outline.org"), options: .atomic)
         try? Data(flatSeed.utf8).write(to: url(for: "flat.org"), options: .atomic)
+        seedKinds()
     }
 
     static func makeClient() -> APIClient {
@@ -234,6 +280,17 @@ final class ReaderTaskEditURLProtocol: URLProtocol {
                 return
             }
             respond(200, ["Content-Type": "text/plain", "ETag": ReaderTaskEditFixture.etag(of: data)], data)
+        case ("HEAD", "/files/current"):
+            // A file card reads the size and date without the bytes.
+            guard let file = file(in: url), let data = try? Data(contentsOf: file) else {
+                respond(404, [:], Data())
+                return
+            }
+            respond(200, [
+                "Content-Length": "\(data.count)",
+                "Last-Modified": "Wed, 11 Nov 2026 09:00:00 GMT",
+                "ETag": ReaderTaskEditFixture.etag(of: data),
+            ], Data())
         case ("PUT", "/files/current"):
             write(to: url)
         default:
@@ -308,27 +365,33 @@ final class ReaderTaskEditPreviewController: PreviewRootController {
             navigation: SceneNavigation()
         )
         let client = ReaderTaskEditFixture.makeClient()
-        let name = ReaderTaskEditFixture.fileName
         let viewer = PreviewLoadingController(
             // The viewer reads the server's capabilities before it offers an edit.
             prepare: { _ = try? await client.serverInfo() },
-            content: {
-                PreviewHost.screenStack(root: root) {
-                    FileViewerViewController(
-                        configuration: .init(
-                            workspaceId: ReaderTaskEditFixture.workspaceId,
-                            serverId: "preview-server",
-                            filePath: name,
-                            fileName: name,
-                            chromeMode: ProcessInfo.processInfo.environment["OPPI_READER_TASK_CHROME"] == "pushed"
-                                ? .pushed : .treePane
-                        ),
-                        services: .init(apiClient: client)
-                    )
-                }
-            }
+            content: { Self.makeStack(root: root, client: client) }
         )
         super.init(root: root, themeStore: root.themeStore, content: viewer)
+    }
+
+    /// The viewer where `OPPI_READER_TASK_CHROME` puts it.
+    private static func makeStack(root: AppRootEnvironment, client: APIClient) -> UIViewController {
+        let chrome = ProcessInfo.processInfo.environment["OPPI_READER_TASK_CHROME"]
+        let name = ReaderTaskEditFixture.fileName
+        var configuration = FileViewerViewController.Configuration(
+            workspaceId: ReaderTaskEditFixture.workspaceId,
+            serverId: "preview-server",
+            filePath: name,
+            fileName: name,
+            chromeMode: chrome == nil ? .treePane : .pushed
+        )
+        configuration.isPaneRoot = chrome == "pane"
+        let viewer = FileViewerViewController(configuration: configuration, services: .init(apiClient: client))
+        guard chrome == "linked" else { return PreviewHost.screenStack(root: root) { viewer } }
+        let stack = PreviewHost.screenStack(root: root) { ReaderTaskFilesPage() }
+        let linked = ReaderTaskLinkedFileController(viewer: viewer)
+        linked.traitOverrides.appRootEnvironment = root
+        stack.pushViewController(linked, animated: false)
+        return stack
     }
 
     @available(*, unavailable)
@@ -386,6 +449,51 @@ final class ReaderTaskEditPreviewController: PreviewRootController {
             readout.text = text
         }
         readout.accessibilityLabel = "On disk: \(fileName)"
+    }
+}
+
+/// The page under a `linked` viewer, where its Back returns.
+private final class ReaderTaskFilesPage: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Files"
+        view.backgroundColor = ThemeRuntimeState.currentPalette().ui.bg
+        let label = UILabel()
+        label.text = "Files"
+        label.accessibilityIdentifier = "harness.readerTask.files"
+        label.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+    }
+}
+
+/// The viewer embedded the way the shell's linked-file route embeds it
+/// (`WorkspaceLinkedFileViewController`): a screen that does not decide the
+/// stack's bar itself, so the stack asks the viewer, and that shows the
+/// viewer's bar items in its own navigation item.
+private final class ReaderTaskLinkedFileController: UIViewController {
+    private let viewer: FileViewerViewController
+
+    init(viewer: FileViewerViewController) {
+        self.viewer = viewer
+        super.init(nibName: nil, bundle: nil)
+        navigationItem.largeTitleDisplayMode = .never
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        PreviewHost.fill(self, with: viewer)
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        viewer.bar.apply(to: navigationItem)
     }
 }
 #endif
