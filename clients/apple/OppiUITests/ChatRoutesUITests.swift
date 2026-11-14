@@ -568,6 +568,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         app.buttons["session.toolbar.thinking"].tap()
         let high = app.descendants(matching: .any)["session.toolbar.thinking.option.high"]
         XCTAssertTrue(high.waitUntilExists(timeout: 5), "The thinking levels did not open")
+        assertThinkingOptionsRunMaxToLow()
         attachScreenshot(usesSheets ? "thinking-popover" : "thinking-menu")
         high.tap()
         XCTAssertTrue(high.waitUntilGone(timeout: 5), "Choosing a level must close the levels")

@@ -243,6 +243,7 @@ extension ComposerBarController {
         }
         if let button = view as? UIButton, case .menu(let menu) = action.kind {
             button.menu = menu
+            button.preferredMenuElementOrder = action.menuElementOrder
             button.showsMenuAsPrimaryAction = true
         }
     }

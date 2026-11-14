@@ -139,6 +139,24 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// Quick Session's thinking list shows the levels in the chat composer's
+    /// order whichever way UIKit opens the menu.
+    func testQuickSessionThinkingListRunsMaxToLow() {
+        launchSite("quick-session")
+        let thinking = app.buttons["session.toolbar.thinking"]
+        XCTAssertTrue(thinking.waitUntilExists(timeout: 10), "Quick session did not appear")
+        let input = app.textViews["chat.input"]
+        input.tap()
+        thinking.tap()
+        assertThinkingOptionsRunMaxToLow()
+        attachScreenshot("quick-session-thinking-list")
+        XCTAssertFalse(
+            app.buttons["session.toolbar.thinking.saveDefault"].exists,
+            "Quick Session never offers Save as Default"
+        )
+        assertRunning()
+    }
+
     /// A failed default save shows its alert while a search is active: the
     /// picker is already presenting the search controller then, and an alert
     /// presented from the picker itself is dropped.

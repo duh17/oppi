@@ -234,7 +234,7 @@ final class ComposerThinkingPickerController: UIViewController, RouterModalConta
 
     private func rebuild() {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for level in levels.reversed() {
+        for level in ComposerThinkingOptions.displayOrder(of: levels) {
             stack.addArrangedSubview(row(
                 title: level.displayTitle,
                 selected: level == selected,

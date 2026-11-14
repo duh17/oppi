@@ -116,6 +116,30 @@ extension PreviewUITestCase where Self: XCTestCase {
         add(attachment)
     }
 
+    /// The open thinking list runs from Max at the top to Off at the bottom, in
+    /// the chat and Quick Session alike, as a pop-up menu (regular width) or a
+    /// popover (compact width). `levels` are the ones the fixture model offers
+    /// (a model that advertises none offers every level).
+    func assertThinkingOptionsRunMaxToLow(
+        _ levels: [String] = ["max", "xhigh", "high", "medium", "low", "minimal", "off"],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let options = levels.map { app.buttons["session.toolbar.thinking.option.\($0)"] }
+        for (option, level) in zip(options, levels) {
+            XCTAssertTrue(option.waitUntilExists(timeout: 5), "Thinking option \(level) did not appear", file: file, line: line)
+        }
+        for (upper, lower) in zip(options, options.dropFirst()) {
+            XCTAssertLessThan(
+                upper.frame.midY,
+                lower.frame.midY,
+                "The thinking list must run from the strongest level at the top down",
+                file: file,
+                line: line
+            )
+        }
+    }
+
     /// Polls `condition` until it holds or `timeout` passes, for a claim XCTest
     /// cannot ask as one element's existence: a value, an order, or two elements
     /// together. Prefer `waitUntilExists` and `waitUntilGone` when the claim is

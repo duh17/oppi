@@ -61,7 +61,50 @@ struct ComposerAction: Identifiable {
     var showsChevron = true
     var chrome: Chrome = .toolbar
     var collapsesToIcon = false
+    /// How UIKit orders a `.menu`'s rows. `.automatic` flips them for a menu
+    /// that opens above its button, so a list whose order matters sets `.fixed`.
+    var menuElementOrder: UIContextMenuConfiguration.ElementOrder = .automatic
     var kind: Kind
+}
+
+/// The thinking levels as every composer shows them: the pop-up menu at
+/// regular width and `ComposerThinkingPickerController`'s popover at compact
+/// width both list `displayOrder` and check the current level, so the chat and
+/// Quick Session cannot disagree. The levels themselves come from the model's
+/// advertised set (`ThinkingLevelMenuSource`); Save as Default is the host's
+/// choice and chat-only.
+@MainActor
+enum ComposerThinkingOptions {
+    /// Top to bottom: the strongest level first, Low (or Off) nearest the
+    /// thumb at the bottom of the screen.
+    static func displayOrder(of levels: [ThinkingLevel]) -> [ThinkingLevel] {
+        levels.reversed()
+    }
+
+    /// The pop-up button's menu. The levels are already in display order, so
+    /// the button must set `menuElementOrder = .fixed`: under `.automatic`
+    /// UIKit reverses them whenever the menu opens above the button.
+    static func menu(
+        levels: [ThinkingLevel],
+        selected: ThinkingLevel,
+        onSelect: @escaping (ThinkingLevel) -> Void,
+        onSaveDefault: (() -> Void)?
+    ) -> UIMenu {
+        // The items keep the popover's row identifiers.
+        var items: [UIMenuElement] = displayOrder(of: levels).map { option in
+            let action = UIAction(title: option.displayTitle, state: option == selected ? .on : .off) { _ in
+                if option != selected { onSelect(option) }
+            }
+            action.accessibilityIdentifier = "session.toolbar.thinking.option.\(option.rawValue)"
+            return action
+        }
+        if let onSaveDefault {
+            let save = UIAction(title: "Save as Default") { _ in onSaveDefault() }
+            save.accessibilityIdentifier = "session.toolbar.thinking.saveDefault"
+            items.append(UIMenu(options: .displayInline, children: [save]))
+        }
+        return UIMenu(children: items)
+    }
 }
 
 struct ComposerActionPopover {
@@ -144,22 +187,12 @@ extension ComposerAction {
         onSaveDefault: (() -> Void)?
     ) -> ComposerAction {
         if chrome == .popUp {
-            // A pop-up button's own menu: the levels, the current one checked,
-            // then Save as Default where the host offers it. The items keep the
-            // popover's row identifiers (`ComposerThinkingPickerController`).
-            var items: [UIMenuElement] = supported.map { option in
-                let action = UIAction(title: option.displayTitle, state: option == level ? .on : .off) { _ in
-                    if option != level { onSelect(option) }
-                }
-                action.accessibilityIdentifier = "session.toolbar.thinking.option.\(option.rawValue)"
-                return action
-            }
-            if let onSaveDefault {
-                let save = UIAction(title: "Save as Default") { _ in onSaveDefault() }
-                save.accessibilityIdentifier = "session.toolbar.thinking.saveDefault"
-                items.append(UIMenu(options: .displayInline, children: [save]))
-            }
-            let menu = UIMenu(children: items)
+            let menu = ComposerThinkingOptions.menu(
+                levels: supported,
+                selected: level,
+                onSelect: onSelect,
+                onSaveDefault: onSaveDefault
+            )
             return ComposerAction(
                 id: "session.toolbar.thinking",
                 icon: .symbol("sparkle"),
@@ -170,6 +203,7 @@ extension ComposerAction {
                 showsChevron: true,
                 chrome: .popUp,
                 collapsesToIcon: true,
+                menuElementOrder: .fixed,
                 kind: .menu(menu)
             )
         }

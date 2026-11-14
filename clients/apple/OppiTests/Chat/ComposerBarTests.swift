@@ -1500,27 +1500,84 @@ struct ComposerBarTests {
     @Test("The pop-up thinking menu keeps the option ids and offers Save as Default only when given")
     func popUpThinkingMenuKeepsOptionIDsAndSaveDefault() {
         func menuIDs(onSaveDefault: (() -> Void)?) -> [String] {
-            let action = ComposerAction.thinking(
-                level: .medium,
-                supported: [.low, .medium, .high],
-                tint: .label,
-                colors: .placeholder,
-                chrome: .popUp,
-                onSelect: { _ in },
-                onSaveDefault: onSaveDefault
-            )
-            guard case .menu(let menu) = action.kind else {
-                Issue.record("A pop-up thinking control opens a menu")
-                return []
-            }
-            func flatten(_ element: UIMenuElement) -> [UIMenuElement] {
-                (element as? UIMenu).map { $0.children.flatMap(flatten) } ?? [element]
-            }
-            return menu.children.flatMap(flatten).map { ($0 as? UIAction)?.accessibilityIdentifier ?? "" }
+            popUpThinkingMenuIDs(supported: [.low, .medium, .high], onSaveDefault: onSaveDefault)
         }
-        let options = ["low", "medium", "high"].map { "session.toolbar.thinking.option.\($0)" }
+        let options = ["high", "medium", "low"].map { "session.toolbar.thinking.option.\($0)" }
         #expect(menuIDs(onSaveDefault: {}) == options + ["session.toolbar.thinking.saveDefault"])
         #expect(menuIDs(onSaveDefault: nil) == options)
+    }
+
+    /// The pop-up menu (regular width) and the popover (compact width, expanded
+    /// composer) are two views of one list: for a model's advertised levels they
+    /// must run in the same order, with one checkmark on the current level. UIKit
+    /// reverses a `.automatic` menu that opens above its button, so the menu
+    /// must also pin its order.
+    @Test("The thinking menu and popover list the model's levels in one order")
+    func thinkingMenuAndPopoverAgreeOnLevelsAndOrder() throws {
+        let model = ModelInfo(
+            id: "claude-opus",
+            name: "Opus",
+            provider: "anthropic",
+            contextWindow: 200_000,
+            thinkingLevels: [.low, .medium, .high, .xhigh, .max]
+        )
+        let supported = ThinkingLevelMenuSource.levels(for: model)
+        func optionLevels(_ ids: [String]) -> [String] {
+            ids.compactMap { $0.components(separatedBy: "session.toolbar.thinking.option.").last }
+                .filter { ThinkingLevel(rawValue: $0) != nil }
+        }
+
+        let menuLevels = optionLevels(popUpThinkingMenuIDs(supported: supported, onSaveDefault: nil))
+        #expect(menuLevels == ["max", "xhigh", "high", "medium", "low"])
+
+        let picker = ComposerThinkingPickerController(
+            levels: supported,
+            selected: .medium,
+            colors: .placeholder,
+            onSelect: { _ in },
+            onSaveDefault: nil
+        )
+        picker.loadViewIfNeeded()
+        let rows = picker.view.allDescendants.compactMap { $0.accessibilityIdentifier }
+            .filter { $0.hasPrefix("session.toolbar.thinking.option.") }
+        #expect(optionLevels(rows) == menuLevels)
+
+        let action = ComposerAction.thinking(
+            level: .medium,
+            supported: supported,
+            tint: .label,
+            colors: .placeholder,
+            chrome: .popUp,
+            onSelect: { _ in },
+            onSaveDefault: nil
+        )
+        #expect(action.menuElementOrder == .fixed)
+        guard case .menu(let menu) = action.kind else {
+            Issue.record("A pop-up thinking control opens a menu")
+            return
+        }
+        let checked = menu.children.compactMap { $0 as? UIAction }.filter { $0.state == .on }.map(\.title)
+        #expect(checked == ["Medium"])
+    }
+
+    private func popUpThinkingMenuIDs(supported: [ThinkingLevel], onSaveDefault: (() -> Void)?) -> [String] {
+        let action = ComposerAction.thinking(
+            level: .medium,
+            supported: supported,
+            tint: .label,
+            colors: .placeholder,
+            chrome: .popUp,
+            onSelect: { _ in },
+            onSaveDefault: onSaveDefault
+        )
+        guard case .menu(let menu) = action.kind else {
+            Issue.record("A pop-up thinking control opens a menu")
+            return []
+        }
+        func flatten(_ element: UIMenuElement) -> [UIMenuElement] {
+            (element as? UIMenu).map { $0.children.flatMap(flatten) } ?? [element]
+        }
+        return menu.children.flatMap(flatten).map { ($0 as? UIAction)?.accessibilityIdentifier ?? "" }
     }
 
     /// The narrowest regular-width row: a chat pane at its 375 pt minimum (343 pt
@@ -2482,6 +2539,11 @@ struct ComposerDictatedCommentRowTests {
 /// The chat screen's part in commenting: it feeds `ChatComposerOwner` the
 /// bar's content the way `ChatViewController` does.
 private extension UIView {
+    /// Every view under this one, in layout order (parents before children).
+    var allDescendants: [UIView] {
+        subviews.flatMap { [$0] + $0.allDescendants }
+    }
+
     func firstDescendant(where match: (UIView) -> Bool) -> UIView? {
         if match(self) { return self }
         for child in subviews {
