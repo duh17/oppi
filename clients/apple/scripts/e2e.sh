@@ -468,8 +468,13 @@ new Storage(process.env.OPPI_DATA_DIR).ensurePaired();
     mkdir -p "$PI_AGENT_DIR"
     if $FAUX_MODEL; then
         # The faux model is the default so durable sessions never pick an ambient provider.
+        # Pi's default tools plus codemode, which `faux:codemode` calls.
         cat > "$PI_AGENT_DIR/settings.json" <<'EOF'
-{ "defaultProvider": "oppi-e2e-faux", "defaultModel": "oppi-e2e-faux-1" }
+{
+  "defaultProvider": "oppi-e2e-faux",
+  "defaultModel": "oppi-e2e-faux-1",
+  "defaultTools": ["read", "bash", "edit", "write", "codemode"]
+}
 EOF
         echo "[e2e] Generated faux-model settings.json at $PI_AGENT_DIR/settings.json"
     else

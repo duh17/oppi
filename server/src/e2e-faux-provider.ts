@@ -50,6 +50,8 @@ export function e2eFauxReplyText(prompt: string): string {
  * - `faux:subagents <name> <task> || <name> <task> ...` spawns several background subagents in
  *   one answer, as a model does when it delegates in parallel.
  * - `faux:ask <question>` asks the user the question, with two options, and waits for the answer.
+ * - `faux:codemode <code>` calls `codemode` with the code; a literal `\n` in it is a line break,
+ *   so a one-line prompt can carry a multi-line script.
  *
  * Only the last line counts, so a reply that echoes a directive (every reply ends with
  * `End of faux reply.`) never triggers another call. No directive: no calls.
@@ -68,6 +70,8 @@ type FauxCall = { name: string; arguments: Record<string, unknown> };
 function directiveCall(line: string): FauxCall[] {
   const [, command] = /^faux:bash\s+(.+)$/.exec(line) ?? [];
   if (command) return [{ name: "bash", arguments: { command } }];
+  const [, code] = /^faux:codemode\s+(.+)$/.exec(line) ?? [];
+  if (code) return [{ name: "codemode", arguments: { code: code.replaceAll("\\n", "\n") } }];
   const [, question] = /^faux:ask\s+(.+)$/.exec(line) ?? [];
   if (question) {
     const options = [

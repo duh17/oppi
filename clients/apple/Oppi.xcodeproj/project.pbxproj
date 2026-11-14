@@ -21,6 +21,7 @@
 		012856EBB235175720D54A71 /* MermaidERRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABF7269A97D1DCF8EEDE7094 /* MermaidERRenderer.swift */; };
 		0129204F841C7040AD635110 /* WorkspaceListViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8E917EAA527E211845899EA /* WorkspaceListViewController.swift */; };
 		017BB839F27F85F275EF5AA1 /* FileBrowserNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D7DDAB227BD59D0CF73834A /* FileBrowserNavigation.swift */; };
+		019E6CE8EF685C7F6B03E90D /* DurableCodemodeToolRowE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8EAC5364ADAA3C6889BB4FE /* DurableCodemodeToolRowE2ETests.swift */; };
 		01CA0FA1EC469EAAAB7DD9AC /* ServerConnectionUsageMetricTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11D1081783BA588EC260344 /* ServerConnectionUsageMetricTests.swift */; };
 		01DFC004BB1A04D7AA5BD13C /* MediaExtractorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A89DAE8BB4248CA60C6C77A /* MediaExtractorTests.swift */; };
 		02090B9F3C6C64B0CB49041A /* AISharingConsentSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABBABDEDC01EA51E84D334CE /* AISharingConsentSheet.swift */; };
@@ -3844,6 +3845,7 @@
 		A8738C84664F4A082861C5C5 /* NativeMermaidBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMermaidBlockView.swift; sourceTree = "<group>"; };
 		A89A65C860007238563D7C23 /* WorkspaceSidebarSessionStatusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSidebarSessionStatusTests.swift; sourceTree = "<group>"; };
 		A8CF98FA20FDCCF83EE37511 /* GraphicalRendererView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphicalRendererView.swift; sourceTree = "<group>"; };
+		A8EAC5364ADAA3C6889BB4FE /* DurableCodemodeToolRowE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DurableCodemodeToolRowE2ETests.swift; sourceTree = "<group>"; };
 		A918C3BEB62D31CBFD7270EC /* MarkdownTableColumnAlignment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTableColumnAlignment.swift; sourceTree = "<group>"; };
 		A92BD87705E6CD99C1D719A2 /* ToolRowDiffRenderStrategy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowDiffRenderStrategy.swift; sourceTree = "<group>"; };
 		A930408297F99C2E572D3163 /* TerminalTestSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalTestSettings.swift; sourceTree = "<group>"; };
@@ -4862,6 +4864,7 @@
 				C0C65DEF9132D02288A61A97 /* ChatFileBrowserE2ETests.swift */,
 				5FC6B9CE2BD688812D0CC8F8 /* ChatLayoutSwapE2ETests.swift */,
 				982445D6522CAC48A97582C0 /* ChatTimelineE2ETests.swift */,
+				A8EAC5364ADAA3C6889BB4FE /* DurableCodemodeToolRowE2ETests.swift */,
 				B92C0190381968EB4306FE4A /* DurableSessionE2ETests.swift */,
 				5763C2F904C35B1FD4387D15 /* DurableSubagentE2ETests.swift */,
 				7C5423449D316AF0B397F038 /* E2EFixtures.swift */,
@@ -10773,6 +10776,7 @@
 				909AB57FFE15FDB604884E3B /* ChatFileBrowserE2ETests.swift in Sources */,
 				8F376E667BEBC88D2CE8C8A8 /* ChatLayoutSwapE2ETests.swift in Sources */,
 				CB9C2F8E74FC11A586865CFA /* ChatTimelineE2ETests.swift in Sources */,
+				019E6CE8EF685C7F6B03E90D /* DurableCodemodeToolRowE2ETests.swift in Sources */,
 				AEFB9E217C7851AFBEC0E42B /* DurableSessionE2ETests.swift in Sources */,
 				915067BCDC6FB7916182AF43 /* DurableSubagentE2ETests.swift in Sources */,
 				EFEDD9C8F5B74F2613335F66 /* E2EFixtures.swift in Sources */,

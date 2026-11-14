@@ -108,6 +108,11 @@ describe("E2E faux provider", () => {
       { type: "toolCall", name: "bash", arguments: { command: "echo tick" } },
     ]);
 
+    // A one-line prompt carries a multi-line script.
+    expect(e2eFauxToolCalls(prompt("faux:codemode const a = 1;\\nreturn a;").messages)).toEqual([
+      { name: "codemode", arguments: { code: "const a = 1;\nreturn a;" } },
+    ]);
+
     // The tool's result is answered with text, and an echoed directive is not a call.
     expect(
       e2eFauxToolCalls([
