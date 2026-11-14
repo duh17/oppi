@@ -219,7 +219,8 @@ enum MarkdownCorpus {
     /// Text with its inline styling as tags: `<b>`, `<i>`, `<s>`, `<u>`,
     /// `<sub>`, `<sup>`, `<code>`, `<kbd>`, `<mark>`, `<a>`; a formula as
     /// `⟦its spoken label⟧`, any other attachment as `◆`. Table cells carry
-    /// emphasis in the font face, prose in the presentation intent; `palette`
+    /// emphasis in the font face, prose in the presentation intent (bold italic
+    /// in its face); `palette`
     /// is the one the text was drawn in, which tells the fills apart.
     @MainActor
     private static func runs(_ text: NSAttributedString, fontTraits: Bool, palette: ThemePalette) -> String {
@@ -244,6 +245,10 @@ enum MarkdownCorpus {
                 let intent = InlinePresentationIntent(rawValue: raw.uintValue)
                 if intent.contains(.stronglyEmphasized) { tags.append("b") }
                 if intent.contains(.emphasized) { tags.append("i") }
+            } else if let traits = (attributes[.font] as? UIFont)?.fontDescriptor.symbolicTraits,
+                      traits.contains([.traitBold, .traitItalic]) {
+                // Bold italic is a face of its own: UIKit would draw both intents upright.
+                tags += ["b", "i"]
             }
             if attributes[.strikethroughStyle] != nil { tags.append("s") }
             if attributes[.underlineStyle] != nil, attributes[.link] == nil { tags.append("u") }

@@ -173,6 +173,11 @@ enum MarkdownInlineHTML {
                 inlines.append(.text(String(decoding: text, as: UTF8.self)))
             }
             while index < bytes.count {
+                // A processing instruction (`<?php … ?>`, CommonMark's block
+                // type 3) stays verbatim; it is no text to read.
+                if bytes[index] == UInt8(ascii: "<"), index + 1 < bytes.count, bytes[index + 1] == UInt8(ascii: "?") {
+                    return nil
+                }
                 // A `<` before anything but a tag name, `/` or `!` is text (`a < b`).
                 guard bytes[index] == UInt8(ascii: "<"), index + 1 < bytes.count,
                       isLetter(bytes[index + 1]) || bytes[index + 1] == UInt8(ascii: "/")
@@ -203,7 +208,9 @@ enum MarkdownInlineHTML {
                 textStart = end
             }
             endText(at: bytes.count)
-            guard !inlines.isEmpty else { return nil }
+            // Only a block that holds a subset tag or comment is read; text alone
+            // never starts an HTML block, so it stays as cmark kept it.
+            guard inlines.contains(where: { if case .html = $0 { true } else { false } }) else { return nil }
             if hasRule { return hasContent ? nil : .thematicBreak }
             guard hasContent else { return .hidden }
             return .paragraph(pair(htmlText(inlines)))

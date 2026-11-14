@@ -1,0 +1,19 @@
+p16 html blocks: processing instruction, declaration and CDATA stay verbatim (CommonMark #180)
+@@@@ source
+<?php
+
+  echo '>';
+
+?>
+
+<!DOCTYPE html>
+
+<![CDATA[
+x <b>y</b>
+]]>
+@@@@ tree
+HTMLBLOCK: <?php⏎⏎  echo '>';⏎⏎?>⏎
+HTMLBLOCK: <!DOCTYPE html>⏎
+HTMLBLOCK: <![CDATA[⏎x <b>y</b>⏎]]>⏎
+@@@@ render
+TEXT: <?php⏎⏎  echo '>';⏎⏎?>⏎⏎<!DOCTYPE html>⏎⏎<![CDATA[⏎x <b>y</b>⏎]]>

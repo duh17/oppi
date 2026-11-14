@@ -211,6 +211,19 @@ enum MarkdownInlineRenderer {
                 var intent: InlinePresentationIntent = []
                 if traits.contains(.bold) { intent.insert(.stronglyEmphasized) }
                 if traits.contains(.italic) { intent.insert(.emphasized) }
+                if intent == [.stronglyEmphasized, .emphasized] {
+                    // UIKit draws a run with both intents in the regular face
+                    // (it resolves either one alone), so bold italic is the
+                    // font's own face, or bold slanted when it has none.
+                    let descriptor = style.font.fontDescriptor
+                    if let face = descriptor.withSymbolicTraits(descriptor.symbolicTraits.union([.traitBold, .traitItalic])) {
+                        attributes[.font] = UIFont(descriptor: face, size: style.font.pointSize)
+                        intent = []
+                    } else {
+                        intent = .stronglyEmphasized
+                        attributes[.obliqueness] = 0.2
+                    }
+                }
                 if !intent.isEmpty { attributes[.inlinePresentationIntent] = NSNumber(value: intent.rawValue) }
             }
             if traits.contains(.keyboard) {

@@ -28,6 +28,26 @@ struct FlatSegmentBuildTests {
         return attachments
     }
 
+    /// Text both bold and italic draws in the bold italic face, as the text
+    /// view resolves it. UIKit draws a run marked with both presentation
+    /// intents in the regular face, so the renderer must not leave it to them.
+    @Test @MainActor func boldItalicDrawsInTheBoldItalicFace() throws {
+        for markdown in ["***both***", "<b><i>both</i></b>", "**bold *both***"] {
+            let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
+            guard case .text(let attributed)? = segments.first else {
+                Issue.record("\(markdown): no text segment")
+                continue
+            }
+            let view = UITextView()
+            view.attributedText = NSAttributedString(attributed)
+            let text = view.textStorage.string as NSString
+            let both = text.range(of: "both")
+            let font = try #require(view.textStorage.attribute(.font, at: both.location, effectiveRange: nil) as? UIFont)
+            let traits = font.fontDescriptor.symbolicTraits
+            #expect(traits.contains(.traitBold) && traits.contains(.traitItalic), "\(markdown): drawn in \(font.fontName)")
+        }
+    }
+
     @Test func emptyBlocksProduceNoSegments() {
         let segments = FlatSegment.build(from: [], themeID: .dark)
         #expect(segments.isEmpty)
