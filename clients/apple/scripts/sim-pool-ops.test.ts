@@ -13,7 +13,7 @@ import {
   extractBuildTimingSummary,
   extractCompilerLinkerErrors,
   extractPoolFlags,
-  extractTestFailures,
+  logTestFailureLines,
   GATE_POOL_WAIT_SECONDS,
   loadConfig,
   normalizeCommandArgs,
@@ -122,8 +122,7 @@ ${Array.from({ length: 40 }, (_, i) => `↳ detail ${i}`).join("\n")}
 ✘ Test run with 1 test in 1 suite failed after 2.7 seconds with 2 issues.
 ↳ not an issue message
 `;
-    const { lines, uncertain } = extractTestFailures(log);
-    expect(uncertain).toBe(false);
+    const lines = logTestFailureLines(log);
     const unknown = lines.find((line) => line.includes("TestDoubles.swift:166"))!;
     expect(unknown.split("\n")).toEqual([
       "✘ Test «unknown» recorded an issue at TestDoubles.swift:166:21: Issue recorded",

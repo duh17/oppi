@@ -14,7 +14,9 @@ afterEach(() => {
 /**
  * A git checkout holding copies of the real shard runner and its modules, with a stand-in
  * sim-pool.sh: a build-for-testing writes the xctestrun; test run N appends its flags to
- * `calls`, logs `ui-N.log` (empty when absent), and exits with `ui-N.exit` (0 when absent).
+ * `calls`, logs `ui-N.log` (empty when absent), records `ui-N.results.json` as its xcresult's
+ * test_results, and exits with `ui-N.exit` (0 when absent). A stand-in xcrun lists the tests of
+ * that xcresult.
  */
 function checkout() {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), "ui-shards-rerun-")));
@@ -37,19 +39,37 @@ echo $n > "${state}/ui.count"
 echo "$*" | tr ' ' '\\n' | grep -e '-testing:' | tr '\\n' ' ' >> "${state}/calls"; echo >> "${state}/calls"
 log="${state}/run-$n.log"
 cp "${state}/ui-$n.log" "$log" 2>/dev/null || : > "$log"
-echo "{\\"log_path\\":\\"$log\\"}" > "${state}/run-$n.summary.json"
+results=$(cat "${state}/ui-$n.results.json" 2>/dev/null || echo null)
+echo "{\\"log_path\\":\\"$log\\",\\"test_results\\":$results}" > "${state}/run-$n.summary.json"
 echo "Artifact: ${state}/run-$n.summary.json"
 exit $(cat "${state}/ui-$n.exit" 2>/dev/null || echo 0)
 `);
   chmodSync(join(scripts, "sim-pool.sh"), 0o755);
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "xcrun"), `#!/bin/sh
+for a; do [ "$prev" = --path ] && bundle="$a"; prev="$a"; done
+cat "$bundle/tests.json"
+`);
+  chmodSync(join(bin, "xcrun"), 0o755);
   Bun.spawnSync(["git", "init", "-q", root]);
   Bun.spawnSync(["git", "-C", root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base"]);
-  const script = (runs: { log?: string; exit?: number }[]) => runs.forEach((run, index) => {
-    if (run.log !== undefined) writeFileSync(join(state, `ui-${index + 1}.log`), run.log);
-    if (run.exit !== undefined) writeFileSync(join(state, `ui-${index + 1}.exit`), String(run.exit));
+  /** Run N's XCTest log and xcresult (its counts, and the tests it lists) of these AUITests cases. */
+  const script = (runs: { cases: Record<string, "passed" | "failed">; exit?: number }[]) => runs.forEach((run, index) => {
+    const n = index + 1;
+    const bundle = join(state, `run-${n}.xcresult`);
+    const ids = Object.entries(run.cases).map(([name, result]) => ({ nodeType: "Test Case", nodeIdentifier: `AUITests/${name}()`, result: result === "passed" ? "Passed" : "Failed" }));
+    const failed = ids.filter((node) => node.result === "Failed").length;
+    mkdirSync(bundle);
+    writeFileSync(join(bundle, "tests.json"), JSON.stringify({ testNodes: [{ nodeType: "UI test bundle", children: ids }] }));
+    writeFileSync(join(state, `ui-${n}.results.json`), JSON.stringify({
+      bundle, result: failed > 0 ? "Failed" : "Passed", total: ids.length, passed: ids.length - failed, failed, skipped: 0, expectedFailures: 0, failures: [],
+    }));
+    writeFileSync(join(state, `ui-${n}.log`), log(run.cases));
+    if (run.exit !== undefined) writeFileSync(join(state, `ui-${n}.exit`), String(run.exit));
   });
   const run = (...filters: string[]) => {
-    const result = Bun.spawnSync(["bun", join(scripts, "ui-shards.ts"), "--profile", "ipad", "--", ...filters], { cwd: root, stdout: "pipe", stderr: "pipe", env: { ...process.env, OPPI_UI_SHARDS: "1" } });
+    const result = Bun.spawnSync(["bun", join(scripts, "ui-shards.ts"), "--profile", "ipad", "--", ...filters], { cwd: root, stdout: "pipe", stderr: "pipe", env: { ...process.env, OPPI_UI_SHARDS: "1", PATH: `${bin}:${process.env.PATH ?? ""}` } });
     return { code: result.exitCode, out: result.stdout.toString() + result.stderr.toString() };
   };
   const calls = () => (existsSync(join(state, "calls")) ? readFileSync(join(state, "calls"), "utf8").trim().split("\n").map((line) => line.trim()) : []);
@@ -70,7 +90,7 @@ function log(cases: Record<string, "passed" | "failed">): string {
 describe("ui shards rerun", () => {
   test("a failed UI test that passes on its one rerun passes the lane, is recorded as a flake, and the summary names it", () => {
     const fx = checkout();
-    fx.script([{ log: log({ testA: "passed", testB: "failed" }), exit: 65 }, { log: log({ testB: "passed" }) }]);
+    fx.script([{ cases: { testA: "passed", testB: "failed" }, exit: 65 }, { cases: { testB: "passed" } }]);
     const result = fx.run("OppiUITests/AUITests");
     expect(result.code).toBe(0);
     expect(fx.calls()).toEqual(["-only-testing:OppiUITests/AUITests", "-only-testing:OppiUITests/AUITests/testB"]);
@@ -83,13 +103,26 @@ describe("ui shards rerun", () => {
 
   test("a test that fails its rerun too keeps the lane red and is named as FAILED", () => {
     const fx = checkout();
-    fx.script([{ log: log({ testA: "passed", testB: "failed" }), exit: 65 }, { log: log({ testB: "failed" }), exit: 65 }]);
+    fx.script([{ cases: { testA: "passed", testB: "failed" }, exit: 65 }, { cases: { testB: "failed" }, exit: 65 }]);
     const result = fx.run("OppiUITests/AUITests");
     expect(result.code).toBe(1);
     expect(result.out).toContain("[ui-shards] FAILED OppiUITests/AUITests/testB");
     // A red lane hides nothing, so it claims nothing about hidden flakes.
     expect(result.out).not.toContain("flakes hidden by rerun");
     expect(fx.flakes().map((row) => row.outcome)).toEqual(["failed"]);
+  });
+
+  test("a passing shard whose xcresult is unreadable fails as result unreadable, never as zero tests", () => {
+    const fx = checkout();
+    fx.script([{ cases: { testA: "passed", testB: "passed" } }]);
+    writeFileSync(join(fx.root, ".state", "ui-1.results.json"), JSON.stringify({ unreadable: "xcresulttool exit 1: Info.plist does not exist" }));
+    const result = fx.run("OppiUITests/AUITests");
+    expect(result.code).toBe(1);
+    expect(result.out).toContain("INFRASTRUCTURE FAIL exit=0 tests=unreadable");
+    expect(result.out).toContain("shard-1: result unreadable (exit 0): xcresulttool exit 1: Info.plist does not exist");
+    expect(result.out).toContain("FAILED (INFRASTRUCTURE failure, result unreadable in shard-1): 0 tests in 1 shards (1 with an unreadable result)");
+    expect(result.out).not.toContain("zero tests ran");
+    expect(fx.calls()).toHaveLength(1);
   });
 });
 
@@ -100,7 +133,7 @@ describe("ui shards quarantine", () => {
   test("a quarantined test is skipped in its class's shard and runs in a shard whose failure does not block", () => {
     const fx = checkout();
     writeFileSync(join(fx.root, "dev", "testing", "quarantine.json"), JSON.stringify([entry("OppiUITests/AUITests/testB", soon)]));
-    fx.script([{ log: log({ testA: "passed" }) }, { log: log({ testB: "failed" }), exit: 65 }]);
+    fx.script([{ cases: { testA: "passed" } }, { cases: { testB: "failed" }, exit: 65 }]);
     const result = fx.run("OppiUITests/AUITests");
     expect(result.code).toBe(0);
     expect(fx.calls()).toEqual(["-only-testing:OppiUITests/AUITests -skip-testing:OppiUITests/AUITests/testB", "-only-testing:OppiUITests/AUITests/testB"]);

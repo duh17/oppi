@@ -225,7 +225,8 @@ export const UNIT_RUN_RECORD = "unit-shards-last.json";
 
 const RERUN_LIMIT = 20;
 
-export type ShardResult = { index: number; label: string; code: number; tests: number; seconds: number; output: string; summary?: string };
+/** `tests` and `unreadable`: see shardTests. */
+export type ShardResult = { index: number; label: string; code: number; tests: number; unreadable?: string; seconds: number; output: string; summary?: string };
 
 export async function runShard(
   index: number,
@@ -252,16 +253,18 @@ export async function runShard(
   closeSync(fd);
   const code = await new Promise<number>((resolve) => child.on("exit", (status, signal) => resolve(status ?? (signal ? 128 : 1))));
   const summary = /^Artifact: (.+)$/m.exec(readFileSync(output, "utf8"))?.[1];
-  return { index, label, code, tests: executedTests(summary), seconds: Math.round((Date.now() - started) / 1000), output, summary };
+  return { index, label, code, ...shardTests(summary), seconds: Math.round((Date.now() - started) / 1000), output, summary };
 }
 
 /**
  * Why a shard failed without testing anything (the pool had no slot, the build or simulator
  * broke, xcodebuild died before the first test), or undefined when it ran tests. A shard that
  * ran nothing has no failed test to rerun or fix; the failure is the machine's, and the gate
- * summary must say so instead of reporting a red test suite.
+ * summary must say so instead of reporting a red test suite. A shard whose result cannot be read
+ * fails the same way, as `result unreadable`: nothing proves what it ran.
  */
-export function infrastructureFailure(result: Pick<ShardResult, "code" | "tests">, output: string): string | undefined {
+export function infrastructureFailure(result: Pick<ShardResult, "code" | "tests" | "unreadable">, output: string): string | undefined {
+  if (result.unreadable !== undefined) return `result unreadable (exit ${result.code}): ${result.unreadable}`;
   if (result.tests > 0) return undefined;
   // sim-pool's own failure line (`error: all 6 simulator slots ... (waited 60s)`) says what stopped it.
   const cause = [...output.matchAll(/^error: (.+)$/gm)].at(-1)?.[1];
@@ -269,11 +272,17 @@ export function infrastructureFailure(result: Pick<ShardResult, "code" | "tests"
   return cause ? `${ran}: ${cause}` : ran;
 }
 
-/** The outcome line of a gate run: test failures and infrastructure failures are never conflated. */
-export function verdict(testFailures: string[], infraFailures: string[]): string {
+/**
+ * The outcome line of a gate run: test failures and infrastructure failures are never conflated, and
+ * a shard whose result is unreadable (`unreadable`, also among `infraFailures`) is never called one
+ * that ran no tests.
+ */
+export function verdict(testFailures: string[], infraFailures: string[], unreadable: string[] = []): string {
+  const noTests = infraFailures.filter((label) => !unreadable.includes(label));
   const parts = [
     testFailures.length > 0 ? `test failures in ${testFailures.join(", ")}` : "",
-    infraFailures.length > 0 ? `INFRASTRUCTURE failure, no tests ran in ${infraFailures.join(", ")}` : "",
+    noTests.length > 0 ? `INFRASTRUCTURE failure, no tests ran in ${noTests.join(", ")}` : "",
+    unreadable.length > 0 ? `INFRASTRUCTURE failure, result unreadable in ${unreadable.join(", ")}` : "",
   ].filter(Boolean);
   return parts.length > 0 ? `FAILED (${parts.join("; ")})` : "PASSED";
 }
@@ -293,15 +302,74 @@ export function readFailures(command: string, args: string[]): Failures {
 
 /** Run an xcresulttool-style command that prints the tests JSON and pick test ids out of it with `pick`. */
 function readTestIds(command: string, args: string[], pick: (json: string) => string[] | undefined): Failures {
+  const read = runXcresulttool(command, args, pick);
+  return "reason" in read ? read : { ids: read.value };
+}
+
+/** Run an xcresulttool-style command and parse what it prints with `parse`, or say why it cannot be read. */
+function runXcresulttool<T>(command: string, args: string[], parse: (json: string) => T | undefined): { value: T } | { reason: string } {
   const tool = spawnSync(command, args, { encoding: "utf8", timeout: 60_000, maxBuffer: XCRESULT_MAX_BYTES, killSignal: "SIGKILL" });
   if (tool.error) return { reason: `xcresulttool did not finish: ${tool.error.message}` };
   if (tool.status !== 0) {
     const stderr = tool.stderr.trim().split("\n").slice(-3).join(" | ");
     return { reason: `xcresulttool ${tool.signal ? `killed by ${tool.signal}` : `exit ${tool.status}`}${stderr ? `: ${stderr}` : ""}` };
   }
-  const ids = pick(tool.stdout);
-  return ids ? { ids } : { reason: `xcresulttool output (${tool.stdout.length} chars) is not test-results JSON` };
+  const value = parse(tool.stdout);
+  return value !== undefined ? { value } : { reason: `xcresulttool output (${tool.stdout.length} chars) is not test-results JSON` };
 }
+
+/**
+ * A test run's verdict and counts as its xcresult records them (`xcresulttool get test-results
+ * summary`): the source of truth for every runner here. The log is not: xcodebuild interleaves the
+ * test host's stdout and stderr by chunk, so a run line can land mid-line, and a run line that
+ * was never printed reads as zero tests. `total` counts skipped tests (the run found them);
+ * `failures` name each failing test (`Target/Type/test()`) with the first line of its message.
+ */
+export type TestResults = {
+  result: string;
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  expectedFailures: number;
+  failures: { test: string; message: string }[];
+};
+
+/** Characters kept of a failure message's first line: a UI failure prints the whole element tree. */
+const FAILURE_MESSAGE_MAX_CHARS = 400;
+
+/** The TestResults in `xcresulttool get test-results summary` JSON, or undefined when it is not that. */
+export function parseTestResults(json: string): TestResults | undefined {
+  try {
+    const summary = JSON.parse(json);
+    const counts = [summary.totalTestCount, summary.passedTests, summary.failedTests, summary.skippedTests, summary.expectedFailures];
+    if (typeof summary.result !== "string" || !counts.every(Number.isInteger)) return undefined;
+    const failures = (summary.testFailures ?? []) as { targetName?: string; testIdentifierString?: string; testName?: string; failureText?: string }[];
+    return {
+      result: summary.result,
+      total: summary.totalTestCount,
+      passed: summary.passedTests,
+      failed: summary.failedTests,
+      skipped: summary.skippedTests,
+      expectedFailures: summary.expectedFailures,
+      failures: failures.map((failure) => ({
+        test: [failure.targetName, failure.testIdentifierString ?? failure.testName].filter(Boolean).join("/") || "(no test)",
+        message: (failure.failureText ?? "").split("\n")[0].slice(0, FAILURE_MESSAGE_MAX_CHARS),
+      })),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** The TestResults of the xcresult at `path`, or why it cannot be read (an xcodebuild stopped mid-write leaves no Info.plist). */
+export function readTestResults(path: string): TestResults | { reason: string } {
+  const read = runXcresulttool("xcrun", ["xcresulttool", "get", "test-results", "summary", "--path", path], parseTestResults);
+  return "reason" in read ? read : read.value;
+}
+
+/** What sim-pool records as a test run's `test_results`: the xcresult's TestResults, or why there are none. */
+export type RecordedResults = ({ bundle: string } & TestResults) | { bundle?: string; unreadable: string };
 
 /** The xcresult in a finished run's directory, or why there is none. */
 function xcresultOf(summary: string | undefined): { path: string } | { reason: string } {
@@ -335,6 +403,9 @@ export function runExecutedTestIds(summary: string | undefined): Failures {
   return readTestIds("xcrun", ["xcresulttool", "get", "test-results", "tests", "--path", xcresult.path], executedTestIds);
 }
 
+/** A shard's `tests=` field: its xcresult count, or `unreadable`, never a zero it cannot prove. */
+export const testsField = (result: Pick<ShardResult, "tests" | "unreadable">) => (result.unreadable === undefined ? String(result.tests) : "unreadable");
+
 /** The gate lane the full unit run is, in the rerun and red-lane ledgers and dev/testing/lane-budgets.json. */
 const LANE = "unit-full";
 const profile = () => process.env.OPPI_SIM_DEVICE_PROFILE ?? "iphone";
@@ -348,27 +419,28 @@ const selectorsOf = (flags: string[]) => flags.filter((flag) => flag.startsWith(
  * with its stderr, where os_log and NSLog print, by chunk rather than by line, so a run line can land
  * behind another writer's unfinished line:
  * `... Couldn't open .../Managed Pr✔ Test run with 5127 tests in 550 suites passed after 229.603 seconds.`
- * Every reader of a run line goes through this. The zero-width space (U+200B) an all-skipped run
- * prints before its result stays with the result.
+ * sim-pool reads run lines only to see a run finish while xcodebuild still runs; counts and the
+ * verdict come from the xcresult. The zero-width space (U+200B) an all-skipped run prints before its
+ * result stays with the result.
  */
 export function untangledRunLines(log: string): string {
   return log.replace(/([^\n\u200b])(\u200b*[◇✔✘] Test run (?:started\.|with ))/g, "$1\n$2");
 }
 
 /**
- * Tests the shard's xcodebuild ran, from its log: the Swift Testing result line (unit tests), or
- * XCTest's `Executed N tests` line or, when the run died before printing it, the count of finished
- * test cases (UI tests). A run that finished some cases is a failure, not an infrastructure failure.
+ * The tests a finished shard ran, from the xcresult counts its sim-pool summary records (`total`:
+ * skipped tests count, the run found them). Zero when sim-pool wrote no summary or no test result:
+ * it never reached a test run (no slot, a failed build). `unreadable` when the run reached its tests
+ * but their result cannot be read (an xcresult left unfinished by a stopped xcodebuild, or a run
+ * sim-pool could not finish cleanly): that is never reported as zero tests.
  */
-export function executedTests(summary: string | undefined): number {
-  if (!summary || !existsSync(summary)) return 0;
-  const log = JSON.parse(readFileSync(summary, "utf8")).log_path as string | undefined;
-  if (!log || !existsSync(log)) return 0;
-  const text = untangledRunLines(readFileSync(log, "utf8"));
-  const swift = [...text.matchAll(/^[✔✘] Test run with ([0-9]+) tests? in [0-9]+ suites? (?:passed|failed) after/gm)].at(-1);
-  const xctest = [...text.matchAll(/^Test Suite '(?:All tests|Selected tests)' (?:passed|failed) at .+\r?\n[ \t]+Executed ([0-9]+) tests?/gm)].at(-1);
-  const cases = [...text.matchAll(/^Test Case '.+' (?:passed|failed) \(/gm)].length;
-  return Math.max(swift ? Number(swift[1]) : 0, xctest ? Number(xctest[1]) : 0, cases);
+export function shardTests(summary: string | undefined): { tests: number; unreadable?: string } {
+  if (!summary || !existsSync(summary)) return { tests: 0 };
+  const record = JSON.parse(readFileSync(summary, "utf8")) as { test_results?: RecordedResults; incomplete?: boolean };
+  const results = record.test_results;
+  if (results && "unreadable" in results) return { tests: 0, unreadable: results.unreadable };
+  if (results) return { tests: results.total };
+  return record.incomplete ? { tests: 0, unreadable: "sim-pool could not finish the run cleanly, so it read no test result" } : { tests: 0 };
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -428,6 +500,7 @@ async function main(argv: string[]): Promise<number> {
   const results = await Promise.all(parts.map((_, index) => runShard(index, xctestrun, [...shardFlags(parts, index), ...skipQuarantined], outDir)));
   const testFailures: string[] = [];
   const infraFailures: string[] = [];
+  const unreadable = results.filter((result) => result.unreadable !== undefined).map((result) => result.label);
   /** Tests still red after the rerun, and the ones that passed only on it. */
   const failing: string[] = [];
   const flaky: string[] = [];
@@ -436,15 +509,15 @@ async function main(argv: string[]): Promise<number> {
     const output = readFileSync(result.output, "utf8");
     const infra = infrastructureFailure(result, output);
     let ok = result.code === 0 && !infra;
-    console.log(`[unit-shards] shard ${result.index + 1}/${shards}: ${ok ? "PASS" : infra ? "INFRASTRUCTURE FAIL" : "FAIL"} exit=${result.code} tests=${result.tests} ${result.seconds}s output=${result.output}${result.summary ? ` summary=${result.summary}` : ""}`);
-    if (result.tests === 0) console.log(`[unit-shards] ${result.label}: ${zeroTestLine(selectorsOf(shardFlags(parts, result.index)), result.code === 0)}`);
+    console.log(`[unit-shards] shard ${result.index + 1}/${shards}: ${ok ? "PASS" : infra ? "INFRASTRUCTURE FAIL" : "FAIL"} exit=${result.code} tests=${testsField(result)} ${result.seconds}s output=${result.output}${result.summary ? ` summary=${result.summary}` : ""}`);
+    if (result.tests === 0 && result.unreadable === undefined) console.log(`[unit-shards] ${result.label}: ${zeroTestLine(selectorsOf(shardFlags(parts, result.index)), result.code === 0)}`);
     if (!ok) {
       // sim-pool's own summary (failures, log path) ends the shard output.
       const tail = output.trimEnd().split("\n").slice(-40).join("\n");
       process.stdout.write(`${tail}\n`);
       redOutput.push(tail);
       if (infra) {
-        console.log(`[unit-shards] ${result.label}: ${infra}; no test failed, so there is nothing to rerun`);
+        console.log(`[unit-shards] ${result.label}: ${infra}; no failed test is known, so there is nothing to rerun`);
         redOutput.push(`INFRASTRUCTURE failure: ${infra}`);
       } else if (!strict) {
         const rerun = await rerunFailures(result, xctestrun, outDir);
@@ -470,7 +543,7 @@ async function main(argv: string[]): Promise<number> {
   for (const id of failing) console.log(`[unit-shards] FAILED ${id}`);
   const total = results.reduce((sum, result) => sum + result.tests, 0);
   const longest = Math.max(...results.map((r) => r.seconds));
-  const outcome = `${verdict(testFailures, infraFailures)}: ${total} tests in ${shards} shards, longest ${longest}s`;
+  const outcome = `${verdict(testFailures, infraFailures, unreadable)}: ${total} tests in ${shards} shards${unreadable.length > 0 ? ` (${unreadable.length} with an unreadable result)` : ""}, longest ${longest}s`;
   console.log(`[unit-shards] ${outcome}`);
   const { budgets, warnings } = loadBudgets();
   const budget = budgetVerdict(LANE, { wall: wall(), longestShard: longest }, budgets);

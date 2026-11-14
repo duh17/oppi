@@ -48,8 +48,9 @@ function writeFakeXcrun(bin: string, fakeDir: string): void {
 set -euo pipefail
 dir="${fakeDir}"
 printf '%s\\n' "$*" >> "$dir/xcrun.calls"
-# The tests an xcresult lists: whatever the fixture's fake xcodebuild was told ran.
-if [[ "\${1:-}" == "xcresulttool" && -f "$dir/xcresult.json" ]]; then cat "$dir/xcresult.json"; exit 0; fi
+# An xcresult's summary and the tests it lists: whatever the fixture's fake xcodebuild was told ran.
+if [[ "\${1:-}" == "xcresulttool" && " $* " == *" summary "* && -f "$dir/xcresult-summary.json" ]]; then cat "$dir/xcresult-summary.json"; exit 0; fi
+if [[ "\${1:-}" == "xcresulttool" && " $* " == *" tests "* && -f "$dir/xcresult.json" ]]; then cat "$dir/xcresult.json"; exit 0; fi
 if [[ "\${1:-}" != "simctl" ]]; then
   echo "fake-xcrun: unexpected $*" >&2
   exit 127
@@ -211,6 +212,8 @@ function runCompletionFixture(text: string, options: {
   extraArgs?: string[];
   /** Tests the run's xcresult lists, id (`Suite/test()`) to result; without it the run leaves no xcresult. */
   listed?: Record<string, "Passed" | "Failed" | "Skipped">;
+  /** Overrides of the xcresult summary that `listed` implies (its `result`, failures). */
+  summary?: Record<string, unknown>;
   /** The listed xcresult is a leftover from an earlier run (old mtime), not written by this one. */
   staleBundle?: boolean;
   env?: Record<string, string>;
@@ -239,6 +242,15 @@ function runCompletionFixture(text: string, options: {
   if (options.listed) {
     const cases = Object.entries(options.listed).map(([nodeIdentifier, result]) => ({ nodeType: "Test Case", result, nodeIdentifier }));
     writeFileSync(join(fake, "xcresult.json"), JSON.stringify({ testNodes: [{ nodeType: "Unit test bundle", children: cases }] }));
+    const count = (result: string) => cases.filter((node) => node.result === result).length;
+    writeFileSync(join(fake, "xcresult-summary.json"), JSON.stringify({
+      result: count("Failed") > 0 ? "Failed" : "Passed",
+      totalTestCount: cases.length, passedTests: count("Passed"), failedTests: count("Failed"), skippedTests: count("Skipped"), expectedFailures: 0,
+      testFailures: cases.filter((node) => node.result === "Failed").map((node) => ({
+        targetName: "OppiTests", testIdentifierString: node.nodeIdentifier, testName: node.nodeIdentifier.split("/").at(-1), failureText: `Expectation failed in ${node.nodeIdentifier}\nmore detail`,
+      })),
+      ...options.summary,
+    }));
   }
   if (options.staleBundle) writeFileSync(join(fake, "xcresult.stale"), "");
   if (options.eraseSleep) {
@@ -1321,7 +1333,10 @@ sleep 30
       expect(result.attempt.test_completion).toEqual(result.summary.test_completion);
       expect(result.attempt.completion_hang_detected).toBe(true);
       expect(result.run.stdout).toContain(text.split("\n")[0]);
-      expect(result.run.stdout).toContain("Result bundle/coverage may be incomplete");
+      // Stopping xcodebuild left no readable bundle: the counts say so and never claim zero tests.
+      expect(result.summary.test_results).toEqual({ unreadable: expect.stringContaining("no .xcresult in") });
+      expect(result.run.stdout).toContain("Tests: result unreadable (no .xcresult in");
+      expect(`${result.run.stdout}${result.run.stderr}`).not.toMatch(/zero tests|Tests: 0\b/);
       expect(result.state === "unreadable" ? undefined : result.state?.status).toBe("reusable");
     });
   }
@@ -1496,10 +1511,25 @@ sleep 30
     expect(result.attempts).toHaveLength(1);
   });
 
-  test("a failed run summary is not masked by xcodebuild's zero exit", () => {
-    // What a land gate missed: issues recorded with no test to blame («unknown», a request
-    // that outlived its test) fail the run's summary, every test case passes, and xcodebuild
-    // exits 0 because its status follows the test plan. The run must not pass the lane.
+  test("a run the xcresult calls failed fails, though no test failed and xcodebuild exited 0", () => {
+    const result = runCompletionFixture(swiftTestPrelude + swiftPassed, {
+      listed: { "FooTests/testA()": "Passed" },
+      summary: { result: "Failed" },
+      afterLog: "exit 0",
+    });
+    expect(result.run.status).toBe(65);
+    expect(result.summary.test_results).toMatchObject({ result: "Failed", total: 1, passed: 1, failed: 0 });
+    expect(result.run.stderr).toContain("the run failed with xcodebuild's exit 0: the xcresult says Failed, 0 failed of 1");
+  });
+
+  test("a failed Swift Testing summary fails the run though the xcresult and xcodebuild call it passed", () => {
+    // What a land gate missed: an issue recorded after its test returned (a request that outlived
+    // its test) fails the run's summary, every test case passes, xcodebuild exits 0, and Xcode
+    // 27.1's xcresult says Passed. The run must not pass the lane, with or without a bundle.
+    const withBundle = runCompletionFixture(swiftTestPrelude + swiftFailed, { listed: { "FooTests/testA()": "Passed" }, afterLog: "exit 0" });
+    expect(withBundle.run.status).toBe(65);
+    expect(withBundle.summary.test_results).toMatchObject({ result: "Passed", total: 1 });
+    expect(withBundle.run.stderr).toContain(`the run failed with xcodebuild's exit 0: ${swiftFailed.trim()}`);
     const result = runCompletionFixture(swiftTestPrelude + swiftFailed, { afterLog: "exit 0" });
     expect(result.run.status).toBe(65);
     expect(result.summary.exit_code).toBe(65);
@@ -1514,17 +1544,38 @@ sleep 30
     // summary of a 5,127-test run followed half an os_log line, and the run read as zero tests.
     const stderrHead = "2026-11-14 12:24:21.110089-0800 Oppi[89210:124240232] [cfprefsd] WebContent[2506] Couldn't open /var/run/Library/Managed Pr";
     const stderrTail = "eferences/com.apple.Accessibility.plist due to No such file or directory\n";
-    const passed = runCompletionFixture(swiftTestPrelude + stderrHead + swiftPassed + stderrTail, { afterLog: "exit 0" });
+    // The counts and the verdict come from the xcresult, wherever the log's run line landed.
+    const nine = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`FooTests/test${i}()`, "Passed" as const]));
+    const glued = swiftTestPrelude + stderrHead + swiftPassed + stderrTail;
+    const passed = runCompletionFixture(glued, { args: ["-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests/FooTests"], listed: nine, afterLog: "exit 0" });
     expect(passed.run.status).toBe(0);
     expect(passed.run.stderr).not.toContain("zero tests ran");
-    const failed = runCompletionFixture(swiftTestPrelude + stderrHead + swiftFailed + stderrTail, { afterLog: "exit 0" });
+    expect(passed.summary.test_results).toMatchObject({ result: "Passed", total: 9, passed: 9, failed: 0, skipped: 0 });
+    expect(passed.run.stdout).toContain("Tests: 9 (9 passed, 0 failed, 0 skipped); xcresult Passed");
+    const failed = runCompletionFixture(swiftTestPrelude + stderrHead + swiftFailed + stderrTail, {
+      listed: { ...nine, "FooTests/test8()": "Failed" },
+      afterLog: "exit 0",
+    });
     expect(failed.run.status).toBe(65);
-    expect(failed.run.stderr).toContain(`the run failed with xcodebuild's exit 0: ${swiftFailed.trim()}`);
-    // An xcodebuild that lingers after such a summary is still a finished run, not a hang to retry.
-    const lingering = runCompletionFixture(swiftTestPrelude + stderrHead + swiftPassed + stderrTail);
+    expect(failed.summary.test_results).toMatchObject({ result: "Failed", total: 9, passed: 8, failed: 1 });
+    expect(failed.run.stdout).toContain("Failed tests (1):\n✘ OppiTests/FooTests/test8(): Expectation failed in FooTests/test8()\n");
+    // An xcodebuild that lingers after such a summary is still a finished run, not a hang to retry,
+    // and its counts are still the xcresult's.
+    const lingering = runCompletionFixture(glued, { listed: nine });
     expect(lingering.run.status).toBe(0);
     expect(lingering.attempts).toHaveLength(1);
     expect(lingering.summary.test_completion).toMatchObject({ outcome: "passed", tests: 9 });
+    expect(lingering.summary.test_results).toMatchObject({ total: 9, passed: 9 });
+  });
+
+  test("a selector run whose xcresult lists no test fails as zero tests, whatever the log printed", () => {
+    const result = runCompletionFixture(swiftTestPrelude + swiftPassed, {
+      args: ["-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests/Missing"],
+      listed: {},
+      afterLog: "exit 0",
+    });
+    expect(result.run.status).toBe(65);
+    expect(result.run.stderr).toContain("error: zero tests ran for OppiTests/Missing: no test matches the selector (the xcresult lists no test)");
   });
 
   test("a passing run fails when any -only-testing selector matched no test the run lists, whatever else matched", () => {
@@ -1568,7 +1619,7 @@ sleep 30
     expect(result.run.stderr).not.toContain("matched no test");
   });
 
-  test("an xcresult an earlier run left in the derived data is not this run's: selectors are not checked and the pass stands", () => {
+  test("an xcresult an earlier run left in the derived data is not this run's: the result is unreadable, never zero tests", () => {
     const result = runCompletionFixture(swiftTestPrelude + swiftPassed, {
       args: ["-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests/FooTests.swift"],
       listed: { "FooTests/testA()": "Passed" },
@@ -1576,17 +1627,19 @@ sleep 30
       afterLog: "exit 0",
     });
     expect(result.run.status).toBe(0);
-    expect(result.run.stderr).toContain("selectors not checked against the run's tests: no .xcresult in");
-    expect(result.run.stderr).toContain("written by this run");
+    expect(result.run.stderr).toContain("test result unreadable: no .xcresult in");
+    expect(result.run.stderr).toContain("written by this run; the run's counts and selectors are not checked");
+    expect(result.summary.test_results).toEqual({ unreadable: expect.stringContaining("written by this run") });
   });
 
-  test("selectors are not checked when the run left no readable xcresult, and the pass stands", () => {
+  test("a bundle xcresulttool cannot read is reported as unreadable with its reason", () => {
     const result = runCompletionFixture(swiftTestPrelude + swiftPassed, {
-      args: ["-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests/FooTests.swift"],
+      listed: { "FooTests/testA()": "Passed" },
+      summary: { totalTestCount: "not a count" },
       afterLog: "exit 0",
     });
-    expect(result.run.status).toBe(0);
-    expect(result.run.stderr).toContain("selectors not checked against the run's tests: no .xcresult in");
+    expect(result.summary.test_results).toEqual({ bundle: expect.stringMatching(/Run\.xcresult$/), unreadable: expect.stringContaining("is not test-results JSON") });
+    expect(result.run.stdout).toContain("Tests: result unreadable (xcresulttool output");
   });
 
   test("nonzero exit racing completion-hang cleanup is not masked", () => {

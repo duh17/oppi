@@ -1,5 +1,8 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { failedTestIds, infrastructureFailure, partition, readFailures, recordWeights, scanTestTypes, shardFlags, splitQuarantine, unmatchedSelectors, verdict, type TestType } from "./unit-shards";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { failedTestIds, infrastructureFailure, parseTestResults, partition, readFailures, recordWeights, scanTestTypes, shardFlags, shardTests, splitQuarantine, unmatchedSelectors, verdict, type TestType } from "./unit-shards";
 import { SUBPROCESS_TEST_TIMEOUT_MS } from "./sim-pool-test-support";
 
 // Some tests spawn a Bun or shell child; see sim-pool-test-support.ts for the sizing.
@@ -136,5 +139,49 @@ describe("unit shards", () => {
     expect(verdict(["shard-2"], [])).toBe("FAILED (test failures in shard-2)");
     expect(verdict([], ["shard-1"])).toBe("FAILED (INFRASTRUCTURE failure, no tests ran in shard-1)");
     expect(verdict(["shard-3"], ["shard-1"])).toBe("FAILED (test failures in shard-3; INFRASTRUCTURE failure, no tests ran in shard-1)");
+    // A shard whose result cannot be read is never said to have run no tests.
+    expect(verdict([], ["shard-1", "shard-3"], ["shard-3"])).toBe("FAILED (INFRASTRUCTURE failure, no tests ran in shard-1; INFRASTRUCTURE failure, result unreadable in shard-3)");
+  });
+
+  test("a shard's test count is its xcresult's, and an unreadable result is reported as such, never as zero tests", () => {
+    const dir = mkdtempSync(join(tmpdir(), "unit-shards-"));
+    try {
+      // The pool log's run line was glued to a simulator line and is not read at all: the count is the xcresult's.
+      writeFileSync(join(dir, "pool.log"), "... Couldn't open .../Managed Pr✔ Test run with 5127 tests in 550 suites passed after 229.603 seconds.\n");
+      const summary = (record: object) => {
+        writeFileSync(join(dir, "summary.json"), JSON.stringify({ log_path: join(dir, "pool.log"), ...record }));
+        return shardTests(join(dir, "summary.json"));
+      };
+      const counts = { bundle: "/r/Run.xcresult", result: "Passed", total: 5127, passed: 5127, failed: 0, skipped: 0, expectedFailures: 0, failures: [] };
+      expect(summary({ exit_code: 0, test_results: counts })).toEqual({ tests: 5127 });
+      // A UI run that died partway still lists the tests it reached: a test failure, not an infrastructure one.
+      const died = summary({ exit_code: 65, test_results: { ...counts, result: "Failed", total: 2, passed: 1, failed: 1 } });
+      expect(infrastructureFailure({ code: 65, ...died }, "")).toBeUndefined();
+      // Stopped after its summary, xcodebuild left no readable bundle.
+      const stopped = summary({ exit_code: 0, completion_hang_detected: true, test_results: { bundle: "/r/Run.xcresult", unreadable: "xcresulttool exit 1: Info.plist ... does not exist" } });
+      expect(stopped).toEqual({ tests: 0, unreadable: "xcresulttool exit 1: Info.plist ... does not exist" });
+      expect(infrastructureFailure({ code: 0, ...stopped }, "")).toBe("result unreadable (exit 0): xcresulttool exit 1: Info.plist ... does not exist");
+      expect(summary({ exit_code: 1, incomplete: true }).unreadable).toContain("could not finish the run cleanly");
+      // No summary, or one with no test run (a build that failed), ran nothing.
+      expect(summary({ exit_code: 65 })).toEqual({ tests: 0 });
+      expect(shardTests(undefined)).toEqual({ tests: 0 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("xcresult summary JSON gives the verdict, counts, and each failing test with its message's first line", () => {
+    const parsed = parseTestResults(JSON.stringify({
+      result: "Failed", totalTestCount: 3, passedTests: 1, failedTests: 1, skippedTests: 1, expectedFailures: 0,
+      testFailures: [
+        { targetName: "OppiUITests", testIdentifierString: "ScheduleUITests/testSwipe()", testName: "testSwipe()", failureText: `Failed to tap "day"\n${"Other,\n".repeat(50)}` },
+        { targetName: "OppiTests", testName: "late()", failureText: "x".repeat(900) },
+      ],
+    }));
+    expect(parsed).toMatchObject({ result: "Failed", total: 3, passed: 1, failed: 1, skipped: 1, expectedFailures: 0 });
+    expect(parsed?.failures[0]).toEqual({ test: "OppiUITests/ScheduleUITests/testSwipe()", message: 'Failed to tap "day"' });
+    expect(parsed?.failures[1]).toEqual({ test: "OppiTests/late()", message: "x".repeat(400) });
+    expect(parseTestResults(JSON.stringify({ result: "Passed", totalTestCount: 1 }))).toBeUndefined();
+    expect(parseTestResults("Error: Info.plist does not exist")).toBeUndefined();
   });
 });

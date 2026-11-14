@@ -41,7 +41,7 @@ import {
   budgetVerdict, failedXCTestCases, hiddenFlakesLine, loadBudgets, logOfSummary, median, passedXCTestCases, recordRerun, xctestCaseSeconds, xctestRerun, zeroTestLine,
 } from "../../../scripts/gate-report";
 import { DEVICE_PROFILES } from "./sim-pool-ops";
-import { executedTests, infrastructureFailure, loadQuarantine, runShard, verdict, type ShardResult } from "./unit-shards";
+import { infrastructureFailure, loadQuarantine, runShard, testsField, verdict, xcresultTestIds, type RecordedResults, type ShardResult } from "./unit-shards";
 
 const SCHEME = "Oppi";
 const BUNDLE = "OppiUITests";
@@ -339,14 +339,14 @@ export function describeShard(plan: ShardPlan): string {
   return [...single, ...[...byClass].map(([cls, n]) => `${cls} (${n} test${n === 1 ? "" : "s"})`)].join(", ");
 }
 
-/** `Class/test` ids of the test cases a finished run executed, from the log its sim-pool summary names. */
+/**
+ * `Class/test` ids of the tests a finished run's xcresult lists (passed, failed, or skipped), from the
+ * bundle its sim-pool summary names; empty when there is none (that shard fails as result unreadable).
+ */
 export function ranTestIds(summary: string | undefined): Set<string> {
-  const ran = new Set<string>();
-  if (!summary || !existsSync(summary)) return ran;
-  const log = JSON.parse(readFileSync(summary, "utf8")).log_path as string | undefined;
-  if (!log || !existsSync(log)) return ran;
-  for (const match of readFileSync(log, "utf8").matchAll(/^Test Case '-\[OppiUITests\.(\w+) (test\w*)\]' (?:passed|failed|skipped) \(/gm)) ran.add(`${match[1]}/${match[2]}`);
-  return ran;
+  const bundle = xcresultOf(summary);
+  const listed = bundle ? xcresultTestIds(bundle) : undefined;
+  return new Set(listed && "ids" in listed ? listed.ids.map((id) => id.replace(/\(\)$/, "")) : []);
 }
 
 /**
@@ -376,13 +376,11 @@ function swiftSources(dir: string): string[] {
 const loadClasses = () => scanUIClasses(SOURCE_DIRS.flatMap((dir) => swiftSources(join(appleDir, dir))));
 const loadWeights = (): Record<string, number> => (existsSync(weightsPath) ? JSON.parse(readFileSync(weightsPath, "utf8")) : {});
 
-/** The xcresult of a finished run, from the derived data path its sim-pool summary names. */
+/** The readable xcresult of a finished run, as its sim-pool summary records it. */
 function xcresultOf(summary: string | undefined): string | undefined {
   if (!summary || !existsSync(summary)) return undefined;
-  const derivedData = JSON.parse(readFileSync(summary, "utf8")).derived_data_path as string | undefined;
-  const logs = derivedData ? join(derivedData, "Logs", "Test") : "";
-  const bundle = existsSync(logs) ? readdirSync(logs).filter((name) => name.endsWith(".xcresult")).sort().at(-1) : undefined;
-  return bundle ? join(logs, bundle) : undefined;
+  const results = JSON.parse(readFileSync(summary, "utf8")).test_results as RecordedResults | undefined;
+  return results && !("unreadable" in results) ? results.bundle : undefined;
 }
 
 function option(argv: string[], flag: string): string | undefined {
@@ -458,6 +456,7 @@ async function main(argv: string[]): Promise<number> {
   const results = await Promise.all(plans.map((plan, index) => runShard(index, xctestrun, shardFlags(plan), outDir, `shard-${index + 1}`, env, true)));
   const testFailures: string[] = [];
   const infraFailures: string[] = [];
+  const unreadable = results.filter((result) => result.unreadable !== undefined).map((result) => result.label);
   /** Tests still red after the rerun (or with no rerun), and the ones that passed only on it. */
   const failing: string[] = [];
   const flaky: string[] = [];
@@ -472,13 +471,13 @@ async function main(argv: string[]): Promise<number> {
     let ok = result.code === 0 && !infra && !mismatch;
     const xcresult = xcresultOf(result.summary);
     caseSeconds.push(...xctestCaseSeconds(logOfSummary(result.summary)));
-    console.log(`[ui-shards] shard ${result.index + 1}/${plans.length}: ${ok ? "PASS" : infra ? "INFRASTRUCTURE FAIL" : "FAIL"} exit=${result.code} tests=${result.tests} ${result.seconds}s output=${result.output}${result.summary ? ` summary=${result.summary}` : ""}${xcresult ? ` xcresult=${xcresult}` : ""}`);
-    if (result.tests === 0) console.log(`[ui-shards] ${result.label}: ${zeroTestLine(selectorsOf(shardFlags(plans[result.index])), result.code === 0)}`);
+    console.log(`[ui-shards] shard ${result.index + 1}/${plans.length}: ${ok ? "PASS" : infra ? "INFRASTRUCTURE FAIL" : "FAIL"} exit=${result.code} tests=${testsField(result)} ${result.seconds}s output=${result.output}${result.summary ? ` summary=${result.summary}` : ""}${xcresult ? ` xcresult=${xcresult}` : ""}`);
+    if (result.tests === 0 && result.unreadable === undefined) console.log(`[ui-shards] ${result.label}: ${zeroTestLine(selectorsOf(shardFlags(plans[result.index])), result.code === 0)}`);
     if (unplanned.length > 0) console.log(`[ui-shards] ${result.label}: ran ${unplanned.length} test(s) the source scan did not list (the class's catch-all): ${unplanned.join(", ")}`);
     if (!ok) {
       // sim-pool's own summary (failures, log path) ends the shard output.
       process.stdout.write(`${output.trimEnd().split("\n").slice(-40).join("\n")}\n`);
-      if (infra) console.log(`[ui-shards] ${result.label}: ${infra}; no test failed, so there is nothing to rerun`);
+      if (infra) console.log(`[ui-shards] ${result.label}: ${infra}; no failed test is known, so there is nothing to rerun`);
       if (mismatch) {
         console.log(`[ui-shards] ${result.label}: ${mismatch}`);
         failing.push(...missing.map((id) => `${BUNDLE}/${id}`));
@@ -498,18 +497,16 @@ async function main(argv: string[]): Promise<number> {
     console.log(`[ui-shards] quarantined (non-blocking): ${watch.code === 0 ? "passed" : "failed"} ${quarantined.watched.join(", ")} output=${watch.output}`);
   }
   for (const id of failing) console.log(`[ui-shards] FAILED ${id}`);
-  // sim-pool stops xcodebuild once the test run completes, which can leave an xcresult unreadable.
-  console.log("[ui-shards] xcresult paths are best effort: sim-pool stops xcodebuild when the tests finish, so a bundle may be unreadable; the shard output and the sim-pool log are the record");
   const total = results.reduce((sum, result) => sum + result.tests, 0);
   const wall = Math.round((Date.now() - started) / 1000);
-  console.log(`[ui-shards] ${verdict(testFailures, infraFailures)}: ${total} tests in ${plans.length} shards, longest ${Math.max(0, ...results.map((r) => r.seconds))}s, ${wall}s wall after the build`);
+  console.log(`[ui-shards] ${verdict(testFailures, infraFailures, unreadable)}: ${total} tests in ${plans.length} shards${unreadable.length > 0 ? ` (${unreadable.length} with an unreadable result)` : ""}, longest ${Math.max(0, ...results.map((r) => r.seconds))}s, ${wall}s wall after the build`);
   const { budgets, warnings } = loadBudgets();
   const budget = budgetVerdict(lane, { wall: Math.round((Date.now() - laneStarted) / 1000), medianTest: median(caseSeconds), tests: caseSeconds.length }, budgets);
   for (const warning of warnings) console.log(`[ui-shards] ${warning}`);
   console.log(`[ui-shards] ${budget.line}`);
   if (budget.warning) console.log(`[ui-shards] ${budget.warning}`);
   // No plans: every named test is quarantined, so nothing blocking had to run.
-  if (total === 0 && plans.length > 0) {
+  if (total === 0 && plans.length > 0 && unreadable.length === 0) {
     console.log(`[ui-shards] ${zeroTestLine(quarantined.filters, results.every((result) => result.code === 0))}`);
     return 1;
   }

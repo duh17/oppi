@@ -70,7 +70,7 @@ import {
   type StopResult,
   type Supervised,
 } from "./sim-pool-supervise";
-import { unmatchedSelectors, untangledRunLines, xcresultTestIds } from "./unit-shards";
+import { readTestResults, unmatchedSelectors, untangledRunLines, xcresultTestIds, type RecordedResults } from "./unit-shards";
 import {
   forgetPersistedWindow,
   frontBoardStorePath,
@@ -1408,12 +1408,13 @@ function finishedSwiftTesting(logText: string): TestCompletion | undefined {
 
 /**
  * The Swift Testing run summary that reports the run failed, with the line that says so, or
- * undefined when the log has none.
+ * undefined when the log has none. Counts and every other verdict come from the xcresult; this line
+ * is read beside it because it can only fail a run, and the xcresult misses what it reports.
  *
- * The summary is the run's own verdict, and xcodebuild's exit status is not: it follows the
- * test plan, so a run that records an issue with no test to blame («unknown», e.g. a request
- * that outlived the test that answered it) fails its summary while every test case passed and
- * xcodebuild exits 0. Sim-pool never reports such a run as a pass.
+ * xcodebuild's exit status follows the test plan, so a run that records an issue after its test
+ * returned (a request or detached task that outlived the test) fails its summary while every test
+ * case passed and xcodebuild exits 0. Xcode 27.1's xcresult records that run as Passed with no failed
+ * test ("No test reporter for test ..." in the log). Sim-pool never reports such a run as a pass.
  */
 export function failedSwiftTestingRun(logText: string): string | undefined {
   return [...untangledRunLines(logText).matchAll(/^✘ Test run with [1-9][0-9]* tests? in [1-9][0-9]* suites? failed after [0-9]+(?:\.[0-9]+)? seconds(?: with [1-9][0-9]* issues?)?\.\r?$/gm)]
@@ -1439,7 +1440,7 @@ export function completionWaitSeconds(config: Pick<PoolConfig, "completionTimeou
 /**
  * A unit (`-scheme OppiUnitTests`) test run with no `-collect-test-diagnostics` of its own collects
  * none: xcodebuild's default, on-failure, spends 15-35 s after a failing run's summary collecting
- * diagnostics nobody reads, and unit failures are read from the log and the xcresult.
+ * diagnostics nobody reads, and unit failures are read from the xcresult.
  */
 export function withUnitDiagnosticsOff(callerArgv: string[], testArgv: string[]): string[] {
   if (extractFlagValue("-scheme", callerArgv) !== "OppiUnitTests" || !isTestAction(callerArgv)) return testArgv;
@@ -1448,46 +1449,37 @@ export function withUnitDiagnosticsOff(callerArgv: string[], testArgv: string[])
 }
 
 /**
- * The summary of a run that finished having executed zero tests, or undefined when it ran some or
- * printed no summary at all (a run that stopped early is not proof that a filter matched nothing).
- * A Swift Testing run prints XCTest's zero-test prelude first, so the prelude counts as zero only
- * when no Swift Testing result with tests follows it. A run whose tests were all skipped prints its
- * result line behind a zero-width space (U+200B), and those tests still count: the run found them.
- */
-export function zeroTestSummary(rawLog: string): string | undefined {
-  const logText = untangledRunLines(rawLog);
-  const xctest = [...logText.matchAll(/^Test Suite '(?:All tests|Selected tests)' (?:passed|failed) at .+\r?\n[ \t]+(Executed ([0-9]+) tests?.*?)\r?$/gm)];
-  const swift = [...logText.matchAll(/^\u200b*[✔✘] Test run with ([0-9]+) tests?\b.*?\r?$/gm)];
-  if (xctest.length === 0 && swift.length === 0) return undefined;
-  if (xctest.some((match) => Number(match[2]) > 0) || swift.some((match) => Number(match[1]) > 0)) return undefined;
-  return (swift.at(-1)?.[0] ?? xctest.at(-1)![1]).trim();
-}
-
-/**
- * The tests this attempt's xcresult lists (skipped ones included: a selector is matched by a test it
- * covers, whatever that test did), or why they cannot be read. The bundle is the attempt's own
+ * This attempt's xcresult, or why there is none. The bundle is the attempt's own
  * `-resultBundlePath`; without one, the newest .xcresult in `derivedData` written after the attempt
  * started, so a bundle an earlier attempt left in a reused directory is never read.
  */
-function listedTestIds(argv: string[], derivedData: string, startedMs: number): { ids: string[] } | { reason: string } {
+function attemptBundle(argv: string[], derivedData: string, startedMs: number): { path: string } | { reason: string } {
   const explicit = extractFlagValue("-resultBundlePath", argv);
-  let path = explicit ? resolve(explicit) : undefined;
-  if (!path) {
-    const testLogs = join(derivedData, "Logs", "Test");
-    const fresh = existsSync(testLogs)
-      ? readdirSync(testLogs)
-          .filter((name) => name.endsWith(".xcresult"))
-          .map((name) => ({ path: join(testLogs, name), mtimeMs: statSync(join(testLogs, name)).mtimeMs }))
-          .filter((bundle) => bundle.mtimeMs > startedMs)
-          .sort((a, b) => b.mtimeMs - a.mtimeMs)
-      : [];
-    if (fresh.length === 0) return { reason: `no .xcresult in ${testLogs} written by this run` };
-    path = fresh[0].path;
-  }
-  if (!existsSync(path)) return { reason: `no .xcresult at ${path}` };
-  const tests = xcresultTestIds(path);
-  if ("reason" in tests) return tests;
-  return tests.ids.length > 0 ? tests : { reason: `${basename(path)} lists no test` };
+  if (explicit) return existsSync(resolve(explicit)) ? { path: resolve(explicit) } : { reason: `no .xcresult at ${resolve(explicit)}` };
+  const testLogs = join(derivedData, "Logs", "Test");
+  const fresh = existsSync(testLogs)
+    ? readdirSync(testLogs)
+        .filter((name) => name.endsWith(".xcresult"))
+        .map((name) => ({ path: join(testLogs, name), mtimeMs: statSync(join(testLogs, name)).mtimeMs }))
+        .filter((bundle) => bundle.mtimeMs > startedMs)
+        .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    : [];
+  return fresh.length > 0 ? { path: fresh[0].path } : { reason: `no .xcresult in ${testLogs} written by this run` };
+}
+
+/** The verdict and counts of a finished test attempt, from its xcresult, or why they cannot be read. */
+function attemptResults(argv: string[], derivedData: string, startedMs: number): RecordedResults {
+  const bundle = attemptBundle(argv, derivedData, startedMs);
+  if ("reason" in bundle) return { unreadable: bundle.reason };
+  const results = readTestResults(bundle.path);
+  return "reason" in results ? { bundle: bundle.path, unreadable: results.reason } : { bundle: bundle.path, ...results };
+}
+
+/** The summary line of a run's test results: xcresult counts, or `result unreadable`, never a zero it cannot prove. */
+function testResultsLine(results: RecordedResults): string {
+  if ("unreadable" in results) return `Tests: result unreadable (${results.unreadable})`;
+  const expected = results.expectedFailures > 0 ? `, ${results.expectedFailures} expected failures` : "";
+  return `Tests: ${results.total} (${results.passed} passed, ${results.failed} failed, ${results.skipped} skipped${expected}); xcresult ${results.result}: ${results.bundle}`;
 }
 
 /** Message lines kept per recorded issue, and characters kept per message line. */
@@ -1495,12 +1487,13 @@ const ISSUE_MESSAGE_MAX_LINES = 8;
 const ISSUE_MESSAGE_MAX_CHARS = 400;
 
 /**
- * The failure lines of a raw xcodebuild log. Swift Testing prints an issue's message, the comment
+ * FALLBACK, printed only when the xcresult is unreadable or names no failing test: the failure lines
+ * of a raw xcodebuild log. Swift Testing prints an issue's message, the comment
  * a test passed to `Issue.record` or `#expect`, on `↳` lines after the `recorded an issue` line, and
  * helpers like TestURLProtocol put the URL and owner only there. Each issue is one entry: its first
  * line plus its leading `↳` lines, each capped, so a runaway message cannot flood the summary.
  */
-function logTestFailureLines(logText: string): string[] {
+export function logTestFailureLines(logText: string): string[] {
   const lines = logText.split("\n").map((line) => line.replace(/\r$/, ""));
   const kept = new Set<string>();
   const clip = (text: string) => {
@@ -1523,34 +1516,6 @@ function logTestFailureLines(logText: string): string[] {
   return [...kept];
 }
 
-export function extractTestFailures(logText: string, derivedData?: string): { lines: string[]; uncertain: boolean } {
-  const fallback = logTestFailureLines(logText);
-  if (derivedData) {
-    const testLogs = join(derivedData, "Logs", "Test");
-    if (existsSync(testLogs)) {
-      const bundles = readdirSync(testLogs)
-        .filter((name) => name.endsWith(".xcresult"))
-        .map((name) => join(testLogs, name))
-        .sort();
-      const latest = bundles.at(-1);
-      if (latest) {
-        const tool = spawnSync(
-          "xcrun",
-          ["xcresulttool", "get", "test-results", "failures", "--path", latest],
-          { encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL" },
-        );
-        if (tool.error || tool.signal != null || tool.status == null) {
-          return { lines: fallback, uncertain: true };
-        }
-        if (tool.status === 0 && tool.stdout.trim() && tool.stdout.trim() !== "[]" && !tool.stdout.includes("No failures")) {
-          return { lines: [tool.stdout.trim()], uncertain: false };
-        }
-      }
-    }
-  }
-  return { lines: fallback, uncertain: false };
-}
-
 function printSummary(input: {
   logFile: string;
   exitCode: number;
@@ -1568,11 +1533,13 @@ function printSummary(input: {
   /** The slotless build that preceded the test phase, or the whole run when it only built. */
   build?: BuildPhase;
   completion?: TestCompletion;
+  /** The test run's xcresult verdict and counts; absent for a run with no test action. */
+  testResults?: RecordedResults;
   /** Crash line that made the run skip its hang retry. */
   hostCrash?: string;
   /** Hang never reached Resolve Package Graph; erase-retry skipped. */
   stalledBeforeProjectOpen?: boolean;
-}): boolean {
+}): void {
   const duration = input.endedAt - input.startedAt;
   const totalDuration = input.totalEndedAt - input.totalStartedAt;
   const lines: string[] = ["", `Started: ${new Date(input.totalStartedAt * 1000).toLocaleString()}`, `Ended:   ${new Date(input.totalEndedAt * 1000).toLocaleString()}`];
@@ -1613,7 +1580,6 @@ function printSummary(input: {
   if (input.completion) {
     lines.push("Completion hang: tests finished; stopped owned xcodebuild without retry.");
     lines.push(input.completion.summary);
-    lines.push("Result bundle/coverage may be incomplete; the test result above comes from the finished test run.");
   } else if (input.hangDetected) {
     lines.push(`Hang detection: triggered (no log, DerivedData, or build CPU progress for timeout)`);
     if (input.hostCrash) {
@@ -1625,32 +1591,33 @@ function printSummary(input: {
     }
   }
   lines.push("");
-  let extractUncertain = false;
+  const results = input.testResults;
   if (input.exitCode === 0) {
     lines.push("========== BUILD SUCCEEDED ==========");
-    const swift = logText
-      .split("\n")
-      .filter((line) =>
-        /^\*\* TEST SUCCEEDED \*\*|Test run with [0-9]+ test|Suite .* passed after/.test(line),
-      )
-      .slice(-5);
-    const xctest = logText.split("\n").filter((line) => /Executed [1-9][0-9]* test/.test(line)).slice(-5);
-    const testSummary = swift.length > 0 ? swift : xctest;
-    if (testSummary.length > 0) {
-      lines.push("", ...testSummary);
+    if (results) {
+      lines.push("", testResultsLine(results));
     }
   } else {
     lines.push("========== BUILD FAILED ==========", "");
+    if (results) {
+      lines.push(testResultsLine(results), "");
+    }
     const errors = extractCompilerLinkerErrors(logText);
     if (errors.length > 0) {
       lines.push(`Compiler/linker errors (${errors.length}):`, ...errors, "");
     }
-    const failures = extractTestFailures(logText, input.derivedData);
-    extractUncertain = failures.uncertain;
-    if (failures.lines.length > 0) {
-      lines.push("Test failures:", ...failures.lines, "");
+    const named = results && !("unreadable" in results) ? results.failures : [];
+    if (named.length > 0) {
+      lines.push(`Failed tests (${named.length}):`, ...named.map((failure) => `✘ ${failure.test}: ${failure.message}`), "");
     }
-    if (errors.length === 0 && failures.lines.length === 0 && !input.hangDetected) {
+    // The log's issue lines carry what the xcresult cannot: messages of an issue no test owns, and
+    // anything at all when the bundle is unreadable.
+    const fromLog = named.length === 0 ? logTestFailureLines(logText) : [];
+    if (fromLog.length > 0) {
+      const why = !results ? "" : "unreadable" in results ? "; the xcresult is unreadable" : "; the xcresult names no failed test";
+      lines.push(`Test failures (from the log${why}):`, ...fromLog, "");
+    }
+    if (errors.length === 0 && named.length === 0 && fromLog.length === 0 && !input.hangDetected) {
       lines.push("(no specific errors extracted — check full log)", "");
     }
   }
@@ -1661,7 +1628,6 @@ function printSummary(input: {
   }
   lines.push("======================================");
   process.stdout.write(`${lines.join("\n")}\n`);
-  return extractUncertain;
 }
 
 async function runXcodebuildAttempt(input: {
@@ -1686,6 +1652,8 @@ async function runXcodebuildAttempt(input: {
   rawSignal?: NodeJS.Signals | null;
   stalledBeforeProjectOpen?: boolean;
   sampleOutput?: string;
+  /** What the attempt's xcresult says, for a test run that ended (not canceled). */
+  testResults?: RecordedResults;
 }> {
   writeFileSync(input.logFile, "");
   const logFd = openSync(input.logFile, "a");
@@ -1829,32 +1797,45 @@ async function runXcodebuildAttempt(input: {
   if (recovered) {
     code = recovered.outcome === "failed" ? 65 : completed.wait.code ?? 0;
   }
-  // A run whose own summary says it failed never passes, whatever xcodebuild's status says.
+  // The xcresult is the run's verdict and its counts; the log only saw the run finish. A failure
+  // never turns into a pass here, and a result that cannot be read is never read as zero tests.
+  const testRun = input.argv.some((arg) => arg === "test" || arg === "test-without-building");
+  const testResults = testRun && !input.session.canceled ? attemptResults(input.argv, input.derivedData, attemptStartedMs) : undefined;
+  // The one log verdict kept beside the xcresult, and it can only fail a run: see failedSwiftTestingRun.
   if (recovered === undefined && code === 0 && !input.session.canceled) {
-    const logText = existsSync(input.logFile) ? readFileSync(input.logFile, "utf8") : "";
-    const failedRun = failedSwiftTestingRun(logText);
+    const failedRun = failedSwiftTestingRun(existsSync(input.logFile) ? readFileSync(input.logFile, "utf8") : "");
     if (failedRun) {
       log(`[sim-pool] the run failed with xcodebuild's exit 0: ${failedRun}`);
       code = 65;
     }
-    // A misspelled -only-testing filter runs nothing and xcodebuild calls that a success.
-    const selectors = (input.completionArgv ?? input.argv).filter((arg) => arg.startsWith("-only-testing:")).map((arg) => arg.slice("-only-testing:".length));
-    const zero = selectors.length > 0 ? zeroTestSummary(logText) : undefined;
-    if (code === 0 && zero) {
-      log(`error: zero tests ran for ${selectors.join(", ")}: no test matches the selector (${zero})`);
-      code = 65;
-    }
-    // Some selectors matching is not enough: a file name beside a type name runs the type and
-    // matches nothing for itself. Check each selector against the tests the run lists.
-    // -skip-testing values are not selectors.
-    if (code === 0 && selectors.length > 0) {
-      const listed = listedTestIds(input.argv, input.derivedData, attemptStartedMs);
-      if ("reason" in listed) {
-        log(`[sim-pool] selectors not checked against the run's tests: ${listed.reason}`);
-      } else {
-        for (const selector of unmatchedSelectors(selectors, listed.ids)) {
-          log(`error: selector ${selector} matched no test (name a target, type, or test; not a file)`);
-          code = 65;
+  }
+  if (testResults && code === 0) {
+    if ("unreadable" in testResults) {
+      log(`[sim-pool] test result unreadable: ${testResults.unreadable}; the run's counts and selectors are not checked`);
+    } else {
+      // xcodebuild's status follows the test plan: an issue no test owns fails the run, not a test.
+      if (testResults.result === "Failed" || testResults.failed > 0) {
+        log(`[sim-pool] the run failed with xcodebuild's exit 0: the xcresult says ${testResults.result}, ${testResults.failed} failed of ${testResults.total}`);
+        code = 65;
+      }
+      // A misspelled -only-testing filter runs nothing and xcodebuild calls that a success.
+      const selectors = (input.completionArgv ?? input.argv).filter((arg) => arg.startsWith("-only-testing:")).map((arg) => arg.slice("-only-testing:".length));
+      if (code === 0 && selectors.length > 0 && testResults.total === 0) {
+        log(`error: zero tests ran for ${selectors.join(", ")}: no test matches the selector (the xcresult lists no test)`);
+        code = 65;
+      }
+      // Some selectors matching is not enough: a file name beside a type name runs the type and
+      // matches nothing for itself. Check each selector against the tests the run lists, skipped
+      // ones included. -skip-testing values are not selectors.
+      if (code === 0 && selectors.length > 0) {
+        const listed = xcresultTestIds(testResults.bundle);
+        if ("reason" in listed) {
+          log(`[sim-pool] selectors not checked against the run's tests: ${listed.reason}`);
+        } else {
+          for (const selector of unmatchedSelectors(selectors, listed.ids)) {
+            log(`error: selector ${selector} matched no test (name a target, type, or test; not a file)`);
+            code = 65;
+          }
         }
       }
     }
@@ -1862,6 +1843,7 @@ async function runXcodebuildAttempt(input: {
   return {
     code, hung, stop: completed.stop,
     ...(recovered ? { completion: recovered, rawCode: completed.wait.code, rawSignal: completed.wait.signal } : {}),
+    ...(testResults ? { testResults } : {}),
     ...stallFields,
   };
 }
@@ -2221,6 +2203,7 @@ export async function commandRun(
   let sampleOutput: string | undefined;
   let attemptsUsed = 0;
   let testCompletion: TestCompletion | undefined;
+  let testResults: RecordedResults | undefined;
   let completionMetadata: Record<string, unknown> = {};
   let prepStart = runStart;
   let prepEnd = runStart;
@@ -2399,12 +2382,16 @@ export async function commandRun(
       testCompletion = result.completion;
       stalledBeforeProjectOpen = Boolean(result.stalledBeforeProjectOpen);
       sampleOutput = result.sampleOutput;
-      completionMetadata = result.completion ? {
-        completion_hang_detected: true,
-        test_completion: result.completion,
-        xcodebuild_exit_code: result.rawCode,
-        xcodebuild_signal: result.rawSignal,
-      } : {};
+      testResults = result.testResults;
+      completionMetadata = {
+        ...(result.completion ? {
+          completion_hang_detected: true,
+          test_completion: result.completion,
+          xcodebuild_exit_code: result.rawCode,
+          xcodebuild_signal: result.rawSignal,
+        } : {}),
+        ...(result.testResults ? { test_results: result.testResults } : {}),
+      };
       if (!result.stop.quiescent) {
         uncertain = true;
         exitCode = exitCode || 1;
@@ -2639,6 +2626,7 @@ export async function commandRun(
           derivedData,
           build,
           completion: testCompletion,
+          testResults,
           hostCrash,
           stalledBeforeProjectOpen,
         });

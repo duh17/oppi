@@ -1,9 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { SUBPROCESS_TEST_TIMEOUT_MS } from "./sim-pool-test-support";
-import { executedTests, infrastructureFailure } from "./unit-shards";
 import { missingTests, normalizeFilters, planShards, profileSlots, pruneStale, recordUIWeights, scanUIClasses, shardCap, shardFlags, testsOf, unplannedTests } from "./ui-shards";
 
 setDefaultTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
@@ -178,22 +174,4 @@ describe("ui shard timings and results", () => {
     expect(recordUIWeights([log(10), log(40), log(20), log(900, "failed"), "Test Case '-[OppiE2ETests.X testY]' passed (5.0 seconds).\n"])).toEqual({ "ChatUITests/testOne": 20 });
   });
 
-  test("a UI shard that died partway counts the cases it finished, so it is a test failure and not an infrastructure failure", () => {
-    const dir = mkdtempSync(join(tmpdir(), "ui-shards-"));
-    try {
-      const run = (log: string) => {
-        writeFileSync(join(dir, "pool.log"), log);
-        writeFileSync(join(dir, "summary.json"), JSON.stringify({ log_path: join(dir, "pool.log") }));
-        return executedTests(join(dir, "summary.json"));
-      };
-      const finished = "Test Suite 'Selected tests' failed at 2026-10-30 01:00:00.000.\n\t Executed 5 tests, with 1 failure (1 unexpected) in 90.0 (90.1) seconds\n";
-      expect(run(finished)).toBe(5);
-      const died = "Test Case '-[OppiUITests.A testX]' passed (3.0 seconds).\nTest Case '-[OppiUITests.A testY]' failed (4.0 seconds).\n";
-      expect(run(died)).toBe(2);
-      expect(infrastructureFailure({ code: 65, tests: run(died) }, "")).toBeUndefined();
-      expect(infrastructureFailure({ code: 70, tests: run("error: all 6 simulator slots are busy\n") }, "error: all 6 simulator slots are busy\n")).toContain("all 6 simulator slots");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
 });
