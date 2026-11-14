@@ -52,17 +52,37 @@ enum OrgBadges {
         )
     }
 
-    /// The chevron before a heading that has a section under it. Tapping the
-    /// heading folds or unfolds the section; VoiceOver hears the state as the
-    /// heading's value, not as words of its own.
-    static func fold(ordinal: Int, isExpanded: Bool) -> MarkdownBadge {
-        MarkdownBadge(
+    /// Heading bullets by level, open and folded, cycling past the last as
+    /// org-superstar's list does. The shapes follow org-superstar and
+    /// org-modern (◉ ◈ ✸ ✳); a folded heading's shape is solid.
+    private static let bullets: [(open: String, folded: String)] = [
+        ("circle.inset.filled", "circle.fill"),
+        ("diamond.inset.filled", "diamond.fill"),
+        ("seal", "seal.fill"),
+        ("staroflife", "staroflife.fill"),
+    ]
+
+    /// The SF Symbol of a heading's bullet at `level` (from 1).
+    static func bulletSymbol(level: Int, isExpanded: Bool) -> String {
+        let pair = bullets[(max(level, 1) - 1) % bullets.count]
+        return isExpanded ? pair.open : pair.folded
+    }
+
+    /// The bullet that leads every heading, in its level's shape and colour.
+    /// A heading with a section under it, in a reader that folds, carries its
+    /// fold (`ordinal`, `OrgFolding`) on the bullet: tapping the bullet or the
+    /// heading folds or unfolds the section, and VoiceOver hears the state as
+    /// the heading's value, not as words of its own.
+    static func bullet(level: Int, fold: (ordinal: Int, isExpanded: Bool)? = nil) -> MarkdownBadge {
+        let isExpanded = fold?.isExpanded ?? true
+        return MarkdownBadge(
             text: "",
-            label: isExpanded ? "Expanded" : "Collapsed",
+            label: fold.map { $0.isExpanded ? "Expanded" : "Collapsed" } ?? "",
             tone: .quiet,
-            shape: .disclosure,
-            symbol: isExpanded ? "chevron.down" : "chevron.right",
-            control: ReaderTaskControl(kind: .fold(isExpanded: isExpanded), line: ordinal)
+            shape: .bullet,
+            symbol: bulletSymbol(level: level, isExpanded: isExpanded),
+            control: fold.map { ReaderTaskControl(kind: .fold(isExpanded: $0.isExpanded), line: $0.ordinal) },
+            level: level
         )
     }
 

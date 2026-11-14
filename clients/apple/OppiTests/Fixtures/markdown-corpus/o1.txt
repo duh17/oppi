@@ -3,8 +3,8 @@ org: o1 dollars and stars
 * Heading
 Costs $5*2 or (2*$3) total and $x_1$ math.
 @@@@ tree
-ORG→MD: # Heading⏎⏎Costs $5\*2 or (2\*$3) total and $x_1$ math.
-H1: T(Heading)
+ORG→MD: # <oppi-badge tone="quiet" shape="bullet" text="" label="" symbol="circle.inset.filled" level="1"/>Heading⏎⏎Costs $5\*2 or (2\*$3) total and $x_1$ math.
+H1: HTML(<oppi-badge tone="quiet" shape="bullet" text="" label="" symbol="circle.inset.filled" level="1"/>)T(Heading)
 P: T(Costs $5*2 or (2*$3) total and )MATH(x_1)T( math.)
 @@@@ render
-TEXT: Heading⏎⏎Costs $5*2 or (2*$3) total and ⟦x_1⟧ math.
+TEXT: ◆Heading⏎⏎Costs $5*2 or (2*$3) total and ⟦x_1⟧ math.

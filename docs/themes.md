@@ -115,7 +115,7 @@ Your prompts are a card filled with `userMessageBg`. Assistant replies always sp
 | | `cyan` | Types, inline code, teal chrome |
 | | `green` | Strings, success |
 | | `orange` | Numbers, warnings |
-| | `purple` | Keywords |
+| | `purple` | Keywords, level 2 Org headings |
 | | `red` | Errors, removals |
 | | `yellow` | Decorators |
 | | `thinkingText` | Thinking-block body |
@@ -126,7 +126,7 @@ Your prompts are a card filled with `userMessageBg`. Assistant replies always sp
 | Tool state | `toolPendingBg` / `toolSuccessBg` / `toolErrorBg` | Tool row while running, after success, after failure |
 | | `toolTitle` | Tool name |
 | | `toolOutput` | Tool body |
-| Markdown | `mdHeading` | Headings |
+| Markdown | `mdHeading` | Headings, level 1 Org headings (deeper Org levels mix it with `purple` and `fg`) |
 | | `mdLink` / `mdLinkUrl` | Link label / link URL |
 | | `mdCode` | Inline code |
 | | `mdCodeBlock` / `mdCodeBlockBorder` | Fenced code text / its border |

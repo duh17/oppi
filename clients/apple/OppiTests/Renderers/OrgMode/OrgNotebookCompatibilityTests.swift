@@ -177,10 +177,11 @@ struct OrgNotebookCompatibilityTests {
         OrgToMarkdownConverter.convert(parser.parse(source), documentPath: documentPath, clock: Self.clock)
     }
 
+    /// The badges of a line apart from a heading's bullet (`OrgHeadingFoldTests`).
     private func badges(_ inlines: [MarkdownInline]) -> [MarkdownBadge] {
         inlines.compactMap { inline in
-            guard case let .html(raw) = inline else { return nil }
-            return MarkdownBadge(markup: raw)
+            guard case let .html(raw) = inline, let badge = MarkdownBadge(markup: raw), badge.shape != .bullet else { return nil }
+            return badge
         }
     }
 
@@ -208,8 +209,9 @@ struct OrgNotebookCompatibilityTests {
         let progress = MarkdownBadge(text: "1/3", label: "1 of 3 done", tone: .neutral)
         let oppi = MarkdownBadge(text: "oppi", label: "tag oppi", tone: .quiet, shape: .capsule)
         let ios = MarkdownBadge(text: "ios", label: "tag ios", tone: .quiet, shape: .capsule)
-        // The cookie moves into the bar and leaves no double space behind.
+        // The bullet leads; the cookie moves into the bar and leaves no double space behind.
         #expect(headingInlines(blocks[0]) == [
+            .html(OrgBadges.bullet(level: 1).markup),
             .html(next.markup), .html(priority.markup), .html(progress.markup),
             .text(" "), .text("Ship Org rendering"),
             .text(" "), .html(oppi.markup), .text(" "), .html(ios.markup),
@@ -451,7 +453,7 @@ struct OrgNotebookCompatibilityTests {
     private func badgeAttachments(_ text: NSAttributedString) -> [MarkdownBadgeAttachment] {
         var found: [MarkdownBadgeAttachment] = []
         text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, _, _ in
-            if let badge = value as? MarkdownBadgeAttachment { found.append(badge) }
+            if let badge = value as? MarkdownBadgeAttachment, !badge.isBullet { found.append(badge) }
         }
         return found
     }

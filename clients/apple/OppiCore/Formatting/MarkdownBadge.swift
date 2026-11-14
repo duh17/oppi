@@ -10,7 +10,8 @@ import Foundation
 ///
 /// `segment` badges written back to back form one bar of connected segments.
 /// A `capsule` stands alone. A `marker` is never drawn: it only carries a
-/// control to a line that shows none.
+/// control to a line that shows none. A `bullet` leads an outline heading and
+/// names its `level`, which colours the bullet and the heading it leads.
 struct MarkdownBadge: Equatable, Sendable {
     enum Tone: String, Sendable {
         /// Open work.
@@ -35,8 +36,9 @@ struct MarkdownBadge: Equatable, Sendable {
         /// Draws nothing and speaks nothing. It marks a line with a control the
         /// reader offers off the page, such as giving a plain heading a state.
         case marker
-        /// A chevron drawn alone before a heading. It joins no bar.
-        case disclosure
+        /// An outline heading's bullet: `symbol` drawn alone in the colour of
+        /// `level`, before the heading's words. It joins no bar.
+        case bullet
     }
 
     /// What the badge shows.
@@ -49,6 +51,8 @@ struct MarkdownBadge: Equatable, Sendable {
     let symbol: String?
     /// The source line this badge edits, for a reader that can save its file.
     let control: ReaderTaskControl?
+    /// The outline depth a `bullet` stands for, from 1.
+    let level: Int?
 
     init(
         text: String,
@@ -56,7 +60,8 @@ struct MarkdownBadge: Equatable, Sendable {
         tone: Tone,
         shape: Shape = .segment,
         symbol: String? = nil,
-        control: ReaderTaskControl? = nil
+        control: ReaderTaskControl? = nil,
+        level: Int? = nil
     ) {
         self.text = text
         self.label = label
@@ -64,6 +69,7 @@ struct MarkdownBadge: Equatable, Sendable {
         self.shape = shape
         self.symbol = symbol
         self.control = control
+        self.level = level
     }
 
     private static let openTag = "<oppi-badge"
@@ -81,6 +87,7 @@ struct MarkdownBadge: Equatable, Sendable {
             attributes.append(("control", control.kindName))
             attributes.append(("line", String(control.line)))
         }
+        if let level { attributes.append(("level", String(level))) }
         let body = attributes.map { "\($0.0)=\"\(Self.escape($0.1))\"" }.joined(separator: " ")
         return "\(Self.openTag) \(body)/>"
     }
@@ -102,7 +109,8 @@ struct MarkdownBadge: Equatable, Sendable {
             symbol: attributes["symbol"],
             control: attributes["control"].flatMap { name in
                 attributes["line"].flatMap { ReaderTaskControl(name: name, line: $0) }
-            }
+            },
+            level: attributes["level"].flatMap { Int($0) }.flatMap { $0 > 0 ? $0 : nil }
         )
     }
 

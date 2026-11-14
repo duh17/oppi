@@ -78,7 +78,7 @@ struct OrgHeadingFoldTests {
             ReaderTaskControl(kind: .fold(isExpanded: true), line: alphaOneDeep),
             ReaderTaskControl(kind: .fold(isExpanded: true), line: alphaTwo),
             ReaderTaskControl(kind: .fold(isExpanded: true), line: beta),
-        ], "Gamma has nothing under it, so no chevron")
+        ], "Gamma has nothing under it, so its bullet carries no fold")
     }
 
     @Test func aFoldStopsAtTheNextHeadingOfTheSameLevel() throws {
@@ -127,10 +127,111 @@ struct OrgHeadingFoldTests {
         #expect(!markdown.contains("sub text"))
     }
 
-    @Test func aDocumentThatDoesNotFoldCarriesNoChevron() throws {
+    @Test func aDocumentThatDoesNotFoldStillHasBulletsButNoFold() throws {
+        // Org in chat and in exports: every heading has its bullet, none folds.
         let converted = DocumentRenderPipeline.orgToMarkdown(Self.outline, cancellationCheck: { false })
         let markdown = try #require(converted)
         #expect(folds(markdown).isEmpty)
+        #expect(bullets(markdown).map(\.level) == [1, 2, 3, 2, 1, 1])
+        #expect(bullets(markdown).allSatisfy { $0.control == nil && $0.label.isEmpty }, "a bullet without a fold says nothing")
+    }
+
+    // MARK: - Bullets
+
+    private func bullets(_ markdown: String) -> [MarkdownBadge] {
+        parseCommonMark(markdown).compactMap { block in
+            guard case .heading(_, let inlines) = block, case .html(let raw)? = inlines.first,
+                  let badge = MarkdownBadge(markup: raw), badge.shape == .bullet else { return nil }
+            return badge
+        }
+    }
+
+    @Test func eachLevelHasItsOwnBulletAndTheShapesCycleAsOrgSuperstarDoes() {
+        let open = (1...4).map { OrgBadges.bulletSymbol(level: $0, isExpanded: true) }
+        let folded = (1...4).map { OrgBadges.bulletSymbol(level: $0, isExpanded: false) }
+        #expect(Set(open).count == 4, "four levels, four shapes")
+        #expect(Set(folded).count == 4)
+        #expect(zip(open, folded).allSatisfy { $0 != $1 }, "a fold changes its bullet at every level")
+        for level in 1...4 {
+            #expect(OrgBadges.bulletSymbol(level: level + 4, isExpanded: true) == open[level - 1])
+            #expect(OrgBadges.bulletSymbol(level: level + 8, isExpanded: false) == folded[level - 1])
+        }
+        for symbol in open + folded {
+            #expect(UIImage(systemName: symbol) != nil, "\(symbol) draws")
+        }
+    }
+
+    @Test func aHeadingsBulletShowsItsLevelAndWhetherItIsFolded() throws {
+        let markdown = try shown(folding: [alphaOne])
+        let found = bullets(markdown)
+        // Alpha, Alpha one (folded, so Alpha one deep is hidden), Alpha two, Beta, Gamma.
+        #expect(found.map(\.level) == [1, 2, 2, 1, 1])
+        #expect(found.map(\.symbol) == [
+            OrgBadges.bulletSymbol(level: 1, isExpanded: true),
+            OrgBadges.bulletSymbol(level: 2, isExpanded: false),
+            OrgBadges.bulletSymbol(level: 2, isExpanded: true),
+            OrgBadges.bulletSymbol(level: 1, isExpanded: true),
+            OrgBadges.bulletSymbol(level: 1, isExpanded: true),
+        ])
+        #expect(found.map(\.control) == [
+            ReaderTaskControl(kind: .fold(isExpanded: true), line: alpha),
+            ReaderTaskControl(kind: .fold(isExpanded: false), line: alphaOne),
+            ReaderTaskControl(kind: .fold(isExpanded: true), line: alphaTwo),
+            ReaderTaskControl(kind: .fold(isExpanded: true), line: beta),
+            nil,
+        ], "the bullet is the fold; Gamma has nothing to fold")
+    }
+
+    @Test func theBulletLeadsTheStateBarAndTheTagsStillTrail() throws {
+        let source = "#+TODO: TODO | DONE\n* TODO [#A] Plan [1/2] :work:\n- [X] a\n- [ ] b"
+        let blocks = parseCommonMark(try shown(folding: [], source))
+        guard case .heading(_, let inlines)? = blocks.first else {
+            Issue.record("expected the heading first")
+            return
+        }
+        let badges = inlines.compactMap { inline -> MarkdownBadge? in
+            if case .html(let raw) = inline { return MarkdownBadge(markup: raw) }
+            return nil
+        }
+        #expect(badges.map(\.shape) == [.bullet, .segment, .segment, .segment, .capsule])
+        #expect(badges.dropFirst().map(\.text) == ["TODO", "#A", "1/2", "work"])
+    }
+
+    @MainActor
+    @Test func everyOutlineLevelReadsOnThePageInEveryBuiltInTheme() {
+        func luminance(_ color: UIColor) -> Double {
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            color.getRed(&r, green: &g, blue: &b, alpha: &a)
+            func linear(_ c: CGFloat) -> Double { c <= 0.03928 ? Double(c) / 12.92 : pow((Double(c) + 0.055) / 1.055, 2.4) }
+            return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+        }
+        for theme in ThemeID.builtins {
+            let palette = theme.palette
+            let page = luminance(palette.ui.bg)
+            let colors = (1...8).map { MarkdownBadgeAttachment.outlineColor(level: $0, palette: palette) }
+            #expect(Set(colors).count == 8, "\(theme): eight levels, eight colours")
+            #expect(MarkdownBadgeAttachment.outlineColor(level: 9, palette: palette) == colors[0], "levels past 8 cycle")
+            for (index, color) in colors.enumerated() {
+                let text = luminance(color)
+                let ratio = (max(text, page) + 0.05) / (min(text, page) + 0.05)
+                #expect(ratio >= 4.5, "\(theme) level \(index + 1) reads at \(ratio):1")
+            }
+        }
+    }
+
+    @MainActor
+    @Test func aHeadingsWordsTakeTheColourOfItsLevel() throws {
+        let markdown = try shown(folding: [], "* Top\nx\n** Middle\ny\n*** Deep\nz")
+        let palette = ThemeID.dark.palette
+        let text = NSMutableAttributedString()
+        for case let .text(attributed) in FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark) {
+            text.append(NSAttributedString(attributed))
+        }
+        for (title, level) in [("Top", 1), ("Middle", 2), ("Deep", 3)] {
+            let range = (text.string as NSString).range(of: title)
+            let color = text.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? UIColor
+            #expect(color == MarkdownBadgeAttachment.outlineColor(level: level, palette: palette), "\(title)")
+        }
     }
 
     @Test func aFoldNamesItsHeadingByOrdinalSoASaveDoesNotMoveIt() throws {
@@ -219,6 +320,32 @@ struct OrgHeadingFoldTests {
         #expect(owner.touched == [fold])
     }
 
+    /// Where the heading's bullet is drawn: the first character of its line.
+    @MainActor
+    private func bulletRect(in view: BaselineSafeTextView, line text: String) throws -> CGRect {
+        let range = (view.textStorage.string as NSString).range(of: text)
+        let start = try #require(view.position(from: view.beginningOfDocument, offset: range.location - 1))
+        let end = try #require(view.position(from: start, offset: 1))
+        let textRange = try #require(view.textRange(from: start, to: end))
+        return view.firstRect(for: textRange)
+    }
+
+    @MainActor
+    @Test func aTapOnTheBulletFoldsItsHeading() throws {
+        let owner = Owner()
+        let (view, window) = try textView("* Alpha\nalpha body\n* Beta", owner: owner)
+        _ = window
+        let fold = ReaderTaskControl(kind: .fold(isExpanded: true), line: 1)
+        let bullet = try bulletRect(in: view, line: "Alpha")
+        #expect(bullet.width > 0 && bullet.minX < 1, "the bullet leads the line")
+        #expect(view.foldControl(at: CGPoint(x: bullet.midX, y: bullet.midY)) == fold)
+        #expect(view.foldControl(at: CGPoint(x: bullet.minX + 1, y: bullet.midY)) == fold, "its leading edge too")
+        let leaf = try bulletRect(in: view, line: "Beta")
+        #expect(view.foldControl(at: CGPoint(x: leaf.midX, y: leaf.midY)) == nil, "Beta's bullet has nothing to fold")
+        #expect(view.activateTaskControl(fold))
+        #expect(owner.touched == [fold])
+    }
+
     @MainActor
     @Test func aLinkInAFoldableHeadingStillOpens() throws {
         let owner = Owner()
@@ -235,7 +362,7 @@ struct OrgHeadingFoldTests {
         _ = window
         let elements = (view.accessibilityElements ?? []).compactMap { $0 as? ReaderTaskControlElement }
         #expect(elements.map(\.accessibilityIdentifier) == ["fileViewer.heading.fold.1", "fileViewer.heading.fold.2"])
-        #expect(elements.map(\.accessibilityLabel) == ["Alpha", "Inner"], "the chevron adds no words to the line")
+        #expect(elements.map(\.accessibilityLabel) == ["Alpha", "Inner"], "the bullet adds no words to the line")
         #expect(elements.map(\.accessibilityValue) == ["Expanded", "Collapsed"])
         #expect(elements.map { $0.accessibilityCustomActions?.map(\.name) } == [["Collapse"], ["Expand"]])
         #expect(elements.allSatisfy { $0.accessibilityTraits.contains(.header) && $0.accessibilityTraits.contains(.button) })

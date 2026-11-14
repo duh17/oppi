@@ -1254,7 +1254,7 @@ enum FlatSegment: Sendable {
         switch block {
         case .heading(let level, let inlines):
             let font = AppFont.messageHeading(level: level)
-            let color = Self.headingColor(level: level, palette: palette)
+            let color = Self.headingColor(level: level, inlines: inlines, palette: palette)
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.paragraphSpacingBefore = Self.headingSpacingAbove(level: level)
 
@@ -1399,7 +1399,14 @@ enum FlatSegment: Sendable {
         )
     }
 
-    private static func headingColor(level: Int, palette: ThemePalette) -> UIColor {
+    /// An outline heading (one its bullet leads, as every Org heading is) takes
+    /// its outline level's colour, like its bullet; any other heading the
+    /// Markdown ladder's.
+    private static func headingColor(level: Int, inlines: [MarkdownInline], palette: ThemePalette) -> UIColor {
+        if case .html(let raw)? = inlines.first,
+           let bullet = MarkdownBadge(markup: raw), bullet.shape == .bullet, let outlineLevel = bullet.level {
+            return MarkdownBadgeAttachment.outlineColor(level: outlineLevel, palette: palette)
+        }
         switch level {
         case 1, 2: return palette.ui.mdHeading
         case 3: return palette.ui.fg

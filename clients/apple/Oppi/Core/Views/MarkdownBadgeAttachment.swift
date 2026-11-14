@@ -30,8 +30,8 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
     let control: ReaderTaskControl?
     /// A `marker` badge: no size, nothing drawn, nothing spoken.
     let isMarker: Bool
-    /// A chevron drawn alone, sized to the line's text.
-    let isDisclosure: Bool
+    /// A heading's bullet, drawn alone in `style.fill` and sized to the line's text.
+    let isBullet: Bool
     private var spokenLabel: String
     /// Used when TextKit does not say which font the badge sits in.
     private let fallbackFont: UIFont
@@ -47,8 +47,12 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
         endsBar: Bool,
         palette: ThemePalette
     ) -> AttributedString {
-        let fill = fill(badge.tone, palette: palette)
+        let fill = badge.shape == .bullet
+            ? outlineColor(level: badge.level ?? 1, palette: palette)
+            : fill(badge.tone, palette: palette)
         let ink: UIColor = switch badge.tone {
+        // A bullet is drawn in its own colour, on no fill.
+        case _ where badge.shape == .bullet: fill
         case .neutral: palette.ui.fg
         case .quiet: palette.ui.fgDim
         case .accent, .warning, .success, .muted, .danger:
@@ -79,13 +83,48 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
         }
     }
 
+    /// The colour of an outline heading at `level` and of its bullet, after
+    /// Doom Emacs's `outline-1`…`outline-8` faces: blue, magenta, violet, then
+    /// blue and magenta lightened by turns. Blue is the theme's heading colour,
+    /// magenta its purple, violet the two mixed, and lightening mixes toward
+    /// the text colour, which is lighter in a dark theme and darker in a light
+    /// one, so every level stays readable on the page. Levels past 8 cycle.
+    static func outlineColor(level: Int, palette: ThemePalette) -> UIColor {
+        let blue = palette.ui.mdHeading
+        let magenta = palette.ui.purple
+        let text = palette.ui.fg
+        return switch (max(level, 1) - 1) % 8 {
+        case 0: blue
+        case 1: magenta
+        case 2: mix(blue, magenta, 0.5)
+        case 3: mix(blue, text, 0.25)
+        case 4: mix(magenta, text, 0.25)
+        case 5: mix(blue, text, 0.5)
+        case 6: mix(magenta, text, 0.5)
+        default: mix(blue, text, 0.8)
+        }
+    }
+
+    private static func mix(_ from: UIColor, _ to: UIColor, _ amount: CGFloat) -> UIColor {
+        var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
+        var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
+        from.getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
+        to.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+        return UIColor(
+            red: r1 + (r2 - r1) * amount,
+            green: g1 + (g2 - g1) * amount,
+            blue: b1 + (b2 - b1) * amount,
+            alpha: a1 + (a2 - a1) * amount
+        )
+    }
+
     init(badge: MarkdownBadge, style: Style, fallbackFont: UIFont) {
         text = badge.text
         symbol = badge.symbol
         spokenLabel = badge.label
         control = badge.control
         isMarker = badge.shape == .marker
-        isDisclosure = badge.shape == .disclosure
+        isBullet = badge.shape == .bullet
         self.style = style
         self.fallbackFont = fallbackFont
         super.init(data: nil, ofType: nil)
@@ -112,7 +151,7 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
         static let control = "oppi.badge.control"
         static let line = "oppi.badge.line"
         static let isMarker = "oppi.badge.isMarker"
-        static let isDisclosure = "oppi.badge.isDisclosure"
+        static let isBullet = "oppi.badge.isBullet"
     }
 
     required init?(coder: NSCoder) {
@@ -123,7 +162,7 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
             ReaderTaskControl(name: name, line: String(coder.decodeInteger(forKey: Key.line)))
         }
         isMarker = coder.decodeBool(forKey: Key.isMarker)
-        isDisclosure = coder.decodeBool(forKey: Key.isDisclosure)
+        isBullet = coder.decodeBool(forKey: Key.isBullet)
         style = Style(
             fill: coder.decodeObject(of: UIColor.self, forKey: Key.fill) ?? .systemGray,
             ink: coder.decodeObject(of: UIColor.self, forKey: Key.ink) ?? .label,
@@ -150,7 +189,7 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
         coder.encode(control?.kindName as NSString?, forKey: Key.control)
         coder.encode(control?.line ?? 0, forKey: Key.line)
         coder.encode(isMarker, forKey: Key.isMarker)
-        coder.encode(isDisclosure, forKey: Key.isDisclosure)
+        coder.encode(isBullet, forKey: Key.isBullet)
     }
 
     // Segments build off the main actor, where `accessibilityLabel`'s setter is
@@ -222,16 +261,17 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
         if isMarker {
             return Layout(bounds: .zero, textFont: lineFont, padding: 0, arrowDepth: 0, symbolWidth: 0, symbolGap: 0)
         }
-        if isDisclosure {
-            // The chevron is a little smaller than the line's text and leaves a
-            // gap before the heading's words. Both chevrons share one width.
-            let font = UIFont.systemFont(ofSize: lineFont.pointSize * 0.7, weight: .bold)
+        if isBullet {
+            // A square about the height of the line's capitals, centred on
+            // them, with a gap before the heading's words: the room the old
+            // disclosure chevron took, so headings wrap and measure as they
+            // did. Open and folded bullets share it, so a fold never moves
+            // the words.
             let side = ceil(lineFont.pointSize * 0.9)
             let gap = ceil(lineFont.pointSize * 0.3)
-            let height = ceil(font.lineHeight)
             return Layout(
-                bounds: CGRect(x: 0, y: ((lineFont.capHeight - height) / 2).rounded(), width: side + gap, height: height),
-                textFont: font,
+                bounds: CGRect(x: 0, y: ((lineFont.capHeight - side) / 2).rounded(), width: side + gap, height: side),
+                textFont: lineFont,
                 padding: 0,
                 arrowDepth: 0,
                 symbolWidth: side,
@@ -271,12 +311,16 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
 
     private func symbolImage(font: UIFont) -> UIImage? {
         guard let symbol else { return nil }
-        let configuration = UIImage.SymbolConfiguration(font: font, scale: .small)
+        let configuration = UIImage.SymbolConfiguration(font: font, scale: isBullet ? .medium : .small)
         return UIImage(systemName: symbol, withConfiguration: configuration)?
             .withTintColor(style.ink, renderingMode: .alwaysOriginal)
     }
 
     // MARK: - Drawing
+
+    private var isFolded: Bool {
+        control?.kind == .fold(isExpanded: false)
+    }
 
     private func render(_ layout: Layout, size: CGSize) -> UIImage? {
         guard size.width > 0, size.height > 0 else { return nil }
@@ -287,12 +331,19 @@ final class MarkdownBadgeAttachment: NSTextAttachment, ReaderTaskControlAttachme
 
     private func draw(_ layout: Layout, in rect: CGRect) {
         let height = rect.height
-        if isDisclosure {
-            if let image = symbolImage(font: layout.textFont) {
-                image.draw(at: CGPoint(
-                    x: (layout.symbolWidth - image.size.width) / 2,
-                    y: (height - image.size.height) / 2
-                ))
+        if isBullet {
+            // Sized from the square TextKit measured, not the font it draws
+            // with, which can differ (the largest text sizes): the shape always
+            // fills its own room.
+            let slot = CGRect(x: 0, y: 0, width: height, height: height)
+            if isFolded {
+                // A folded bullet sits in a faint disc of its colour, as an
+                // outliner marks a bullet with hidden children.
+                style.fill.withAlphaComponent(0.2).setFill()
+                UIBezierPath(ovalIn: slot).fill()
+            }
+            if let image = symbolImage(font: .systemFont(ofSize: height * 0.72, weight: .semibold)) {
+                image.draw(at: CGPoint(x: slot.midX - image.size.width / 2, y: slot.midY - image.size.height / 2))
             }
             return
         }

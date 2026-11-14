@@ -160,7 +160,7 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
     // MARK: Heading folds
 
     /// Folding a heading hides everything under it up to the next heading of
-    /// the same or a higher level, and the chevron's state reads as the
+    /// the same or a higher level, and the bullet's state reads as the
     /// heading's value.
     func testHeadingsFoldAndUnfoldTheirSections() throws {
         launch(file: "notebook.org")
@@ -197,7 +197,7 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// A folded heading in light mode, at the default and at the largest text
-    /// size: the chevron, the mark and the heading stay readable and tappable.
+    /// size: the bullet, the mark and the heading stay readable and tappable.
     func testAFoldedHeadingAtTheLargestTextSizeAndInLightMode() throws {
         let device = UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
         XCUIDevice.shared.orientation = .portrait
@@ -210,6 +210,37 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
             saveScreenshot(name: "org-fold-\(device)-light-\(name)-folded")
             tapHeading(3)
             XCTAssertTrue(waitForFold(3, "Expanded"), "\(name): and unfolds again")
+        }
+    }
+
+    /// The bullet before a heading's words carries its fold: a tap on the
+    /// bullet folds the section, and a tap on the heading's words unfolds it.
+    func testTheBulletFoldsAndUnfoldsItsHeading() throws {
+        launch(file: "notebook.org")
+        let heading = fold(3)
+        XCTAssertTrue(scrollUntilBuilt(heading), "fold 3 exists")
+        reveal(heading)
+        let lineStart = heading.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+        // The bullet is the line's first glyph, about a text height wide.
+        lineStart.withOffset(CGVector(dx: 9, dy: 0)).tap()
+        XCTAssertTrue(waitForFold(3, "Collapsed"), "a tap on the bullet folds")
+        XCTAssertTrue(app.buttons["fileViewer.task.checkbox.19"].waitUntilGone(timeout: 10), "the section is hidden")
+        saveScreenshot(name: "org-bullet-folded")
+        heading.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)).tap()
+        XCTAssertTrue(waitForFold(3, "Expanded"), "a tap on the heading's words unfolds")
+        XCTAssertTrue(app.buttons["fileViewer.task.checkbox.19"].waitUntilExists(timeout: 10), "the section is back")
+    }
+
+    /// Stills of a notes file in dark and light: three levels of bullets and
+    /// colours, states, tags, and one folded subtree.
+    func testOrgHeadingStillsInDarkAndLight() throws {
+        let device = UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
+        XCUIDevice.shared.orientation = .portrait
+        for scheme in ["dark", "light"] {
+            launch(file: "notebook.org", colorScheme: scheme)
+            tapHeading(2)
+            XCTAssertTrue(waitForFold(2, "Collapsed"), "\(scheme): the done heading folds")
+            saveScreenshot(name: "org-headings-\(device)-\(scheme)")
         }
     }
 
@@ -308,7 +339,7 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
         return fold(ordinal).value as? String == value
     }
 
-    /// Taps the heading's chevron, at the start of its line: a touch on a state
+    /// Taps the heading's bullet, at the start of its line: a touch on a state
     /// badge would open that badge's menu, and a long heading wraps its badges
     /// anywhere along the line. `at` taps that far across the line instead.
     private func tapHeading(_ ordinal: Int, at dx: CGFloat? = nil) {

@@ -13,10 +13,11 @@ struct OrgKeywordNoiseTests {
         OrgToMarkdownConverter.convert(parser.parse(source))
     }
 
+    /// The badges of a line apart from a heading's bullet (`OrgHeadingFoldTests`).
     private func badges(_ inlines: [MarkdownInline]) -> [MarkdownBadge] {
         inlines.compactMap { inline in
-            guard case let .html(raw) = inline else { return nil }
-            return MarkdownBadge(markup: raw)
+            guard case let .html(raw) = inline, let badge = MarkdownBadge(markup: raw), badge.shape != .bullet else { return nil }
+            return badge
         }
     }
 

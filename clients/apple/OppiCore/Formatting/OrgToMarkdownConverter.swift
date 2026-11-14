@@ -7,9 +7,10 @@ import Foundation
 /// markdown: same fonts, colors, spacing, code blocks, and theme integration.
 ///
 /// Org metadata travels as `MarkdownBadge` inline elements (see `OrgBadges`):
-/// a heading's TODO state, priority and progress cookie lead it as one bar,
-/// tags trail it, a done heading's title is struck through, and a planning
-/// line becomes a bar of dates. Property drawers stay out of the reading
+/// every heading leads with its level's bullet, which also carries its fold
+/// in a reader that folds; its TODO state, priority and progress cookie follow
+/// as one bar, tags trail it, a done heading's title is struck through, and a
+/// planning line becomes a bar of dates. Property drawers stay out of the reading
 /// view, and timestamps in prose are italic. The goal is a reading view, not
 /// round-trip fidelity.
 enum OrgToMarkdownConverter {
@@ -40,9 +41,9 @@ enum OrgToMarkdownConverter {
         /// every other render (share, PDF, chat output), whose link opens the
         /// document: an app-private scheme means nothing to a receiving app.
         var linksHeadings = false
-        /// The ordinal (`OrgFolding`) of each heading a fold control leads, by
-        /// source line, and the source lines of those folded. Empty for a
-        /// reader that does not fold.
+        /// The ordinal (`OrgFolding`) of each heading whose bullet carries a
+        /// fold, by source line, and the source lines of those folded. Empty
+        /// for a reader that does not fold.
         var foldableHeadings: [Int: Int] = [:]
         var foldedHeadings: Set<Int> = []
         /// Collects each heading block written, in order, when a reader needs to
@@ -110,8 +111,8 @@ enum OrgToMarkdownConverter {
     }
 
     /// A reader that folds headings: which it has folded, by ordinal
-    /// (`OrgFolding`). Every heading with a section under it then leads with a
-    /// chevron, and a folded one ends in a mark.
+    /// (`OrgFolding`). The bullet of every heading with a section under it
+    /// then carries its fold, and a folded one ends in a mark.
     struct FoldState: Sendable {
         var folded: Set<Int>
 
@@ -279,13 +280,15 @@ enum OrgToMarkdownConverter {
                         titleRest.append(inline)
                     }
                 }
-                // The marker leads the heading apart from the bar, so it never joins it.
-                var leading: [MarkdownBadge] = []
+                // The bullet leads the heading, and the marker follows it apart
+                // from the bar, so neither joins it. A foldable heading's
+                // bullet carries its fold.
                 let foldOrdinal = line.flatMap { context.foldableHeadings[$0] }
-                if let line, let foldOrdinal {
-                    leading.append(OrgBadges.fold(ordinal: foldOrdinal, isExpanded: !context.foldedHeadings.contains(line)))
+                let fold = line.flatMap { line in
+                    foldOrdinal.map { (ordinal: $0, isExpanded: !context.foldedHeadings.contains(line)) }
                 }
-                var inlines: [MarkdownInline] = (leading + (marker.map { [$0] } ?? []) + bar).map { .html($0.markup) }
+                let leading = [OrgBadges.bullet(level: level, fold: fold)] + (marker.map { [$0] } ?? [])
+                var inlines: [MarkdownInline] = (leading + bar).map { .html($0.markup) }
 
                 // Title content, struck through when the heading is done.
                 let titleInlines = convertInlines(tidiedTitle(titleRest), context: context)
