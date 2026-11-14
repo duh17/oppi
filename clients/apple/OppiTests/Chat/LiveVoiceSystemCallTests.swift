@@ -431,7 +431,7 @@ struct LiveVoiceSystemCallTests {
         let defaults = try #require(UserDefaults(suiteName: "LiveVoiceSystemCallTests-\(UUID().uuidString)"))
         let appLock = AppLockService(
             defaults: defaults, availability: { .available }, method: { .faceID },
-            authenticator: { _ in .success }, didTurnOn: {}, isProtectedDataAvailable: { true }
+            authenticator: { _, _ in .success }, didTurnOn: {}, isProtectedDataAvailable: { true }
         )
         let locks = ScopedLockService(defaults: defaults, appLock: appLock, didLock: { _ in }, isProtectedDataAvailable: { true })
         let session = makeTestSession(id: "sess-1", workspaceId: "ws-1", name: "Fix the build")

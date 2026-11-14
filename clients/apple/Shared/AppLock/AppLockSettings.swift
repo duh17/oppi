@@ -170,8 +170,9 @@ enum DeviceOwnerAuthentication {
         }
     }
 
-    static func authenticate(reason: String) async -> Outcome {
-        let context = LAContext()
+    /// Evaluates `context`; on success the caller may keep it as the person's
+    /// approval (App Lock's unlock does, for SSH sign-in).
+    static func authenticate(reason: String, context: LAContext = LAContext()) async -> Outcome {
         context.localizedCancelTitle = String(localized: "Cancel")
         var error: NSError?
         guard context.canEvaluatePolicy(policy, error: &error) else {

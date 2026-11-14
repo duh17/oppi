@@ -422,7 +422,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
             defaults: lockDefaults,
             availability: { .available },
             method: { .faceID },
-            authenticator: { _ in .success },
+            authenticator: { _, _ in .success },
             didTurnOn: {},
             isProtectedDataAvailable: { true }
         )

@@ -320,7 +320,7 @@ struct ScopedLockLockedLaunchTests {
             defaults: defaults,
             availability: { .available },
             method: { .faceID },
-            authenticator: { _ in .success },
+            authenticator: { _, _ in .success },
             didTurnOn: {},
             isProtectedDataAvailable: { true }
         )
@@ -338,7 +338,7 @@ struct ScopedLockLockedLaunchTests {
     private func seed(_ scopes: [ScopedLockScope], sessionWorkspaceId: String?, in defaults: UserDefaults) {
         let appLock = AppLockService(
             defaults: defaults, availability: { .available }, method: { .faceID },
-            authenticator: { _ in .success }, didTurnOn: {}, isProtectedDataAvailable: { true }
+            authenticator: { _, _ in .success }, didTurnOn: {}, isProtectedDataAvailable: { true }
         )
         let writer = ScopedLockService(
             defaults: defaults, appLock: appLock, didLock: { _ in }, isProtectedDataAvailable: { true }
@@ -350,7 +350,7 @@ struct ScopedLockLockedLaunchTests {
         ScopedLockService(
             defaults: defaults, appLock: AppLockService(
                 defaults: defaults, availability: { .available }, method: { .faceID },
-                authenticator: { _ in .success }, didTurnOn: {}, isProtectedDataAvailable: { true }
+                authenticator: { _, _ in .success }, didTurnOn: {}, isProtectedDataAvailable: { true }
             ),
             didLock: { _ in }, isProtectedDataAvailable: { true }
         ).flags
@@ -729,7 +729,7 @@ private struct ScopedHarness {
             monotonicNow: { clock.now },
             availability: { availability.status },
             method: { .faceID },
-            authenticator: { _ in await authenticator.authenticate() },
+            authenticator: { _, _ in await authenticator.authenticate() },
             didTurnOn: {}
         )
         locks = ScopedLockService(defaults: defaults, appLock: appLock, didLock: { _ in })

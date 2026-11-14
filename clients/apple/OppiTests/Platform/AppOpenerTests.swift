@@ -2063,7 +2063,7 @@ private final class OpenerHarness {
             monotonicNow: { 10_000 },
             availability: { .available },
             method: { .faceID },
-            authenticator: { _ in await authenticator.authenticate() },
+            authenticator: { _, _ in await authenticator.authenticate() },
             didTurnOn: {}
         )
         self.appLock = appLock

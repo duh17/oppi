@@ -272,7 +272,7 @@ struct LiveVoiceCallStripTests {
             monotonicNow: { 0 },
             availability: { .available },
             method: { .faceID },
-            authenticator: { _ in .cancelled },
+            authenticator: { _, _ in .cancelled },
             didTurnOn: {},
             isProtectedDataAvailable: { true }
         )

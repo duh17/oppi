@@ -149,6 +149,57 @@ struct SSHApprovalCacheTests {
         #expect(cache.context(for: .deviceKeySigning) != nil)
     }
 
+    // MARK: App Lock's unlock
+
+    @Test func anUnlockApprovesEveryPurposeForTheWindowOnly() async throws {
+        let clock = Clock()
+        let cache = makeCache(clock)
+        let probe = Probe()
+        let unlock = LAContext()
+        #expect(cache.storeUnlock(unlock, ifGeneration: cache.currentGeneration))
+        #expect(unlock.interactionNotAllowed)
+        clock.advance(SSHApprovalCache.reuseWindow - 1)
+        try await approve(cache, .deviceKeySigning, probe)
+        try await approve(cache, .savedPassword(account: "a"), probe)
+        #expect(probe.prompts.withLock { $0 } == 0)
+        #expect(probe.used.withLock { $0 }.allSatisfy { $0 === unlock })
+        clock.advance(1)
+        try await approve(cache, .savedPassword(account: "b"), probe)
+        #expect(probe.prompts.withLock { $0 } == 1, "the unlock no longer counts once the window passed")
+    }
+
+    @Test func anUnlockEndsWithALockOrCover() async throws {
+        let cache = makeCache(Clock())
+        let generation = cache.currentGeneration
+        cache.invalidateAll()
+        #expect(!cache.storeUnlock(LAContext(), ifGeneration: generation), "an unlock that spanned a lock is not kept")
+        #expect(cache.storeUnlock(LAContext(), ifGeneration: cache.currentGeneration))
+        cache.invalidateAll()
+        let probe = Probe()
+        try await approve(cache, .deviceKeySigning, probe)
+        #expect(probe.prompts.withLock { $0 } == 1)
+    }
+
+    @Test func anUnlockThatFailsToSignIsDroppedForEveryPurpose() async throws {
+        let cache = makeCache(Clock())
+        let unlock = LAContext()
+        cache.storeUnlock(unlock, ifGeneration: cache.currentGeneration)
+        let probe = Probe()
+        struct Refused: Error {}
+        let value: Int = try await cache.approved(
+            for: .deviceKeySigning,
+            evaluate: { try await probe.evaluate($0) },
+            use: { context in
+                if context === unlock { throw Refused() }
+                return 7
+            }
+        )
+        #expect(value == 7)
+        #expect(probe.prompts.withLock { $0 } == 1, "asked once, in the same call")
+        #expect(cache.context(for: .appUnlock) == nil)
+        #expect(cache.context(for: .savedPassword(account: "a")) == nil)
+    }
+
     @Test func onlyCredentialFailuresEndAnApproval() {
         let host = SSHHostKey(openSSH: "ssh-ed25519 AAAA")
         let credential: [any Error] = [

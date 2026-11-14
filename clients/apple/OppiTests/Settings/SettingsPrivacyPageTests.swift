@@ -33,7 +33,7 @@ struct SettingsPrivacyPageTests {
             defaults: defaults,
             availability: { available ? .available : .noPasscode },
             method: { .faceID },
-            authenticator: { reason in
+            authenticator: { reason, _ in
                 prompts.reasons.append(reason)
                 return prompts.outcome
             },

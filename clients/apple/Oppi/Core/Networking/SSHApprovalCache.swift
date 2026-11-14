@@ -6,16 +6,17 @@ import Synchronization
 /// the person approved does not ask for Face ID, Touch ID, or the passcode again.
 ///
 /// What is kept is this app's own approval: the `LAContext` that the person
-/// evaluated, for one purpose (the device key, or one saved password). It is
+/// evaluated, for one purpose (the device key, or one saved password), or
+/// App Lock's unlock, which stands in for every purpose (`appUnlock`). It is
 /// not the system's biometric reuse (`touchIDAuthenticationAllowableReuseDuration`),
 /// which would let any fresh context skip the prompt after a device unlock.
 ///
 /// An entry ends when any of these happens, and the next sign-in then asks
 /// again:
 /// - `reuseWindow` passes since the person approved;
-/// - App Lock locks or covers Oppi (`invalidateAll`);
-/// - a use of the approval fails, or a sign-in fails on credentials;
-/// - the experiment is turned off or the host is deleted.
+/// - App Lock locks or covers Oppi, or Oppi leaves the foreground with App
+///   Lock on (`invalidateAll`);
+/// - a use of the approval fails, or a sign-in fails on credentials.
 ///
 /// Cached contexts are `interactionNotAllowed`, so neither NIOSSH's synchronous
 /// signer nor a later Keychain read can present UI on the strength of them.
@@ -24,6 +25,10 @@ final class SSHApprovalCache: Sendable {
         case deviceKeySigning
         /// One saved password; each host has its own Keychain account.
         case savedPassword(account: String)
+        /// The context App Lock's unlock evaluated. Any purpose with no
+        /// approval of its own uses it, so a sign-in right after unlocking
+        /// Oppi asks nothing.
+        case appUnlock
     }
 
     static let reuseWindow: TimeInterval = 5 * 60
@@ -51,9 +56,20 @@ final class SSHApprovalCache: Sendable {
         self.now = now
     }
 
-    /// The context approved for `purpose` within the window. A stale entry is
-    /// invalidated and dropped here.
+    /// The context approved for `purpose` within the window, else App Lock's
+    /// unlock within the window. A stale entry is invalidated and dropped here.
     func context(for purpose: Purpose) -> LAContext? {
+        kept(for: purpose)?.context
+    }
+
+    /// The kept context for `purpose` and the entry it came from.
+    private func kept(for purpose: Purpose) -> (context: LAContext, key: Purpose)? {
+        if let context = live(purpose) { return (context, purpose) }
+        if purpose != .appUnlock, let context = live(.appUnlock) { return (context, .appUnlock) }
+        return nil
+    }
+
+    private func live(_ purpose: Purpose) -> LAContext? {
         let (context, stale) = entries.withLock { entries -> (LAContext?, Entry?) in
             guard let entry = entries[purpose] else { return (nil, nil) }
             let age = now() - entry.approvedAt
@@ -76,7 +92,7 @@ final class SSHApprovalCache: Sendable {
         let expiry = Task { [weak self] in
             try? await Task.sleep(for: .seconds(window))
             guard !Task.isCancelled else { return }
-            _ = self?.context(for: purpose)
+            _ = self?.live(purpose)
         }
         // The check and the insert share the lock `invalidateAll` takes.
         let outcome = entries.withLock { entries -> (kept: Bool, replaced: Entry?) in
@@ -91,6 +107,15 @@ final class SSHApprovalCache: Sendable {
     }
 
     var currentGeneration: Int { generation.load(ordering: .acquiring) }
+
+    /// Keeps the context App Lock's unlock evaluated (`appUnlock`), unless App
+    /// Lock locked or covered Oppi since `expected` was read. Like every kept
+    /// context it can no longer prompt.
+    @discardableResult
+    func storeUnlock(_ context: LAContext, ifGeneration expected: Int) -> Bool {
+        context.interactionNotAllowed = true
+        return store(context, for: .appUnlock, ifGeneration: expected)
+    }
 
     func invalidate(_ purpose: Purpose) {
         let removed = entries.withLock { $0.removeValue(forKey: purpose) }
@@ -113,8 +138,9 @@ final class SSHApprovalCache: Sendable {
     }
 
     /// Runs `use` with an approved context for `purpose`: the cached one when
-    /// the person approved within the window, otherwise a fresh one that
-    /// `evaluate` approves (the system prompt) before `use` runs.
+    /// the person approved within the window (for `purpose`, or App Lock's
+    /// unlock), otherwise a fresh one that `evaluate` approves (the system
+    /// prompt) before `use` runs.
     ///
     /// A cached context that fails in `use` is dropped, and the person is asked
     /// once, in this same call. A fresh approval is cached only after `use`
@@ -125,13 +151,13 @@ final class SSHApprovalCache: Sendable {
         use: @escaping @Sendable (LAContext) async throws -> Value
     ) async throws -> Value {
         let attemptGeneration = currentGeneration
-        if let cached = context(for: purpose) {
+        if let cached = kept(for: purpose) {
             do {
-                return try await use(cached)
+                return try await use(cached.context)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                invalidate(purpose)
+                invalidate(cached.key)
             }
         }
         try Task.checkCancellation()

@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Observation
 import os.log
 import UIKit
@@ -190,7 +191,10 @@ final class AppLockService {
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let monotonicNow: @MainActor () -> TimeInterval
     @ObservationIgnored private let availability: @MainActor () -> DeviceOwnerAuthentication.Availability
-    @ObservationIgnored private let authenticator: @MainActor (String) async -> DeviceOwnerAuthentication.Outcome
+    /// Evaluates the context it is given with the reason.
+    @ObservationIgnored private let authenticator: @MainActor (String, LAContext) async -> DeviceOwnerAuthentication.Outcome
+    /// SSH sign-in approvals: an unlock seeds them, a lock ends them.
+    @ObservationIgnored private let sshApprovals: SSHApprovalCache
     @ObservationIgnored private let methodProvider: @MainActor () -> DeviceOwnerAuthentication.Method
     @ObservationIgnored private let didTurnOn: @MainActor () -> Void
     @ObservationIgnored private let isProtectedDataAvailable: @MainActor () -> Bool
@@ -209,7 +213,10 @@ final class AppLockService {
         monotonicNow: @escaping @MainActor () -> TimeInterval = { AppLockClock.monotonicNow() },
         availability: @escaping @MainActor () -> DeviceOwnerAuthentication.Availability = { DeviceOwnerAuthentication.availability() },
         method: @escaping @MainActor () -> DeviceOwnerAuthentication.Method = { DeviceOwnerAuthentication.method() },
-        authenticator: @escaping @MainActor (String) async -> DeviceOwnerAuthentication.Outcome = { await DeviceOwnerAuthentication.authenticate(reason: $0) },
+        authenticator: @escaping @MainActor (String, LAContext) async -> DeviceOwnerAuthentication.Outcome = {
+            await DeviceOwnerAuthentication.authenticate(reason: $0, context: $1)
+        },
+        sshApprovals: SSHApprovalCache = .shared,
         didTurnOn: @escaping @MainActor () -> Void = { AppLockService.clearContentShownBeforeAppLock() },
         isProtectedDataAvailable: @escaping @MainActor () -> Bool = { UIApplication.shared.isProtectedDataAvailable }
     ) {
@@ -217,6 +224,7 @@ final class AppLockService {
         self.monotonicNow = monotonicNow
         self.availability = availability
         self.authenticator = authenticator
+        self.sshApprovals = sshApprovals
         self.methodProvider = method
         self.didTurnOn = didTurnOn
         self.isProtectedDataAvailable = isProtectedDataAvailable
@@ -348,6 +356,9 @@ final class AppLockService {
     /// The last foreground scene entered the background.
     func appDidEnterBackground() {
         dropDeferredAction()
+        // An unlock still finishing must not keep its approval past leaving
+        // Oppi: a timed lock is not applied until the return.
+        if machine.isEnabled { sshApprovals.invalidateAll() }
         update { $0.didEnterBackground(at: now()) }
     }
 
@@ -391,9 +402,20 @@ final class AppLockService {
         guard began else { return false }
         unlockFailed = false
 
-        let task = Task { @MainActor [authenticator] in
-            let outcome = await authenticator(String(localized: "Unlock Oppi"))
+        let task = Task { @MainActor [authenticator, sshApprovals] in
+            let approvalGeneration = sshApprovals.currentGeneration
+            let context = LAContext()
+            let outcome = await authenticator(String(localized: "Unlock Oppi"), context)
             logger.info("App Lock unlock outcome: \(String(describing: outcome), privacy: .public)")
+            if outcome == .success {
+                // The person just proved they own the device: a terminal
+                // sign-in within the approval window asks nothing more. Kept
+                // before the unlock applies, so a waiting link that opens a
+                // terminal finds it.
+                if !sshApprovals.storeUnlock(context, ifGeneration: approvalGeneration) { context.invalidate() }
+            } else {
+                context.invalidate()
+            }
             self.unlockFailed = outcome == .failed
             self.update { $0.finishUnlock(outcome) }
             if self.machine.isLocked {
@@ -417,7 +439,7 @@ final class AppLockService {
         guard machine.isEnabled else { return true }
         protectedAuthenticationsInFlight += 1
         defer { protectedAuthenticationsInFlight -= 1 }
-        switch await authenticator(reason) {
+        switch await authenticator(reason, LAContext()) {
         case .success:
             return true
         case .unavailable:
@@ -441,7 +463,7 @@ final class AppLockService {
         guard !requiresUnlock() else { return false }
         protectedAuthenticationsInFlight += 1
         defer { protectedAuthenticationsInFlight -= 1 }
-        switch await authenticator(reason) {
+        switch await authenticator(reason, LAContext()) {
         case .success:
             return true
         case .unavailable:
@@ -460,7 +482,7 @@ final class AppLockService {
         change(&machine)
         guard machine != before else { return }
         // A kept SSH sign-in approval ends when App Lock locks.
-        if !before.isLocked, machine.isLocked { SSHApprovalCache.shared.invalidateAll() }
+        if !before.isLocked, machine.isLocked { sshApprovals.invalidateAll() }
         onLockStateChange?()
         if let deferred = deferredUntilUnlock, !requiresUnlock() {
             deferredUntilUnlock = nil

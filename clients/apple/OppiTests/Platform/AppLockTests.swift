@@ -1,5 +1,6 @@
 import Foundation
 import LocalAuthentication
+import Synchronization
 import Testing
 import UserNotifications
 @testable import Oppi
@@ -350,15 +351,74 @@ struct AppLockServiceTests {
     }
 
     @Test func relockEndsAKeptSSHApproval() async {
-        let purpose = SSHApprovalCache.Purpose.savedPassword(account: "app-lock-test-\(UUID().uuidString)")
+        let purpose = SSHApprovalCache.Purpose.savedPassword(account: "app-lock-test")
         let harness = Harness(timeout: .immediately, outcomes: [.success])
         #expect(await harness.service.unlock())
-        SSHApprovalCache.shared.store(LAContext(), for: purpose)
-        // Unlocking and being active again keep it.
-        #expect(SSHApprovalCache.shared.context(for: purpose) != nil)
+        harness.approvals.store(LAContext(), for: purpose)
+        // Unlocking and being active again keep it, and the unlock's own approval.
+        #expect(harness.approvals.context(for: purpose) != nil)
+        #expect(harness.approvals.context(for: .appUnlock) != nil)
         harness.service.appDidEnterBackground() // Immediately: locks as the app backgrounds.
         #expect(harness.service.isLocked)
-        #expect(SSHApprovalCache.shared.context(for: purpose) == nil)
+        #expect(harness.approvals.context(for: purpose) == nil)
+        #expect(harness.approvals.context(for: .deviceKeySigning) == nil, "the unlock's approval ends with the lock")
+    }
+
+    /// Unlocking Oppi is the person's approval for a terminal sign-in: the
+    /// device key and any saved password sign in within the window without a
+    /// second Face ID, Touch ID, or passcode prompt.
+    @Test func anUnlockApprovesTheNextSSHSignIn() async throws {
+        let harness = Harness(timeout: .fiveMinutes, outcomes: [.success])
+        #expect(await harness.service.unlock())
+        let evaluated = try #require(harness.authenticator.contexts.first)
+        #expect(evaluated.interactionNotAllowed, "a kept approval can never prompt")
+
+        let prompts = PromptCount()
+        for purpose in [SSHApprovalCache.Purpose.deviceKeySigning, .savedPassword(account: "host-a")] {
+            let used = try await harness.approvals.approved(
+                for: purpose,
+                evaluate: { _ in prompts.add() },
+                use: { $0 }
+            )
+            #expect(used === evaluated, "signs with the context App Lock evaluated")
+        }
+        #expect(prompts.value == 0)
+    }
+
+    @Test func anUnlockThatDidNotSucceedApprovesNothing() async {
+        let harness = Harness(timeout: .fiveMinutes, outcomes: [.cancelled, .failed])
+        #expect(await harness.service.unlock() == false)
+        #expect(await harness.service.unlock() == false)
+        #expect(harness.approvals.context(for: .deviceKeySigning) == nil)
+    }
+
+    /// Oppi left the foreground while the unlock was still finishing. A timed
+    /// timeout does not lock yet, but the unlock keeps no approval: the next
+    /// sign-in asks.
+    @Test func anUnlockFinishingAfterOppiLeftKeepsNoApproval() async throws {
+        let harness = Harness(timeout: .fiveMinutes, outcomes: [.success])
+        harness.authenticator.suspends = true
+        let unlock = Task { await harness.service.unlock() }
+        await harness.authenticator.waitForPrompt()
+        harness.service.appDidEnterBackground()
+        harness.authenticator.resume()
+        #expect(await unlock.value)
+
+        let prompts = PromptCount()
+        _ = try await harness.approvals.approved(
+            for: .deviceKeySigning, evaluate: { _ in prompts.add() }, use: { _ in 1 }
+        )
+        #expect(prompts.value == 1)
+    }
+
+    /// App Lock locked or covered Oppi while the person was still unlocking
+    /// (`invalidateAll`): the unlock opens Oppi but approves no sign-in.
+    @Test func anUnlockSpanningACoverDoesNotApproveASignIn() async {
+        let harness = Harness(timeout: .fiveMinutes, outcomes: [.success])
+        let approvals = harness.approvals
+        harness.authenticator.duringPrompt = { approvals.invalidateAll() }
+        #expect(await harness.service.unlock())
+        #expect(harness.approvals.context(for: .deviceKeySigning) == nil)
     }
 
     @Test func launchBeforeFirstUnlockStartsLockedOnceTheStoredTimeoutIsReadable() async {
@@ -695,6 +755,8 @@ private final class TestClock {
 private final class StubAuthenticator {
     var outcomes: [DeviceOwnerAuthentication.Outcome]
     private(set) var calls = 0
+    /// The contexts App Lock handed over to evaluate, in order.
+    private(set) var contexts: [LAContext] = []
     var duringPrompt: (() -> Void)?
     var suspends = false
     private var continuation: CheckedContinuation<Void, Never>?
@@ -704,8 +766,9 @@ private final class StubAuthenticator {
         self.outcomes = outcomes
     }
 
-    func authenticate() async -> DeviceOwnerAuthentication.Outcome {
+    func authenticate(_ context: LAContext) async -> DeviceOwnerAuthentication.Outcome {
         calls += 1
+        contexts.append(context)
         duringPrompt?()
         if suspends {
             promptWaiter?.resume()
@@ -726,6 +789,12 @@ private final class StubAuthenticator {
     }
 }
 
+private final class PromptCount: Sendable {
+    private let count = Mutex(0)
+    var value: Int { count.withLock { $0 } }
+    func add() { count.withLock { $0 += 1 } }
+}
+
 @MainActor
 private final class HookCounts {
     var turnedOn = 0
@@ -737,6 +806,7 @@ private struct Harness {
     let authenticator: StubAuthenticator
     let defaults: UserDefaults
     let service: AppLockService
+    let approvals: SSHApprovalCache
     let protectedData: ProtectedDataFlag
     private let hooks: HookCounts
 
@@ -761,12 +831,15 @@ private struct Harness {
         self.hooks = hooks
         let protectedData = ProtectedDataFlag(available: protectedDataAvailable)
         self.protectedData = protectedData
+        let approvals = SSHApprovalCache()
+        self.approvals = approvals
         service = AppLockService(
             defaults: defaults,
             monotonicNow: { clock.monotonic },
             availability: { availability },
             method: { .faceID },
-            authenticator: { _ in await authenticator.authenticate() },
+            authenticator: { _, context in await authenticator.authenticate(context) },
+            sshApprovals: approvals,
             didTurnOn: { hooks.turnedOn += 1 },
             isProtectedDataAvailable: { protectedData.available }
         )

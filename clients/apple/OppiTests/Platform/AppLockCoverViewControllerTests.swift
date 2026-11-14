@@ -44,7 +44,7 @@ struct AppLockCoverViewControllerTests {
             defaults: defaults,
             availability: { availability.status },
             method: { .faceID },
-            authenticator: { _ in auth.next() },
+            authenticator: { _, _ in auth.next() },
             isProtectedDataAvailable: { true }
         )
         let cover = AppLockCoverViewController(service: service)
