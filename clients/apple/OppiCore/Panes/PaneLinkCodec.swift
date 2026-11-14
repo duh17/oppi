@@ -26,7 +26,7 @@ enum PaneLinkError: Error, Hashable, Sendable {
 /// `terminal` links are not pane links and decode to nil.
 ///
 /// Every pane link only opens and takes an optional `server=`. On the pane
-/// links new in v1 (sessions, file, files, git, panel, browser) an unknown or repeated
+/// links new in v1 (sessions, file, files, git, panel, browser, godot) an unknown or repeated
 /// parameter, user-info or a port makes the link invalid; only a file link
 /// takes a fragment, `#L<line>`. Session and thread links keep their older
 /// rule and ignore everything but `server` (a `?workspaceId=` most of all: a
@@ -51,7 +51,7 @@ enum PaneLinkCodec {
         switch name {
         case "session", "thread":
             return decodeSession(name: name, path: path, query: query)
-        case "sessions", "file", "files", "git", "panel", "browser":
+        case "sessions", "file", "files", "git", "panel", "browser", "godot":
             if let component = [
                 ("user", components.user), ("password", components.password),
                 ("port", components.port.map(String.init)),
@@ -111,6 +111,9 @@ enum PaneLinkCodec {
             guard case .success = PaneWebAddress.check(url.absoluteString) else { return nil }
             path = "browser"
             query.append(("url", url.absoluteString))
+        case .godot(let project):
+            path = "godot"
+            query.append(("project", project))
         case .local, .unsupported:
             return nil
         }
@@ -147,6 +150,7 @@ enum PaneLinkCodec {
         case "files": ["workspace", "path"]
         case "git": path.isEmpty ? ["workspace", "worktree"] : ["workspace"]
         case "browser": ["url"]
+        case "godot": ["project"]
         default: ["session", "id"]
         }
         var values: [String: String] = [:]
@@ -193,6 +197,9 @@ enum PaneLinkCodec {
             route = required("url").flatMap { value in
                 PaneWebAddress.check(value).map(PaneRoute.browser).mapError { _ in .invalidValue("url") }
             }
+        case "godot":
+            guard path.isEmpty else { return .failure(.unexpectedPath) }
+            route = required("project").map { .godot(project: $0) }
         default:
             guard path.isEmpty else { return .failure(.unexpectedPath) }
             route = required("session").flatMap { session in

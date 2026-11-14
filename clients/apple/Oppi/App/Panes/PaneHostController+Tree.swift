@@ -131,6 +131,7 @@ extension PaneHostController {
         if leaf.id == panes.routedLeafID { return PaneMinimumSize.chat }
         let route = leaf.stack.last?.route ?? .sessions(workspace: nil)
         if case .local(let token) = route, case .browser? = PaneLocalScreen(token) { return PaneMinimumSize.browser }
+        if case .local(let token) = route, case .godot? = PaneLocalScreen(token) { return PaneMinimumSize.list }
         return PaneMinimumSize.standard(for: route) ?? PaneMinimumSize.list
     }
 
@@ -632,8 +633,10 @@ extension PaneHostController {
             switch PaneLocalScreen(token) {
             case .terminal?: String(localized: "Terminal")
             case .browser?: String(localized: "Web Page")
+            case .godot?: String(localized: "Godot")
             case .launcher?, nil: String(localized: "New Pane")
             }
+        case .godot(let project): project
         default: String(localized: "Pane")
         }
     }

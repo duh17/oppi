@@ -1,0 +1,190 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oppi <noreply@oppi.invalid>
+Date: Fri, 13 Nov 2026 22:09:59 -0800
+Subject: [PATCH 2/4] iOS: libgodot create/destroy, rendering layer helpers,
+ SDL shims
+
+---
+ core/extension/libgodot.h    |  19 +++++
+ platform/ios/libgodot_ios.mm | 142 +++++++++++++++++++++++++++++++++++
+ 2 files changed, 161 insertions(+)
+ create mode 100644 platform/ios/libgodot_ios.mm
+
+diff --git a/core/extension/libgodot.h b/core/extension/libgodot.h
+index 17d0753..7d165a0 100644
+--- a/core/extension/libgodot.h
++++ b/core/extension/libgodot.h
+@@ -70,6 +70,25 @@ LIBGODOT_API GDExtensionObjectPtr libgodot_create_godot_instance(int p_argc, cha
+  */
+ LIBGODOT_API void libgodot_destroy_godot_instance(GDExtensionObjectPtr p_godot_instance);
+ 
++/**
++ * iOS only. Rendering layer helpers for a host that draws Godot into its own
++ * view. Create on the main thread after creating the instance (the driver is
++ * known then) and before `start`; the result is a +1 retained CALayer. Hand it
++ * to the display server with `DisplayServerAppleEmbedded::set_host_layer`.
++ * Start and stop wrap each iteration (the OpenGL layer binds and presents).
++ */
++LIBGODOT_API void *libgodot_ios_create_rendering_layer(const char *p_rendering_driver);
++LIBGODOT_API void libgodot_ios_initialize_rendering_layer(void *p_rendering_layer);
++LIBGODOT_API void libgodot_ios_layout_rendering_layer(void *p_rendering_layer);
++LIBGODOT_API void libgodot_ios_start_rendering_layer(void *p_rendering_layer);
++LIBGODOT_API void libgodot_ios_stop_rendering_layer(void *p_rendering_layer);
++
++/**
++ * iOS only. Called right after the OS singleton exists, before setup reads
++ * the project, so a host can add loggers that see setup's own errors.
++ */
++LIBGODOT_API void libgodot_ios_set_os_created_callback(void (*p_callback)(void));
++
+ #ifdef __cplusplus
+ }
+ #endif // __cplusplus
+diff --git a/platform/ios/libgodot_ios.mm b/platform/ios/libgodot_ios.mm
+new file mode 100644
+index 0000000..7561816
+--- /dev/null
++++ b/platform/ios/libgodot_ios.mm
+@@ -0,0 +1,142 @@
++/**************************************************************************/
++/*  libgodot_ios.mm                                                       */
++/**************************************************************************/
++/*                         This file is part of:                          */
++/*                             GODOT ENGINE                               */
++/*                        https://godotengine.org                         */
++/**************************************************************************/
++/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
++/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
++/*                                                                        */
++/* Permission is hereby granted, free of charge, to any person obtaining  */
++/* a copy of this software and associated documentation files (the        */
++/* "Software"), to deal in the Software without restriction, including    */
++/* without limitation the rights to use, copy, modify, merge, publish,    */
++/* distribute, sublicense, and/or sell copies of the Software, and to     */
++/* permit persons to whom the Software is furnished to do so, subject to  */
++/* the following conditions:                                              */
++/*                                                                        */
++/* The above copyright notice and this permission notice shall be         */
++/* included in all copies or substantial portions of the Software.        */
++/*                                                                        */
++/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
++/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
++/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
++/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
++/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
++/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
++/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
++/**************************************************************************/
++
++#include "core/extension/libgodot.h"
++
++#include "core/extension/godot_instance.h"
++#include "main/main.h"
++
++#import "display_layer_ios.h"
++#import "os_ios.h"
++
++#import <UIKit/UIKit.h>
++
++static OS_IOS *os = nullptr;
++static GodotInstance *instance = nullptr;
++static void (*os_created_callback)(void) = nullptr;
++
++void libgodot_ios_set_os_created_callback(void (*p_callback)(void)) {
++	os_created_callback = p_callback;
++}
++
++// SDL's iOS joypad code calls these; the app build gets them from SDL's UIKit
++// video backend, which a static library does not link.
++extern "C" bool SDL_IsIPad(void) {
++	return UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad;
++}
++
++extern "C" bool SDL_IsAppleTV(void) {
++	return UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomTV;
++}
++
++// An exported Xcode project generates these for its plugins; a host that
++// links the library has none. Weak, so an export's own definitions win.
++__attribute__((weak)) void godot_apple_embedded_plugins_initialize() {}
++__attribute__((weak)) void godot_apple_embedded_plugins_deinitialize() {}
++
++static CALayer<GDTDisplayLayer> *_rendering_layer(void *p_layer) {
++	ERR_FAIL_NULL_V(p_layer, nullptr);
++	id object = (__bridge id)p_layer;
++	ERR_FAIL_COND_V(![object conformsToProtocol:@protocol(GDTDisplayLayer)], nullptr);
++	return (CALayer<GDTDisplayLayer> *)object;
++}
++
++void *libgodot_ios_create_rendering_layer(const char *p_rendering_driver) {
++	ERR_FAIL_NULL_V(p_rendering_driver, nullptr);
++	ERR_FAIL_COND_V(![NSThread isMainThread], nullptr);
++	CALayer<GDTDisplayLayer> *layer = nil;
++	if (strcmp(p_rendering_driver, "metal") == 0 || strcmp(p_rendering_driver, "vulkan") == 0) {
++		layer = [GDTMetalLayer layer];
++	}
++#if defined(GLES3_ENABLED)
++	if (strcmp(p_rendering_driver, "opengl3") == 0) {
++		GODOT_CLANG_WARNING_PUSH_AND_IGNORE("-Wdeprecated-declarations")
++		layer = [GDTOpenGLLayer layer];
++		GODOT_CLANG_WARNING_POP
++	}
++#endif
++	return (__bridge_retained void *)layer;
++}
++
++void libgodot_ios_initialize_rendering_layer(void *p_layer) {
++	[_rendering_layer(p_layer) initializeDisplayLayer];
++}
++
++void libgodot_ios_layout_rendering_layer(void *p_layer) {
++	[_rendering_layer(p_layer) layoutDisplayLayer];
++}
++
++void libgodot_ios_start_rendering_layer(void *p_layer) {
++	[_rendering_layer(p_layer) startRenderDisplayLayer];
++}
++
++void libgodot_ios_stop_rendering_layer(void *p_layer) {
++	[_rendering_layer(p_layer) stopRenderDisplayLayer];
++}
++
++GDExtensionObjectPtr libgodot_create_godot_instance(int p_argc, char *p_argv[], GDExtensionInitializationFunction p_init_func) {
++	ERR_FAIL_COND_V_MSG(instance != nullptr, nullptr, "Only one Godot Instance may be created at a time.");
++
++	os = new OS_IOS();
++	if (os_created_callback) {
++		os_created_callback();
++	}
++	Error err = Main::setup(p_argv[0], p_argc - 1, &p_argv[1], false);
++	if (err != OK) {
++		delete os;
++		os = nullptr;
++		return nullptr;
++	}
++	os->initialize_modules();
++
++	instance = memnew(GodotInstance);
++	if (!instance->initialize(p_init_func)) {
++		memdelete(instance);
++		instance = nullptr;
++		Main::cleanup();
++		delete os;
++		os = nullptr;
++		return nullptr;
++	}
++	return (GDExtensionObjectPtr)instance;
++}
++
++// Clears the instance, but 4.7 cannot set up a second engine in the same
++// process (class registration is static): a host starts one per launch.
++void libgodot_destroy_godot_instance(GDExtensionObjectPtr p_godot_instance) {
++	GodotInstance *godot_instance = (GodotInstance *)p_godot_instance;
++	ERR_FAIL_COND(godot_instance != instance || instance == nullptr);
++	godot_instance->stop();
++	memdelete(godot_instance);
++	instance = nullptr;
++	Main::cleanup();
++	delete os;
++	os = nullptr;
++}

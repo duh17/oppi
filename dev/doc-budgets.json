@@ -25,6 +25,10 @@
       "words": 780,
       "reason": "Content access and current-file routes, workspace file edit sessions and drafts, launch and Quick Session intake. 676 words; headroom max(15%, 100 words)."
     },
+    "dev/architecture-client/godot.md": {
+      "words": 420,
+      "reason": "Godot pane owners, the engine artifact outside the repository, packs and the sandbox, and its tests. 318 words; headroom max(15%, 100 words)."
+    },
     "dev/architecture-server.md": {
       "words": 1700,
       "reason": "Server map and cross-cutting owners: program status, push, Live Voice and barge-in, the protocol boundary checklist, settings and route registries, and the boundary rules the architecture check links to. 1476 words; headroom max(15%, 100 words)."

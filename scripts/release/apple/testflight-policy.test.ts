@@ -112,7 +112,7 @@ describe("TestFlight release policy", () => {
         if (identity) writeFileSync(resolve(root, name, "archive-identity.json"), JSON.stringify(identity));
         return resolve(root, name);
       };
-      const want = { build: 56, commit: "c1", xcode: "Xcode 27.1", localConfig: "absent" };
+      const want = { build: 56, commit: "c1", xcode: "Xcode 27.1", localConfig: "absent", godot: "absent" };
       const older = archive("testflight-20261022-010000", want);
       const newer = archive("testflight-20261022-020000", want);
       archive("testflight-20261022-030000", { ...want, commit: "c2" });
@@ -123,6 +123,8 @@ describe("TestFlight release policy", () => {
       expect(findReusableArchive(root, { ...want, build: 57 })).toBeNull();
       expect(findReusableArchive(root, { ...want, xcode: "Xcode 27.2" })).toBeNull();
       expect(findReusableArchive(root, { ...want, localConfig: "0f3a" })).toBeNull();
+      // An archive without the game engine is not one with it.
+      expect(findReusableArchive(root, { ...want, godot: "ed1daf0bf001-5b4a1c4c213b04a1-stripped" })).toBeNull();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

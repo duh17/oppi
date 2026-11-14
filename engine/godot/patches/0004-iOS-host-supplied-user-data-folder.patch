@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oppi <noreply@oppi.invalid>
+Date: Fri, 13 Nov 2026 22:10:00 -0800
+Subject: [PATCH 4/4] iOS: host-supplied user data folder
+
+---
+ core/extension/libgodot.h                   | 3 +++
+ drivers/apple_embedded/os_apple_embedded.h  | 2 ++
+ drivers/apple_embedded/os_apple_embedded.mm | 3 +++
+ platform/ios/libgodot_ios.mm                | 4 ++++
+ 4 files changed, 12 insertions(+)
+
+diff --git a/core/extension/libgodot.h b/core/extension/libgodot.h
+index 7d165a0..5658e8e 100644
+--- a/core/extension/libgodot.h
++++ b/core/extension/libgodot.h
+@@ -89,6 +89,9 @@ LIBGODOT_API void libgodot_ios_stop_rendering_layer(void *p_rendering_layer);
+  */
+ LIBGODOT_API void libgodot_ios_set_os_created_callback(void (*p_callback)(void));
+ 
++/** iOS only. The folder user:// maps to for the next instance (UTF-8). */
++LIBGODOT_API void libgodot_ios_set_user_data_dir(const char *p_path);
++
+ #ifdef __cplusplus
+ }
+ #endif // __cplusplus
+diff --git a/drivers/apple_embedded/os_apple_embedded.h b/drivers/apple_embedded/os_apple_embedded.h
+index d801a86..d5d63a2 100644
+--- a/drivers/apple_embedded/os_apple_embedded.h
++++ b/drivers/apple_embedded/os_apple_embedded.h
+@@ -116,6 +116,8 @@ public:
+ 	virtual Error shell_open(const String &p_uri) override;
+ 
+ 	virtual String get_user_data_dir(const String &p_user_dir) const override;
++	// A host that embeds libgodot keeps each game's user:// in its own folder.
++	static inline String host_user_data_dir;
+ 
+ 	virtual String get_cache_path() const override;
+ 	virtual String get_temp_path() const override;
+diff --git a/drivers/apple_embedded/os_apple_embedded.mm b/drivers/apple_embedded/os_apple_embedded.mm
+index 3cc11ba..e9b7d96 100644
+--- a/drivers/apple_embedded/os_apple_embedded.mm
++++ b/drivers/apple_embedded/os_apple_embedded.mm
+@@ -398,6 +398,9 @@ Error OS_AppleEmbedded::shell_open(const String &p_uri) {
+ }
+ 
+ String OS_AppleEmbedded::get_user_data_dir(const String &p_user_dir) const {
++	if (!host_user_data_dir.is_empty()) {
++		return host_user_data_dir;
++	}
+ 	static String ret;
+ 	if (ret.is_empty()) {
+ 		NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+diff --git a/platform/ios/libgodot_ios.mm b/platform/ios/libgodot_ios.mm
+index 7561816..901cf90 100644
+--- a/platform/ios/libgodot_ios.mm
++++ b/platform/ios/libgodot_ios.mm
+@@ -46,6 +46,10 @@ void libgodot_ios_set_os_created_callback(void (*p_callback)(void)) {
+ 	os_created_callback = p_callback;
+ }
+ 
++void libgodot_ios_set_user_data_dir(const char *p_path) {
++	OS_AppleEmbedded::host_user_data_dir = p_path ? String::utf8(p_path) : String();
++}
++
+ // SDL's iOS joypad code calls these; the app build gets them from SDL's UIKit
+ // video backend, which a static library does not link.
+ extern "C" bool SDL_IsIPad(void) {

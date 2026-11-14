@@ -960,6 +960,10 @@ private final class ChatRoutesURLProtocol: URLProtocol {
         let workspace = "/workspaces/chat-routes-ws"
         let body: Data?
         var contentType = "application/json"
+        if let game = ChatRoutesGodot.answer(request.httpMethod ?? "GET", url.path) {
+            if game.hangs { return }
+            return respond(url, body: game.body, contentType: game.contentType)
+        }
         switch (request.httpMethod ?? "GET", url.path) {
         case ("GET", "\(workspace)/git/status"):
             body = try? JSONEncoder().encode(ChatRoutesFixture.gitStatus)
@@ -1046,17 +1050,22 @@ private final class ChatRoutesURLProtocol: URLProtocol {
         default:
             body = nil
         }
+        respond(url, body: body, contentType: contentType)
+    }
+
+    private func respond(_ url: URL, body: Data?, contentType: String) {
+        let payload = body ?? Data(#"{"error":"Not found"}"#.utf8)
         guard let http = HTTPURLResponse(
             url: url,
             statusCode: body == nil ? 404 : 200,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": contentType]
+            headerFields: ["Content-Type": contentType, "Content-Length": String(payload.count)]
         ) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return
         }
         client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: body ?? Data(#"{"error":"Not found"}"#.utf8))
+        client?.urlProtocol(self, didLoad: payload)
         client?.urlProtocolDidFinishLoading(self)
     }
 

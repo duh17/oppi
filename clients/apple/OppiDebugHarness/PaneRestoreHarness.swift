@@ -16,6 +16,8 @@ import UIKit
 /// `PANE_RESTORE_SEED=splits` saves the workspace's sessions with a Files and
 /// a Git pane split beside them, the tree a wide window leaves behind, so a
 /// compact window (the iPhone) shows it one pane at a time with the chip.
+/// `PANE_RESTORE_SEED=godot` saves the sessions with Tide Runner's Godot pane
+/// beside them, which a relaunch restores waiting for Play.
 final class PaneRestorePreviewController: PreviewRootController {
     static let serverId = "sha256:pane-restore"
     static let offlineServerId = "sha256:pane-restore-mini"
@@ -31,6 +33,9 @@ final class PaneRestorePreviewController: PreviewRootController {
             AppPreferences.ChatTopBar.orderKey: topBar.storedOrder,
             AppPreferences.ChatTopBar.shownKey: topBar.storedShown,
         ])
+        if ProcessInfo.processInfo.environment["CHAT_ROUTES_GODOT"] != nil {
+            ServerConnection._godotPlayerLinkForTesting = ChatRoutesGodot.playerLink
+        }
         let root = AppRootEnvironment.preview(coordinator: Self.makeCoordinator())
         root.navigation.app.revealPairedServerShell()
         self.root = root
@@ -52,6 +57,7 @@ final class PaneRestorePreviewController: PreviewRootController {
         switch ProcessInfo.processInfo.environment["PANE_RESTORE_SEED"] {
         case "missing": PaneTreeStore().save(Self.missingTree(), scene: scene)
         case "splits": PaneTreeStore().save(Self.splitsTree(), scene: scene)
+        case "godot": PaneTreeStore().save(Self.godotTree(), scene: scene)
         default: break
         }
         panes.connect(scene: scene)
@@ -108,6 +114,21 @@ final class PaneRestorePreviewController: PreviewRootController {
                 leaf("leaf-2", .files(workspace: workspace, path: nil)),
                 leaf("leaf-3", .git(workspace: workspace, worktree: nil)),
             ], weights: [0.4, 0.3, 0.3]),
+            focus: routed
+        ))
+    }
+
+    private static func godotTree() -> PaneLayoutArchive? {
+        let workspace = ChatRoutesFixture.workspace.id
+        let routed = ScenePanes().routedLeafID
+        guard let godot = PaneID("leaf-godot") else { return nil }
+        return PaneLayoutArchive(restorable: PaneLayout(
+            root: .split(axis: .row, children: [
+                .leaf(PaneLeaf(id: routed, name: nil, stack: [PaneStackEntry(serverId: serverId, route: .sessions(workspace: workspace))],
+                               attachedTo: nil, origin: .split)),
+                .leaf(PaneLeaf(id: godot, name: nil, stack: [PaneStackEntry(serverId: serverId, route: .godot(project: "tide-runner-3fa9c2b1"))],
+                               attachedTo: nil, origin: .split)),
+            ], weights: [0.5, 0.5]),
             focus: routed
         ))
     }

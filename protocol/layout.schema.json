@@ -87,6 +87,10 @@
           "pattern": "^[hH][tT][tT][pP][sS]?://[^/?#@]+([/?#]|$)",
           "maxLength": 2048
         },
+        "godot": {
+          "description": "A Godot project id the server discovered, like tide-3fa9c2b1.",
+          "$ref": "#/$defs/reference"
+        },
         "terminal": {
           "description": "Exactly one of rex (a block), hc (a terminal), or ssh (a saved host).",
           "type": "object",
@@ -105,15 +109,16 @@
       },
       "dependentRequired": { "line": ["file"], "session": ["panel"] },
       "oneOf": [
-        { "required": ["chat"], "not": { "anyOf": [{ "required": ["file"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["web"] }, { "required": ["terminal"] }] } },
-        { "required": ["file"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["web"] }, { "required": ["terminal"] }] } },
-        { "required": ["panel"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["git"] }, { "required": ["web"] }, { "required": ["terminal"] }] } },
-        { "required": ["git"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["panel"] }, { "required": ["web"] }, { "required": ["terminal"] }] } },
-        { "required": ["web"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["terminal"] }] } },
-        { "required": ["terminal"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["web"] }] } },
+        { "required": ["chat"], "not": { "anyOf": [{ "required": ["file"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["web"] }, { "required": ["terminal"] }, { "required": ["godot"] }] } },
+        { "required": ["file"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["web"] }, { "required": ["terminal"] }, { "required": ["godot"] }] } },
+        { "required": ["panel"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["git"] }, { "required": ["web"] }, { "required": ["terminal"] }, { "required": ["godot"] }] } },
+        { "required": ["git"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["panel"] }, { "required": ["web"] }, { "required": ["terminal"] }, { "required": ["godot"] }] } },
+        { "required": ["web"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["terminal"] }, { "required": ["godot"] }] } },
+        { "required": ["terminal"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["web"] }, { "required": ["godot"] }] } },
+        { "required": ["godot"], "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["web"] }, { "required": ["terminal"] }] } },
         {
           "description": "A leaf of a kind a newer Oppi knows: no known content field, at least one other field.",
-          "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["web"] }, { "required": ["terminal"] }] },
+          "not": { "anyOf": [{ "required": ["chat"] }, { "required": ["file"] }, { "required": ["panel"] }, { "required": ["git"] }, { "required": ["web"] }, { "required": ["terminal"] }, { "required": ["godot"] }] },
           "allOf": [{ "not": { "propertyNames": { "enum": ["pane", "name", "line", "session"] } } }]
         }
       ]

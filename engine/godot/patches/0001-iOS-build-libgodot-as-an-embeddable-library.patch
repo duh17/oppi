@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oppi <noreply@oppi.invalid>
+Date: Fri, 13 Nov 2026 22:09:59 -0800
+Subject: [PATCH 1/4] iOS: build libgodot as an embeddable library
+
+---
+ drivers/apple_embedded/SCsub | 24 +++++++++++++-----------
+ platform/ios/SCsub           |  1 +
+ platform/ios/detect.py       |  2 +-
+ 3 files changed, 15 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/apple_embedded/SCsub b/drivers/apple_embedded/SCsub
+index 59ade51..6fa4deb 100644
+--- a/drivers/apple_embedded/SCsub
++++ b/drivers/apple_embedded/SCsub
+@@ -12,16 +12,18 @@ env_apple_embedded = env.Clone()
+ # Enable module support
+ env_apple_embedded.Append(CCFLAGS=["-fmodules", "-fcxx-modules"])
+ 
+-# Configure Swift builder
+-apple_platform = env["APPLE_PLATFORM"]
+-sdk_path = env["APPLE_SDK_PATH"]
+-current_path = Dir(".").abspath
+-bridging_header_filename = "bridging_header_apple_embedded.h"
+-swift_files = Glob("*.swift")
+-swift_file_names = list(map(lambda f: f.name, swift_files))
+-setup_swift_builder(
+-    env_apple_embedded, apple_platform, sdk_path, current_path, bridging_header_filename, swift_file_names
+-)
++# app.swift is the standalone app's @main entry point; an embeddable library
++# (library_type != executable) leaves it, and with it all Swift, out.
++swift_files = Glob("*.swift") if env["library_type"] == "executable" else []
++if swift_files:
++    apple_platform = env["APPLE_PLATFORM"]
++    sdk_path = env["APPLE_SDK_PATH"]
++    current_path = Dir(".").abspath
++    bridging_header_filename = "bridging_header_apple_embedded.h"
++    swift_file_names = list(map(lambda f: f.name, swift_files))
++    setup_swift_builder(
++        env_apple_embedded, apple_platform, sdk_path, current_path, bridging_header_filename, swift_file_names
++    )
+ 
+ # Use bundled Vulkan headers
+ vulkan_dir = "#thirdparty/vulkan"
+@@ -32,4 +34,4 @@ env_apple_embedded.Prepend(CPPPATH=["#thirdparty/metal-cpp"])
+ 
+ # Driver source files
+ env_apple_embedded.add_source_files(env_apple_embedded.drivers_sources, "*.mm")
+-env_apple_embedded.add_source_files(env_apple_embedded.drivers_sources, "*.swift")
++env_apple_embedded.add_source_files(env_apple_embedded.drivers_sources, swift_files)
+diff --git a/platform/ios/SCsub b/platform/ios/SCsub
+index 92f6c17..1a4614e 100644
+--- a/platform/ios/SCsub
++++ b/platform/ios/SCsub
+@@ -12,6 +12,7 @@ ios_lib = [
+     "display_layer_ios.mm",
+     "display_server_ios.mm",
+     "godot_view_ios.mm",
++    "libgodot_ios.mm",
+     "main_ios.mm",
+     "os_ios.mm",
+ ]
+diff --git a/platform/ios/detect.py b/platform/ios/detect.py
+index b7da135..fce34f6 100644
+--- a/platform/ios/detect.py
++++ b/platform/ios/detect.py
+@@ -51,7 +51,7 @@ def get_flags():
+         "target": "template_debug",
+         "use_volk": False,
+         "metal": True,
+-        "supported": ["metal", "mono"],
++        "supported": ["library", "metal", "mono"],
+         "builtin_pcre2_with_jit": False,
+     }
+ 

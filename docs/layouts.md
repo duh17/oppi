@@ -60,6 +60,7 @@ Each leaf has a `pane` id and exactly one of these content fields:
 | `git` | `"status"` or a commit sha | Git status, or one commit |
 | `web` | An `http` or `https` URL | The page |
 | `terminal` | `{ "rex": block }`, `{ "hc": terminal }` or `{ "ssh": saved host }` | A terminal |
+| `godot` | A Godot project id from the server, like `tide-3fa9c2b1` (see [Godot](godot.md)) | The Godot pane on that project (with the Godot Pane experiment on) |
 
 Limits: at most 8 leaves, splits at most 3 deep, a title of at most 60 characters, a pane name of at most 24, and 16 KiB for the whole document. Use relative paths: an absolute path works only on the machine it names. A `web` URL must not name loopback (`localhost`, `127.0.0.1`, `::1`), because loopback is a different machine on the phone than on the Mac.
 

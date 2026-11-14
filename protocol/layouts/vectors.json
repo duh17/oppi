@@ -676,6 +676,106 @@
       "warnings": []
     },
     {
+      "name": "a Godot pane beside the chat",
+      "input": {
+        "v": 1,
+        "title": "Play",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "play",
+              "godot": "tide-3fa9c2b1"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "valid",
+      "layout": {
+        "v": 1,
+        "title": "Play",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "play",
+              "godot": "tide-3fa9c2b1"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "warnings": []
+    },
+    {
+      "name": "a Godot project id with a space",
+      "input": {
+        "v": 1,
+        "title": "Play",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "play",
+              "godot": "my game"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "value",
+          "path": "root.children[1].godot"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "a Godot project and a web page in one leaf",
+      "input": {
+        "v": 1,
+        "title": "Play",
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "pane": "chat",
+              "chat": "self"
+            },
+            {
+              "pane": "play",
+              "godot": "tide-3fa9c2b1",
+              "web": "https://example.com/"
+            }
+          ]
+        },
+        "focus": "chat"
+      },
+      "expect": "invalid",
+      "problems": [
+        {
+          "code": "contentCount",
+          "path": "root.children[1]"
+        }
+      ],
+      "warnings": []
+    },
+    {
       "name": "a web page on a public host and port",
       "input": {
         "v": 1,

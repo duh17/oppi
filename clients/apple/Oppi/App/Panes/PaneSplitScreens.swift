@@ -2,9 +2,10 @@ import UIKit
 
 /// The screens a split leaf shows that have no link (`PaneRoute.local`), so a
 /// relaunch does not bring them back: the launcher a fresh split opens, a
-/// folder terminal, and a web page still waiting for its address (it becomes
-/// a `.browser` entry once it loads one). The token carries the workspace
-/// each one works in.
+/// folder terminal, a web page still waiting for its address (it becomes
+/// a `.browser` entry once it loads one), and the server's game projects
+/// (a pick becomes a `.godot` entry). The token carries the workspace each
+/// one works in.
 enum PaneLocalScreen: Equatable {
     /// Sessions, Files, Terminal and Web Page as large choices.
     case launcher(workspaceId: String?)
@@ -12,6 +13,8 @@ enum PaneLocalScreen: Equatable {
     case terminal(workspaceId: String)
     /// A browser with its address field up and no page yet.
     case browser
+    /// The Godot projects the server discovered, to pick one to play.
+    case godot
 
     init?(_ token: PaneLocalToken) {
         let parts = token.raw.split(separator: "/", maxSplits: 1).map(String.init)
@@ -20,6 +23,7 @@ enum PaneLocalScreen: Equatable {
         case ("launcher", 2): self = .launcher(workspaceId: parts[1])
         case ("terminal", 2): self = .terminal(workspaceId: parts[1])
         case ("browser", 1): self = .browser
+        case ("godot", 1): self = .godot
         default: return nil
         }
     }
@@ -30,6 +34,7 @@ enum PaneLocalScreen: Equatable {
         case .launcher(nil): PaneLocalToken(raw: "launcher")
         case .terminal(let workspaceId): PaneLocalToken(raw: "terminal/\(workspaceId)")
         case .browser: PaneLocalToken(raw: "browser")
+        case .godot: PaneLocalToken(raw: "godot")
         }
     }
 
@@ -37,7 +42,7 @@ enum PaneLocalScreen: Equatable {
         switch self {
         case .launcher(let workspaceId): workspaceId
         case .terminal(let workspaceId): workspaceId
-        case .browser: nil
+        case .browser, .godot: nil
         }
     }
 }
@@ -64,6 +69,10 @@ enum PaneSplitScreens {
         if case .browser(let url) = entry.route {
             return browser(url, serverId: entry.serverId, paused: restored, root: root, actions: actions)
         }
+        if case .godot(let project) = entry.route {
+            // States its own server and project; a restored game waits for Play.
+            return GodotPaneViewController(serverId: entry.serverId, project: project, restored: restored, root: root)
+        }
         if case .local(let token) = entry.route, let screen = PaneLocalScreen(token) {
             switch screen {
             case .launcher(let workspaceId):
@@ -72,6 +81,8 @@ enum PaneSplitScreens {
                 return terminal(serverId: entry.serverId, workspaceId: workspaceId, root: root)
             case .browser:
                 return browser(nil, serverId: entry.serverId, paused: false, root: root, actions: actions)
+            case .godot:
+                return GodotProjectListViewController(serverId: entry.serverId, root: root, choose: actions.show)
             }
         }
         guard let root else { return PaneLauncherViewController(serverId: entry.serverId, workspaceId: nil, root: nil, choose: actions.show) }

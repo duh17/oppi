@@ -298,6 +298,7 @@ final class PaneLeafStateViewController: UIViewController {
         case .sessions: String(localized: "Sessions")
         case .git, .commit: String(localized: "Git")
         case .browser: String(localized: "Web Page")
+        case .godot: String(localized: "Godot")
         case .local, .unsupported: String(localized: "Pane")
         }
     }

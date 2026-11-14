@@ -1,8 +1,9 @@
 import UIKit
 
-/// What a fresh split shows: the workspace's Sessions, Files, a Terminal or
-/// a Web Page, as large choices. Picking one replaces the launcher in its
-/// leaf; Web Page opens the browser with its address field up. New Session
+/// What a fresh split shows: the workspace's Sessions, Files, a Terminal,
+/// a Web Page or Godot (with the Godot Pane experiment on), as large
+/// choices. Picking one replaces the launcher in its leaf; Web Page opens
+/// the browser with its address field up, Godot the server's Godot projects. New Session
 /// waits for two live chats per server, so a new chat never takes the place
 /// of the one already open. Files and Terminal need a workspace.
 ///
@@ -11,7 +12,12 @@ import UIKit
 /// wide enough for two lays them out two by two.
 final class PaneLauncherViewController: UIViewController {
     enum Choice: CaseIterable {
-        case sessions, files, terminal, web
+        case sessions, files, terminal, web, godot
+
+        /// The choices this device offers now: Godot only with its experiment on.
+        static var offered: [Self] {
+            allCases.filter { $0 != .godot || GodotPaneAvailability.isOn }
+        }
     }
 
     /// The narrowest a choice gets in a two-column grid.
@@ -81,7 +87,7 @@ final class PaneLauncherViewController: UIViewController {
             grid.widthAnchor.constraint(lessThanOrEqualTo: frame.widthAnchor, constant: -2 * Self.margin),
             preferredWidth,
         ])
-        buttons = Choice.allCases.map(button(for:))
+        buttons = Choice.offered.map(button(for:))
         arrange(columns: 1)
     }
 
@@ -170,6 +176,8 @@ final class PaneLauncherViewController: UIViewController {
             return workspaceId.map { PaneStackEntry(serverId: serverId, route: .files(workspace: $0, path: nil)) }
         case .terminal:
             return workspaceId.map { PaneStackEntry(serverId: serverId, route: .local(PaneLocalScreen.terminal(workspaceId: $0).token)) }
+        case .godot:
+            return PaneStackEntry(serverId: serverId, route: .local(PaneLocalScreen.godot.token))
         }
     }
 }
@@ -181,6 +189,7 @@ private extension PaneLauncherViewController.Choice {
         case .files: String(localized: "Files")
         case .terminal: String(localized: "Terminal")
         case .web: String(localized: "Web Page")
+        case .godot: String(localized: "Godot")
         }
     }
 
@@ -190,6 +199,7 @@ private extension PaneLauncherViewController.Choice {
         case .files: String(localized: "Browse this workspace's files")
         case .terminal: String(localized: "A shell in this workspace's folder")
         case .web: String(localized: "A website, such as a dev server")
+        case .godot: String(localized: "A Godot game from this server")
         }
     }
 
@@ -199,6 +209,7 @@ private extension PaneLauncherViewController.Choice {
         case .files: "folder"
         case .terminal: "apple.terminal"
         case .web: "safari"
+        case .godot: "gamecontroller"
         }
     }
 }

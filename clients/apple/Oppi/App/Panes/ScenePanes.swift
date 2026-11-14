@@ -441,7 +441,7 @@ final class ScenePanes {
             return coordinator?.connection(for: entry.serverId)?.sessionStore.session(id: id)?.workspaceId
         case .local(let token):
             return PaneLocalScreen(token)?.workspaceId
-        case .thread, .file(.host, _, _), .browser, .unsupported:
+        case .thread, .file(.host, _, _), .browser, .godot, .unsupported:
             return nil
         }
     }

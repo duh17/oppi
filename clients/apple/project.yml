@@ -166,6 +166,9 @@ targets:
         INFOPLIST_OTHER_PREPROCESSOR_FLAGS:
           - "-include"
           - "$(SRCROOT)/scripts/OPPIGitCommitGuard.h"
+        # The Godot pane's engine, when installed (Vendor/OppiGodot/OppiGodot.xcconfig,
+        # included by Base.xcconfig); empty otherwise.
+        OTHER_LDFLAGS: "$(inherited) $(OPPI_GODOT_LDFLAGS)"
       configs:
         Release:
           # Debug harnesses, screenshot previews, and their fixtures never ship:
@@ -772,6 +775,12 @@ targets:
     sources:
       - path: OppiUITests
         type: group
+      # The Godot pane's sample build (engine/godot/sample, exported), served by the fixture server.
+      - path: OppiTests/Fixtures/godot-sample.pck
+        buildPhase: resources
+      # The same game exported with a changed project setting: a build that needs a relaunch.
+      - path: OppiTests/Fixtures/godot-sample-settings.pck
+        buildPhase: resources
       - path: QAVerificationSupport
         type: group
     dependencies:

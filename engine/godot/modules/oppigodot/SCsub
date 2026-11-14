@@ -1,0 +1,10 @@
+#!/usr/bin/env python
+from misc.utility.scons_hints import *
+
+Import("env")
+Import("env_modules")
+
+env_oppigodot = env_modules.Clone()
+env_oppigodot.Prepend(CPPPATH=["include", "#thirdparty/metal-cpp"])
+env_oppigodot.Append(CCFLAGS=["-fmodules", "-fcxx-modules"])
+env_oppigodot.add_source_files(env.modules_sources, "*.mm")

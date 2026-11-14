@@ -1938,6 +1938,12 @@ final class ServerConnection {
         }
     }
 
+    /// A new live socket's access for `role`: its renewer, and the token it opens with.
+    func streamAccess(role: String) -> (renewer: StreamAuthRenewer?, token: @Sendable () async throws -> String) {
+        let session = httpAuthSession, fallback = credentials?.effectiveAccessToken ?? ""
+        return (.ifSupported(by: serverCapabilities, session: session, streamRole: role), { try await session?.currentAccessToken() ?? fallback })
+    }
+
     func makeDictationStreamClient() -> DictationStreamClient? {
         guard let selection = endpointSelection,
               let credentials else { return nil }

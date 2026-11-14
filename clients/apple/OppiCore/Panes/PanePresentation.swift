@@ -146,6 +146,8 @@ enum PaneMinimumSize {
     static let attached = CGSize(width: 390, height: 280)
     /// A web page: the narrowest width sites lay out for.
     static let browser = CGSize(width: 320, height: 320)
+    /// A game: the smallest a game's viewport is worth drawing at.
+    static let godot = CGSize(width: 320, height: 240)
 
     /// The minimum for a linkable route; nil for `.local`, which only the app can size.
     static func standard(for route: PaneRoute) -> CGSize? {
@@ -154,6 +156,7 @@ enum PaneMinimumSize {
         case .sessions, .files, .git, .panel, .unsupported: list
         case .file, .commit: document
         case .browser: browser
+        case .godot: godot
         case .local: nil
         }
     }

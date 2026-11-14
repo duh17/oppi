@@ -2,9 +2,9 @@ import UIKit
 
 /// Settings > Experiments: features on trial, saved on this device, each off by
 /// default but Split Panes, which ships on and is listed only on a wide window
-/// (a compact one never splits). Split Panes, Rex, Herdr, and Calendar Events are
-/// declared in `SettingsCatalog` (`experimentSplitPanes`, `experimentRex`,
-/// `experimentHerdr`, `experimentCalendarEvents`) and read and
+/// (a compact one never splits). Split Panes, Rex, Herdr, Calendar Events and Game
+/// Pane are declared in `SettingsCatalog` (`experimentSplitPanes`, `experimentRex`,
+/// `experimentHerdr`, `experimentCalendarEvents`, `experimentGodotPane`) and read and
 /// written through the app's device `SettingsStore`, so a switch saves as it flips
 /// and the feature follows without a relaunch. Live Voice still writes its own
 /// default key here, as it did before the settings kit; it is the one row this page
@@ -15,9 +15,9 @@ import UIKit
 /// access, its section offers Calendars (which ones Schedules shows); refused, it
 /// offers the system Settings page where access is given back.
 final class SettingsExperimentsViewController: ListScreenController<SettingsExperimentsViewController.Section, SettingsExperimentsViewController.Item> {
-    enum Section: Hashable, Sendable { case splitPanes, liveVoice, rex, herdr, calendarEvents }
+    enum Section: Hashable, Sendable { case splitPanes, liveVoice, rex, herdr, calendarEvents, godotPane }
     enum Item: Hashable, Sendable {
-        case splitPanes, liveVoice, rex, herdr, calendarEvents
+        case splitPanes, liveVoice, rex, herdr, calendarEvents, godotPane
         /// Which calendars Schedules shows; with access only.
         case calendars
         /// Access was refused: opens Oppi's page in the system Settings.
@@ -76,6 +76,7 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
             AppPreferenceStore.Experiments.rexEnabled,
             AppPreferenceStore.Experiments.herdrEnabled,
             AppPreferenceStore.Experiments.calendarEventsEnabled,
+            PlatformCapabilities.godotPane && AppPreferenceStore.Experiments.godotPaneEnabled,
         ].count { $0 }
     }
 
@@ -97,6 +98,13 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
         let splitSection: [ListSection<Section, Item>] = AdaptiveWidth.isWide(traitCollection) ? [
             ListSection(.splitPanes, footer: splitPanes.copy.footer, items: settingRows(splitPanes, .splitPanes) { .failure($0) }),
         ] : []
+        let godotPane = SettingsCatalog.experimentGodotPane
+        // Builds without the game engine, and the Mac, have no Godot pane (`PlatformCapabilities.godotPane`).
+        let godotPaneSection: [ListSection<Section, Item>] = PlatformCapabilities.godotPane ? [ListSection(
+            .godotPane,
+            footer: godotPane.copy.footer,
+            items: settingRows(godotPane, .godotPane) { .failure($0) }
+        )] : []
         return splitSection + [
             ListSection(
                 .liveVoice,
@@ -118,7 +126,7 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
                 footer: calendarFooter,
                 items: settingRows(calendarEvents, .calendarEvents) { .failure($0) } + calendarRows
             ),
-        ]
+        ] + godotPaneSection
     }
 
     /// Calendars with access; the way back to access when it was refused.
@@ -144,6 +152,7 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
         case .rex: settingInputs(SettingsCatalog.experimentRex)
         case .herdr: settingInputs(SettingsCatalog.experimentHerdr)
         case .calendarEvents: settingInputs(SettingsCatalog.experimentCalendarEvents)
+        case .godotPane: settingInputs(SettingsCatalog.experimentGodotPane)
         case .calendars: AnyHashable([
             settingInputs(SettingsCatalog.calendarEventsHiddenCalendars), AnyHashable(deviceCalendar.calendars().map(\.id)),
         ])
@@ -191,7 +200,7 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         switch item {
-        case .splitPanes, .liveVoice, .rex, .herdr, .calendarEvents: super.dequeue(item, at: indexPath)
+        case .splitPanes, .liveVoice, .rex, .herdr, .calendarEvents, .godotPane: super.dequeue(item, at: indexPath)
         case .calendars: collectionView.dequeueConfiguredReusableCell(using: calendarsRow, for: indexPath, item: item)
         case .calendarAccess: collectionView.dequeueConfiguredReusableCell(using: calendarAccessRow, for: indexPath, item: item)
         case .failure(let id): dequeueSettingFailure(id, at: indexPath)
@@ -218,6 +227,8 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
             settingToggleRow(cell, SettingsCatalog.experimentHerdr)
         case .calendarEvents:
             settingToggleRow(cell, SettingsCatalog.experimentCalendarEvents)
+        case .godotPane:
+            settingToggleRow(cell, SettingsCatalog.experimentGodotPane)
         case .liveVoice:
             toggleRow(cell, title: String(localized: "Live Voice"), isOn: isOn(AppPreferences.Experiments.liveVoiceKey), identifier: "settings.experiments.liveVoice") { [weak self] in
                 self?.set(AppPreferences.Experiments.liveVoiceKey, $0)

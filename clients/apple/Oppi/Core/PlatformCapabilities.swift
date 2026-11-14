@@ -46,6 +46,15 @@ enum PlatformCapabilities {
     /// sizes the window: the iPhone, and iPad windowing keeps its own limits.
     static let minimumWindowSize: CGSize? = isMacCatalyst ? CGSize(width: 700, height: 500) : nil
 
+    /// The Godot pane: only in a build that links its engine
+    /// (`scripts/install-oppi-godot.sh`). The engine has device and simulator
+    /// slices only, so the Mac's build never has it.
+    #if canImport(OppiGodot)
+    static let godotPane = true
+    #else
+    static let godotPane = false
+    #endif
+
     /// The most pane leaves a window keeps live at once; more go to overflow
     /// (`PanePresentation.resolve`). The iPad mini holds four within its
     /// memory budget; on the Mac the window's width binds first.

@@ -55,6 +55,8 @@ enum PaneRoute: Hashable, Sendable {
     /// `PaneWebAddress` rules; a page the person opened directly may be any
     /// http or https page, and one with no link is not restored.
     case browser(URL)
+    /// A Godot game the server discovered, by its project id (Godot pane).
+    case godot(project: String)
     case local(PaneLocalToken)
     /// A leaf kind from a newer layout file: kept and restored, never written.
     case unsupported(kind: String, raw: [String: JSONValue])

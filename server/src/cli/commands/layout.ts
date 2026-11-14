@@ -242,6 +242,8 @@ function describeLeaf(validLeaf: LayoutLeaf): [string, string] {
       const [kind, target] = Object.entries(leaf.terminal as Record<string, string>)[0] ?? [];
       return ["Terminal", `${kind} ${target}`];
     }
+    case "godot":
+      return ["Godot", `project ${String(leaf.godot)}`];
     case undefined:
       return ["Unknown", "needs a newer Oppi"];
   }

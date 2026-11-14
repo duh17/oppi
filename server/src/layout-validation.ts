@@ -39,7 +39,7 @@ const PANE_ID = /^[a-z0-9-]{1,24}$/;
 const REFERENCE = /^[\x21-\x7e]{1,128}$/;
 const GIT_SHA = /^[0-9a-f]{7,64}$/;
 const TERMINAL_KINDS = ["rex", "hc", "ssh"] as const;
-const CONTENT_FIELDS = ["chat", "file", "panel", "git", "web", "terminal"] as const;
+const CONTENT_FIELDS = ["chat", "file", "panel", "git", "web", "terminal", "godot"] as const;
 type ContentField = (typeof CONTENT_FIELDS)[number];
 
 const DOCUMENT_FIELDS = new Set(["$schema", "v", "title", "root", "focus"]);
@@ -52,6 +52,7 @@ const LEAF_FIELDS: Record<ContentField, readonly string[]> = {
   git: [],
   web: [],
   terminal: [],
+  godot: [],
 };
 /** Fields that only mean something next to one content field. */
 const MODIFIER_OF: Record<string, ContentField> = { line: "file", session: "panel" };
@@ -457,6 +458,12 @@ class Checker {
         return this.web(value, at);
       case "terminal":
         return this.terminal(value, at);
+      case "godot":
+        // The id the server's discovery names (`GET /godot`); whether it still exists is
+        // decided when the pane opens, as for a session.
+        if (typeof value === "string" && REFERENCE.test(value)) return { godot: value };
+        this.problem("value", at, 'a Godot project id, like "tide-3fa9c2b1"');
+        return undefined;
     }
   }
 

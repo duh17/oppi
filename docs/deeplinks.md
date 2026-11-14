@@ -11,6 +11,7 @@ oppi://sessions?workspace=<workspace-id>
 oppi://file?workspace=<workspace-id>&path=src/app.ts#L12
 oppi://files?workspace=<workspace-id>&path=src
 oppi://browser?url=https%3A%2F%2Fexample.com%2Fdocs
+oppi://godot?project=<project-id>
 oppi://terminal/rex?session=<rex-session-id>&block=<rex-block-id>
 ```
 
@@ -33,21 +34,22 @@ xcrun simctl openurl booted 'oppi://workspace?path=/Users/example/workspace/oppi
 | `oppi://files?workspace=<id>[&path=<folder>]` | `workspace` | Opens the File Browser at the workspace root or a folder |
 | `oppi://panel?session=<id>&id=<surface id>` | `session` and `id` | Opens the session's chat with that extension surface in a [panel pane](extension-native-ui.md#panel-panes) beside it (full screen on a narrow window) |
 | `oppi://browser?url=<percent-encoded URL>` | `url`: http or https, at most 2 KiB, with no user name or password, and not a loopback host (`localhost`, `127.0.0.0/8`, `::1`), which names a different machine on each device | Opens the page as a tapped web link does (see [Links in assistant output](#links-in-assistant-output)). Escape the page's own `?`, `&`, and `#` |
+| `oppi://godot?project=<id>` | `project`: a Godot project the server found in one of its workspaces | With the Godot Pane experiment on (Settings › Experiments), plays the project's newest build in a pane beside the focused one (full screen on a narrow window); a project with no exported build says so. Oppi plays one game per launch: another game waits until Oppi is reopened |
 | `oppi://terminal/rex?session=<id>&block=<id>` | Rex `session_id` and `block_id` (`session:…`, `block:…`, as `rex split --json` prints them; the colons may be percent-encoded) | Opens that Rex pane in the SSH terminal, on the saved SSH host for the server the link came from (the chat it was tapped in, else the active server) |
 
 Invite and workspace links accept `oppi://workspace?...` and `oppi:///workspace?...`. Session links use `oppi://session/<id>` and thread links `oppi://thread/<id>`, with the same ID validation and server lookup (a `?workspaceId=` query is ignored). Use lowercase parameter names; route names are case-insensitive.
 
 ## Pane links
 
-Session, thread, `sessions`, `file`, `files`, `panel`, and `browser` links are pane links: each names one place a pane can show, and all of them accept an optional `server=<fingerprint>` (`sha256:<hash>` or `<hash>`). With `server`, the link opens on that server. Without it, a link tapped in a chat opens on that chat's server, and one from outside Oppi uses the server that has the session (session and thread links) or the active server.
+Session, thread, `sessions`, `file`, `files`, `panel`, `browser`, and `game` links are pane links: each names one place a pane can show, and all of them accept an optional `server=<fingerprint>` (`sha256:<hash>` or `<hash>`). With `server`, the link opens on that server. Without it, a link tapped in a chat opens on that chat's server, and one from outside Oppi uses the server that has the session (session and thread links) or the active server.
 
 - A session or thread link takes exactly one ID after its route; any other path, or `server` given twice, makes it invalid. It ignores every other parameter.
-- On `sessions`, `file`, `files`, `panel`, and `browser` links, an unknown or repeated parameter, a fragment other than a file's `#L<line>`, user-info, or a port makes the link invalid. A `file` link names exactly one of `workspace`, `host=1`, or `session`, and only a workspace file takes `worktree`.
+- On `sessions`, `file`, `files`, `panel`, `browser`, and `game` links, an unknown or repeated parameter, a fragment other than a file's `#L<line>`, user-info, or a port makes the link invalid. A `file` link names exactly one of `workspace`, `host=1`, or `session`, and only a workspace file takes `worktree`.
 - Oppi says when a link is invalid and opens nothing.
 - A session, `sessions`, `file`, `files`, or `panel` link whose `server` this device has not paired opens a pane that says the server was removed, with **Choose…** (All Sessions) and **Close Pane**.
 - On a `sessions`, `file`, or `files` link, a workspace that no longer exists opens the same way, and a server that cannot be reached shows **Retry** until the place opens. A session link to a session no server has, or to a server that cannot be reached, behaves as described under Routes. A `panel` link whose session is not on this device yet opens a pane that waits for it, then offers **Open Chat**. A pane link to locked content opens a pane that asks you to unlock only when you tap it.
 
-The app saves its panes in the same form, so a relaunch shows the screens you left (on a wide window, with the chat's Files, Git, or extension panel beside it), each resolving on its own: a session, file, or server that is gone, or a server that cannot be reached, shows that state in its pane. A web page comes back paused and loads when you tap it; a page that no `browser` link can name, such as one on `localhost`, does not come back.
+The app saves its panes in the same form, so a relaunch shows the screens you left (on a wide window, with the chat's Files, Git, or extension panel beside it), each resolving on its own: a session, file, or server that is gone, or a server that cannot be reached, shows that state in its pane. A web page comes back paused and loads when you tap it; a page that no `browser` link can name, such as one on `localhost`, does not come back. A game comes back paused and starts when you tap Play.
 
 If a link needs a server that is not reachable yet, Oppi says so once, keeps the request, and opens it when Oppi returns to the foreground and the server connects. A newer link replaces the kept one, and a kept link is dropped after 10 minutes or when its server is removed.
 

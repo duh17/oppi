@@ -24,6 +24,7 @@ struct PaneLinkCodecTests {
             let line: Int?
             let sha: String?
             let url: String?
+            let project: String?
         }
 
         struct Failure: Decodable {
@@ -93,6 +94,7 @@ struct PaneLinkCodecTests {
         case "commit": return .commit(workspace: try field("workspace", value.workspace), sha: try field("sha", value.sha))
         case "panel": return .panel(session: try field("session", value.session), id: try field("id", value.id))
         case "browser": return .browser(try #require(URL(string: try field("url", value.url))))
+        case "godot": return .godot(project: try field("project", value.project))
         default: throw VectorError.unknown("route kind \(value.kind)")
         }
     }

@@ -249,6 +249,7 @@ enum AppPreferenceStore {
         static let rexKey = "\(AppIdentifiers.subsystem).experiments.rex"
         static let herdrKey = "\(AppIdentifiers.subsystem).experiments.herdr"
         static let calendarEventsKey = "\(AppIdentifiers.subsystem).experiments.calendarEvents"
+        static let godotPaneKey = "\(AppIdentifiers.subsystem).experiments.godotPane"
         /// The calendars Schedules leaves out, by EventKit identifier: a calendar added
         /// later shows until it is hidden.
         static let calendarEventsHiddenKey = "\(AppIdentifiers.subsystem).experiments.calendarEvents.hidden"
@@ -270,6 +271,9 @@ enum AppPreferenceStore {
         /// Split Panes: a wide window's split leaves and every way to make one.
         /// While off, a window is its chat and that chat's panel (`ScenePanes`).
         static var splitPanesEnabled: Bool { flag(splitPanesKey, default: splitPanesDefault) }
+
+        /// Godot Pane: the launcher's Godot choice and Godot games in panes.
+        static var godotPaneEnabled: Bool { flag(godotPaneKey) }
 
         /// Nothing stored means the default; anything stored reads as a bool, so a
         /// launch argument's `-key YES` (a test's switch) counts too.

@@ -9,11 +9,18 @@ import Foundation
 // (`PaneLeafStateViewController`), which turns into the content when it can.
 // A panel opens beside its session's chat (`ScenePanes.openPanel`). A
 // browser link opens its page as a tapped web link does: needing no server,
-// it never switches one.
+// it never switches one. A Godot link opens beside the focused pane on a wide
+// window, else in the primary stack, and only with the Godot Pane experiment on.
 extension AppOpener {
     func performPane(_ link: PaneLink, sourceServerID: String?, generation: UInt64) async -> AppOpenOutcome {
         if case .browser(let url) = link.route {
             presentWebLink(url)
+            return .finished
+        }
+        if case .godot = link.route, !GodotPaneAvailability.isOn {
+            toast(PlatformCapabilities.godotPane
+                ? String(localized: "Turn on Godot Pane in Settings › Experiments to open Godot games")
+                : String(localized: "This build of Oppi can’t play Godot games"))
             return .finished
         }
         guard let serverId = link.server ?? sourceServerID ?? windowServerId else {
@@ -62,6 +69,10 @@ extension AppOpener {
                 previousServerId: previousServerId,
                 generation: generation
             )
+        }
+        if case .godot = link.route, let window = navigation.window,
+           PaneHostController.focused(in: window)?.openGodot(entry) == true {
+            return .finished
         }
         switch PaneEntries.element(for: entry, coordinator: coordinator) {
         case .workspace(let target)?:

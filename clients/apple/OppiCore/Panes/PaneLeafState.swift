@@ -119,6 +119,8 @@ enum PaneLeafState: Hashable, Sendable {
         case .session, .thread, .panel: .session
         case .file: .file
         case .sessions, .files, .git, .commit: .workspace
+        // A Godot leaf states its own project (`GodotPaneViewController`).
+        case .godot: .workspace
         // A browser leaf shows its page whatever its server's state, so it
         // never asks; nor do screens with no content to miss.
         case .browser, .local, .unsupported: .session

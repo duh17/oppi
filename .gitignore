@@ -10,6 +10,9 @@ clients/apple/.build
 clients/apple/Vendor/TailscaleKit/
 # Locally built, pinned static terminal engine.
 clients/apple/Vendor/GhosttyVt/
+# The Godot pane's engine, built locally by engine/godot/build.sh and
+# installed by clients/apple/scripts/install-oppi-godot.sh; never committed.
+clients/apple/Vendor/OppiGodot/
 clients/apple/docs/
 clients/apple/*.xcodeproj/
 # Xcode Cloud must discover the configured project before post-clone scripts run.
@@ -55,6 +58,7 @@ scripts/*
 clients/apple/scripts/*
 !clients/apple/scripts/build-tailscalekit.sh
 !clients/apple/scripts/build-ghostty-vt.sh
+!clients/apple/scripts/install-oppi-godot.sh
 !clients/apple/scripts/stamp-git-commit.sh
 !clients/apple/scripts/OPPIGitCommitGuard.h
 !clients/apple/scripts/ensure-prebuilt-frameworks.sh

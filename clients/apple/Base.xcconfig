@@ -1,3 +1,6 @@
 // Base build configuration — committed to git.
+// The Godot pane's engine, when this machine built it (scripts/install-oppi-godot.sh
+// writes this file; without it the app builds with no game engine).
+#include? "Vendor/OppiGodot/OppiGodot.xcconfig"
 // Pull in local overrides if present (optional include — no error if missing).
 #include? "Local.xcconfig"

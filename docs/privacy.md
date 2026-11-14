@@ -13,6 +13,7 @@ You choose the server, workspace, model providers, speech-to-text service, and t
 - A selected photo or file is read by the app and uploaded to the paired server with the session turn. The app does not collect photos or files in the background.
 - Dictation uses Apple's on-device speech by default. If you choose **Server** in Settings, dictation audio goes through the paired server to its configured speech-to-text backend.
 - Calendar Events (an experiment, off by default) reads this device's calendar to show events in Schedules. Events stay on the device; an event's details go to your server only when you schedule an agent for it. See [Calendar](#calendar).
+- Godot Pane (an experiment, off by default) downloads a Godot game's build from your paired server and runs it on this device. The game cannot read Oppi's files, reach the network, or use the microphone; it keeps its saved data in a folder of its own.
 - Live Voice (an experiment, off by default) streams your voice during a call through the paired server to the voice backend the server sets: speech services the server operator chooses, or xAI's Grok Voice, which also receives the text of what the agent says aloud. See [Live Voice](#live-voice).
 - Model, speech, and voice providers can receive the content needed for the operation you choose. Their privacy policies and retention rules apply.
 - Before your content first goes to one of those services, the app names it, says what is sent, and asks; nothing is sent until you tap **Allow**. See [AI sharing consent](#ai-sharing-consent).

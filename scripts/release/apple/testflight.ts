@@ -741,9 +741,11 @@ async function cmdSubmitBetaReview(buildNumber: string): Promise<void> {
  * and entitlement checks pass, only when the checkout was clean and unchanged from before the
  * archive started to after verification, so the commit names the exact source (and matches
  * the commit stamp-git-commit.sh bakes into Info.plist).
- * `localConfig` covers the one ignored build input, the optional Local.xcconfig.
+ * `localConfig` covers one ignored build input, the optional Local.xcconfig, and `godot`
+ * the other, the Godot pane's engine: its BUILD_ID when the archive links it, else "absent"
+ * (`--with-godot`).
  */
-export type ArchiveIdentity = { build: number; commit: string; xcode: string; localConfig: string };
+export type ArchiveIdentity = { build: number; commit: string; xcode: string; localConfig: string; godot: string };
 
 const ARCHIVE_IDENTITY = "archive-identity.json";
 
@@ -768,6 +770,7 @@ export function findReusableArchive(buildRoot: string, want: ArchiveIdentity): s
         have.commit === want.commit &&
         have.xcode === want.xcode &&
         have.localConfig === want.localConfig &&
+        have.godot === want.godot &&
         fs.existsSync(path.join(dir, "Oppi.xcarchive"))
       ) {
         return dir;
@@ -785,6 +788,32 @@ function localConfigDigest(): string {
   return fs.existsSync(file) ? crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex") : "absent";
 }
 
+/**
+ * The Godot pane's engine in an archive is a per-release decision: it links only with
+ * `--with-godot`, and then only the build engine/godot/build.sh made from this checkout's
+ * inputs. Without the flag the engine is removed from Vendor/, so a build machine that has it
+ * installed for development still archives without it. Vendor/ changes under the lock that
+ * sim-pool builds in this checkout take too. Returns the engine's BUILD_ID, or "absent".
+ */
+function prepareGodotEngine(withGodot: boolean): string {
+  const install = spawnSync(path.join(APPLE_DIR, "scripts", "ensure-prebuilt-frameworks.sh"), {
+    encoding: "utf8",
+    env: { ...process.env, OPPI_GODOT: withGodot ? "" : "off" },
+  });
+  if (install.status !== 0) die(`ensure-prebuilt-frameworks.sh failed:\n${install.stderr || install.stdout}`);
+  const engine = godotEngineIdentity();
+  if (withGodot && engine === "absent") {
+    die("--with-godot needs the engine built for this checkout: run engine/godot/build.sh first.");
+  }
+  return engine;
+}
+
+/** The installed engine's BUILD_ID, or "absent". */
+function godotEngineIdentity(): string {
+  const file = path.join(APPLE_DIR, "Vendor", "OppiGodot", "BUILD_ID");
+  return fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim() : "absent";
+}
+
 /** HEAD's commit when the checkout has no changes at all (untracked files included), else null. */
 function cleanSourceCommit(): string | null {
   const status = spawnSync("git", ["-C", REPO_ROOT, "status", "--porcelain"], { encoding: "utf8" });
@@ -797,8 +826,9 @@ async function cmdBuild(opts: {
   bump: boolean;
   buildOnly: boolean;
   explicitBuild: string;
+  withGodot: boolean;
 }): Promise<void> {
-  const { bump, buildOnly, explicitBuild } = opts;
+  const { bump, buildOnly, explicitBuild, withGodot } = opts;
 
   // Validate credentials for App Store Connect upload/export signing.
   const { issuerId: credentialIssuerId, keyPath: credentialKeyPath } = creds();
@@ -828,6 +858,7 @@ async function cmdBuild(opts: {
   }
 
   const { keyPath, keyId, issuerId } = creds();
+  const godotEngine = prepareGodotEngine(withGodot);
   const sourceCommit = newBuild === currentBuild ? cleanSourceCommit() : null;
   const reusable =
     !buildOnly && sourceCommit
@@ -836,6 +867,7 @@ async function cmdBuild(opts: {
           commit: sourceCommit,
           xcode: xcodeVersion,
           localConfig: localConfigDigest(),
+          godot: godotEngine,
         })
       : null;
   if (reusable) {
@@ -854,6 +886,7 @@ async function cmdBuild(opts: {
   console.log(xcodeVersion);
   console.log(`DEVELOPER_DIR: ${developerDir}`);
   console.log(`Build number: ${currentBuild} -> ${newBuild}`);
+  console.log(`Godot engine: ${godotEngine}`);
   console.log(`Build dir:    ${buildDir}`);
   console.log();
 
@@ -976,12 +1009,18 @@ async function cmdBuild(opts: {
   // Record what this verified archive is, if the source was clean after the bump and
   // xcodegen and did not move while archiving (a landing can fast-forward the checkout), so a
   // later upload of the same build from the same commit can reuse it.
-  if (archiveSourceCommit && cleanSourceCommit() === archiveSourceCommit && localConfigDigest() === archiveLocalConfig) {
+  if (
+    archiveSourceCommit &&
+    cleanSourceCommit() === archiveSourceCommit &&
+    localConfigDigest() === archiveLocalConfig &&
+    godotEngineIdentity() === godotEngine
+  ) {
     const identity: ArchiveIdentity = {
       build: newBuild,
       commit: archiveSourceCommit,
       xcode: xcodeVersion,
       localConfig: archiveLocalConfig,
+      godot: godotEngine,
     };
     fs.writeFileSync(path.join(buildDir, ARCHIVE_IDENTITY), `${JSON.stringify(identity, null, 2)}\n`);
   }
@@ -1568,6 +1607,7 @@ Build commands:
   bun testflight.ts --bump                            Bump build number, archive, upload
   bun testflight.ts --build-number 44                 Explicit build number, archive, upload
   bun testflight.ts --build-number 44 --build-only    Archive + export IPA only (no upload)
+  bun testflight.ts --bump --with-godot               Include the Godot pane's engine (engine/godot/build.sh)
 
 Distribution commands:
   bun testflight.ts sync-internal <build> [file] [locale]        Sync brief What to Test + Internal Testers only
@@ -1688,6 +1728,7 @@ async function main(): Promise<void> {
   let bump = false;
   let buildOnly = false;
   let explicitBuild = "";
+  let withGodot = false;
 
   let i = 0;
   while (i < args.length) {
@@ -1698,6 +1739,10 @@ async function main(): Promise<void> {
         break;
       case "--build-only":
         buildOnly = true;
+        i++;
+        break;
+      case "--with-godot":
+        withGodot = true;
         i++;
         break;
       case "--build-number":
@@ -1722,6 +1767,7 @@ async function main(): Promise<void> {
     bump,
     buildOnly,
     explicitBuild,
+    withGodot,
   });
 }
 

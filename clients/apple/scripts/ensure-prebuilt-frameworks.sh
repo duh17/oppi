@@ -9,8 +9,10 @@
 #
 # Each build script exits immediately when Vendor/ matches its pin, copies from
 # the shared host cache when it can, and builds from source only on a cache
-# miss. Concurrent runs in one checkout share this lock so one run never
-# replaces Vendor/ while another is installing it.
+# miss. The Godot pane's engine is optional and never built here: it installs
+# only from a cache `engine/godot/build.sh` filled (install-oppi-godot.sh;
+# OPPI_GODOT=off removes it). Concurrent runs in one checkout share this lock
+# so one run never replaces Vendor/ while another is installing it.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,4 +25,4 @@ if ! /usr/bin/lockf -k -s -t 0 "$LOCK" /usr/bin/true; then
   echo "Waiting for $LOCK (another run is preparing Vendor/)..." >&2
 fi
 exec /usr/bin/lockf -k "$LOCK" \
-  /bin/bash -c '"$1/build-ghostty-vt.sh" && "$1/build-tailscalekit.sh"' _ "$SCRIPT_DIR"
+  /bin/bash -c '"$1/build-ghostty-vt.sh" && "$1/build-tailscalekit.sh" && "$1/install-oppi-godot.sh"' _ "$SCRIPT_DIR"

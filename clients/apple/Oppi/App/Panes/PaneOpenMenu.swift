@@ -72,15 +72,15 @@ struct PaneOpenChoices: Equatable {
     var targets: [Target]
 
     /// Whether a pane showing `leaf` takes a file in place of what it shows.
-    /// A web page or a terminal is a live surface of its own, not somewhere
-    /// a file goes.
+    /// A web page, a terminal or a game is a live surface of its own, not
+    /// somewhere a file goes.
     static func takesFile(_ leaf: PaneLeaf) -> Bool {
         switch leaf.stack.last?.route {
-        case .browser?: return false
+        case .browser?, .godot?: return false
         case .local(let token)?:
             switch PaneLocalScreen(token) {
             case .terminal?, .browser?: return false
-            case .launcher?, nil: return true
+            case .launcher?, .godot?, nil: return true
             }
         default: return true
         }

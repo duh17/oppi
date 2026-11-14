@@ -1,0 +1,2 @@
+# SCons compiles the module's config.py in place.
+__pycache__/

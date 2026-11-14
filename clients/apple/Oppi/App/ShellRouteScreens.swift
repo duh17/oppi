@@ -71,6 +71,11 @@ enum ShellRouteScreens {
         case .serverSkillFile(let target):
             return ServerSkillFileViewController(target: target, root: root)
         case .paneEntry(let entry):
+            // A game states its own server and project (a Godot link on a
+            // compact window, or with no room for a pane beside).
+            if case .godot(let project) = entry.route {
+                return GodotPaneViewController(serverId: entry.serverId, project: project, restored: false, root: root)
+            }
             return PaneLeafStateViewController(entry: entry, root: root)
         }
     }

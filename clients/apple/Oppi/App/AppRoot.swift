@@ -34,6 +34,8 @@ struct AppRootEnvironment {
     let opener: AppOpener
     /// This device's calendar events for Schedules (the Calendar Events experiment).
     let deviceCalendar: DeviceCalendar
+    /// The app's one game engine (the Godot Pane experiment); one per process.
+    let godot: GodotEngineHost
 
     /// The app passes its own opener, the one `AppDelegate` wires to the
     /// notification delegate.
@@ -47,7 +49,8 @@ struct AppRootEnvironment {
         sessionRows: SessionRowDisplayStore,
         liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter(),
         opener: AppOpener,
-        deviceCalendar: DeviceCalendar = DeviceCalendar()
+        deviceCalendar: DeviceCalendar = DeviceCalendar(),
+        godot: GodotEngineHost = .shared
     ) {
         self.coordinator = coordinator
         self.navigation = navigation
@@ -60,6 +63,7 @@ struct AppRootEnvironment {
         self.liveVoiceCalls = liveVoiceCalls
         self.opener = opener
         self.deviceCalendar = deviceCalendar
+        self.godot = godot
     }
 
     /// Previews and tests: the root owns an opener built for these services.
@@ -107,6 +111,7 @@ extension AppRootEnvironment: Equatable {
             && lhs.liveVoiceCalls === rhs.liveVoiceCalls
             && lhs.opener === rhs.opener
             && lhs.deviceCalendar === rhs.deviceCalendar
+            && lhs.godot === rhs.godot
     }
 }
 

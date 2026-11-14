@@ -10,7 +10,8 @@ The Apple clients render and control server-owned and terminal-owned Pi sessions
 | [Media, files, and sharing](architecture-client/media-files.md) | Content access, current-file routes, file editing, Quick Session intake |
 | [Renderer change map](architecture-client/change-map.md) | Adding a document renderer; cleanup targets |
 | [Where to look in code](architecture-client/code-map.md) | File pointers by area |
-| [Durable conversation stream](architecture-server/durable-conversation-stream.md#apple-client) | The client replica of a durable conversation |
+| [Godot](architecture-client/godot.md) | Engine, sandbox |
+| [Durable conversation stream](architecture-server/durable-conversation-stream.md#apple-client) | Client replica |
 
 `ServerConnection` is the facade and cross-store workflow owner; each state machine inside it has its own owner:
 

@@ -300,6 +300,19 @@ enum SettingsCatalog {
         )
     )
 
+    /// Godot Pane: Godot games from the server in a pane beside the chat. Nothing
+    /// runs until a Godot pane opens; the engine then runs for the app's launch.
+    static let experimentGodotPane = SettingDeclaration<Bool>(
+        id: "settings.experiments.godotPane",
+        key: AppPreferenceStore.Experiments.godotPaneKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.Experiments.enabledDefault,
+        copy: SettingCopy(
+            title: String(localized: "Godot Pane"),
+            footer: String(localized: "Adds Godot to a new pane’s choices: Godot projects in the server’s workspaces, played beside the chat. A new export reaches the pane by itself. Oppi plays one game per launch.")
+        )
+    )
+
     /// The calendars whose events Schedules leaves out. Stored as the hidden ones, so a
     /// calendar added later shows until it is hidden.
     static let calendarEventsHiddenCalendars = SettingDeclaration<[String]>(

@@ -27,12 +27,13 @@ enum OppiTestLaunch {
     /// turns both off, so a value left in the simulator's app container by another
     /// run cannot decide the answer.
     enum Experiment: String, Sendable {
-        case rex, herdr
+        case rex, herdr, godotPane
 
         var key: String {
             switch self {
             case .rex: "dev.chenda.Oppi.experiments.rex"
             case .herdr: "dev.chenda.Oppi.experiments.herdr"
+            case .godotPane: "dev.chenda.Oppi.experiments.godotPane"
             }
         }
     }

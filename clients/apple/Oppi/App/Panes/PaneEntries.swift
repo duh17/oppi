@@ -71,6 +71,13 @@ enum PaneEntries {
         coordinator.connection(for: serverId)
     }
 
+    /// A Godot leaf's (or its project list's) link to its own server; nil
+    /// until that server is connected.
+    static func godotLink(_ serverId: String, coordinator: ConnectionCoordinator) -> GodotLinkClient? {
+        guard let connection = connection(serverId, coordinator), let api = connection.apiClient else { return nil }
+        return GodotLinkClient(api: api) { [weak connection] project in connection?.makeGodotPlayerLink(project: project) }
+    }
+
     /// Workspace `id` on `serverId`, and the host that server is reached at
     /// (a terminal leaf's SSH host).
     static func workspace(
@@ -119,7 +126,7 @@ enum PaneEntries {
                 scope: .workspace(workspaceId: workspaceId, worktreeId: nil),
                 path: path ?? ""
             ))
-        case .sessions(nil), .thread, .git, .commit, .panel, .browser, .local, .unsupported:
+        case .sessions(nil), .thread, .git, .commit, .panel, .browser, .godot, .local, .unsupported:
             return nil
         }
     }

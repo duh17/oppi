@@ -72,6 +72,8 @@ export type LayoutKnownLeaf = LayoutLeafBase &
     | { git: string }
     | { web: string }
     | { terminal: LayoutTerminal }
+    /** A Godot project id (`GET /godot`). */
+    | { godot: string }
   );
 
 /**

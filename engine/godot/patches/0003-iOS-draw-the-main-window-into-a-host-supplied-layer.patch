@@ -1,0 +1,154 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oppi <noreply@oppi.invalid>
+Date: Fri, 13 Nov 2026 22:09:59 -0800
+Subject: [PATCH 3/4] iOS: draw the main window into a host-supplied layer
+
+A host app that embeds libgodot supplies the main window's rendering layer. Inside such a host the game opens no URL (shell_open) and has no pasteboard, and does not keep the screen awake: those belong to the host.
+---
+ .../display_server_apple_embedded.h           |  6 ++++
+ .../display_server_apple_embedded.mm          | 36 +++++++++++++++----
+ drivers/apple_embedded/os_apple_embedded.mm   |  4 +++
+ 3 files changed, 40 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/apple_embedded/display_server_apple_embedded.h b/drivers/apple_embedded/display_server_apple_embedded.h
+index f8efc73..fbba7b3 100644
+--- a/drivers/apple_embedded/display_server_apple_embedded.h
++++ b/drivers/apple_embedded/display_server_apple_embedded.h
+@@ -107,6 +107,12 @@ public:
+ 
+ 	static DisplayServerAppleEmbedded *get_singleton();
+ 
++	// A host app that embeds libgodot supplies the main window's rendering
++	// layer (a CALayer from libgodot_ios_create_rendering_layer) before the
++	// display server is created. Without one, Godot's own view provides it.
++	static void set_host_layer(void *p_layer);
++	static bool has_host_layer();
++
+ 	static Vector<String> get_rendering_drivers_func();
+ 
+ 	// MARK: - Events
+diff --git a/drivers/apple_embedded/display_server_apple_embedded.mm b/drivers/apple_embedded/display_server_apple_embedded.mm
+index fc116e4..efb4edc 100644
+--- a/drivers/apple_embedded/display_server_apple_embedded.mm
++++ b/drivers/apple_embedded/display_server_apple_embedded.mm
+@@ -48,10 +48,24 @@
+ 
+ static const float kDisplayServerIOSAcceleration = 1.f;
+ 
++static CALayer *host_layer = nil;
++
+ DisplayServerAppleEmbedded *DisplayServerAppleEmbedded::get_singleton() {
+ 	return (DisplayServerAppleEmbedded *)DisplayServer::get_singleton();
+ }
+ 
++void DisplayServerAppleEmbedded::set_host_layer(void *p_layer) {
++	host_layer = (__bridge CALayer *)p_layer;
++}
++
++bool DisplayServerAppleEmbedded::has_host_layer() {
++	return host_layer != nil;
++}
++
++static CALayer *_main_rendering_layer(NSString *p_driver) {
++	return host_layer ?: [GDTAppDelegateService.viewController.godotView initializeRenderingForDriver:p_driver];
++}
++
+ DisplayServerAppleEmbedded::DisplayServerAppleEmbedded(const String &p_rendering_driver, DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::VSyncMode p_vsync_mode, uint32_t p_flags, const Vector2i *p_position, const Vector2i &p_resolution, int p_screen, DisplayServerEnums::Context p_context, int64_t p_parent_window, Error &r_error) {
+ 	KeyMappingAppleEmbedded::initialize();
+ 
+@@ -86,7 +100,7 @@ DisplayServerAppleEmbedded::DisplayServerAppleEmbedded(const String &p_rendering
+ 
+ #if defined(VULKAN_ENABLED)
+ 	if (rendering_driver == "vulkan") {
+-		layer = [GDTAppDelegateService.viewController.godotView initializeRenderingForDriver:@"vulkan"];
++		layer = _main_rendering_layer(@"vulkan");
+ 		if (!layer) {
+ 			ERR_FAIL_MSG("Failed to create iOS Vulkan rendering layer.");
+ 		}
+@@ -97,7 +111,7 @@ DisplayServerAppleEmbedded::DisplayServerAppleEmbedded(const String &p_rendering
+ #ifdef METAL_ENABLED
+ 	if (rendering_driver == "metal") {
+ 		if (@available(iOS 14.0, *)) {
+-			layer = [GDTAppDelegateService.viewController.godotView initializeRenderingForDriver:@"metal"];
++			layer = _main_rendering_layer(@"metal");
+ 			wpd.metal.layer = (__bridge CA::MetalLayer *)layer;
+ 			rendering_context = memnew(RenderingContextDriverMetal);
+ 		} else {
+@@ -158,7 +172,7 @@ DisplayServerAppleEmbedded::DisplayServerAppleEmbedded(const String &p_rendering
+ 
+ #if defined(GLES3_ENABLED)
+ 	if (rendering_driver == "opengl3") {
+-		CALayer *layer = [GDTAppDelegateService.viewController.godotView initializeRenderingForDriver:@"opengl3"];
++		CALayer *layer = _main_rendering_layer(@"opengl3");
+ 
+ 		if (!layer) {
+ 			ERR_FAIL_MSG("Failed to create iOS OpenGLES rendering layer.");
+@@ -482,7 +496,7 @@ void DisplayServerAppleEmbedded::emit_system_theme_changed() {
+ Rect2i DisplayServerAppleEmbedded::get_display_safe_area() const {
+ 	UIEdgeInsets insets = UIEdgeInsetsZero;
+ 	UIView *view = GDTAppDelegateService.viewController.godotView;
+-	if ([view respondsToSelector:@selector(safeAreaInsets)]) {
++	if (!host_layer && [view respondsToSelector:@selector(safeAreaInsets)]) {
+ 		insets = [view safeAreaInsets];
+ 	}
+ 	float scale = screen_get_scale();
+@@ -512,7 +526,7 @@ Size2i DisplayServerAppleEmbedded::screen_get_size(int p_screen) const {
+ 	int screen_count = get_screen_count();
+ 	ERR_FAIL_INDEX_V(p_screen, screen_count, Size2i());
+ 
+-	CALayer *layer = GDTAppDelegateService.viewController.godotView.renderingLayer;
++	CALayer *layer = host_layer ?: GDTAppDelegateService.viewController.godotView.renderingLayer;
+ 
+ 	if (!layer) {
+ 		return Size2i();
+@@ -615,7 +629,7 @@ void DisplayServerAppleEmbedded::window_set_size(const Size2i p_size, DisplaySer
+ }
+ 
+ Size2i DisplayServerAppleEmbedded::window_get_size(DisplayServerEnums::WindowID p_window) const {
+-	CGRect viewBounds = GDTAppDelegateService.viewController.view.bounds;
++	CGRect viewBounds = host_layer ? host_layer.bounds : GDTAppDelegateService.viewController.view.bounds;
+ 	return Size2i(viewBounds.size.width, viewBounds.size.height) * screen_get_max_scale();
+ }
+ 
+@@ -786,16 +800,26 @@ bool DisplayServerAppleEmbedded::has_hardware_keyboard() const {
+ }
+ 
+ void DisplayServerAppleEmbedded::clipboard_set(const String &p_text) {
++	// A game inside a host app has no pasteboard.
++	if (host_layer) {
++		return;
++	}
+ 	[UIPasteboard generalPasteboard].string = [NSString stringWithUTF8String:p_text.utf8().get_data()];
+ }
+ 
+ String DisplayServerAppleEmbedded::clipboard_get() const {
++	if (host_layer) {
++		return String();
++	}
+ 	NSString *text = [UIPasteboard generalPasteboard].string;
+ 
+ 	return String::utf8([text UTF8String]);
+ }
+ 
+ void DisplayServerAppleEmbedded::screen_set_keep_on(bool p_enable) {
++	if (host_layer) {
++		return;
++	}
+ 	[UIApplication sharedApplication].idleTimerDisabled = p_enable;
+ }
+ 
+diff --git a/drivers/apple_embedded/os_apple_embedded.mm b/drivers/apple_embedded/os_apple_embedded.mm
+index 84e4821..3cc11ba 100644
+--- a/drivers/apple_embedded/os_apple_embedded.mm
++++ b/drivers/apple_embedded/os_apple_embedded.mm
+@@ -379,6 +379,10 @@ String OS_AppleEmbedded::get_model_name() const {
+ }
+ 
+ Error OS_AppleEmbedded::shell_open(const String &p_uri) {
++	// A game inside a host app opens nothing outside it.
++	if (DisplayServerAppleEmbedded::has_host_layer()) {
++		return ERR_UNAVAILABLE;
++	}
+ 	NSString *urlPath = [[NSString alloc] initWithUTF8String:p_uri.utf8().get_data()];
+ 	NSURL *url = [NSURL URLWithString:urlPath];
+ 
