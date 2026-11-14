@@ -343,6 +343,19 @@ const profile = () => process.env.OPPI_SIM_DEVICE_PROFILE ?? "iphone";
 const selectorsOf = (flags: string[]) => flags.filter((flag) => flag.startsWith("-only-testing:")).map((flag) => flag.slice("-only-testing:".length));
 
 /**
+ * A test log with each Swift Testing run line (`◇ Test run started.`, `✔ Test run with N tests ...`)
+ * starting a line of its own. xcodebuild merges the test host's stdout, where Swift Testing prints,
+ * with its stderr, where os_log and NSLog print, by chunk rather than by line, so a run line can land
+ * behind another writer's unfinished line:
+ * `... Couldn't open .../Managed Pr✔ Test run with 5127 tests in 550 suites passed after 229.603 seconds.`
+ * Every reader of a run line goes through this. The zero-width space (U+200B) an all-skipped run
+ * prints before its result stays with the result.
+ */
+export function untangledRunLines(log: string): string {
+  return log.replace(/([^\n\u200b])(\u200b*[◇✔✘] Test run (?:started\.|with ))/g, "$1\n$2");
+}
+
+/**
  * Tests the shard's xcodebuild ran, from its log: the Swift Testing result line (unit tests), or
  * XCTest's `Executed N tests` line or, when the run died before printing it, the count of finished
  * test cases (UI tests). A run that finished some cases is a failure, not an infrastructure failure.
@@ -351,7 +364,7 @@ export function executedTests(summary: string | undefined): number {
   if (!summary || !existsSync(summary)) return 0;
   const log = JSON.parse(readFileSync(summary, "utf8")).log_path as string | undefined;
   if (!log || !existsSync(log)) return 0;
-  const text = readFileSync(log, "utf8");
+  const text = untangledRunLines(readFileSync(log, "utf8"));
   const swift = [...text.matchAll(/^[✔✘] Test run with ([0-9]+) tests? in [0-9]+ suites? (?:passed|failed) after/gm)].at(-1);
   const xctest = [...text.matchAll(/^Test Suite '(?:All tests|Selected tests)' (?:passed|failed) at .+\r?\n[ \t]+Executed ([0-9]+) tests?/gm)].at(-1);
   const cases = [...text.matchAll(/^Test Case '.+' (?:passed|failed) \(/gm)].length;

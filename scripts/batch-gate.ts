@@ -80,7 +80,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { loadQuarantine, runExecutedTestIds, runFailures, unmatchedSelectors, UNIT_RUN_RECORD, type QuarantineEntry } from "../clients/apple/scripts/unit-shards";
+import { loadQuarantine, runExecutedTestIds, runFailures, unmatchedSelectors, UNIT_RUN_RECORD, untangledRunLines, type QuarantineEntry } from "../clients/apple/scripts/unit-shards";
 import { resolveDeveloperDir } from "../clients/apple/scripts/xcode-toolchain";
 import {
   budgetVerdict, failedTestsInOutput, failedXCTestCases, flakesAtHead, hiddenFlakesLine, lastArtifact, loadBudgets, logOfSummary, passedXCTestCases,
@@ -496,7 +496,7 @@ export function executedTests(output: string): number {
   if (!summary || !existsSync(summary)) return 0;
   const log = JSON.parse(readFileSync(summary, "utf8")).log_path as string | undefined;
   if (!log || !existsSync(log)) return 0;
-  const text = readFileSync(log, "utf8");
+  const text = untangledRunLines(readFileSync(log, "utf8"));
   // Not `\u200b*`-tolerant on purpose: a run whose tests were all skipped prints its result line behind
   // a zero-width space, and for a gate an all-skipped run is zero tests run.
   const swift = [...text.matchAll(/^[\u2714\u2718] Test run with ([0-9]+) tests?/gm)].at(-1);

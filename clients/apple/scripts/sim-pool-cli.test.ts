@@ -1509,6 +1509,24 @@ sleep 30
     expect(result.calls).not.toMatch(/simctl (shutdown|erase)/);
   });
 
+  test("a run summary printed behind the test host's unfinished stderr line still decides the run", () => {
+    // What a release gate hit: xcodebuild merges the host's stdout and stderr by chunk, so the
+    // summary of a 5,127-test run followed half an os_log line, and the run read as zero tests.
+    const stderrHead = "2026-11-14 12:24:21.110089-0800 Oppi[89210:124240232] [cfprefsd] WebContent[2506] Couldn't open /var/run/Library/Managed Pr";
+    const stderrTail = "eferences/com.apple.Accessibility.plist due to No such file or directory\n";
+    const passed = runCompletionFixture(swiftTestPrelude + stderrHead + swiftPassed + stderrTail, { afterLog: "exit 0" });
+    expect(passed.run.status).toBe(0);
+    expect(passed.run.stderr).not.toContain("zero tests ran");
+    const failed = runCompletionFixture(swiftTestPrelude + stderrHead + swiftFailed + stderrTail, { afterLog: "exit 0" });
+    expect(failed.run.status).toBe(65);
+    expect(failed.run.stderr).toContain(`the run failed with xcodebuild's exit 0: ${swiftFailed.trim()}`);
+    // An xcodebuild that lingers after such a summary is still a finished run, not a hang to retry.
+    const lingering = runCompletionFixture(swiftTestPrelude + stderrHead + swiftPassed + stderrTail);
+    expect(lingering.run.status).toBe(0);
+    expect(lingering.attempts).toHaveLength(1);
+    expect(lingering.summary.test_completion).toMatchObject({ outcome: "passed", tests: 9 });
+  });
+
   test("a passing run fails when any -only-testing selector matched no test the run lists, whatever else matched", () => {
     const log = swiftTestPrelude + swiftPassed;
     const unit = (...selectors: string[]) => ["-scheme", "OppiUnitTests", "test", ...selectors.map((selector) => `-only-testing:${selector}`)];

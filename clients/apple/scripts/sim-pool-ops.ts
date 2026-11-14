@@ -70,7 +70,7 @@ import {
   type StopResult,
   type Supervised,
 } from "./sim-pool-supervise";
-import { unmatchedSelectors, xcresultTestIds } from "./unit-shards";
+import { unmatchedSelectors, untangledRunLines, xcresultTestIds } from "./unit-shards";
 import {
   forgetPersistedWindow,
   frontBoardStorePath,
@@ -1332,7 +1332,8 @@ type TestCompletion = {
  * prelude; an XCTest-only bundle (UI/E2E lanes) must print exactly one
  * top-level suite result with at least one test, and nothing test-related after it.
  */
-function finishedTests(argv: string[], logText: string): TestCompletion | undefined {
+function finishedTests(argv: string[], rawLog: string): TestCompletion | undefined {
+  const logText = untangledRunLines(rawLog);
   const project = extractFlagValue("-project", argv);
   if (
     (project != null && resolve(project) !== resolve("Oppi.xcodeproj")) ||
@@ -1415,7 +1416,7 @@ function finishedSwiftTesting(logText: string): TestCompletion | undefined {
  * xcodebuild exits 0. Sim-pool never reports such a run as a pass.
  */
 export function failedSwiftTestingRun(logText: string): string | undefined {
-  return [...logText.matchAll(/^✘ Test run with [1-9][0-9]* tests? in [1-9][0-9]* suites? failed after [0-9]+(?:\.[0-9]+)? seconds(?: with [1-9][0-9]* issues?)?\.\r?$/gm)]
+  return [...untangledRunLines(logText).matchAll(/^✘ Test run with [1-9][0-9]* tests? in [1-9][0-9]* suites? failed after [0-9]+(?:\.[0-9]+)? seconds(?: with [1-9][0-9]* issues?)?\.\r?$/gm)]
     .at(-1)?.[0].trim();
 }
 
@@ -1453,7 +1454,8 @@ export function withUnitDiagnosticsOff(callerArgv: string[], testArgv: string[])
  * when no Swift Testing result with tests follows it. A run whose tests were all skipped prints its
  * result line behind a zero-width space (U+200B), and those tests still count: the run found them.
  */
-export function zeroTestSummary(logText: string): string | undefined {
+export function zeroTestSummary(rawLog: string): string | undefined {
+  const logText = untangledRunLines(rawLog);
   const xctest = [...logText.matchAll(/^Test Suite '(?:All tests|Selected tests)' (?:passed|failed) at .+\r?\n[ \t]+(Executed ([0-9]+) tests?.*?)\r?$/gm)];
   const swift = [...logText.matchAll(/^\u200b*[✔✘] Test run with ([0-9]+) tests?\b.*?\r?$/gm)];
   if (xctest.length === 0 && swift.length === 0) return undefined;
