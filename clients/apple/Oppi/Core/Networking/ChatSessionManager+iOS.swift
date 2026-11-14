@@ -113,7 +113,7 @@ extension ChatSessionManager {
         through entryId: String,
         connection: ServerConnection,
         sessionStore: SessionStore
-    ) async -> Bool {
+    ) async -> OlderHistoryJump {
         bindIOSRuntime(connection: connection, sessionStore: sessionStore)
         return await loadOlderHistory(through: entryId)
     }

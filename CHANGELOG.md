@@ -164,6 +164,7 @@ On iPad, a window splits into panes, so chats, files, terminals, and web pages s
 - **Client:** The session list shows after you close What's New.
 - **Client:** A tool row's image that failed to load during a reconnect loads once the connection is back, instead of staying "Image unavailable".
 - **Client:** The chat's Outline shows the text of a message sent with attachments instead of its markup.
+- **Client:** In a very long chat, choosing an early entry in the Outline jumps to it. The jump used to stop after loading about 10,000 older entries and do nothing; it now loads as far back as the entry is, and says so when earlier messages could not be loaded.
 - **Client:** The in-app Tailscale connection is built with Go 1.27.3 and updated Go modules that fix published security advisories.
 - **Client:** Message, Dictate, Now Playing, and Files in the session list's bottom bar no longer react to a tap meant for a chat pushed over the list.
 - **Client:** Now Playing and an extension drawer no longer open at the same time, and an open extension drawer takes touches and scrolls at once.

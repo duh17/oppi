@@ -283,6 +283,23 @@ struct ConversationStreamSessionTests {
         await harness.finish()
     }
 
+    /// A jump asked for before the attach's snapshot cannot page yet: it is a failure worth
+    /// another try, not a missing entry. Once the whole conversation is held, it is.
+    @Test func outlineJumpBeforeTheSnapshotFailsAndAfterItKnowsTheEntryIsGone() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        #expect(await harness.manager.loadOlderHistory(through: "8") == .failed)
+        #expect(harness.olderRequests.isEmpty)
+
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [
+            Wire.user(10, "newer"),
+        ], docs: [:])))
+        #expect(await harness.waitForRows(["10"]))
+        #expect(await harness.manager.loadOlderHistory(through: "8") == .notInHistory)
+        await harness.finish()
+    }
+
     /// A page the server refuses is a failure the chat reports; running out of older
     /// history is not. Both return false, so the chat tells them apart by the flag.
     @Test func refusedOlderPageIsAFailureButNoOlderHistoryIsNot() async throws {
@@ -846,7 +863,7 @@ struct ConversationStreamSessionTests {
         #expect(reducer.items.map(\.id) == ["1"] + liveIDs)
         #expect(reducer.items.contains { if case .thinking(liveIDs[0], "plan", _, true) = $0 { true } else { false } })
         #expect(reducer.traceEventsForCache().map(\.id) == ["1", "2-think-0", "2-text-1"])
-        #expect(await harness.manager.loadOlderHistory(through: "2-text-1"))
+        #expect(await harness.manager.loadOlderHistory(through: "2-text-1") == .reached)
 
         // The next answer streams in rows of its own.
         harness.frame(.update(.init(conversationId: 7, docs: ["pi.live": [.replace(Wire.live(text: "Again"))]])))

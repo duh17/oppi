@@ -431,17 +431,13 @@ extension ChatViewController {
                     items: reducer.items,
                     scrollController: scrollController
                 ) {
-                    let loaded = await sessionManager.loadOlderHistory(
+                    let outcome = await sessionManager.loadOlderHistory(
                         through: targetID,
                         connection: connection,
                         sessionStore: sessionStore
                     )
-                    Self.reportOlderHistoryFailure(
-                        loaded: loaded,
-                        sessionManager: sessionManager,
-                        connection: connection
-                    )
-                    return loaded
+                    Self.reportOlderHistoryJump(outcome, connection: connection)
+                    return outcome == .reached
                 }
             },
             onFork: { [weak self] in self?.forkFromMessage($0) },

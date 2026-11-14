@@ -2854,7 +2854,7 @@ struct ChatSessionManagerTests {
             sessionStore: sessionStore
         )
 
-        #expect(loaded)
+        #expect(loaded == .reached)
         #expect(manager.coalescer.isPresentationPaused)
         #expect(!manager.coalescer.needsPresentationTraceReload)
         #expect(manager.reducer.items.contains { $0.id == "older" })
@@ -3001,10 +3001,11 @@ struct ChatSessionManagerTests {
         let liveIDs: [String]
     }
 
-    private func makeLivePagingHarness() async throws -> LivePagingHarness {
+    /// The newest 10 of `eventCount` events loaded, then a prompt and a streaming answer.
+    private func makeLivePagingHarness(eventCount: Int = 60) async throws -> LivePagingHarness {
         let sessionId = "live-paging-\(UUID().uuidString)"
         let session = makeTestSession(id: sessionId, workspaceId: "w1", status: .busy)
-        let history = ScriptedTraceHistory(session: session, events: (0..<60).map { index in
+        let history = ScriptedTraceHistory(session: session, events: (0..<eventCount).map { index in
             makeTraceEvent(
                 id: "e\(index)",
                 type: index.isMultiple(of: 2) ? .user : .assistant,
@@ -3025,7 +3026,7 @@ struct ChatSessionManagerTests {
             coalescer: DeltaCoalescer()
         )
         #expect(await manager.forceHistoryReload())
-        #expect(manager.reducer.items.map(\.id) == (50..<60).map { "e\($0)" })
+        #expect(manager.reducer.items.map(\.id) == (eventCount - 10..<eventCount).map { "e\($0)" })
 
         let promptID = manager.reducer.appendUserMessage("next")
         manager.reducer.processBatch([
@@ -3064,7 +3065,7 @@ struct ChatSessionManagerTests {
         defer { manager.cleanup(); connection.disconnectStream() }
 
         // Several pages older than the loaded range (the server caps each page at 15).
-        #expect(await manager.loadOlderHistory(through: "e7"))
+        #expect(await manager.loadOlderHistory(through: "e7") == .reached)
         #expect(manager.reducer.items.map(\.id) == (5..<60).map { "e\($0)" } + liveIDs)
         #expect(history.requestedCursors == ["c50", "c35", "c20"])
 
@@ -3093,9 +3094,38 @@ struct ChatSessionManagerTests {
         history.releaseHeldPage()
 
         #expect(await scroll.value)
-        #expect(await jump.value)
+        #expect(await jump.value == .reached)
         #expect(history.requestedCursors == ["c50", "c40", "c25", "c10"])
         #expect(manager.reducer.items.map(\.id) == (0..<60).map { "e\($0)" } + liveIDs)
+    }
+
+    /// The outline lists the whole session, so a jump to its first row pages back through
+    /// all of it, however many pages that takes (a long chat is thousands of entries).
+    @Test func outlineJumpReachesTheFirstEntryOfAVeryLongSession() async throws {
+        // 600 events at 15 a page: 40 pages back to the first.
+        let harness = try await makeLivePagingHarness(eventCount: 600)
+        let manager = harness.manager
+        defer { manager.cleanup(); harness.connection.disconnectStream() }
+
+        #expect(await manager.loadOlderHistory(through: "e0") == .reached)
+        #expect(manager.reducer.items.map(\.id) == (0..<600).map { "e\($0)" } + harness.liveIDs)
+        #expect(harness.history.requestedCursors.count == 40)
+
+        // With everything loaded, an entry that is not in it says so.
+        #expect(await manager.loadOlderHistory(through: "gone") == .notInHistory)
+    }
+
+    /// A page the server does not deliver ends the jump as a failure the chat reports,
+    /// not as a missing entry.
+    @Test func outlineJumpWhosePageFailsIsAFailure() async throws {
+        let harness = try await makeLivePagingHarness()
+        let manager = harness.manager
+        defer { manager.cleanup(); harness.connection.disconnectStream() }
+
+        harness.history.failsOlderPages = true
+        #expect(await manager.loadOlderHistory(through: "e7") == .failed)
+        harness.history.failsOlderPages = false
+        #expect(await manager.loadOlderHistory(through: "e7") == .reached)
     }
 
     // MARK: - Helpers
@@ -3302,6 +3332,8 @@ private final class ScriptedTraceHistory: ChatSessionHistoryPort {
     private(set) var requestedCursors: [String] = []
     /// When set, the next older page waits for `releaseHeldPage()`.
     var holdsNextOlderPage = false
+    /// When set, every older page fails as a refused request does.
+    var failsOlderPages = false
     private var heldPage: CheckedContinuation<Void, Never>?
     var canFetchRemoteHistory: Bool { true }
 
@@ -3331,6 +3363,7 @@ private final class ScriptedTraceHistory: ChatSessionHistoryPort {
         previewBytes: Int
     ) async throws -> ChatSessionTraceSnapshot {
         requestedCursors.append(cursor)
+        if failsOlderPages { throw URLError(.badServerResponse) }
         if holdsNextOlderPage {
             holdsNextOlderPage = false
             await withCheckedContinuation { heldPage = $0 }

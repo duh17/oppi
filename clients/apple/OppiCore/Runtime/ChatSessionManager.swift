@@ -1907,9 +1907,6 @@ final class ChatSessionManager {
     }
 
     private static let conversationRequestTimeout: Duration = .seconds(10)
-    /// A jump pages back at most this many pages: 10k conversation entries or 20k trace
-    /// events past the loaded history.
-    private static let historyJumpMaxPages = 20
     private static let conversationJumpPageEntries = 500
     private static let traceJumpPageEvents = 1_000
 
@@ -2445,22 +2442,45 @@ final class ChatSessionManager {
         await loadOlderHistoryPage(jump: false)
     }
 
+    /// What paging back to an entry came to.
+    enum OlderHistoryJump: Equatable, Sendable {
+        /// History holds the entry.
+        case reached
+        /// Older history remains but a page did not come: the server refused it, it timed
+        /// out, or the stream could not ask yet. Trying again can work.
+        case failed
+        /// The whole history is loaded and the entry is not in it.
+        case notInHistory
+    }
+
     /// Page back until history holds `entryId` (an outline jump or a deep link), in larger
-    /// pages than scrolling and bounded. Never loads a detached page around the target:
-    /// rows between it and the loaded range would be missing.
+    /// pages than scrolling, however far back it is: an outline lists the whole session,
+    /// so a row it offers is always one this can reach. Never loads a detached page around
+    /// the target: rows between it and the loaded range would be missing.
     @discardableResult
-    func loadOlderHistory(through entryId: String) async -> Bool {
+    func loadOlderHistory(through entryId: String) async -> OlderHistoryJump {
         // A landed answer keeps its live row id; resolve the trace id to that row.
         func holdsEntry() -> Bool {
             let rowID = reducer.timelineItemID(for: entryId)
             return reducer.items.contains { $0.id == rowID }
         }
-        guard !holdsEntry() else { return true }
-        for _ in 0..<Self.historyJumpMaxPages {
-            guard await loadOlderHistoryPage(jump: true) else { break }
-            if holdsEntry() { return true }
+        guard !holdsEntry() else { return .reached }
+        var rowCount = reducer.items.count
+        while await loadOlderHistoryPage(jump: true) {
+            if holdsEntry() { return .reached }
+            // A page that added no row would be asked for again forever.
+            guard reducer.items.count != rowCount else { return .failed }
+            rowCount = reducer.items.count
         }
-        return false
+        // Only a history the server said is complete can rule the entry out; anything else
+        // (a refused page, a stream still waiting for its snapshot) is worth another try.
+        return holdsWholeHistory && !olderHistoryLoadFailed ? .notInHistory : .failed
+    }
+
+    /// The server said nothing is older than the loaded history.
+    private var holdsWholeHistory: Bool {
+        if let conversationStream { return conversationStream.holdsWholeConversation }
+        return tracePage.map { !$0.hasOlder } ?? false
     }
 
     /// The older page in flight, shared by scrolling and jumps: a jump that arrives while
@@ -2470,8 +2490,7 @@ final class ChatSessionManager {
 
     /// The last older page was asked for and not delivered (the server refused it, the
     /// request failed, or it timed out), as opposed to there being nothing older. Read it
-    /// after `loadOlderTracePage` or `loadOlderHistory(through:)` return false, to tell the
-    /// user instead of doing nothing.
+    /// after `loadOlderTracePage` returns false, to tell the user instead of doing nothing.
     @ObservationIgnored private(set) var olderHistoryLoadFailed = false
 
     private func loadOlderHistoryPage(jump: Bool) async -> Bool {

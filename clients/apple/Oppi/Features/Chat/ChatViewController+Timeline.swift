@@ -86,8 +86,19 @@ extension ChatViewController {
         connection: ServerConnection
     ) {
         guard !loaded, sessionManager.olderHistoryLoadFailed else { return }
-        connection.extensionToast = "Couldn't load earlier messages from the server. Try again."
+        connection.extensionToast = Self.olderHistoryFailureMessage
     }
+
+    /// An outline jump that could not reach its row says why, so a tap never does nothing.
+    static func reportOlderHistoryJump(_ outcome: ChatSessionManager.OlderHistoryJump, connection: ServerConnection) {
+        switch outcome {
+        case .reached: return
+        case .failed: connection.extensionToast = olderHistoryFailureMessage
+        case .notInHistory: connection.extensionToast = "That entry is no longer in this chat's history."
+        }
+    }
+
+    private static let olderHistoryFailureMessage = "Couldn't load earlier messages from the server. Try again."
 
     static func currentToolFileTarget(
         serverId: String?,

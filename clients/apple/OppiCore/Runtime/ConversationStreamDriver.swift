@@ -114,7 +114,14 @@ final class ConversationStreamDriver {
         liveConversationId.map { .conversationDetach(.init(conversationId: $0)) }
     }
 
-    /// `older` before the oldest held entry, or nil when there is nothing older.
+    /// The replica holds the conversation back to its first entry, from a frame this attach
+    /// accepted: an entry that is not in it is not in the conversation.
+    var holdsWholeConversation: Bool {
+        !awaitingSnapshot && replica.conversationId != nil && !replica.hasOlder
+    }
+
+    /// `older` before the oldest held entry, or nil when there is nothing older (or the
+    /// attach still waits for its snapshot).
     func olderRequest(limit: Int? = nil) -> (message: ClientMessage, requestId: String)? {
         guard replica.hasOlder, let before = replica.oldestEntryId, !awaitingSnapshot else { return nil }
         let requestId = "older-\(UUID().uuidString)"

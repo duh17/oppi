@@ -129,7 +129,7 @@ struct SessionTimelineNavigationTests {
         #expect(retainedLanding, "New publication must preserve the outline landing; count=\(coordinator.currentIDs.count), first=\(coordinator.currentIDs.first ?? "nil"), targetY=\(targetY ?? -999), offset=\(cv.contentOffset.y), inset=\(cv.adjustedContentInset.top), top=\(scrollController.currentTopVisibleItemId ?? "nil"), attached=\(scrollController.isCurrentlyNearBottom)")
     }
 
-    /// A jump whose entry never loads (past the paging bound, or the request failed) must
+    /// A jump whose entry never loads (the request failed, or the entry is gone) must
     /// leave the timeline following the live tail instead of waiting on a row that never comes.
     @Test func outlineJumpThatCannotLoadKeepsFollowingTheLiveTail() async throws {
         let manager = ChatSessionManager(sessionId: "outline-unloaded")
