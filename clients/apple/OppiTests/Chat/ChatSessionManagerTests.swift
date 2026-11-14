@@ -14,6 +14,7 @@ struct ChatSessionManagerTests {
         let controller = ScreenAwakeController(
             timeoutProvider: { nil },
             idleTimerSetter: { captured.append($0) },
+            isApplicationActive: { true },
             sleepFunction: { _ in }
         )
         return (controller, { captured })

@@ -163,6 +163,7 @@ struct ServerConnectionRoutingTests {
         conn.screenAwakeController = ScreenAwakeController(
             timeoutProvider: { nil },
             idleTimerSetter: { idleTimerUpdates.append($0) },
+            isApplicationActive: { true },
             sleepFunction: { _ in }
         )
 
@@ -193,6 +194,7 @@ struct ServerConnectionRoutingTests {
         conn.screenAwakeController = ScreenAwakeController(
             timeoutProvider: { nil },
             idleTimerSetter: { idleTimerUpdates.append($0) },
+            isApplicationActive: { true },
             sleepFunction: { _ in }
         )
 

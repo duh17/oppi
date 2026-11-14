@@ -11,7 +11,20 @@ import Foundation
 ///
 /// `flock` is associated with the open file description, so two independent
 /// `open()` calls — including two calls in the same process — contend correctly.
+///
+/// iOS kills an app it suspends while the app holds a file lock in a shared
+/// container (`0xdead10cc`). Every lock is taken inside `backgroundHold`, so the
+/// app keeps running until the lock is released.
 enum CrossProcessFileLock {
+    /// Begins keeping the process running for the lock file named, and returns the
+    /// call that ends it. Called before the lock is taken and ended after it is
+    /// released, on whatever thread takes the lock.
+    typealias BackgroundHold = @Sendable (_ lockName: String) -> @Sendable () -> Void
+
+    /// The app sets this once at launch, before any lock is taken, to a UIKit
+    /// background task. Extensions leave it nil: they cannot start one.
+    nonisolated(unsafe) static var backgroundHold: BackgroundHold?
+
     enum LockError: LocalizedError {
         case appGroupUnavailable
         case openFailed
@@ -53,6 +66,8 @@ enum CrossProcessFileLock {
         _ body: () throws -> T
     ) throws -> T {
         let url = lockURL(serverId: serverId, container: container)
+        let endHold = backgroundHold?(url.lastPathComponent)
+        defer { endHold?() }
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true,
@@ -88,6 +103,8 @@ enum CrossProcessFileLock {
         classes: FileClasses = .fileSystem,
         _ body: () throws -> T
     ) throws -> T {
+        let endHold = backgroundHold?(url.lastPathComponent)
+        defer { endHold?() }
         let fd = try openLockFile(at: url, protection: protection, classes: classes)
         guard flock(fd, LOCK_EX) == 0 else {
             let error = POSIXError.current

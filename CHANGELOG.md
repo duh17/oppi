@@ -163,6 +163,8 @@ On iPad, a window splits into panes, so chats, files, terminals, and web pages s
 - **Client:** Message, Dictate, Now Playing, and Files in the session list's bottom bar no longer react to a tap meant for a chat pushed over the list.
 - **Client:** Now Playing and an extension drawer no longer open at the same time, and an open extension drawer takes touches and scrolls at once.
 - **Client:** iPad: Settings forms center beside the sidebar, session list headers stay level with the rows when the sidebar toggles, a video in the file viewer fits its own proportions, Outline and Files search keep **Cancel** in a narrow window, the Git pane keeps the branch name readable, and **Files** closes with an X like the other panes. On iPhone Duo, the Outline header stays clear of the system's side rail.
+- **Client:** iOS no longer closes Oppi in the background when Keep Awake After Activity runs out there. The screen setting now changes when you return to the app.
+- **Client:** iOS no longer closes Oppi when it suspends the app in the middle of saving a refreshed server sign-in. Oppi now finishes the save before it is suspended.
 - **Server:** A long tool or MCP call is no longer stopped by the ten-minute idle timeout. A turn that sends no event for two hours stops.
 - **Server:** Stop on a session that is still starting stops it, and no longer leaves it running or hanging on a startup dialog. A session whose start failed is not started again after a crash.
 - **Server:** The server starts when a session queued to resume has a missing worktree or a durable store that cannot open, and waits for the store lock of a server that just crashed.

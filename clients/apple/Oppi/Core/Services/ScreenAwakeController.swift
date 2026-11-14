@@ -16,12 +16,18 @@ import UIKit
 /// - A write that changes no reason does nothing: it must neither wake an idle
 ///   screen nor restart the timeout, or routine updates for idle sessions would
 ///   keep the screen on for as long as they keep arriving.
+/// - The idle timer is written only while the app is active. Writing it sends a
+///   synchronous scene update to the system; from the background (the release
+///   timer firing after the user left) that call once hung the main thread until
+///   the watchdog killed the app, and the system ignores the setting there anyway.
+///   A change made while not active waits for `applicationDidBecomeActive()`.
 @MainActor
 final class ScreenAwakeController {
     static let shared = ScreenAwakeController()
 
     typealias TimeoutProvider = @MainActor () -> Duration?
     typealias IdleTimerSetter = @MainActor (Bool) -> Void
+    typealias ApplicationActiveCheck = @MainActor () -> Bool
     typealias SleepFunction = @Sendable (Duration) async throws -> Void
 
     private static let voiceInputReason = "voice-input"
@@ -29,13 +35,17 @@ final class ScreenAwakeController {
 
     private let timeoutProvider: TimeoutProvider
     private let idleTimerSetter: IdleTimerSetter
+    private let isApplicationActive: ApplicationActiveCheck
     private let sleepFunction: SleepFunction
 
     private var activeReasons: Set<String> = []
     private var runningSessionsByOwner: [ObjectIdentifier: Set<String>] = [:]
     private var releaseTask: Task<Void, Never>?
 
+    /// Whether screen sleep should be prevented now.
     private(set) var isPreventingSleep = false
+    /// The value last written to the idle timer, which starts enabled.
+    private var writtenIdleTimerDisabled = false
 
     var isVoiceInputActive: Bool {
         activeReasons.contains(Self.voiceInputReason)
@@ -48,13 +58,20 @@ final class ScreenAwakeController {
     init(
         timeoutProvider: @escaping TimeoutProvider = { AppPreferences.ScreenAwake.keepAwakeDuration },
         idleTimerSetter: @escaping IdleTimerSetter = { UIApplication.shared.isIdleTimerDisabled = $0 },
+        isApplicationActive: @escaping ApplicationActiveCheck = { UIApplication.shared.applicationState == .active },
         sleepFunction: @escaping SleepFunction = { duration in
             try await Task.sleep(for: duration)
         }
     ) {
         self.timeoutProvider = timeoutProvider
         self.idleTimerSetter = idleTimerSetter
+        self.isApplicationActive = isApplicationActive
         self.sleepFunction = sleepFunction
+    }
+
+    /// A scene became active: write what changed while the app was not.
+    func applicationDidBecomeActive() {
+        writeIdleTimer()
     }
 
     func setVoiceInputActive(_ isActive: Bool) {
@@ -120,9 +137,15 @@ final class ScreenAwakeController {
     }
 
     private func applyIdleTimerDisabled(_ disabled: Bool) {
-        guard isPreventingSleep != disabled else { return }
         isPreventingSleep = disabled
-        idleTimerSetter(disabled)
+        guard isApplicationActive() else { return }
+        writeIdleTimer()
+    }
+
+    private func writeIdleTimer() {
+        guard writtenIdleTimerDisabled != isPreventingSleep else { return }
+        writtenIdleTimerDisabled = isPreventingSleep
+        idleTimerSetter(isPreventingSleep)
     }
 }
 

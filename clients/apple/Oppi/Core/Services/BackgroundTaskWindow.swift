@@ -1,3 +1,4 @@
+import os
 import UIKit
 
 /// Starts and ends one UIKit background task. `UIApplication` in the app; a
@@ -80,4 +81,40 @@ final class BackgroundTaskWindow {
     }
 
     func endCurrent() { end(epoch) }
+}
+
+extension CrossProcessFileLock {
+    /// A UIKit background task for each held lock, so iOS does not suspend the
+    /// app while it holds one (`0xdead10cc`). `beginBackgroundTask` and
+    /// `endBackgroundTask` may be called from any thread. If iOS refuses the task,
+    /// the lock is taken as before. The task ends once: on release, or at
+    /// expiration if the lock is still held then, since a task still running at
+    /// expiration gets the app killed.
+    static func uiKitBackgroundHold(_ application: UIApplication) -> BackgroundHold {
+        { lockName in
+            let state = OSAllocatedUnfairLock(initialState: HoldState.starting)
+            let end: @Sendable () -> Void = {
+                let task: UIBackgroundTaskIdentifier? = state.withLock { state in
+                    defer { state = .ended }
+                    guard case .running(let task) = state else { return nil }
+                    return task
+                }
+                if let task { application.endBackgroundTask(task) }
+            }
+            let task = application.beginBackgroundTask(withName: "oppi.lock.\(lockName)", expirationHandler: end)
+            guard task != .invalid else { return {} }
+            // iOS may run the expiration handler before `beginBackgroundTask` returns.
+            let expired = state.withLock { state in
+                guard case .starting = state else { return true }
+                state = .running(task)
+                return false
+            }
+            if expired { application.endBackgroundTask(task) }
+            return end
+        }
+    }
+
+    private enum HoldState: Sendable {
+        case starting, running(UIBackgroundTaskIdentifier), ended
+    }
 }

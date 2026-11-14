@@ -138,6 +138,7 @@ struct SettingsLiveHookTests {
         let controller = ScreenAwakeController(
             timeoutProvider: { updates.timeout },
             idleTimerSetter: { updates.values.append($0) },
+            isApplicationActive: { true },
             sleepFunction: { _ in try await Task.sleep(for: .seconds(3600)) }
         )
         controller.setVoiceInputActive(true)

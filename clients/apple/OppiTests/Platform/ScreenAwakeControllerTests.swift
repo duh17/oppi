@@ -7,6 +7,12 @@ import Testing
 struct ScreenAwakeControllerTests {
     private let owner = ObjectIdentifier(Self.self)
 
+    /// Whether the app is active, switched by a test after the controller captured it.
+    private final class AppActivity {
+        var isActive: Bool
+        init(isActive: Bool) { self.isActive = isActive }
+    }
+
     @Test("active session immediately prevents sleep")
     func activeSessionDisablesIdleTimer() {
         var idleTimerUpdates: [Bool] = []
@@ -14,6 +20,7 @@ struct ScreenAwakeControllerTests {
         let controller = ScreenAwakeController(
             timeoutProvider: { .seconds(2) },
             idleTimerSetter: { idleTimerUpdates.append($0) },
+            isApplicationActive: { true },
             sleepFunction: { _ in }
         )
 
@@ -29,7 +36,8 @@ struct ScreenAwakeControllerTests {
 
         let controller = ScreenAwakeController(
             timeoutProvider: { .milliseconds(40) },
-            idleTimerSetter: { idleTimerUpdates.append($0) }
+            idleTimerSetter: { idleTimerUpdates.append($0) },
+            isApplicationActive: { true }
         )
 
         controller.reconcileSessionActivity(sessionIds: ["s1"], owner: owner)
@@ -50,7 +58,8 @@ struct ScreenAwakeControllerTests {
 
         let controller = ScreenAwakeController(
             timeoutProvider: { nil },
-            idleTimerSetter: { idleTimerUpdates.append($0) }
+            idleTimerSetter: { idleTimerUpdates.append($0) },
+            isApplicationActive: { true }
         )
 
         controller.reconcileSessionActivity(sessionIds: ["s1"], owner: owner)
@@ -67,6 +76,7 @@ struct ScreenAwakeControllerTests {
         let controller = ScreenAwakeController(
             timeoutProvider: { .seconds(2) },
             idleTimerSetter: { idleTimerUpdates.append($0) },
+            isApplicationActive: { true },
             sleepFunction: { _ in }
         )
 
@@ -82,7 +92,8 @@ struct ScreenAwakeControllerTests {
 
         let controller = ScreenAwakeController(
             timeoutProvider: { nil },
-            idleTimerSetter: { idleTimerUpdates.append($0) }
+            idleTimerSetter: { idleTimerUpdates.append($0) },
+            isApplicationActive: { true }
         )
 
         controller.setVoiceInputActive(true)
@@ -98,7 +109,8 @@ struct ScreenAwakeControllerTests {
 
         let controller = ScreenAwakeController(
             timeoutProvider: { .milliseconds(40) },
-            idleTimerSetter: { idleTimerUpdates.append($0) }
+            idleTimerSetter: { idleTimerUpdates.append($0) },
+            isApplicationActive: { true }
         )
 
         controller.setVoiceInputActive(true)
@@ -119,7 +131,8 @@ struct ScreenAwakeControllerTests {
 
         let controller = ScreenAwakeController(
             timeoutProvider: { nil },
-            idleTimerSetter: { idleTimerUpdates.append($0) }
+            idleTimerSetter: { idleTimerUpdates.append($0) },
+            isApplicationActive: { true }
         )
 
         controller.setVoiceInputActive(true)
@@ -150,6 +163,7 @@ struct ScreenAwakeControllerTests {
         let controller = ScreenAwakeController(
             timeoutProvider: { .seconds(120) },
             idleTimerSetter: { idleTimerUpdates.append($0) },
+            isApplicationActive: { true },
             sleepFunction: { _ in try await Task.sleep(for: .seconds(3600)) }
         )
 
@@ -196,5 +210,76 @@ struct ScreenAwakeControllerTests {
 
         controller.reconcileSessionActivity(sessionIds: [], owner: owner)
         #expect(!controller.isPreventingSleep)
+    }
+
+    @Test("a change while the app is in the background waits until it becomes active")
+    func backgroundChangeAppliesOnBecomingActive() {
+        var idleTimerUpdates: [Bool] = []
+        let app = AppActivity(isActive: false)
+
+        let controller = ScreenAwakeController(
+            timeoutProvider: { nil },
+            idleTimerSetter: { idleTimerUpdates.append($0) },
+            isApplicationActive: { app.isActive },
+            sleepFunction: { _ in }
+        )
+
+        controller.reconcileSessionActivity(sessionIds: ["s1"], owner: owner)
+        #expect(controller.isPreventingSleep)
+        #expect(idleTimerUpdates.isEmpty)
+
+        app.isActive = true
+        controller.applicationDidBecomeActive()
+        #expect(idleTimerUpdates == [true])
+
+        controller.applicationDidBecomeActive()
+        #expect(idleTimerUpdates == [true])
+    }
+
+    @Test("the release timer firing in the background leaves the idle timer alone until active")
+    func backgroundReleaseAppliesOnBecomingActive() async {
+        var idleTimerUpdates: [Bool] = []
+        let app = AppActivity(isActive: true)
+
+        let controller = ScreenAwakeController(
+            timeoutProvider: { .seconds(600) },
+            idleTimerSetter: { idleTimerUpdates.append($0) },
+            isApplicationActive: { app.isActive },
+            sleepFunction: { _ in }
+        )
+
+        controller.reconcileSessionActivity(sessionIds: ["s1"], owner: owner)
+        app.isActive = false
+        controller.reconcileSessionActivity(sessionIds: [], owner: owner)
+
+        let released = await waitForTestCondition(timeout: .milliseconds(300), poll: .milliseconds(10)) {
+            await MainActor.run { !controller.isPreventingSleep }
+        }
+        #expect(released)
+        #expect(idleTimerUpdates == [true])
+
+        app.isActive = true
+        controller.applicationDidBecomeActive()
+        #expect(idleTimerUpdates == [true, false])
+    }
+
+    @Test("a background change undone before becoming active writes nothing")
+    func backgroundRoundTripWritesNothing() {
+        var idleTimerUpdates: [Bool] = []
+        let app = AppActivity(isActive: false)
+
+        let controller = ScreenAwakeController(
+            timeoutProvider: { nil },
+            idleTimerSetter: { idleTimerUpdates.append($0) },
+            isApplicationActive: { app.isActive }
+        )
+
+        controller.reconcileSessionActivity(sessionIds: ["s1"], owner: owner)
+        controller.reconcileSessionActivity(sessionIds: [], owner: owner)
+        app.isActive = true
+        controller.applicationDidBecomeActive()
+
+        #expect(!controller.isPreventingSleep)
+        #expect(idleTimerUpdates.isEmpty)
     }
 }

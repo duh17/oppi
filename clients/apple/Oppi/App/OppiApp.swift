@@ -263,6 +263,8 @@ final class OppiApp {
         // A request whose server was unreachable retries here.
         opener.sceneDidBecomeActive()
         PairingApprovalController.shared.sceneDidBecomeActive(coordinator: coordinator)
+        // Idle timer changes made in the background were held until now.
+        ScreenAwakeController.shared.applicationDidBecomeActive()
     }
     func sceneWillResignActive() { changeScenePhase(to: .inactive) }
     func sceneDidEnterBackground() {

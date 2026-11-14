@@ -30,6 +30,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 #if DEBUG
         UncaughtExceptionRecorder.raiseForTestingIfRequested()
 #endif
+        // Before anything takes a credential, device key, or push state lock.
+        CrossProcessFileLock.backgroundHold = CrossProcessFileLock.uiKitBackgroundHold(application)
         // Force-capture process start timestamp before any SwiftUI views load.
         // Static lets are lazy — this ensures it runs at app delegate init, not first view appear.
         ChatSessionTelemetry.warmProcessStartTime()

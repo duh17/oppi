@@ -28,6 +28,7 @@ struct ScreenAwakeIntegrationTests {
         let ctrl = ScreenAwakeController(
             timeoutProvider: timeoutProvider,
             idleTimerSetter: { captured.append($0) },
+            isApplicationActive: { true },
             sleepFunction: { _ in } // never fires; prevents async release noise
         )
         return (ctrl, { captured })
