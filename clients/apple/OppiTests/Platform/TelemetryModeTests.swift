@@ -45,10 +45,13 @@ struct TelemetryModeTests {
         }
     }
 
-    @Test func emptyOrUnknownFallsBackToDefaultMode() {
-        #expect(TelemetryMode.fromRawString(nil) == .internalDiagnostics)
-        #expect(TelemetryMode.fromRawString("") == .internalDiagnostics)
-        #expect(TelemetryMode.fromRawString("mystery") == .internalDiagnostics)
+    @Test func missingEmptyOrUnknownFallsBackToPublicMode() {
+        #expect(TelemetryMode.fromInfoValue(nil) == .public)
+        #expect(TelemetryMode.fromRawString(nil) == .public)
+        #expect(TelemetryMode.fromRawString("") == .public)
+        #expect(TelemetryMode.fromRawString("mystery") == .public)
+        // An unexpanded build setting means the key was never configured.
+        #expect(TelemetryMode.fromRawString("$(OPPI_TELEMETRY_MODE)") == .public)
     }
 
     @Test func telemetrySettingsDisableRemoteUploadsDuringAutomatedTests() {

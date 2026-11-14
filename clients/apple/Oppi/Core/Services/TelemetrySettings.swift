@@ -39,8 +39,10 @@ enum TelemetryMode: Sendable, Equatable {
         }
     }
 
+    /// A missing, empty, or unknown `OPPITelemetryMode` fails closed to the App Store
+    /// mode, so a build that lost the key never uploads diagnostics without opt-in.
     private static var defaultMode: Self {
-        .internalDiagnostics
+        .public
     }
 
     var diagnosticsEnabledByDefault: Bool {

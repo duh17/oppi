@@ -27,15 +27,33 @@ assert_value() {
   fi
 }
 
+# Collected types are comma-separated NSPrivacyCollectedDataType values, each
+# declared unlinked, not used for tracking, and for app functionality only.
 validate_manifest() {
   local manifest="$1"
-  shift
+  local collected="$2"
+  shift 2
 
   [[ -f "$manifest" ]] || fail "missing privacy manifest: $manifest"
   /usr/bin/plutil -lint "$manifest" >/dev/null || fail "invalid privacy manifest: $manifest"
   assert_value "$manifest" NSPrivacyTracking false
   assert_value "$manifest" NSPrivacyTrackingDomains 0
-  assert_value "$manifest" NSPrivacyCollectedDataTypes 0
+
+  local -a collected_types=()
+  [[ -z "$collected" ]] || IFS=',' read -r -a collected_types <<< "$collected"
+  assert_value "$manifest" NSPrivacyCollectedDataTypes "${#collected_types[@]}"
+  local collected_index=0 collected_type
+  for collected_type in "${collected_types[@]+"${collected_types[@]}"}"; do
+    local entry="NSPrivacyCollectedDataTypes.${collected_index}"
+    assert_value "$manifest" "$entry.NSPrivacyCollectedDataType" "$collected_type"
+    assert_value "$manifest" "$entry.NSPrivacyCollectedDataTypeLinked" false
+    assert_value "$manifest" "$entry.NSPrivacyCollectedDataTypeTracking" false
+    assert_value "$manifest" "$entry.NSPrivacyCollectedDataTypePurposes" 1
+    assert_value "$manifest" "$entry.NSPrivacyCollectedDataTypePurposes.0" \
+      NSPrivacyCollectedDataTypePurposeAppFunctionality
+    collected_index=$((collected_index + 1))
+  done
+
   assert_value "$manifest" NSPrivacyAccessedAPITypes "$#"
 
   local api_index=0
@@ -85,11 +103,13 @@ RUBY
 }
 
 validate_sources() {
+  # The push relay stores the APNs token and App Attest key (docs/privacy.md).
   validate_manifest "$APPLE_ROOT/Oppi/Resources/PrivacyInfo.xcprivacy" \
+    NSPrivacyCollectedDataTypeDeviceID \
     "NSPrivacyAccessedAPICategoryUserDefaults:CA92.1,1C8F.1" \
     "NSPrivacyAccessedAPICategoryFileTimestamp:C617.1" \
     "NSPrivacyAccessedAPICategorySystemBootTime:35F9.1"
-  validate_manifest "$APPLE_ROOT/OppiShareExtension/PrivacyInfo.xcprivacy" \
+  validate_manifest "$APPLE_ROOT/OppiShareExtension/PrivacyInfo.xcprivacy" "" \
     "NSPrivacyAccessedAPICategoryUserDefaults:CA92.1,1C8F.1"
 
   [[ ! -e "$APPLE_ROOT/OppiActivityExtension/PrivacyInfo.xcprivacy" ]] || \
