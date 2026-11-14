@@ -188,9 +188,9 @@ final class CappedScrollView: UIView {
         super.init(frame: .zero)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.backgroundColor = .clear
-        scrollView.alwaysBounceVertical = false
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.showsVerticalScrollIndicator = true
+        scrollView.keepsContentOutOfEnclosingEdgeEffects()
         addSubview(scrollView)
         content.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(content)

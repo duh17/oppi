@@ -1069,6 +1069,7 @@ final class ExtensionNativeBlockScrollView: UIView, UIGestureRecognizerDelegate 
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.showsVerticalScrollIndicator = true
         scrollView.onLayout = { [weak self] in self?.scrollViewDidLayout() }
+        scrollView.keepsContentOutOfEnclosingEdgeEffects()
         addSubview(scrollView)
 
         blockStack.translatesAutoresizingMaskIntoConstraints = false

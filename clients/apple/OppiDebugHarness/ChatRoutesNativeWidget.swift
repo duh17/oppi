@@ -35,9 +35,20 @@ enum ChatRoutesNativeWidget {
 
     /// The Subagents widget as `server/plugins/subagents` publishes it for one working child (a
     /// long step line) and two finished ones: a Working and a Recent section of activity rows.
-    static var subagentsJSON: Data {
+    /// `extraWorking` adds that many more working children, so the drawer's body scrolls well
+    /// past its cap (`CHAT_ROUTES_SURFACE=subagents-many`).
+    static func subagentsJSON(extraWorking: Int = 0) -> Data {
         let since = Int(Date().timeIntervalSince1970 * 1000) - 9_000
-        return Data(subagentsTemplate.replacingOccurrences(of: "__SINCE__", with: String(since)).utf8)
+        let extra = (0..<extraWorking).map { index in
+            #"""
+            ,{ "id": "w\#(index)", "title": "worker-\#(index + 2)", "subtitle": "$ rg -n \"nb check\" ~/.config/oppi",
+               "detail": "opus-5-5 high", "state": "running", "link": "oppi://session/w\#(index)" }
+            """#
+        }.joined()
+        return Data(subagentsTemplate
+            .replacingOccurrences(of: "__SINCE__", with: String(since))
+            .replacingOccurrences(of: "__EXTRA_WORKING__", with: extra)
+            .utf8)
     }
 
     private static let subagentsTemplate = #"""
@@ -58,7 +69,7 @@ enum ChatRoutesNativeWidget {
             "id": "a1", "title": "codemode-row",
             "subtitle": "read ~/.config/oppi/worktrees/main/wt_subagent-codemode-row/clients/apple/Oppi/Features/Chat",
             "detail": "opus-5-5 medium", "state": "running", "link": "oppi://session/a1", "since": __SINCE__
-          }]
+          }__EXTRA_WORKING__]
         }]
       },
       {

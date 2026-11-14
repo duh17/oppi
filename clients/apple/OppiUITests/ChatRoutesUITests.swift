@@ -953,6 +953,80 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// Scrolling an open drawer's list leaves the timeline above the strip as it was. The
+    /// timeline's bottom edge effect is shaped by what the footer holds, and UIKit counts the
+    /// rows a drawer has scrolled out of its own viewport: those rows once dragged a frosted
+    /// band up over the chat as far as they had scrolled.
+    func testScrollingAnOpenDrawerLeavesTheTimelineAboveIt() throws {
+        launch(environment: ["CHAT_ROUTES_SURFACE": "subagents-many", "CHAT_ROUTES_REVIEW_COMMENT": "none"])
+        func element(_ kind: String) -> XCUIElement {
+            app.descendants(matching: .any).matching(NSPredicate(
+                format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+                "extension-strip-aboveEditor-\(kind)-", "subagents"
+            )).firstMatch
+        }
+        let pill = element("pill")
+        XCTAssertTrue(pill.waitUntilExists(timeout: 10), "The Subagents widget shows its pill")
+        pill.tap()
+        let drawer = element("drawer")
+        XCTAssertTrue(drawer.waitUntilExists(timeout: 5), "Tapping the pill opens its drawer")
+        hold()
+        let firstRow = drawer.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "codemode-row")).firstMatch
+        XCTAssertTrue(firstRow.exists, "The drawer lists the first working child")
+        let rowTop = firstRow.frame.minY
+        // The timeline from under the bar down to the strip, short of the soft fade the edge
+        // effect keeps over the footer's top edge.
+        let window = app.windows.firstMatch.frame
+        let bandTop = app.buttons["chat.toolbar.context"].frame.maxY + 8
+        let band = CGRect(x: window.minX, y: bandTop, width: window.width, height: pill.frame.minY - 50 - bandTop)
+        let before = app.screenshot()
+        attachScreenshot("drawer-open")
+
+        drawer.scrollViews.firstMatch.swipeUp(velocity: .slow)
+        hold()
+        XCTAssertLessThan(firstRow.frame.minY, rowTop - 100, "The drawer's list scrolled: \(firstRow.frame.minY) vs \(rowTop)")
+        let after = app.screenshot()
+        attachScreenshot("drawer-scrolled")
+
+        let changed = try changedPixelShare(before, after, in: band, window: window)
+        XCTAssertLessThan(changed, 0.002, "The timeline above the strip changed while the drawer scrolled: \(changed) of \(band)")
+        assertRunning()
+    }
+
+    /// The share of pixels in `rect` (points, in `window`) whose colour moved by more than a few
+    /// levels between two screenshots of the app.
+    private func changedPixelShare(
+        _ first: XCUIScreenshot, _ second: XCUIScreenshot, in rect: CGRect, window: CGRect
+    ) throws -> Double {
+        func pixels(_ shot: XCUIScreenshot) throws -> (bytes: [UInt8], width: Int, height: Int) {
+            let image = try XCTUnwrap(shot.image.cgImage)
+            var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
+            let context = try XCTUnwrap(CGContext(
+                data: &bytes, width: image.width, height: image.height, bitsPerComponent: 8,
+                bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+            ))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            return (bytes, image.width, image.height)
+        }
+        let a = try pixels(first)
+        let b = try pixels(second)
+        XCTAssertEqual(a.width, b.width)
+        let scale = CGFloat(a.width) / window.width
+        let rows = max(0, Int((rect.minY - window.minY) * scale))..<min(a.height, Int((rect.maxY - window.minY) * scale))
+        let columns = max(0, Int((rect.minX - window.minX) * scale))..<min(a.width, Int((rect.maxX - window.minX) * scale))
+        var changed = 0
+        for y in rows {
+            for x in columns {
+                let offset = (y * a.width + x) * 4
+                let delta = (0..<3).map { abs(Int(a.bytes[offset + $0]) - Int(b.bytes[offset + $0])) }.max() ?? 0
+                if delta > 12 { changed += 1 }
+            }
+        }
+        return Double(changed) / Double(max(1, rows.count * columns.count))
+    }
+
     /// A surface placed as a panel (`placement.kind: "panel"`) has no drawer: its pill opens the
     /// surface in its pane under Oppi's bar with the surface's title and subtitle. Where it goes
     /// follows the fit rule, read from the window as the app reads it: beside the chat when both

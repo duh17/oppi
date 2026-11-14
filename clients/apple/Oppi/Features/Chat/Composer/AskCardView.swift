@@ -161,6 +161,7 @@ final class AskCardView: UIView, UIScrollViewDelegate {
         scrollView.keyboardDismissMode = .none
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.keepsContentOutOfEnclosingEdgeEffects()
         scrollView.backgroundColor = .clear
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scrollView)

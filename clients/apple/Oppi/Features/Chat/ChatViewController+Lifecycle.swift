@@ -33,7 +33,8 @@ extension ChatViewController {
         view.addSubview(footerStack)
         // The timeline's bottom edge effect reaches up behind the whole footer (the strip, an open
         // drawer, the composer), so rows scrolled under it fade out instead of reading through the
-        // glass of the composer and between the strip's pills.
+        // glass of the composer and between the strip's pills. A scroll view inside the footer
+        // keeps its scrolled-away content out of this effect (`keepsContentOutOfEnclosingEdgeEffects`).
         let footerEdge = UIScrollEdgeElementContainerInteraction()
         footerEdge.scrollView = collectionView
         footerEdge.edge = .bottom

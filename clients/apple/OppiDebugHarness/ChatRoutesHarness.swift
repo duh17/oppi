@@ -470,7 +470,9 @@ enum ChatRoutesFixture {
         let widget: [ExtensionUINotification]? = if let path = environment["CHAT_ROUTES_NATIVE_WIDGET_FILE"] {
             ChatRoutesNativeWidget.notifications(path: path)
         } else if environment["CHAT_ROUTES_SURFACE"] == "subagents" {
-            ChatRoutesNativeWidget.notifications(data: ChatRoutesNativeWidget.subagentsJSON)
+            ChatRoutesNativeWidget.notifications(data: ChatRoutesNativeWidget.subagentsJSON())
+        } else if environment["CHAT_ROUTES_SURFACE"] == "subagents-many" {
+            ChatRoutesNativeWidget.notifications(data: ChatRoutesNativeWidget.subagentsJSON(extraWorking: 6))
         } else {
             nil
         }

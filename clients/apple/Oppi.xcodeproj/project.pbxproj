@@ -1778,6 +1778,7 @@
 		C1BAC52BA5C94D8134238A1F /* LiveNestedToolCalls.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEB0FA22FB9526394205548C /* LiveNestedToolCalls.swift */; };
 		C1C3792DE1EBB4939B6EDACC /* ServerListRepeatedIdTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F54ED7A5B2FB1CB02A99B67 /* ServerListRepeatedIdTests.swift */; };
 		C1CA3C883433CFEBBDFA3246 /* MermaidKanbanParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B231D97AE677A326B334E5 /* MermaidKanbanParser.swift */; };
+		C1DF59F4733E40703E68FF3B /* ChatFooterScrollEdge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F08E1C596E1492ED556C23E /* ChatFooterScrollEdge.swift */; };
 		C2003EAF899DDBD929A0A91A /* IconPickerModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5CC6F74731D0932E84C930 /* IconPickerModelTests.swift */; };
 		C203E804B18DD2DF8B281E4F /* PaneLinkCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9141799EFF630B3285BECBEC /* PaneLinkCodec.swift */; };
 		C210A95AD55406334B9D026C /* MermaidClassRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E14A4BC931984D4A4464CDB /* MermaidClassRenderer.swift */; };
@@ -3138,6 +3139,7 @@
 		4E68B230E7FE6CB9EBA56D26 /* DoubleTapZoom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoubleTapZoom.swift; sourceTree = "<group>"; };
 		4EB75B91FCFD93C1DF484009 /* ToolExpandedMarkdownSurfaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolExpandedMarkdownSurfaceTests.swift; sourceTree = "<group>"; };
 		4EEC7B62512B0A0A2D1F8861 /* AppSupportLinks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSupportLinks.swift; sourceTree = "<group>"; };
+		4F08E1C596E1492ED556C23E /* ChatFooterScrollEdge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFooterScrollEdge.swift; sourceTree = "<group>"; };
 		4F0FDB1D4069DE3DA87923DF /* MermaidParserErrorRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidParserErrorRecoveryTests.swift; sourceTree = "<group>"; };
 		4F1CBA0EA04860B545044247 /* ServerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerStore.swift; sourceTree = "<group>"; };
 		4F22340C84E530CB7F11A9E8 /* github-html-01-bold-italic.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "github-html-01-bold-italic.md"; sourceTree = "<group>"; };
@@ -6574,6 +6576,7 @@
 		82CC0CA7422EF3C33897C002 /* Chat */ = {
 			isa = PBXGroup;
 			children = (
+				4F08E1C596E1492ED556C23E /* ChatFooterScrollEdge.swift */,
 				6993BDAA3649CCEEB775E5CF /* ChatFooterViews.swift */,
 				1FE912406F54C4032D940697 /* ChatTimelineDestinationPresenter.swift */,
 				33E8E442877AAC69EC1B26F6 /* ChatViewController.swift */,
@@ -9855,6 +9858,7 @@
 				053FCCCBB8F4F31C80468CCB /* ChatComposerDraftController.swift in Sources */,
 				A612502A7810BD421E95FA21 /* ChatComposerOwner.swift in Sources */,
 				A980E139A897C42DB213D124 /* ChatFileBrowserPanel.swift in Sources */,
+				C1DF59F4733E40703E68FF3B /* ChatFooterScrollEdge.swift in Sources */,
 				8D9B4E343CFD62EFC949944B /* ChatFooterViews.swift in Sources */,
 				12316A59121A62100202DF9A /* ChatItem.swift in Sources */,
 				3DE29F2447BAF33A0D6373E2 /* ChatReaderPayload.swift in Sources */,
