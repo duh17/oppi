@@ -98,6 +98,62 @@ enum ReaderTaskEditFixture {
         return text
     }
 
+    /// A long notebook outline for fold positions: 42 headings over three
+    /// levels, with bodies of different shapes and lengths, so a fold far down
+    /// the file redraws over rows the reader has and has not measured.
+    /// Heading k (from 1) is Org heading ordinal k.
+    static var outlineSeed: String {
+        let tops = ["Inbox", "Projects", "Areas", "Reading", "Journal", "Archive"]
+        let topics = ["Kitchen shelves", "Tax papers", "Bike service", "Garden beds", "Photo backup", "Trip to Lisbon", "Piano practice"]
+        func body(_ n: Int) -> String {
+            switch n % 5 {
+            case 0:
+                return "A short note on item \(n)."
+            case 1:
+                return """
+                Item \(n) needs a longer paragraph: what was decided, who asked for it, and what is still open. It wraps several times on a phone and two or three times on an iPad, with a [[https://example.com][link]] and some ~inline code~ along the way.
+
+                A second paragraph for item \(n), shorter than the first.
+                """
+            case 2:
+                return (1...(3 + n % 4)).map { "- [ ] Step \($0) of item \(n)" }.joined(separator: "\n")
+            case 3:
+                return """
+                Notes for item \(n), then the command that does it:
+                #+BEGIN_SRC sh
+                rsync -av ~/Pictures/item-\(n) /Volumes/Backup/
+                #+END_SRC
+                """
+            default:
+                return """
+                #+BEGIN_QUOTE
+                A quoted passage for item \(n), long enough to wrap onto a second line on most screens.
+                #+END_QUOTE
+                - One point
+                - Another point, a little longer than the first
+                """
+            }
+        }
+        var text = "#+TITLE: Notebook\n#+TODO: TODO NEXT WAIT | DONE CANCELLED\n\n"
+        var n = 0
+        for top in tops {
+            n += 1
+            text += "* \(top)\n\(body(n))\n\n"
+            for sub in 0..<3 {
+                n += 1
+                let topic = topics[(n + sub) % topics.count]
+                text += "** \(n % 3 == 0 ? "TODO " : "")\(topic) \(n)\n\(body(n))\n\n"
+                if sub != 1 {
+                    n += 1
+                    text += "*** Detail \(n)\n\(body(n))\n\n"
+                }
+            }
+            n += 1
+            text += "** Loose ends \(n)\n\(body(n))\n\n"
+        }
+        return text
+    }
+
     static let flatSeed = "Just prose, with no headings at all.\n\nA second paragraph.\n"
 
     static let markdownSeed = """
@@ -133,6 +189,7 @@ enum ReaderTaskEditFixture {
         try? Data(notebookSeed.utf8).write(to: url(for: "notebook.org"), options: .atomic)
         try? Data(markdownSeed.utf8).write(to: url(for: "notes.md"), options: .atomic)
         try? Data(handbookSeed.utf8).write(to: url(for: "handbook.org"), options: .atomic)
+        try? Data(outlineSeed.utf8).write(to: url(for: "outline.org"), options: .atomic)
         try? Data(flatSeed.utf8).write(to: url(for: "flat.org"), options: .atomic)
     }
 

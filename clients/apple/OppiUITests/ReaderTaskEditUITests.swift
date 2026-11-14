@@ -271,6 +271,28 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
         XCTAssertEqual(box.frame.minY, before.minY, accuracy: 4, "the box stays where it was")
     }
 
+    /// Folding or unfolding a heading far down a long file leaves that heading
+    /// where it was on screen, as in an outliner: only what is under it moves.
+    /// Both a heading in the middle of the screen and one near its top.
+    func testAFoldKeepsTheHeadingWhereItIsOnScreen() throws {
+        launch(file: "outline.org")
+        let window = app.windows.firstMatch.frame
+        for _ in 0..<5 { app.swipeUp() }
+
+        let middle = try XCTUnwrap(
+            visibleHeading(within: window.minY + window.height * 0.35...window.minY + window.height * 0.65),
+            "a heading sits in the middle of the screen"
+        )
+        assertFoldKeepsPlace(middle, name: "middle")
+
+        app.swipeUp()
+        let nearTop = try XCTUnwrap(
+            visibleHeading(within: window.minY + 140...window.minY + window.height * 0.3),
+            "a heading sits near the top of the screen"
+        )
+        assertFoldKeepsPlace(nearTop, name: "top")
+    }
+
     /// Folding edits nothing, so a file the server cannot save still folds,
     /// and still shows no edit control.
     func testAReadOnlyFileFolds() throws {
@@ -328,6 +350,53 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
     private func reveal(_ element: XCUIElement) {
         let bottom = app.windows.firstMatch.frame.maxY - 90
         for _ in 0..<8 where element.frame.maxY > bottom { app.swipeUp() }
+    }
+
+    /// The ordinal of a heading whose top is inside `band`, with a few headings
+    /// after it so a fold has something under it to take away.
+    private func visibleHeading(within band: ClosedRange<CGFloat>) -> Int? {
+        let prefix = "fileViewer.heading.fold."
+        let headings = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
+            .allElementsBoundByIndex
+        return headings.lazy
+            .compactMap { element -> (Int, CGRect)? in
+                guard let ordinal = Int(element.identifier.dropFirst(prefix.count)) else { return nil }
+                return (ordinal, element.frame)
+            }
+            .first { ordinal, frame in band.contains(frame.minY) && ordinal < 38 }?
+            .0
+    }
+
+    /// The heading's top once it has stopped moving: the reader measures what
+    /// it redrew over the next few turns.
+    private func settledTop(_ ordinal: Int) -> CGFloat {
+        var last = fold(ordinal).frame.minY
+        var still = 0
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, still < 4 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            let next = fold(ordinal).frame.minY
+            still = abs(next - last) < 0.5 ? still + 1 : 0
+            last = next
+        }
+        return last
+    }
+
+    private func assertFoldKeepsPlace(_ ordinal: Int, name: String) {
+        let before = fold(ordinal).frame.minY
+        saveScreenshot(name: "fold-keeps-position-\(name)-1-before")
+        fold(ordinal).coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 10, dy: 0)).tap()
+        XCTAssertTrue(waitForFold(ordinal, "Collapsed"), "\(name): heading \(ordinal) folds")
+        let folded = settledTop(ordinal)
+        saveScreenshot(name: "fold-keeps-position-\(name)-2-folded")
+        XCTAssertEqual(folded, before, accuracy: 1, "\(name): heading \(ordinal) stays where it was after the fold")
+
+        fold(ordinal).coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 10, dy: 0)).tap()
+        XCTAssertTrue(waitForFold(ordinal, "Expanded"), "\(name): heading \(ordinal) unfolds")
+        let unfolded = settledTop(ordinal)
+        saveScreenshot(name: "fold-keeps-position-\(name)-3-unfolded")
+        XCTAssertEqual(unfolded, before, accuracy: 1, "\(name): heading \(ordinal) stays where it was after the unfold")
     }
 
     private func waitForFold(_ ordinal: Int, _ value: String, timeout: TimeInterval = 10) -> Bool {
@@ -431,11 +500,12 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
         launchPreview(screen: "reader-task-edit", environment: environment, colorScheme: colorScheme, arguments: arguments, readyTimeout: 20)
         if !readOnly {
             let first = switch file {
-            case "tasks.org": "fileViewer.task.checkbox.5"
-            case "notebook.org": "fileViewer.task.checkbox.10"
-            default: "fileViewer.task.checkbox.3"
+            case "tasks.org": app.buttons["fileViewer.task.checkbox.5"]
+            case "notebook.org": app.buttons["fileViewer.task.checkbox.10"]
+            case "outline.org": fold(1)
+            default: app.buttons["fileViewer.task.checkbox.3"]
             }
-            XCTAssertTrue(app.buttons[first].waitUntilExists(timeout: 20), "the reader draws its task controls")
+            XCTAssertTrue(first.waitUntilExists(timeout: 20), "the reader draws its task controls")
         }
     }
 

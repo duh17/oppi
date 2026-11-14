@@ -195,6 +195,88 @@ struct MarkdownReaderHeightLedger {
     }
 }
 
+/// The first-paint height of a segment, which the ledger holds until the
+/// segment is measured. Nothing is typeset: the estimate only positions items
+/// until the reader scrolls to them.
+@MainActor
+enum MarkdownReaderHeightEstimate {
+    static func height(for segment: FlatSegment, containerWidth: CGFloat) -> CGFloat {
+        let contentWidth = max(1, containerWidth - 24)
+        switch segment {
+        case .text(let attributed):
+            // Wrapped line count from character counts.
+            return ceil(textHeight(String(attributed.characters), contentWidth: contentWidth, lineSpacing: 8))
+        case .codeBlock(_, let code):
+            // Monospace glyphs are wider than proportional text.
+            return ceil(textHeight(code, contentWidth: contentWidth, charWidth: 9.6, lineHeight: 16, lineSpacing: 56))
+        case .table(let headers, let rows, _):
+            let metrics = NativeTableBlockView.measureNaturalColumns(headers: headers, rows: rows)
+            if metrics.breaksLines || MarkdownTableColumnLayout.needsGridMode(naturalWidths: metrics.columnWidths) {
+                return CGFloat(max(headers.isEmpty ? 1 : 1, rows.count + 1)) * 56 + 16
+            }
+            let lineCount = CGFloat(1 + rows.count)
+            return lineCount * 22 + 16
+        case .thematicBreak:
+            return 8
+        case .image:
+            return 180
+        case .video:
+            return MarkdownInlineVideoLayout.reservedHeight(forWidth: contentWidth)
+        case .audio:
+            return MarkdownInlineAudioLayout.reservedHeight(forWidth: contentWidth)
+        case .usdz:
+            return MarkdownInlineUSDZLayout.reservedHeight(forWidth: contentWidth)
+        case .mermaidDiagram(let code):
+            // Mermaid parsing is too expensive for first paint. Estimate
+            // from diagram source lines; the background prefetch renders
+            // the real raster before the user reaches the item.
+            let lineCount = CGFloat(newlineCount(code) + 1)
+            return min(400, max(120, lineCount * 24 + 44))
+        case .geoJSONMap:
+            return 220
+        case .latexBlock(let code):
+            // TeX parsing plus CoreGraphics layout is too expensive for
+            // first paint. Estimate from source lines; real rasters are
+            // prefetched in the background before the user scrolls here.
+            let lineCount = CGFloat(newlineCount(code) + 1)
+            return min(400, max(44, lineCount * 28 + 24))
+        }
+    }
+
+    nonisolated static func newlineCount(_ string: String) -> Int {
+        var count = 0
+        for byte in string.utf8 where byte == UInt8(ascii: "\n") {
+            count += 1
+        }
+        return count
+    }
+
+    /// Cheap wrapped-line estimate. A ~9 pt average glyph width overestimates
+    /// slightly, so cells never collapse to clipped heights.
+    private static func textHeight(
+        _ text: String,
+        contentWidth: CGFloat,
+        charWidth: CGFloat = 9.0,
+        lineHeight: CGFloat = 20,
+        lineSpacing: CGFloat = 0
+    ) -> CGFloat {
+        guard !text.isEmpty else { return max(22, lineHeight + lineSpacing) }
+        let width = max(1, contentWidth)
+        var lines: CGFloat = 0
+        var paragraphScalars: CGFloat = 0
+        for scalar in text.unicodeScalars {
+            if scalar.value == 10 {
+                lines += max(1, (paragraphScalars * charWidth / width).rounded(.up))
+                paragraphScalars = 0
+            } else {
+                paragraphScalars += 1
+            }
+        }
+        lines += max(1, (paragraphScalars * charWidth / width).rounded(.up))
+        return max(22, lines * lineHeight + lineSpacing)
+    }
+}
+
 /// The only reasons the Markdown reader may write its vertical content offset.
 enum MarkdownReaderOffsetWriteReason: String, Equatable, Sendable {
     case preserveAnchor

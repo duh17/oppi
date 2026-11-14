@@ -82,8 +82,10 @@ final class OrgReaderControls: ReaderTaskControlHandling {
     private(set) var folded: Set<Int>
     /// The heading a fold just changed, which VoiceOver is sent back to.
     private var focusOrdinal: Int?
-    /// Called after `folded` changed; the reader converts and renders again.
-    var onFoldChange: (@MainActor () -> Void)?
+    /// Called after `folded` changed, with the heading the person toggled (nil
+    /// when the reader opened sections itself); the reader converts and
+    /// renders again, keeping a toggled heading where it is on screen.
+    var onFoldChange: (@MainActor (_ toggled: Int?) -> Void)?
 
     init(source: String, documentPath: String?, editing: ReaderTaskEditing?, memory: OrgFoldMemory?) {
         document = OrgReaderDocument(source: source, documentPath: documentPath, offersStateControl: editing != nil)
@@ -99,7 +101,7 @@ final class OrgReaderControls: ReaderTaskControlHandling {
         if !folded.insert(ordinal).inserted { folded.remove(ordinal) }
         focusOrdinal = ordinal
         memory.onChange(folded)
-        onFoldChange?()
+        onFoldChange?(ordinal)
     }
 
     /// Opens whichever of the sections `ordinals` names are folded, so a
@@ -111,7 +113,7 @@ final class OrgReaderControls: ReaderTaskControlHandling {
         guard !closed.isEmpty else { return false }
         folded.subtract(closed)
         memory.onChange(folded)
-        onFoldChange?()
+        onFoldChange?(nil)
         return true
     }
 

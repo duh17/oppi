@@ -391,13 +391,13 @@ struct OrgHeadingFoldTests {
         let memory = OrgFoldMemory(folded: [2]) { heard.append($0) }
         let controls = OrgReaderControls(source: Self.outline, documentPath: nil, editing: nil, memory: memory)
         #expect(controls.folded == [2], "a new reader starts from what the last one left")
-        var renders = 0
-        controls.onFoldChange = { renders += 1 }
+        var toggled: [Int?] = []
+        controls.onFoldChange = { toggled.append($0) }
         controls.toggleFold(ordinal: 5)
         controls.toggleFold(ordinal: 2)
         #expect(heard == [[2, 5], [5]])
         #expect(controls.folded == [5])
-        #expect(renders == 2)
+        #expect(toggled == [5, 2], "each render names the heading that was tapped, which the reader keeps in place")
     }
 
     @MainActor

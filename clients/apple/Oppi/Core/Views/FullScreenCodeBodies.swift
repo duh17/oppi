@@ -70,6 +70,18 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     /// strands the cells that pass prepared. The height flush honours the flag.
     private var needsLayoutReplaceAfterInteraction = false
     private var needsVisibleHeightRefreshAfterInteraction = false
+    /// The Org heading the person just folded or unfolded, held where it was on
+    /// screen as an outliner does. Every anchored layout after the fold (the
+    /// redraw, then each height measured above the heading) keeps its top the
+    /// same distance from the viewport's top, so only what is under it moves.
+    /// Kept until the page moves on purpose: a gesture, or a jump to a heading,
+    /// a find match or a line (any offset write but an anchor's).
+    private var heldFoldHeading: HeldFoldHeading?
+    private struct HeldFoldHeading {
+        let ordinal: Int
+        /// The viewport's top less the heading's top, as `ViewportAnchor`.
+        let offsetInItem: CGFloat
+    }
     private var pendingLayoutReplaceAfterInteractionRetry = false
     private var isReplacingCollectionLayout = false
     #if DEBUG
@@ -262,15 +274,17 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
         super.init(frame: .zero)
         _ = viewportOwner
-        #if DEBUG
         viewportOwner.onOffsetWrite = { [weak self] reason, _, _ in
             guard let self else { return }
+            // A jump or a followed tail moved the page on purpose.
+            if reason != .preserveAnchor { self.heldFoldHeading = nil }
+            #if DEBUG
             self.debugOffsetWriteReasons.append(reason)
             if self.isCollectionUserInteracting {
                 self.debugVisibleHeightCorrectionDuringInteractionCount += 1
             }
+            #endif
         }
-        #endif
 
         backgroundColor = bookAppearance?.backgroundColor(in: palette) ?? palette.ui.bgDark
 
@@ -328,7 +342,11 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             lineAnchorHighlightView.bottomAnchor.constraint(equalTo: collectionView.bottomAnchor),
         ])
 
-        orgControls?.onFoldChange = { [weak self] in self?.scheduleOrgModeSourcePreparation() }
+        orgControls?.onFoldChange = { [weak self] toggled in
+            guard let self else { return }
+            if let toggled { self.holdFoldHeading(ordinal: toggled) }
+            self.scheduleOrgModeSourcePreparation()
+        }
         installFindInteraction()
         if sourceFormat == .orgMode {
             installDeferredRenderPlaceholder(palette: palette)
@@ -753,7 +771,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                     build: build,
                     parseDurationNs: parseEnd - parseStart,
                     buildDurationNs: buildEnd - parseEnd,
-                    lineCount: Self.countNewlines(source) + 1,
+                    lineCount: MarkdownReaderHeightEstimate.newlineCount(source) + 1,
                     ranOnMainThread: ranOnMainThread
                 )
             }
@@ -908,14 +926,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         } else {
             UIAccessibility.post(notification: .layoutChanged, argument: collectionView)
         }
-    }
-
-    nonisolated private static func countNewlines(_ string: String) -> Int {
-        var count = 0
-        for byte in string.utf8 where byte == UInt8(ascii: "\n") {
-            count += 1
-        }
-        return count
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
@@ -1179,7 +1189,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         applyViewportTextTrim(width: width, canonicalWidth: canonicalWidth)
         let proseWidth = width - 2 * (readingColumn?.proseInset(in: canonicalWidth) ?? 0)
         let estimates = renderedSegments.map {
-            Self.estimatedHeight(for: $0, containerWidth: proseWidth)
+            MarkdownReaderHeightEstimate.height(for: $0, containerWidth: proseWidth)
         }
         heightLedger.applyDocument(
             ids: renderedSegmentIDs,
@@ -1193,14 +1203,16 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
         // Settle first paint plus a small immediate runway. The remaining two
         // viewports are prepared in short main-actor slices after the shell is
-        // visible, avoiding a gallery-sized synchronous opening stall.
-        let initialPreparedCount = settleRenderAhead(
-            fromItem: 0,
-            throughY: collectionView.bounds.height * 1.5,
-            maxItems: Self.maxInitialSynchronousPreparationItems,
-            timeBudgetNs: Self.maxInitialSynchronousPreparationNs,
-            visibleThroughY: collectionView.bounds.height
-        )
+        // visible, avoiding a gallery-sized synchronous opening stall. A redraw
+        // after a fold paints the held heading's screen instead of the top.
+        let initialPreparedCount = heldFoldHeadingAnchor().flatMap(settleViewport(around:))
+            ?? settleRenderAhead(
+                fromItem: 0,
+                throughY: collectionView.bounds.height * 1.5,
+                maxItems: Self.maxInitialSynchronousPreparationItems,
+                timeBudgetNs: Self.maxInitialSynchronousPreparationNs,
+                visibleThroughY: collectionView.bounds.height
+            )
         #if DEBUG
         debugInitialSynchronousPreparationItemCount = initialPreparedCount
         #endif
@@ -1264,7 +1276,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                   let shorter = Self.viewportTrimmedText(
                       text,
                       viewportHeight: viewportHeight,
-                      estimatedHeight: Self.estimatedHeight(for: segment, containerWidth: width),
+                      estimatedHeight: MarkdownReaderHeightEstimate.height(for: segment, containerWidth: width),
                       measure: { [self] candidate in
                           measuredHeight(
                               of: .text(candidate),
@@ -1595,77 +1607,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             targetY: collectionView.contentOffset.y + collectionView.bounds.height * 3,
             generation: heightFlushGeneration
         )
-    }
-
-    private static func estimatedHeight(for segment: FlatSegment, containerWidth: CGFloat) -> CGFloat {
-        let contentWidth = max(1, containerWidth - 24)
-        switch segment {
-        case .text(let attributed):
-            // First paint must not typeset every paragraph. Estimate wrapped
-            // line count from character counts; the estimate only positions
-            // items until the user scrolls to them.
-            return ceil(estimatedTextHeight(String(attributed.characters), contentWidth: contentWidth, lineSpacing: 8))
-        case .codeBlock(_, let code):
-            // Monospace glyphs are wider than proportional text.
-            return ceil(estimatedTextHeight(code, contentWidth: contentWidth, charWidth: 9.6, lineHeight: 16, lineSpacing: 56))
-        case .table(let headers, let rows, _):
-            let metrics = NativeTableBlockView.measureNaturalColumns(headers: headers, rows: rows)
-            if metrics.breaksLines || MarkdownTableColumnLayout.needsGridMode(naturalWidths: metrics.columnWidths) {
-                return CGFloat(max(headers.isEmpty ? 1 : 1, rows.count + 1)) * 56 + 16
-            }
-            let lineCount = CGFloat(1 + rows.count)
-            return lineCount * 22 + 16
-        case .thematicBreak:
-            return 8
-        case .image:
-            return 180
-        case .video:
-            return MarkdownInlineVideoLayout.reservedHeight(forWidth: contentWidth)
-        case .audio:
-            return MarkdownInlineAudioLayout.reservedHeight(forWidth: contentWidth)
-        case .usdz:
-            return MarkdownInlineUSDZLayout.reservedHeight(forWidth: contentWidth)
-        case .mermaidDiagram(let code):
-            // Mermaid parsing is too expensive for first paint. Estimate
-            // from diagram source lines; the background prefetch renders
-            // the real raster before the user reaches the item.
-            let lineCount = CGFloat(countNewlines(code) + 1)
-            return min(400, max(120, lineCount * 24 + 44))
-        case .geoJSONMap:
-            return 220
-        case .latexBlock(let code):
-            // TeX parsing plus CoreGraphics layout is too expensive for
-            // first paint. Estimate from source lines; real rasters are
-            // prefetched in the background before the user scrolls here.
-            let lineCount = CGFloat(countNewlines(code) + 1)
-            return min(400, max(44, lineCount * 28 + 24))
-        }
-    }
-
-    /// Cheap wrapped-line estimate for first-paint sizing. Avoids full
-    /// NSAttributedString typesetting per segment; ~9pt average glyph width
-    /// overestimates slightly so cells never collapse to clipped heights.
-    private static func estimatedTextHeight(
-        _ text: String,
-        contentWidth: CGFloat,
-        charWidth: CGFloat = 9.0,
-        lineHeight: CGFloat = 20,
-        lineSpacing: CGFloat = 0
-    ) -> CGFloat {
-        guard !text.isEmpty else { return max(22, lineHeight + lineSpacing) }
-        let width = max(1, contentWidth)
-        var lines: CGFloat = 0
-        var paragraphScalars: CGFloat = 0
-        for scalar in text.unicodeScalars {
-            if scalar.value == 10 {
-                lines += max(1, (paragraphScalars * charWidth / width).rounded(.up))
-                paragraphScalars = 0
-            } else {
-                paragraphScalars += 1
-            }
-        }
-        lines += max(1, (paragraphScalars * charWidth / width).rounded(.up))
-        return max(22, lines * lineHeight + lineSpacing)
     }
 
     private struct ViewportAnchor {
@@ -2086,6 +2027,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 
     private func captureViewportAnchor() -> ViewportAnchor? {
+        if let held = heldFoldHeadingAnchor() { return held }
         let visibleRect = CGRect(origin: collectionView.contentOffset, size: collectionView.bounds.size)
         let first = collectionView.indexPathsForVisibleItems
             .sorted { $0.item < $1.item }
@@ -2130,6 +2072,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 
     private func restoreViewportAnchor(_ anchor: ViewportAnchor) {
+        // An anchor captured before a fold's redraw named the old document's
+        // segment; the held heading is found again in the one now drawn.
+        let anchor = heldFoldHeadingAnchor() ?? anchor
         guard let item = renderedSegmentIDs.firstIndex(of: anchor.id),
               itemHeights.indices.contains(item) else { return }
         let spacing = readerPreferences.spacing.markdownStackSpacing
@@ -2173,7 +2118,57 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         )
     }
 
+    /// Holds the heading with `ordinal` where it is on screen through the
+    /// redraw its fold starts (`heldFoldHeading`). A fold from a tap, VoiceOver
+    /// or the keyboard all come through here.
+    private func holdFoldHeading(ordinal: Int) {
+        guard let item = headingPlacement.segment(forOrdinal: ordinal),
+              let frame = collectionView.layoutAttributesForItem(at: IndexPath(item: item, section: 0))?.frame else {
+            heldFoldHeading = nil
+            return
+        }
+        heldFoldHeading = HeldFoldHeading(ordinal: ordinal, offsetInItem: collectionView.contentOffset.y - frame.minY)
+    }
+
+    /// The held heading as an anchor in the document now drawn.
+    private func heldFoldHeadingAnchor() -> ViewportAnchor? {
+        guard let held = heldFoldHeading,
+              let item = headingPlacement.segment(forOrdinal: held.ordinal),
+              renderedSegmentIDs.indices.contains(item) else { return nil }
+        return ViewportAnchor(id: renderedSegmentIDs[item], offsetInItem: held.offsetInItem)
+    }
+
+    /// Measures the items `anchor`'s screen shows, above and below it, so a
+    /// redraw paints them at their height rather than an estimate that the
+    /// next measurement corrects. Returns how many it measured, or nil when the
+    /// anchor is not in the document.
+    private func settleViewport(around anchor: ViewportAnchor) -> Int? {
+        guard let item = renderedSegmentIDs.firstIndex(of: anchor.id),
+              let config = currentConfig,
+              let canonicalWidth = preparedCanonicalWidth else { return nil }
+        let spacing = readerPreferences.spacing.markdownStackSpacing
+        var prepared = 0
+        // The anchor's top sits `-offsetInItem` below the viewport's top.
+        var above = item - 1
+        var covered = CGFloat(0)
+        while above >= 0, covered < -anchor.offsetInItem {
+            let id = renderedSegmentIDs[above]
+            if heightLedger.finalHeight(for: id, canonicalWidth: canonicalWidth) == nil {
+                settleItemGeometry(above, config: config, canonicalWidth: canonicalWidth)
+                prepared += 1
+            }
+            covered += (heightLedger.geometry(for: id)?.height ?? 0) + spacing
+            above -= 1
+        }
+        itemHeights = heightLedger.heights()
+        let itemMinY = MarkdownReaderStackLayout.contentInsets.top
+            + itemHeights.prefix(item).reduce(0, +) + spacing * CGFloat(item)
+        let viewportMaxY = itemMinY + anchor.offsetInItem + collectionView.bounds.height
+        return prepared + settleRenderAhead(fromItem: item, throughY: viewportMaxY, visibleThroughY: viewportMaxY)
+    }
+
     private func beginViewportInteraction() {
+        heldFoldHeading = nil
         markdownViewportRestoreSettled = true
         viewportOwner.touchDown()
         lineAnchorFocusTask?.cancel()
