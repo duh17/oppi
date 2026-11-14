@@ -85,6 +85,11 @@ struct FileRenderInput {
     let audioPlayer: AudioPlayerService?
     /// Bytes the viewer already read (text that did not decode); `bytes()` returns them.
     let preread: Data?
+    /// The folder listing's size, when the file was opened from one.
+    let listedSize: Int?
+    /// Why a file of another kind shows as a file card instead (text too
+    /// large to read whole), for the card to say.
+    var notice: String? = nil
     /// False once the viewer shows another file or the load was cancelled.
     let isCurrent: @MainActor () -> Bool
 
@@ -109,6 +114,15 @@ struct FileRenderInput {
     /// This file as Share downloads it, for a renderer that streams it.
     var remoteShare: RemoteFileShare {
         access.remoteFileShare(api: api, path: path, fileName: fileName, size: nil)
+    }
+
+    /// The file's size and modification time from a HEAD, which no size cap
+    /// refuses. Throws `FileDownloadError.rejected` when the server refuses.
+    func head() async throws -> RemoteFileHead {
+        let source = try await access.mediaSource(
+            api: api, path: path, contentTypeHint: nil, sourceFileExtension: fileExtension
+        )
+        return try await source.loadFileHead(configuration: api.sessionConfiguration)
     }
 
     /// Captions or lyrics beside this media file, read when the player asks.

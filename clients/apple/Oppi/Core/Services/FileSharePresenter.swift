@@ -112,21 +112,43 @@ enum FileSharePresenter {
     private static let progressDelay = Duration.milliseconds(350)
 
     /// Downloads `file` to a temporary file, then presents the share sheet
-    /// with it, anchored to `sourceItem`. A download that takes a moment
-    /// shows its progress with Cancel. A file over the server's size limit
-    /// says so. The temporary file goes when the sheet closes, or at once
-    /// when there is no sheet.
+    /// with it, anchored to `sourceItem` (`download(_:to:from:)`). The
+    /// temporary file goes when the sheet closes, or at once when there is
+    /// no sheet.
     static func share(
         _ file: RemoteFileShare,
         from screen: UIViewController,
         sourceItem: (any UIPopoverPresentationControllerSourceItem)?
     ) async {
-        guard !isPreparingRemoteFile, screen.viewIfLoaded?.window != nil else { return }
-        let presenter = Router.topPresenter(from: screen)
-        isPreparingRemoteFile = true
-        defer { isPreparingRemoteFile = false }
-
         let destination = FileShareService.temporaryFileURL(named: file.fileName)
+        guard await download(file, to: destination, from: screen) else { return }
+        presentActivityController(item: .file(destination), from: screen, sourceItem: sourceItem)
+    }
+
+    /// Downloads `file` to `destination` on disk, never into memory, and says
+    /// whether it is there. A download that takes a moment shows its progress
+    /// with Cancel over `screen`'s window. A file this device should not hold
+    /// (`FileDownloadBudget`), or one over the server's size limit, says so
+    /// in an alert, as does any other failure; a cancel says nothing. On
+    /// failure `destination`'s folder is removed.
+    static func download(_ file: RemoteFileShare, to destination: URL, from screen: UIViewController) async -> Bool {
+        guard !isPreparingRemoteFile, screen.viewIfLoaded?.window != nil else { return false }
+        let presenter = Router.topPresenter(from: screen)
+        if let refusal = FileDownloadBudget.refusal(
+            byteCount: file.expectedBytes,
+            availableBytes: FileDownloadBudget.availableBytes()
+        ) {
+            presenter.errorAlerts.show(title: refusal.title, message: refusal.message(fileName: file.fileName))
+            return false
+        }
+        isPreparingRemoteFile = true
+        let transfer = RemoteFileTransfer()
+        transfer.beginBackgroundTime()
+        defer {
+            isPreparingRemoteFile = false
+            transfer.endBackgroundTime()
+        }
+
         let expectedBytes = file.expectedBytes
         let overlay = FileShareProgressOverlay(
             fileName: file.fileName,
@@ -134,15 +156,19 @@ enum FileSharePresenter {
             palette: ThemeRuntimeState.currentPalette()
         )
         // This function holds the overlay until the download ends anyway.
-        let download = Task { [overlay] in
+        let download = Task { [overlay, transfer] in
             try await file.download(destination) { progress in
                 Task { @MainActor [weak overlay] in
-                    overlay?.update(
-                        FileDownloadProgress(received: progress.received, expected: progress.expected ?? expectedBytes)
+                    let progress = FileDownloadProgress(
+                        received: progress.received,
+                        expected: progress.expected ?? expectedBytes
                     )
+                    overlay?.update(progress)
+                    transfer.check(progress)
                 }
             }
         }
+        transfer.task = download
         overlay.onCancel = { download.cancel() }
         let showProgress = Task {
             // The download can end between the sleep and this turn of the main actor.
@@ -156,19 +182,62 @@ enum FileSharePresenter {
 
         switch result {
         case .success:
-            presentActivityController(item: .file(destination), from: screen, sourceItem: sourceItem)
+            return true
         case .failure(let error):
             try? FileManager.default.removeItem(at: destination.deletingLastPathComponent())
-            if error is CancellationError { return }
-            if case .rejected(status: 413, let message)? = error as? FileDownloadError {
+            if let refusedMidway = transfer.refusal {
+                presenter.errorAlerts.show(title: refusedMidway.title, message: refusedMidway.message(fileName: file.fileName))
+            } else if error is CancellationError {
+                return false
+            } else if case .digestMismatch? = error as? FileDownloadError {
+                presenter.errorAlerts.show(
+                    title: String(localized: "Download Failed"),
+                    message: String(localized: "“\(file.fileName)” did not match the server's copy: it changed or was damaged on the way. Nothing was saved.")
+                )
+            } else if case .rejected(status: 413, let message)? = error as? FileDownloadError {
                 let reason = message ?? String(localized: "it is over the size limit for this kind of file")
                 presenter.errorAlerts.show(
-                    title: String(localized: "File Too Large to Share"),
+                    title: String(localized: "File Too Large"),
                     message: String(localized: "The server won't send “\(file.fileName)”: \(reason).")
                 )
             } else {
                 presenter.errorAlerts.showShareFailure()
             }
+            return false
+        }
+    }
+
+    /// One download in flight: a size the listing did not know is checked
+    /// against `FileDownloadBudget`'s cap as the response states it, or as
+    /// bytes arrive, and the download stops there.
+    @MainActor
+    private final class RemoteFileTransfer {
+        var task: Task<Void, Error>?
+        private(set) var refusal: FileDownloadBudget.Refusal?
+        private var backgroundTask = UIBackgroundTaskIdentifier.invalid
+
+        /// Leaving the app keeps the download going for the time iOS grants;
+        /// after that the download resumes from where it stopped when the app
+        /// comes back (`ResumableFileDownload`).
+        func beginBackgroundTime() {
+            backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "File download") { [weak self] in
+                MainActor.assumeIsolated { self?.endBackgroundTime() }
+            }
+        }
+
+        func endBackgroundTime() {
+            guard backgroundTask != .invalid else { return }
+            UIApplication.shared.endBackgroundTask(backgroundTask)
+            backgroundTask = .invalid
+        }
+
+        func check(_ progress: FileDownloadProgress) {
+            guard refusal == nil, let refusal = FileDownloadBudget.refusal(
+                byteCount: max(progress.received, progress.expected ?? 0),
+                availableBytes: nil
+            ) else { return }
+            self.refusal = refusal
+            task?.cancel()
         }
     }
 

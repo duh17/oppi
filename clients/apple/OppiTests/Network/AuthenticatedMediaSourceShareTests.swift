@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import Oppi
@@ -117,6 +118,8 @@ struct AuthenticatedMediaSourceShareTests {
             #expect(query.contains(URLQueryItem(name: "workspaceId", value: "w1")))
             #expect(query.contains(URLQueryItem(name: "path", value: "media/clip.mp4")))
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer share-token")
+            // A ranged read: the server caps only whole reads, which a viewer holds in memory.
+            #expect(request.value(forHTTPHeaderField: "Range") == "bytes=0-")
             return (
                 expected,
                 (try #require(HTTPURLResponse(
@@ -182,6 +185,158 @@ struct AuthenticatedMediaSourceShareTests {
         #expect(refusal == .rejected(status: 413, message: "File too large (max 10MB)"))
         #expect(!FileManager.default.fileExists(atPath: destination.path), "an error body is not the file")
         #expect(reported.last == nil, "an error body is not progress")
+    }
+
+    @Test("an empty file, which has no byte to range over, downloads as an empty file")
+    func downloadsAnEmptyFile() async throws {
+        defer { AudioShareURLProtocol.handler = nil }
+        AudioShareURLProtocol.handler = { request in
+            (
+                Data(),
+                (try #require(HTTPURLResponse(
+                    url: testUnwrap(request.url),
+                    statusCode: 416,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Range": "bytes */0", "Content-Length": "0"]
+                )))
+            )
+        }
+        let source = AuthenticatedMediaSource(
+            url: testUnwrap(URL(string: "https://server.example.com/files/current?path=empty.bin")),
+            authorizationHeaderValue: "Bearer token",
+            tlsCertFingerprint: nil,
+            contentTypeHint: nil,
+            sourceFileExtension: "bin"
+        )
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AudioShareURLProtocol.self]
+        let destination = shareDestination()
+        defer { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()) }
+
+        try await source.downloadFile(to: destination, configuration: configuration) { _ in }
+
+        #expect(try Data(contentsOf: destination).isEmpty)
+    }
+
+    private func scriptedDownload(_ url: String) -> ResumableFileDownload {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ScriptedDownloadURLProtocol.self]
+        var download = AuthenticatedMediaSource(
+            url: testUnwrap(URL(string: url)),
+            authorizationProvider: { "Bearer token-\(UUID().uuidString.prefix(4))" },
+            tlsCertFingerprint: nil,
+            contentTypeHint: nil,
+            sourceFileExtension: "zip"
+        ).resumableDownload(configuration: configuration)
+        download.retryDelays = [.zero, .zero]
+        download.waitUntilActive = {}
+        return download
+    }
+
+    private static func digest(_ data: Data) -> String {
+        "sha-256=:\(Data(SHA256.hash(data: data)).base64EncodedString()):"
+    }
+
+    @Test("a dropped download resumes from the bytes it has, while the file is unchanged")
+    func resumesAfterADrop() async throws {
+        defer { ScriptedDownloadURLProtocol.script = nil }
+        let file = Data((0..<400_000).map { UInt8($0 % 251) })
+        let half = 150_000
+        let requests = RequestLog()
+        ScriptedDownloadURLProtocol.script = { request, index in
+            requests.record(request)
+            let url = try #require(request.url)
+            let start = index == 0 ? 0 : half
+            let response = try #require(HTTPURLResponse(url: url, statusCode: 206, httpVersion: "HTTP/1.1", headerFields: [
+                "Content-Range": "bytes \(start)-\(file.count - 1)/\(file.count)",
+                "Content-Length": String(file.count - start),
+                "ETag": "\"v1\"",
+                "X-Oppi-File-Digest": Self.digest(file),
+            ]))
+            // The first answer drops after half the file.
+            return index == 0
+                ? (response, file.prefix(half), URLError(.networkConnectionLost))
+                : (response, file.suffix(from: half), nil)
+        }
+        let destination = shareDestination()
+        defer { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()) }
+        let reported = ProgressCapture()
+
+        try await scriptedDownload("https://server.example.com/files/current?path=archive-sample.zip")
+            .run(to: destination) { reported.record($0) }
+
+        #expect(try Data(contentsOf: destination) == file)
+        let sent = requests.all
+        #expect(sent.count == 2)
+        #expect(sent.first?.value(forHTTPHeaderField: "Range") == "bytes=0-")
+        #expect(sent.first?.value(forHTTPHeaderField: "If-Range") == nil)
+        #expect(sent.last?.value(forHTTPHeaderField: "Range") == "bytes=\(half)-")
+        #expect(sent.last?.value(forHTTPHeaderField: "If-Range") == "\"v1\"")
+        #expect(sent.allSatisfy { $0.value(forHTTPHeaderField: "X-Oppi-Want-File-Digest") == "sha-256" })
+        #expect(reported.last == FileDownloadProgress(received: Int64(file.count), expected: Int64(file.count)))
+        #expect(!FileManager.default.fileExists(atPath: destination.appendingPathExtension("part").path))
+    }
+
+    @Test("a file that changed while the download was down starts over with the new file")
+    func restartsWhenTheFileChanged() async throws {
+        defer { ScriptedDownloadURLProtocol.script = nil }
+        let old = Data(repeating: 1, count: 200_000)
+        let new = Data(repeating: 2, count: 120_000)
+        let requests = RequestLog()
+        ScriptedDownloadURLProtocol.script = { request, index in
+            requests.record(request)
+            let url = try #require(request.url)
+            if index == 0 {
+                let response = try #require(HTTPURLResponse(url: url, statusCode: 206, httpVersion: "HTTP/1.1", headerFields: [
+                    "Content-Range": "bytes 0-\(old.count - 1)/\(old.count)",
+                    "Content-Length": String(old.count),
+                    "ETag": "\"v1\"",
+                    "X-Oppi-File-Digest": Self.digest(old),
+                ]))
+                return (response, old.prefix(90_000), URLError(.networkConnectionLost))
+            }
+            // If-Range no longer holds: the server sends the whole new file.
+            let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: [
+                "Content-Length": String(new.count),
+                "ETag": "\"v2\"",
+                "X-Oppi-File-Digest": Self.digest(new),
+            ]))
+            return (response, new, nil)
+        }
+        let destination = shareDestination()
+        defer { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()) }
+
+        try await scriptedDownload("https://server.example.com/files/current?path=archive-sample.zip")
+            .run(to: destination) { _ in }
+
+        #expect(requests.all.last?.value(forHTTPHeaderField: "If-Range") == "\"v1\"", "the resume named the old version")
+        #expect(try Data(contentsOf: destination) == new)
+    }
+
+    @Test("a file whose bytes do not match the server's digest is not kept")
+    func refusesADigestMismatch() async throws {
+        defer { ScriptedDownloadURLProtocol.script = nil }
+        let file = Data(repeating: 3, count: 50_000)
+        ScriptedDownloadURLProtocol.script = { request, _ in
+            let url = try #require(request.url)
+            let response = try #require(HTTPURLResponse(url: url, statusCode: 206, httpVersion: "HTTP/1.1", headerFields: [
+                "Content-Range": "bytes 0-\(file.count - 1)/\(file.count)",
+                "Content-Length": String(file.count),
+                "ETag": "\"v1\"",
+                "X-Oppi-File-Digest": Self.digest(Data(repeating: 4, count: 50_000)),
+            ]))
+            return (response, file, nil)
+        }
+        let destination = shareDestination()
+        defer { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()) }
+
+        let error = await #expect(throws: FileDownloadError.self) {
+            try await scriptedDownload("https://server.example.com/files/current?path=archive-sample.zip")
+                .run(to: destination) { _ in }
+        }
+        #expect(error == .digestMismatch)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        #expect(!FileManager.default.fileExists(atPath: destination.appendingPathExtension("part").path))
     }
 
     @Test("cancelling a share download stops it and leaves no file")
@@ -308,6 +463,49 @@ private final class RedirectRequestCapture: @unchecked Sendable {
             called = true
         }
     }
+}
+
+private final class RequestLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requests: [URLRequest] = []
+    var all: [URLRequest] { lock.withLock { requests } }
+    func record(_ request: URLRequest) { lock.withLock { requests.append(request) } }
+}
+
+/// Answers the nth request with a response, its bytes, and then either the
+/// end of the body or a failure, as `script` says.
+private final class ScriptedDownloadURLProtocol: URLProtocol, @unchecked Sendable {
+    /// Setting a script starts its request count over.
+    nonisolated(unsafe) static var script: ((URLRequest, Int) throws -> (HTTPURLResponse, Data, URLError?))? {
+        didSet { count = 0 }
+    }
+    nonisolated(unsafe) private static var count = 0
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let index = Self.count
+        Self.count += 1
+        guard let script = Self.script, let (response, body, failure) = try? script(request, index) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        guard let failure else {
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
+        // The connection drops a moment after the bytes arrived, as a real
+        // one does; a failure in the same turn discards the bytes undelivered.
+        let loader = self
+        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) {
+            loader.client?.urlProtocol(loader, didFailWithError: failure)
+        }
+    }
+
+    override func stopLoading() {}
 }
 
 private final class ProgressCapture: @unchecked Sendable {

@@ -93,7 +93,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     private enum Phase: Equatable {
         case loading
         case sizeWarning(Int)
-        case error(String)
+        /// A failed read; `retry` when reading again could succeed.
+        case error(String, retry: Bool)
         /// The server has no file at the path (404): the pane's missing state.
         case missing
         case text(String)
@@ -105,7 +106,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             switch (lhs, rhs) {
             case (.loading, .loading): true
             case (.sizeWarning(let a), .sizeWarning(let b)): a == b
-            case (.error(let a), .error(let b)): a == b
+            case (.error(let a, let retryA), .error(let b, let retryB)): a == b && retryA == retryB
             case (.missing, .missing): true
             case (.text(let a), .text(let b)): a == b
             case (.rendered(let a, _), .rendered(let b, _)): a === b
@@ -500,11 +501,11 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             addPage(warning)
             sizeWarning = warning
             mounted = warning
-        case .error(let message):
+        case .error(let message, let retry):
             mounted = unavailable(.failed(
                 title: String(localized: "Unable to Load"),
                 message: message,
-                retry: RetryAction { [weak self] in self?.startLoad(force: true) }
+                retry: retry ? RetryAction { [weak self] in self?.startLoad(force: true) } : nil
             ))
         case .missing:
             mounted = unavailable(.paneMissing(.file, retry: RetryAction { [weak self] in self?.startLoad(force: true) }))
@@ -884,7 +885,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 
     private func loadContent(force: Bool = false) async {
         guard let api = services.apiClient() else {
-            content = .error("Not connected")
+            content = .error(String(localized: "Not connected"), retry: true)
             return
         }
         // Reappearing over an open editor must not reload over the buffer (subjects, not the canonical identity).
@@ -923,7 +924,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
                       Self.isHTTPError(error, statusCodes: [401, 403, 404]) else { return }
                 loadedTextPath = nil
                 loadedHostFilePath = nil
-                content = Self.isHTTPError(error, statusCodes: [404]) ? .missing : .error(error.localizedDescription)
+                content = Self.failure(error)
                 return
             }
         }
@@ -975,8 +976,35 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             }
         } catch {
             guard isCurrentFile(requestedPath) else { return }
-            content = Self.isHTTPError(error, statusCodes: [404]) ? .missing : .error(error.localizedDescription)
+            // Text over the server's limit for a whole read opens as a file
+            // card, which shares or saves it without reading it into memory.
+            if Self.isHTTPError(error, statusCodes: [413]), requestedCategory == .text {
+                let notice = String(localized: "Too large to show here. Share it, save it to Files, or open it in another app.")
+                do {
+                    if let card = try await BinaryFileRenderer.load(
+                        renderInput(api: api, path: requestedPath, notice: notice)
+                    ) {
+                        content = .rendered(card, path: requestedPath)
+                    }
+                    return
+                } catch {
+                    guard isCurrentFile(requestedPath) else { return }
+                    content = Self.failure(error)
+                    return
+                }
+            }
+            content = Self.failure(error)
         }
+    }
+
+    /// The page for a failed read: the missing state for a file the server
+    /// does not have, else the error, with Retry only when reading again
+    /// could succeed. A refusal the server repeats for the same request (a
+    /// 4xx other than a timeout or rate limit) offers none.
+    private static func failure(_ error: Error) -> Phase {
+        if isHTTPError(error, statusCodes: [404]) { return .missing }
+        let refused = isHTTPError(error, statusCodes: Set(400..<500).subtracting([408, 429]))
+        return .error(error.localizedDescription, retry: !refused)
     }
 
     /// Shows a freshly read file and records `app.file_open`: how long mounting
@@ -1008,7 +1036,12 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         }
     }
 
-    private func renderInput(api: APIClient, path: String, preread: Data? = nil) -> FileRenderInput {
+    private func renderInput(
+        api: APIClient,
+        path: String,
+        preread: Data? = nil,
+        notice: String? = nil
+    ) -> FileRenderInput {
         FileRenderInput(
             api: api,
             access: fileAccess,
@@ -1016,6 +1049,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             fileName: currentFileName,
             audioPlayer: services.audioPlayer,
             preread: preread,
+            listedSize: currentSelection.path == path ? currentSelection.size : nil,
+            notice: notice,
             isCurrent: { [weak self] in self?.isCurrentFile(path) ?? false }
         )
     }

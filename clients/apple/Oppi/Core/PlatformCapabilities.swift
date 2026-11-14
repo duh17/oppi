@@ -1,4 +1,8 @@
 import CoreGraphics
+import Foundation
+#if !targetEnvironment(macCatalyst)
+import QuickLook
+#endif
 
 /// What this build of the app can do where it runs: the one owner of the
 /// differences between the iOS app and its Mac Catalyst build.
@@ -46,4 +50,17 @@ enum PlatformCapabilities {
     /// (`PanePresentation.resolve`). The iPad mini holds four within its
     /// memory budget; on the Mac the window's width binds first.
     static let livePaneLimit = isMacCatalyst ? 8 : 4
+
+    /// Whether Quick Look can preview the file at `url`, by its type; the
+    /// file need not exist yet. `QLPreviewController.canPreview` is unavailable
+    /// to Mac Catalyst, so the Mac's file card offers Share and Save to Files
+    /// only.
+    @MainActor
+    static func quickLookPreviews(_ url: URL) -> Bool {
+        #if targetEnvironment(macCatalyst)
+        false
+        #else
+        QLPreviewController.canPreview(url as NSURL)
+        #endif
+    }
 }

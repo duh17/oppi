@@ -222,19 +222,24 @@ extension E2ETestCase {
 
     /// Creates a file fixture on the E2E server and returns a host mount path
     /// that can be attached to a workspace.
+    /// `sizeBytes` pads the decoded bytes with zeros to that size, for a file
+    /// larger than a request body should carry.
     func createLabWorkspaceFileFixture(
         directoryName: String,
         filename: String,
-        base64: String
+        base64: String,
+        sizeBytes: Int? = nil
     ) throws -> E2ELabWorkspaceFileFixture {
+        var body: [String: Any] = [
+            "directoryName": directoryName,
+            "filename": filename,
+            "base64": base64,
+        ]
+        if let sizeBytes { body["sizeBytes"] = sizeBytes }
         let response = try e2eLabAPIJSON(
             method: "POST",
             path: "/e2e/ui/fixtures/workspace-file",
-            body: [
-                "directoryName": directoryName,
-                "filename": filename,
-                "base64": base64,
-            ]
+            body: body
         )
         return E2ELabWorkspaceFileFixture(
             hostMount: try XCTUnwrap(response["hostMount"] as? String, "Fixture response missing hostMount"),

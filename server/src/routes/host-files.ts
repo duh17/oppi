@@ -467,7 +467,9 @@ export function createHostFileRoutes(
         status = resolved.status;
         return;
       }
-      const servable = await statServableFile(resolved.file.realPath, resolved.file.lexicalPath);
+      const servable = await statServableFile(resolved.file.realPath, resolved.file.lexicalPath, {
+        wholeRead: method === "GET" && req.headers.range === undefined,
+      });
       switch (servable.kind) {
         case "ok": {
           let extraHeaders = resolvedPathHeaders(resolved.file);

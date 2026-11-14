@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -28,6 +28,8 @@ import type { RouteDispatcher, RouteHelpers, RouteContext } from "./types.js";
 
 const MAX_E2E_UI_MESSAGE_BYTES = 2 * 1024 * 1024;
 const MAX_E2E_FIXTURE_FILE_BYTES = 5 * 1024 * 1024;
+/** `sizeBytes` pads a fixture past the browse caps (10, 50, 100 MB) without a body that large. */
+const MAX_E2E_FIXTURE_PADDED_BYTES = 128 * 1024 * 1024;
 const MAX_E2E_FIXTURE_BODY_BYTES = 8 * 1024 * 1024;
 const MAX_E2E_STOPPED_SESSION_FIXTURES = 500;
 
@@ -185,12 +187,24 @@ async function handleWorkspaceFileFixture(
     helpers.error(res, 400, "Fixture file size is invalid");
     return;
   }
+  // Optional: zero bytes after the decoded ones, up to this total size.
+  const sizeBytes = numberField(body.sizeBytes);
+  if (
+    sizeBytes !== undefined &&
+    (!Number.isSafeInteger(sizeBytes) ||
+      sizeBytes < bytes.length ||
+      sizeBytes > MAX_E2E_FIXTURE_PADDED_BYTES)
+  ) {
+    helpers.error(res, 400, "Fixture sizeBytes is invalid");
+    return;
+  }
 
   const root = join(ctx.storage.getDataDir(), "e2e-fixtures");
   const hostMount = join(root, directoryName);
   const filePath = join(hostMount, filename);
   await mkdir(hostMount, { recursive: true, mode: 0o700 });
   await writeFile(filePath, bytes, { mode: 0o600 });
+  if (sizeBytes !== undefined) await truncate(filePath, sizeBytes);
   helpers.json(res, { ok: true, hostMount, filePath, filename });
 }
 

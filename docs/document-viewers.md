@@ -27,13 +27,15 @@ Assistant messages link to files with wiki links or standard Markdown links. A t
 
 **Resolution.** Oppi resolves a link when you tap it. One match opens directly, several matches show a chooser, and none shows an unresolved-file message. A non-main worktree that lacks the file retries on the main checkout. Authentication or server errors on a host file are reported as such, not as an unresolved file.
 
-**What opens.** Git tracking does not matter: tracked and safe Git-ignored files open the same way. The viewer follows the file type: Markdown, code, JSON, CSV, HTML, CSS, XML, GeoJSON, TopoJSON, PDF, images, audio and video (`.mp3`, `.wav`, `.m4a`, `.mp4`, `.mov`, `.m3u8`), and `.usdz` scenes. An unknown binary is served within the limits below without a guaranteed preview.
+**What opens.** Git tracking does not matter: tracked and safe Git-ignored files open the same way. The viewer follows the file type: Markdown, code, JSON, CSV, HTML, CSS, XML, GeoJSON, TopoJSON, PDF, images, audio and video (`.mp3`, `.wav`, `.m4a`, `.mp4`, `.mov`, `.m3u8`), and `.usdz` scenes. Any other file, such as a `.zip`, `.dmg`, or `.docx`, opens as a file card: its type, size, and when it last changed, with **Share** and **Save to Files**, and **Quick Look** when iOS can preview the type (Office and iWork documents, for example). Text too large to show opens as the same card.
 
 **Limits.**
 
 - Images, PDFs, and USDZ: 50 MB.
-- Text and other non-streaming files: 10 MB.
+- Text and other files the viewer reads whole: 10 MB.
 - Audio, video, and HLS: range streaming, without the size cap.
+- **Share**, **Save to Files**, and **Quick Look** download the file to the device, with progress and **Cancel**, and are not held to these limits. A download can be up to 2 GB and needs free space for twice its size, room for the file and the copy another app makes. The card keeps its copy until you leave the file.
+- Downloads use the same paired connection and certificate check as the rest of the app; nothing gets a public link. A download that drops, or that iOS pauses after you leave the app, continues from where it stopped once the connection or the app is back (if iOS closed Oppi meanwhile, start it again), unless the file changed on the server, in which case it starts over. Before the file is offered, the app checks it against the SHA-256 the server sends and discards it if they differ. Text files travel compressed; archives and media do not.
 - Name lookup scans at most 1,000 entries in a directory, so resolution can fail when the target's folder has more siblings. Fuzzy search lists at most 50,000 files and says when it stopped early.
 
 **Writes in chat.** An expanded, completed, successful text `write` row opens the file as it is now, not the content the tool wrote. Running, failed, and interrupted writes keep the tool-output viewer.

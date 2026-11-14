@@ -1,4 +1,6 @@
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { once } from "node:events";
 import {
   mkdirSync,
@@ -8,6 +10,7 @@ import {
   rmSync,
   symlinkSync,
   truncateSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -50,9 +53,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { sendFileBytes, statServableFile } from "../src/current-file.js";
 import {
+  browseSizeLimit,
   getContentType,
   MAX_BROWSE_BOOK_FILE_SIZE,
   MAX_BROWSE_IMAGE_FILE_SIZE,
+  MAX_BROWSE_TEXT_FILE_SIZE,
 } from "../src/file-serving-policy.js";
 import { listDirectoryEntries } from "../src/directory-listing.js";
 import { createRouteHelpers } from "../src/routes/http.js";
@@ -468,6 +473,209 @@ describe("GET/HEAD /files/current", () => {
     const unsatisfiable = await request(fixture, "GET", search, { range: "bytes=20-" });
     expect(unsatisfiable.statusCode).toBe(416);
     expect(unsatisfiable.headers["Content-Range"]).toBe("bytes */10");
+  });
+});
+
+describe("browse size caps", () => {
+  it("caps a whole read by the kind the name serves as", () => {
+    const cap = (name: string) => browseSizeLimit(getContentType("", name));
+    expect({
+      text: cap("notes.md"),
+      unrecognised: cap("archive-sample.zip"),
+      image: cap("photo.png"),
+      pdf: cap("report.pdf"),
+      book: cap("novel.epub"),
+      audio: cap("track.mp3"),
+      video: cap("clip.mp4"),
+    }).toEqual({
+      text: MAX_BROWSE_TEXT_FILE_SIZE,
+      unrecognised: MAX_BROWSE_TEXT_FILE_SIZE,
+      image: MAX_BROWSE_IMAGE_FILE_SIZE,
+      pdf: MAX_BROWSE_IMAGE_FILE_SIZE,
+      book: MAX_BROWSE_BOOK_FILE_SIZE,
+      audio: null,
+      video: null,
+    });
+  });
+
+  it("refuses a whole read over the cap but serves ranged and HEAD reads of any size", async () => {
+    const fixture = seed();
+    const archive = join(fixture.outside, "archive-sample.zip");
+    writeFileSync(archive, "");
+    truncateSync(archive, MAX_BROWSE_TEXT_FILE_SIZE + 1);
+    const text = join(fixture.outside, "server.log");
+    writeFileSync(text, "");
+    truncateSync(text, MAX_BROWSE_TEXT_FILE_SIZE + 1);
+    const size = MAX_BROWSE_TEXT_FILE_SIZE + 1;
+    const search = (path: string) => `/files/current?${query({ origin: "host", path })}`;
+
+    for (const path of [archive, text]) {
+      const whole = await request(fixture, "GET", search(path));
+      expect({ path, status: whole.statusCode, body: JSON.parse(whole.text()) }).toEqual({
+        path,
+        status: 413,
+        body: { error: "File too large (max 10MB)" },
+      });
+
+      const head = await request(fixture, "HEAD", search(path));
+      expect({ path, status: head.statusCode, length: head.headers["Content-Length"] }).toEqual({
+        path,
+        status: 200,
+        length: String(size),
+      });
+      expect(head.body.length).toBe(0);
+    }
+
+    // A download reads from the first byte to the end: every byte, as a 206.
+    const download = await request(fixture, "GET", search(archive), { range: "bytes=0-" });
+    expect({
+      status: download.statusCode,
+      range: download.headers["Content-Range"],
+      length: download.headers["Content-Length"],
+      received: download.body.length,
+    }).toEqual({
+      status: 206,
+      range: `bytes 0-${size - 1}/${size}`,
+      length: String(size),
+      received: size,
+    });
+  });
+
+  it("states when the file was last modified", async () => {
+    const fixture = seed();
+    const archive = join(fixture.outside, "archive-sample.zip");
+    writeFileSync(archive, "PK\u0005\u0006");
+    const modified = new Date("2026-03-04T05:06:07Z");
+    utimesSync(archive, modified, modified);
+
+    const head = await request(
+      fixture,
+      "HEAD",
+      `/files/current?${query({ origin: "host", path: archive })}`,
+    );
+    expect(head.headers["Last-Modified"]).toBe("Wed, 04 Mar 2026 05:06:07 GMT");
+  });
+});
+
+describe("resumable, verified downloads", () => {
+  const search = (path: string) => `/files/current?${query({ origin: "host", path })}`;
+
+  it("names the version on ranged reads and resumes only while it holds", async () => {
+    const fixture = seed();
+    const archive = join(fixture.outside, "archive-sample.zip");
+    writeFileSync(archive, "0123456789");
+
+    // The editor reads without Range; its ETag is a tagged read's content hash.
+    const plain = await request(fixture, "GET", search(archive));
+    expect(plain.headers.ETag).toBeUndefined();
+
+    const first = await request(fixture, "GET", search(archive), { range: "bytes=0-" });
+    const etag = first.headers.ETag;
+    expect(etag).toMatch(/^"[0-9a-f-]+"$/);
+
+    const resumed = await request(fixture, "GET", search(archive), {
+      range: "bytes=4-",
+      "if-range": etag,
+    });
+    expect({
+      status: resumed.statusCode,
+      range: resumed.headers["Content-Range"],
+      body: resumed.text(),
+      etag: resumed.headers.ETag,
+    }).toEqual({ status: 206, range: "bytes 4-9/10", body: "456789", etag });
+
+    // Rewritten: the old tag no longer holds, so the whole new file comes back.
+    writeFileSync(archive, "abcdefghijkl");
+    utimesSync(archive, new Date("2026-05-01T00:00:00Z"), new Date("2026-05-01T00:00:00Z"));
+    const restarted = await request(fixture, "GET", search(archive), {
+      range: "bytes=4-",
+      "if-range": etag,
+    });
+    expect({
+      status: restarted.statusCode,
+      range: restarted.headers["Content-Range"],
+      body: restarted.text(),
+    }).toEqual({ status: 200, range: undefined, body: "abcdefghijkl" });
+    expect(restarted.headers.ETag).not.toBe(etag);
+
+    // A date is not a version this server compares: the whole file.
+    const dated = await request(fixture, "GET", search(archive), {
+      range: "bytes=4-",
+      "if-range": restarted.headers["Last-Modified"],
+    });
+    expect(dated.statusCode).toBe(200);
+  });
+
+  it("sends the whole file's SHA-256 on request, computed once per version", async () => {
+    const fixture = seed();
+    const archive = join(fixture.outside, "archive-sample.zip");
+    const bytes = Buffer.alloc(300_000, 7);
+    writeFileSync(archive, bytes);
+    const expected = `sha-256=:${createHash("sha256").update(bytes).digest("base64")}:`;
+    const want = { "x-oppi-want-file-digest": "sha-256" };
+
+    const unasked = await request(fixture, "GET", search(archive), { range: "bytes=0-0" });
+    expect(unasked.headers["X-Oppi-File-Digest"]).toBeUndefined();
+
+    openedHandles.length = 0;
+    const tail = await request(fixture, "GET", search(archive), {
+      ...want,
+      range: "bytes=299990-",
+    });
+    expect(tail.headers["X-Oppi-File-Digest"]).toBe(expected);
+    expect(tail.body.length).toBe(10);
+    const firstRead = openedHandles.reduce((sum, entry) => sum + entry.bytesRead, 0);
+    expect(firstRead).toBeGreaterThanOrEqual(bytes.length);
+
+    openedHandles.length = 0;
+    const again = await request(fixture, "GET", search(archive), {
+      ...want,
+      range: "bytes=299990-",
+    });
+    expect(again.headers["X-Oppi-File-Digest"]).toBe(expected);
+    // Cached: only the ten bytes served are read.
+    expect(openedHandles.reduce((sum, entry) => sum + entry.bytesRead, 0)).toBe(10);
+
+    writeFileSync(archive, Buffer.alloc(300_000, 8));
+    utimesSync(archive, new Date("2026-05-02T00:00:00Z"), new Date("2026-05-02T00:00:00Z"));
+    const changed = await request(fixture, "HEAD", search(archive), want);
+    expect(changed.headers["X-Oppi-File-Digest"]).not.toBe(expected);
+  });
+
+  it("compresses whole text-like files only", async () => {
+    const fixture = seed();
+    const log = join(fixture.outside, "server.log");
+    const text = "2026-11-13 INFO request ok\n".repeat(2_000);
+    writeFileSync(log, text);
+    const archive = join(fixture.outside, "archive-sample.zip");
+    writeFileSync(archive, Buffer.alloc(50_000, 1));
+    const accepts = { "accept-encoding": "gzip, br" };
+
+    const whole = await request(fixture, "GET", search(log), { ...accepts, range: "bytes=0-" });
+    expect({
+      status: whole.statusCode,
+      encoding: whole.headers["Content-Encoding"],
+      length: whole.headers["Content-Length"],
+    }).toEqual({ status: 200, encoding: "br", length: undefined });
+    expect(brotliDecompressSync(whole.body).toString("utf8")).toBe(text);
+    expect(whole.body.length).toBeLessThan(text.length / 10);
+
+    const gzip = await request(fixture, "GET", search(log), { "accept-encoding": "gzip" });
+    expect(gunzipSync(gzip.body).toString("utf8")).toBe(text);
+
+    // A resumed range is identity bytes at their offsets.
+    const tail = await request(fixture, "GET", search(log), { ...accepts, range: "bytes=100-" });
+    expect({ status: tail.statusCode, encoding: tail.headers["Content-Encoding"] }).toEqual({
+      status: 206,
+      encoding: undefined,
+    });
+    expect(tail.text()).toBe(text.slice(100));
+
+    const zip = await request(fixture, "GET", search(archive), { ...accepts, range: "bytes=0-" });
+    expect({ status: zip.statusCode, encoding: zip.headers["Content-Encoding"] }).toEqual({
+      status: 206,
+      encoding: undefined,
+    });
   });
 });
 

@@ -310,8 +310,10 @@ export function isBookContentType(contentType: string): boolean {
 }
 
 /**
- * Largest file the browse reads serve for a content type, in bytes; null for
- * streaming media, which is range-served without buffering and has no cap.
+ * Largest file a whole browse read serves for a content type, in bytes; null
+ * for streaming media, which is range-served without buffering and has no
+ * cap. An unrecognised type keeps the text cap: an older phone reads it whole.
+ * Ranged and HEAD reads are never capped (`statServableFile`).
  */
 export function browseSizeLimit(contentType: string): number | null {
   if (isStreamingMediaContentType(contentType)) return null;
