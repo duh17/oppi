@@ -1,0 +1,7 @@
+p04 html inline: code and strikethrough tags
+@@@@ source
+Run <code>make test</code>, <code>a *b* c</code>; <s>s</s>, <del>del</del>, <strike>strike</strike>.
+@@@@ tree
+P: T(Run )CODE(make test)T(, )CODE(a b c)T(; )S[T(s)]T(, )S[T(del)]T(, )S[T(strike)]T(.)
+@@@@ render
+TEXT: Run <code>make test</code>, <code>a b c</code>; <s>s</s>, <s>del</s>, <s>strike</s>.

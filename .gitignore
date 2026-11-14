@@ -64,6 +64,7 @@ clients/apple/scripts/*
 !clients/apple/scripts/ci-simulator.sh
 !clients/apple/scripts/e2e.sh
 !clients/apple/scripts/markdown-corpus-update.sh
+!clients/apple/scripts/markdown-github-fixtures.sh
 !clients/apple/scripts/sim-pool.sh
 !clients/apple/scripts/sim-pool.ts
 !clients/apple/scripts/sim-pool-ffi.d.ts

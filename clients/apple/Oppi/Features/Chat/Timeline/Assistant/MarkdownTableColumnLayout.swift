@@ -4,7 +4,8 @@ import UIKit
 ///
 /// A column's width starts at `min(naturalSingleLine, maxReadable)`. Whether a
 /// table needs the wrapping grid depends only on content: any column's natural
-/// width over `maxReadable`.
+/// width over `maxReadable`, or a cell a `<br>` breaks into lines (clip text is
+/// one line per row).
 ///
 /// The viewport decides the rest, and only through `plan`. A wrapping table
 /// narrower than the text around it grows its wrapping columns into the spare
@@ -96,6 +97,8 @@ enum MarkdownTableColumnLayout {
         let valueWidths: [CGFloat]
         /// Width of the clip-mode text.
         let totalWidth: CGFloat
+        /// A cell breaks into lines, which only the grid can draw.
+        var breaksLines = false
 
         static let empty = Self(columnWidths: [], longestWordWidths: [], valueWidths: [], totalWidth: 0)
     }
@@ -147,6 +150,8 @@ enum MarkdownTableColumnLayout {
     ///     character counts above; the message body's unless the table draws at
     ///     another size (the full-screen viewer's text size).
     ///   - gutters: the grid's padding and column gaps.
+    ///   - breaksLines: a cell holds a line break (`NaturalColumns.breaksLines`),
+    ///     so the table draws as a grid at any width.
     static func plan(
         naturalWidths: [CGFloat],
         longestWordWidths: [CGFloat],
@@ -156,10 +161,11 @@ enum MarkdownTableColumnLayout {
         fillWidth: CGFloat? = nil,
         displayScale: CGFloat,
         characterWidth unit: CGFloat = characterWidth,
-        gutters: Gutters = .message
+        gutters: Gutters = .message,
+        breaksLines: Bool = false
     ) -> Plan {
         let capped = clampedColumnWidths(naturalWidths: naturalWidths, characterWidth: unit)
-        let needsGrid = needsGridMode(naturalWidths: naturalWidths, characterWidth: unit)
+        let needsGrid = breaksLines || needsGridMode(naturalWidths: naturalWidths, characterWidth: unit)
         // The narrowest each column may be: a short column its whole width, a
         // longer one `minimumFitColumnWidth` or its longest word, never past its
         // content. A word can be longer than the cap (a commit hash).
@@ -392,7 +398,8 @@ struct TablePlanning {
             fillWidth: fillWidth,
             displayScale: displayScale,
             characterWidth: characterWidth,
-            gutters: gutters
+            gutters: gutters,
+            breaksLines: natural.breaksLines
         )
         guard drawsGridOnly, plan.presentation == .clip else { return plan }
         return MarkdownTableColumnLayout.Plan(presentation: .grid, columnWidths: plan.columnWidths, gutters: plan.gutters)

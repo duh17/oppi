@@ -356,9 +356,12 @@ enum MarkdownTableMarkupRewriter {
         return content
     }
 
+    /// One HTML cell as GFM cell text. `<b>`, `<i>`, `<code>` and `<a href>`
+    /// become Markdown; `<br>` and the other tags of the inline-HTML subset
+    /// (`MarkdownInlineHTML`) stay tags, which the parser pairs like any raw
+    /// HTML, so a cell keeps its line breaks. Other tags are dropped, text kept.
     private static func cellMarkdown(_ html: String) -> String {
         var text = html
-        text = replace(tag: "br", in: text, with: " ")
         text = wrapSimpleTag("code", in: text, with: "`")
         text = wrapSimpleTag("strong", in: text, with: "**")
         text = wrapSimpleTag("b", in: text, with: "**")
@@ -368,6 +371,8 @@ enum MarkdownTableMarkupRewriter {
         text = stripTags(text)
         text = unescapeHTMLEntities(text)
         text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        // A line break ends the line: no blank on either side of it.
+        text = text.replacingOccurrences(of: " ?<br ?/?> ?", with: "<br>", options: [.regularExpression, .caseInsensitive])
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return text.replacingOccurrences(of: "|", with: "\\|")
     }
@@ -386,23 +391,6 @@ enum MarkdownTableMarkupRewriter {
             result += inner
             result += wrap
             remaining = slice
-        }
-        result += remaining
-        return result
-    }
-
-    private static func replace(tag: String, in html: String, with replacement: String) -> String {
-        var remaining = html[...]
-        var result = ""
-        while let open = rangeOfOpenTag(tag, in: remaining) {
-            result += remaining[..<open.lowerBound]
-            let afterOpen = remaining[open.upperBound...]
-            guard let tagEnd = afterOpen.firstIndex(of: ">") else {
-                result += remaining[open.lowerBound...]
-                return result
-            }
-            result += replacement
-            remaining = afterOpen[afterOpen.index(after: tagEnd)...]
         }
         result += remaining
         return result
@@ -467,33 +455,59 @@ enum MarkdownTableMarkupRewriter {
         return nil
     }
 
+    /// Drops every tag but the inline-HTML subset's styles and line breaks;
+    /// the text between tags stays.
     private static func stripTags(_ html: String) -> String {
         var result = ""
-        var skipping = false
-        for character in html {
-            if character == "<" {
-                skipping = true
-                continue
+        var remaining = html[...]
+        while let open = remaining.firstIndex(of: "<") {
+            result += remaining[..<open]
+            guard let close = remaining[open...].firstIndex(of: ">") else {
+                remaining = remaining[remaining.endIndex...]
+                break
             }
-            if character == ">" {
-                skipping = false
-                continue
+            let tag = remaining[open ... close]
+            switch MarkdownInlineHTML.tag(String(tag))?.element {
+            case .lineBreak?, .styled?, .strikethrough?: result += tag
+            default: break
             }
-            if !skipping {
-                result.append(character)
-            }
+            remaining = remaining[remaining.index(after: close)...]
         }
+        result += remaining
         return result
     }
 
+    /// Decodes a cell's character references in one pass. Outside a code span
+    /// `&lt;`, `&gt;` and `&amp;` stay references, which cmark decodes into
+    /// text: decoded here, `&lt;b&gt;` would read as a tag. Inside one, where
+    /// cmark decodes nothing, they become the characters.
     private static func unescapeHTMLEntities(_ text: String) -> String {
-        text
-            .replacingOccurrences(of: "&nbsp;", with: " ")
-            .replacingOccurrences(of: "&amp;", with: "&")
-            .replacingOccurrences(of: "&lt;", with: "<")
-            .replacingOccurrences(of: "&gt;", with: ">")
-            .replacingOccurrences(of: "&quot;", with: "\"")
-            .replacingOccurrences(of: "&#39;", with: "'")
-            .replacingOccurrences(of: "&apos;", with: "'")
+        guard text.contains("&") else { return text }
+        var result = ""
+        result.reserveCapacity(text.utf8.count)
+        var inCode = false
+        var rest = text[...]
+        while let index = rest.firstIndex(where: { $0 == "&" || $0 == "`" }) {
+            result += rest[..<index]
+            rest = rest[index...]
+            if rest.first == "`" {
+                inCode.toggle()
+                result += "`"
+                rest = rest.dropFirst()
+                continue
+            }
+            let entities: [(String, String, Bool)] = [
+                ("&nbsp;", " ", true), ("&quot;", "\"", true), ("&#39;", "'", true), ("&apos;", "'", true),
+                ("&amp;", "&", inCode), ("&lt;", "<", inCode), ("&gt;", ">", inCode),
+            ]
+            if let (entity, character, decodes) = entities.first(where: { rest.hasPrefix($0.0) }) {
+                result += decodes ? character : entity
+                rest = rest.dropFirst(entity.count)
+            } else {
+                result += "&"
+                rest = rest.dropFirst()
+            }
+        }
+        return result + rest
     }
 }

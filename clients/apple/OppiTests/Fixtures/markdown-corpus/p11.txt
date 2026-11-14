@@ -1,0 +1,8 @@
+p11 html inline: attributes are never read
+@@@@ source
+<b style="color:red" onclick="alert(1)">styled</b>, <kbd class="key">K</kbd>, <a href="https://example.com" onclick="steal()" style="x">link</a>, <sub
+title="t">wrapped</sub>.
+@@@@ tree
+P: B[T(styled)]T(, )KBD[T(K)]T(, )LINK[T(link)→https://example.com]T(, )SUB[T(wrapped)]T(.)
+@@@@ render
+TEXT: <b>styled</b>, <kbd>K</kbd>, <a>link</a>, <sub>wrapped</sub>.

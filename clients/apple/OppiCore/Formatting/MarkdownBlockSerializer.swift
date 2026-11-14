@@ -70,12 +70,12 @@ enum MarkdownBlockSerializer {
 
         case .table(let headers, let rows, let alignments):
             guard !headers.isEmpty else { return "" }
-            let headerRow = "| " + headers.map { serializeInlines($0) }.joined(separator: " | ") + " |"
+            let headerRow = "| " + headers.map { serializeInlines($0, inTableCell: true) }.joined(separator: " | ") + " |"
             let separator = "| " + headers.indices.map { column in
                 (column < alignments.count ? alignments[column] : nil)?.delimiter ?? "---"
             }.joined(separator: " | ") + " |"
             let dataRows = rows.map { row in
-                "| " + row.map { serializeInlines($0) }.joined(separator: " | ") + " |"
+                "| " + row.map { serializeInlines($0, inTableCell: true) }.joined(separator: " | ") + " |"
             }
             return ([headerRow, separator] + dataRows).joined(separator: "\n")
 
@@ -105,11 +105,16 @@ enum MarkdownBlockSerializer {
 
     // MARK: - Inline serialization
 
-    static func serializeInlines(_ inlines: [MarkdownInline]) -> String {
-        inlines.map(serializeInline).joined()
+    /// `inTableCell`: a cell is one source line, so its line break goes out as
+    /// `<br>` (which the parser reads back as one) and a soft break as a space.
+    static func serializeInlines(_ inlines: [MarkdownInline], inTableCell: Bool = false) -> String {
+        inlines.map { serializeInline($0, inTableCell: inTableCell) }.joined()
     }
 
-    private static func serializeInline(_ inline: MarkdownInline) -> String {
+    private static func serializeInline(_ inline: MarkdownInline, inTableCell: Bool) -> String {
+        func serializeInlines(_ children: [MarkdownInline]) -> String {
+            Self.serializeInlines(children, inTableCell: inTableCell)
+        }
         switch inline {
         case .text(let string):
             return escapeText(string)
@@ -157,13 +162,15 @@ enum MarkdownBlockSerializer {
             }
             return "![[\(embed.reference.target)]]"
         case .softBreak:
-            return "\n"
+            return inTableCell ? " " : "\n"
         case .hardBreak:
-            return "  \n"
+            return inTableCell ? "<br>" : "  \n"
         case .html(let raw):
             return raw
         case .strikethrough(let children):
             return "~~\(serializeInlines(children))~~"
+        case .styled(let style, let children):
+            return "<\(style.tag)>\(serializeInlines(children))</\(style.tag)>"
         case .math(let math):
             return math.source
         }

@@ -908,6 +908,7 @@ enum FlatSegment: Sendable {
             case .emphasis(let children),
                  .strong(let children),
                  .strikethrough(let children),
+                 .styled(_, let children),
                  .link(let children, _):
                 return inlinesContainMediaEmbed(children)
             case .text, .code, .image, .softBreak, .hardBreak, .html:
@@ -1425,6 +1426,7 @@ enum FlatSegment: Sendable {
             case .emphasis(let children),
                  .strong(let children),
                  .strikethrough(let children),
+                 .styled(_, let children),
                  .link(let children, _):
                 if inlineChunkHasVisibleFallback(children) {
                     return true

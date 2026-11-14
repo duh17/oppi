@@ -1,0 +1,7 @@
+p14 html: entity and escaped text stays literal
+@@@@ source
+&lt;b&gt;not bold&lt;/b&gt;, `<b>code</b>`, \<b>escaped\</b>, &lt;br&gt; and <b>&amp;lt;</b>.
+@@@@ tree
+P: T(<b>not bold</b>, )CODE(<b>code</b>)T(, <b>escaped</b>, <br> and )B[T(&lt;)]T(.)
+@@@@ render
+TEXT: <b>not bold</b>, <code><b>code</b></code>, <b>escaped</b>, <br> and <b>&lt;</b>.

@@ -344,7 +344,13 @@ private func convertCMarkBlock(
         return .thematicBreak
 
     case CMARK_NODE_HTML_BLOCK:
-        return .htmlBlock(restoration.restore(string(node.pointee.as.literal)))
+        let html = restoration.restore(string(node.pointee.as.literal))
+        switch MarkdownInlineHTML.block(html) {
+        case .hidden?: return nil
+        case .thematicBreak?: return .thematicBreak
+        case .paragraph(let inlines)?: return .paragraph(inlines)
+        case nil: return .htmlBlock(html)
+        }
 
     default:
         // A table is the only other block the attached extensions make.
@@ -475,14 +481,18 @@ private func convertCMarkInlines(
     restoration: CMarkRestoration
 ) -> [MarkdownInline] {
     var inlines: [MarkdownInline] = []
+    var hasHTML = false
     var child = cmark_node_first_child(parentNode)
     while let node = child {
         if let inline = convertCMarkInline(node, restoration: restoration) {
+            if case .html = inline { hasHTML = true }
             inlines.append(inline)
         }
         child = cmark_node_next(node)
     }
-    return inlines
+    // Raw HTML of Oppi's subset pairs within its own run, so a tag opened in
+    // one emphasis never closes in another.
+    return hasHTML ? MarkdownInlineHTML.pair(inlines) : inlines
 }
 
 private func convertCMarkInline(

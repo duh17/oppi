@@ -1,0 +1,10 @@
+p08 html inline: nesting and mixed Markdown
+@@@@ source
+<b><i>both</i></b>, **a <sub>2</sub>**, <sup>*em*</sup>, <mark>**bold** mark</mark>, <kbd><b>B</b></kbd>, <a href="https://example.com"><code>code</code> link</a>
+
+## Heading with H<sub>2</sub>O
+@@@@ tree
+P: B[EM[T(both)]]T(, )B[T(a )SUB[T(2)]]T(, )SUP[EM[T(em)]]T(, )MARK[B[T(bold)]T( mark)]T(, )KBD[B[T(B)]]T(, )LINK[CODE(code)T( link)→https://example.com]
+H2: T(Heading with H)SUB[T(2)]T(O)
+@@@@ render
+TEXT: <b><i>both</i></b>, <b>a </b><b><sub>2</sub></b>, <i><sup>em</sup></i>, <b><mark>bold</mark></b><mark> mark</mark>, <b><kbd>B</kbd></b>, <code><a>code</a></code><a> link</a>⏎⏎Heading with H<sub>2</sub>O

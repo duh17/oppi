@@ -61,7 +61,7 @@ You are running in Oppi: your Markdown renders in a native iPhone/iPad app.
 - ```mermaid renders only flowchart/graph, sequence, class, state, ER, gantt, pie, timeline, mindmap, xychart, journey, quadrantChart, gitGraph, sankey, and kanban.
 - ```geojson or ```topojson renders an interactive map.
 - Inline and display math render. Use aligned, cases, or matrices; align, \color, and \textcolor show as source.
-- No footnotes, callouts, or raw HTML; they show as text.
+- Inline HTML renders only <b> <strong> <i> <em> <code> <s> <del> <strike> <u> <ins> <sub> <sup> <kbd> <mark> <a href>, <br> (also in table cells), an <hr> line, and hidden <!-- comments -->. Other HTML, footnotes, and callouts show as text.
 - Linked CSV, HTML, Org, .mmd, GeoJSON, and PDF files open in rendered viewers.
 - Never link, embed, or quote secrets, credentials, or private runtime state.
 ````
@@ -102,7 +102,7 @@ A Markdown table's cells use the message text, so they follow Dynamic Type and *
 - **Long tables.** In chat, a table longer than 20 rows shows its first 20 and a **Show all N rows** bar. When columns are cut as well, the bar reads **Show all N rows · M columns**. The reader and exports show every row.
 - **Full screen.** The bar under a table opens it full screen. Touch and hold any table in chat and choose **View Full Screen** to open one that fits. Where a touch and hold selects text, **View Full Screen** is in the menu for the selection. VoiceOver offers it as an action on every cell. Full screen shows the same table with every row, fit to the screen and centered on a wide one. Its text size follows **Viewing Options**, and a caption gives its size in columns and rows. Its header row stays under the bar while the rows scroll. Touch and hold a cell to select its text. **Copy** in the toolbar offers **Copy as Markdown** and **Copy as TSV**; **Share** shares a TSV file.
 - **Copy.** Touch and hold a table, or its bar, for **Copy as Markdown** and **Copy as TSV**, which always take every row. Text selected across cells copies as tab-separated cells, ready to paste into a spreadsheet.
-- **Formatting.** Bold, italic, strikethrough, `code`, links, and math show in cells.
+- **Formatting.** Bold, italic, strikethrough, `code`, links, math, and the [inline HTML](#html-in-markdown) tags show in cells. A `<br>` starts a new line in its cell; a table with one always wraps its cells.
 
 ## Math
 
@@ -114,6 +114,33 @@ Markdown in chat and in the reader draws TeX math in paragraphs, headings, table
 - **Fallback.** TeX that Oppi cannot draw shows as written.
 
 Quotes and dashes show as typed: `--`, `...`, and straight quotes are not changed to typographic characters.
+
+## HTML in Markdown
+
+Markdown in chat, in the reader, and in tool output draws a small set of the HTML tags GitHub allows, with the app's own text styles. Nothing in it runs or loads.
+
+| HTML | Shows as |
+| --- | --- |
+| `<b>`, `<strong>` | Bold |
+| `<i>`, `<em>` | Italic |
+| `<code>` | Inline code |
+| `<s>`, `<del>`, `<strike>` | Strikethrough |
+| `<u>`, `<ins>` | Underline |
+| `<sub>`, `<sup>` | Subscript and superscript |
+| `<kbd>` | A key on a key-colored fill |
+| `<mark>` | Highlighted text |
+| `<a href="…">` | A link, opened like a Markdown link. An `<a>` without `href` shows its text. |
+| `<br>`, `<br/>` | A line break, also in a table cell. A line of only `<br>` tags between blocks adds nothing. |
+| `<hr>` on its own line | A horizontal rule |
+| `<!-- … -->` | Nothing: comments are hidden |
+
+- **Pairs.** A tag works only with its closing tag in the same paragraph, heading, or table cell, and inside the same Markdown emphasis or link. Tags can nest (`<b><i>x</i></b>`) and mix with Markdown (`**a <sub>2</sub>**`). Tag names ignore case.
+- **HTML lines.** A line that is one tag alone, such as `<br>` or `<kbd>`, starts an HTML block that runs to the next blank line. When every tag in it is from the table, the block shows as a paragraph of its text, read as HTML: Markdown inside it stays as written, and line breaks inside it are spaces.
+- **Attributes.** Attributes such as `style`, `class`, and `onclick` are ignored. `href` on `<a>` is the only one used.
+- **Shown as text.** Any other tag (`<details>`, `<img>`, `<span>`, `<script>`, `<iframe>`, forms), a tag without its closing tag, a closing tag without its opening tag, a self-closing `<b/>`, and a comment with no `-->` show as written, so no text is hidden. `&lt;b&gt;` and HTML in code spans also stay text.
+- **While streaming.** A tag whose closing tag has not arrived shows as text until it arrives.
+- **Differences from GitHub.** GitHub removes `<u>` and other unknown tags and closes a tag that is left open; Oppi underlines `<u>` and shows the others as text. Markdown inside `<code>` keeps its text but not its emphasis. An HTML block that mixes `<hr>` with text, or holds any tag outside the table, shows as written.
+- **Org files.** Org has no inline HTML. `@@html:…@@` snippets and `#+HTML:` lines show as text, and a `#+begin_export html` block shows as an `html` code block.
 
 ## The reader's bar
 

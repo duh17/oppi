@@ -59,7 +59,8 @@ struct ReaderReadingColumn: Equatable {
                 availableWidth: available,
                 valueWidths: metrics.valueWidths,
                 fillWidth: proseWidth,
-                displayScale: 1
+                displayScale: 1,
+                breaksLines: metrics.breaksLines
             )
             switch plan.presentation {
             case .clip:

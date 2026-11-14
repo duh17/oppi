@@ -1,0 +1,48 @@
+p13 html blocks: comments and br-only blocks hidden, hr blocks, subset blocks as paragraphs, others literal
+@@@@ source
+Before <!-- inline comment --> after.
+
+<!-- a block comment
+over two lines -->
+
+<hr>
+
+<HR class="x" />
+
+<br>
+<br/>
+
+<br>
+Text after a br line,
+on two lines: *not emphasis* &amp; a < b.
+
+<kbd>
+Esc
+</kbd> closes it.
+
+<hr>
+Text beside a rule keeps the block literal.
+
+<div>
+An unsupported tag keeps the block literal.
+</div>
+
+Inline <hr> stays.
+
+<!-- unclosed comment
+keeps showing
+@@@@ tree
+P: T(Before )T( after.)
+HR
+HR
+P: ⏎⏎T(Text after a br line, on two lines: *not emphasis* & a < b.)
+P: KBD[T( Esc )]T( closes it.)
+HTMLBLOCK: <hr>⏎Text beside a rule keeps the block literal.⏎
+HTMLBLOCK: <div>⏎An unsupported tag keeps the block literal.⏎</div>⏎
+P: T(Inline )HTML(<hr>)T( stays.)
+HTMLBLOCK: <!-- unclosed comment⏎keeps showing⏎
+@@@@ render
+TEXT: Before  after.
+HR
+HR
+TEXT: ⏎Text after a br line, on two lines: *not emphasis* & a < b.⏎⏎<kbd> Esc </kbd> closes it.⏎⏎<hr>⏎Text beside a rule keeps the block literal.⏎⏎<div>⏎An unsupported tag keeps the block literal.⏎</div>⏎⏎Inline <hr> stays.⏎⏎<!-- unclosed comment⏎keeps showing

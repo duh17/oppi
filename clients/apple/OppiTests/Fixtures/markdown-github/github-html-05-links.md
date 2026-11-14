@@ -1,0 +1,1 @@
+See <a href="https://example.com/?a=1&amp;b=2">the docs</a>, <a href='https://example.com/guide'>the guide</a>, <a name="top"></a>an anchor, <a id="x">named text</a>, and <A HREF=https://example.org>upper</A>.

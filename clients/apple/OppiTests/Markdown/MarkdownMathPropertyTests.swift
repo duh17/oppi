@@ -210,7 +210,8 @@ struct MarkdownMathPropertyTests {
         inlines.flatMap { inline -> [String] in
             switch inline {
             case .math(let math): [math.latex]
-            case .emphasis(let children), .strong(let children), .strikethrough(let children), .link(let children, _):
+            case .emphasis(let children), .strong(let children), .strikethrough(let children), .styled(_, let children),
+                 .link(let children, _):
                 formulas(in: children)
             case .text, .code, .image, .videoEmbed, .audioEmbed, .usdzEmbed, .softBreak, .hardBreak, .html: []
             }

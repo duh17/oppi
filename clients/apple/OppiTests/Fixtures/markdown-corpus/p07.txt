@@ -1,0 +1,7 @@
+p07 html inline: links
+@@@@ source
+See <a href="https://example.com/?a=1&amp;b=2">the docs</a>, <a href='docs/guide.md'>the guide</a>, <a name="top"></a>an anchor, <a id="x">named text</a>, and <A HREF=https://example.org>upper</A>.
+@@@@ tree
+P: T(See )LINK[T(the docs)→https://example.com/?a=1&b=2]T(, )LINK[T(the guide)→oppi-resource-reference://resolve?target=docs/guide.md&workspaceId=ws&fileCandidate=docs/guide.md&sourceServerId=srv&sourceSessionId=s1&label=the%20guide]T(, )T(an anchor, )T(named text)T(, and )LINK[T(upper)→https://example.org]T(.)
+@@@@ render
+TEXT: See <a>the docs</a>, <a>the guide</a>, an anchor, named text, and <a>upper</a>.

@@ -1,0 +1,20 @@
+p12 html: unsupported tags stay literal
+@@@@ source
+Inline <span>span</span>, <script>alert(1)</script>, <img src="x.png">, <input value="v">, <small>small</small>.
+
+<details>
+<summary>More</summary>
+
+Hidden?
+
+</details>
+
+<iframe src="https://example.com"></iframe>
+@@@@ tree
+P: T(Inline )HTML(<span>)T(span)HTML(</span>)T(, )HTML(<script>)T(alert(1))HTML(</script>)T(, )HTML(<img src="x.png">)T(, )HTML(<input value="v">)T(, )HTML(<small>)T(small)HTML(</small>)T(.)
+HTMLBLOCK: <details>⏎<summary>More</summary>⏎
+P: T(Hidden?)
+HTMLBLOCK: </details>⏎
+HTMLBLOCK: <iframe src="https://example.com"></iframe>⏎
+@@@@ render
+TEXT: Inline <span>span</span>, <script>alert(1)</script>, <img src="x.png">, <input value="v">, <small>small</small>.⏎⏎<details>⏎<summary>More</summary>⏎⏎Hidden?⏎⏎</details>⏎⏎<iframe src="https://example.com"></iframe>

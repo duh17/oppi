@@ -84,9 +84,37 @@ indirect enum MarkdownInline: Equatable, Sendable {
     case hardBreak
     case html(String)
     case strikethrough([Self])
+    /// A style only inline HTML writes (`<u>`, `<sub>`, `<kbd>`…), paired by
+    /// `MarkdownInlineHTML` from an open and a close tag in one inline run.
+    case styled(MarkdownInlineStyle, [Self])
     /// `$…$`, `$$…$$` or `\(…\)` inside a line. The parser decides what is math;
     /// renderers draw it and never scan text for delimiters again.
     case math(MarkdownMath)
+}
+
+/// The inline HTML styles Markdown has no syntax for.
+enum MarkdownInlineStyle: Equatable, Sendable {
+    /// `<u>`, `<ins>`.
+    case underline
+    /// `<sub>`.
+    case `subscript`
+    /// `<sup>`.
+    case superscript
+    /// `<kbd>`: a key on a keycap fill.
+    case keyboard
+    /// `<mark>`: a highlighter fill.
+    case highlight
+
+    /// The tag that writes it, as `MarkdownBlockSerializer` puts it back.
+    var tag: String {
+        switch self {
+        case .underline: "u"
+        case .subscript: "sub"
+        case .superscript: "sup"
+        case .keyboard: "kbd"
+        case .highlight: "mark"
+        }
+    }
 }
 
 /// A formula the parser found. The renderer draws `latex`, or shows `source`
@@ -161,7 +189,7 @@ func plainText(from inlines: [MarkdownInline]) -> String {
         case .softBreak: return " "
         case .hardBreak: return "\n"
         case .html(let s): return MarkdownBadge(markup: s)?.text ?? s
-        case .strikethrough(let children): return plainText(from: children)
+        case .strikethrough(let children), .styled(_, let children): return plainText(from: children)
         case .math(let math): return math.source
         }
     }.joined()

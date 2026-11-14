@@ -43,6 +43,10 @@ struct StreamingTextAppendDifferentialTests {
         ),
         Fixture(name: "two-item ordered list", source: "Steps:\n\n1. First step\n\n2. Second step\n\nDone.\n"),
         Fixture(
+            name: "inline html closing",
+            source: "Press <kbd>Cmd</kbd>, H<sub>2</sub>O, <b>bold <i>both</i></b>, a<br>b, <!-- note --> end.\n\n<mark>open\n"
+        ),
+        Fixture(
             name: "reader scale mid-stream",
             source: "First paragraph streams at the default size.\n\nSecond paragraph keeps streaming after the scale changes.\n",
             scaleFromUTF8Count: 30

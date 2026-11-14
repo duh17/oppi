@@ -196,6 +196,15 @@ struct CommonMarkTests {
 
         for markdown in sources {
             let blocks = parseCommonMark(markdown)
+            #expect(!blocks.contains { if case .math = $0 { true } else { false } }, "\(blocks)")
+            // A comment is hidden whole, its `$$` lines with it.
+            if markdown.hasPrefix("<!--") {
+                guard case .heading = try #require(blocks.first) else {
+                    Issue.record("Expected the comment hidden: \(blocks)")
+                    continue
+                }
+                continue
+            }
             guard case .htmlBlock(let html) = try #require(blocks.first) else {
                 Issue.record("Expected CommonMark HTML block")
                 continue
@@ -1019,8 +1028,9 @@ struct CommonMarkTests {
         #expect(text.contains(">"))
     }
 
+    /// A tag outside the inline-HTML subset stays raw HTML.
     @Test func inlineHtml() {
-        let blocks = parseCommonMark("text <em>html</em> text\n")
+        let blocks = parseCommonMark("text <span>html</span> text\n")
         guard case .paragraph(let inlines) = blocks.first else {
             Issue.record("Expected paragraph")
             return

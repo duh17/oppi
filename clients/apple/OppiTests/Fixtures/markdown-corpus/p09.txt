@@ -1,0 +1,16 @@
+p09 html inline: table cells
+@@@@ source
+| Key | Notes |
+| --- | --- |
+| <kbd>Esc</kbd> | first line<br>second line |
+| x<sup>2</sup> | <mark>hot</mark> and <b>bold</b> |
+@@@@ tree
+TABLE
+  hdr: T(Key) ‖ T(Notes)
+  row: KBD[T(Esc)] ‖ T(first line)⏎⏎T(second line)
+  row: T(x)SUP[T(2)] ‖ MARK[T(hot)]T( and )B[T(bold)]
+@@@@ render
+TABLE
+  hdr: <b>Key</b> ‖ <b>Notes</b>
+  row: <kbd>Esc</kbd> ‖ first line⏎second line
+  row: x<sup>2</sup> ‖ <mark>hot</mark> and <b>bold</b>

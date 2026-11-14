@@ -1509,7 +1509,8 @@ final class NativeTableBlockView: UIView {
                 return true
             case .emphasis(let children),
                  .strong(let children),
-                 .strikethrough(let children):
+                 .strikethrough(let children),
+                 .styled(_, let children):
                 return containsLink(children)
             case .text, .code, .image, .videoEmbed, .audioEmbed, .usdzEmbed, .softBreak, .hardBreak, .html, .math:
                 return false
@@ -1531,10 +1532,12 @@ final class NativeTableBlockView: UIView {
         max(headers.count, rows.first?.count ?? 0)
     }
 
-    /// One cell's single-line width and its widest unbreakable run, as drawn.
+    /// One cell's single-line width and its widest unbreakable run, as drawn,
+    /// and whether a `<br>` breaks it into lines.
     private struct CellWidth {
         let natural: CGFloat
         let word: CGFloat
+        let breaksLines: Bool
     }
 
     private static func naturalCellWidths(
@@ -1544,7 +1547,7 @@ final class NativeTableBlockView: UIView {
     ) -> [CellWidth] {
         cells.map { cell in
             let measured = TableInlineText.measure(cell, fonts: fonts, isHeader: isHeader)
-            return CellWidth(natural: measured.natural, word: measured.word)
+            return CellWidth(natural: measured.natural, word: measured.word, breaksLines: measured.breaksLines)
         }
     }
 
@@ -1575,9 +1578,11 @@ final class NativeTableBlockView: UIView {
         var colWidths = [CGFloat](repeating: 0, count: colCount)
         var wordWidths = [CGFloat](repeating: 0, count: colCount)
         var valueWidths = [CGFloat](repeating: 0, count: colCount)
+        var breaksLines = false
 
         func include(_ row: [CellWidth], isHeader: Bool) {
             for (index, width) in row.enumerated() where index < colCount {
+                breaksLines = breaksLines || width.breaksLines
                 colWidths[index] = max(colWidths[index], width.natural)
                 wordWidths[index] = max(wordWidths[index], width.word)
                 if !isHeader { valueWidths[index] = max(valueWidths[index], width.natural) }
@@ -1598,7 +1603,8 @@ final class NativeTableBlockView: UIView {
             columnWidths: colWidths,
             longestWordWidths: wordWidths,
             valueWidths: valueWidths,
-            totalWidth: ceil(total)
+            totalWidth: ceil(total),
+            breaksLines: breaksLines
         )
     }
 

@@ -205,6 +205,41 @@ struct MarkdownTableColumnLayoutTests {
         #expect(abs(header.natural - width("Owner", fonts.bold)) <= 1, "Headers are measured bold")
     }
 
+    /// Clip text is one line per row, so a cell a `<br>` breaks draws the table
+    /// as a grid even when every column is short, and the column is as wide as
+    /// its widest line, not its lines laid end to end.
+    @Test @MainActor func aCellLineBreakDrawsTheGridAtItsWidestLine() {
+        let fonts = TableInlineText.Fonts.current
+        let broken = parseCommonMark("| A |\n| - |\n| one<br>three |\n")
+        guard case .table(let headers, let rows, _)? = broken.first else {
+            Issue.record("no table: \(broken)")
+            return
+        }
+        let metrics = NativeTableBlockView.measureNaturalColumns(headers: headers, rows: rows)
+        let cell = TableInlineText.measure(rows[0][0], fonts: fonts, isHeader: false)
+        let three = ceil(("three" as NSString).size(withAttributes: [.font: fonts.body]).width)
+        #expect(metrics.breaksLines)
+        #expect(abs(cell.natural - three) <= 1, "\(cell.natural) vs \(three)")
+        let plan = MarkdownTableColumnLayout.plan(
+            naturalWidths: metrics.columnWidths,
+            longestWordWidths: metrics.longestWordWidths,
+            clipContentWidth: metrics.totalWidth,
+            availableWidth: 390,
+            displayScale: 3,
+            breaksLines: metrics.breaksLines
+        )
+        #expect(plan.presentation == .grid)
+
+        let plain = MarkdownTableColumnLayout.plan(
+            naturalWidths: metrics.columnWidths,
+            longestWordWidths: metrics.longestWordWidths,
+            clipContentWidth: metrics.totalWidth,
+            availableWidth: 390,
+            displayScale: 3
+        )
+        #expect(plain.presentation == .clip, "The same short column without a break stays clip text")
+    }
+
     @Test func wrappingColumnsShareTheSpareWidthUpToTheirContent() {
         let cap = MarkdownTableColumnLayout.maxReadableColumnWidth
         let naturals: [CGFloat] = [100, cap + 600, cap + 200]

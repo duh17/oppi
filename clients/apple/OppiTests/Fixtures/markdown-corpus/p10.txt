@@ -1,0 +1,7 @@
+p10 html inline: unclosed, mismatched and self-closing stay literal
+@@@@ source
+Open <b>never closed, close never opened</i>, <b><i>crossed</b></i>, self <b/> closing, end </br> tag, <b>a *b</b> c*.
+@@@@ tree
+P: T(Open )HTML(<b>)T(never closed, close never opened)HTML(</i>)T(, )B[HTML(<i>)T(crossed)]HTML(</i>)T(, self )HTML(<b/>)T( closing, end )HTML(</br>)T( tag, )HTML(<b>)T(a )EM[T(b)HTML(</b>)T( c)]T(.)
+@@@@ render
+TEXT: Open <b>never closed, close never opened</i>, <b><i>crossed</b></i>, self <b/> closing, end </br> tag, <b>a <i>b</b> c</i>.

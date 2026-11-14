@@ -1,0 +1,7 @@
+p03 html inline: bold and italic tags
+@@@@ source
+<b>bold</b>, <strong>strong</strong>, <i>italic</i>, <em>em</em>, <B>upper</B> and <EM>Upper</EM>.
+@@@@ tree
+P: B[T(bold)]T(, )B[T(strong)]T(, )EM[T(italic)]T(, )EM[T(em)]T(, )B[T(upper)]T( and )EM[T(Upper)]T(.)
+@@@@ render
+TEXT: <b>bold</b>, <b>strong</b>, <i>italic</i>, <i>em</i>, <b>upper</b> and <i>Upper</i>.

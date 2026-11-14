@@ -18,7 +18,7 @@ enum MarkdownInlineRenderer {
         var palette: ThemePalette
         var paragraph: NSParagraphStyle?
         /// Table cells, which CoreText measures: emphasis as the font's own
-        /// faces and a line break as a space. Prose leaves emphasis to the
+        /// faces and a soft line break as a space. Prose leaves emphasis to the
         /// presentation intent TextKit applies.
         var faces: TableInlineText.Fonts?
         /// Traits every run starts with (a header cell is bold).
@@ -30,7 +30,40 @@ enum MarkdownInlineRenderer {
         static let bold = Self(rawValue: 1 << 0)
         static let italic = Self(rawValue: 1 << 1)
         static let strikethrough = Self(rawValue: 1 << 2)
+        static let underline = Self(rawValue: 1 << 3)
+        static let `subscript` = Self(rawValue: 1 << 4)
+        static let superscript = Self(rawValue: 1 << 5)
+        static let keyboard = Self(rawValue: 1 << 6)
+        static let highlight = Self(rawValue: 1 << 7)
+
+        init(rawValue: Int) {
+            self.rawValue = rawValue
+        }
+
+        init(_ style: MarkdownInlineStyle) {
+            switch style {
+            case .underline: self = .underline
+            case .subscript: self = .subscript
+            case .superscript: self = .superscript
+            case .keyboard: self = .keyboard
+            case .highlight: self = .highlight
+            }
+        }
     }
+
+    /// `<kbd>`'s keycap: a faint fill of the text's own ink, apart from inline
+    /// code's chip, in every theme.
+    static func keycapFill(_ palette: ThemePalette) -> UIColor {
+        palette.ui.fg.withAlphaComponent(0.12)
+    }
+
+    /// `<mark>`'s highlighter, fainter than the reader's find highlight.
+    static func highlightFill(_ palette: ThemePalette) -> UIColor {
+        palette.ui.yellow.withAlphaComponent(0.3)
+    }
+
+    /// `<sub>` and `<sup>` set at this fraction of the text's size.
+    private static let scriptScale: CGFloat = 0.75
 
     static func append(_ inlines: [MarkdownInline], to result: NSMutableAttributedString, style: Style) {
         Walker(style: style, result: result).append(inlines, Context(traits: style.traits))
@@ -93,6 +126,8 @@ enum MarkdownInlineRenderer {
                 append(children, context.adding(.bold))
             case .strikethrough(let children):
                 append(children, context.adding(.strikethrough))
+            case .styled(let style, let children):
+                append(children, context.adding(Traits(style)))
             case .code(let code):
                 var attributes = attributes(context)
                 attributes[.font] = style.codeFont
@@ -120,8 +155,12 @@ enum MarkdownInlineRenderer {
                 appendEmbed(embed.displayLabel, embed.reference, context)
             case .usdzEmbed(let embed):
                 appendEmbed(embed.displayLabel, embed.reference, context)
-            case .softBreak, .hardBreak:
+            case .softBreak:
                 appendText(style.faces == nil ? "\n" : " ", context)
+            case .hardBreak:
+                // In a cell only `<br>` makes one, and a cell that holds one
+                // draws in the wrapping grid, never in one-line clip text.
+                appendText("\n", context)
             case .html(let raw):
                 appendText(raw, context, color: style.mutedColor)
             case .math(let math):
@@ -174,10 +213,23 @@ enum MarkdownInlineRenderer {
                 if traits.contains(.italic) { intent.insert(.emphasized) }
                 if !intent.isEmpty { attributes[.inlinePresentationIntent] = NSNumber(value: intent.rawValue) }
             }
+            if traits.contains(.keyboard) {
+                attributes[.font] = style.codeFont
+                attributes[.obliqueness] = nil
+                attributes[.backgroundColor] = MarkdownInlineRenderer.keycapFill(style.palette)
+            } else if traits.contains(.highlight) {
+                attributes[.backgroundColor] = MarkdownInlineRenderer.highlightFill(style.palette)
+            }
+            if traits.contains(.subscript) || traits.contains(.superscript), let font = attributes[.font] as? UIFont {
+                attributes[.font] = font.withSize(font.pointSize * MarkdownInlineRenderer.scriptScale)
+                attributes[.baselineOffset] = traits.contains(.superscript) ? font.pointSize * 0.35 : -font.pointSize * 0.15
+            }
             if traits.contains(.strikethrough) {
                 attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
             }
-            if context.underline { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+            if context.underline || traits.contains(.underline) {
+                attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            }
             if let url = context.url { attributes[.link] = url }
             return attributes
         }

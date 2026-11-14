@@ -1,0 +1,7 @@
+p05 html inline: underline, scripts, keys, highlight
+@@@@ source
+H<sub>2</sub>O, E = mc<sup>2</sup>, press <kbd>Cmd</kbd>+<kbd>K</kbd>, <mark>hot path</mark>, <u>under</u> and <ins>inserted</ins>.
+@@@@ tree
+P: T(H)SUB[T(2)]T(O, E = mc)SUP[T(2)]T(, press )KBD[T(Cmd)]T(+)KBD[T(K)]T(, )MARK[T(hot path)]T(, )U[T(under)]T( and )U[T(inserted)]T(.)
+@@@@ render
+TEXT: H<sub>2</sub>O, E = mc<sup>2</sup>, press <kbd>Cmd</kbd>+<kbd>K</kbd>, <mark>hot path</mark>, <u>under</u> and <u>inserted</u>.

@@ -1,0 +1,17 @@
+p15 html table: cells keep line breaks and subset tags
+@@@@ source
+<table>
+<tr><th>Step</th><th>Detail</th></tr>
+<tr><td>One</td><td>first<br>second</td></tr>
+<tr><td>H<sub>2</sub>O</td><td>&lt;b&gt;text&lt;/b&gt; and <code>a &lt; b</code></td></tr>
+</table>
+@@@@ tree
+TABLE
+  hdr: T(Step) ‖ T(Detail)
+  row: T(One) ‖ T(first)⏎⏎T(second)
+  row: T(H)SUB[T(2)]T(O) ‖ T(<b>text</b> and )CODE(a < b)
+@@@@ render
+TABLE
+  hdr: <b>Step</b> ‖ <b>Detail</b>
+  row: One ‖ first⏎second
+  row: H<sub>2</sub>O ‖ <b>text</b> and <code>a < b</code>

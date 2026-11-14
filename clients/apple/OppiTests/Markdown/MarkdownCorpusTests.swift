@@ -142,6 +142,7 @@ enum MarkdownCorpus {
         case .hardBreak: "⏎⏎"
         case .html(let s): "HTML(\(s))"
         case .strikethrough(let c): "S[\(c.map(dump).joined())]"
+        case .styled(let style, let c): "\(style.tag.uppercased())[\(c.map(dump).joined())]"
         case .math(let math): (math.isDisplay ? "DMATH(" : "MATH(") + math.latex + ")"
         }
     }
@@ -182,7 +183,9 @@ enum MarkdownCorpus {
     @MainActor
     static func dump(_ segment: FlatSegment) -> String {
         switch segment {
-        case .text(let text): "TEXT: " + runs(NSAttributedString(text), fontTraits: false)
+        case .text(let text): "TEXT: " + runs(
+                NSAttributedString(text), fontTraits: false, palette: ThemeRuntimeState.currentThemeID().palette
+            )
         case .codeBlock(let language, let code): "CODE[\(language ?? "-")]: " + oneLine(code)
         case .table(let headers, let rows, _): "TABLE\n  hdr: " + cells(headers, isHeader: true)
             + rows.map { "\n  row: " + cells($0, isHeader: false) }.joined()
@@ -209,15 +212,17 @@ enum MarkdownCorpus {
                 colors: .measuring,
                 paragraph: .default
             )
-            return runs(text, fontTraits: true)
+            return runs(text, fontTraits: true, palette: TableInlineText.Colors.measuring.palette)
         }.joined(separator: " ‖ ")
     }
 
-    /// Text with its inline styling as tags: `<b>`, `<i>`, `<s>`, `<code>`,
-    /// `<a>`; a formula as `⟦its spoken label⟧`, any other attachment as `◆`.
-    /// Table cells carry emphasis in the font face, prose in the presentation intent.
+    /// Text with its inline styling as tags: `<b>`, `<i>`, `<s>`, `<u>`,
+    /// `<sub>`, `<sup>`, `<code>`, `<kbd>`, `<mark>`, `<a>`; a formula as
+    /// `⟦its spoken label⟧`, any other attachment as `◆`. Table cells carry
+    /// emphasis in the font face, prose in the presentation intent; `palette`
+    /// is the one the text was drawn in, which tells the fills apart.
     @MainActor
-    private static func runs(_ text: NSAttributedString, fontTraits: Bool) -> String {
+    private static func runs(_ text: NSAttributedString, fontTraits: Bool, palette: ThemePalette) -> String {
         var pieces: [(tags: [String], text: String)] = []
         text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attributes, range, _ in
             var piece = (text.string as NSString).substring(with: range)
@@ -241,7 +246,15 @@ enum MarkdownCorpus {
                 if intent.contains(.emphasized) { tags.append("i") }
             }
             if attributes[.strikethroughStyle] != nil { tags.append("s") }
-            if attributes[.backgroundColor] != nil { tags.append("code") }
+            if attributes[.underlineStyle] != nil, attributes[.link] == nil { tags.append("u") }
+            if let offset = attributes[.baselineOffset] as? CGFloat, offset != 0 { tags.append(offset > 0 ? "sup" : "sub") }
+            if let fill = attributes[.backgroundColor] as? UIColor {
+                switch fill {
+                case MarkdownInlineRenderer.keycapFill(palette): tags.append("kbd")
+                case MarkdownInlineRenderer.highlightFill(palette): tags.append("mark")
+                default: tags.append("code")
+                }
+            }
             if attributes[.link] != nil { tags.append("a") }
             if let last = pieces.last, last.tags == tags {
                 pieces[pieces.count - 1].text += piece

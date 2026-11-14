@@ -218,6 +218,8 @@ enum MarkdownWikiLinkRewriter {
                 result.append(.strong(rewrite(inlines: children, context: context)))
             case .strikethrough(let children):
                 result.append(.strikethrough(rewrite(inlines: children, context: context)))
+            case .styled(let style, let children):
+                result.append(.styled(style, rewrite(inlines: children, context: context)))
             case .link(let children, let destination):
                 result.append(contentsOf: rewriteMarkdownLink(
                     children: rewrite(inlines: children, context: context),

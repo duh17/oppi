@@ -695,6 +695,10 @@ final class AssistantMarkdownSegmentSource {
                 value: FullScreenCodeTypography.scaledFont(font, scale: scale),
                 range: range
             )
+            // A `<sub>` or `<sup>` rides off the baseline by a share of its size.
+            if let offset = attributes[.baselineOffset] as? CGFloat, offset != 0 {
+                mutable.addAttribute(.baselineOffset, value: offset * scale, range: range)
+            }
 
             let paragraph = ((attributes[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle)
                 ?? NSMutableParagraphStyle()

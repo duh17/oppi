@@ -113,14 +113,41 @@ enum TableInlineText {
         ))
     }
 
-    /// A cell's single-line width and the width of its widest run that line
-    /// breaking cannot split (`unbreakableRuns`), both as drawn. CoreText
-    /// gives an attachment (a formula, a file icon) no width of its own, so
-    /// its bounds stand in for the replacement character's advance, and an
-    /// attachment is an unbreakable run by itself.
-    static func measure(_ inlines: [MarkdownInline], fonts: Fonts, isHeader: Bool) -> (natural: CGFloat, word: CGFloat) {
+    /// A cell's width on one line (its widest line, when a `<br>` breaks it),
+    /// the width of its widest run that line breaking cannot split
+    /// (`unbreakableRuns`), both as drawn, and whether it breaks into lines.
+    /// CoreText gives an attachment (a formula, a file icon) no width of its
+    /// own, so its bounds stand in for the replacement character's advance,
+    /// and an attachment is an unbreakable run by itself.
+    static func measure(
+        _ inlines: [MarkdownInline],
+        fonts: Fonts,
+        isHeader: Bool
+    ) -> (natural: CGFloat, word: CGFloat, breaksLines: Bool) {
         let text = NSMutableAttributedString()
         appendCell(inlines, to: text, fonts: fonts, isHeader: isHeader, colors: .measuring, paragraph: NSParagraphStyle.default)
+        guard text.length > 0 else { return (0, 0, false) }
+        let string = text.string as NSString
+        guard string.range(of: "\n").location != NSNotFound else {
+            let measured = measureLine(text)
+            return (ceil(measured.natural), ceil(measured.word), false)
+        }
+        var natural: CGFloat = 0
+        var word: CGFloat = 0
+        var lineStart = 0
+        while lineStart <= string.length {
+            let newline = string.range(of: "\n", range: NSRange(location: lineStart, length: string.length - lineStart))
+            let lineEnd = newline.location == NSNotFound ? string.length : newline.location
+            let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+            let measured = measureLine(text.attributedSubstring(from: lineRange))
+            natural = max(natural, measured.natural)
+            word = max(word, measured.word)
+            lineStart = lineEnd + 1
+        }
+        return (ceil(natural), ceil(word), true)
+    }
+
+    private static func measureLine(_ text: NSAttributedString) -> (natural: CGFloat, word: CGFloat) {
         guard text.length > 0 else { return (0, 0) }
         let line = CTLineCreateWithAttributedString(text)
         var natural = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
@@ -137,7 +164,7 @@ enum TableInlineText {
             natural += attachment.bounds.width * CGFloat(range.length) - abs(end - start)
             word = max(word, attachment.bounds.width)
         }
-        return (ceil(natural), ceil(word))
+        return (natural, word)
     }
 
     /// The runs of `text` a wrapped cell cannot break inside: a run of ASCII

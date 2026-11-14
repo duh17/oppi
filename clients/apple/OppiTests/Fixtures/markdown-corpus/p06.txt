@@ -1,0 +1,17 @@
+p06 html inline: line breaks in paragraphs and lists
+@@@@ source
+one<br>two<br/>three<br />four<BR>five
+six<br>
+seven
+
+- item one<br>item two
+- item three
+@@@@ tree
+P: T(one)⏎⏎T(two)⏎⏎T(three)⏎⏎T(four)⏎⏎T(five)⏎T(six)⏎⏎⏎T(seven)
+UL
+  •
+    P: T(item one)⏎⏎T(item two)
+  •
+    P: T(item three)
+@@@@ render
+TEXT: one⏎two⏎three⏎four⏎five⏎six⏎⏎seven⏎⏎  • item one⏎    item two⏎  • item three
