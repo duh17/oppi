@@ -1,17 +1,18 @@
 import UIKit
 
-/// Inline LaTeX math renderer for the chat timeline.
+/// Display math in chat and the Markdown reader.
 ///
 /// Shows a rendered formula when the code fence is closed, or falls back
 /// to a syntax-highlighted code block while the fence is still open during
 /// streaming. Parses via `TeXMathParser` and rasterizes via
 /// `MathCoreGraphicsRenderer` on a background thread, then displays the
-/// resulting image.
+/// resulting image. The formula sits on the page's own background, with
+/// room above and below it like a display in a typeset document.
 ///
 /// Tap opens `FullScreenCodeViewController` with two-axis scrolling and
 /// full export support.
 @MainActor
-final class NativeLatexBlockView: UIView {
+final class NativeLatexBlockView: UIView, UIScrollViewDelegate {
 
     // MARK: - Subviews
 
@@ -28,7 +29,6 @@ final class NativeLatexBlockView: UIView {
         scrollView.alwaysBounceVertical = false
         scrollView.isDirectionalLockEnabled = true
         scrollView.contentInsetAdjustmentBehavior = .never
-        scrollView.layer.cornerRadius = 8
         scrollView.clipsToBounds = true
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         return scrollView
@@ -59,37 +59,38 @@ final class NativeLatexBlockView: UIView {
     /// Cap formula height in the timeline to keep cells reasonable.
     private static let maxInlineHeight: CGFloat = 400
 
-    /// Display math uses Apple's title1 role rather than a caption-sized scalar.
-    /// Applying the configured message-body ratio keeps Dynamic Type and the
-    /// chat text-size preference aligned with the surrounding typography.
-    private var displayFormulaFontSize: CGFloat {
-        Self.displayFormulaFontSize(compatibleWith: traitCollection)
+    /// Display math is set like inline math, at the size whose x-height
+    /// matches the message body's (Dynamic Type and Message Text Size), a
+    /// tenth larger so a block reads as a display; TeX's display style then
+    /// sets its fractions and big operators full size. `textScale` is the
+    /// full-screen reader's text size.
+    static func displayFormulaFontSize(textScale: CGFloat = 1) -> CGFloat {
+        MathFont.shared.fontSize(matchingXHeightOf: AppFont.messageBody as CTFont) * 1.1 * textScale
     }
 
-    static func displayFormulaFontSize(compatibleWith traitCollection: UITraitCollection) -> CGFloat {
-        let displayFont = UIFont.preferredFont(
-            forTextStyle: .title1,
-            compatibleWith: traitCollection
-        )
-        let defaultTraits = UITraitCollection(preferredContentSizeCategory: .large)
-        let defaultBodyFont = UIFont.preferredFont(
-            forTextStyle: .body,
-            compatibleWith: defaultTraits
-        )
-        let messageBodyScale = AppFont.messageBody.pointSize / max(defaultBodyFont.pointSize, 1)
-        return displayFont.pointSize * messageBodyScale
+    private var displayFormulaFontSize: CGFloat {
+        Self.displayFormulaFontSize(textScale: textScale)
+    }
+
+    /// The formula's natural height plus room above and below, as a typeset
+    /// display has: half an em of its size on top of the stack spacing
+    /// between blocks. The timeline shows at most `maxInlineHeight` of it.
+    static func canvasHeight(forNaturalHeight height: CGFloat, fontSize: CGFloat) -> CGFloat {
+        max(height + (fontSize * 0.5).rounded() * 2, 44)
     }
 
     // MARK: - State
 
     private struct RenderIdentity: Equatable {
         let code: String
-        let contentSizeCategory: UIContentSizeCategory
+        let fontSize: CGFloat
         let availableWidth: CGFloat
     }
 
+    /// The full-screen reader's text scale; chat leaves it at 1.
+    private var textScale: CGFloat = 1
+
     private var currentCode: String?
-    private var currentPalette: ThemePalette?
     private var currentRenderIdentity: RenderIdentity?
     private var isShowingFormula = false
     private var renderTask: Task<Void, Never>?
@@ -107,21 +108,51 @@ final class NativeLatexBlockView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupViews()
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: Self, previous: UITraitCollection) in
-            guard previous.preferredContentSizeCategory
-                    != view.traitCollection.preferredContentSizeCategory,
-                  let currentCode = view.currentCode,
-                  let currentPalette = view.currentPalette,
-                  view.isShowingFormula else {
-                return
-            }
-            view.currentRenderIdentity = nil
-            view.applyAsFormula(code: currentCode, palette: currentPalette)
-        }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// A formula wider than the page fades out at the edge it continues past,
+    /// so it reads as scrollable instead of cut off. An alpha mask, so the
+    /// fade works on any background.
+    private let edgeFade: CAGradientLayer = {
+        let gradient = CAGradientLayer()
+        gradient.startPoint = CGPoint(x: 0, y: 0.5)
+        gradient.endPoint = CGPoint(x: 1, y: 0.5)
+        return gradient
+    }()
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateEdgeFade()
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        updateEdgeFade()
+    }
+
+    private func updateEdgeFade() {
+        let scrollView = formulaScrollView
+        let width = scrollView.bounds.width
+        let overflow = scrollView.contentSize.width - width
+        guard isShowingFormula, width > 0, overflow > 1 else {
+            scrollView.layer.mask = nil
+            return
+        }
+        let fade = min(32, width / 4) / width
+        let opaque = UIColor.black.cgColor
+        let clear = UIColor.clear.cgColor
+        let offset = scrollView.contentOffset.x
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // A scroll view's bounds move with its offset; the mask follows them.
+        edgeFade.frame = scrollView.bounds
+        edgeFade.colors = [offset > 1 ? clear : opaque, opaque, opaque, offset < overflow - 1 ? clear : opaque]
+        edgeFade.locations = [0, NSNumber(value: Double(fade)), NSNumber(value: Double(1 - fade)), 1]
+        scrollView.layer.mask = edgeFade
+        CATransaction.commit()
+    }
 
     private func setupViews() {
         translatesAutoresizingMaskIntoConstraints = false
@@ -131,6 +162,7 @@ final class NativeLatexBlockView: UIView {
         addSubview(codeBlockView)
 
         formulaScrollView.isHidden = true
+        formulaScrollView.delegate = self
         addSubview(formulaScrollView)
 
         formulaCanvas.translatesAutoresizingMaskIntoConstraints = false
@@ -188,7 +220,6 @@ final class NativeLatexBlockView: UIView {
     func applyAsCode(language: String?, code: String, palette: ThemePalette, isOpen: Bool) {
         renderTask?.cancel()
         renderTask = nil
-        currentPalette = palette
         currentRenderIdentity = nil
 
         setShowsCodeBlock(true)
@@ -208,12 +239,14 @@ final class NativeLatexBlockView: UIView {
     func applyAsFormulaSync(
         code: String,
         palette: ThemePalette,
-        availableWidth explicitWidth: CGFloat? = nil
+        availableWidth explicitWidth: CGFloat? = nil,
+        textScale: CGFloat = 1
     ) {
+        self.textScale = textScale
         let availableWidth = resolvedAvailableWidth(explicitWidth)
         let identity = RenderIdentity(
             code: code,
-            contentSizeCategory: traitCollection.preferredContentSizeCategory,
+            fontSize: displayFormulaFontSize,
             availableWidth: availableWidth
         )
         // Re-entrant collection-view measurement reuses this cell. Rendering
@@ -225,7 +258,6 @@ final class NativeLatexBlockView: UIView {
         renderTask?.cancel()
         renderTask = nil
         currentCode = code
-        currentPalette = palette
         currentRenderIdentity = identity
 
         let theme = ThemeRuntimeState.currentRenderTheme()
@@ -249,7 +281,6 @@ final class NativeLatexBlockView: UIView {
         showFormula(
             image: result.image,
             naturalSize: result.size,
-            palette: palette,
             invalidateHostLayout: false
         )
     }
@@ -258,28 +289,25 @@ final class NativeLatexBlockView: UIView {
     func applyAsFormula(
         code: String,
         palette: ThemePalette,
-        availableWidth explicitWidth: CGFloat? = nil
+        availableWidth explicitWidth: CGFloat? = nil,
+        textScale: CGFloat = 1
     ) {
+        self.textScale = textScale
         let availableWidth = resolvedAvailableWidth(explicitWidth)
         let identity = RenderIdentity(
             code: code,
-            contentSizeCategory: traitCollection.preferredContentSizeCategory,
+            fontSize: displayFormulaFontSize,
             availableWidth: availableWidth
         )
         guard identity != currentRenderIdentity || !isShowingFormula else { return }
         currentCode = code
-        currentPalette = palette
         currentRenderIdentity = identity
 
         renderTask?.cancel()
         #if DEBUG
         debugRenderCount += 1
         #endif
-        guard reserveFormulaHeightFromLayout(
-            code: code,
-            availableWidth: availableWidth,
-            palette: palette
-        ) else {
+        guard reserveFormulaHeightFromLayout(code: code, availableWidth: availableWidth) else {
             showAsCodeFallback(code: code, palette: palette)
             return
         }
@@ -317,7 +345,6 @@ final class NativeLatexBlockView: UIView {
             self.showFormula(
                 image: result.image,
                 naturalSize: result.size,
-                palette: palette,
                 invalidateHostLayout: true
             )
         }
@@ -351,11 +378,7 @@ final class NativeLatexBlockView: UIView {
     /// async raster arrives so the image swap does not change cell height.
     /// Same renderability and natural-raster budget as `renderLatexGraphicalImage`.
     @discardableResult
-    private func reserveFormulaHeightFromLayout(
-        code: String,
-        availableWidth: CGFloat,
-        palette: ThemePalette
-    ) -> Bool {
+    private func reserveFormulaHeightFromLayout(code: String, availableWidth: CGFloat) -> Bool {
         guard let layout = DocumentRenderPipeline.layoutLatexGraphical(
             text: code,
             config: RenderConfiguration(
@@ -374,8 +397,6 @@ final class NativeLatexBlockView: UIView {
 
         let heightOrRevealChanged = updateFormulaHeight(naturalSize: layout.size)
         formulaHeightConstraint?.isActive = true
-        formulaScrollView.backgroundColor = palette.ui.bgHighlight
-        formulaCanvas.backgroundColor = palette.ui.bgHighlight
         setShowsCodeBlock(false)
         formulaScrollView.isHidden = false
         isShowingFormula = true
@@ -391,18 +412,17 @@ final class NativeLatexBlockView: UIView {
     private func showFormula(
         image: UIImage,
         naturalSize: CGSize,
-        palette: ThemePalette,
         invalidateHostLayout: Bool
     ) {
-        let canvasHeight = max(naturalSize.height, 44)
         let heightOrRevealChanged = updateFormulaHeight(naturalSize: naturalSize)
 
         formulaHeightConstraint?.isActive = true
-        formulaCanvasHeightConstraint?.constant = canvasHeight
+        formulaCanvasHeightConstraint?.constant = Self.canvasHeight(
+            forNaturalHeight: naturalSize.height,
+            fontSize: displayFormulaFontSize
+        )
         formulaImageWidthConstraint?.constant = max(naturalSize.width, 1)
         formulaImageHeightConstraint?.constant = max(naturalSize.height, 1)
-        formulaScrollView.backgroundColor = palette.ui.bgHighlight
-        formulaCanvas.backgroundColor = palette.ui.bgHighlight
         formulaImageView.image = image
 
         setShowsCodeBlock(false)
@@ -422,8 +442,10 @@ final class NativeLatexBlockView: UIView {
 
     @discardableResult
     private func updateFormulaHeight(naturalSize: CGSize) -> Bool {
-        let canvasHeight = max(naturalSize.height, 44)
-        let displayHeight = min(canvasHeight, Self.maxInlineHeight)
+        let displayHeight = min(
+            Self.canvasHeight(forNaturalHeight: naturalSize.height, fontSize: displayFormulaFontSize),
+            Self.maxInlineHeight
+        )
         let constraintIsActive = formulaHeightConstraint?.isActive == true
         let heightUnchanged = abs((formulaHeightConstraint?.constant ?? 0) - displayHeight) <= 0.5
         guard !isShowingFormula || !constraintIsActive || !heightUnchanged else {

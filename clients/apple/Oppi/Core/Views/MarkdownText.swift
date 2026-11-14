@@ -1035,8 +1035,16 @@ enum FlatSegment: Sendable {
             appendMathToken("(", to: &output)
             appendMathToken(mathPlainText(from: radicand), to: &output)
             appendMathToken(")", to: &output)
-        case .group(let body), .font(_, let body), .accent(_, let body):
+        case .group(let body), .font(_, let body), .accent(_, let body), .style(_, let body):
             appendMathToken(mathPlainText(from: body), to: &output)
+        case .binomial(let top, let bottom):
+            appendMathToken("(", to: &output)
+            appendMathToken(mathPlainText(from: top), to: &output)
+            appendSpacedMathToken("choose", to: &output)
+            appendMathToken(mathPlainText(from: bottom), to: &output)
+            appendMathToken(")", to: &output)
+        case .sizedDelimiter(let delimiter, _):
+            appendMathToken(delimiterText(delimiter), to: &output)
         case .leftRight(let left, let right, let body):
             appendMathToken(delimiterText(left), to: &output)
             appendMathToken(mathPlainText(from: body), to: &output)
@@ -1112,8 +1120,11 @@ enum FlatSegment: Sendable {
         case .sqrt(let index, let radicand):
             return (index.map { containsLossyAccessibilityNode(in: $0) } ?? false)
                 || containsLossyAccessibilityNode(in: radicand)
-        case .group(let body), .font(_, let body):
+        case .group(let body), .font(_, let body), .style(_, let body):
             return containsLossyAccessibilityNode(in: body)
+        case .binomial(let top, let bottom):
+            return containsLossyAccessibilityNode(in: top)
+                || containsLossyAccessibilityNode(in: bottom)
         case .leftRight(_, _, let body):
             return containsLossyAccessibilityNode(in: body)
         case .matrix(let rows, _), .environment(_, let rows):
@@ -1121,7 +1132,7 @@ enum FlatSegment: Sendable {
         case .bigOperator(_, let limits):
             return (limits?.lower.map { containsLossyAccessibilityNode(in: $0) } ?? false)
                 || (limits?.upper.map { containsLossyAccessibilityNode(in: $0) } ?? false)
-        case .number, .variable, .operator, .symbol, .text, .space:
+        case .number, .variable, .operator, .symbol, .text, .space, .sizedDelimiter:
             return false
         }
     }
@@ -1146,6 +1157,8 @@ enum FlatSegment: Sendable {
         case .approx: text = "≈"
         case .equiv: text = "≡"
         case .sim: text = "∼"
+        case .propto: text = "∝"
+        case .mid: text = "∣"
         case .in: text = "∈"
         case .subset: text = "⊂"
         case .supset: text = "⊃"
@@ -1736,37 +1749,6 @@ enum FlatSegment: Sendable {
         case 4: return 8
         default: return 6
         }
-    }
-}
-
-/// An inline LaTeX image with a VoiceOver label fixed at creation.
-///
-/// Segments build off the main actor, where `accessibilityLabel`'s setter is
-/// unavailable. UIKit reads the label on the main actor through this override.
-final class InlineLatexTextAttachment: NSTextAttachment {
-    private static let formulaLabelKey = "oppi.formulaLabel"
-    private var formulaLabel: String
-
-    override class var supportsSecureCoding: Bool { true }
-
-    init(formulaLabel: String) {
-        self.formulaLabel = formulaLabel
-        super.init(data: nil, ofType: nil)
-    }
-
-    required init?(coder: NSCoder) {
-        formulaLabel = coder.decodeObject(of: NSString.self, forKey: Self.formulaLabelKey) as String? ?? ""
-        super.init(coder: coder)
-    }
-
-    override func encode(with coder: NSCoder) {
-        super.encode(with: coder)
-        coder.encode(formulaLabel as NSString, forKey: Self.formulaLabelKey)
-    }
-
-    override var accessibilityLabel: String? {
-        get { formulaLabel }
-        set { formulaLabel = newValue ?? "" }
     }
 }
 

@@ -51,6 +51,29 @@ struct TeXMathParserStressFixtureTests {
         #expect(!result.nodes.isEmpty)
     }
 
+    /// Formulas from the LaTeX stress file that fell back to source because
+    /// a command was missing (`\displaystyle`, `\binom`, `\propto`), and
+    /// the styled fraction forms.
+    @Test(arguments: [
+        #"\displaystyle \int_{-\infty}^{\infty} \frac{\sin x}{x}\,dx = \pi"#,
+        #"\binom{n}{k} = \frac{n!}{k!(n-k)!}"#,
+        #"\sum_{k=0}^{n} \binom{n}{k} = 2^n"#,
+        #"\frac{1}{\displaystyle 1 + \frac{1}{\displaystyle 1 + \frac{1}{1 + \cdots}}} = \frac{\sqrt{5} - 1}{2}"#,
+        #"i \propto j"#,
+        #"\dfrac{a}{b} + \tfrac{c}{d} + \cfrac{1}{2} + \dbinom{n}{2} + \tbinom{n}{2}"#,
+        #"\textstyle a \scriptstyle b \scriptscriptstyle c"#,
+    ])
+    func stressFileFormulasRender(_ source: String) {
+        let result = parser.parseValidated(source)
+        #expect(result.diagnostics.isEmpty, "Unexpected diagnostics for \(source): \(result.diagnostics)")
+        #expect(result.isRenderable)
+    }
+
+    @Test(arguments: [#"\binom{n}"#, #"\dfrac{1}"#])
+    func twoArgumentCommandsNeedBothArguments(_ source: String) {
+        #expect(!parser.parseValidated(source).isRenderable)
+    }
+
     @Test func midIsARelationAndDoesNotRemainACommandToken() {
         let result = parser.parse(#"P(A \mid B)"#)
         #expect(result.contains { node in

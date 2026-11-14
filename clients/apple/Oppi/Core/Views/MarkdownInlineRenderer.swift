@@ -125,8 +125,12 @@ enum MarkdownInlineRenderer {
             case .html(let raw):
                 appendText(raw, context, color: style.mutedColor)
             case .math(let math):
-                if let formula = formulaAttachment(math) {
-                    result.append(formula)
+                if let formula = MarkdownInlineRenderer.formulaAttachment(
+                    latex: math.latex,
+                    font: style.faces?.body ?? style.font,
+                    theme: style.palette.renderTheme
+                ) {
+                    result.append(NSAttributedString(attachment: formula))
                 } else {
                     appendText(math.source, context)
                 }
@@ -178,30 +182,6 @@ enum MarkdownInlineRenderer {
             return attributes
         }
 
-        /// No `.link` on an attachment: UIKit's long-press text drag removes an
-        /// attachment inside a link twice and aborts with `NSRangeException`.
-        private func formulaAttachment(_ math: MarkdownMath) -> NSAttributedString? {
-            let font = style.faces?.body ?? style.font
-            guard let rendered = DocumentRenderPipeline.renderInlineLatexImage(
-                text: math.latex,
-                config: RenderConfiguration(
-                    fontSize: font.pointSize,
-                    maxWidth: 1_000,
-                    theme: style.palette.renderTheme,
-                    displayMode: .inline
-                )
-            ) else { return nil }
-            let attachment = InlineLatexTextAttachment(formulaLabel: FlatSegment.formulaAccessibilityLabel(for: math.latex))
-            attachment.image = rendered.image
-            attachment.bounds = CGRect(
-                x: 0,
-                y: -(rendered.size.height - rendered.baseline),
-                width: rendered.size.width,
-                height: rendered.size.height
-            )
-            return NSAttributedString(attachment: attachment)
-        }
-
         /// A tinted SF Symbol centred on the cap height. An unknown symbol
         /// fails closed to no icon.
         private func iconAttachment(_ icon: FileIcon) -> NSAttributedString? {
@@ -219,6 +199,36 @@ enum MarkdownInlineRenderer {
         }
     }
 
+    /// One inline formula drawn for a line of `font`: math set in TeX's text
+    /// style at the size whose x-height matches the font's, its baseline on
+    /// the text's. Nil when the formula does not render.
+    ///
+    /// No `.link` on an attachment: UIKit's long-press text drag removes an
+    /// attachment inside a link twice and aborts with `NSRangeException`.
+    static func formulaAttachment(latex: String, font: UIFont, theme: RenderTheme) -> InlineLatexTextAttachment? {
+        guard let rendered = DocumentRenderPipeline.renderInlineLatexImage(
+            text: latex,
+            config: RenderConfiguration(
+                fontSize: MathFont.shared.fontSize(matchingXHeightOf: font as CTFont),
+                maxWidth: 1_000,
+                theme: theme,
+                displayMode: .inline
+            )
+        ) else { return nil }
+        let attachment = InlineLatexTextAttachment(
+            formulaLabel: FlatSegment.formulaAccessibilityLabel(for: latex),
+            source: .init(latex: latex, font: font, theme: theme)
+        )
+        attachment.image = rendered.image
+        attachment.bounds = CGRect(
+            x: 0,
+            y: -(rendered.size.height - rendered.baseline),
+            width: rendered.size.width,
+            height: rendered.size.height
+        )
+        return attachment
+    }
+
     /// A link to a non-text file (image, audio, video, PDF, binary) leads with
     /// its file icon; text-like files stay icon-free.
     static func fileIcon(for destination: String?) -> FileIcon? {
@@ -228,5 +238,86 @@ enum MarkdownInlineRenderer {
         let path = reference.fileCandidatePath ?? reference.target
         guard FileKind.detect(from: path).previewCategory != .text else { return nil }
         return FileIcon.forPath(path)
+    }
+}
+
+/// An inline LaTeX image with a VoiceOver label fixed at creation.
+///
+/// Segments build off the main actor, where `accessibilityLabel`'s setter is
+/// unavailable. UIKit reads the label on the main actor through this override.
+final class InlineLatexTextAttachment: NSTextAttachment {
+    /// What drew the image, so a reader that scales its text can draw the
+    /// formula again at the new size. Not archived.
+    struct Source {
+        let latex: String
+        let font: UIFont
+        let theme: RenderTheme
+    }
+
+    private static let formulaLabelKey = "oppi.formulaLabel"
+    private var formulaLabel: String
+    private(set) var source: Source?
+
+    override class var supportsSecureCoding: Bool { true }
+
+    init(formulaLabel: String, source: Source? = nil) {
+        self.formulaLabel = formulaLabel
+        self.source = source
+        super.init(data: nil, ofType: nil)
+    }
+
+    /// This formula drawn again for text `scale` times its size, or nil when
+    /// it has no source or no longer renders.
+    func scaled(by scale: CGFloat) -> InlineLatexTextAttachment? {
+        guard let source else { return nil }
+        return MarkdownInlineRenderer.formulaAttachment(
+            latex: source.latex,
+            font: source.font.withSize(source.font.pointSize * scale),
+            theme: source.theme
+        )
+    }
+
+    required init?(coder: NSCoder) {
+        formulaLabel = coder.decodeObject(of: NSString.self, forKey: Self.formulaLabelKey) as String? ?? ""
+        super.init(coder: coder)
+    }
+
+    override func encode(with coder: NSCoder) {
+        super.encode(with: coder)
+        coder.encode(formulaLabel as NSString, forKey: Self.formulaLabelKey)
+    }
+
+    override var accessibilityLabel: String? {
+        get { formulaLabel }
+        set { formulaLabel = newValue ?? "" }
+    }
+
+    // A formula cannot wrap. One wider than the line shrinks to fit it rather
+    // than running past the text's edge, where it would be cut off.
+
+    override func attachmentBounds(
+        for textContainer: NSTextContainer?,
+        proposedLineFragment lineFrag: CGRect,
+        glyphPosition position: CGPoint,
+        characterIndex charIndex: Int
+    ) -> CGRect {
+        fitted(to: lineFrag, in: textContainer)
+    }
+
+    override func attachmentBounds(
+        for attributes: [NSAttributedString.Key: Any],
+        location: any NSTextLocation,
+        textContainer: NSTextContainer?,
+        proposedLineFragment: CGRect,
+        position: CGPoint
+    ) -> CGRect {
+        fitted(to: proposedLineFragment, in: textContainer)
+    }
+
+    private func fitted(to lineFragment: CGRect, in container: NSTextContainer?) -> CGRect {
+        let available = lineFragment.width - 2 * (container?.lineFragmentPadding ?? 0)
+        guard available > 0, bounds.width > available else { return bounds }
+        let scale = available / bounds.width
+        return CGRect(x: bounds.minX, y: bounds.minY * scale, width: available, height: bounds.height * scale)
     }
 }

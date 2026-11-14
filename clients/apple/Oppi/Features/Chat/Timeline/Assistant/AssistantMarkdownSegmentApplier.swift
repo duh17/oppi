@@ -1469,10 +1469,21 @@ final class AssistantMarkdownSegmentApplier {
 
         switch config.decorativeDecision(for: .latexDiagram) {
         case .allow, .reducedDetail:
+            let textScale = config.readerPreferences?.textScale ?? 1
             if config.renderingMode.rendersHeightChangingBlocksSynchronously {
-                latexView.applyAsFormulaSync(code: code, palette: palette, availableWidth: preparationWidth)
+                latexView.applyAsFormulaSync(
+                    code: code,
+                    palette: palette,
+                    availableWidth: preparationWidth,
+                    textScale: textScale
+                )
             } else {
-                latexView.applyAsFormula(code: code, palette: palette, availableWidth: preparationWidth)
+                latexView.applyAsFormula(
+                    code: code,
+                    palette: palette,
+                    availableWidth: preparationWidth,
+                    textScale: textScale
+                )
             }
         case .deferToPlain, .refuse:
             if latexView.isDisplayingRenderedFormula {

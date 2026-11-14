@@ -3,8 +3,8 @@
 /// A node in the math expression tree.
 ///
 /// Designed for a two-phase pipeline: parse → layout → draw.
-/// The parser produces `[MathNode]`; the layout engine (future) converts
-/// to positioned boxes. All types are value types, `Equatable` and `Sendable`.
+/// The parser produces `[MathNode]`; `MathLayoutEngine` converts them to
+/// positioned boxes. All types are value types, `Equatable` and `Sendable`.
 enum MathNode: Equatable, Sendable {
     /// Numeric literal: "3", "42", "3.14"
     case number(String)
@@ -20,6 +20,9 @@ enum MathNode: Equatable, Sendable {
 
     /// \frac{numerator}{denominator}
     case fraction(numerator: [Self], denominator: [Self])
+
+    /// \binom{top}{bottom}: a stack without a bar, in parentheses.
+    case binomial(top: [Self], bottom: [Self])
 
     /// base^{exponent}
     case superscript(base: [Self], exponent: [Self])
@@ -59,6 +62,21 @@ enum MathNode: Equatable, Sendable {
 
     /// \begin{cases} ... \end{cases} and other named environments
     case environment(String, rows: [[[Self]]])
+
+    /// \displaystyle and its kin: the rest of the enclosing list in that style.
+    /// \dfrac and \tfrac wrap one fraction in this.
+    case style(MathStyleKind, body: [Self])
+
+    /// \bigl( … \Biggr): a delimiter at a fixed size, 1 (\big) to 4 (\Bigg).
+    case sizedDelimiter(Delimiter, size: Int)
+}
+
+/// TeX's four math styles, as \displaystyle … \scriptscriptstyle name them.
+enum MathStyleKind: String, Equatable, Sendable {
+    case display = "displaystyle"
+    case text = "textstyle"
+    case script = "scriptstyle"
+    case scriptScript = "scriptscriptstyle"
 }
 
 // MARK: - Supporting Enums
@@ -85,6 +103,8 @@ enum MathOperator: String, Equatable, Sendable {
     case approx = "\\approx"
     case equiv = "\\equiv"
     case sim = "\\sim"
+    case propto = "\\propto"
+    case mid = "\\mid"
     case `in` = "\\in"
     case subset = "\\subset"
     case supset = "\\supset"

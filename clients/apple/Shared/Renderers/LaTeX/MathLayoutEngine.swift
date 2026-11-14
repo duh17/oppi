@@ -7,23 +7,37 @@ import Foundation
 /// A positioned box in the layout tree.
 ///
 /// Each `MathNode` becomes one or more `LayoutBox` instances during layout.
-/// Positions are relative to the parent container's origin (top-left).
+/// Positions are relative to the parent container's origin (top-left, y down).
 struct LayoutBox: Equatable, Sendable {
     /// Top-left corner relative to parent.
     var origin: CGPoint
-    /// Bounding size of this box.
+    /// Advance width and height. Glyph boxes are as tall as their ink, as TeX
+    /// measures characters, so spacing follows what is drawn.
     var size: CGSize
     /// Distance from top edge to the baseline (for vertical alignment).
     var baseline: CGFloat
     /// What this box contains.
     var content: LayoutContent
+    /// Drawn extent relative to this box's origin. Ink can pass the box:
+    /// italic overhangs, accents, a negative kern. `.null` when nothing draws.
+    var ink: CGRect = .null
+    /// Slant overhang of a box that ends in an italic glyph; a superscript
+    /// moves right by it.
+    var italicCorrection: CGFloat = 0
+
+    var ascent: CGFloat { baseline }
+    var descent: CGFloat { size.height - baseline }
 }
 
 /// Content inside a layout box.
 enum LayoutContent: Equatable, Sendable {
-    /// A single glyph drawn at the given font size.
+    /// A run of text in the math font at the given size, baseline at the
+    /// box's baseline.
     case glyph(String, CGFloat)
-    /// A line segment (from, to, thickness) for fraction bars, sqrt overlines.
+    /// One glyph of the math font by id: size variants and assembly parts
+    /// that have no character of their own.
+    case glyphID(CGGlyph, CGFloat)
+    /// A filled rule from one point to another (fraction bars, overbars).
     case line(CGPoint, CGPoint, CGFloat)
     /// A container holding child boxes positioned relative to this box's origin.
     case container([LayoutBox])
@@ -33,1089 +47,51 @@ enum LayoutContent: Equatable, Sendable {
 
 /// Converts `[MathNode]` into a positioned `LayoutBox` tree.
 ///
-/// Uses Core Text font metrics (`CTFont`) for accurate glyph sizing.
-/// Layout follows TeX conventions: italic variables, upright numbers/operators,
-/// shrunk sub/superscripts, centered fractions, etc.
-///
-/// Two-phase usage:
-/// ```
-/// let engine = MathLayoutEngine()
-/// let box = engine.layout(nodes, fontSize: 16)
-/// // box.size gives the bounding rect; pass to renderer for drawing
-/// ```
+/// Follows TeX's rules with the constants, size variants and assembly parts
+/// of the math font's OpenType MATH table (`MathFont`): four styles (display,
+/// text, script, scriptscript), inter-atom spacing by atom class, fractions
+/// and big operators centred on the math axis, stretchy delimiters and
+/// radicals, and accents placed on each glyph's attachment point. Letters map
+/// to Unicode's mathematical alphanumerics, so italic, bold, blackboard,
+/// script, fraktur, sans and monospace all come from the one font.
 struct MathLayoutEngine: Sendable {
-
-    // MARK: - Constants
-
-    /// Factor applied to font size for sub/superscripts and fraction children.
-    private static let scriptSizeFactor: CGFloat = 0.7
     /// Minimum font size to prevent infinite shrinking in deep nesting.
     private static let minimumFontSize: CGFloat = 6.0
-    /// Horizontal padding around relation operators (=, <, >, etc.).
-    private static let relationSpacing: CGFloat = 0.25 // em
-    /// Horizontal padding around binary operators (+, -, etc.).
-    private static let binaryOpSpacing: CGFloat = 0.2 // em
-    /// Padding above/below fraction bar.
-    private static let fractionGap: CGFloat = 0.15 // em
-    /// Fraction bar thickness as fraction of font size.
-    private static let fractionBarThickness: CGFloat = 0.04
-    /// Superscript raise as fraction of font size.
-    private static let superscriptRaise: CGFloat = 0.4
-    /// Subscript drop as fraction of font size.
-    private static let subscriptDrop: CGFloat = 0.2
-    /// Spacing between matrix columns in em.
-    private static let matrixColumnSpacing: CGFloat = 1.0
-    /// Spacing between matrix rows in em.
-    private static let matrixRowSpacing: CGFloat = 0.5
-    /// Radical symbol horizontal padding.
-    private static let radicalPadding: CGFloat = 0.15 // em
-    /// Overline thickness as fraction of font size.
-    private static let overlineThickness: CGFloat = 0.04
-    /// Gap between accent and base as fraction of font size.
-    private static let accentGap: CGFloat = 0.1
-    /// Big operator scale factor relative to base font size.
-    private static let bigOperatorScale: CGFloat = 1.5
-    /// Delimiter padding.
-    private static let delimiterPadding: CGFloat = 0.1 // em
 
-    // MARK: - Font Cache
-
-    /// Per-layout font cache to avoid repeated CTFont creation.
-    /// Not stored across layout calls — created fresh each time.
-    private final class FontCache: @unchecked Sendable {
-        private var italicFonts: [CGFloat: CTFont] = [:]
-        private var romanFonts: [CGFloat: CTFont] = [:]
-
-        func italic(size: CGFloat) -> CTFont {
-            if let cached = italicFonts[size] { return cached }
-            let font = MathLayoutEngine.createItalicFont(size: size)
-            italicFonts[size] = font
-            return font
-        }
-
-        func roman(size: CGFloat) -> CTFont {
-            if let cached = romanFonts[size] { return cached }
-            let font = MathLayoutEngine.createRomanFont(size: size)
-            romanFonts[size] = font
-            return font
-        }
-    }
-
-    // MARK: - Public API
-
-    /// Layout a list of math nodes at the given font size.
+    /// Layout a list of math nodes at the given font size. Display style
+    /// stacks limits and sets fractions full size; text style is for math in
+    /// a line of prose.
     ///
-    /// Returns a single container `LayoutBox` wrapping all nodes laid out
-    /// left to right. Returns a zero-size box for empty input.
-    func layout(_ nodes: [MathNode], fontSize: CGFloat) -> LayoutBox {
+    /// The returned box covers every drawn pixel: its size and baseline grow
+    /// to include ink that overhangs the advance boxes.
+    func layout(_ nodes: [MathNode], fontSize: CGFloat, display: Bool = true) -> LayoutBox {
         guard !nodes.isEmpty else {
-            return LayoutBox(
-                origin: .zero,
-                size: .zero,
-                baseline: 0,
-                content: .container([])
-            )
-        }
-        let cache = FontCache()
-        let effectiveSize = max(fontSize, Self.minimumFontSize)
-        let children = layoutSequence(nodes, fontSize: effectiveSize, cache: cache)
-        return wrapInContainer(children)
-    }
-
-    // MARK: - Sequence Layout
-
-    /// Layout nodes left-to-right, returning positioned child boxes.
-    private func layoutSequence(
-        _ nodes: [MathNode],
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> [LayoutBox] {
-        var boxes: [LayoutBox] = []
-        var cursor: CGFloat = 0
-
-        for node in nodes {
-            let box = layoutNode(node, fontSize: fontSize, cache: cache)
-            var positioned = box
-            positioned.origin.x = cursor
-            boxes.append(positioned)
-            cursor += box.size.width
-        }
-
-        return boxes
-    }
-
-    // MARK: - Node Dispatch
-
-    /// Layout a single math node, returning a box at origin (0,0).
-    private func layoutNode(
-        _ node: MathNode,
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> LayoutBox {
-        switch node {
-        case .variable(let name):
-            return layoutGlyph(name, fontSize: fontSize, italic: true, cache: cache)
-
-        case .number(let digits):
-            return layoutGlyph(digits, fontSize: fontSize, italic: false, cache: cache)
-
-        case .operator(let op):
-            return layoutOperator(op, fontSize: fontSize, cache: cache)
-
-        case .symbol(let sym):
-            return layoutSymbol(sym, fontSize: fontSize, cache: cache)
-
-        case .fraction(let num, let den):
-            return layoutFraction(num, den, fontSize: fontSize, cache: cache)
-
-        case .superscript(let base, let exp):
-            return layoutSuperscript(base, exp, fontSize: fontSize, cache: cache)
-
-        case .subscript(let base, let idx):
-            return layoutSubscript(base, idx, fontSize: fontSize, cache: cache)
-
-        case .subSuperscript(let base, let sub, let sup):
-            return layoutSubSuperscript(base, sub, sup, fontSize: fontSize, cache: cache)
-
-        case .sqrt(let index, let radicand):
-            return layoutSqrt(index: index, radicand: radicand, fontSize: fontSize, cache: cache)
-
-        case .leftRight(let left, let right, let body):
-            return layoutLeftRight(left: left, right: right, body: body, fontSize: fontSize, cache: cache)
-
-        case .matrix(let rows, let style):
-            return layoutMatrix(
-                rows: rows,
-                style: style,
-                columnAlignment: .centered,
-                fontSize: fontSize,
-                cache: cache
-            )
-
-        case .bigOperator(let kind, let limits):
-            return layoutBigOperator(kind, limits: limits, fontSize: fontSize, cache: cache)
-
-        case .accent(let kind, let base):
-            return layoutAccent(kind, base: base, fontSize: fontSize, cache: cache)
-
-        case .group(let children):
-            let childBoxes = layoutSequence(children, fontSize: fontSize, cache: cache)
-            return wrapInContainer(childBoxes)
-
-        case .text(let content):
-            return layoutGlyph(content, fontSize: fontSize, italic: false, cache: cache)
-
-        case .space(let sp):
-            return layoutSpace(sp, fontSize: fontSize)
-
-        case .font(_, let body):
-            // Font style hint — layout body normally (visual distinction handled by renderer)
-            let childBoxes = layoutSequence(body, fontSize: fontSize, cache: cache)
-            return wrapInContainer(childBoxes)
-
-        case .environment(let name, let rows):
-            return layoutMatrix(
-                rows: rows,
-                style: .plain,
-                columnAlignment: name == "aligned" ? .alternatingRightLeft : .centered,
-                fontSize: fontSize,
-                cache: cache
-            )
-        }
-    }
-
-    // MARK: - Glyph Layout
-
-    private func layoutGlyph(
-        _ text: String,
-        fontSize: CGFloat,
-        italic: Bool,
-        cache: FontCache
-    ) -> LayoutBox {
-        let font = italic ? cache.italic(size: fontSize) : cache.roman(size: fontSize)
-        let (width, ascent, descent) = measureText(text, font: font)
-        let height = ascent + descent
-        return LayoutBox(
-            origin: .zero,
-            size: CGSize(width: width, height: height),
-            baseline: ascent,
-            content: .glyph(text, fontSize)
-        )
-    }
-
-    // MARK: - Operator Layout
-
-    private func layoutOperator(
-        _ op: MathOperator,
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> LayoutBox {
-        let displayChar = Self.operatorDisplayString(op)
-        let font = cache.roman(size: fontSize)
-        let (glyphWidth, ascent, descent) = measureText(displayChar, font: font)
-        let height = ascent + descent
-        let em = fontSize
-
-        let spacing: CGFloat
-        if Self.isRelationOperator(op) {
-            spacing = em * Self.relationSpacing
-        } else if Self.isBinaryOperator(op) {
-            spacing = em * Self.binaryOpSpacing
-        } else {
-            spacing = 0
-        }
-
-        let totalWidth = glyphWidth + spacing * 2
-
-        // The glyph sits centered in the total width
-        let glyphBox = LayoutBox(
-            origin: CGPoint(x: spacing, y: 0),
-            size: CGSize(width: glyphWidth, height: height),
-            baseline: ascent,
-            content: .glyph(displayChar, fontSize)
-        )
-
-        return LayoutBox(
-            origin: .zero,
-            size: CGSize(width: totalWidth, height: height),
-            baseline: ascent,
-            content: .container([glyphBox])
-        )
-    }
-
-    // MARK: - Symbol Layout
-
-    private func layoutSymbol(
-        _ sym: MathSymbol,
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> LayoutBox {
-        let displayChar = Self.symbolDisplayString(sym)
-        return layoutGlyph(displayChar, fontSize: fontSize, italic: true, cache: cache)
-    }
-
-    // MARK: - Fraction Layout
-
-    private func layoutFraction(
-        _ numerator: [MathNode],
-        _ denominator: [MathNode],
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> LayoutBox {
-        let childSize = max(fontSize * Self.scriptSizeFactor, Self.minimumFontSize)
-        let em = fontSize
-
-        let numBoxes = layoutSequence(numerator, fontSize: childSize, cache: cache)
-        let numContainer = wrapInContainer(numBoxes)
-
-        let denBoxes = layoutSequence(denominator, fontSize: childSize, cache: cache)
-        let denContainer = wrapInContainer(denBoxes)
-
-        let barThickness = em * Self.fractionBarThickness
-        let gap = em * Self.fractionGap
-
-        let maxWidth = max(numContainer.size.width, denContainer.size.width)
-        let padding: CGFloat = em * 0.1
-
-        // Center numerator
-        var num = numContainer
-        num.origin = CGPoint(
-            x: (maxWidth + padding * 2 - num.size.width) / 2,
-            y: 0
-        )
-
-        // Bar position
-        let barY = num.size.height + gap
-        let barBox = LayoutBox(
-            origin: CGPoint(x: padding, y: barY),
-            size: CGSize(width: maxWidth, height: barThickness),
-            baseline: barThickness / 2,
-            content: .line(
-                CGPoint(x: 0, y: barThickness / 2),
-                CGPoint(x: maxWidth, y: barThickness / 2),
-                barThickness
-            )
-        )
-
-        // Center denominator
-        var den = denContainer
-        den.origin = CGPoint(
-            x: (maxWidth + padding * 2 - den.size.width) / 2,
-            y: barY + barThickness + gap
-        )
-
-        let totalHeight = den.origin.y + den.size.height
-        let totalWidth = maxWidth + padding * 2
-
-        // Baseline is at the fraction bar
-        return LayoutBox(
-            origin: .zero,
-            size: CGSize(width: totalWidth, height: totalHeight),
-            baseline: barY + barThickness / 2,
-            content: .container([num, barBox, den])
-        )
-    }
-
-    // MARK: - Superscript Layout
-
-    private func layoutSuperscript(
-        _ base: [MathNode],
-        _ exponent: [MathNode],
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> LayoutBox {
-        let baseBoxes = layoutSequence(base, fontSize: fontSize, cache: cache)
-        let baseContainer = wrapInContainer(baseBoxes)
-
-        let scriptSize = max(fontSize * Self.scriptSizeFactor, Self.minimumFontSize)
-        let supBoxes = layoutSequence(exponent, fontSize: scriptSize, cache: cache)
-        let supContainer = wrapInContainer(supBoxes)
-
-        let raise = fontSize * Self.superscriptRaise
-
-        // Position by script baseline, not its top edge. Using the top edge
-        // makes the visible raise depend on the script glyph's ascent.
-        let unshiftedSupY = baseContainer.baseline - raise - supContainer.baseline
-        let topShift = max(-unshiftedSupY, 0)
-
-        var basePlaced = baseContainer
-        basePlaced.origin = CGPoint(x: 0, y: topShift)
-
-        var supPlaced = supContainer
-        supPlaced.origin = CGPoint(
-            x: baseContainer.size.width,
-            y: unshiftedSupY + topShift
-        )
-
-        let totalHeight = max(
-            basePlaced.origin.y + basePlaced.size.height,
-            supPlaced.origin.y + supPlaced.size.height
-        )
-        let totalWidth = baseContainer.size.width + supContainer.size.width
-
-        return LayoutBox(
-            origin: .zero,
-            size: CGSize(width: totalWidth, height: totalHeight),
-            baseline: basePlaced.origin.y + baseContainer.baseline,
-            content: .container([basePlaced, supPlaced])
-        )
-    }
-
-    // MARK: - Subscript Layout
-
-    private func layoutSubscript(
-        _ base: [MathNode],
-        _ index: [MathNode],
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> LayoutBox {
-        let baseBoxes = layoutSequence(base, fontSize: fontSize, cache: cache)
-        let baseContainer = wrapInContainer(baseBoxes)
-
-        let scriptSize = max(fontSize * Self.scriptSizeFactor, Self.minimumFontSize)
-        let subBoxes = layoutSequence(index, fontSize: scriptSize, cache: cache)
-        let subContainer = wrapInContainer(subBoxes)
-
-        let drop = fontSize * Self.subscriptDrop
-
-        // Drop the script baseline below the base baseline. Positioning the
-        // script's top at that baseline detached compound indices by a full
-        // script ascent (for example x_{t+1} in matrices).
-        let subY = baseContainer.baseline + drop - subContainer.baseline
-
-        var basePlaced = baseContainer
-        basePlaced.origin = .zero
-
-        var subPlaced = subContainer
-        subPlaced.origin = CGPoint(x: baseContainer.size.width, y: subY)
-
-        let totalHeight = max(
-            basePlaced.size.height,
-            subPlaced.origin.y + subPlaced.size.height
-        )
-        let totalWidth = baseContainer.size.width + subContainer.size.width
-
-        return LayoutBox(
-            origin: .zero,
-            size: CGSize(width: totalWidth, height: totalHeight),
-            baseline: baseContainer.baseline,
-            content: .container([basePlaced, subPlaced])
-        )
-    }
-
-    // MARK: - Combined Sub + Superscript
-
-    private func layoutSubSuperscript(
-        _ base: [MathNode],
-        _ sub: [MathNode],
-        _ sup: [MathNode],
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> LayoutBox {
-        let baseBoxes = layoutSequence(base, fontSize: fontSize, cache: cache)
-        let baseContainer = wrapInContainer(baseBoxes)
-
-        let scriptSize = max(fontSize * Self.scriptSizeFactor, Self.minimumFontSize)
-        let supBoxes = layoutSequence(sup, fontSize: scriptSize, cache: cache)
-        let supContainer = wrapInContainer(supBoxes)
-        let subBoxes = layoutSequence(sub, fontSize: scriptSize, cache: cache)
-        let subContainer = wrapInContainer(subBoxes)
-
-        let raise = fontSize * Self.superscriptRaise
-        let drop = fontSize * Self.subscriptDrop
-
-        let unshiftedSupY = baseContainer.baseline - raise - supContainer.baseline
-        let baseOffsetY = max(-unshiftedSupY, 0)
-        let subY = baseContainer.baseline + drop - subContainer.baseline
-
-        var basePlaced = baseContainer
-        basePlaced.origin = CGPoint(x: 0, y: baseOffsetY)
-
-        let scriptX = baseContainer.size.width
-
-        var supPlaced = supContainer
-        supPlaced.origin = CGPoint(x: scriptX, y: unshiftedSupY + baseOffsetY)
-
-        var subPlaced = subContainer
-        subPlaced.origin = CGPoint(x: scriptX, y: subY + baseOffsetY)
-
-        let totalHeight = max(
-            basePlaced.origin.y + basePlaced.size.height,
-            max(supPlaced.origin.y + supPlaced.size.height,
-                subPlaced.origin.y + subPlaced.size.height)
-        )
-        let scriptWidth = max(supContainer.size.width, subContainer.size.width)
-        let totalWidth = baseContainer.size.width + scriptWidth
-
-        return LayoutBox(
-            origin: .zero,
-            size: CGSize(width: totalWidth, height: totalHeight),
-            baseline: basePlaced.origin.y + baseContainer.baseline,
-            content: .container([basePlaced, supPlaced, subPlaced])
-        )
-    }
-
-    // MARK: - Square Root
-
-    private func layoutSqrt(
-        index: [MathNode]?,
-        radicand: [MathNode],
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> LayoutBox {
-        let em = fontSize
-        let radBoxes = layoutSequence(radicand, fontSize: fontSize, cache: cache)
-        let radContainer = wrapInContainer(radBoxes)
-
-        let radicalPad = em * Self.radicalPadding
-        let overlineThick = em * Self.overlineThickness
-        let overlineGap = em * 0.1
-
-        // Radical symbol
-        let radicalChar = "\u{221A}" // √
-        let radicalFont = cache.roman(size: fontSize * 1.2)
-        let (radicalWidth, radicalAsc, radicalDesc) = measureText(radicalChar, font: radicalFont)
-        let radicalHeight = radicalAsc + radicalDesc
-        _ = radicalHeight // Suppress unused warning; height is for reference
-
-        // Scale radical to match radicand height
-        let contentHeight = radContainer.size.height + overlineThick + overlineGap
-        let radicalGlyphBox = LayoutBox(
-            origin: CGPoint(x: 0, y: 0),
-            size: CGSize(width: radicalWidth, height: contentHeight),
-            baseline: radicalAsc,
-            content: .glyph(radicalChar, fontSize * 1.2)
-        )
-
-        // Overline bar
-        let overlineStartX = radicalWidth
-        let overlineY = overlineThick / 2
-        let overlineBox = LayoutBox(
-            origin: CGPoint(x: overlineStartX, y: 0),
-            size: CGSize(width: radContainer.size.width + radicalPad, height: overlineThick),
-            baseline: overlineThick / 2,
-            content: .line(
-                CGPoint(x: 0, y: overlineY),
-                CGPoint(x: radContainer.size.width + radicalPad, y: overlineY),
-                overlineThick
-            )
-        )
-
-        // Radicand content
-        var radPlaced = radContainer
-        radPlaced.origin = CGPoint(
-            x: radicalWidth + radicalPad / 2,
-            y: overlineThick + overlineGap
-        )
-
-        var children: [LayoutBox] = [radicalGlyphBox, overlineBox, radPlaced]
-
-        // Optional index
-        var indexWidth: CGFloat = 0
-        if let indexNodes = index, !indexNodes.isEmpty {
-            let indexSize = max(fontSize * Self.scriptSizeFactor * Self.scriptSizeFactor, Self.minimumFontSize)
-            let indexBoxes = layoutSequence(indexNodes, fontSize: indexSize, cache: cache)
-            let indexContainer = wrapInContainer(indexBoxes)
-
-            var indexPlaced = indexContainer
-            indexPlaced.origin = CGPoint(x: 0, y: 0)
-            indexWidth = indexContainer.size.width
-
-            // Shift everything right to make room for index
-            for i in children.indices {
-                children[i].origin.x += indexWidth
-            }
-            children.insert(indexPlaced, at: 0)
-        }
-
-        let totalWidth = indexWidth + radicalWidth + radContainer.size.width + radicalPad
-        let totalHeight = contentHeight
-
-        return LayoutBox(
-            origin: .zero,
-            size: CGSize(width: totalWidth, height: totalHeight),
-            baseline: radPlaced.origin.y + radContainer.baseline,
-            content: .container(children)
-        )
-    }
-
-    // MARK: - Left/Right Delimiters
-
-    private func layoutLeftRight(
-        left: Delimiter,
-        right: Delimiter,
-        body: [MathNode],
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> LayoutBox {
-        let bodyBoxes = layoutSequence(body, fontSize: fontSize, cache: cache)
-        let bodyContainer = wrapInContainer(bodyBoxes)
-
-        let em = fontSize
-        let pad = em * Self.delimiterPadding
-        var children: [LayoutBox] = []
-        var cursor: CGFloat = 0
-
-        // Left delimiter
-        if left != .none {
-            let leftStr = Self.delimiterDisplayString(left)
-            let delBox = layoutGlyph(leftStr, fontSize: fontSize, italic: false, cache: cache)
-            var placed = delBox
-            placed.origin = CGPoint(x: cursor, y: 0)
-            // Scale to body height
-            placed.size.height = bodyContainer.size.height
-            placed.baseline = bodyContainer.baseline
-            children.append(placed)
-            cursor += delBox.size.width + pad
-        }
-
-        // Body
-        var bodyPlaced = bodyContainer
-        bodyPlaced.origin = CGPoint(x: cursor, y: 0)
-        children.append(bodyPlaced)
-        cursor += bodyContainer.size.width
-
-        // Right delimiter
-        if right != .none {
-            cursor += pad
-            let rightStr = Self.delimiterDisplayString(right)
-            let delBox = layoutGlyph(rightStr, fontSize: fontSize, italic: false, cache: cache)
-            var placed = delBox
-            placed.origin = CGPoint(x: cursor, y: 0)
-            placed.size.height = bodyContainer.size.height
-            placed.baseline = bodyContainer.baseline
-            children.append(placed)
-            cursor += delBox.size.width
-        }
-
-        return LayoutBox(
-            origin: .zero,
-            size: CGSize(width: cursor, height: bodyContainer.size.height),
-            baseline: bodyContainer.baseline,
-            content: .container(children)
-        )
-    }
-
-    // MARK: - Matrix Layout
-
-    private enum GridColumnAlignment {
-        case centered
-        case alternatingRightLeft
-    }
-
-    private func layoutMatrix(
-        rows: [[[MathNode]]],
-        style: MatrixStyle,
-        columnAlignment: GridColumnAlignment,
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> LayoutBox {
-        guard !rows.isEmpty else {
             return LayoutBox(origin: .zero, size: .zero, baseline: 0, content: .container([]))
         }
-
-        let em = fontSize
-        let colSpace = em * Self.matrixColumnSpacing
-        let rowSpace = em * Self.matrixRowSpacing
-
-        // Layout all cells
-        let numCols = rows.map(\.count).max() ?? 0
-        var cellBoxes: [[LayoutBox]] = []
-        for row in rows {
-            var rowBoxes: [LayoutBox] = []
-            for cell in row {
-                let cellChildren = layoutSequence(cell, fontSize: fontSize, cache: cache)
-                rowBoxes.append(wrapInContainer(cellChildren))
-            }
-            // Pad with empty boxes if row has fewer columns
-            while rowBoxes.count < numCols {
-                rowBoxes.append(LayoutBox(origin: .zero, size: .zero, baseline: 0, content: .container([])))
-            }
-            cellBoxes.append(rowBoxes)
-        }
-
-        // Compute column widths and row heights
-        var colWidths = [CGFloat](repeating: 0, count: numCols)
-        var rowHeights = [CGFloat](repeating: 0, count: rows.count)
-        var rowBaselines = [CGFloat](repeating: 0, count: rows.count)
-        var rowDescents = [CGFloat](repeating: 0, count: rows.count)
-
-        for (r, rowBoxArr) in cellBoxes.enumerated() {
-            for (c, cell) in rowBoxArr.enumerated() {
-                colWidths[c] = max(colWidths[c], cell.size.width)
-                rowBaselines[r] = max(rowBaselines[r], cell.baseline)
-                rowDescents[r] = max(rowDescents[r], cell.size.height - cell.baseline)
-            }
-            rowHeights[r] = rowBaselines[r] + rowDescents[r]
-        }
-
-        // Position cells
-        var positioned: [LayoutBox] = []
-        var y: CGFloat = 0
-        for (r, rowBoxArr) in cellBoxes.enumerated() {
-            var x: CGFloat = 0
-            for (c, cell) in rowBoxArr.enumerated() {
-                var placed = cell
-                // Center horizontally in column
-                let horizontalOffset: CGFloat
-                switch columnAlignment {
-                case .centered:
-                    horizontalOffset = (colWidths[c] - cell.size.width) / 2
-                case .alternatingRightLeft:
-                    horizontalOffset = c.isMultiple(of: 2)
-                        ? colWidths[c] - cell.size.width
-                        : 0
-                }
-                placed.origin = CGPoint(
-                    x: x + horizontalOffset,
-                    y: y + (rowBaselines[r] - cell.baseline)
-                )
-                positioned.append(placed)
-                x += colWidths[c]
-                if c < numCols - 1 {
-                    x += colSpace
-                }
-            }
-            y += rowHeights[r]
-            if r < rows.count - 1 {
-                y += rowSpace
-            }
-        }
-
-        let totalWidth = colWidths.reduce(0, +) + CGFloat(max(numCols - 1, 0)) * colSpace
-        let totalHeight = y
-
-        // Wrap with delimiter brackets based on matrix style
-        let innerBox = LayoutBox(
-            origin: .zero,
-            size: CGSize(width: totalWidth, height: totalHeight),
-            baseline: totalHeight / 2,
-            content: .container(positioned)
+        let typesetter = Typesetter(font: .shared)
+        let style = Style(
+            level: display ? .display : .text,
+            baseSize: max(fontSize, Self.minimumFontSize),
+            scales: typesetter.font.constants
         )
-
-        let (leftDel, rightDel) = Self.matrixDelimiters(style)
-        if leftDel != .none || rightDel != .none {
-            return wrapWithDelimiters(
-                innerBox,
-                left: leftDel,
-                right: rightDel,
-                fontSize: fontSize,
-                cache: cache
-            )
-        }
-
-        return innerBox
+        let box = typesetter.list(nodes, style)
+        return Self.coveringInk(box, margin: max(fontSize, Self.minimumFontSize) * 0.04)
     }
 
-    /// Wrap a pre-laid-out box with delimiter glyphs.
-    private func wrapWithDelimiters(
-        _ innerBox: LayoutBox,
-        left: Delimiter,
-        right: Delimiter,
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> LayoutBox {
-        let em = fontSize
-        let pad = em * Self.delimiterPadding
-        var children: [LayoutBox] = []
-        var cursor: CGFloat = 0
-
-        if left != .none {
-            let leftStr = Self.delimiterDisplayString(left)
-            let delBox = layoutDelimiterGlyph(
-                leftStr,
-                targetHeight: innerBox.size.height,
-                fontSize: fontSize,
-                cache: cache
-            )
-            var placed = delBox
-            placed.origin = CGPoint(
-                x: cursor,
-                y: (innerBox.size.height - delBox.size.height) / 2
-            )
-            children.append(placed)
-            cursor += delBox.size.width + pad
-        }
-
-        var bodyPlaced = innerBox
-        bodyPlaced.origin = CGPoint(x: cursor, y: 0)
-        children.append(bodyPlaced)
-        cursor += innerBox.size.width
-
-        if right != .none {
-            cursor += pad
-            let rightStr = Self.delimiterDisplayString(right)
-            let delBox = layoutDelimiterGlyph(
-                rightStr,
-                targetHeight: innerBox.size.height,
-                fontSize: fontSize,
-                cache: cache
-            )
-            var placed = delBox
-            placed.origin = CGPoint(
-                x: cursor,
-                y: (innerBox.size.height - delBox.size.height) / 2
-            )
-            children.append(placed)
-            cursor += delBox.size.width
-        }
-
+    /// Grows the root so its rect holds all ink plus an anti-aliasing margin.
+    private static func coveringInk(_ box: LayoutBox, margin: CGFloat) -> LayoutBox {
+        var bounds = CGRect(origin: .zero, size: box.size)
+        if !box.ink.isNull { bounds = bounds.union(box.ink.insetBy(dx: -margin, dy: -margin)) }
+        var child = box
+        child.origin = CGPoint(x: -bounds.minX, y: -bounds.minY)
+        let size = CGSize(width: ceil(bounds.width * 2) / 2, height: ceil(bounds.height * 2) / 2)
         return LayoutBox(
             origin: .zero,
-            size: CGSize(width: cursor, height: innerBox.size.height),
-            baseline: innerBox.baseline,
-            content: .container(children)
+            size: size,
+            baseline: child.origin.y + box.baseline,
+            content: .container([child]),
+            ink: box.ink.offsetBy(dx: child.origin.x, dy: child.origin.y)
         )
-    }
-
-    private func layoutDelimiterGlyph(
-        _ delimiter: String,
-        targetHeight: CGFloat,
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> LayoutBox {
-        let base = layoutGlyph(delimiter, fontSize: fontSize, italic: false, cache: cache)
-        guard base.size.height > 0, targetHeight > base.size.height else { return base }
-        let scaledFontSize = fontSize * targetHeight / base.size.height
-        return layoutGlyph(
-            delimiter,
-            fontSize: scaledFontSize,
-            italic: false,
-            cache: cache
-        )
-    }
-
-    // MARK: - Big Operator Layout
-
-    private func layoutBigOperator(
-        _ kind: BigOpKind,
-        limits: MathLimits?,
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> LayoutBox {
-        let isTextOp = Self.isTextOperator(kind)
-        let displayStr = Self.bigOperatorDisplayString(kind)
-
-        let opFontSize: CGFloat
-        let opItalic: Bool
-        if isTextOp {
-            opFontSize = fontSize
-            opItalic = false
-        } else {
-            opFontSize = fontSize * Self.bigOperatorScale
-            opItalic = false
-        }
-
-        let opBox = layoutGlyph(displayStr, fontSize: opFontSize, italic: opItalic, cache: cache)
-
-        guard let limits, limits.lower != nil || limits.upper != nil else {
-            return opBox
-        }
-
-        let limitSize = max(fontSize * Self.scriptSizeFactor, Self.minimumFontSize)
-        var children: [LayoutBox] = []
-        var totalHeight: CGFloat = 0
-        let gap = fontSize * 0.1
-
-        // Upper limit (above operator)
-        var upperContainer: LayoutBox?
-        if let upper = limits.upper, !upper.isEmpty {
-            let upperBoxes = layoutSequence(upper, fontSize: limitSize, cache: cache)
-            let container = wrapInContainer(upperBoxes)
-            upperContainer = container
-            totalHeight += container.size.height + gap
-        }
-
-        // Operator
-        let opY = totalHeight
-        totalHeight += opBox.size.height
-
-        // Lower limit (below operator)
-        var lowerContainer: LayoutBox?
-        if let lower = limits.lower, !lower.isEmpty {
-            totalHeight += gap
-            let lowerBoxes = layoutSequence(lower, fontSize: limitSize, cache: cache)
-            let container = wrapInContainer(lowerBoxes)
-            lowerContainer = container
-            totalHeight += container.size.height
-        }
-
-        // Center everything on the widest element
-        let maxWidth = max(
-            opBox.size.width,
-            max(upperContainer?.size.width ?? 0, lowerContainer?.size.width ?? 0)
-        )
-
-        if let upper = upperContainer {
-            var placed = upper
-            placed.origin = CGPoint(x: (maxWidth - upper.size.width) / 2, y: 0)
-            children.append(placed)
-        }
-
-        var opPlaced = opBox
-        opPlaced.origin = CGPoint(x: (maxWidth - opBox.size.width) / 2, y: opY)
-        children.append(opPlaced)
-
-        if let lower = lowerContainer {
-            var placed = lower
-            placed.origin = CGPoint(
-                x: (maxWidth - lower.size.width) / 2,
-                y: opY + opBox.size.height + gap
-            )
-            children.append(placed)
-        }
-
-        return LayoutBox(
-            origin: .zero,
-            size: CGSize(width: maxWidth, height: totalHeight),
-            baseline: opY + opBox.baseline,
-            content: .container(children)
-        )
-    }
-
-    // MARK: - Accent Layout
-
-    private func layoutAccent(
-        _ kind: MathAccentKind,
-        base: [MathNode],
-        fontSize: CGFloat,
-        cache: FontCache
-    ) -> LayoutBox {
-        let baseBoxes = layoutSequence(base, fontSize: fontSize, cache: cache)
-        let baseContainer = wrapInContainer(baseBoxes)
-
-        let accentChar = Self.accentDisplayString(kind)
-        let accentSize = fontSize * 0.8
-        let accentBox = layoutGlyph(accentChar, fontSize: accentSize, italic: false, cache: cache)
-
-        let gap = fontSize * Self.accentGap
-        let isUnder = (kind == .underline || kind == .underbrace)
-
-        var children: [LayoutBox] = []
-        let maxWidth = max(baseContainer.size.width, accentBox.size.width)
-
-        if isUnder {
-            var basePlaced = baseContainer
-            basePlaced.origin = CGPoint(x: (maxWidth - baseContainer.size.width) / 2, y: 0)
-            children.append(basePlaced)
-
-            var accentPlaced = accentBox
-            accentPlaced.origin = CGPoint(
-                x: (maxWidth - accentBox.size.width) / 2,
-                y: baseContainer.size.height + gap
-            )
-            children.append(accentPlaced)
-
-            let totalHeight = baseContainer.size.height + gap + accentBox.size.height
-            return LayoutBox(
-                origin: .zero,
-                size: CGSize(width: maxWidth, height: totalHeight),
-                baseline: baseContainer.baseline,
-                content: .container(children)
-            )
-        } else {
-            // Accent above base
-            var accentPlaced = accentBox
-            accentPlaced.origin = CGPoint(
-                x: (maxWidth - accentBox.size.width) / 2,
-                y: 0
-            )
-            children.append(accentPlaced)
-
-            var basePlaced = baseContainer
-            basePlaced.origin = CGPoint(
-                x: (maxWidth - baseContainer.size.width) / 2,
-                y: accentBox.size.height + gap
-            )
-            children.append(basePlaced)
-
-            let totalHeight = accentBox.size.height + gap + baseContainer.size.height
-            return LayoutBox(
-                origin: .zero,
-                size: CGSize(width: maxWidth, height: totalHeight),
-                baseline: accentBox.size.height + gap + baseContainer.baseline,
-                content: .container(children)
-            )
-        }
-    }
-
-    // MARK: - Space Layout
-
-    private func layoutSpace(_ space: MathSpace, fontSize: CGFloat) -> LayoutBox {
-        let em = fontSize
-        let width: CGFloat
-        switch space {
-        case .thinSpace: width = em * 3.0 / 18.0
-        case .mediumSpace: width = em * 4.0 / 18.0
-        case .thickSpace: width = em * 5.0 / 18.0
-        case .quad: width = em
-        case .qquad: width = em * 2
-        case .negThin: width = em * -3.0 / 18.0
-        case .backslashSpace: width = em * 4.0 / 18.0
-        }
-        return LayoutBox(
-            origin: .zero,
-            size: CGSize(width: max(width, 0), height: fontSize),
-            baseline: fontSize * 0.7,
-            content: .container([])
-        )
-    }
-
-    // MARK: - Container Wrapping
-
-    /// Wrap a list of positioned child boxes into a single container box.
-    /// Computes bounding size and unifies baselines.
-    /// If there's only one child, returns it directly to avoid unnecessary nesting.
-    private func wrapInContainer(_ children: [LayoutBox]) -> LayoutBox {
-        guard !children.isEmpty else {
-            return LayoutBox(origin: .zero, size: .zero, baseline: 0, content: .container([]))
-        }
-
-        // Single child: return directly, no wrapper needed
-        if children.count == 1 {
-            var box = children[0]
-            box.origin = .zero
-            return box
-        }
-
-        // First pass: find the maximum baseline among children
-        // so we can align them all on a common baseline.
-        let maxBaseline = children.map(\.baseline).max() ?? 0
-
-        // Second pass: shift children so baselines align, compute bounds
-        var aligned: [LayoutBox] = []
-        var maxWidth: CGFloat = 0
-        var maxBottom: CGFloat = 0
-
-        for child in children {
-            var shifted = child
-            let baselineShift = maxBaseline - child.baseline
-            shifted.origin.y += baselineShift
-            aligned.append(shifted)
-
-            let right = shifted.origin.x + shifted.size.width
-            let bottom = shifted.origin.y + shifted.size.height
-            maxWidth = max(maxWidth, right)
-            maxBottom = max(maxBottom, bottom)
-        }
-
-        return LayoutBox(
-            origin: .zero,
-            size: CGSize(width: maxWidth, height: maxBottom),
-            baseline: maxBaseline,
-            content: .container(aligned)
-        )
-    }
-
-    // MARK: - Core Text Measurement
-
-    /// Glyph advances are reused across layout and later rasters of the same
-    /// formula. Draw still builds a colored CTLine; this cache is metrics only.
-    private final class GlyphMetricsStore: @unchecked Sendable {
-        let cache: NSCache<NSString, CachedGlyphMetrics> = {
-            let cache = NSCache<NSString, CachedGlyphMetrics>()
-            cache.countLimit = 4_096
-            cache.name = "org.oppi.MathLayoutEngine.ctLineMetrics"
-            return cache
-        }()
-    }
-
-    private static let glyphMetricsStore = GlyphMetricsStore()
-
-    private final class CachedGlyphMetrics: @unchecked Sendable {
-        let width: CGFloat
-        let ascent: CGFloat
-        let descent: CGFloat
-
-        init(width: CGFloat, ascent: CGFloat, descent: CGFloat) {
-            self.width = width
-            self.ascent = ascent
-            self.descent = descent
-        }
-    }
-
-    private func measureText(_ text: String, font: CTFont) -> (width: CGFloat, ascent: CGFloat, descent: CGFloat) {
-        let fontName = (CTFontCopyPostScriptName(font) as String?) ?? ""
-        let key = "\(fontName)|\(CTFontGetSize(font))|\(text)" as NSString
-        if let hit = Self.glyphMetricsStore.cache.object(forKey: key) {
-            return (hit.width, hit.ascent, hit.descent)
-        }
-
-        let ascent = CTFontGetAscent(font)
-        let descent = CTFontGetDescent(font)
-
-        let attrString = NSAttributedString(
-            string: text,
-            attributes: [.font: font as Any]
-        )
-        let line = CTLineCreateWithAttributedString(attrString)
-        let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
-        Self.glyphMetricsStore.cache.setObject(
-            CachedGlyphMetrics(width: width, ascent: ascent, descent: descent),
-            forKey: key,
-            cost: max(1, text.utf8.count)
-        )
-        return (width, ascent, descent)
-    }
-
-    // MARK: - Font Creation
-
-    private static func createItalicFont(size: CGFloat) -> CTFont {
-        // Try to get italic variant via symbolic traits
-        let baseFont = CTFontCreateWithName("TimesNewRomanPSMT" as CFString, size, nil)
-        if let italicFont = CTFontCreateCopyWithSymbolicTraits(
-            baseFont, size, nil, .traitItalic, .traitItalic
-        ) {
-            return italicFont
-        }
-        // Fallback: use the italic PostScript name directly
-        return CTFontCreateWithName("TimesNewRomanPS-ItalicMT" as CFString, size, nil)
-    }
-
-    private static func createRomanFont(size: CGFloat) -> CTFont {
-        // Try Times New Roman, fall back to system serif
-        let font = CTFontCreateWithName("TimesNewRomanPSMT" as CFString, size, nil)
-        return font
     }
 
     // MARK: - Display String Tables
@@ -1129,7 +105,7 @@ struct MathLayoutEngine: Sendable {
         case .cdot: return "\u{22C5}"  // ⋅
         case .pm: return "\u{00B1}"    // ±
         case .mp: return "\u{2213}"    // ∓
-        case .star: return "*"
+        case .star: return "\u{2217}"  // ∗
         case .equal: return "="
         case .lessThan: return "<"
         case .greaterThan: return ">"
@@ -1139,6 +115,8 @@ struct MathLayoutEngine: Sendable {
         case .approx: return "\u{2248}" // ≈
         case .equiv: return "\u{2261}" // ≡
         case .sim: return "\u{223C}"   // ∼
+        case .propto: return "\u{221D}" // ∝
+        case .mid: return "\u{2223}"   // ∣
         case .in: return "\u{2208}"    // ∈
         case .subset: return "\u{2282}" // ⊂
         case .supset: return "\u{2283}" // ⊃
@@ -1165,10 +143,10 @@ struct MathLayoutEngine: Sendable {
     static func isRelationOperator(_ op: MathOperator) -> Bool {
         switch op {
         case .equal, .lessThan, .greaterThan, .leq, .geq, .neq,
-             .approx, .equiv, .sim, .in, .subset, .supset,
+             .approx, .equiv, .sim, .propto, .mid, .in, .subset, .supset,
              .subseteq, .supseteq, .to, .rightarrow, .leftarrow, .mapsto,
              .iff, .doubleRightarrow, .doubleLeftarrow, .doubleLeftrightarrow,
-             .leftrightarrow:
+             .leftrightarrow, .colon:
             return true
         default:
             return false
@@ -1184,13 +162,15 @@ struct MathLayoutEngine: Sendable {
         }
     }
 
+    /// TeX's glyph for each symbol command. `\phi` and `\epsilon` are the
+    /// straight forms; `\varphi` and `\varepsilon` the curly ones.
     static func symbolDisplayString(_ sym: MathSymbol) -> String {
         switch sym {
         case .alpha: return "\u{03B1}"
         case .beta: return "\u{03B2}"
         case .gamma: return "\u{03B3}"
         case .delta: return "\u{03B4}"
-        case .epsilon: return "\u{03B5}"
+        case .epsilon: return "\u{03F5}"
         case .varepsilon: return "\u{03B5}"
         case .zeta: return "\u{03B6}"
         case .eta: return "\u{03B7}"
@@ -1209,8 +189,8 @@ struct MathLayoutEngine: Sendable {
         case .varsigma: return "\u{03C2}"
         case .tau: return "\u{03C4}"
         case .upsilon: return "\u{03C5}"
-        case .phi: return "\u{03C6}"
-        case .varphi: return "\u{03D5}"
+        case .phi: return "\u{03D5}"
+        case .varphi: return "\u{03C6}"
         case .chi: return "\u{03C7}"
         case .psi: return "\u{03C8}"
         case .omega: return "\u{03C9}"
@@ -1268,35 +248,19 @@ struct MathLayoutEngine: Sendable {
         case .cos: return "cos"
         case .tan: return "tan"
         case .exp: return "exp"
-        case .xrightarrow: return "\u{27F6}" // ⟶
-        case .xleftarrow: return "\u{27F5}" // ⟵
+        case .xrightarrow: return "\u{2192}" // →, stretched to its label
+        case .xleftarrow: return "\u{2190}" // ←
         }
     }
 
+    /// Operator names set as upright words rather than symbols.
     static func isTextOperator(_ kind: BigOpKind) -> Bool {
         switch kind {
         case .lim, .sup, .inf, .min, .max, .det, .log, .ln,
-             .sin, .cos, .tan, .exp, .xrightarrow, .xleftarrow:
+             .sin, .cos, .tan, .exp:
             return true
         default:
             return false
-        }
-    }
-
-    static func accentDisplayString(_ kind: MathAccentKind) -> String {
-        switch kind {
-        case .hat: return "\u{0302}"      // combining circumflex
-        case .bar: return "\u{0304}"      // combining macron
-        case .vec: return "\u{20D7}"      // combining right arrow above
-        case .dot: return "\u{0307}"      // combining dot above
-        case .ddot: return "\u{0308}"     // combining diaeresis
-        case .tilde: return "\u{0303}"    // combining tilde
-        case .overline: return "\u{203E}" // overline
-        case .underline: return "_"
-        case .widehat: return "\u{0302}"
-        case .widetilde: return "\u{0303}"
-        case .overbrace: return "\u{23DE}" // top curly bracket
-        case .underbrace: return "\u{23DF}" // bottom curly bracket
         }
     }
 
@@ -1324,6 +288,1054 @@ struct MathLayoutEngine: Sendable {
         case .braced: return (.brace, .closeBrace)
         case .pipe: return (.pipe, .pipe)
         case .doublePipe: return (.doublePipe, .doublePipe)
+        }
+    }
+}
+
+// MARK: - Style
+
+/// TeX's math style: the level sets the size and whether limits stack and
+/// fractions stay full size; cramped styles raise superscripts less.
+private struct Style {
+    enum Level: Int { case display, text, script, scriptScript }
+
+    var level: Level
+    var baseSize: CGFloat
+    var fontStyle: MathFontStyle?
+    var cramped = false
+    let scriptScale: CGFloat
+    let scriptScriptScale: CGFloat
+
+    init(level: Level, baseSize: CGFloat, scales: MathFont.Constants) {
+        self.level = level
+        self.baseSize = baseSize
+        scriptScale = scales.scriptScale
+        scriptScriptScale = scales.scriptScriptScale
+    }
+
+    var isDisplay: Bool { level == .display }
+    var isScript: Bool { level.rawValue >= Level.script.rawValue }
+
+    var size: CGFloat {
+        let scale: CGFloat = switch level {
+        case .display, .text: 1
+        case .script: scriptScale
+        case .scriptScript: scriptScriptScale
+        }
+        return max(baseSize * scale, 6)
+    }
+
+    func with(_ level: Level, cramped: Bool? = nil) -> Self {
+        var style = self
+        style.level = level
+        if let cramped { style.cramped = cramped }
+        return style
+    }
+
+    func restyled(_ kind: MathStyleKind) -> Self {
+        switch kind {
+        case .display: with(.display)
+        case .text: with(.text)
+        case .script: with(.script)
+        case .scriptScript: with(.scriptScript)
+        }
+    }
+
+    /// Superscripts and limits.
+    var superscript: Self { with(level.rawValue <= Level.text.rawValue ? .script : .scriptScript) }
+    /// Subscripts are cramped.
+    var `subscript`: Self { with(superscript.level, cramped: true) }
+    var numerator: Self {
+        switch level {
+        case .display: with(.text)
+        case .text: with(.script)
+        case .script, .scriptScript: with(.scriptScript)
+        }
+    }
+    var denominator: Self { with(numerator.level, cramped: true) }
+    var crampedStyle: Self { with(level, cramped: true) }
+}
+
+// MARK: - Atom classes
+
+/// TeX's atom classes, which decide the space between neighbours.
+private enum AtomClass: Int {
+    case ord, op, bin, rel, open, close, punct, inner
+
+    /// Space between a left and a right atom in mu (1/18 em): 1 thin,
+    /// 2 medium, 3 thick. Negative entries apply only outside script styles.
+    /// TeXbook, chapter 18.
+    private static let table: [[Int]] = [
+        //  ord op bin rel open close punct inner
+        [0, 1, -2, -3, 0, 0, 0, -1], // ord
+        [1, 1, 0, -3, 0, 0, 0, -1], // op
+        [-2, -2, 0, 0, -2, 0, 0, -2], // bin
+        [-3, -3, 0, 0, -3, 0, 0, -3], // rel
+        [0, 0, 0, 0, 0, 0, 0, 0], // open
+        [0, 1, -2, -3, 0, 0, 0, -1], // close
+        [-1, -1, 0, -1, -1, -1, -1, -1], // punct
+        [-1, 1, -2, -3, -1, 0, -1, -1], // inner
+    ]
+
+    /// The space in mu: thin 3, medium 4, thick 5.
+    func space(before right: Self, inScript: Bool) -> CGFloat {
+        let entry = Self.table[rawValue][right.rawValue]
+        if entry < 0, inScript { return 0 }
+        return CGFloat([0, 3, 4, 5][abs(entry)])
+    }
+}
+
+// MARK: - Typesetter
+
+private struct Typesetter {
+    let font: MathFont
+    var c: MathFont.Constants { font.constants }
+
+    // MARK: Lists
+
+    /// One item of a flattened list: a node and the style it sets in.
+    private struct Item {
+        let node: MathNode
+        let style: Style
+    }
+
+    private func flatten(_ nodes: [MathNode], _ style: Style, into items: inout [Item]) {
+        for node in nodes {
+            if case .style(let kind, let body) = node {
+                flatten(body, style.restyled(kind), into: &items)
+            } else {
+                items.append(Item(node: node, style: style))
+            }
+        }
+    }
+
+    /// Lays a list out left to right with TeX's spacing between atoms.
+    /// `leadingOrd` spaces the first atom as if an empty group came before it,
+    /// as amsmath does for the right side of an alignment (`&=`).
+    func list(_ nodes: [MathNode], _ style: Style, leadingOrd: Bool = false) -> LayoutBox {
+        var items: [Item] = []
+        flatten(nodes, style, into: &items)
+
+        // Atom classes, with TeX's rule that a binary operator with nothing
+        // to bind on its left (or right) is an ordinary atom: −b, (−x).
+        var classes: [AtomClass?] = items.map { atomClass($0.node) }
+        var previous: Int?
+        var previousClass: AtomClass? = leadingOrd ? .ord : nil
+        for index in classes.indices {
+            guard let current = classes[index] else { continue }
+            if current == .bin {
+                switch previousClass {
+                case nil, .bin?, .op?, .rel?, .open?, .punct?:
+                    classes[index] = .ord
+                default:
+                    break
+                }
+            }
+            if let prior = previous, classes[prior] == .bin,
+               [.rel, .close, .punct].contains(classes[index]) {
+                classes[prior] = .ord
+            }
+            previous = index
+            previousClass = classes[index]
+        }
+        if let last = previous, classes[last] == .bin {
+            classes[last] = .ord
+        }
+
+        var children: [LayoutBox] = []
+        var cursor: CGFloat = 0
+        var leftClass: AtomClass? = leadingOrd ? .ord : nil
+        var lastItalicCorrection: CGFloat = 0
+        for (index, item) in items.enumerated() {
+            if case .space(let space) = item.node {
+                cursor += spaceWidth(space, item.style)
+                continue
+            }
+            guard let atom = classes[index] else { continue }
+            if let leftClass {
+                cursor += leftClass.space(before: atom, inScript: item.style.isScript) * item.style.size / 18
+            }
+            var box = node(item.node, item.style)
+            box.origin.x = cursor
+            cursor += box.size.width
+            lastItalicCorrection = box.italicCorrection
+            children.append(box)
+            leftClass = atom
+        }
+        var result = hbox(children, width: cursor)
+        result.italicCorrection = lastItalicCorrection
+        return result
+    }
+
+    private func atomClass(_ node: MathNode) -> AtomClass? {
+        switch node {
+        case .space, .style:
+            return nil
+        case .number, .text, .font, .accent, .sqrt, .group:
+            return .ord
+        case .symbol(let symbol):
+            return symbol == .cdots || symbol == .ldots ? .inner : .ord
+        case .variable(let name):
+            if ["(", "[", "{", "\u{27E8}"].contains(name) { return .open }
+            if [")", "]", "}", "\u{27E9}"].contains(name) { return .close }
+            return .ord
+        case .operator(let op):
+            if MathLayoutEngine.isRelationOperator(op) { return .rel }
+            if MathLayoutEngine.isBinaryOperator(op) { return .bin }
+            switch op {
+            case .comma, .semicolon: return .punct
+            case .bang: return .close
+            default: return .ord
+            }
+        case .fraction, .binomial, .leftRight:
+            return .inner
+        case .matrix(_, let style):
+            return style == .plain || style == .small ? .ord : .inner
+        case .environment(let name, _):
+            return name == "cases" ? .inner : .ord
+        case .bigOperator(let kind, _):
+            return kind == .xrightarrow || kind == .xleftarrow ? .rel : .op
+        case .superscript(let base, _), .subscript(let base, _), .subSuperscript(let base, _, _):
+            return base.count == 1 ? atomClass(base[0]) : .ord
+        case .sizedDelimiter(let delimiter, _):
+            switch delimiter {
+            case .paren, .bracket, .brace, .angle: return .open
+            case .closeParen, .closeBracket, .closeBrace, .closeAngle: return .close
+            default: return .ord
+            }
+        }
+    }
+
+    private func spaceWidth(_ space: MathSpace, _ style: Style) -> CGFloat {
+        let mu = style.size / 18
+        return switch space {
+        case .thinSpace: 3 * mu
+        case .mediumSpace: 4 * mu
+        case .thickSpace: 5 * mu
+        case .quad: 18 * mu
+        case .qquad: 36 * mu
+        case .negThin: -3 * mu
+        case .backslashSpace: 0.25 * style.size
+        }
+    }
+
+    // MARK: Nodes
+
+    private func node(_ node: MathNode, _ style: Style) -> LayoutBox {
+        switch node {
+        case .variable(let name):
+            return text(MathAlphabet.map(name, style: style.fontStyle, defaultItalic: true), style)
+        case .number(let digits):
+            return text(MathAlphabet.map(digits, style: style.fontStyle, defaultItalic: false), style)
+        case .operator(let op):
+            return text(MathLayoutEngine.operatorDisplayString(op), style)
+        case .symbol(let symbol):
+            return text(
+                MathAlphabet.map(MathLayoutEngine.symbolDisplayString(symbol), style: style.fontStyle, defaultItalic: true),
+                style
+            )
+        case .text(let content):
+            return text(content, style)
+        case .fraction(let numerator, let denominator):
+            return fraction(numerator, denominator, style, hasRule: true)
+        case .binomial(let top, let bottom):
+            let stack = fraction(top, bottom, style, hasRule: false)
+            return delimited(stack, left: .paren, right: .closeParen, style, shortfall: false)
+        case .superscript(let base, let exponent):
+            return scripts(base: list(base, style), baseIsCharacter: isCharacter(base), sup: exponent, sub: nil, style)
+        case .subscript(let base, let index):
+            return scripts(base: list(base, style), baseIsCharacter: isCharacter(base), sup: nil, sub: index, style)
+        case .subSuperscript(let base, let sub, let sup):
+            return scripts(base: list(base, style), baseIsCharacter: isCharacter(base), sup: sup, sub: sub, style)
+        case .sqrt(let index, let radicand):
+            return radical(index: index, radicand: radicand, style)
+        case .leftRight(let left, let right, let body):
+            return delimited(list(body, style), left: left, right: right, style)
+        case .matrix(let rows, let matrixStyle):
+            let cellStyle = matrixStyle == .small ? style.with(.script) : style.with(style.isScript ? style.level : .text)
+            let grid = grid(rows, cellStyle, alignment: .centered, columnGap: 1, rowGap: 0)
+            let (left, right) = MathLayoutEngine.matrixDelimiters(matrixStyle)
+            guard left != .none || right != .none else { return grid }
+            return delimited(grid, left: left, right: right, style, padding: 0.1)
+        case .environment(let name, let rows):
+            switch name {
+            case "cases":
+                let cellStyle = style.with(style.isScript ? style.level : .text)
+                let grid = grid(rows, cellStyle, alignment: .left, columnGap: 1, rowGap: 0.2)
+                return delimited(grid, left: .brace, right: .none, style, padding: 0.1)
+            case "aligned":
+                return grid(rows, style.with(.display), alignment: .alternatingRightLeft, columnGap: 1, rowGap: 0.3)
+            default:
+                return grid(rows, style.with(.display), alignment: .centered, columnGap: 1, rowGap: 0.3)
+            }
+        case .bigOperator(let kind, let limits):
+            return bigOperator(kind, limits: limits, style)
+        case .accent(let kind, let base):
+            return accent(kind, base: base, style)
+        case .group(let children):
+            return list(children, style)
+        case .font(let fontStyle, let body):
+            var styled = style
+            styled.fontStyle = fontStyle
+            return list(body, styled)
+        case .style(let kind, let body):
+            return list(body, style.restyled(kind))
+        case .sizedDelimiter(let delimiter, let size):
+            let heights: [CGFloat] = [1.2, 1.8, 2.4, 3.0]
+            let height = heights[min(max(size, 1), 4) - 1] * style.size
+            return delimiterBox(delimiter, covering: height, style)
+        case .space:
+            return emptyBox(width: 0)
+        }
+    }
+
+    /// A single letter, digit or symbol takes TeX's character script rules.
+    private func isCharacter(_ base: [MathNode]) -> Bool {
+        guard base.count == 1 else { return false }
+        switch base[0] {
+        case .variable(let name), .number(let name): return name.count == 1
+        case .symbol: return true
+        default: return false
+        }
+    }
+
+    // MARK: Glyphs
+
+    private func text(_ string: String, _ style: Style) -> LayoutBox {
+        let size = style.size
+        let ctFont = font.font(size: size)
+        let metrics = GlyphMetrics.measure(string, font: ctFont)
+        var italicCorrection = max(0, metrics.ink.maxX - metrics.width)
+        if string.count == 1, let first = string.first, let glyph = font.glyph(for: first),
+           let correction = font.italicCorrection(glyph) {
+            italicCorrection = correction * size
+        }
+        return glyphBox(content: .glyph(string, size), width: metrics.width, ink: metrics.ink, italicCorrection: italicCorrection)
+    }
+
+    private func glyph(_ glyph: CGGlyph, size: CGFloat) -> LayoutBox {
+        let ctFont = font.font(size: size)
+        var id = glyph
+        var advance = CGSize.zero
+        CTFontGetAdvancesForGlyphs(ctFont, .horizontal, &id, &advance, 1)
+        let ink = CTFontGetBoundingRectsForGlyphs(ctFont, .horizontal, &id, nil, 1)
+        let correction = font.italicCorrection(glyph).map { $0 * size } ?? 0
+        return glyphBox(content: .glyphID(glyph, size), width: advance.width, ink: ink, italicCorrection: correction)
+    }
+
+    /// A box as tall as its ink. `ink` is in CoreText's y-up glyph space.
+    private func glyphBox(content: LayoutContent, width: CGFloat, ink: CGRect, italicCorrection: CGFloat) -> LayoutBox {
+        let hasInk = !ink.isNull && !ink.isEmpty
+        let ascent = hasInk ? max(ink.maxY, 0) : 0
+        let descent = hasInk ? max(-ink.minY, 0) : 0
+        return LayoutBox(
+            origin: .zero,
+            size: CGSize(width: width, height: ascent + descent),
+            baseline: ascent,
+            content: content,
+            ink: hasInk ? CGRect(x: ink.minX, y: ascent - ink.maxY, width: ink.width, height: ink.height) : .null,
+            italicCorrection: italicCorrection
+        )
+    }
+
+    private func emptyBox(width: CGFloat) -> LayoutBox {
+        LayoutBox(origin: .zero, size: CGSize(width: width, height: 0), baseline: 0, content: .container([]))
+    }
+
+    // MARK: Boxes
+
+    /// A child to place with its baseline `shift` above the parent's baseline.
+    private struct Placed {
+        var box: LayoutBox
+        var x: CGFloat
+        var shift: CGFloat
+    }
+
+    /// Stacks placed children on a common baseline. Width defaults to the
+    /// right edge of the widest child.
+    private func vbox(_ placed: [Placed], width: CGFloat? = nil) -> LayoutBox {
+        guard !placed.isEmpty else { return emptyBox(width: width ?? 0) }
+        let ascent = max(0, placed.map { $0.box.ascent + $0.shift }.max() ?? 0)
+        let descent = max(0, placed.map { $0.box.descent - $0.shift }.max() ?? 0)
+        var children: [LayoutBox] = []
+        var ink = CGRect.null
+        var right: CGFloat = 0
+        for item in placed {
+            var child = item.box
+            child.origin = CGPoint(x: item.x, y: ascent - item.shift - item.box.ascent)
+            if !child.ink.isNull { ink = ink.union(child.ink.offsetBy(dx: child.origin.x, dy: child.origin.y)) }
+            right = max(right, item.x + item.box.size.width)
+            children.append(child)
+        }
+        return LayoutBox(
+            origin: .zero,
+            size: CGSize(width: width ?? right, height: ascent + descent),
+            baseline: ascent,
+            content: .container(children),
+            ink: ink
+        )
+    }
+
+    /// Children already positioned along x, aligned on their baselines.
+    private func hbox(_ children: [LayoutBox], width: CGFloat) -> LayoutBox {
+        vbox(children.map { Placed(box: $0, x: $0.origin.x, shift: 0) }, width: width)
+    }
+
+    /// A filled rule of `thickness` whose top edge is `top` above the baseline.
+    private func rule(width: CGFloat, thickness: CGFloat) -> LayoutBox {
+        LayoutBox(
+            origin: .zero,
+            size: CGSize(width: width, height: thickness),
+            baseline: thickness,
+            content: .line(CGPoint(x: 0, y: thickness / 2), CGPoint(x: width, y: thickness / 2), thickness),
+            ink: CGRect(x: 0, y: 0, width: width, height: thickness)
+        )
+    }
+
+    /// Centres a box on the math axis.
+    private func centeredOnAxis(_ box: LayoutBox, _ style: Style) -> Placed {
+        let axis = c.axisHeight * style.size
+        return Placed(box: box, x: 0, shift: axis - (box.ascent - box.descent) / 2)
+    }
+
+    // MARK: Fractions
+
+    private func fraction(_ numerator: [MathNode], _ denominator: [MathNode], _ style: Style, hasRule: Bool) -> LayoutBox {
+        let size = style.size
+        let num = list(numerator, style.numerator)
+        let den = list(denominator, style.denominator)
+        let axis = c.axisHeight * size
+        let display = style.isDisplay
+
+        var numShift: CGFloat
+        var denShift: CGFloat
+        let thickness = hasRule ? c.fractionRuleThickness * size : 0
+        if hasRule {
+            // Text style uses TeX's shifts (num2, denom2): STIX's own text
+            // shifts equal its display ones and set an inline a/b 1.5 em tall,
+            // pushing prose lines apart. The gap minimums below still hold.
+            numShift = (display ? c.fractionNumeratorDisplayStyleShiftUp : 0.394) * size
+            denShift = (display ? c.fractionDenominatorDisplayStyleShiftDown : 0.345) * size
+            let numGap = (display ? c.fractionNumDisplayStyleGapMin : c.fractionNumeratorGapMin) * size
+            let denGap = (display ? c.fractionDenomDisplayStyleGapMin : c.fractionDenominatorGapMin) * size
+            numShift += max(0, numGap - ((numShift - num.descent) - (axis + thickness / 2)))
+            denShift += max(0, denGap - ((axis - thickness / 2) - (den.ascent - denShift)))
+        } else {
+            numShift = (display ? c.stackTopDisplayStyleShiftUp : c.stackTopShiftUp) * size
+            denShift = (display ? c.stackBottomDisplayStyleShiftDown : c.stackBottomShiftDown) * size
+            let gapMin = (display ? c.stackDisplayStyleGapMin : c.stackGapMin) * size
+            let gap = (numShift - num.descent) - (den.ascent - denShift)
+            if gap < gapMin {
+                numShift += (gapMin - gap) / 2
+                denShift += (gapMin - gap) / 2
+            }
+        }
+
+        // TeX's null delimiter space on each side keeps a bar off its neighbours.
+        let padding = 0.12 * size
+        let content = max(num.size.width, den.size.width)
+        let width = content + 2 * padding
+        var placed = [
+            Placed(box: num, x: (width - num.size.width) / 2, shift: numShift),
+            Placed(box: den, x: (width - den.size.width) / 2, shift: -denShift),
+        ]
+        if hasRule {
+            let bar = rule(width: content, thickness: thickness)
+            placed.append(Placed(box: bar, x: padding, shift: axis - thickness / 2))
+        }
+        return vbox(placed, width: width)
+    }
+
+    // MARK: Scripts
+
+    private func scripts(base: LayoutBox, baseIsCharacter: Bool, sup: [MathNode]?, sub: [MathNode]?, _ style: Style) -> LayoutBox {
+        let size = style.size
+        let supBox = sup.map { list($0, style.superscript) }
+        let subBox = sub.map { list($0, style.subscript) }
+        let scriptSize = style.superscript.size
+
+        var supShift: CGFloat = 0
+        var subShift: CGFloat = 0
+        if let supBox {
+            supShift = (style.cramped ? c.superscriptShiftUpCramped : c.superscriptShiftUp) * size
+            if !baseIsCharacter {
+                supShift = max(supShift, base.ascent - c.superscriptBaselineDropMax * scriptSize)
+            }
+            supShift = max(supShift, supBox.descent + c.superscriptBottomMin * size)
+        }
+        if let subBox {
+            subShift = c.subscriptShiftDown * size
+            if !baseIsCharacter {
+                subShift = max(subShift, base.descent + c.subscriptBaselineDropMin * scriptSize)
+            }
+            subShift = max(subShift, subBox.ascent - c.subscriptTopMax * size)
+        }
+        if let supBox, let subBox {
+            let gap = (supShift - supBox.descent) - (subBox.ascent - subShift)
+            let gapMin = c.subSuperscriptGapMin * size
+            if gap < gapMin {
+                subShift += gapMin - gap
+                let lift = c.superscriptBottomMaxWithSubscript * size - (supShift - supBox.descent)
+                if lift > 0 {
+                    supShift += lift
+                    subShift -= lift
+                }
+            }
+        }
+
+        var placed = [Placed(box: base, x: 0, shift: 0)]
+        var right = base.size.width
+        if let supBox {
+            let x = base.size.width + base.italicCorrection
+            placed.append(Placed(box: supBox, x: x, shift: supShift))
+            right = max(right, x + supBox.size.width)
+        }
+        if let subBox {
+            placed.append(Placed(box: subBox, x: base.size.width, shift: -subShift))
+            right = max(right, base.size.width + subBox.size.width)
+        }
+        return vbox(placed, width: right + c.spaceAfterScript * size)
+    }
+
+    // MARK: Radicals
+
+    private func radical(index: [MathNode]?, radicand: [MathNode], _ style: Style) -> LayoutBox {
+        let size = style.size
+        let body = list(radicand, style.crampedStyle)
+        let thickness = c.radicalRuleThickness * size
+        var gap = (style.isDisplay ? c.radicalDisplayStyleVerticalGap : c.radicalVerticalGap) * size
+        let needed = body.ascent + body.descent + gap + thickness
+
+        let sign = verticalStretch("\u{221A}", height: needed, size: size)
+        let signHeight = sign.size.height
+        if signHeight > needed { gap += (signHeight - needed) / 2 }
+        // The sign's top is the overbar's top.
+        let top = body.ascent + gap + thickness
+        let signShift = top - sign.ascent
+
+        var placed: [Placed] = []
+        var x: CGFloat = 0
+        if let index, !index.isEmpty {
+            let degree = list(index, style.with(.scriptScript))
+            let kernBefore = c.radicalKernBeforeDegree * size
+            let kernAfter = c.radicalKernAfterDegree * size
+            let raise = c.radicalDegreeBottomRaise * signHeight
+            placed.append(Placed(box: degree, x: kernBefore, shift: (top - signHeight) + raise + degree.descent))
+            x = max(0, kernBefore + degree.size.width + kernAfter)
+        }
+        placed.append(Placed(box: sign, x: x, shift: signShift))
+        x += sign.size.width
+        let bar = rule(width: body.size.width, thickness: thickness)
+        placed.append(Placed(box: bar, x: x, shift: top - thickness))
+        placed.append(Placed(box: body, x: x, shift: 0))
+        // Room above the bar so a radical does not touch what is above it.
+        placed.append(Placed(box: emptyBox(width: 0), x: 0, shift: top + c.radicalExtraAscender * size))
+        return vbox(placed, width: x + body.size.width)
+    }
+
+    // MARK: Delimiters
+
+    /// A body between two delimiters tall enough to cover it, centred on the
+    /// axis. TeX lets `\left`/`\right` fall short: 90.1% of the body, or
+    /// within 0.5 em of it. A binomial's parentheses cover it fully.
+    /// `padding` (em) separates a matrix from its delimiters.
+    private func delimited(
+        _ body: LayoutBox,
+        left: Delimiter,
+        right: Delimiter,
+        _ style: Style,
+        shortfall: Bool = true,
+        padding: CGFloat = 0
+    ) -> LayoutBox {
+        let size = style.size
+        let axis = c.axisHeight * size
+        let half = max(body.ascent - axis, body.descent + axis)
+        let target = shortfall ? max(2 * half * 0.901, 2 * half - 0.5 * size) : 2 * half
+        let leftBox = delimiterBox(left, covering: target, style)
+        let rightBox = delimiterBox(right, covering: target, style)
+        let pad = padding * size
+        let bodyX = leftBox.size.width + (left == .none ? 0 : pad)
+        let rightX = bodyX + body.size.width + (right == .none ? 0 : pad)
+        return vbox([
+            Placed(box: leftBox, x: 0, shift: 0),
+            Placed(box: body, x: bodyX, shift: 0),
+            Placed(box: rightBox, x: rightX, shift: 0),
+        ], width: rightX + rightBox.size.width)
+    }
+
+    /// One delimiter at least `height` tall, centred on the axis.
+    private func delimiterBox(_ delimiter: Delimiter, covering height: CGFloat, _ style: Style) -> LayoutBox {
+        let size = style.size
+        guard delimiter != .none else { return emptyBox(width: 0.12 * size) }
+        let glyph = verticalStretch(MathLayoutEngine.delimiterDisplayString(delimiter), height: height, size: size)
+        return vbox([centeredOnAxis(glyph, style)])
+    }
+
+    /// The character's own glyph if it is tall enough, else the smallest
+    /// size variant that is, else an assembly built to `height`.
+    private func verticalStretch(_ character: String, height: CGFloat, size: CGFloat) -> LayoutBox {
+        guard let first = character.first, let base = font.glyph(for: first) else {
+            return text(character, Style(level: .text, baseSize: size, scales: c))
+        }
+        let natural = glyph(base, size: size)
+        guard natural.size.height < height, let construction = font.verticalConstruction(base) else {
+            return natural
+        }
+        var largest = natural
+        for variant in construction.variants {
+            let box = glyph(variant, size: size)
+            if box.size.height >= height { return box }
+            largest = box
+        }
+        guard !construction.assembly.isEmpty else { return largest }
+        return assemble(construction.assembly, length: height, size: size, vertical: true)
+    }
+
+    private func horizontalStretch(_ character: String, width: CGFloat, size: CGFloat) -> LayoutBox {
+        guard let first = character.first, let base = font.glyph(for: first) else {
+            return text(character, Style(level: .text, baseSize: size, scales: c))
+        }
+        let natural = glyph(base, size: size)
+        guard natural.size.width < width, let construction = font.horizontalConstruction(base) else {
+            return natural
+        }
+        var largest = natural
+        for variant in construction.variants {
+            let box = glyph(variant, size: size)
+            if box.size.width >= width { return box }
+            largest = box
+        }
+        guard !construction.assembly.isEmpty else { return largest }
+        return assemble(construction.assembly, length: width, size: size, vertical: false)
+    }
+
+    /// Builds a glyph assembly `length` long (OpenType MATH): repeat the
+    /// extenders until the parts can reach it, then share the overlap evenly
+    /// between joints within what each connector allows.
+    private func assemble(_ parts: [MathFont.AssemblyPart], length: CGFloat, size: CGFloat, vertical: Bool) -> LayoutBox {
+        let scale = size / font.unitsPerEm
+        let minOverlap = font.minConnectorOverlap * scale
+        let hasExtender = parts.contains(where: \.isExtender)
+        var sequence: [MathFont.AssemblyPart] = []
+        for repeats in 1 ... 64 {
+            sequence = parts.flatMap { part in
+                part.isExtender ? Array(repeating: part, count: repeats) : [part]
+            }
+            let total = sequence.reduce(0) { $0 + $1.fullAdvance * scale }
+            let reach = total - CGFloat(max(sequence.count - 1, 0)) * minOverlap
+            if reach >= length || !hasExtender { break }
+        }
+
+        let total = sequence.reduce(0) { $0 + $1.fullAdvance * scale }
+        let joints = max(sequence.count - 1, 1)
+        let wanted = (total - length) / CGFloat(joints)
+        var offsets: [CGFloat] = []
+        var cursor: CGFloat = 0
+        for (index, part) in sequence.enumerated() {
+            offsets.append(cursor)
+            guard index + 1 < sequence.count else { break }
+            let next = sequence[index + 1]
+            let allowed = min(part.endConnector, next.startConnector) * scale
+            let overlap = min(max(wanted, minOverlap), max(allowed, minOverlap))
+            cursor += part.fullAdvance * scale - overlap
+        }
+        let extent = (offsets.last ?? 0) + (sequence.last?.fullAdvance ?? 0) * scale
+
+        var placed: [Placed] = []
+        for (part, offset) in zip(sequence, offsets) {
+            let piece = glyph(part.glyph, size: size)
+            if vertical {
+                // Parts run bottom to top; each sits on its own ink bottom.
+                placed.append(Placed(box: piece, x: 0, shift: offset + piece.descent))
+            } else {
+                placed.append(Placed(box: piece, x: offset, shift: 0))
+            }
+        }
+        // A vertical assembly sits on the baseline; callers centre it.
+        return vbox(placed, width: vertical ? nil : extent)
+    }
+
+    // MARK: Big operators
+
+    private func bigOperator(_ kind: BigOpKind, limits: MathLimits?, _ style: Style) -> LayoutBox {
+        let size = style.size
+        if kind == .xrightarrow || kind == .xleftarrow {
+            return extensibleArrow(kind, limits: limits, style)
+        }
+
+        let lower = limits?.lower.flatMap { $0.isEmpty ? nil : list($0, style.subscript) }
+        let upper = limits?.upper.flatMap { $0.isEmpty ? nil : list($0, style.superscript) }
+        let isIntegral = [.int, .iint, .iiint, .oint].contains(kind)
+        let stacksLimits: Bool = switch kind {
+        case .int, .iint, .iiint, .oint, .log, .ln, .sin, .cos, .tan, .exp: false
+        default: style.isDisplay
+        }
+
+        var op: LayoutBox
+        if MathLayoutEngine.isTextOperator(kind) {
+            op = text(MathLayoutEngine.bigOperatorDisplayString(kind), style)
+            op.italicCorrection = 0
+        } else {
+            let symbol = MathLayoutEngine.bigOperatorDisplayString(kind)
+            var glyphBox = text(symbol, style)
+            if style.isDisplay, let first = symbol.first, let base = font.glyph(for: first),
+               let construction = font.verticalConstruction(base) {
+                // The first display size at least DisplayOperatorMinHeight tall,
+                // else the largest there is.
+                let minimum = c.displayOperatorMinHeight * size
+                for variant in construction.variants.dropFirst() {
+                    glyphBox = glyph(variant, size: size)
+                    if glyphBox.size.height >= minimum { break }
+                }
+            }
+            op = vbox([centeredOnAxis(glyphBox, style)])
+            op.italicCorrection = glyphBox.italicCorrection
+        }
+
+        guard lower != nil || upper != nil else { return op }
+        guard stacksLimits else {
+            var sideBase = op
+            if !isIntegral { sideBase.italicCorrection = 0 }
+            // A function name takes scripts like a letter, so the exponent of
+            // \sin sits where the exponent of \cos does despite the i's dot.
+            return scripts(
+                base: sideBase,
+                baseIsCharacter: MathLayoutEngine.isTextOperator(kind),
+                sup: limits?.upper,
+                sub: limits?.lower,
+                style
+            )
+        }
+
+        let width = max(op.size.width, upper?.size.width ?? 0, lower?.size.width ?? 0)
+        let correction = op.italicCorrection
+        var placed = [Placed(box: op, x: (width - op.size.width) / 2, shift: 0)]
+        if let upper {
+            let gap = max(c.upperLimitGapMin * size, c.upperLimitBaselineRiseMin * size - upper.descent)
+            placed.append(Placed(
+                box: upper,
+                x: (width - upper.size.width) / 2 + correction / 2,
+                shift: op.ascent + gap + upper.descent
+            ))
+        }
+        if let lower {
+            let gap = max(c.lowerLimitGapMin * size, c.lowerLimitBaselineDropMin * size - lower.ascent)
+            placed.append(Placed(
+                box: lower,
+                x: (width - lower.size.width) / 2 - correction / 2,
+                shift: -(op.descent + gap + lower.ascent)
+            ))
+        }
+        return vbox(placed, width: width)
+    }
+
+    /// `\xrightarrow[under]{over}`: an arrow stretched past its labels.
+    private func extensibleArrow(_ kind: BigOpKind, limits: MathLimits?, _ style: Style) -> LayoutBox {
+        let size = style.size
+        let over = limits?.upper.flatMap { $0.isEmpty ? nil : list($0, style.superscript) }
+        let under = limits?.lower.flatMap { $0.isEmpty ? nil : list($0, style.subscript) }
+        let labelWidth = max(over?.size.width ?? 0, under?.size.width ?? 0)
+        let arrow = horizontalStretch(
+            MathLayoutEngine.bigOperatorDisplayString(kind),
+            width: labelWidth + 0.6 * size,
+            size: size
+        )
+        let width = max(arrow.size.width, labelWidth)
+        var placed = [Placed(box: arrow, x: (width - arrow.size.width) / 2, shift: 0)]
+        if let over {
+            let gap = max(c.stretchStackGapAboveMin * size, c.stretchStackTopShiftUp * size - arrow.ascent - over.descent)
+            placed.append(Placed(box: over, x: (width - over.size.width) / 2, shift: arrow.ascent + gap + over.descent))
+        }
+        if let under {
+            let gap = max(c.stretchStackGapBelowMin * size, c.stretchStackBottomShiftDown * size - arrow.descent - under.ascent)
+            placed.append(Placed(box: under, x: (width - under.size.width) / 2, shift: -(arrow.descent + gap + under.ascent)))
+        }
+        return vbox(placed, width: width)
+    }
+
+    // MARK: Accents
+
+    private func accent(_ kind: MathAccentKind, base nodes: [MathNode], _ style: Style) -> LayoutBox {
+        let size = style.size
+        let base = list(nodes, style.crampedStyle)
+
+        switch kind {
+        case .overline:
+            let thickness = c.overbarRuleThickness * size
+            let bar = rule(width: base.size.width, thickness: thickness)
+            let shift = base.ascent + c.overbarVerticalGap * size
+            var result = vbox([
+                Placed(box: base, x: 0, shift: 0),
+                Placed(box: bar, x: 0, shift: shift),
+                Placed(box: emptyBox(width: 0), x: 0, shift: shift + thickness + c.overbarExtraAscender * size),
+            ], width: base.size.width)
+            result.italicCorrection = base.italicCorrection
+            return result
+        case .underline:
+            let thickness = c.underbarRuleThickness * size
+            let bar = rule(width: base.size.width, thickness: thickness)
+            let drop = base.descent + c.underbarVerticalGap * size + thickness
+            return vbox([
+                Placed(box: base, x: 0, shift: 0),
+                Placed(box: bar, x: 0, shift: -drop),
+            ], width: base.size.width)
+        case .overbrace, .underbrace:
+            let brace = horizontalStretch(kind == .overbrace ? "\u{23DE}" : "\u{23DF}", width: base.size.width, size: size)
+            let x = (base.size.width - brace.size.width) / 2
+            let gap = c.stretchStackGapAboveMin * size
+            let shift = kind == .overbrace
+                ? base.ascent + gap + brace.descent
+                : -(base.descent + gap + brace.ascent)
+            return vbox([
+                Placed(box: base, x: max(0, -x), shift: 0),
+                Placed(box: brace, x: max(0, x), shift: shift),
+            ])
+        default:
+            break
+        }
+
+        let mark: String = switch kind {
+        case .hat, .widehat: "\u{0302}"
+        case .tilde, .widetilde: "\u{0303}"
+        case .bar: "\u{0304}"
+        case .vec: "\u{20D7}"
+        case .dot: "\u{0307}"
+        case .ddot: "\u{0308}"
+        default: "\u{0302}"
+        }
+        let accentBox: LayoutBox
+        let accentGlyph = mark.first.flatMap { font.glyph(for: $0) }
+        if kind == .widehat || kind == .widetilde {
+            accentBox = horizontalStretch(mark, width: base.size.width, size: size)
+        } else if let accentGlyph {
+            accentBox = glyph(accentGlyph, size: size)
+        } else {
+            accentBox = text(mark, style)
+        }
+
+        // Centre the mark's attachment point over the base's.
+        var baseAnchor = base.size.width / 2
+        if nodes.count == 1, case .glyph(let string, _) = singleGlyphContent(base),
+           let first = string.first, string.count == 1, let baseGlyph = font.glyph(for: first),
+           let attachment = font.topAccentAttachment(baseGlyph) {
+            baseAnchor = attachment * size
+        }
+        var accentAnchor = accentBox.ink.isNull ? accentBox.size.width / 2 : accentBox.ink.midX
+        if case .glyphID(let id, _) = accentBox.content, let attachment = font.topAccentAttachment(id) {
+            accentAnchor = attachment * size
+        }
+        // Marks are drawn to sit over an x-height base; raise them over taller ones.
+        let raise = max(0, base.ascent - c.accentBaseHeight * size)
+        var result = vbox([
+            Placed(box: base, x: 0, shift: 0),
+            Placed(box: accentBox, x: baseAnchor - accentAnchor, shift: raise),
+        ], width: base.size.width)
+        result.italicCorrection = base.italicCorrection
+        return result
+    }
+
+    /// The glyph content of a box that is one glyph, possibly wrapped.
+    private func singleGlyphContent(_ box: LayoutBox) -> LayoutContent? {
+        switch box.content {
+        case .glyph: return box.content
+        case .container(let children) where children.count == 1: return singleGlyphContent(children[0])
+        default: return nil
+        }
+    }
+
+    // MARK: Grids
+
+    private enum ColumnAlignment {
+        case centered
+        case left
+        case alternatingRightLeft
+    }
+
+    /// Matrix-like rows. Each row is at least a strut tall (TeX arrays use
+    /// 1.2 em rows) plus `rowGap` em; the grid centres on the axis.
+    private func grid(
+        _ rows: [[[MathNode]]],
+        _ style: Style,
+        alignment: ColumnAlignment,
+        columnGap: CGFloat,
+        rowGap: CGFloat
+    ) -> LayoutBox {
+        guard !rows.isEmpty else { return emptyBox(width: 0) }
+        let size = style.size
+        let columns = rows.map(\.count).max() ?? 0
+        let cells: [[LayoutBox]] = rows.map { row in
+            (0 ..< columns).map { column in
+                guard column < row.count else { return emptyBox(width: 0) }
+                let rightSide = alignment == .alternatingRightLeft && !column.isMultiple(of: 2)
+                return list(row[column], style, leadingOrd: rightSide)
+            }
+        }
+
+        var widths = [CGFloat](repeating: 0, count: columns)
+        for row in cells {
+            for (column, cell) in row.enumerated() { widths[column] = max(widths[column], cell.size.width) }
+        }
+        let strutAscent = 0.85 * size
+        let strutDescent = 0.35 * size
+        let gaps: [CGFloat] = (0 ..< columns).map { column in
+            guard column + 1 < columns else { return 0 }
+            if alignment == .alternatingRightLeft { return column.isMultiple(of: 2) ? 0 : columnGap * size }
+            return columnGap * size
+        }
+
+        var placed: [Placed] = []
+        var y: CGFloat = 0
+        var rowBaselines: [CGFloat] = []
+        for row in cells {
+            let ascent = max(strutAscent, row.map(\.ascent).max() ?? 0)
+            let descent = max(strutDescent, row.map(\.descent).max() ?? 0)
+            if !rowBaselines.isEmpty { y += rowGap * size }
+            y += ascent
+            rowBaselines.append(y)
+            var x: CGFloat = 0
+            for (column, cell) in row.enumerated() {
+                let offset: CGFloat = switch alignment {
+                case .centered: (widths[column] - cell.size.width) / 2
+                case .left: 0
+                case .alternatingRightLeft: column.isMultiple(of: 2) ? widths[column] - cell.size.width : 0
+                }
+                placed.append(Placed(box: cell, x: x + offset, shift: -y))
+                x += widths[column] + gaps[column]
+            }
+            y += descent
+        }
+        let width = widths.reduce(0, +) + gaps.reduce(0, +)
+        // Rows hang below a baseline at the top; centre the whole on the axis.
+        let axis = c.axisHeight * size
+        let shiftToAxis = y / 2 + axis
+        let lifted = placed.map { Placed(box: $0.box, x: $0.x, shift: $0.shift + shiftToAxis) }
+        return vbox(lifted, width: width)
+    }
+}
+
+// MARK: - Glyph metrics
+
+/// Advance and ink of a text run, cached across layouts.
+private enum GlyphMetrics {
+    struct Measured {
+        let width: CGFloat
+        let ink: CGRect
+    }
+
+    private final class Entry: @unchecked Sendable {
+        let value: Measured
+        init(_ value: Measured) { self.value = value }
+    }
+
+    private final class Store: @unchecked Sendable {
+        let cache: NSCache<NSString, Entry> = {
+            let cache = NSCache<NSString, Entry>()
+            cache.countLimit = 4_096
+            cache.name = "org.oppi.MathLayoutEngine.glyphMetrics"
+            return cache
+        }()
+    }
+
+    private static let store = Store()
+
+    static func measure(_ text: String, font: CTFont) -> Measured {
+        let key = "\(CTFontGetSize(font))|\(text)" as NSString
+        if let hit = store.cache.object(forKey: key) { return hit.value }
+        let attributed = NSAttributedString(
+            string: text,
+            attributes: [NSAttributedString.Key(kCTFontAttributeName as String): font]
+        )
+        let line = CTLineCreateWithAttributedString(attributed)
+        let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+        let value = Measured(width: width, ink: ink)
+        store.cache.setObject(Entry(value), forKey: key, cost: max(1, text.utf8.count))
+        return value
+    }
+}
+
+// MARK: - Math alphabets
+
+/// Maps letters and digits to Unicode's mathematical alphanumerics, which the
+/// math font draws: italic for variables, and the \mathbb … \mathtt faces.
+enum MathAlphabet {
+    static func map(_ string: String, style: MathFontStyle?, defaultItalic: Bool) -> String {
+        var result = String.UnicodeScalarView()
+        for scalar in string.unicodeScalars {
+            result.append(map(scalar, style: style, defaultItalic: defaultItalic))
+        }
+        return String(result)
+    }
+
+    private static func map(_ scalar: Unicode.Scalar, style: MathFontStyle?, defaultItalic: Bool) -> Unicode.Scalar {
+        if scalar == "'" { return "\u{2032}" }
+        let value = scalar.value
+        let upper = (0x41 ... 0x5A).contains(value) ? value - 0x41 : nil
+        let lower = (0x61 ... 0x7A).contains(value) ? value - 0x61 : nil
+        let digit = (0x30 ... 0x39).contains(value) ? value - 0x30 : nil
+        let greekLower = (0x3B1 ... 0x3C9).contains(value) ? value - 0x3B1 : nil
+        let greekUpper = (0x391 ... 0x3A9).contains(value) ? value - 0x391 : nil
+
+        func code(_ point: UInt32) -> Unicode.Scalar { Unicode.Scalar(point) ?? scalar }
+
+        switch style {
+        case nil, .italic?:
+            guard defaultItalic || style == .italic else { return scalar }
+            if let upper { return code(0x1D434 + upper) }
+            if let lower { return lower == 7 ? "\u{210E}" : code(0x1D44E + lower) }
+            if let greekLower { return code(0x1D6FC + greekLower) }
+            switch value {
+            case 0x3F5: return "\u{1D716}" // ϵ
+            case 0x3D1: return "\u{1D717}" // ϑ
+            case 0x3D5: return "\u{1D719}" // ϕ
+            case 0x3F1: return "\u{1D71A}" // ϱ
+            case 0x3D6: return "\u{1D71B}" // ϖ
+            default: return scalar
+            }
+        case .roman?:
+            return scalar
+        case .bold?:
+            if let upper { return code(0x1D400 + upper) }
+            if let lower { return code(0x1D41A + lower) }
+            if let digit { return code(0x1D7CE + digit) }
+            if let greekUpper { return code(0x1D6A8 + greekUpper) }
+            if let greekLower { return code(0x1D6C2 + greekLower) }
+            return scalar
+        case .blackboard?:
+            let exceptions: [UInt32: Unicode.Scalar] = [
+                2: "\u{2102}", 7: "\u{210D}", 13: "\u{2115}", 15: "\u{2119}",
+                16: "\u{211A}", 17: "\u{211D}", 25: "\u{2124}",
+            ]
+            if let upper { return exceptions[upper] ?? code(0x1D538 + upper) }
+            if let lower { return code(0x1D552 + lower) }
+            if let digit { return code(0x1D7D8 + digit) }
+            return scalar
+        case .calligraphic?:
+            let exceptions: [UInt32: Unicode.Scalar] = [
+                1: "\u{212C}", 4: "\u{2130}", 5: "\u{2131}", 7: "\u{210B}",
+                8: "\u{2110}", 11: "\u{2112}", 12: "\u{2133}", 17: "\u{211B}",
+            ]
+            let lowerExceptions: [UInt32: Unicode.Scalar] = [4: "\u{212F}", 6: "\u{210A}", 14: "\u{2134}"]
+            if let upper { return exceptions[upper] ?? code(0x1D49C + upper) }
+            if let lower { return lowerExceptions[lower] ?? code(0x1D4B6 + lower) }
+            return scalar
+        case .fraktur?:
+            let exceptions: [UInt32: Unicode.Scalar] = [
+                2: "\u{212D}", 7: "\u{210C}", 8: "\u{2111}", 17: "\u{211C}", 25: "\u{2128}",
+            ]
+            if let upper { return exceptions[upper] ?? code(0x1D504 + upper) }
+            if let lower { return code(0x1D51E + lower) }
+            return scalar
+        case .sansSerif?:
+            if let upper { return code(0x1D5A0 + upper) }
+            if let lower { return code(0x1D5BA + lower) }
+            if let digit { return code(0x1D7E2 + digit) }
+            return scalar
+        case .typewriter?:
+            if let upper { return code(0x1D670 + upper) }
+            if let lower { return code(0x1D68A + lower) }
+            if let digit { return code(0x1D7F6 + digit) }
+            return scalar
         }
     }
 }

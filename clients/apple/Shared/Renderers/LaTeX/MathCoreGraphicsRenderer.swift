@@ -5,10 +5,11 @@ import Foundation
 /// Renders `[MathNode]` into a Core Graphics context via a two-phase pipeline.
 ///
 /// Phase 1 — `layout()`: converts the AST into a `LayoutBox` tree with
-/// computed positions and sizes using `MathLayoutEngine`.
+/// computed positions and sizes using `MathLayoutEngine`. Inline formulas set
+/// in TeX's text style, document formulas in display style.
 ///
 /// Phase 2 — `draw()`: walks the `LayoutBox` tree and draws glyphs and
-/// lines into a `CGContext` using Core Text and Core Graphics.
+/// rules into a `CGContext` using Core Text and Core Graphics.
 ///
 /// Conforms to `GraphicalDocumentRenderer` so it plugs into the shared
 /// renderer protocol. The draw closure captures the layout result and
@@ -28,7 +29,11 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
         _ document: [MathNode],
         configuration: RenderConfiguration
     ) -> MathRenderLayout {
-        let rootBox = engine.layout(document, fontSize: configuration.fontSize)
+        let rootBox = engine.layout(
+            document,
+            fontSize: configuration.fontSize,
+            display: configuration.displayMode == .document
+        )
         return MathRenderLayout(
             rootBox: rootBox,
             configuration: configuration
@@ -45,8 +50,8 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
         context.saveGState()
         defer { context.restoreGState() }
 
-        // Translate to origin. Layout uses top-left coordinates which match
-        // UIKit's context (Y-down). Text is drawn with local Y-flips via drawGlyph.
+        // Layout uses top-left coordinates, which match UIKit's context
+        // (y down). Glyphs flip locally around their baseline.
         context.translateBy(x: origin.x, y: origin.y)
 
         drawBox(layout.rootBox, in: context, foreground: layout.configuration.theme.foreground)
@@ -60,7 +65,6 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
 
     // MARK: - Recursive Drawing
 
-    /// Recursively draw a layout box and its children.
     private func drawBox(
         _ box: LayoutBox,
         in context: CGContext,
@@ -71,10 +75,28 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
 
         switch box.content {
         case .glyph(let text, let fontSize):
-            drawGlyph(text, fontSize: fontSize, in: context, foreground: foreground)
+            drawText(text, fontSize: fontSize, baseline: box.baseline, in: context, foreground: foreground)
+
+        case .glyphID(let glyph, let fontSize):
+            context.saveGState()
+            context.translateBy(x: 0, y: box.baseline)
+            context.scaleBy(x: 1, y: -1)
+            context.setFillColor(foreground)
+            // The text matrix is not graphics state: a CTLineDraw before
+            // this one leaves its pen position in it.
+            context.textMatrix = .identity
+            context.textPosition = .zero
+            var id = glyph
+            var position = CGPoint.zero
+            CTFontDrawGlyphs(MathFont.shared.font(size: fontSize), &id, &position, 1, context)
+            context.restoreGState()
 
         case .line(let from, let to, let thickness):
-            drawLine(from: from, to: to, thickness: thickness, in: context, foreground: foreground)
+            context.setStrokeColor(foreground)
+            context.setLineWidth(thickness)
+            context.move(to: from)
+            context.addLine(to: to)
+            context.strokePath()
 
         case .container(let children):
             for child in children {
@@ -120,9 +142,10 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
         )
     }
 
-    private func drawGlyph(
+    private func drawText(
         _ text: String,
         fontSize: CGFloat,
+        baseline: CGFloat,
         in context: CGContext,
         foreground: CGColor
     ) {
@@ -131,10 +154,9 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
         if let hit = Self.glyphLineStore.cache.object(forKey: key) {
             line = hit.line
         } else {
-            let font = CTFontCreateWithName("TimesNewRomanPSMT" as CFString, fontSize, nil)
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: foreground,
+                NSAttributedString.Key(kCTFontAttributeName as String): MathFont.shared.font(size: fontSize),
+                NSAttributedString.Key(kCTForegroundColorAttributeName as String): foreground,
             ]
             let attrString = NSAttributedString(string: text, attributes: attributes)
             line = CTLineCreateWithAttributedString(attrString)
@@ -146,30 +168,14 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
         }
 
         // CTLineDraw expects CG coordinates (Y-up), but UIKit context is Y-down.
-        // Flip locally around the text position.
+        // Flip locally around the baseline.
         context.saveGState()
-        context.translateBy(x: 0, y: fontSize)
+        context.translateBy(x: 0, y: baseline)
         context.scaleBy(x: 1, y: -1)
         context.textMatrix = .identity
         context.textPosition = .zero
         CTLineDraw(line, context)
         context.restoreGState()
-    }
-
-    // MARK: - Line Drawing
-
-    private func drawLine(
-        from: CGPoint,
-        to: CGPoint,
-        thickness: CGFloat,
-        in context: CGContext,
-        foreground: CGColor
-    ) {
-        context.setStrokeColor(foreground)
-        context.setLineWidth(thickness)
-        context.move(to: from)
-        context.addLine(to: to)
-        context.strokePath()
     }
 }
 

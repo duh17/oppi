@@ -2,507 +2,343 @@ import CoreGraphics
 import Testing
 @testable import Oppi
 
-/// Tests for `MathLayoutEngine` layout correctness.
-///
-/// Verifies that the box-and-glue layout model produces structurally correct
-/// output: correct sizes, baseline positions, and spatial relationships.
-/// Uses the parser to produce ASTs from LaTeX strings, then checks layout invariants.
+/// What a formula looks like once laid out and drawn: where glyphs, rules and
+/// scripts land, which glyphs draw, and how much of the raster each part
+/// covers. Geometry is read from the layout tree's absolute frames or from a
+/// rendered bitmap, never from the tree's shape.
 @Suite("MathLayoutTests")
 struct MathLayoutTests {
     let parser = TeXMathParser()
-    let engine = MathLayoutEngine()
     let renderer = MathCoreGraphicsRenderer()
-    let fontSize: CGFloat = 16
-
-    // MARK: - Helper
-
-    private func layoutFromTeX(_ tex: String) -> LayoutBox {
-        let nodes = parser.parse(tex)
-        return engine.layout(nodes, fontSize: fontSize)
-    }
-
-    private func assertNonZeroSize(_ box: LayoutBox, _ message: String = "", sourceLocation: SourceLocation = #_sourceLocation) {
-        #expect(box.size.width > 0, "width should be > 0: \(message)", sourceLocation: sourceLocation)
-        #expect(box.size.height > 0, "height should be > 0: \(message)", sourceLocation: sourceLocation)
-    }
-
-    // MARK: - Empty Input
-
-    @Test func emptyInputProducesZeroSize() {
-        let box = engine.layout([], fontSize: fontSize)
-        #expect(box.size == .zero)
-    }
-
-    // MARK: - Simple Variable
-
-    @Test func singleVariableGlyphBox() {
-        let box = layoutFromTeX("x")
-        assertNonZeroSize(box, "single variable")
-        #expect(box.baseline > 0, "baseline should be positive")
-        // Single variable should produce a glyph
-        if case .glyph(let text, let size) = box.content {
-            #expect(text == "x")
-            #expect(size == fontSize)
-        } else if case .container(let children) = box.content {
-            // May be wrapped in container with single child
-            #expect(children.count == 1)
-            if case .glyph(let text, _) = children[0].content {
-                #expect(text == "x")
-            }
-        }
-    }
-
-    // MARK: - Number
-
-    @Test func numberGlyphBox() {
-        let box = layoutFromTeX("3")
-        assertNonZeroSize(box, "single number")
-        #expect(box.baseline > 0)
-    }
-
-    // MARK: - Fraction
-
-    @Test func fractionNumeratorAboveDenominator() {
-        let box = layoutFromTeX("\\frac{a}{b}")
-        assertNonZeroSize(box, "fraction")
-
-        // Fraction should be a container with numerator, bar, denominator
-        guard case .container(let children) = box.content else {
-            Issue.record("fraction should be a container")
-            return
-        }
-
-        // Should have at least 3 children (num, bar, den)
-        #expect(children.count >= 3, "fraction needs num + bar + den, got \(children.count)")
-
-        // Find the bar (line content)
-        let barIndex = children.firstIndex { child in
-            if case .line = child.content { return true }
-            return false
-        }
-        #expect(barIndex != nil, "fraction should have a bar line")
-
-        if let barIdx = barIndex {
-            // Numerator should be above bar
-            let numChild = children[0]
-            #expect(numChild.origin.y < children[barIdx].origin.y,
-                    "numerator should be above fraction bar")
-
-            // Denominator should be below bar
-            let denIdx = barIdx + 1
-            if denIdx < children.count {
-                #expect(children[denIdx].origin.y > children[barIdx].origin.y,
-                        "denominator should be below fraction bar")
-            }
-        }
-    }
-
-    @Test func fractionChildrenShrunk() {
-        // Children of fractions use smaller font size (0.7x)
-        let box = layoutFromTeX("\\frac{x}{y}")
-        let singleBox = layoutFromTeX("x")
-
-        // The fraction should be taller than a single character
-        // (numerator + bar + denominator stacked)
-        #expect(box.size.height > singleBox.size.height,
-                "fraction should be taller than a single glyph")
-    }
-
-    // MARK: - Superscript
-
-    @Test func superscriptSmallerAndRaised() {
-        let box = layoutFromTeX("x^2")
-        assertNonZeroSize(box, "superscript")
-
-        guard case .container(let children) = box.content else {
-            Issue.record("superscript should be a container")
-            return
-        }
-
-        // Should have base and exponent
-        #expect(children.count >= 2, "x^2 needs base + exponent")
-
-        if children.count >= 2 {
-            let base = children[0]
-            let sup = children[1]
-
-            // Superscript should be to the right of base
-            #expect(sup.origin.x >= base.origin.x + base.size.width - 0.1,
-                    "superscript should be right of base")
-
-            // Superscript should be raised (lower Y in top-left coords = higher up)
-            #expect(sup.origin.y < base.origin.y + base.size.height,
-                    "superscript should be raised above base bottom")
-
-            // Superscript should be smaller
-            #expect(sup.size.height < base.size.height,
-                    "superscript should be smaller than base")
-        }
-    }
-
-    // MARK: - Subscript
-
-    @Test func subscriptSmallerAndLowered() {
-        let box = layoutFromTeX("x_i")
-        assertNonZeroSize(box, "subscript")
-
-        guard case .container(let children) = box.content else {
-            Issue.record("subscript should be a container")
-            return
-        }
-
-        #expect(children.count >= 2, "x_i needs base + index")
-
-        if children.count >= 2 {
-            let base = children[0]
-            let sub = children[1]
-
-            // Subscript should be to the right of base
-            #expect(sub.origin.x >= base.origin.x + base.size.width - 0.1,
-                    "subscript should be right of base")
-
-            // Subscript should be lowered (higher Y = further down)
-            #expect(sub.origin.y > base.origin.y,
-                    "subscript should be below base top")
-
-            // Subscript should be smaller
-            #expect(sub.size.height < base.size.height,
-                    "subscript should be smaller than base")
-        }
-    }
-
-    @Test func compoundSubscriptBaselineStaysAttachedToBase() throws {
-        let box = layoutFromTeX("x_{t+1}")
-        guard case .container(let children) = box.content else {
-            Issue.record("compound subscript should be a container")
-            return
-        }
-        let base = try #require(children.first)
-        let sub = try #require(children.dropFirst().first)
-        let baselineDrop = (sub.origin.y + sub.baseline) - (base.origin.y + base.baseline)
-
-        #expect(baselineDrop > 0)
-        #expect(
-            baselineDrop <= fontSize * 0.35,
-            "Subscript baseline detached by \(baselineDrop)pt at \(fontSize)pt"
-        )
-    }
-
-    // MARK: - Combined Sub + Superscript
-
-    @Test func subSuperscriptBothAttached() {
-        let box = layoutFromTeX("x_i^2")
-        assertNonZeroSize(box, "sub+superscript")
-
-        guard case .container(let children) = box.content else {
-            Issue.record("sub+superscript should be a container")
-            return
-        }
-
-        // Should have base + sup + sub (3 children)
-        #expect(children.count >= 3, "x_i^2 needs base + sup + sub, got \(children.count)")
-
-        if children.count >= 3 {
-            let base = children[0]
-            let sup = children[1]
-            let sub = children[2]
-
-            // Both scripts should be to the right of base
-            #expect(sup.origin.x >= base.size.width - 0.1)
-            #expect(sub.origin.x >= base.size.width - 0.1)
-
-            // Sup should be above sub
-            #expect(sup.origin.y < sub.origin.y,
-                    "superscript should be above subscript")
-        }
-    }
-
-    // MARK: - Horizontal Sequence
-
-    @Test func horizontalSequenceCorrectOrder() {
-        // x^2 + y^2 = z^2
-        let box = layoutFromTeX("x^2+y^2=z^2")
-        assertNonZeroSize(box, "equation")
-
-        guard case .container(let children) = box.content else {
-            Issue.record("sequence should be a container")
-            return
-        }
-
-        // Should have multiple children laid out left to right
-        #expect(children.count >= 5, "x^2 + y^2 = z^2 should have multiple parts")
-
-        // Verify left-to-right ordering
-        for i in 1 ..< children.count {
-            #expect(children[i].origin.x >= children[i - 1].origin.x,
-                    "children should be ordered left to right")
-        }
-
-        // Total width should be substantial
-        #expect(box.size.width > fontSize * 3,
-                "full equation should be wider than 3 em")
-    }
-
-    // MARK: - Nested Fraction
-
-    @Test func nestedFractionRecursiveShrinking() {
-        let box = layoutFromTeX("\\frac{\\frac{a}{b}}{c}")
-        assertNonZeroSize(box, "nested fraction")
-
-        // Nested fraction should be taller than a simple fraction
-        let simpleFrac = layoutFromTeX("\\frac{a}{b}")
-        #expect(box.size.height > simpleFrac.size.height * 0.8,
-                "nested fraction should be at least 80%% as tall as simple fraction")
-    }
-
-    // MARK: - Matrix
-
-    @Test func matrixGridLayout() {
-        let box = layoutFromTeX("\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}")
-        assertNonZeroSize(box, "matrix")
-
-        // Matrix should be substantially wider and taller than a single character
-        let singleChar = layoutFromTeX("a")
-        #expect(box.size.width > singleChar.size.width * 2,
-                "2x2 matrix should be wider than 2 chars")
-        #expect(box.size.height > singleChar.size.height * 1.5,
-                "2x2 matrix should be taller than 1.5 chars")
-    }
-
-    @Test func matrixDelimitersVisuallySpanAllRows() throws {
-        let box = layoutFromTeX("\\begin{bmatrix} x \\\\ v \\end{bmatrix}")
-        guard case .container(let children) = box.content else {
-            Issue.record("bracketed matrix should contain delimiters and a body")
-            return
-        }
-        let leftDelimiter = try #require(children.first)
-        let body = try #require(children.dropFirst().first)
-        guard case .glyph("[", let delimiterFontSize) = leftDelimiter.content else {
-            Issue.record("expected a left bracket glyph")
-            return
-        }
-
-        #expect(body.size.height > fontSize * 2)
-        #expect(
-            delimiterFontSize > fontSize * 1.5,
-            "Matrix bracket stayed at \(delimiterFontSize)pt for a \(body.size.height)pt body"
-        )
-    }
-
-    @Test func alignedEnvironmentRightAlignsLeftColumnsAndLeftAlignsRightColumns() throws {
-        let box = layoutFromTeX("\\begin{aligned}x&=1\\\\long&=2\\end{aligned}")
-        guard case .container(let cells) = box.content else {
-            Issue.record("aligned environment should lay out a grid")
-            return
-        }
-        #expect(cells.count == 4)
-        let firstLeft = try #require(cells.first)
-        let firstRight = try #require(cells.dropFirst().first)
-        let secondLeft = try #require(cells.dropFirst(2).first)
-        let secondRight = try #require(cells.dropFirst(3).first)
-
-        #expect(abs(firstLeft.origin.x + firstLeft.size.width
-                    - secondLeft.origin.x - secondLeft.size.width) < 0.5)
-        #expect(abs(firstRight.origin.x - secondRight.origin.x) < 0.5)
-    }
-
-    @Test func matrixCellPositions() {
-        let box = layoutFromTeX("\\begin{matrix} a & b \\\\ c & d \\end{matrix}")
-        assertNonZeroSize(box, "plain matrix")
-
-        // Flatten to find all glyph boxes
-        let glyphs = collectGlyphs(box)
-        #expect(glyphs.count >= 4, "2x2 matrix should have at least 4 glyph boxes")
-    }
-
-    // MARK: - Big Operator with Limits
-
-    @Test func bigOperatorWithLimits() {
-        let box = layoutFromTeX("\\sum_{i=0}^{n}")
-        assertNonZeroSize(box, "sum with limits")
-
-        guard case .container(let children) = box.content else {
-            Issue.record("big operator with limits should be a container")
-            return
-        }
-
-        // Should have upper limit, operator, lower limit
-        #expect(children.count >= 2, "sum with limits should have multiple parts")
-
-        // The whole thing should be taller than a plain sum
-        let plainSum = layoutFromTeX("\\sum")
-        #expect(box.size.height > plainSum.size.height,
-                "sum with limits should be taller than plain sum")
-    }
-
-    // MARK: - Square Root
-
-    @Test func sqrtWithRadicalAndOverline() {
-        let box = layoutFromTeX("\\sqrt{x}")
-        assertNonZeroSize(box, "sqrt")
-
-        guard case .container(let children) = box.content else {
-            Issue.record("sqrt should be a container")
-            return
-        }
-
-        // Should have radical glyph, overline, and radicand
-        #expect(children.count >= 3, "sqrt needs radical + overline + radicand, got \(children.count)")
-
-        // Check that there's a line (overline) in the children
-        let hasLine = children.contains { child in
-            if case .line = child.content { return true }
-            return false
-        }
-        #expect(hasLine, "sqrt should have an overline")
-
-        // Check for radical glyph
-        let hasRadical = children.contains { child in
-            if case .glyph(let text, _) = child.content {
-                return text == "\u{221A}"
-            }
-            return false
-        }
-        #expect(hasRadical, "sqrt should have a radical symbol")
-    }
-
-    @Test func sqrtWithIndex() {
-        let box = layoutFromTeX("\\sqrt[3]{x}")
-        assertNonZeroSize(box, "cube root")
-
-        // Should be wider than sqrt without index
-        let plainSqrt = layoutFromTeX("\\sqrt{x}")
-        #expect(box.size.width >= plainSqrt.size.width,
-                "cube root should be at least as wide as plain sqrt")
-    }
-
-    // MARK: - Layout Size Invariants
-
-    @Test func layoutSizeNonZeroForNonEmptyInput() {
-        let inputs = [
-            "x", "42", "x+y", "\\frac{1}{2}", "x^2", "x_i",
-            "\\alpha", "\\sum_{i=0}^{n} x_i",
-            "\\sqrt{2}", "\\left(x\\right)",
-        ]
-
-        for input in inputs {
-            let box = layoutFromTeX(input)
-            assertNonZeroSize(box, "input: \(input)")
-        }
-    }
-
-    // MARK: - Extensible arrows
-
-    @Test func xrightarrowOverscriptMakesTheBoxTallerThanABareArrow() {
-        let stacked = layoutFromTeX(#"\xrightarrow{N}"#)
-        let arrow = layoutFromTeX(#"\rightarrow"#)
-        assertNonZeroSize(stacked, "xrightarrow")
-        #expect(
-            stacked.size.height > arrow.size.height,
-            "xrightarrow overscript should stack above the arrow"
-        )
-    }
-
-    @Test func xleftarrowOverscriptMakesTheBoxTallerThanABareArrow() {
-        let stacked = layoutFromTeX(#"\xleftarrow{f}"#)
-        let arrow = layoutFromTeX(#"\leftarrow"#)
-        assertNonZeroSize(stacked, "xleftarrow")
-        #expect(
-            stacked.size.height > arrow.size.height,
-            "xleftarrow overscript should stack above the arrow"
-        )
-    }
-
-    // MARK: - Accent
-
-    @Test func accentAboveBase() {
-        let box = layoutFromTeX("\\hat{x}")
-        assertNonZeroSize(box, "hat accent")
-
-        // Accented expression should be taller than base alone
-        let plainX = layoutFromTeX("x")
-        #expect(box.size.height > plainX.size.height,
-                "accented x should be taller than plain x")
-    }
-
-    // MARK: - Left/Right Delimiters
-
-    @Test func leftRightDelimiters() {
-        let box = layoutFromTeX("\\left(x+y\\right)")
-        assertNonZeroSize(box, "delimited expression")
-
-        // Should be wider than content alone (delimiters add width)
-        let content = layoutFromTeX("x+y")
-        #expect(box.size.width > content.size.width,
-                "delimited should be wider than bare content")
-    }
-
-    // MARK: - Renderer Integration
-
-    @Test func rendererProducesNonZeroResult() {
-        let nodes = parser.parse("x^2 + y^2 = z^2")
-        let config = RenderConfiguration.default()
-        let layout = renderer.layout(nodes, configuration: config)
-        let size = renderer.boundingBox(layout)
-
-        #expect(size.width > 0, "rendered width should be > 0")
-        #expect(size.height > 0, "rendered height should be > 0")
-    }
-
-    @Test func rendererProducesGraphicalOutput() {
-        let nodes = parser.parse("\\frac{1}{2}")
-        let config = RenderConfiguration.default()
-        let output = renderer.render(nodes, configuration: config)
-
-        if case .graphical(let result) = output {
-            #expect(result.boundingBox.width > 0)
-            #expect(result.boundingBox.height > 0)
-        } else {
-            Issue.record("renderer should produce graphical output")
-        }
-    }
-
-    @Test func rendererEmptyInput() {
-        let nodes: [MathNode] = []
-        let config = RenderConfiguration.default()
-        let layout = renderer.layout(nodes, configuration: config)
-        let size = renderer.boundingBox(layout)
-        #expect(size == .zero)
-    }
-
-    // MARK: - Space Layout
-
-    @Test func spaceNodes() {
-        let withSpace = layoutFromTeX("x\\quad y")
-        let withoutSpace = layoutFromTeX("xy")
-
-        #expect(withSpace.size.width > withoutSpace.size.width,
-                "quad space should increase width")
-    }
-
-    // MARK: - Greek Symbols
-
-    @Test func greekSymbolLayout() {
-        let box = layoutFromTeX("\\alpha + \\beta")
-        assertNonZeroSize(box, "greek symbols")
-        #expect(box.size.width > fontSize, "greek expression should have meaningful width")
-    }
+    let fontSize: CGFloat = 40
 
     // MARK: - Helpers
 
-    /// Recursively collect all glyph boxes from a layout tree.
-    private func collectGlyphs(_ box: LayoutBox) -> [(text: String, fontSize: CGFloat)] {
-        var result: [(String, CGFloat)] = []
-        switch box.content {
-        case .glyph(let text, let size):
-            result.append((text, size))
-        case .container(let children):
-            for child in children {
-                result.append(contentsOf: collectGlyphs(child))
+    private func layout(_ tex: String, inline: Bool = false) -> MathRenderLayout {
+        renderer.layout(
+            parser.parse(tex),
+            configuration: RenderConfiguration(
+                fontSize: fontSize,
+                maxWidth: 4_000,
+                theme: .fallback,
+                displayMode: inline ? .inline : .document
+            )
+        )
+    }
+
+    /// A drawn piece of the formula with its frame in root coordinates (y down).
+    private struct Leaf {
+        let text: String?
+        let frame: CGRect
+        let isRule: Bool
+    }
+
+    private func leaves(_ tex: String, inline: Bool = false) -> (leaves: [Leaf], root: LayoutBox) {
+        let root = layout(tex, inline: inline).rootBox
+        var result: [Leaf] = []
+        func walk(_ box: LayoutBox, _ origin: CGPoint) {
+            let frame = CGRect(origin: CGPoint(x: origin.x + box.origin.x, y: origin.y + box.origin.y), size: box.size)
+            switch box.content {
+            case .glyph(let text, _):
+                result.append(Leaf(text: text, frame: frame, isRule: false))
+            case .line:
+                result.append(Leaf(text: nil, frame: frame, isRule: true))
+            case .container(let children):
+                for child in children { walk(child, frame.origin) }
+            default:
+                result.append(Leaf(text: nil, frame: frame, isRule: false))
             }
-        case .line:
-            break
         }
-        return result
+        walk(root, .zero)
+        return (result, root)
+    }
+
+    private func leaf(_ text: String, in leaves: [Leaf], sourceLocation: SourceLocation = #_sourceLocation) -> Leaf? {
+        let found = leaves.first { $0.text == text }
+        #expect(found != nil, "no glyph run \(text) in \(leaves.compactMap(\.text))", sourceLocation: sourceLocation)
+        return found
+    }
+
+    /// Alpha of every pixel of the formula drawn with a margin around its box.
+    private struct Raster {
+        static let margin = 24
+        let width: Int
+        let height: Int
+        let alpha: [UInt8]
+        let boxSize: CGSize
+
+        func painted(_ x: Int, _ y: Int) -> Bool { alpha[y * width + x] > 64 }
+
+        /// Painted extent within `columns`, as (minY, maxY), or nil.
+        func rows(inColumns columns: Range<Int>) -> (min: Int, max: Int)? {
+            var low: Int?
+            var high: Int?
+            for y in 0 ..< height {
+                for x in columns where x >= 0 && x < width && painted(x, y) {
+                    low = low ?? y
+                    high = y
+                    break
+                }
+            }
+            guard let low, let high else { return nil }
+            return (low, high)
+        }
+
+        var inkColumns: (min: Int, max: Int)? {
+            var low: Int?
+            var high: Int?
+            for x in 0 ..< width {
+                for y in 0 ..< height where painted(x, y) {
+                    low = low ?? x
+                    high = x
+                    break
+                }
+            }
+            guard let low, let high else { return nil }
+            return (low, high)
+        }
+
+        func columns(inRows rows: ClosedRange<Int>) -> (min: Int, max: Int)? {
+            var low: Int?
+            var high: Int?
+            for x in 0 ..< width {
+                for y in rows where painted(x, y) {
+                    low = low ?? x
+                    high = x
+                    break
+                }
+            }
+            guard let low, let high else { return nil }
+            return (low, high)
+        }
+    }
+
+    private func raster(_ tex: String, inline: Bool = false) throws -> Raster {
+        let result = layout(tex, inline: inline)
+        let size = renderer.boundingBox(result)
+        let width = Int(ceil(size.width)) + 2 * Raster.margin
+        let height = Int(ceil(size.height)) + 2 * Raster.margin
+        let context = try #require(CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        // Draw as UIKit does: y down from the top-left.
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1, y: -1)
+        renderer.draw(result, in: context, at: CGPoint(x: Raster.margin, y: Raster.margin))
+        let pixels = try #require(context.data).bindMemory(to: UInt8.self, capacity: width * height * 4)
+        let alpha = (0 ..< width * height).map { pixels[$0 * 4 + 3] }
+        return Raster(width: width, height: height, alpha: alpha, boxSize: size)
+    }
+
+    // MARK: - Empty input
+
+    @Test func emptyInputProducesZeroSize() {
+        #expect(renderer.boundingBox(layout("")) == .zero)
+    }
+
+    // MARK: - Glyph choice
+
+    /// Variables are italic and the font commands draw their own alphabets,
+    /// not the plain letter (`\mathbb{R}` once drew an ordinary R).
+    @Test(arguments: [
+        ("x", "\u{1D465}"),
+        (#"\mathbb{R}"#, "\u{211D}"),
+        (#"\mathbb{C}"#, "\u{2102}"),
+        (#"\mathbf{E}"#, "\u{1D404}"),
+        (#"\mathcal{L}"#, "\u{2112}"),
+        (#"\mathfrak{J}"#, "\u{1D50D}"),
+        (#"\mathrm{d}"#, "d"),
+        (#"\operatorname{sgn}"#, "sgn"),
+    ])
+    func lettersDrawInTheirMathAlphabet(tex: String, glyph: String) {
+        let drawn = leaves(tex).leaves.compactMap(\.text).joined()
+        #expect(drawn == glyph, "\(tex) drew \(drawn.unicodeScalars.map { String($0.value, radix: 16) })")
+    }
+
+    // MARK: - Fractions
+
+    /// The bar sits on the math axis, a quarter em above the baseline, so a
+    /// fraction centres on the minus sign and stands beside text, not below it.
+    @Test func fractionBarSitsOnTheMathAxis() throws {
+        let (parts, root) = leaves(#"a = \frac{1}{2}"#)
+        let bar = try #require(parts.first(where: { $0.isRule }))
+        let height = root.baseline - bar.frame.midY
+        #expect(height > fontSize * 0.15 && height < fontSize * 0.35, "bar is \(height / fontSize) em above the baseline")
+    }
+
+    @Test func numeratorAboveBarAboveDenominator() throws {
+        let parts = leaves(#"\frac{a}{b}"#).leaves
+        let bar = try #require(parts.first(where: { $0.isRule }))
+        let numerator = try #require(leaf("\u{1D44E}", in: parts))
+        let denominator = try #require(leaf("\u{1D44F}", in: parts))
+        #expect(numerator.frame.maxY < bar.frame.minY)
+        #expect(denominator.frame.minY > bar.frame.maxY)
+    }
+
+    /// Display style keeps a fraction's parts full size; text style shrinks
+    /// them, and `\displaystyle` switches an inline formula to display.
+    @Test func displayStyleSwitchEnlargesAnInlineFraction() {
+        let plain = layout(#"\frac{a}{b}"#, inline: true).rootBox.size.height
+        let switched = layout(#"\displaystyle\frac{a}{b}"#, inline: true).rootBox.size.height
+        let display = layout(#"\frac{a}{b}"#).rootBox.size.height
+        #expect(switched > plain * 1.2)
+        #expect(abs(switched - display) < 1)
+    }
+
+    @Test func binomialStacksWithoutABarInsideParentheses() throws {
+        let parts = leaves(#"\binom{n}{k}"#).leaves
+        #expect(!parts.contains(where: { $0.isRule }))
+        let top = try #require(leaf("\u{1D45B}", in: parts))
+        let bottom = try #require(leaf("\u{1D458}", in: parts))
+        #expect(top.frame.maxY <= bottom.frame.minY)
+        let picture = try raster(#"\binom{n}{k}"#)
+        let stack = try #require(picture.rows(inColumns: 0 ..< picture.width))
+        let left = try #require(picture.rows(inColumns: 0 ..< Raster.margin + Int(fontSize * 0.45)))
+        #expect(Double(left.max - left.min) > Double(stack.max - stack.min) * 0.85, "the parenthesis covers the stack")
+    }
+
+    // MARK: - Scripts and limits
+
+    /// In a line of prose, limits go beside the operator so the line keeps
+    /// its height; display style stacks them.
+    @Test func inlineLimitsGoBesideTheOperator() throws {
+        let tex = #"\sum_{k=1}^{n} k"#
+        let inline = leaves(tex, inline: true)
+        let display = leaves(tex)
+        #expect(inline.root.size.height < display.root.size.height * 0.8)
+        let sum = try #require(leaf("\u{2211}", in: inline.leaves))
+        let upper = try #require(leaf("\u{1D45B}", in: inline.leaves))
+        #expect(upper.frame.minX >= sum.frame.maxX - 0.5)
+    }
+
+    /// Function names take scripts beside them, in display style too:
+    /// `\cos^2` is a power, `\log_b` a base.
+    @Test(arguments: [(#"\cos^2\theta"#, "cos", "2"), (#"\log_b x"#, "log", "\u{1D44F}")])
+    func functionNamesTakeScriptsBeside(tex: String, name: String, script: String) throws {
+        let parts = leaves(tex).leaves
+        let operatorName = try #require(leaf(name, in: parts))
+        let attached = try #require(leaf(script, in: parts))
+        #expect(attached.frame.minX >= operatorName.frame.maxX - 0.5)
+    }
+
+    /// Exponents on function names line up: the dot of the i in `sin` does
+    /// not lift its exponent above `cos`'s.
+    @Test func functionNameExponentsShareAHeight() throws {
+        let sine = try #require(leaf("2", in: leaves(#"\sin^2"#).leaves))
+        let cosine = try #require(leaf("2", in: leaves(#"\cos^2"#).leaves))
+        let sineRoot = leaves(#"\sin^2"#).root
+        let cosineRoot = leaves(#"\cos^2"#).root
+        let sineRise = sineRoot.baseline - sine.frame.maxY
+        let cosineRise = cosineRoot.baseline - cosine.frame.maxY
+        #expect(abs(sineRise - cosineRise) < 0.5, "sin² rises \(sineRise), cos² \(cosineRise)")
+    }
+
+    // MARK: - Spacing
+
+    /// TeX spacing: a leading minus binds to its operand, a binary minus is
+    /// spaced, and a comma has a thin space after it.
+    @Test func spacingFollowsAtomClasses() throws {
+        let unary = leaves("(-b)").leaves
+        let unaryMinus = try #require(leaf("\u{2212}", in: unary))
+        let operand = try #require(leaf("\u{1D44F}", in: unary))
+        #expect(operand.frame.minX - unaryMinus.frame.maxX < fontSize * 0.05)
+
+        let binary = leaves("a-b").leaves
+        let left = try #require(leaf("\u{1D44E}", in: binary))
+        let minus = try #require(leaf("\u{2212}", in: binary))
+        #expect(minus.frame.minX - left.frame.maxX > fontSize * 0.15)
+
+        let list = leaves("a,b").leaves
+        let comma = try #require(leaf(",", in: list))
+        let next = try #require(leaf("\u{1D44F}", in: list))
+        #expect(next.frame.minX - comma.frame.maxX > fontSize * 0.12)
+    }
+
+    // MARK: - Delimiters and radicals
+
+    /// Stretchy delimiters, radicals and the cases brace grow to cover what
+    /// they enclose instead of staying one line tall.
+    @Test(arguments: [
+        #"\left(\frac{a}{b}\right)"#,
+        #"\begin{pmatrix}1\\2\\3\end{pmatrix}"#,
+        #"\begin{bmatrix}1\\2\\3\\4\end{bmatrix}"#,
+        #"\begin{cases}1 & a\\2 & b\\3 & c\end{cases}"#,
+    ])
+    func leftEdgeCoversTheContent(tex: String) throws {
+        let picture = try raster(tex)
+        let all = try #require(picture.rows(inColumns: 0 ..< picture.width))
+        let edge = try #require(picture.rows(inColumns: 0 ..< Raster.margin + Int(fontSize * 0.45)))
+        let covered = Double(edge.max - edge.min) / Double(all.max - all.min)
+        #expect(covered > 0.85, "\(tex): left edge spans \(covered) of the formula")
+    }
+
+    /// The radical sign reaches from below the radicand up to its bar.
+    @Test func radicalSignCoversATallRadicand() throws {
+        let tex = #"\sqrt{\frac{a}{\frac{b}{c}}}"#
+        let bar = try #require(leaves(tex).leaves.filter { $0.isRule }.min { $0.frame.minY < $1.frame.minY })
+        let picture = try raster(tex)
+        let all = try #require(picture.rows(inColumns: 0 ..< picture.width))
+        let sign = try #require(picture.rows(inColumns: 0 ..< Raster.margin + Int(bar.frame.minX)))
+        let covered = Double(sign.max - sign.min) / Double(all.max - all.min)
+        #expect(covered > 0.85, "the sign spans \(covered) of the formula")
+    }
+
+    @Test func sizedDelimitersGrowWithTheirCommand() throws {
+        let plain = try #require(try raster("[x").rows(inColumns: 0 ..< Raster.margin + Int(fontSize * 0.3)))
+        let big = try #require(try raster(#"\Big[x"#).rows(inColumns: 0 ..< Raster.margin + Int(fontSize * 0.3)))
+        #expect(Double(big.max - big.min) > Double(plain.max - plain.min) * 1.4)
+    }
+
+    // MARK: - Accents and bars
+
+    @Test func overlineSpansItsWholeBase() throws {
+        let parts = leaves(#"\overline{x_2}"#).leaves
+        let bar = try #require(parts.first(where: { $0.isRule }))
+        let base = parts.filter { $0.text != nil }.map(\.frame).reduce(CGRect.null) { $0.union($1) }
+        #expect(bar.frame.width >= base.width * 0.9)
+        #expect(bar.frame.maxY <= base.minY)
+    }
+
+    /// The accent's ink centres over its base's ink (the hat on f once
+    /// floated off to the left).
+    @Test(arguments: [#"\hat{f}"#, #"\hat{x}"#, #"\vec{a}"#, #"\tilde{d}"#, #"\hat{H}"#])
+    func accentCentresOverItsBase(tex: String) throws {
+        let picture = try raster(tex)
+        let rows = try #require(picture.rows(inColumns: 0 ..< picture.width))
+        // The first blank row below the accent separates it from the base.
+        var gap = rows.min
+        while gap <= rows.max, picture.columns(inRows: gap ... gap) != nil { gap += 1 }
+        try #require(gap < rows.max, "\(tex): accent and base touch")
+        let accent = try #require(picture.columns(inRows: rows.min ... gap))
+        // Compare with the base's top, where the accent attaches: an italic
+        // letter's foot sits left of its head.
+        var baseTop = gap
+        while baseTop < rows.max, picture.columns(inRows: baseTop ... baseTop) == nil { baseTop += 1 }
+        let base = try #require(picture.columns(inRows: baseTop ... baseTop + (rows.max - baseTop) / 3))
+        let offset = abs(Double(accent.min + accent.max) / 2 - Double(base.min + base.max) / 2)
+        #expect(offset < Double(fontSize) * 0.15, "\(tex): accent is \(offset) px off centre")
+        // And it sits just above the base rather than floating over it.
+        let lift = baseTop - gap
+        #expect(Double(lift) < Double(fontSize) * 0.2, "\(tex): accent floats \(lift) px above its base")
+    }
+
+    // MARK: - Canvas
+
+    /// Every drawn pixel is inside the formula's box, so a raster of that
+    /// size never clips an italic overhang, an accent or an integral.
+    @Test(arguments: ["f", #"\int_0^1 f\,dx"#, #"\hat{f}(\xi)"#, #"\left(\frac{1}{2}\right)^n"#, #"\sqrt[3]{x}"#])
+    func drawingStaysInsideTheBox(tex: String) throws {
+        let picture = try raster(tex)
+        let columns = try #require(picture.inkColumns)
+        let rows = try #require(picture.rows(inColumns: 0 ..< picture.width))
+        let margin = Raster.margin
+        #expect(columns.min >= margin - 1 && columns.max <= margin + Int(ceil(picture.boxSize.width)))
+        #expect(rows.min >= margin - 1 && rows.max <= margin + Int(ceil(picture.boxSize.height)))
     }
 }

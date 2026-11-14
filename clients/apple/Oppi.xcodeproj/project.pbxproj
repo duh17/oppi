@@ -565,6 +565,7 @@
 		3CFFB9982C97E7EA88491C25 /* ScheduleCalendarDayViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E292FD08E5380D0EF792708 /* ScheduleCalendarDayViewController.swift */; };
 		3D12BA89218E8E72F1EF2C18 /* TailnetTransportRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03321A1C350C49D0786BBFCA /* TailnetTransportRoute.swift */; };
 		3D3C2244288E4EAC61FD103A /* AskCardIntentRegressionPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 445A1D71C288BE351BED1D8C /* AskCardIntentRegressionPreview.swift */; };
+		3DA462B9C0B3D8A40CACBBA9 /* MathFont.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48367E91D499FED33BFEB6A6 /* MathFont.swift */; };
 		3DD7540430444AE5628E2D29 /* TelemetryCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06BED5B0F53D9FAAFC4342E3 /* TelemetryCapture.swift */; };
 		3DDAE9B112AE7FF725648021 /* FileBrowserReviewCommentSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DB3DA547F5A170F783887D0 /* FileBrowserReviewCommentSelectionTests.swift */; };
 		3DE29F2447BAF33A0D6373E2 /* ChatReaderPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27731F77EBDBCABAA85B05EB /* ChatReaderPayload.swift */; };
@@ -688,6 +689,7 @@
 		4A9B75F6751FB350A09918A1 /* TimelineReducerToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C7153BAC2F728C87542A18B /* TimelineReducerToolTests.swift */; };
 		4AB68B68E97034473D3DD9C1 /* PairedDevicesE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AADA3A05DBB7D2FA6D1BA846 /* PairedDevicesE2ETests.swift */; };
 		4ABDE5378622D815582B9729 /* OppiClientEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F3C89992F5DCEE3EC870931 /* OppiClientEnvironment.swift */; };
+		4AD9D44479ABC8E2128937C2 /* MathFont.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48367E91D499FED33BFEB6A6 /* MathFont.swift */; };
 		4B2A3E0A4EE8D39A2F2B46F0 /* FullScreenViewingOptionsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC605FC77BEFD4B5626A0EE9 /* FullScreenViewingOptionsController.swift */; };
 		4B4EC8E539A0FA24F410C6B0 /* DeviceAuthSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24F80637EB2D077A3410259D /* DeviceAuthSession.swift */; };
 		4B5EF0C312A4C1013451E779 /* SSHTerminalAgentDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943E8A11B1E33EA9AACAEEA0 /* SSHTerminalAgentDetection.swift */; };
@@ -697,6 +699,7 @@
 		4B8A87A73669125E056CE852 /* UsageModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A9B1A4E74ECBDD0EA605DF /* UsageModel.swift */; };
 		4B99D80B20729EB480A24E44 /* SSHTerminalHostPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 436E6B3957684C7E42DE77A2 /* SSHTerminalHostPresentation.swift */; };
 		4BA4A29538CB268960336E2A /* OrgListNestingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E453F12687870B5454218D76 /* OrgListNestingTests.swift */; };
+		4BF8B595FB1F1FAF6D8690E6 /* MathFont.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48367E91D499FED33BFEB6A6 /* MathFont.swift */; };
 		4C1034D8699222893E905E3F /* FrameHitchCounter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67681B68112C4CD4EB3E12A /* FrameHitchCounter.swift */; };
 		4C305F7DEAC45CB6FE31DCA6 /* PhotoLibraryPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0067E7B6EEFC7F5172C71D2B /* PhotoLibraryPicker.swift */; };
 		4C42E10BFDD7182B0826DDE9 /* MermaidJourneyParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA6B8D5B1CE933B1C98D0411 /* MermaidJourneyParser.swift */; };
@@ -3006,6 +3009,7 @@
 		47AF617293D232F93CF46BAC /* UsageViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageViewController.swift; sourceTree = "<group>"; };
 		47C927545EBA9D68C236E399 /* APIClient+Agents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "APIClient+Agents.swift"; sourceTree = "<group>"; };
 		4824D3A8A29E0738CD117E04 /* ToolRowTextRenderStrategy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowTextRenderStrategy.swift; sourceTree = "<group>"; };
+		48367E91D499FED33BFEB6A6 /* MathFont.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathFont.swift; sourceTree = "<group>"; };
 		483FFB3B4ABEADE2DE22AC02 /* SessionHistoryE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionHistoryE2ETests.swift; sourceTree = "<group>"; };
 		484DDEDB4C0264C7228B3B0D /* ReaderFindSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderFindSession.swift; sourceTree = "<group>"; };
 		48593C3AB84986543D919F02 /* EPUBBookFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBBookFixture.swift; sourceTree = "<group>"; };
@@ -5886,6 +5890,7 @@
 			isa = PBXGroup;
 			children = (
 				B7B4CAE2A5865A269549911F /* MathCoreGraphicsRenderer.swift */,
+				48367E91D499FED33BFEB6A6 /* MathFont.swift */,
 				D3A8E514C47C3ACC89952835 /* MathLayoutEngine.swift */,
 				25711154EFC224B8FE7389BE /* MathNode.swift */,
 				EEF14619D93642F1C82BC9D9 /* MathSymbolTable.swift */,
@@ -8556,6 +8561,7 @@
 				A13B94D7783903030AA5288F /* DocumentRenderer.swift in Sources */,
 				F4F533083C2C874C27D3CB05 /* LiveActivityPresentation.swift in Sources */,
 				D187F8501EE4C723D776DB09 /* MathCoreGraphicsRenderer.swift in Sources */,
+				4BF8B595FB1F1FAF6D8690E6 /* MathFont.swift in Sources */,
 				38A67A6F57D6781A68B1B234 /* MathLayoutEngine.swift in Sources */,
 				DFC3F1DA65F3CC0ECC873E9A /* MathNode.swift in Sources */,
 				EB04F096C18A866CD7C9C110 /* MathSymbolTable.swift in Sources */,
@@ -8694,6 +8700,7 @@
 				97E394F134B78E8D6F107ACC /* DocumentRenderer.swift in Sources */,
 				E40301E04E036B44B35BA935 /* LiveActivityPresentation.swift in Sources */,
 				41DDD7385EFEE2D9BDFEE607 /* MathCoreGraphicsRenderer.swift in Sources */,
+				3DA462B9C0B3D8A40CACBBA9 /* MathFont.swift in Sources */,
 				89C7DA3767DE73CAF5BD166B /* MathLayoutEngine.swift in Sources */,
 				7506D9C50ABFEDCC020571EA /* MathNode.swift in Sources */,
 				283AC16F11C68ABC91CF7964 /* MathSymbolTable.swift in Sources */,
@@ -10012,6 +10019,7 @@
 				851FA6040F37B5B96C6F6EDC /* MarkdownWikiLinkParserInput.swift in Sources */,
 				9E64D682A1FD5415B1F1E22D /* MathCoreGraphicsRenderer.swift in Sources */,
 				7F6AA25E960C176AC4704658 /* MathDelimiterRules.swift in Sources */,
+				4AD9D44479ABC8E2128937C2 /* MathFont.swift in Sources */,
 				7D9A1EF0779C07EFB2C66A26 /* MathLayoutEngine.swift in Sources */,
 				523F82C3F01145660545C389 /* MathNode.swift in Sources */,
 				AAB1B25C19575A162A0F403D /* MathSymbolTable.swift in Sources */,

@@ -309,19 +309,19 @@ struct TeXMathParserConformanceTests {
 
     @Test func manualSizedDelimitersAndIff() {
         #expect(parser.parse(#"\bigl(x\bigr)"#) == [
-            .variable("("), .variable("x"), .variable(")"),
+            .sizedDelimiter(.paren, size: 1), .variable("x"), .sizedDelimiter(.closeParen, size: 1),
         ])
         #expect(parser.parse(#"\lvert x \rvert"#) == [
             .variable("|"), .variable("x"), .variable("|"),
         ])
-        #expect(parser.parse(#"\bigl\{x\bigr\}"#) == [
-            .variable("{"), .variable("x"), .variable("}"),
+        #expect(parser.parse(#"\Bigl\{x\Bigr\}"#) == [
+            .sizedDelimiter(.brace, size: 2), .variable("x"), .sizedDelimiter(.closeBrace, size: 2),
         ])
-        #expect(parser.parse(#"\bigl\langle x \bigr\rangle"#) == [
-            .variable("\u{27E8}"), .variable("x"), .variable("\u{27E9}"),
+        #expect(parser.parse(#"\biggl\langle x \biggr\rangle"#) == [
+            .sizedDelimiter(.angle, size: 3), .variable("x"), .sizedDelimiter(.closeAngle, size: 3),
         ])
-        #expect(parser.parse(#"\bigl\|x\bigr\|"#) == [
-            .variable("\u{2016}"), .variable("x"), .variable("\u{2016}"),
+        #expect(parser.parse(#"\Biggl\|x\Biggr\|"#) == [
+            .sizedDelimiter(.doublePipe, size: 4), .variable("x"), .sizedDelimiter(.doublePipe, size: 4),
         ])
         #expect(parser.parse(#"a \iff b"#) == [
             .variable("a"), .operator(.iff), .variable("b"),
@@ -794,6 +794,39 @@ struct TeXMathParserConformanceTests {
             .variable("x"),
             .operator(.equal),
             .sqrt(index: nil, radicand: [.symbol(.pi)]),
+        ])
+    }
+
+    // MARK: - Styles and binomials
+
+    /// A style switch restyles the rest of its group, not what follows the group.
+    @Test func styleSwitchCoversTheRestOfItsGroup() {
+        #expect(parser.parse(#"a {\displaystyle b c} d"#) == [
+            .variable("a"),
+            .style(.display, body: [.variable("b"), .variable("c")]),
+            .variable("d"),
+        ])
+    }
+
+    @Test func styleSwitchInAMatrixCellEndsAtTheCell() {
+        #expect(parser.parse(#"\begin{matrix}\displaystyle a & b\end{matrix}"#) == [
+            .matrix(rows: [[[.style(.display, body: [.variable("a")])], [.variable("b")]]], style: .plain),
+        ])
+    }
+
+    @Test func styledFractionsAndBinomials() {
+        let half: MathNode = .fraction(numerator: [.number("1")], denominator: [.number("2")])
+        #expect(parser.parse(#"\dfrac{1}{2}"#) == [.style(.display, body: [half])])
+        #expect(parser.parse(#"\tfrac{1}{2}"#) == [.style(.text, body: [half])])
+        #expect(parser.parse(#"\binom{n}{k}"#) == [.binomial(top: [.variable("n")], bottom: [.variable("k")])])
+        #expect(parser.parse(#"\dbinom{n}{k}"#) == [
+            .style(.display, body: [.binomial(top: [.variable("n")], bottom: [.variable("k")])]),
+        ])
+    }
+
+    @Test func midAndProptoAreRelations() {
+        #expect(parser.parse(#"a \mid b \propto c"#) == [
+            .variable("a"), .operator(.mid), .variable("b"), .operator(.propto), .variable("c"),
         ])
     }
 }

@@ -4676,44 +4676,111 @@ struct NativeLatexBlockViewTests {
         ))
     }
 
-    @Test func formulaRerendersWhenContentSizeCategoryChanges() async throws {
-        let controller = UIViewController()
-        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 500))
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+    /// The reader's text size reaches display math: a larger scale renders
+    /// a larger formula, not the same image again.
+    @Test func formulaRerendersAtTheReaderTextScale() throws {
         let view = NativeLatexBlockView()
-        view.translatesAutoresizingMaskIntoConstraints = false
-        controller.view.addSubview(view)
-        NSLayoutConstraint.activate([
-            view.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor),
-            view.trailingAnchor.constraint(equalTo: controller.view.trailingAnchor),
-            view.topAnchor.constraint(equalTo: controller.view.topAnchor),
-        ])
-        controller.view.frame = window.bounds
-        controller.view.layoutIfNeeded()
-        view.applyAsFormulaSync(code: #"\frac{1}{2}"#, palette: ThemeID.dark.palette)
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 200)
+        view.applyAsFormulaSync(code: #"\frac{1}{2}"#, palette: ThemeID.dark.palette, availableWidth: 320)
+        let standard = try #require(view.debugFormulaImageForTesting?.size.height)
+        view.applyAsFormulaSync(code: #"\frac{1}{2}"#, palette: ThemeID.dark.palette, availableWidth: 320, textScale: 1.32)
+        let large = try #require(view.debugFormulaImageForTesting?.size.height)
+        #expect(large > standard * 1.25)
+    }
+
+    /// Display math sits on the page's background, not on a card of its own.
+    @Test func displayedFormulaHasNoCardBehindIt() throws {
+        let view = NativeLatexBlockView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 200)
+        view.applyAsFormulaSync(code: #"x^2 + y^2 = r^2"#, palette: ThemeID.dark.palette, availableWidth: 320)
         view.layoutIfNeeded()
-        let initialHeight = try #require(timelineAllImageViews(in: view).first {
-            timelineViewIsVisible($0) && $0.isUserInteractionEnabled && $0.image != nil
-        }?.image?.size.height)
-
-        let previousTraits = view.traitCollection
-        controller.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
-        controller.view.layoutIfNeeded()
-        #expect(view.traitCollection.preferredContentSizeCategory == .accessibilityExtraExtraExtraLarge)
-        // Reapplying the same source proves content-size category participates
-        // in render identity; the trait callback uses this same path in production.
-        view.applyAsFormula(code: #"\frac{1}{2}"#, palette: ThemeID.dark.palette)
-        view.traitCollectionDidChange(previousTraits)
-        let rerendered = await waitForTimelineCondition(timeoutMs: 1_800) { @MainActor in
-            controller.view.layoutIfNeeded()
-            return (timelineAllImageViews(in: view).first {
-                timelineViewIsVisible($0) && $0.isUserInteractionEnabled && $0.image != nil
-            }?.image?.size.height ?? 0) > initialHeight + 4
+        #expect(view.debugIsShowingFormulaForTesting)
+        var filled: [UIView] = []
+        func collect(_ current: UIView) {
+            if let color = current.backgroundColor, color.cgColor.alpha > 0 { filled.append(current) }
+            current.subviews.forEach(collect)
         }
+        collect(view)
+        #expect(filled.isEmpty, "filled views: \(filled)")
+    }
 
-        #expect(rerendered)
+    /// Inline math matches the prose it sits in: its x-height is the body
+    /// font's, not a smaller serif's.
+    @Test func inlineFormulaMatchesTheBodyXHeight() throws {
+        let font = UIFont.systemFont(ofSize: 17)
+        let formula = try #require(MarkdownInlineRenderer.formulaAttachment(
+            latex: "x",
+            font: font,
+            theme: ThemeID.dark.palette.renderTheme
+        ))
+        let image = try #require(formula.image?.cgImage)
+        // The image is the letter plus a thin margin: its ink is the x-height.
+        let scale = CGFloat(image.height) / formula.bounds.height
+        let ink = try #require(inkRowCount(of: image))
+        let xHeight = CGFloat(ink) / scale
+        #expect(abs(xHeight - font.xHeight) < font.xHeight * 0.1, "x is \(xHeight) pt, body x-height \(font.xHeight) pt")
+    }
+
+    /// The reader's text size reaches inline math too: a formula in prose is
+    /// drawn again at the scaled size rather than left at the chat size.
+    @Test func inlineFormulaFollowsTheReaderTextScale() throws {
+        func formulaHeight(scale: CGFloat?) throws -> CGFloat {
+            let config = AssistantMarkdownContentView.Configuration.make(
+                content: #"Area $\pi r^2$ here."#,
+                isStreaming: false,
+                themeID: .dark,
+                readerPreferences: scale.map { FullScreenReaderPreferences(textScale: $0, wrapsText: false) }
+            )
+            let built = FlatSegment.build(from: parseCommonMark(config.content), themeID: .dark)
+            let segments = AssistantMarkdownSegmentSource.applyReaderPreferences(to: built, config: config)
+            guard case .text(let text) = try #require(segments.first) else { throw CancellationError() }
+            let attributed = NSAttributedString(text)
+            var height: CGFloat?
+            attributed.enumerateAttribute(.attachment, in: NSRange(location: 0, length: attributed.length)) { value, _, _ in
+                if let formula = value as? InlineLatexTextAttachment { height = formula.bounds.height }
+            }
+            return try #require(height)
+        }
+        let standard = try formulaHeight(scale: nil)
+        let large = try formulaHeight(scale: 1.32)
+        #expect(large > standard * 1.25, "standard \(standard), large \(large)")
+    }
+
+    private func inkRowCount(of image: CGImage) -> Int? {
+        let width = image.width
+        let height = image.height
+        guard let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data?.bindMemory(to: UInt8.self, capacity: width * height * 4) else { return nil }
+        let rows = (0 ..< height).filter { y in (0 ..< width).contains { data[(y * width + $0) * 4 + 3] > 128 } }
+        guard let first = rows.first, let last = rows.last else { return nil }
+        return last - first + 1
+    }
+
+    /// An inline formula wider than the line cannot wrap; it shrinks to the
+    /// line instead of running past the text's edge.
+    @Test func inlineFormulaWiderThanTheLineFitsIt() throws {
+        let markdown = #"Greek: $\alpha, \beta, \gamma, \delta, \epsilon, \zeta, \eta, \theta, \iota, \kappa, \lambda, \mu, \nu, \xi, \pi, \rho$ end."#
+        let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
+        guard case .text(let attributed) = try #require(segments.first) else {
+            Issue.record("Expected inline attributed text")
+            return
+        }
+        let textView = UITextView(frame: CGRect(x: 0, y: 0, width: 240, height: 400))
+        textView.textContainerInset = .zero
+        textView.attributedText = NSAttributedString(attributed)
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
+        let storage = textView.textStorage
+        let index = try #require((0 ..< storage.length).first {
+            storage.attribute(.attachment, at: $0, effectiveRange: nil) is InlineLatexTextAttachment
+        })
+        let glyphs = textView.layoutManager.glyphRange(forCharacterRange: NSRange(location: index, length: 1), actualCharacterRange: nil)
+        let rect = textView.layoutManager.boundingRect(forGlyphRange: glyphs, in: textView.textContainer)
+        #expect(rect.maxX <= textView.textContainer.size.width + 0.5, "formula ends at \(rect.maxX)")
+        #expect(rect.width > 100)
     }
 
     /// Characterization: this containment already passed before the display
@@ -4794,15 +4861,19 @@ struct NativeLatexBlockViewTests {
         let layout = try #require(DocumentRenderPipeline.layoutLatexGraphical(
             text: code,
             config: RenderConfiguration(
-                fontSize: NativeLatexBlockView.displayFormulaFontSize(
-                    compatibleWith: view.traitCollection
-                ),
+                fontSize: NativeLatexBlockView.displayFormulaFontSize(),
                 maxWidth: availableWidth,
                 theme: ThemeRuntimeState.currentRenderTheme(),
                 displayMode: .document
             )
         ))
-        let expectedHeight = min(max(layout.size.height, 44), 400)
+        let expectedHeight = min(
+            NativeLatexBlockView.canvasHeight(
+                forNaturalHeight: layout.size.height,
+                fontSize: NativeLatexBlockView.displayFormulaFontSize()
+            ),
+            400
+        )
         #expect(expectedHeight > 1)
 
         view.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
@@ -4833,9 +4904,7 @@ struct NativeLatexBlockViewTests {
         let availableWidth: CGFloat = 320
         let palette = ThemeID.dark.palette
         let config = RenderConfiguration(
-            fontSize: NativeLatexBlockView.displayFormulaFontSize(
-                compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
-            ),
+            fontSize: NativeLatexBlockView.displayFormulaFontSize(),
             maxWidth: availableWidth,
             theme: ThemeRuntimeState.currentRenderTheme(),
             displayMode: .document

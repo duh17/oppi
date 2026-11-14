@@ -22,7 +22,7 @@ export const MOBILE_OUTPUT_GUIDE = [
   "- Session link: [label](oppi://session/<full-session-id>).",
   "- ```mermaid renders only flowchart/graph, sequence, class, state, ER, gantt, pie, timeline, mindmap, xychart, journey, quadrantChart, gitGraph, sankey, and kanban.",
   "- ```geojson or ```topojson renders an interactive map.",
-  "- Inline and display math render. Use aligned, cases, or matrices; align, \\color, \\textcolor, and \\dfrac show as source.",
+  "- Inline and display math render. Use aligned, cases, or matrices; align, \\color, and \\textcolor show as source.",
   "- No footnotes, callouts, or raw HTML; they show as text.",
   "- Linked CSV, HTML, Org, .mmd, GeoJSON, and PDF files open in rendered viewers.",
   "- Never link, embed, or quote secrets, credentials, or private runtime state.",

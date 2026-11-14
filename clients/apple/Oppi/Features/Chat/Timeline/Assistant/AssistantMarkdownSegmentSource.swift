@@ -700,6 +700,13 @@ final class AssistantMarkdownSegmentSource {
                 ?? NSMutableParagraphStyle()
             paragraph.lineSpacing = lineSpacing
             mutable.addAttribute(.paragraphStyle, value: paragraph, range: range)
+
+            // An inline formula is an image: draw it again at the text's new size.
+            if abs(scale - 1) > 0.001,
+               let formula = attributes[.attachment] as? InlineLatexTextAttachment,
+               let scaled = formula.scaled(by: scale) {
+                mutable.addAttribute(.attachment, value: scaled, range: range)
+            }
         }
 
         return AttributedString(mutable)

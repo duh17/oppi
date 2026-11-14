@@ -14,9 +14,10 @@ enum TeXMathLimits {
 /// 2. Parser consumes tokens recursively, building the AST
 /// 3. Malformed input produces partial results — never crashes
 ///
-/// Supports Phase 1 KaTeX commands: variables, numbers, operators, relations,
-/// fractions, sub/superscripts, Greek letters, delimiters, roots, text,
-/// big operators, matrices, cases, accents, fonts, spaces.
+/// Supports the common KaTeX subset: variables, numbers, operators, relations,
+/// fractions and binomials, sub/superscripts, Greek letters, delimiters (sized
+/// and stretchy), roots, text, big operators, matrices, cases, aligned,
+/// accents, fonts, spaces and the style switches (\displaystyle …).
 struct TeXMathParser: DocumentParser, Sendable {
     nonisolated func parse(_ source: String) -> [MathNode] {
         parseValidated(source).nodes
@@ -214,6 +215,14 @@ private enum TeXMathValidator {
                     validateArguments(
                         command: command,
                         count: 1,
+                        source: source,
+                        after: commandEnd,
+                        append: append
+                    )
+                } else if twoArgumentExtraCommands.contains(command) {
+                    validateArguments(
+                        command: command,
+                        count: 2,
                         source: source,
                         after: commandEnd,
                         append: append
@@ -577,13 +586,21 @@ private enum TeXMathValidator {
         MatrixStyle(rawValue: name) != nil || rowEnvironments.contains(name)
     }
 
-    /// Commands used by the markdown stress fixture that the renderer can
-    /// accept without adding a second math engine. `\mid` is a relation,
-    /// `\boxed` wraps one argument, `\operatorname*` is an upright name,
-    /// and `\xrightarrow`/`\xleftarrow` reuse big-operator limit layout.
+    /// \dfrac, \tfrac and \cfrac are a fraction in a fixed style; the
+    /// binomials are a bar-less stack in parentheses.
+    private static let twoArgumentExtraCommands: Set<String> = [
+        "dfrac", "tfrac", "cfrac", "binom", "dbinom", "tbinom",
+    ]
+
+    /// Commands the parser builds from existing nodes rather than the symbol
+    /// table: `\boxed` wraps one argument, `\operatorname*` is an upright
+    /// name, `\xrightarrow`/`\xleftarrow` reuse big-operator limit layout,
+    /// and the style switches restyle the rest of their list.
     private static func isSupportedExtraCommand(_ name: String) -> Bool {
-        name == "mid" || name == "boxed" || name == "operatorname"
+        name == "boxed" || name == "operatorname"
             || name == "xrightarrow" || name == "xleftarrow"
+            || twoArgumentExtraCommands.contains(name)
+            || MathStyleKind(rawValue: name) != nil
     }
 }
 
@@ -738,6 +755,12 @@ private struct ParserState {
         var nodes: [MathNode] = []
         while let tok = peek() {
             if stop(tok) { break }
+            // A style switch applies to the rest of this list, up to its stop.
+            if case .command(let name) = tok, let kind = MathStyleKind(rawValue: name) {
+                pos += 1
+                nodes.append(.style(kind, body: parseNodeList(until: stop)))
+                break
+            }
             let before = pos
             if let node = parseAtom() {
                 let result = attachScripts(base: node)
@@ -882,10 +905,10 @@ private struct ParserState {
             // Stray \right without matching \left — return delimiter literal
             return parseStrayRight()
 
-        case .sizedDelimiter:
-            // Manual sizing aliases (\bigl, \Bigr, ...). Consume the next
-            // delimiter and paint it as a literal. Do not pair with a mate.
-            return parseSizedDelimiter()
+        case .sizedDelimiter(let size):
+            // Manual sizing (\bigl, \Bigr, ...): the next delimiter at a fixed
+            // size. It does not pair with a mate.
+            return parseSizedDelimiter(size: size)
 
         case .begin:
             return parseEnvironment()
@@ -901,9 +924,21 @@ private struct ParserState {
     /// Keep rendering on existing AST cases so layout stays unchanged.
     mutating func parseExtraCommand(_ name: String) -> MathNode? {
         switch name {
-        case "mid":
+        case "dfrac", "cfrac":
             pos += 1
-            return .variable("|")
+            return .style(.display, body: [parseFraction()])
+        case "tfrac":
+            pos += 1
+            return .style(.text, body: [parseFraction()])
+        case "binom":
+            pos += 1
+            return parseBinomial()
+        case "dbinom":
+            pos += 1
+            return .style(.display, body: [parseBinomial()])
+        case "tbinom":
+            pos += 1
+            return .style(.text, body: [parseBinomial()])
         case "boxed":
             pos += 1
             return .group(parseBraceArg())
@@ -1033,6 +1068,12 @@ private struct ParserState {
         return .fraction(numerator: numerator, denominator: denominator)
     }
 
+    mutating func parseBinomial() -> MathNode {
+        let top = parseBraceArg()
+        let bottom = parseBraceArg()
+        return .binomial(top: top, bottom: bottom)
+    }
+
     // MARK: Square Root
 
     mutating func parseSqrt() -> MathNode {
@@ -1091,11 +1132,11 @@ private struct ParserState {
         return literalDelimiter(del)
     }
 
-    mutating func parseSizedDelimiter() -> MathNode? {
+    mutating func parseSizedDelimiter(size: Int) -> MathNode? {
         let del = parseDelimiter()
         // \bigl. is an invisible delimiter — emit nothing.
         guard del != .none else { return nil }
-        return literalDelimiter(del)
+        return .sizedDelimiter(del, size: size)
     }
 
     mutating func parseDelimiter() -> Delimiter {
@@ -1197,25 +1238,15 @@ private struct ParserState {
         var currentRow: [[MathNode]] = []
         var currentCell: [MathNode] = []
 
-        while !atEnd {
-            guard let tok = peek() else { break }
+        func isCellEnd(_ token: Token) -> Bool {
+            if case .command("end") = token { return true }
+            return token == .ampersand || token == .doubleBslash
+        }
 
-            // Check for \end{name}
-            if case .command("end") = tok {
-                let saved = pos
-                pos += 1
-                let endEnvName = parseBraceText()
-                if endEnvName == endName {
-                    // Found matching \end — finalize
-                    if !currentCell.isEmpty || !currentRow.isEmpty {
-                        currentRow.append(currentCell)
-                        rows.append(currentRow)
-                    }
-                    return rows
-                }
-                // Not our \end — restore and continue
-                pos = saved
-            }
+        while !atEnd {
+            // A cell is a node list, so a \displaystyle in it ends at the cell.
+            currentCell += parseNodeList(until: isCellEnd)
+            guard let tok = peek() else { break }
 
             if tok == .ampersand {
                 pos += 1
@@ -1227,12 +1258,16 @@ private struct ParserState {
                 rows.append(currentRow)
                 currentRow = []
                 currentCell = []
-            } else if let node = parseAtom() {
-                let result = attachScripts(base: node)
-                currentCell.append(result)
             } else {
-                // Skip unparseable token
+                // \end: ours finishes the grid; a stray one is skipped.
                 pos += 1
+                if parseBraceText() == endName {
+                    if !currentCell.isEmpty || !currentRow.isEmpty {
+                        currentRow.append(currentCell)
+                        rows.append(currentRow)
+                    }
+                    return rows
+                }
             }
         }
 
