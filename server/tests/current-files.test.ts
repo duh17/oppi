@@ -514,7 +514,7 @@ describe("browse size caps", () => {
       expect({ path, status: whole.statusCode, body: JSON.parse(whole.text()) }).toEqual({
         path,
         status: 413,
-        body: { error: "File too large (max 10MB)" },
+        body: { error: "File too large (max 100MB)" },
       });
 
       const head = await request(fixture, "HEAD", search(path));
@@ -526,18 +526,18 @@ describe("browse size caps", () => {
       expect(head.body.length).toBe(0);
     }
 
-    // A download reads from the first byte to the end: every byte, as a 206.
-    const download = await request(fixture, "GET", search(archive), { range: "bytes=0-" });
+    // A ranged read streams, so no cap applies: a download resuming near the end.
+    const download = await request(fixture, "GET", search(archive), {
+      range: `bytes=${size - 16}-`,
+    });
     expect({
       status: download.statusCode,
       range: download.headers["Content-Range"],
-      length: download.headers["Content-Length"],
       received: download.body.length,
     }).toEqual({
       status: 206,
-      range: `bytes 0-${size - 1}/${size}`,
-      length: String(size),
-      received: size,
+      range: `bytes ${size - 16}-${size - 1}/${size}`,
+      received: 16,
     });
   });
 

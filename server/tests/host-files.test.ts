@@ -8,6 +8,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  truncateSync,
   writeFileSync,
   existsSync,
 } from "node:fs";
@@ -481,7 +482,8 @@ describe("GET/HEAD /files/current host and control-session origins", () => {
     const textPath = join(root, "notes.txt");
     writeFileSync(textPath, "0123456789", "utf8");
     const hugePath = join(root, "huge.txt");
-    writeFileSync(hugePath, Buffer.alloc(MAX_BROWSE_TEXT_FILE_SIZE + 1, 0x61));
+    writeFileSync(hugePath, "");
+    truncateSync(hugePath, MAX_BROWSE_TEXT_FILE_SIZE + 1);
     const imagePath = join(root, "huge.png");
     writeFileSync(imagePath, Buffer.alloc(MAX_BROWSE_IMAGE_FILE_SIZE + 1, 0x89));
 
@@ -509,12 +511,13 @@ describe("GET/HEAD /files/current host and control-session origins", () => {
     expect(imageTooLarge.statusCode).toBe(413);
   });
 
-  it("serves USDZ under the 50 MB image/PDF cap, not the 10 MB octet-stream cap", async () => {
+  it("serves USDZ as a scene under the 50 MB image/PDF cap", async () => {
     const root = tempRoot("oppi-hostfile-usdz-");
     const allowed = join(root, "scene.usdz");
     const tooLarge = join(root, "huge.usdz");
-    writeFileSync(allowed, Buffer.alloc(MAX_BROWSE_TEXT_FILE_SIZE + 1, 0x50));
-    writeFileSync(tooLarge, Buffer.alloc(MAX_BROWSE_IMAGE_FILE_SIZE + 1, 0x50));
+    writeFileSync(allowed, Buffer.alloc(4096, 0x50));
+    writeFileSync(tooLarge, "");
+    truncateSync(tooLarge, MAX_BROWSE_IMAGE_FILE_SIZE + 1);
 
     const allowedRes = await dispatchHost(
       "GET",
@@ -524,7 +527,7 @@ describe("GET/HEAD /files/current host and control-session origins", () => {
     expect(String(allowedRes.headers["Content-Type"] ?? allowedRes.headers["content-type"])).toBe(
       "model/vnd.usdz+zip",
     );
-    expect(allowedRes.body.length).toBe(MAX_BROWSE_TEXT_FILE_SIZE + 1);
+    expect(allowedRes.body.length).toBe(4096);
 
     const tooLargeRes = await dispatchHost(
       "GET",

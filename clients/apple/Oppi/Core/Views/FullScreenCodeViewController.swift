@@ -96,6 +96,7 @@ final class FullScreenCodeViewController: UIViewController {
     }()
     private var lastNavigationPresentation: NavigationPresentation?
     private var showSource = false
+    private var largeFileNote: LargeFileNoteView?
     private var completeRawText: String?
     private var rawSidecarTask: Task<Void, Never>?
     private var copyButton: UIBarButtonItem?
@@ -152,6 +153,8 @@ final class FullScreenCodeViewController: UIViewController {
         addToChatDestination: ComposerCanvasDestination? = nil
     ) {
         self.content = content
+        // A file too large to format opens on its plain text (`opensPlain`).
+        self.showSource = content.opensPlain
         self.taskEditing = taskEditing
         self.orgFolds = orgFolds
         self.presentationMode = presentationMode
@@ -508,6 +511,7 @@ final class FullScreenCodeViewController: UIViewController {
             }
         }
         stashButton.bringToFront()
+        updateLargeFileNote(on: viewController)
         restorePendingMarkdownViewportIfNeeded(in: bodyView)
         scheduleLineAnchorNotice()
         updateAnnotateAvailability()
@@ -1227,6 +1231,33 @@ final class FullScreenCodeViewController: UIViewController {
                 // The preview remains the honest fallback if the sidecar is gone.
             }
         }
+    }
+
+    /// While a large file shows as plain text, a note at the bottom says so
+    /// and formats it on a tap, as the bar's toggle does.
+    private func updateLargeFileNote(on viewController: UIViewController) {
+        guard content.opensPlain, showSource, let action = content.sourceToggleTitle(showingSource: true) else {
+            largeFileNote?.removeFromSuperview()
+            largeFileNote = nil
+            return
+        }
+        guard largeFileNote?.superview !== viewController.view else { return }
+        let note = LargeFileNoteView(
+            message: String(localized: "Large file, shown as plain text."),
+            action: action,
+            palette: bodyThemeID.palette
+        ) { [weak self] in self?.toggleSource() }
+        note.translatesAutoresizingMaskIntoConstraints = false
+        viewController.view.addSubview(note)
+        let guide = viewController.view.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            note.centerXAnchor.constraint(equalTo: guide.centerXAnchor),
+            note.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -12),
+            // Clear of the floating Annotate and comment stash at the corners.
+            note.leadingAnchor.constraint(greaterThanOrEqualTo: guide.leadingAnchor, constant: 68),
+            note.trailingAnchor.constraint(lessThanOrEqualTo: guide.trailingAnchor, constant: -68),
+        ])
+        largeFileNote = note
     }
 
     @objc private func toggleSource() {

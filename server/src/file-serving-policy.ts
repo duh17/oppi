@@ -1,7 +1,11 @@
 const HLS_CONTENT_TYPES = new Set(["application/vnd.apple.mpegurl", "application/x-mpegurl"]);
 
 export const MAX_BROWSE_IMAGE_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
-export const MAX_BROWSE_TEXT_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+// The phone reads text whole into memory. Measured on an iPhone simulator, a
+// 100 MB plain-text file opened in a quarter second at about twice its size in
+// memory; the reader opens Markdown over 1 MB and code over 5 MB as plain text,
+// because formatting, not the bytes, is what costs (`FullScreenCodeContent`).
+export const MAX_BROWSE_TEXT_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 // Illustrated books are far larger than a PDF of the same page count, and the
 // phone holds the whole archive in memory while it reads. The client keeps
 // everything it derives from that archive small: one chapter at a time, at most

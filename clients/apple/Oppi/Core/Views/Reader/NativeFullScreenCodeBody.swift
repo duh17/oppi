@@ -105,9 +105,10 @@ private struct FullScreenCodeChunkIndex: Sendable {
         let nsSource = source as NSString
         let lines = SourceLineMetrics.logicalLineContentRanges(in: nsSource)
         let highlightStart = DispatchTime.now().uptimeNanoseconds
-        let tokens = language == .unknown
-            ? []
-            : TreeSitterHighlighter.resolvedTokenRanges(source, language: language)
+        let tokens = Self.inSourceOrder(
+            language == .unknown ? [] : TreeSitterHighlighter.resolvedTokenRanges(source, language: language)
+        )
+        var firstToken = 0
         let highlightMilliseconds = Double(
             DispatchTime.now().uptimeNanoseconds &- highlightStart
         ) / 1_000_000
@@ -141,15 +142,27 @@ private struct FullScreenCodeChunkIndex: Sendable {
                 widestLine = max(widestLine, range.length)
                 return NSRange(location: range.location - chunkStart, length: range.length)
             }
-            let localTokens = tokens.compactMap { token -> SyntaxTokenRange? in
+            // Tokens are in source order: skip those that end before this
+            // chunk and stop at the first that starts after it. Filtering every
+            // token per chunk made a large file's index quadratic: a 50 MB
+            // JSONL file showed nothing for over a minute.
+            while firstToken < tokens.count,
+                  tokens[firstToken].location + tokens[firstToken].length <= sourceRange.lowerBound {
+                firstToken += 1
+            }
+            var localTokens: [SyntaxTokenRange] = []
+            var tokenIndex = firstToken
+            while tokenIndex < tokens.count, tokens[tokenIndex].location < sourceRange.upperBound {
+                let token = tokens[tokenIndex]
+                tokenIndex += 1
                 let lower = max(token.location, sourceRange.lowerBound)
                 let upper = min(token.location + token.length, sourceRange.upperBound)
-                guard lower < upper else { return nil }
-                return SyntaxTokenRange(
+                guard lower < upper else { continue }
+                localTokens.append(SyntaxTokenRange(
                     location: lower - sourceRange.lowerBound,
                     length: upper - lower,
                     kind: token.kind
-                )
+                ))
             }
             chunks.append(FullScreenCodeChunk(
                 sourceUTF16Range: sourceRange,
@@ -170,6 +183,15 @@ private struct FullScreenCodeChunkIndex: Sendable {
             widestLineUTF16Count: widestLine,
             highlightMilliseconds: highlightMilliseconds
         )
+    }
+
+    /// `tokens` ordered by location, keeping the painter's order among tokens
+    /// that start together; already ordered (the usual case) costs one pass.
+    private static func inSourceOrder(_ tokens: [SyntaxTokenRange]) -> [SyntaxTokenRange] {
+        guard zip(tokens, tokens.dropFirst()).contains(where: { $0.location > $1.location }) else { return tokens }
+        return tokens.enumerated()
+            .sorted { ($0.element.location, $0.offset) < ($1.element.location, $1.offset) }
+            .map(\.element)
     }
 }
 

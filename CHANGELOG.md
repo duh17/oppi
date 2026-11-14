@@ -106,6 +106,7 @@ On iPad, a window splits into panes, so chats, files, terminals, and web pages s
 
 ### Changed
 
+- **Client/Server:** The file reader opens text files up to 100 MB, up from 10 MB. Markdown, Org, and other formatted files over 1 MB, and code over 5 MB, open as plain text, which stays fast at any size, with **Format Anyway** to format them. Large code files also highlight much faster. See [Limits](docs/document-viewers.md#file-links-in-agent-output).
 - **Client:** In the **Chat** style, replies are plain text across the full width instead of a filled card, so your messages are the only filled bubbles. Replies no longer show an icon in any style; the top bar already shows the session's. More space above each of your messages and each card from another session groups the chat into exchanges.
 - **Client:** A running turn shows one row instead of a **Working** pill above a separate busy row: the busy animation, what the agent is doing, and the turn's time, plus its steps in the **Compact** and **Chat** styles, where a tap shows them.
 - **Server:** The built-in Working Words message in durable sessions names what the agent is doing without a running clock, and is sent only when that changes instead of every second; the app shows the turn's time. It starts at the same edge as the rest of the chat, its text is easier to read, and only the animation moves (and not at all with Reduce Motion). When the turn ends it becomes the **Worked** pill, or the work strip in the **Compact** style.

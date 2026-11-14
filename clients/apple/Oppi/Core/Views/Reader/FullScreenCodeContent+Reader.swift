@@ -93,6 +93,42 @@ extension FullScreenCodeContent {
         }
     }
 
+    // MARK: - Large files
+
+    /// Largest Markdown, Org, LaTeX, Mermaid, HTML, or table/map document the
+    /// reader formats when it opens. Formatting costs time and memory that grow
+    /// with the text: on an iPhone simulator a 1 MB Markdown file took 1.5 s to
+    /// first paint and a 1 MB Org file 1.9 s, at 8 to 10 times the file in
+    /// memory; 10 MB of Markdown took 6 s. Plain text paints 100 MB in a quarter
+    /// of a second.
+    static let formattedTextByteLimit = 1_000_000
+    /// Largest source file the reader highlights when it opens. 10 MB of JSONL
+    /// took 2.1 s to first paint and 25 MB 10.6 s.
+    static let highlightedCodeByteLimit = 5_000_000
+
+    /// The text formatting or highlighting would draw, for the kinds that
+    /// have a limit.
+    private var formattableText: String? {
+        switch self {
+        case .markdown(let text, _, _, let rawText, _): rawText ?? text
+        case .orgMode(let text, _), .latex(let text, _), .mermaid(let text, _), .html(let text, _),
+             .code(let text, _, _, _):
+            text
+        case .document(let family): family.text
+        case .plainText, .diff, .thinking, .terminal, .liveSource, .graphviz, .markdownTable, .book, .notebook:
+            nil
+        }
+    }
+
+    /// True for a file too large to format or highlight when it opens: the
+    /// reader starts on its plain text (`sourceContent`), says why, and its
+    /// toggle formats it anyway.
+    var opensPlain: Bool {
+        guard let text = formattableText else { return false }
+        let limit = if case .code = self { Self.highlightedCodeByteLimit } else { Self.formattedTextByteLimit }
+        return text.utf8.count > limit
+    }
+
     /// What the content reads as now: a live source's current kind, its final
     /// content once done; every other kind itself.
     @MainActor
@@ -132,6 +168,9 @@ extension FullScreenCodeContent {
     /// whole raw text once its sidecar has loaded.
     @MainActor
     func sourceContent(completeRaw: String?) -> FullScreenCodeContent? {
+        if opensPlain, let text = formattableText {
+            return .plainText(content: text, filePath: filePath)
+        }
         switch self {
         case .markdown(let text, let filePath, _, let rawText, _):
             return .plainText(content: completeRaw ?? rawText ?? text, filePath: filePath)
@@ -159,6 +198,11 @@ extension FullScreenCodeContent {
     /// `sourceContent` is.
     @MainActor
     func sourceToggleTitle(showingSource: Bool) -> String? {
+        if opensPlain {
+            guard showingSource else { return String(localized: "Plain Text") }
+            if case .code = self { return String(localized: "Highlight Anyway") }
+            return String(localized: "Format Anyway")
+        }
         switch self {
         case .markdown(_, _, _, let rawText, _):
             if rawText != nil { return showingSource ? String(localized: "Rendered") : String(localized: "Raw") }

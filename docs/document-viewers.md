@@ -32,7 +32,8 @@ Assistant messages link to files with wiki links or standard Markdown links. A t
 **Limits.**
 
 - Images, PDFs, and USDZ: 50 MB.
-- Text and other files the viewer reads whole: 10 MB.
+- Text and other files the viewer reads whole: 100 MB.
+- Markdown, Org, LaTeX, Mermaid, HTML, CSV, and map files over 1 MB, and code over 5 MB, open as plain text, which stays fast at any size. A note at the bottom says so; **Format Anyway** (or **Highlight Anyway** for code), there or in the bar, formats the file, which can take a while and a lot of memory.
 - Audio, video, and HLS: range streaming, without the size cap.
 - **Share**, **Save to Files**, and **Quick Look** download the file to the device, with progress and **Cancel**, and are not held to these limits. A download can be up to 2 GB and needs free space for twice its size, room for the file and the copy another app makes. The card keeps its copy until you leave the file.
 - Downloads use the same paired connection and certificate check as the rest of the app; nothing gets a public link. A download that drops, or that iOS pauses after you leave the app, continues from where it stopped once the connection or the app is back (if iOS closed Oppi meanwhile, start it again), unless the file changed on the server, in which case it starts over. Before the file is offered, the app checks it against the SHA-256 the server sends and discards it if they differ. Text files travel compressed; archives and media do not.
