@@ -422,6 +422,8 @@ final class IOSChatSessionRuntimeAdapter:
         switch level {
         case .info:
             ClientLog.info("ChatSession", message, metadata: metadata)
+        case .warning:
+            ClientLog.warning("ChatSession", message, metadata: metadata)
         case .error:
             ClientLog.error("ChatSession", message, metadata: metadata)
         }

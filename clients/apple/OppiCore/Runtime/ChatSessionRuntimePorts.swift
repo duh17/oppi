@@ -122,6 +122,7 @@ enum ChatSessionRuntimeTelemetry: Sendable {
 
 enum ChatSessionRuntimeLogLevel: Sendable {
     case info
+    case warning
     case error
 }
 

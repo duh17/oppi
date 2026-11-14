@@ -930,14 +930,16 @@ final class ChatSessionManager {
 
         // Wire silence watchdog → full reconnect. The handler is a shared
         // connection slot: only the claim owner installs it, and it acts only
-        // while that runtime still owns the stream.
+        // while that runtime still owns the stream. A warning, not an error:
+        // it fires on most returns from background during a busy turn, and
+        // the reconnect recovers the stream.
         let sid = sessionId
         if ownsFocusClaim {
             focusedStreamPort.setReconnectHandler { [weak self] in
                 guard let self, self.ownsFocusClaim else { return }
-                log.error("Silence watchdog triggered reconnect for \(sid)")
+                log.warning("Silence watchdog triggered reconnect for \(sid)")
                 self.effectsStatePort.recordLog(
-                    .error,
+                    .warning,
                     message: "Silence watchdog triggered reconnect",
                     metadata: ["sessionId": sid]
                 )
