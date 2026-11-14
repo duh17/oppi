@@ -108,6 +108,10 @@ final class ComposerPopUpButton: UIButton {
             return
         }
         display = result.display
+        // An icon alone has no title left to give: past every control's floor
+        // (a busy row in a 375 pt pane), the squeeze must cut a title, never
+        // the icon into its indicator.
+        setContentCompressionResistancePriority(display == .iconOnly ? .defaultHigh : .defaultLow, for: .horizontal)
         truncatedWidth = result.display == .truncated ? result.width : nil
         widthCap?.isActive = false
         widthCap = nil

@@ -68,13 +68,16 @@ extension ComposerBarController {
         let tipHeight: CGFloat = showsBusy ? busyTipNaturalHeight : 0
         busyTipHeightConstraint?.constant = tipHeight
         busyTipContainer.setHiddenIfChanged(tipHeight <= 0)
-        busyModeButton.apply(
-            title: content.busyStreamingBehavior == .steer ? "Steering" : "Follow-up",
-            systemImage: nil,
-            colors: colors,
-            chevron: true
-        )
-        busyModeButton.accessibilityValue = content.busyStreamingBehavior == .steer ? "Steering" : "Follow-up"
+        // A row of pop-up buttons (regular width) takes the "+" and the busy
+        // send mode in the same style.
+        let popUpRow = (content.actionRow.leading + content.actionRow.trailing).contains { $0.chrome == .popUp }
+        let busyTitle = content.busyStreamingBehavior == .steer ? "Steering" : "Follow-up"
+        if popUpRow {
+            busyModeButton.applyPopUpStyle(colors: colors, title: busyTitle)
+        } else {
+            busyModeButton.apply(title: busyTitle, systemImage: nil, colors: colors, chevron: true)
+        }
+        busyModeButton.accessibilityValue = busyTitle
 
         let leadingAttach = content.allowsAttachments && content.attachmentButtonPlacement == .leading
         let trailingAttach = content.allowsAttachments && content.attachmentButtonPlacement == .trailing
@@ -82,8 +85,6 @@ extension ComposerBarController {
         trailingAttachButton.setHiddenIfChanged(!trailingAttach || !showActionRow)
         attachButton.isEnabled = !content.isSending
         trailingAttachButton.isEnabled = !content.isSending
-        // A row of pop-up buttons (regular width) takes the "+" in the same style.
-        let popUpRow = (content.actionRow.leading + content.actionRow.trailing).contains { $0.chrome == .popUp }
         for button in [attachButton, trailingAttachButton] {
             if popUpRow {
                 button.applyPopUpStyle(colors: colors, systemImage: "plus")
@@ -320,8 +321,13 @@ extension ComposerBarController {
         let others = actionRowStack.arrangedSubviews.filter { !$0.isHidden && $0 !== trailingStack && $0 !== spacer }
         let gaps = actionRowStack.spacing * CGFloat(others.count + 1)
         let margins = actionRowStack.layoutMargins
-        let available = actionRowStack.bounds.width - margins.left - margins.right
-            - others.reduce(0) { $0 + $1.bounds.width } - gaps
+        // Their natural widths, not their bounds: a control that just appeared
+        // (Steering when a turn starts) has no bounds until this pass places it.
+        let occupied = others.reduce(0) { total, view in
+            let natural = view.intrinsicContentSize.width
+            return total + (natural == UIView.noIntrinsicMetric ? view.bounds.width : natural)
+        }
+        let available = actionRowStack.bounds.width - margins.left - margins.right - occupied - gaps
         let results = ComposerPopUpFit.resolve(
             order.map { items[$0] },
             available: available,

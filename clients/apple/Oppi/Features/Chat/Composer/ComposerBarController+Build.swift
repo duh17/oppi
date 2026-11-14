@@ -78,6 +78,7 @@ extension ComposerBarController {
         busyTipContainer.isHidden = true
         busyTipContainer.clipsToBounds = true
 
+        actionRowStack.onLayout = { [weak self] in self?.fitPopUpActions() }
         actionRowStack.axis = .horizontal
         actionRowStack.alignment = .center
         actionRowStack.spacing = 6

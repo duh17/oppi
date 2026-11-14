@@ -334,6 +334,7 @@ extension ChatViewController: ChatComposerSource {
         let (colors, theme) = composerTheme
         let reviewing = model.activeReviewCommentRequest != nil
         let ask = composerAskRequest
+        let pickers = ComposerAction.Chrome.pickers(for: traitCollection)
         return ComposerBarContent(
             text: composerDraftController.text,
             textBeforeRecording: model.composerTextBeforeRecording,
@@ -357,7 +358,9 @@ extension ChatViewController: ChatComposerSource {
             fileSuggestions: chatState.fileSuggestions,
             modelCatalog: chatState.cachedModels,
             appliesOuterPadding: true,
-            alwaysShowActionRow: false,
+            // With pop-up pickers (regular width) the row stays up, as in Quick
+            // Session; compact width shows it with the keyboard.
+            alwaysShowActionRow: pickers == .popUp,
             allowsExpansion: ask == nil,
             allowsAttachments: true,
             attachmentButtonPlacement: .leading,
@@ -366,7 +369,7 @@ extension ChatViewController: ChatComposerSource {
             autocorrectionEnabled: true,
             inputAccessibilityIdentifier: "chat.input",
             sendAccessibilityIdentifier: "chat.send",
-            actionRow: composerActionRow(colors: colors, theme: theme),
+            actionRow: composerActionRow(colors: colors, theme: theme, pickers: pickers),
             colors: colors,
             reduceMotion: UIAccessibility.isReduceMotionEnabled,
             suppressKeyboard: false,
@@ -377,7 +380,11 @@ extension ChatViewController: ChatComposerSource {
         )
     }
 
-    private func composerActionRow(colors: ComposerThemeColors, theme: AppTheme) -> ComposerActionRow {
+    private func composerActionRow(
+        colors: ComposerThemeColors,
+        theme: AppTheme,
+        pickers: ComposerAction.Chrome
+    ) -> ComposerActionRow {
         if model.activeReviewCommentRequest != nil {
             let templates = QuickCommentTemplate.quickCommentTemplates(root?.quickCommentTemplateStore.templates ?? [])
             return ComposerActionRow(
@@ -403,6 +410,7 @@ extension ChatViewController: ChatComposerSource {
                 in: chatState.cachedModels
             ),
             colors: colors,
+            chrome: pickers,
             onModelTap: { [weak self] in self?.model.openModelPicker(from: $0) },
             onThinkingSelect: { [weak self] level in self?.setThinking(level) },
             onSaveThinkingAsDefault: canPersistSessionDefaults ? { [weak self] in

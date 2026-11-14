@@ -206,10 +206,11 @@ final class QuickSessionViewController: UIViewController {
     }
 
     /// Regular width: the destination bar above the composer, and model and
-    /// thinking as pop-up buttons at the composer's bottom right. Accessibility
-    /// text sizes keep the compact pills and the stacked panel, which wrap.
+    /// thinking as pop-up buttons at the composer's bottom right, as the chat
+    /// draws them (`ComposerAction.Chrome.pickers`). Accessibility text sizes
+    /// keep the compact pills and the stacked panel, which wrap.
     var usesWideLayout: Bool {
-        AdaptiveWidth.isWide(traitCollection) && !stacksActionControls
+        ComposerAction.Chrome.pickers(for: traitCollection) == .popUp
     }
 
     override func updateProperties() {

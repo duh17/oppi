@@ -11,7 +11,7 @@
  "ChatRoutesUITests/testGitPanelNewSessionOpensOnTheChatStack": 5.6,
  "ChatRoutesUITests/testGitPanelScopesItsFilesAndOpensAReview": 20.3,
  "ChatRoutesUITests/testLongQueuedMessageKeepsTheDrawerCollapsibleAndOpensFullScreen": 24.2,
- "ChatRoutesUITests/testModelPickerAndThinkingPopover": 10.8,
+ "ChatRoutesUITests/testModelAndThinkingSelectionFromTheComposer": 14,
  "ChatRoutesUITests/testOutlineJumpLandsOnTheTappedRow": 42.7,
  "ChatRoutesUITests/testOutlineSearchesAndClosesBothWays": 7.4,
  "ChatRoutesUITests/testOutlineSummarySheetSendsInstructionsToTheOutline": 31.5,

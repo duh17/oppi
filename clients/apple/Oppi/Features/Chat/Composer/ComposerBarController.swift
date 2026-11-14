@@ -692,7 +692,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     var busyTipHeightConstraint: NSLayoutConstraint?
     private var busyTipView: UIView?
     var busyTipNaturalHeight: CGFloat = 0
-    let actionRowStack = UIStackView()
+    let actionRowStack = ComposerActionRowStackView()
     var actionRowMinHeight: NSLayoutConstraint?
     let attachButton = ComposerGlassPillButton()
     let trailingAttachButton = ComposerGlassPillButton()
@@ -739,11 +739,6 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         if let inputModeObserver {
             NotificationCenter.default.removeObserver(inputModeObserver)
         }
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        fitPopUpActions()
     }
 
     override func viewDidAppear(_ animated: Bool) {

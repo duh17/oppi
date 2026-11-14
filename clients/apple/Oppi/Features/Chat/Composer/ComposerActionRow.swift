@@ -22,6 +22,16 @@ struct ComposerAction: Identifiable {
         case popUp
         case chip
         case cancel
+
+        /// The chrome of a composer's model, thinking, and Agent pickers, the
+        /// same in the chat and Quick Session: pop-up buttons at regular
+        /// width, with the "+" matched to them; caption pills at compact width
+        /// and at accessibility text sizes, where the pop-ups do not fit.
+        static func pickers(for traits: UITraitCollection) -> Self {
+            AdaptiveWidth.isWide(traits) && !traits.preferredContentSizeCategory.isAccessibilityCategory
+                ? .popUp
+                : .toolbar
+        }
     }
 
     final class Handler {
@@ -134,12 +144,22 @@ extension ComposerAction {
         onSaveDefault: (() -> Void)?
     ) -> ComposerAction {
         if chrome == .popUp {
-            // A pop-up button's own menu: the levels, the current one checked.
-            let menu = UIMenu(children: supported.map { option in
-                UIAction(title: option.displayTitle, state: option == level ? .on : .off) { _ in
-                    onSelect(option)
+            // A pop-up button's own menu: the levels, the current one checked,
+            // then Save as Default where the host offers it. The items keep the
+            // popover's row identifiers (`ComposerThinkingPickerController`).
+            var items: [UIMenuElement] = supported.map { option in
+                let action = UIAction(title: option.displayTitle, state: option == level ? .on : .off) { _ in
+                    if option != level { onSelect(option) }
                 }
-            })
+                action.accessibilityIdentifier = "session.toolbar.thinking.option.\(option.rawValue)"
+                return action
+            }
+            if let onSaveDefault {
+                let save = UIAction(title: "Save as Default") { _ in onSaveDefault() }
+                save.accessibilityIdentifier = "session.toolbar.thinking.saveDefault"
+                items.append(UIMenu(options: .displayInline, children: [save]))
+            }
+            let menu = UIMenu(children: items)
             return ComposerAction(
                 id: "session.toolbar.thinking",
                 icon: .symbol("sparkle"),

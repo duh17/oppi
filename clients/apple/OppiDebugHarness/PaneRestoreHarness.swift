@@ -120,8 +120,10 @@ final class PaneRestorePreviewController: PreviewRootController {
         let connection = coordinator.activatePreviewServer(server, apiClient: ChatRoutesFixture.api)
         connection.workspaceStore.upsert(ChatRoutesFixture.workspace, serverId: serverId)
         connection.sessionStore.switchServer(to: serverId)
+        // `CHAT_ROUTES_STATUS=busy` makes the chat busy, as on `chat-routes`.
+        let busy = ProcessInfo.processInfo.environment["CHAT_ROUTES_STATUS"] == "busy"
         connection.sessionStore.sessions = [
-            ChatRoutesFixture.session(id: ChatRoutesFixture.sessionId, status: .ready),
+            ChatRoutesFixture.session(id: ChatRoutesFixture.sessionId, status: busy ? .busy : .ready),
         ]
         return coordinator
     }

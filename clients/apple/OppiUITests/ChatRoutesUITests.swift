@@ -523,11 +523,21 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
 
     // MARK: - Composer modals
 
-    func testModelPickerAndThinkingPopover() {
+    /// Model and thinking chosen from the composer's row. Regular width keeps
+    /// "+", model, and thinking in the row without focus, as Quick Session
+    /// does, with thinking as a pop-up menu; compact width shows the row with
+    /// the keyboard and thinking as a popover. Both keep the option ids.
+    func testModelAndThinkingSelectionFromTheComposer() {
         launch()
-        focusComposer()
         let modelPill = app.buttons["session.toolbar.model"]
-        XCTAssertTrue(modelPill.waitUntilExists(timeout: 10), "A focused composer shows the model pill")
+        if usesSheets {
+            focusComposer()
+            XCTAssertTrue(modelPill.waitUntilExists(timeout: 10), "A focused composer shows the model pill")
+        } else {
+            XCTAssertTrue(modelPill.waitUntilExists(timeout: 10), "Regular width keeps the model picker in the row without focus")
+            XCTAssertTrue(app.buttons["chat.attach"].exists, "The + shares the row with the pickers")
+            XCTAssertFalse(app.keyboards.firstMatch.exists, "The row shows without the keyboard")
+        }
         modelPill.tap()
         let models = app.navigationBars["Models"]
         XCTAssertTrue(models.waitUntilExists(timeout: 5), "Model picker did not open")
@@ -547,16 +557,20 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         }
         modelPill.tap()
         XCTAssertTrue(models.waitUntilExists(timeout: 5), "Model picker did not reopen")
-        cancelButton.tap()
-        XCTAssertTrue(models.waitUntilGone(timeout: 5), "Cancel must close the model picker")
+        app.buttons["model.picker.row.openai/gpt-routes"].tap()
+        XCTAssertTrue(models.waitUntilGone(timeout: 5), "Choosing a model must close the picker")
+        XCTAssertTrue(
+            waitFor((modelPill.value as? String) == "gpt-routes"),
+            "The chosen model must read back on the pill: \(modelPill.value as? String ?? "nil")"
+        )
         assertRunning()
 
         app.buttons["session.toolbar.thinking"].tap()
-        let high = app.buttons["session.toolbar.thinking.option.high"]
-        XCTAssertTrue(high.waitUntilExists(timeout: 5), "Thinking popover did not open")
-        attachScreenshot("thinking-popover")
+        let high = app.descendants(matching: .any)["session.toolbar.thinking.option.high"]
+        XCTAssertTrue(high.waitUntilExists(timeout: 5), "The thinking levels did not open")
+        attachScreenshot(usesSheets ? "thinking-popover" : "thinking-menu")
         high.tap()
-        XCTAssertTrue(high.waitUntilGone(timeout: 5), "Choosing a level must close the popover")
+        XCTAssertTrue(high.waitUntilGone(timeout: 5), "Choosing a level must close the levels")
         assertRunning()
     }
 

@@ -195,6 +195,19 @@ final class ComposerPillStackView: UIStackView {
     }
 }
 
+/// The composer's action row. It refits its pop-up controls
+/// (`ComposerBarController.fitPopUpActions`) each time it lays out, when its
+/// own width is current: the bar's `viewDidLayoutSubviews` can run before a
+/// narrowed row (a pane split) gets its new bounds.
+final class ComposerActionRowStackView: UIStackView {
+    var onLayout: (() -> Void)?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout?()
+    }
+}
+
 /// Scrolling row of action pills; see `ComposerPillStackView`.
 final class ComposerPillScrollView: UIScrollView {
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
@@ -230,8 +243,9 @@ final class ComposerGlassPillButton: UIButton {
         sendSubviewToBack(glassView)
     }
 
-    /// True once `applyPopUpStyle` ran: a circle the height of the row's pop-up
-    /// buttons, with no glass of its own. `apply` puts the glass pill back.
+    /// True once `applyPopUpStyle` ran: the gray capsule of the row's pop-up
+    /// buttons (a circle when it has no title), with no glass of its own.
+    /// `apply` puts the glass pill back.
     private var usesPopUpStyle = false {
         didSet {
             guard usesPopUpStyle != oldValue else { return }
@@ -242,7 +256,8 @@ final class ComposerGlassPillButton: UIButton {
 
     override var intrinsicContentSize: CGSize {
         if usesPopUpStyle {
-            return CGSize(width: ComposerPopUpButton.height, height: ComposerPopUpButton.height)
+            let width = configuration?.title == nil ? ComposerPopUpButton.height : super.intrinsicContentSize.width
+            return CGSize(width: max(width, ComposerPopUpButton.height), height: ComposerPopUpButton.height)
         }
         if configuration?.title == nil, configuration?.image != nil {
             return CGSize(width: 36, height: 23)
@@ -254,18 +269,35 @@ final class ComposerGlassPillButton: UIButton {
         ComposerHitTarget.contains(point, in: bounds)
     }
 
-    /// The "+" in a row of pop-up buttons (`ComposerAction.Chrome.popUp`): the
-    /// same gray capsule and height, so the row reads as one set.
-    func applyPopUpStyle(colors: ComposerThemeColors, systemImage: String) {
+    /// The "+" (a symbol) or the busy send mode (a title with the pop-up
+    /// indicator) in a row of pop-up buttons (`ComposerAction.Chrome.popUp`):
+    /// the same gray capsule, height, and body text, so the row reads as one set.
+    func applyPopUpStyle(colors: ComposerThemeColors, systemImage: String? = nil, title: String? = nil) {
         usesPopUpStyle = true
         var config = ComposerPopUpButton.baseConfiguration(
             tint: colors.fg,
             fill: ComposerPopUpButton.fill(for: colors)
         )
-        config.image = UIImage(systemName: systemImage, withConfiguration: UIImage.SymbolConfiguration(textStyle: .body))
-        config.contentInsets = .zero
+        if let systemImage {
+            config.image = UIImage(systemName: systemImage, withConfiguration: UIImage.SymbolConfiguration(textStyle: .body))
+        }
+        if let title {
+            config.title = title
+            config.indicator = .popup
+            config.indicatorColorTransformer = UIConfigurationColorTransformer { _ in .secondaryLabel }
+            config.titleLineBreakMode = .byTruncatingTail
+            config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+                var outgoing = incoming
+                outgoing.font = UIFont.preferredFont(forTextStyle: .body)
+                return outgoing
+            }
+            config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12)
+        } else {
+            config.contentInsets = .zero
+        }
         configuration = config
         isPointerInteractionEnabled = true
+        invalidateIntrinsicContentSize()
     }
 
     func apply(

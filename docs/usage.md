@@ -57,7 +57,7 @@ Type `@` to mention a file or a model. Models from the server show above the fil
 
 **Quick Session** opens the composer without creating a session yet. Launch it from Oppi, Control Center, the Action Button, or the Shortcuts **New Session** action.
 
-On iPad, Quick Session shows the workspace and worktree on the left of a bar above the composer, and the **Classic** or **Durable** pill (while Durable Sessions is on) and **Incognito** on the right. The Agent, model, and thinking level are pop-up buttons at the composer's bottom right. On a hardware keyboard, Esc closes an open picker, then Quick Session.
+On iPad, Quick Session shows the workspace and worktree on the left of a bar above the composer, and the **Classic** or **Durable** pill (while Durable Sessions is on) and **Incognito** on the right. The Agent, model, and thinking level are pop-up buttons at the composer's bottom right. On a hardware keyboard, Esc closes an open picker, then Quick Session. A chat's composer on iPad has the same row, without the Agent: **+** at the bottom left, and the model and thinking level at the bottom right, shown before you tap into the composer.
 
 **The Shortcuts New Session action** reads "Open *Agent* in *Mode* mode". Every field is optional, and an empty one follows Quick Session's own choice:
 

@@ -105,6 +105,8 @@ extension ChatViewController {
             [UITraitHorizontalSizeClass.self, UITraitPreferredContentSizeCategory.self]
         ) { (self: Self, _) in
             self.setNeedsUpdateProperties()
+            // The composer's pickers change chrome with both (`ComposerAction.Chrome.pickers`).
+            self.composer.setNeedsUpdateProperties()
         }
         SystemVerticalBar.observeEdgeChanges(of: self) { $0.setNeedsUpdateProperties() }
     }

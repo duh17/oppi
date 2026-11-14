@@ -1494,6 +1494,86 @@ struct ComposerBarTests {
         )
     }
 
+    /// Regular width shows thinking as a pop-up menu (the chat and Quick
+    /// Session alike): it must keep the popover's option ids and its Save as
+    /// Default, so both stay reachable whichever chrome the row draws.
+    @Test("The pop-up thinking menu keeps the option ids and offers Save as Default only when given")
+    func popUpThinkingMenuKeepsOptionIDsAndSaveDefault() {
+        func menuIDs(onSaveDefault: (() -> Void)?) -> [String] {
+            let action = ComposerAction.thinking(
+                level: .medium,
+                supported: [.low, .medium, .high],
+                tint: .label,
+                colors: .placeholder,
+                chrome: .popUp,
+                onSelect: { _ in },
+                onSaveDefault: onSaveDefault
+            )
+            guard case .menu(let menu) = action.kind else {
+                Issue.record("A pop-up thinking control opens a menu")
+                return []
+            }
+            func flatten(_ element: UIMenuElement) -> [UIMenuElement] {
+                (element as? UIMenu).map { $0.children.flatMap(flatten) } ?? [element]
+            }
+            return menu.children.flatMap(flatten).map { ($0 as? UIAction)?.accessibilityIdentifier ?? "" }
+        }
+        let options = ["low", "medium", "high"].map { "session.toolbar.thinking.option.\($0)" }
+        #expect(menuIDs(onSaveDefault: {}) == options + ["session.toolbar.thinking.saveDefault"])
+        #expect(menuIDs(onSaveDefault: nil) == options)
+    }
+
+    /// The narrowest regular-width row: a chat pane at its 375 pt minimum (343 pt
+    /// inside the composer's gutters) while busy, so "+", Steering, model, and
+    /// thinking share it. A model name too short to cut leaves the pop-ups past
+    /// their floors; the squeeze must truncate the model, never crush the
+    /// thinking icon into its indicator or push a control out of the row.
+    @Test("A busy pop-up row at a 375 pt pane keeps every control inside and thinking's icon whole")
+    func busyPopUpRowFitsANarrowPane() throws {
+        let host = ComposerBarTestHost()
+        host.content.busyStreamingBehavior = .steer
+        host.content.actionRow = .sessionToolbar(
+            modelTitle: "routes",
+            modelProvider: "anthropic",
+            thinkingLevel: .medium,
+            thinkingTint: .systemBlue,
+            supportedThinkingLevels: [.low, .medium, .high],
+            colors: .placeholder,
+            chrome: .popUp,
+            onModelTap: { _ in },
+            onThinkingSelect: { _ in },
+            onSaveThinkingAsDefault: nil
+        )
+        let controller = ComposerBarController()
+        controller.host = host
+        // The chat starts full width, then a split narrows it to 375 pt while
+        // the turn starts: Steering appears in a row already laid out, and one
+        // layout pass must fit the narrower row.
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 744, height: 844))
+        defer { hideTestWindow(window); window.rootViewController = nil }
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.apply()
+        controller.view.layoutIfNeeded()
+        host.content.isBusy = true
+        window.frame.size.width = 343
+        controller.apply()
+        controller.view.layoutIfNeeded()
+
+        let row = controller.actionRowStack
+        let thinking = try #require(descendant(in: controller.view, identifier: "session.toolbar.thinking") as? ComposerPopUpButton)
+        let model = try #require(descendant(in: controller.view, identifier: "session.toolbar.model") as? ComposerPopUpButton)
+        #expect(!controller.busyModeButton.isHidden)
+        #expect(thinking.display == .iconOnly)
+        let iconOnly = try #require(thinking.fitItem.iconOnly)
+        #expect(thinking.bounds.width >= iconOnly - 0.5, "thinking \(thinking.bounds.width) < its icon-only \(iconOnly)")
+        #expect(model.bounds.width < model.fitItem.full, "The model gives up the room")
+        for control in [controller.attachButton, controller.busyModeButton, model, thinking] as [UIView] {
+            let frame = control.convert(control.bounds, to: row)
+            #expect(frame.minX >= -0.5 && frame.maxX <= row.bounds.width + 0.5, "\(control.accessibilityIdentifier ?? "") \(frame) outside \(row.bounds)")
+        }
+    }
+
     @Test("A long Ask scrolls its rows inside the capped slot, rows fit their text, and actions stay in view")
     func longAskScrollsInsideCappedSlotWithActionsInView() throws {
         let host = ComposerBarTestHost()
