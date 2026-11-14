@@ -11371,7 +11371,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = OppiActivityExtension/OppiActivityExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 57;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = OppiActivityExtension/Info.plist;
@@ -11395,7 +11395,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = OppiNotificationService/OppiNotificationService.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 57;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				INFOPLIST_FILE = OppiNotificationService/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -11419,7 +11419,7 @@
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Oppi/Resources/Oppi-Catalyst.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 57;
+				CURRENT_PROJECT_VERSION = 58;
 				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				"ENABLE_HARDENED_RUNTIME[sdk=macosx*]" = YES;
@@ -11484,7 +11484,7 @@
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Oppi/Resources/Oppi-Catalyst.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 57;
+				CURRENT_PROJECT_VERSION = 58;
 				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				"ENABLE_HARDENED_RUNTIME[sdk=macosx*]" = YES;
@@ -11528,7 +11528,7 @@
 				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = OppiControlWidget/OppiControlWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 57;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				INFOPLIST_FILE = OppiControlWidget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -11568,7 +11568,7 @@
 				CODE_SIGN_ENTITLEMENTS = OppiShareExtension/OppiShareExtension.entitlements;
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "OppiShareExtension/OppiShareExtension-Catalyst.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 57;
+				CURRENT_PROJECT_VERSION = 58;
 				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				"ENABLE_HARDENED_RUNTIME[sdk=macosx*]" = YES;
@@ -11593,7 +11593,7 @@
 				CODE_SIGN_ENTITLEMENTS = OppiShareExtension/OppiShareExtension.entitlements;
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "OppiShareExtension/OppiShareExtension-Catalyst.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 57;
+				CURRENT_PROJECT_VERSION = 58;
 				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				"ENABLE_HARDENED_RUNTIME[sdk=macosx*]" = YES;
@@ -11706,7 +11706,7 @@
 				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = OppiControlWidget/OppiControlWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 57;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				INFOPLIST_FILE = OppiControlWidget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -11745,7 +11745,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = OppiNotificationService/OppiNotificationService.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 57;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				INFOPLIST_FILE = OppiNotificationService/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -11765,7 +11765,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = OppiActivityExtension/OppiActivityExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 57;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = AZAQMY4SPZ;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = OppiActivityExtension/Info.plist;

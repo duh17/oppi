@@ -53,8 +53,10 @@ Example:
 
 ## [Unreleased]
 <!-- Written by the release lane from the delta at release time. Don't add entries in feature or fix work. -->
-<!-- Build 58 cut: delete this comment then. Not on main when this section was written:
-The app does not declare pane-layouts:v1 yet, so the layout bullet covers the server and CLI only. -->
+
+## [0.55.0] - 2026-11-14
+
+Target: iOS `1.1.2` Build `58`, `oppi-server@0.55.0`, and `oppi-mirror@0.55.0` (pi-durable 1.5.2).
 
 On iPad, a window splits into panes, so chats, files, terminals, and web pages sit side by side and come back after a relaunch. Math is typeset like TeX, tables fit the screen, and the file reader gets Org folding, Outline and Find, task controls, and EPUB books. Schedules open on a calendar of past and coming runs. The server now listens only on this machine and on Tailscale unless you set `host`; see the migration notes.
 
@@ -193,7 +195,7 @@ On iPad, a window splits into panes, so chats, files, terminals, and web pages s
 ### Migration notes
 
 - **Server:** A server with no `host` set stops listening on the local network. A phone that reaches it by its Wi-Fi address, without Tailscale or a public URL, cannot connect after the update. To serve the local network again, run `oppi config set host 0.0.0.0` and `oppi server restart`. A config that already sets `host` keeps its meaning. See [Reach the server](docs/onboarding.md#reach-the-server).
-- **Compatibility:** The app still requires `oppi-server@0.54.0` or later. Editing linked and home files, keeping connections open when the access token renews, the Schedules calendar, and binary files in commit diffs need the new server.
+- **Compatibility:** Build 58 still requires `oppi-server@0.54.0` or later. Editing linked and home files, keeping connections open when the access token renews, the Schedules calendar, binary files in commit diffs, and the Godot pane need `oppi-server@0.55.0`.
 - **Compatibility:** Classic sandbox sessions lose global Pi extensions that do not declare the sandbox runtime. To keep one, list its ID in the workspace's `sandboxConfig.hostExtensions`. See [Host extensions](docs/sandbox.md#host-extensions).
 - **Compatibility:** The first start re-indexes session search once, to add text from before compactions.
 - **Compatibility:** The Mobile Output Guide setting moves into `config.json` on the first start. The old `settings/mobile-output-guide.json` is renamed with a `.migrated` suffix. If `config.json` has invalid values, the move waits and the server logs a warning.
