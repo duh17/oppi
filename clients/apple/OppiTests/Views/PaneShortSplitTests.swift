@@ -72,6 +72,9 @@ struct PaneShortSplitTests {
         #expect(host.panes.view.hitTest(onStrip, with: nil) === strip, "the strip sits above the home indicator")
         let inZone = CGPoint(x: 372, y: 1133 - inset / 2)
         #expect(host.panes.view.hitTest(inZone, with: nil) !== strip, "the swipe-up zone is not the strip's")
+        // It reaches up into the pane above instead, to 44 pt.
+        let above = CGPoint(x: 372, y: 1133 - inset - 43)
+        #expect(host.panes.view.hitTest(above, with: nil) === strip, "44 pt to touch, reaching up")
     }
 
     // MARK: Launcher

@@ -87,14 +87,15 @@ final class AppWindow: UIWindow {
             super.validate(command)
             return
         }
+        let hidden: UIMenuElement.Attributes = keyboardCommand.isHidden ? .hidden : []
         guard let resolved = commandSurface?.resolve(keyboardCommand) else {
             // A disabled Cmd-W falls through to the system's Close Window, which
             // would end the app's only window. Close stays enabled and does nothing.
-            command.attributes = keyboardCommand == .close ? [] : .disabled
+            command.attributes = keyboardCommand == .close ? [] : hidden.union(.disabled)
             return
         }
         command.title = resolved.title
-        command.attributes = []
+        command.attributes = hidden
     }
 
     // MARK: Find

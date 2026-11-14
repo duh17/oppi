@@ -40,7 +40,9 @@ extension SceneNavigation {
             return
         }
         guard let index = workspaceStackRouteElements.firstIndex(of: .paneEntry(entry)) else { return }
+        let before = workspaceStackRouteElements
         workspaceStackRouteElements[index] = element
+        panes.routedEntryResolved(from: before, to: workspaceStackRouteElements)
     }
 
     /// Close Pane on an entry's leaf state: the entry and what was above it

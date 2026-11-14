@@ -61,9 +61,10 @@ struct PaneTreeHostTests {
         #expect(divider.accessibilityValue == "53 percent")
     }
 
-    /// A3 and the zoom capsule: a zoomed pane fills the window, the others
-    /// leave it (and VoiceOver), and its grip offers Restore.
-    @Test func zoomFillsTheWindowAndTheCapsuleRestores() throws {
+    /// A3 and the zoomed grip: a zoomed pane fills the window, the others
+    /// leave it (and VoiceOver), and its grip grows but keeps the whole pane
+    /// menu, with Restore first, for touch and VoiceOver alike.
+    @Test func zoomFillsTheWindowAndTheGripMenuLeadsWithRestore() throws {
         let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
         defer { host.hide() }
         host.act { host.panes.split(axis: .row) }
@@ -74,12 +75,57 @@ struct PaneTreeHostTests {
         #expect(host.panes.primary.view.isHidden)
         let capsule = try grip(host, split)
         #expect(capsule.accessibilityValue == "Zoomed")
+        #expect(capsule.frame.width > PaneGripView.size.width, "the zoomed grip is the longer pill")
         #expect(try grip(host, host.scenePanes.routedLeafID).isHidden)
         #expect(host.panes.focusedLeaf == .split(split), "zoom focuses the pane")
+        let menu = host.panes.menuItems(for: split)
+        #expect(menu.first?.identifier == "pane.menu.zoom" && menu.first?.title == "Restore")
+        #expect(menu.contains { $0.identifier == "pane.menu.close" && $0.isEnabled }, "Close Pane stays in reach")
+        let actions = capsule.accessibilityCustomActions?.map(\.name) ?? []
+        #expect(actions.first == "Restore")
+        #expect(actions.contains("Close Pane"))
+        // A drag does not start on the zoomed grip.
+        let pan = try #require(capsule.gestureRecognizers?.first { $0 is UIPanGestureRecognizer })
+        #expect(!capsule.gestureRecognizerShouldBegin(pan))
 
-        host.act { _ = capsule.accessibilityActivate() }
+        try run("Restore", on: capsule, in: host)
+        #expect(host.scenePanes.zoomedCell == nil)
         #expect(!host.panes.primary.view.isHidden)
         #expect(leaf.frame.width < 1133)
+        #expect(capsule.frame.width == PaneGripView.size.width)
+        #expect(capsule.gestureRecognizerShouldBegin(pan))
+        #expect(host.panes.menuItems(for: split).first { $0.identifier == "pane.menu.zoom" }?.title == "Zoom")
+    }
+
+    /// The other ways out of a zoom: Split Panes off shows the chat alone,
+    /// unzoomed, and on again the capsule is there to leave by; closing the
+    /// zoomed pane gives the chat the window back.
+    @Test func splitPanesOffAndCloseNeverLeaveAZoomWithoutAWayOut() throws {
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer { host.hide() }
+        let routed = host.scenePanes.routedLeafID
+        host.act { host.panes.split(axis: .row) }
+        let split = try #require(host.scenePanes.splitLeaves.first?.id)
+        host.act { host.panes.zoom(split) }
+
+        host.act {
+            host.scenePanes.splitsEnabled = false
+            host.panes.updatePropertiesIfNeeded()
+        }
+        #expect(!host.panes.primary.view.isHidden)
+        #expect(host.panes.primary.view.frame == host.panes.view.bounds, "the chat has the window")
+        #expect(host.scenePanes.zoomedCell == nil)
+        host.act {
+            host.scenePanes.splitsEnabled = true
+            host.panes.updatePropertiesIfNeeded()
+        }
+        let capsule = try grip(host, split)
+        #expect(!capsule.isHidden && capsule.accessibilityValue == "Zoomed", "back on, the capsule shows")
+
+        host.act { host.panes.closePane(split) }
+        #expect(host.scenePanes.zoomedCell == nil)
+        #expect(host.panes.primary.view.frame == host.panes.view.bounds)
+        #expect(try grip(host, routed).isHidden, "one pane, no grip")
     }
 
     /// Overflow: a third pane in mini portrait does not fit beside two, so the
@@ -103,6 +149,21 @@ struct PaneTreeHostTests {
         host.act { hidden.children.first?.run() }
         #expect(leafView(host, first)?.isHidden == false)
         #expect(host.panes.focusedLeaf == .split(first))
+    }
+
+    /// A file dropped on a pane's edge where no third pane fits: the new
+    /// pane takes focus and shows, as Split's does, rather than going
+    /// straight to Hidden Panes.
+    @Test func aDropThatMakesAPaneThatDoesNotFitFocusesIt() throws {
+        let host = PaneTestHost(width: 744, height: 1133, inNavigation: true)
+        defer { host.hide() }
+        let routed = host.scenePanes.routedLeafID
+        host.act { host.panes.split(axis: .row) }
+        let file = PaneStackEntry(serverId: "s", route: .file(.host, path: "/tmp/a.md", line: nil))
+        host.act { host.panes.split(routed, edge: .left, showing: file) }
+        let dropped = try #require(host.scenePanes.splitLeaves.first { host.scenePanes.topEntry(of: $0.id) == file }?.id)
+        #expect(leafView(host, dropped)?.isHidden == false, "the dropped pane shows")
+        #expect(host.panes.focusedLeaf == .split(dropped))
     }
 
     /// A divider never takes a cell below its minimum: the chat keeps 375 pt.
@@ -136,7 +197,7 @@ struct PaneTreeHostTests {
     @Test func withOnePaneTheScreensMenuOffersTheSplits() throws {
         let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
         defer { host.hide() }
-        let items = host.panes.splitItems(for: host.screen)
+        let items = host.panes.screenMenuItems(for: host.screen)
         #expect(items.map(\.identifier) == ["pane.menu.splitRight", "pane.menu.splitDown"])
         host.act { items[1].run() }
         let split = try #require(host.scenePanes.splitLeaves.first?.id)
@@ -174,7 +235,7 @@ struct PaneTreeHostTests {
         #expect(companion.frame.maxX == 1133, "the panel stays beside the chat")
         #expect(abs(host.screenWidth + 1 + companion.frame.width - 1133) <= 1, "the two share the window")
         #expect(companion.frame.height > splitHeight, "the chat's cell is the whole window again")
-        #expect(host.panes.splitItems(for: host.screen).isEmpty, "no Split Right or Down")
+        #expect(host.panes.screenMenuItems(for: host.screen).isEmpty, "no Split Right or Down")
         #expect(host.panes.openChoices(from: routed) == nil, "no Open in New Pane or Open in Pane")
         #expect(!host.panes.openBrowser(try #require(URL(string: "https://example.com"))), "web links keep Safari's sheet")
         let chat = try #require(host.panes.cellFrame(routed))
@@ -292,6 +353,9 @@ struct PaneTreeHostTests {
         #expect(!host.panes.view.subviews.contains { $0 is PaneSplitDividerView && !$0.isHidden },
                 "no divider to drag beside a strip")
         #expect(collapsed.accessibilityLabel == "Collapsed pane, New Pane")
+        // Drawn 20 pt thin, it takes touches 44 pt across.
+        #expect(host.panes.view.hitTest(CGPoint(x: 1133 - 20 - 11, y: 372), with: nil) === collapsed)
+        #expect(host.panes.view.hitTest(CGPoint(x: 1133 - 20 - 13, y: 372), with: nil) !== collapsed)
 
         host.act { _ = collapsed.accessibilityActivate() }
         #expect(strip(host, split) == nil)
@@ -489,7 +553,7 @@ struct PaneTreeHostTests {
         #expect(host.scenePanes.undoAction == "Move Pane")
         host.act { host.panes.resetPanes() }
         #expect(host.scenePanes.splitLeaves.isEmpty)
-        #expect(host.panes.splitItems(for: host.screen).first?.identifier == "pane.menu.undo",
+        #expect(host.panes.screenMenuItems(for: host.screen).first?.identifier == "pane.menu.undo",
                 "one pane: the screen's own menu offers Undo")
         host.act { host.panes.undoPanes() }
         #expect(Set(host.scenePanes.splitLeaves.map(\.id)) == [first, second], "Reset taken back")

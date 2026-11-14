@@ -401,11 +401,12 @@ final class ChatBarItems {
         ) { [weak self] _ in self?.chat?.customizeTopBar() }
         customize.accessibilityIdentifier = "chat.toolbar.menu.customize"
         // Split Right and Split Down on a wide window: with one pane there is
-        // no grip yet, so this is where touch makes the first split.
+        // no grip yet, so this is where touch makes the first split. Undo and,
+        // while a pane fills the window, Restore Panes.
         let panes = UIDeferredMenuElement.uncached { [weak self] completion in
             MainActor.assumeIsolated {
                 guard let chat = self?.chat, let host = PaneHostController.containing(chat) else { return completion([]) }
-                let items = host.splitItems(for: chat).map(\.element)
+                let items = host.screenMenuItems(for: chat).map(\.element)
                 completion(items.isEmpty ? [] : [UIMenu(options: .displayInline, children: items)])
             }
         }

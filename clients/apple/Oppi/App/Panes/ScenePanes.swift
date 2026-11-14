@@ -65,6 +65,10 @@ final class ScenePanes {
     /// once an empty tree removed the entry.
     @ObservationIgnored private var lastWritten: PaneLayoutArchive?? = .none
     @ObservationIgnored private weak var navigation: SceneNavigation?
+    /// The routed stack a relaunch restored (and its entries resolved into
+    /// their screens), until the person navigates away from it: showing it
+    /// does not reveal a routed leaf a restored zoom hides.
+    @ObservationIgnored private var restoredRoutedStack: [WorkspaceStackRouteElement]?
     @ObservationIgnored private weak var coordinator: ConnectionCoordinator?
     /// Debounce before a settled change is written.
     private static let settleDelay: Duration = .milliseconds(500)
@@ -528,6 +532,22 @@ final class ScenePanes {
     /// The cell that fills the window by the person's choice, if any.
     var zoomedCell: PaneID? { cellLayout.zoomed }
 
+    /// Whether the routed stack about to show is the person's navigation,
+    /// not the stack a relaunch restored. The first change away from the
+    /// restored stack ends the restore's exemption.
+    func routedStackNavigated() -> Bool {
+        guard let restored = restoredRoutedStack else { return true }
+        guard navigation?.workspaceStackRouteElements != restored else { return false }
+        restoredRoutedStack = nil
+        return true
+    }
+
+    /// A restored entry resolved into its screen in place: still the
+    /// restore's stack, not navigation.
+    func routedEntryResolved(from before: [WorkspaceStackRouteElement], to after: [WorkspaceStackRouteElement]) {
+        if restoredRoutedStack == before { restoredRoutedStack = after }
+    }
+
     /// Collapses a cell to its strip; focus moves to the most recent open
     /// cell. False when it cannot (the window's only open cell).
     @discardableResult
@@ -750,6 +770,7 @@ final class ScenePanes {
             }
         }
         navigation.restorePrimaryStack(elements)
+        restoredRoutedStack = navigation.workspaceStackRouteElements
 
         guard case .session(let sessionId)? = primary.stack.last?.route else { return }
         handoff.scroll = archive.chatScroll[primary.id].flatMap { $0.sessionId == sessionId ? $0 : nil }

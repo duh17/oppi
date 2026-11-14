@@ -140,6 +140,16 @@ final class LiveKeyboardCommandSurface {
                 body: { host in host.zoom(zoomed == nil ? host.focusedCell : nil) }
             )
             if zoomed != nil { title = String(localized: "Restore Panes") }
+        case .restorePanes:
+            // Esc belongs to whatever holds the keyboard: a text field, the
+            // editor (vim's Normal Mode), a terminal's program, a chat's keys.
+            // Otherwise only while a zoomed grip shows; a compact window's
+            // chip shows one pane at a time with no zoom to leave.
+            run = firstResponder(in: window) != nil ? nil : paneAction(
+                yieldsToEditor: false,
+                available: { $0.panes.zoomedCell != nil && !$0.showsChip($0.panes.cellLayout) },
+                body: { $0.zoom(nil) }
+            )
         case .equaliseSizes:
             run = paneAction(
                 yieldsToEditor: false,

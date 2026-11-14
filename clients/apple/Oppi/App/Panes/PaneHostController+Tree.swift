@@ -237,10 +237,13 @@ extension PaneHostController {
         }
     }
 
-    /// Lays everything out again now, after the tree changed.
+    /// Lays everything out again now, after the tree changed, with the
+    /// panes' one motion for it (`PaneMotion.changeCells`).
     func relayoutCells() {
-        view.setNeedsLayout()
-        view.layoutIfNeeded()
+        PaneMotion.changeCells(in: view) { [view] in
+            view?.setNeedsLayout()
+            view?.layoutIfNeeded()
+        }
     }
 
     // MARK: Divider drags
@@ -407,7 +410,7 @@ extension PaneHostController {
                 isZoomed: zoomed == id,
                 hasWaitingSheet: panes.sheets.waitingOwners.contains(id)
             ))
-            let size = zoomed == id ? PaneGripView.capsuleSize : PaneGripView.size
+            let size = grip.preferredSize
             let top = gripTop(ofCell: id, in: frame) + (PaneStripSlot.height - size.height) / 2
             // A grip being dragged follows the finger by its transform.
             guard grip.transform.isIdentity else { continue }
@@ -652,7 +655,16 @@ extension PaneHostController {
         let cells = panes.cellLayout
         let isZoomed = cells.zoomed == id
         let isSplitLeaf = id != panes.routedLeafID
-        var items: [PaneMenuItem] = []
+        let zoom = PaneMenuItem(
+            title: isZoomed ? PaneGripView.restoreTitle : String(localized: "Zoom"),
+            symbol: isZoomed ? PaneGripView.restoreSymbol : "arrow.up.left.and.arrow.down.right",
+            actionName: isZoomed ? PaneGripView.restoreTitle : String(localized: "Zoom"),
+            identifier: "pane.menu.zoom",
+            isEnabled: cells.leaves.count > 1,
+            run: { [weak self] in self?.zoom(isZoomed ? nil : id) }
+        )
+        // Zoomed, Restore leads: the grip is the way back out.
+        var items: [PaneMenuItem] = isZoomed ? [zoom] : []
         if let action = panes.undoAction {
             items.append(PaneMenuItem(
                 title: String(localized: "Undo \(action)"), symbol: "arrow.uturn.backward",
@@ -660,15 +672,8 @@ extension PaneHostController {
                 run: { [weak self] in self?.undoPanes() }
             ))
         }
+        if !isZoomed { items.append(zoom) }
         items += [
-            PaneMenuItem(
-                title: isZoomed ? String(localized: "Restore") : String(localized: "Zoom"),
-                symbol: isZoomed ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
-                actionName: isZoomed ? String(localized: "Restore") : String(localized: "Zoom"),
-                identifier: "pane.menu.zoom",
-                isEnabled: cells.leaves.count > 1,
-                run: { [weak self] in self?.zoom(isZoomed ? nil : id) }
-            ),
             PaneMenuItem(
                 title: String(localized: "Split Right"), symbol: "rectangle.split.2x1",
                 actionName: String(localized: "Split Right"), identifier: "pane.menu.splitRight",
@@ -752,13 +757,28 @@ extension PaneHostController {
         return nil
     }
 
-    /// Split Right, Split Down and Undo for the pane holding `screen`, for
-    /// that screen's own … menu: with one pane there is no grip, so this is
-    /// the first split's touch path, and Undo's after the last pane closed.
-    func splitItems(for screen: UIViewController) -> [PaneMenuItem] {
-        guard canSplit, let cell = cell(holding: screen) else { return [] }
-        let splits: Set<String> = ["pane.menu.undo", "pane.menu.splitRight", "pane.menu.splitDown"]
-        return menuItems(for: cell).filter { splits.contains($0.identifier) }
+    /// Undo, Restore Panes, Split Right and Split Down for the pane holding
+    /// `screen`, for that screen's own … menu: with one pane there is no
+    /// grip, so this is the first split's touch path and Undo's after the
+    /// last pane closed, and while a pane fills the window it is a second
+    /// way out beside the capsule. Undo and Restore stay when no split is
+    /// possible (the leaf cap).
+    func screenMenuItems(for screen: UIViewController) -> [PaneMenuItem] {
+        guard let cell = cell(holding: screen) else { return [] }
+        let cells = panes.cellLayout
+        var items = menuItems(for: cell).filter { $0.identifier == "pane.menu.undo" }
+        if panes.splitsEnabled, cells.zoomed != nil, cells.leaves.count > 1 {
+            items.append(PaneMenuItem(
+                title: String(localized: "Restore Panes"), symbol: PaneGripView.restoreSymbol,
+                actionName: String(localized: "Restore Panes"), identifier: "pane.menu.restore",
+                run: { [weak self] in self?.zoom(nil) }
+            ))
+        }
+        if canSplit {
+            let splits: Set<String> = ["pane.menu.splitRight", "pane.menu.splitDown"]
+            items += menuItems(for: cell).filter { splits.contains($0.identifier) }
+        }
+        return items
     }
 
     // MARK: Operations

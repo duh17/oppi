@@ -177,6 +177,22 @@ struct PaneLayoutTests: PaneFixtureBuilding {
         #expect(layout.collapsed == [id("d"): 0.2])
     }
 
+    /// A saved zoom that would leave no way out comes back unzoomed: a
+    /// collapsed leaf has a strip, no grip, and a lone leaf has neither.
+    @Test func normalisedDropsAZoomWithNoGripToExitIt() throws {
+        var collapsed = try row(("a", 0.5), ("b", 0.3), ("c", 0.2)).collapse(id("b"))
+        collapsed.zoomed = id("b")
+        #expect(try collapsed.normalised().zoomed == nil)
+        #expect(try collapsed.normalised().collapsed == [id("b"): 0.3])
+        var lone = PaneLayout(single: leaf("a"))
+        lone.zoomed = id("a")
+        #expect(try lone.normalised().zoomed == nil)
+        // Closing the zoomed leaf's last neighbour ends its zoom too.
+        let zoomed = try row(("a", 0.5), ("b", 0.5)).zoom(id("a"))
+        #expect(try zoomed.normalised().zoomed == id("a"))
+        #expect(try zoomed.close(id("b")).zoomed == nil)
+    }
+
     @Test func normalisedRefusesWhatItCannotRepair() {
         let duplicate = PaneLayout(
             root: .split(axis: .row, children: [.leaf(leaf("a")), .leaf(leaf("a"))], weights: [1, 1]),

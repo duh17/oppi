@@ -147,9 +147,7 @@ extension PaneHostController: UIDropInteractionDelegate {
         guard let (target, _) = dropTarget(at: session.location(in: view), payload: payload) else { return }
         switch (target, payload) {
         case (.split(let id, let edge), .entry(let entry)?):
-            panes.split(id, edge: edge, showing: entry)
-            syncSplitLeaves()
-            relayoutCells()
+            split(id, edge: edge, showing: entry)
         case (.open(let id), .entry(let entry)?):
             panes.show(entry, in: id)
             focus(cell: id)
@@ -164,6 +162,17 @@ extension PaneHostController: UIDropInteractionDelegate {
         default:
             return
         }
+    }
+
+    /// A drop on a pane's edge: `entry` in a new pane on that side. As Split
+    /// does, a pane that would go straight to overflow takes focus, so the
+    /// drop shows what it made.
+    func split(_ id: PaneID, edge: PaneEdge, showing entry: PaneStackEntry) {
+        guard let made = panes.split(id, edge: edge, showing: entry) else { return }
+        syncSplitLeaves()
+        relayoutCells()
+        if cellFrame(made) == nil { focus(cell: made) }
+        announceLayoutChange()
     }
 
     func showDropZone(_ zone: CGRect) {

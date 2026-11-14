@@ -84,10 +84,13 @@ final class PaneCapsuleBackground: UIVisualEffectView {
 
 /// A leaf's grip: a … capsule centred under its pane's navigation bar, never
 /// in it, because the system moves a floating window by a drag in the bar
-/// even after a hold. A tap opens the pane menu; while its leaf fills the
-/// window it is the zoom capsule ("1 of 3"), and a tap restores. A drag
-/// moves the pane (the host's pan). The focused leaf's grip shows the accent
-/// glyph on an accent wash; the others a secondary glyph on the material.
+/// even after a hold. A tap opens the pane menu, in every state. While its
+/// leaf fills the window the capsule grows to the restore glyph beside the
+/// …, on the accent wash, and its menu leads with Restore: the way out of a
+/// zoom stays where the way in was, with the rest of the menu (Close Pane,
+/// Undo) still in reach. A drag moves the pane (the host's pan), except
+/// while zoomed. The focused leaf's grip shows the accent glyph on an accent
+/// wash; the others a secondary glyph on the material.
 ///
 /// A plain view, not a menu button: a menu button takes the touch for its
 /// menu as it goes down, so no drag could start. The tap presents the menu
@@ -104,13 +107,18 @@ final class PaneGripView: UIView {
     }
 
     static let size = CGSize(width: 44, height: 20)
-    static let capsuleSize = CGSize(width: 76, height: 20)
+    /// What the pane menu and VoiceOver call leaving a zoom.
+    static var restoreTitle: String { String(localized: "Restore") }
+    static let restoreSymbol = "arrow.down.right.and.arrow.up.left"
     /// The touch target's height; the capsule draws shorter, inside its strip.
     static let hitHeight: CGFloat = 44
+    private static let zoomedPadding: CGFloat = 10
+    private static let zoomedSpacing: CGFloat = 5
 
     let leafID: PaneID
     /// The pane menu as it is when it opens.
     var items: @MainActor () -> [PaneMenuItem] = { [] }
+    /// VoiceOver's escape on a zoomed grip: the menu's Restore.
     var onRestore: @MainActor () -> Void = {}
     /// Whether the touch target may reach above the capsule, into the pane's
     /// bar. False under a divider, whose own band takes the touches there;
@@ -122,8 +130,11 @@ final class PaneGripView: UIView {
         systemName: "ellipsis",
         withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .bold)
     ))
+    private let restoreGlyph = UIImageView(image: UIImage(
+        systemName: PaneGripView.restoreSymbol,
+        withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .bold)
+    ))
     private let waitingDot = UIView()
-    private let capsule = UILabel()
     private let menuButton = UIButton(type: .custom)
     private(set) var shown = Shown(title: "", position: 1, count: 1, isFocused: false, isZoomed: false)
 
@@ -132,14 +143,11 @@ final class PaneGripView: UIView {
         super.init(frame: .zero)
         accessibilityIdentifier = "pane.grip.\(leafID.raw)"
         addSubview(background)
-        glyph.isUserInteractionEnabled = false
-        glyph.contentMode = .center
-        addSubview(glyph)
-        capsule.isUserInteractionEnabled = false
-        capsule.font = .preferredFont(forTextStyle: .caption1)
-        capsule.adjustsFontForContentSizeCategory = true
-        capsule.textAlignment = .center
-        addSubview(capsule)
+        for view in [glyph, restoreGlyph] {
+            view.isUserInteractionEnabled = false
+            view.contentMode = .center
+            addSubview(view)
+        }
         waitingDot.isUserInteractionEnabled = false
         waitingDot.backgroundColor = .systemOrange
         waitingDot.layer.cornerRadius = 3
@@ -168,13 +176,23 @@ final class PaneGripView: UIView {
         apply()
     }
 
-    /// A tap: the capsule restores; otherwise the pane menu opens.
+    /// The size the grip draws at: the … capsule, or the longer zoomed one.
+    var preferredSize: CGSize {
+        guard shown.isZoomed else { return Self.size }
+        let content = restoreGlyph.intrinsicContentSize.width + Self.zoomedSpacing + glyph.intrinsicContentSize.width
+        return CGSize(width: max(Self.size.width, ceil(content + Self.zoomedPadding * 2)), height: Self.size.height)
+    }
+
+    /// A zoomed pane does not move: no drag starts on its grip, so a finger
+    /// that moves a little still opens the menu.
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if shown.isZoomed, gestureRecognizer is UIPanGestureRecognizer { return false }
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
+    }
+
+    /// A tap opens the pane menu.
     @objc private func activate() {
-        if shown.isZoomed {
-            onRestore()
-        } else {
-            menuButton.performPrimaryAction()
-        }
+        menuButton.performPrimaryAction()
     }
 
     override func accessibilityActivate() -> Bool {
@@ -182,11 +200,16 @@ final class PaneGripView: UIView {
         return true
     }
 
+    /// VoiceOver's escape (two-finger scrub) on a zoomed grip restores.
+    override func accessibilityPerformEscape() -> Bool {
+        guard shown.isZoomed else { return false }
+        onRestore()
+        return true
+    }
+
     private func apply() {
-        glyph.isHidden = shown.isZoomed
+        restoreGlyph.isHidden = !shown.isZoomed
         waitingDot.isHidden = !shown.hasWaitingSheet
-        capsule.isHidden = !shown.isZoomed
-        capsule.text = String(localized: "\(shown.position) of \(shown.count)")
         applyFocus()
         let place = String(localized: "\(shown.position) of \(shown.count)")
         accessibilityLabel = String(localized: "Pane, \(shown.title), \(place)")
@@ -196,9 +219,9 @@ final class PaneGripView: UIView {
         accessibilityValue = shown.hasWaitingSheet
             ? [state, String(localized: "Sheet waiting")].compactMap { $0 }.joined(separator: ", ")
             : state
-        accessibilityHint = shown.isZoomed ? String(localized: "Restores the other panes.") : nil
-        largeContentTitle = shown.isZoomed ? place : shown.title
-        largeContentImage = UIImage(systemName: "rectangle.split.2x1")
+        accessibilityHint = shown.isZoomed ? String(localized: "Opens the pane menu, with Restore first.") : nil
+        largeContentTitle = shown.title
+        largeContentImage = UIImage(systemName: shown.isZoomed ? Self.restoreSymbol : "rectangle.split.2x1")
         setNeedsLayout()
     }
 
@@ -207,17 +230,27 @@ final class PaneGripView: UIView {
         applyFocus()
     }
 
+    /// The focused grip, and a zoomed one always, wear the accent: zoomed,
+    /// the grip is the way back and should read as a control.
     private func applyFocus() {
-        let focused = shown.isFocused && !shown.isZoomed
-        background.isTinted = focused
-        glyph.tintColor = focused ? tintColor : .secondaryLabel
+        let accented = shown.isFocused || shown.isZoomed
+        background.isTinted = accented
+        glyph.tintColor = accented ? tintColor : .secondaryLabel
+        restoreGlyph.tintColor = tintColor
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         background.frame = bounds
-        glyph.frame = bounds
-        capsule.frame = bounds
+        if shown.isZoomed {
+            let restoreWidth = restoreGlyph.intrinsicContentSize.width
+            let dotsWidth = glyph.intrinsicContentSize.width
+            let left = bounds.midX - (restoreWidth + Self.zoomedSpacing + dotsWidth) / 2
+            restoreGlyph.frame = CGRect(x: left, y: 0, width: restoreWidth, height: bounds.height)
+            glyph.frame = CGRect(x: left + restoreWidth + Self.zoomedSpacing, y: 0, width: dotsWidth, height: bounds.height)
+        } else {
+            glyph.frame = bounds
+        }
         menuButton.frame = bounds
         // A badge on the capsule's trailing shoulder.
         waitingDot.frame = CGRect(x: bounds.maxX - 5, y: -1, width: 6, height: 6)
@@ -239,10 +272,10 @@ final class PaneGripView: UIView {
         set {}
     }
 
+    /// The pane menu's items, Restore first while zoomed, as actions.
     override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
         get {
-            guard !shown.isZoomed else { return nil }
-            return items().flatMap(\.leaves).filter(\.isEnabled).map { item in
+            items().flatMap(\.leaves).filter(\.isEnabled).map { item in
                 let run = item.run
                 return UIAccessibilityCustomAction(name: item.actionName) { _ in
                     MainActor.assumeIsolated { run() }
@@ -428,9 +461,23 @@ final class PaneStripView: UIView {
         )
     }
 
+    /// The strip draws 20 pt thin but takes touches 44 pt across, reaching
+    /// evenly into its neighbours; above a home indicator it reaches up only.
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        super.point(inside: point, with: event) && point.y < bounds.height - bottomInset
+        let touchable = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height - bottomInset)
+        let target: CGRect
+        if axis == .row {
+            target = touchable.insetBy(dx: min(0, (touchable.width - Self.hitThickness) / 2), dy: 0)
+        } else if bottomInset > 0 {
+            let height = max(touchable.height, Self.hitThickness)
+            target = CGRect(x: 0, y: touchable.height - height, width: touchable.width, height: height)
+        } else {
+            target = touchable.insetBy(dx: 0, dy: min(0, (touchable.height - Self.hitThickness) / 2))
+        }
+        return target.contains(point)
     }
+
+    static let hitThickness: CGFloat = 44
 
     @objc private func expand() { onExpand() }
 

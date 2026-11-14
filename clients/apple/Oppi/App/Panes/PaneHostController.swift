@@ -162,6 +162,21 @@ final class PaneHostController: UIViewController {
         view.setNeedsLayout()
     }
 
+    /// The routed leaf (the shell's stack) is about to show another screen.
+    /// Sidebar taps, links, notifications and Settings all open there, so a
+    /// routed leaf behind another pane's zoom, collapsed, or in overflow is
+    /// brought back and focused; otherwise the navigation would seem to do
+    /// nothing. The screens a relaunch restores are not navigation and keep
+    /// a restored zoom (`ScenePanes.routedStackNavigated`).
+    func routedLeafWillShowScreen() {
+        leafWillShowScreen()
+        guard panes.routedStackNavigated() else { return }
+        let id = panes.routedLeafID
+        guard cellFrame(id) == nil || panes.collapsedCells.contains(id) else { return }
+        focus(cell: id)
+        announceLayoutChange()
+    }
+
     /// A leaf's navigation controller showed another screen: it hears the
     /// leaf's current visibility, as its siblings did at the transition, and
     /// the grip settles on the screen's slot now that its bar is final.
@@ -989,15 +1004,16 @@ final class PaneHostController: UIViewController {
         updateVisibility()
     }
 
-    /// Animates to `target` with an interruptible spring: a transition still
-    /// in flight (a quick toggle, or a drag that starts mid-settle) stops in
-    /// place and restarts from there, so the companion never jumps.
+    /// Animates to `target` with an interruptible spring (`PaneMotion`): a
+    /// transition still in flight (a quick toggle, or a drag that starts
+    /// mid-settle) stops in place and restarts from there, so the companion
+    /// never jumps.
     private func animateWidth(to target: CGFloat, initialVelocity: CGFloat, completion: (() -> Void)? = nil) {
         stopSettle()
         // UIKit animations off (the test launch's switch, or
-        // `performWithoutAnimation`): the width lands at once. A property
-        // animator would still run its spring.
-        guard UIView.areAnimationsEnabled else {
+        // `performWithoutAnimation`) or Reduce Motion: the width lands at
+        // once. A property animator would still run its spring.
+        guard !PaneMotion.settlesAtOnce else {
             width = target
             view.setNeedsLayout()
             view.layoutIfNeeded()
@@ -1005,10 +1021,7 @@ final class PaneHostController: UIViewController {
             completion?()
             return
         }
-        let distance = target - width
-        let velocityVector = distance == 0 ? .zero : CGVector(dx: initialVelocity / distance, dy: 0)
-        let timing = UISpringTimingParameters(dampingRatio: 0.86, initialVelocity: velocityVector)
-        let animator = UIViewPropertyAnimator(duration: 0.42, timingParameters: timing)
+        let animator = PaneMotion.settleAnimator(distance: target - width, velocity: initialVelocity)
         animator.addAnimations { [weak self] in
             guard let self else { return }
             self.width = target

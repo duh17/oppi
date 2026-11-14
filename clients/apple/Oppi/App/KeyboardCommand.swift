@@ -27,6 +27,9 @@ enum KeyboardCommand: Hashable, Sendable {
     case splitRight
     case splitDown
     case zoomPane
+    /// Esc while a pane is zoomed: the capsule's Restore. Hidden from the
+    /// menu, where Zoom Pane already reads Restore Panes.
+    case restorePanes
     case equaliseSizes
     /// The pane beside the focused one, physically (arrows do not mirror).
     case focusPane(PaneDirection)
@@ -43,7 +46,7 @@ enum KeyboardCommand: Hashable, Sendable {
     /// direction, focus by number, move, and the divider.
     static let paneSections: [[Self]] = [
         [.undoPanes],
-        [.splitRight, .splitDown, .zoomPane, .equaliseSizes],
+        [.splitRight, .splitDown, .zoomPane, .restorePanes, .equaliseSizes],
         PaneDirection.allCases.map(Self.focusPane),
         (1...PaneLayout.maximumLeaves).map(Self.focusPaneNumber),
         PaneDirection.allCases.map(Self.movePane),
@@ -76,6 +79,7 @@ enum KeyboardCommand: Hashable, Sendable {
         case .splitRight: "splitRight"
         case .splitDown: "splitDown"
         case .zoomPane: "zoomPane"
+        case .restorePanes: "restorePanes"
         case .equaliseSizes: "equaliseSizes"
         case .focusPane(let direction): "focusPane.\(direction)"
         case .focusPaneNumber(let number): "focusPane.\(number)"
@@ -107,6 +111,7 @@ enum KeyboardCommand: Hashable, Sendable {
         case .splitRight: String(localized: "Split Right")
         case .splitDown: String(localized: "Split Down")
         case .zoomPane: String(localized: "Zoom Pane")
+        case .restorePanes: String(localized: "Restore Panes")
         case .equaliseSizes: String(localized: "Equalise Sizes")
         case .focusPane(let direction): String(localized: "Focus Pane \(direction.title)")
         case .focusPaneNumber(let number): String(localized: "Focus Pane \(number)")
@@ -134,6 +139,7 @@ enum KeyboardCommand: Hashable, Sendable {
         case .splitRight: ("d", .command)
         case .splitDown: ("d", [.command, .shift])
         case .zoomPane: ("\r", [.command, .shift])
+        case .restorePanes: (UIKeyCommand.inputEscape, [])
         case .equaliseSizes: ("=", [.control, .command])
         case .focusPane(let direction): (direction.arrowInput, [.alternate, .command])
         case .focusPaneNumber(let number): ("\(number)", [.control, .command])
@@ -142,6 +148,10 @@ enum KeyboardCommand: Hashable, Sendable {
         case .undoPanes: nil
         }
     }
+
+    /// A key with no menu item of its own: it works, but the menu bar and the
+    /// Command-hold overlay leave it out.
+    var isHidden: Bool { self == .restorePanes }
 
     /// The menu item. All commands share one selector; `propertyList` says which.
     @MainActor
@@ -154,6 +164,7 @@ enum KeyboardCommand: Hashable, Sendable {
             modifierFlags: key.modifiers,
             propertyList: id
         )
+        if isHidden { command.attributes = .hidden }
         if PaneDirection.allCases.contains(where: { $0.arrowInput == key.input }) {
             // Pane arrows act physically, and win over text input and the
             // focus system, which would otherwise take arrows first.

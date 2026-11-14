@@ -159,7 +159,9 @@ struct PaneLayout: Hashable, Sendable {
     /// gives way to it, depth ≤ 3, ≤ 8 leaves with unique ids and non-empty
     /// stacks, `focus` names a leaf (else the most recent one), `recency`
     /// holds each leaf once (missing ones appended in tree order), and zoom
-    /// and collapse name only leaves.
+    /// and collapse name only leaves. A zoom also needs another leaf to hide
+    /// and a leaf that is not collapsed: a zoomed strip has no grip to exit
+    /// it, and a lone zoomed leaf would hide the next split behind it.
     func normalised() throws -> PaneLayout {
         guard let root = Self.normalise(root) else { throw PaneLayoutError.emptyTree }
         let leaves = root.leaves
@@ -175,12 +177,13 @@ struct PaneLayout: Hashable, Sendable {
         var recency = recency.filter { ids.contains($0) && seen.insert($0).inserted }
         recency += leaves.map(\.id).filter { !seen.contains($0) }
         let focus = ids.contains(focus) ? focus : recency[0]
+        let collapsed = collapsed.filter { ids.contains($0.key) && $0.value > 0 && $0.value.isFinite }
         return PaneLayout(
             root: root,
             focus: focus,
             recency: recency,
-            zoomed: zoomed.flatMap { ids.contains($0) ? $0 : nil },
-            collapsed: collapsed.filter { ids.contains($0.key) && $0.value > 0 && $0.value.isFinite }
+            zoomed: zoomed.flatMap { ids.contains($0) && ids.count > 1 && collapsed[$0] == nil ? $0 : nil },
+            collapsed: collapsed
         )
     }
 

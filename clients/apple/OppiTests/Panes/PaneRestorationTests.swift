@@ -105,6 +105,81 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         #expect(!host.panes.primary.view.accessibilityElementsHidden, "both leaves show")
     }
 
+    /// Relaunched while a pane filled the window: it comes back zoomed with
+    /// its grip shown, whose menu leads with Restore, and Restore brings the
+    /// chat back beside it.
+    @Test func aRelaunchWhileZoomedComesBackWithItsGripsRestore() async throws {
+        let store = try makeStore()
+        let before = try await makeRoot(sessions: [session("s-1")])
+        before.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
+        let saved = before.navigation.panes
+        let files = try #require(saved.split(saved.routedLeafID, axis: .row))
+        saved.show(PaneStackEntry(serverId: serverId, route: .files(workspace: "ws-1", path: nil)), in: files)
+        saved.zoom(files)
+        save(saved, before.navigation, scene: "scene-zoomed", store: store)
+
+        let after = try await makeRoot(sessions: [session("s-1")])
+        after.navigation.panes.connect(scene: "scene-zoomed", store: store)
+        after.navigation.panes.restore(navigation: after.navigation, coordinator: after.coordinator)
+        #expect(after.navigation.panes.zoomedCell == files)
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true, scenePanes: after.navigation.panes)
+        defer { host.hide() }
+        let leaf = try #require(host.panes.view.subviews.first { $0.accessibilityIdentifier == "pane.leaf.\(files.raw)" })
+        #expect(leaf.frame == host.panes.view.bounds, "the pane still fills the window")
+        #expect(host.panes.primary.view.isHidden)
+
+        let capsule = try #require(host.panes.view.subviews.lazy.compactMap { $0 as? PaneGripView }.first { $0.leafID == files })
+        #expect(!capsule.isHidden)
+        #expect(capsule.accessibilityValue == "Zoomed")
+        let restore = try #require(capsule.accessibilityCustomActions?.first)
+        #expect(restore.name == "Restore")
+        host.act { _ = restore.actionHandler?(restore) }
+        #expect(after.navigation.panes.zoomedCell == nil)
+        #expect(!host.panes.primary.view.isHidden, "the chat is back")
+        #expect(leaf.frame.width < 1133)
+    }
+
+    /// The routed leaf behind another pane's zoom: the restored stack showing
+    /// keeps the restored zoom, and the person opening a session there (a
+    /// sidebar tap) brings the routed leaf back, focused.
+    @Test func navigatingTheHiddenRoutedLeafRevealsItButTheRestoreDoesNot() async throws {
+        let store = try makeStore()
+        let before = try await makeRoot(sessions: [session("s-1"), session("s-2")])
+        before.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
+        let saved = before.navigation.panes
+        let files = try #require(saved.split(saved.routedLeafID, axis: .row))
+        saved.show(PaneStackEntry(serverId: serverId, route: .files(workspace: "ws-1", path: nil)), in: files)
+        saved.zoom(files)
+        save(saved, before.navigation, scene: "scene-reveal", store: store)
+
+        let after = try await makeRoot(sessions: [session("s-1"), session("s-2")])
+        let panes = after.navigation.panes
+        panes.connect(scene: "scene-reveal", store: store)
+        panes.restore(navigation: after.navigation, coordinator: after.coordinator)
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true, scenePanes: panes)
+        defer { host.hide() }
+        host.act { host.panes.routedLeafWillShowScreen() }
+        #expect(panes.zoomedCell == files, "the restored stack showing is not navigation")
+        #expect(host.panes.primary.view.isHidden)
+
+        after.navigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-2", workspaceId: "ws-1")
+        )
+        host.act { host.panes.routedLeafWillShowScreen() }
+        #expect(panes.zoomedCell == nil, "the zoom ends")
+        #expect(host.panes.focusedLeaf == .primary)
+        #expect(!host.panes.primary.view.isHidden)
+
+        // Collapsed, it expands the same way.
+        host.act { host.panes.collapse(panes.routedLeafID) }
+        #expect(panes.collapsedCells.contains(panes.routedLeafID))
+        after.navigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-1", workspaceId: "ws-1")
+        )
+        host.act { host.panes.routedLeafWillShowScreen() }
+        #expect(!panes.collapsedCells.contains(panes.routedLeafID))
+    }
+
     /// The tree is written once it has rested: a burst of changes writes
     /// only its last state, 500 ms after it.
     @Test func aBurstOfChangesIsWrittenOnceItRests() async throws {

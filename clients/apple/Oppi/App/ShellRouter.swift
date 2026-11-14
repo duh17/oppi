@@ -289,7 +289,7 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
             }
         }
         applyNavigationBar(forIncoming: viewController, animated: animated)
-        PaneHostController.containing(self)?.leafWillShowScreen()
+        PaneHostController.containing(self)?.routedLeafWillShowScreen()
     }
 
     func navigationController(

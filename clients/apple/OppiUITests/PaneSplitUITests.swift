@@ -49,7 +49,8 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(capsule.waitUntilExists(timeout: 5), "The zoomed pane's grip is the capsule")
         attachScreenCapture("split-zoomed")
         capsule.tap()
-        XCTAssertTrue(waitFor(composer.isHittable), "The capsule restored the chat")
+        app.buttons["pane.menu.zoom"].tap()
+        XCTAssertTrue(waitFor(composer.isHittable), "The zoomed grip's Restore brought the chat back")
 
         filesGrip.tap()
         let close = app.buttons["Close Pane"]
@@ -140,7 +141,8 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         attachScreenCapture("touch-zoomed")
         let capsule = grips.matching(NSPredicate(format: "value == 'Zoomed'")).firstMatch
         capsule.tap()
-        XCTAssertTrue(waitFor(composer.isHittable), "The capsule restored both panes")
+        app.buttons["pane.menu.zoom"].tap()
+        XCTAssertTrue(waitFor(composer.isHittable), "The zoomed grip's Restore brought both panes back")
 
         let chatLeadingEdge = app.collectionViews["chat.timeline"].coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5))
         launcherGrip.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
@@ -148,6 +150,84 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(waitFor(composer.frame.minX > launcher.frame.maxX - 1),
                       "The held grip moved the pane to the chat's leading edge: the chat is now on the right")
         attachScreenCapture("touch-moved")
+    }
+
+    /// The way out of a zoom by touch: the zoomed pane's grip stays, a
+    /// longer accent pill, and one tap opens the pane menu with Restore, and
+    /// Close Pane still in it. Restore gives both panes back, in landscape
+    /// and after a rotation to portrait while zoomed.
+    func testAZoomedPaneLeavesByItsGripMenu() throws {
+        try openChatInLandscape()
+        app.typeKey("d", modifierFlags: .command)
+        XCTAssertTrue(app.buttons["pane.launcher.files"].waitUntilExists(timeout: 5), "⌘D opened the launcher")
+        app.buttons["pane.launcher.files"].tap()
+        let files = app.descendants(matching: .any)["fileBrowser.row.Route.md"]
+        XCTAssertTrue(files.waitUntilExists(timeout: 10), "Files fills the pane")
+        let composer = app.descendants(matching: .any)["chat.input"]
+        let grips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.'"))
+        let filesGrip = grips.matching(NSPredicate(format: "label ENDSWITH '2 of 2'")).firstMatch
+        let zoomed = grips.matching(NSPredicate(format: "value == 'Zoomed'")).firstMatch
+        let menuZoom = app.buttons["pane.menu.zoom"]
+
+        func zoomAndRestore(_ phase: String, rotateWhileZoomed: Bool) {
+            filesGrip.tap()
+            XCTAssertTrue(menuZoom.waitUntilExists(timeout: 5), "The grip opens the pane menu")
+            menuZoom.tap()
+            XCTAssertTrue(waitFor(!composer.isHittable), "Zoom filled the window with Files")
+            if rotateWhileZoomed { XCUIDevice.shared.orientation = .portrait }
+            XCTAssertTrue(zoomed.waitUntilExists(timeout: 5) && zoomed.isHittable, "The zoomed pane keeps its grip")
+            hold()
+            attachScreenCapture("\(phase)-zoomed")
+            zoomed.tap()
+            XCTAssertTrue(menuZoom.waitUntilExists(timeout: 5), "One tap on the zoomed grip opens the pane menu")
+            XCTAssertEqual(menuZoom.label, "Restore")
+            XCTAssertTrue(app.buttons["pane.menu.close"].exists, "Close Pane is in reach while zoomed")
+            hold()
+            attachScreenCapture("\(phase)-zoomed-menu")
+            menuZoom.tap()
+            XCTAssertTrue(waitFor(composer.isHittable && files.isHittable), "Restore gave both panes back")
+            XCTAssertFalse(zoomed.exists, "No pane is zoomed")
+            hold()
+            attachScreenCapture("\(phase)-restored")
+        }
+        zoomAndRestore("landscape", rotateWhileZoomed: false)
+        zoomAndRestore("rotated", rotateWhileZoomed: true)
+    }
+
+    /// Navigation in the main pane while another pane fills the window: a
+    /// workspace tapped in the sidebar opens in the main pane, which comes
+    /// back from behind the zoomed Terminal instead of changing unseen.
+    func testNavigatingTheMainPaneBehindAZoomBringsItBack() throws {
+        try openChatInLandscape()
+        let toggleSidebar = app.buttons["workspace.split.sidebarToggle"]
+        if toggleSidebar.waitUntilExists(timeout: 5), toggleSidebar.label.localizedCaseInsensitiveContains("show") {
+            toggleSidebar.tap()
+        }
+        let workspace = app.buttons["workspace.open.routes-workspace"]
+        XCTAssertTrue(workspace.waitUntilExists(timeout: 5), "The sidebar lists the workspace")
+        app.typeKey("d", modifierFlags: .command)
+        let terminal = app.buttons["pane.launcher.terminal"]
+        XCTAssertTrue(terminal.waitUntilExists(timeout: 5), "⌘D opened the launcher")
+        terminal.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["sshTerminal.setup.list"].waitUntilExists(timeout: 10),
+                      "The terminal opened in the pane")
+        let composer = app.descendants(matching: .any)["chat.input"]
+        let grips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.'"))
+        grips.matching(NSPredicate(format: "label ENDSWITH '2 of 2'")).firstMatch.tap()
+        app.buttons["pane.menu.zoom"].tap()
+        XCTAssertTrue(waitFor(!composer.isHittable), "The terminal fills the panes")
+        let zoomed = grips.matching(NSPredicate(format: "value == 'Zoomed'")).firstMatch
+        XCTAssertTrue(zoomed.waitUntilExists(timeout: 5))
+        hold()
+        attachScreenCapture("terminal-zoomed")
+
+        XCTAssertTrue(workspace.isHittable, "The sidebar is still beside the panes")
+        workspace.tap()
+        let row = app.descendants(matching: .any)[sessionRow]
+        XCTAssertTrue(waitFor(row.exists && row.isHittable), "The main pane came back with the workspace's sessions")
+        XCTAssertFalse(zoomed.exists, "The terminal's zoom ended")
+        hold()
+        attachScreenCapture("main-pane-revealed")
     }
 
     /// The owner's terminal pane: Terminal in the launcher opens the
