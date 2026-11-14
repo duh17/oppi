@@ -28,6 +28,7 @@ import {
   withStaticElapsed,
   withWorkingIconStandIn,
 } from "./extension-surface-projection.js";
+import { createLogger } from "./logger.js";
 import type {
   ExtensionUIBlocksComposite,
   ExtensionUIDataTableComposite,
@@ -157,6 +158,8 @@ function cannotAct(action: ExtensionUISurfaceActionMessage): ExtensionUISurfaceA
     error: { compositeId: action.compositeId, message: "This client cannot act on a surface." },
   };
 }
+
+const log = createLogger({ base: { component: "extension_surface" } });
 
 export const EXTENSION_UI_SURFACE_COALESCE_MS = 250;
 
@@ -303,7 +306,7 @@ export class ExtensionSurfaceRuntime {
   }
 
   /** The extension is done with this surface: its action work is cancelled and the client clears it. */
-  dismiss(surfaceId: string): boolean {
+  dismiss(surfaceId: string, reason: "dismissed" | "deadline" = "dismissed"): boolean {
     const queued = this.publishes.get(surfaceId);
     if (queued) {
       clearTimeout(queued.timer);
@@ -319,6 +322,12 @@ export class ExtensionSurfaceRuntime {
     const revision = this.nextRevision(surfaceId, live);
     this.rememberRevision(surfaceId, revision);
     this.sendRemoved(surfaceId, revision, live);
+    log.info("extension_surface.removed", {
+      sessionId: this.options.sessionId,
+      surfaceId,
+      revision,
+      reason,
+    });
     return true;
   }
 
@@ -331,7 +340,14 @@ export class ExtensionSurfaceRuntime {
     for (const surface of [...this.surfaces.values()]) {
       this.cancelActions(surface.id);
       this.options.onSettled?.(surface.id);
-      this.sendRemoved(surface.id, this.nextRevision(surface.id, surface), surface);
+      const revision = this.nextRevision(surface.id, surface);
+      this.sendRemoved(surface.id, revision, surface);
+      log.info("extension_surface.removed", {
+        sessionId: this.options.sessionId,
+        surfaceId: surface.id,
+        revision,
+        reason: "session_stopped",
+      });
     }
     this.surfaces.clear();
     this.answered.clear();
@@ -367,15 +383,17 @@ export class ExtensionSurfaceRuntime {
     audience: ExtensionUISurfaceAudience,
   ): Promise<ExtensionUISurfaceActionAnswer> {
     // A client that sees only the v1 projection never drew the card: refused before any lookup.
-    if (audience === "v1-projection") return cannotAct(message);
+    if (audience === "v1-projection") return this.cannotAct(message, audience);
 
     this.flush(message.surfaceId);
     const surface = this.surfaces.get(message.surfaceId);
-    if (this.stopped || !surface)
+    if (this.stopped || !surface) {
+      if (!this.stopped) this.sendGone(message);
       return this.refuse(undefined, message, { message: "This surface is gone." });
+    }
     // A client that draws only the closed composites was sent the projection of a tree, never the
     // card, so a tap from it cannot be one this surface offered.
-    if (!audienceDrawsWhole(audience, surface)) return cannotAct(message);
+    if (!audienceDrawsWhole(audience, surface)) return this.cannotAct(message, audience);
 
     if (!this.hasComposite(surface, message.compositeId))
       return this.refuse(undefined, message, { message: "This card is gone." });
@@ -532,8 +550,54 @@ export class ExtensionSurfaceRuntime {
     error: { title?: string; message: string },
   ): ExtensionUISurfaceActionAnswer {
     const compositeId = action.compositeId;
+    this.logRefused(action, error.message);
     if (surface) this.drawError(surface, { compositeId, ...error });
     return { error: { compositeId, message: error.message } };
+  }
+
+  private cannotAct(
+    action: ExtensionUISurfaceActionMessage,
+    audience: ExtensionUISurfaceAudience,
+  ): ExtensionUISurfaceActionAnswer {
+    this.logRefused(action, `audience ${audience} cannot act`);
+    return cannotAct(action);
+  }
+
+  private logRefused(action: ExtensionUISurfaceActionMessage, reason: string): void {
+    log.info("extension_surface.action_refused", {
+      sessionId: this.options.sessionId,
+      surfaceId: action.surfaceId,
+      compositeId: action.compositeId,
+      actionId: action.actionId,
+      revision: action.revision,
+      reason,
+    });
+  }
+
+  /**
+   * A tap on a surface this session does not hold comes from a client still drawing it: one that
+   * was away when the removal went out, or that kept it across a server restart. Every client that
+   * draws v2 is told it is gone, above the revision the tap was sent at, so the stale card clears
+   * itself instead of its pending state reverting to a button that does nothing. The revision is
+   * remembered, so a later publish of the same id continues above it.
+   */
+  private sendGone(action: ExtensionUISurfaceActionMessage): void {
+    const surfaceId = action.surfaceId;
+    // The wire only promises a finite number; a revision the client can decode is an integer.
+    const tapped = Number.isSafeInteger(action.revision) ? action.revision : 0;
+    const revision = Math.max(tapped, this.revisionFloors.get(surfaceId) ?? 0) + 1;
+    this.rememberRevision(surfaceId, revision);
+    const message = buildExtensionUIPatchMessage(this.options.sessionId, surfaceId, revision, {
+      removed: true,
+    });
+    for (const audience of [...TREE_AUDIENCES, "composites" as const])
+      this.options.emit(message, audience);
+    log.info("extension_surface.removed", {
+      sessionId: this.options.sessionId,
+      surfaceId,
+      revision,
+      reason: "tapped_after_removal",
+    });
   }
 
   /** Every action ends here; a tap that carried no request id has nothing to answer. */
@@ -700,7 +764,7 @@ export class ExtensionSurfaceRuntime {
     const wait = Math.max(0, surface.timeoutAt - this.now());
     this.deadlines.set(
       surface.id,
-      setTimeout(() => this.dismiss(surface.id), wait),
+      setTimeout(() => this.dismiss(surface.id, "deadline"), wait),
     );
   }
 

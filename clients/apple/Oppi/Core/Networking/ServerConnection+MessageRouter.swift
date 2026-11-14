@@ -40,7 +40,7 @@ extension ServerConnection {
         case .extensionUIRequest, .extensionUINotification:
             applyUIEffects(ServerMessageEffects.uiEffects(for: message, isFocusedSession: true), sessionId: sessionId)
 
-        case .extensionUISurface, .extensionUIPatch:
+        case .extensionUISurface, .extensionUIPatch, .extensionUILiveSurfaces:
             applyComposableSurface(message, sessionId: sessionId)
 
         case .turnAck(let command, let clientTurnId, let stage, let requestId, _):
@@ -93,7 +93,7 @@ extension ServerConnection {
         case .extensionUIRequest, .extensionUINotification:
             applyUIEffects(ServerMessageEffects.uiEffects(for: message, isFocusedSession: false), sessionId: sessionId)
 
-        case .extensionUISurface, .extensionUIPatch:
+        case .extensionUISurface, .extensionUIPatch, .extensionUILiveSurfaces:
             applyComposableSurface(message, sessionId: sessionId)
 
         case .extensionUISettled(let id, _):
@@ -138,6 +138,8 @@ extension ServerConnection {
             extensionSurfaces.apply(surface, sessionId: routedSessionId ?? sessionId)
         case .extensionUIPatch(let patch):
             extensionSurfaces.apply(patch, sessionId: patch.sessionId ?? sessionId)
+        case .extensionUILiveSurfaces(let surfaceIds, let routedSessionId):
+            extensionSurfaces.retain(surfaceIds, sessionId: routedSessionId ?? sessionId)
         default:
             break
         }
@@ -286,6 +288,9 @@ extension ServerConnection {
         // Display versions are scoped to the backend instance. A fresh
         // stream bootstrap may follow a server/backend restart at version 1.
         messageQueueStore.clear(sessionId: session.id)
+        // The replay that follows ends with the set of live surfaces, which drops any removed while
+        // this stream was away; until then the old ones stay drawn.
+        extensionSurfaces.forgetDismissals(sessionId: session.id)
         sessionStore.upsert(session)
         sessionUsageMetrics.reportIfNeeded(session)
         syncThinkingLevel(from: session)

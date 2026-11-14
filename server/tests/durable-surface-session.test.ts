@@ -271,6 +271,7 @@ describe("durable plugin surfaces on the session stream", () => {
     expect(declared.map((frame) => frame.type)).toEqual([
       "extension_ui_notification",
       "extension_ui_surface",
+      "extension_ui_live_surfaces",
     ]);
     // A declaration that asks for an answer gets one, after the frames it reconciled.
     expect(
@@ -371,8 +372,47 @@ describe("durable plugin surfaces on the session stream", () => {
       },
       "phone-1",
     );
-    expect((await removed).message).toMatchObject({ surfaceId: "deploy", removed: true });
+    const removal = (await removed).message as Extract<
+      ServerMessage,
+      { type: "extension_ui_patch" }
+    >;
+    expect(removal).toMatchObject({ surfaceId: "deploy", removed: true });
     expect(f.manager.getSurfaceMessages(f.session.id, "late-phone")).toEqual([]);
+    // A phone that resubscribes is told it holds no surface, so a card it kept clears.
+    expect(f.manager.getSurfaceMessages(f.session.id, "phone-1")).toEqual([
+      { type: "extension_ui_live_surfaces", surfaceIds: [], sessionId: f.session.id },
+    ]);
+
+    // A phone that missed the removal taps the card it still draws: it is told the card is gone,
+    // above the revision it acted on, instead of watching its pending state quietly revert.
+    const healed = observed.next(
+      (frame) =>
+        frame.message.type === "extension_ui_patch" &&
+        frame.message.removed === true &&
+        frame.message.revision > removal.revision &&
+        frame.audience === "composites",
+    );
+    const settledForStale = observed.next(
+      (frame) =>
+        frame.message.type === "extension_ui_settled" &&
+        (frame.message as Extract<ServerMessage, { type: "extension_ui_settled" }>).id ===
+          "tap-stale",
+    );
+    expect(
+      await tap(
+        {
+          type: "extension_ui_action",
+          surfaceId: "deploy",
+          compositeId: "status",
+          actionId: "retry",
+          revision: patchFrame.revision,
+          requestId: "tap-stale",
+        },
+        "phone-1",
+      ),
+    ).toEqual([]);
+    expect((await healed).message).toMatchObject({ surfaceId: "deploy", removed: true });
+    await settledForStale;
   }, 30_000);
 
   it("replays a live surface to a client that subscribes later, and clears it when the session ends", async () => {
@@ -383,15 +423,21 @@ describe("durable plugin surfaces on the session stream", () => {
     await f.manager.startSession(f.session.id, f.workspace);
     const observed = observe(f.manager, f.session.id);
 
-    // A session that never published has no loop: a tap is answered where it arrives, and a
-    // declaration has nothing to replay.
+    // A session that never published has nothing to replay: a v2 client is told it holds no
+    // surface, and a tap on a card it kept from before is answered by clearing that card.
     expect(f.manager.getSurfaceMessages(f.session.id, "phone-1")).toEqual([]);
     expect(
       f.manager.declareSurfaceCapabilities(f.session.id, "phone-1", [
         EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
       ]),
-    ).toEqual([]);
+    ).toEqual([{ type: "extension_ui_live_surfaces", surfaceIds: [], sessionId: f.session.id }]);
     const idle = socketHandler(f.manager, f.manager.getActiveSession(f.session.id)!);
+    const cleared = observed.next(
+      (frame) =>
+        frame.message.type === "extension_ui_patch" &&
+        frame.message.removed === true &&
+        frame.audience === "composites",
+    );
     expect(
       await idle(
         {
@@ -404,10 +450,13 @@ describe("durable plugin surfaces on the session stream", () => {
         },
         "phone-1",
       ),
-    ).toEqual([
-      { type: "error", error: "Unknown extension surface: deploy" },
-      { type: "extension_ui_settled", id: "tap-early", sessionId: f.session.id },
-    ]);
+    ).toEqual([]);
+    expect((await cleared).message).toMatchObject({ surfaceId: "deploy", revision: 2 });
+    expect(observed.messages("extension_ui_settled")).toContainEqual({
+      type: "extension_ui_settled",
+      id: "tap-early",
+      sessionId: f.session.id,
+    });
 
     const published = observed.next((frame) => frame.message.type === "extension_ui_surface");
     await f.manager.sendPrompt(f.session.id, "Publish the deploy panel");
@@ -424,7 +473,9 @@ describe("durable plugin surfaces on the session stream", () => {
     expect(frames.map((frame) => frame.type)).toEqual([
       "extension_ui_notification",
       "extension_ui_surface",
+      "extension_ui_live_surfaces",
     ]);
+    expect(frames.at(-1)).toMatchObject({ surfaceIds: ["deploy"] });
 
     // The session ends with the surface still up: the clients watching are told it is gone
     // before the session's own end, so nothing keeps drawing a card no loop can answer.
@@ -590,7 +641,9 @@ describe("background jobs on their panel", () => {
     await until(() => !alive(pid), "the process to die");
     // The result reaches the model as one follow-up, which clears the panel.
     await removed;
-    expect(f.manager.getSurfaceMessages(f.session.id, "phone-1")).toEqual([]);
+    expect(f.manager.getSurfaceMessages(f.session.id, "phone-1")).toEqual([
+      { type: "extension_ui_live_surfaces", surfaceIds: [], sessionId: f.session.id },
+    ]);
     // The model was woken by the cancellation's report and answered it.
     await answered(f, "STOP_NOTED");
   }, 30_000);

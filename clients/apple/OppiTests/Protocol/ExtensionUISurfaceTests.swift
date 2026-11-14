@@ -623,6 +623,24 @@ struct ExtensionUISurfaceTests {
         #expect(patch.revision == 8)
     }
 
+    @Test func decodesTheSetOfLiveSurfaces() throws {
+        let messages = try #require(
+            try JSONSerialization.jsonObject(with: ProtocolFixtures.data("server-messages.json"))
+                as? [String: Any]
+        )["messages"] as? [String: Any]
+        let frame = try #require(messages?["extension_ui_live_surfaces"])
+        let decoded = try JSONDecoder().decode(
+            ServerMessage.self,
+            from: try JSONSerialization.data(withJSONObject: frame)
+        )
+        guard case .extensionUILiveSurfaces(let surfaceIds, let sessionId) = decoded else {
+            Issue.record("Expected the live surface set")
+            return
+        }
+        #expect(surfaceIds == ["deploy"])
+        #expect(sessionId == "test-session-1")
+    }
+
     @Test func carriesTheRemovalOfASurface() throws {
         let frame: [String: Any] = [
             "type": "extension_ui_patch",

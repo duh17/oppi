@@ -137,6 +137,8 @@ On iPad, a window splits into panes, so chats, files, terminals, and web pages s
 
 ### Fixed
 
+- **Client/Server:** A background jobs panel, or any other extension panel, that ended while the app was away no longer stays on screen after it reconnects. Tapping a button on a panel that already ended now closes the panel instead of showing "Stopping…" and doing nothing.
+- **Server:** In durable sessions, the background jobs panel now closes when the last job's result is delivered, also after `/reload`.
 - **Client:** The thinking-level menu lists levels strongest first in both the chat and Quick Session, whichever way it opens.
 - **Client:** An expanded tool call whose input is code, such as a codemode script, no longer opens with a tall, mostly empty header on iPad. Its long-press menu now offers Open Full Screen while it runs, before it prints anything.
 - **Client:** Sending a message to a busy session no longer leaves the bottom of the chat, such as the busy row, hidden behind the pills above the composer when the queue pill appears as the chat scrolls down.

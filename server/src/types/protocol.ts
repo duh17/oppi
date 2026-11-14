@@ -1192,9 +1192,7 @@ export type ServerMessage =
         sessionId: string;
       }
     // ── Composable extension surfaces (v2, capability `extension-native-ui:v2:composites`) ──
-    //
-    // A client without the capability never sees these frames: the publisher sends it the v1
-    // widget projection of the same surface instead (`projectExtensionUISurfaceToV1`).
+    // A client without it gets the v1 widget projection instead (`projectExtensionUISurfaceToV1`).
     | {
         type: "extension_ui_surface";
         surface: ExtensionUISurface;
@@ -1210,6 +1208,8 @@ export type ServerMessage =
         removed?: boolean;
         sessionId: string;
       }
+    /** Every surface this client was just sent whole; it drops any other surface it holds. */
+    | { type: "extension_ui_live_surfaces"; surfaceIds: string[]; sessionId: string }
     // ── Git status (workspace/worktree-level, pushed after file-mutating tool calls) ──
     | {
         type: "git_status";

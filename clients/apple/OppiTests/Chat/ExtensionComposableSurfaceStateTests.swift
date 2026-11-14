@@ -346,6 +346,73 @@ struct ExtensionComposableSurfaceStateTests {
         #expect(store.surface(for: "s1").layout.composableSurfaces["deploy"]?.surface.revision == 8)
     }
 
+    @Test func aRemovalAnswersAnActionOnASurfaceThatIsGone() throws {
+        let store = ExtensionSurfaceStore()
+        store.apply(try surface("status-card.json"), sessionId: "s1")
+        store.beginAction(pending(revision: 7), sessionId: "s1")
+
+        // The server no longer holds the surface the tap named, and says so above its revision:
+        // the card goes instead of its pending words reverting to a button that does nothing.
+        store.apply(patch(surfaceId: "deploy", revision: 8, removed: true), sessionId: "s1")
+        #expect(store.surface(for: "s1").layout.composableSurfaces.isEmpty)
+        #expect(store.surface(for: "s1").pendingAction == nil)
+    }
+
+    // MARK: - Reconnect
+
+    @Test func reconnectDropsASurfaceTheServerNoLongerHolds() async throws {
+        let (conn, pipe) = await makeTestConnection()
+        pipe.handle(.extensionUISurface(surface: try surface("status-card.json"), sessionId: "s1"), sessionId: "s1")
+        pipe.handle(.extensionUISurface(surface: try surface("checklist.json"), sessionId: "s1"), sessionId: "s1")
+        conn.extensionSurfaces.beginAction(pending(revision: 7), sessionId: "s1")
+
+        // The phone was away when `deploy` ended. It resubscribes and is handed what is live.
+        pipe.handle(.connected(session: makeTestSession(status: .ready)), sessionId: "s1")
+        // Until the replay ends, what it held stays drawn: no pill or open drawer blinks out.
+        #expect(conn.extensionSurfaces.surface(for: "s1").layout.composableSurfaces.count == 2)
+        pipe.handle(
+            .extensionUISurface(surface: try surface("checklist.json", revision: 4, headerTitle: "Release 2"), sessionId: "s1"),
+            sessionId: "s1"
+        )
+        pipe.handle(.extensionUILiveSurfaces(surfaceIds: ["release"], sessionId: "s1"), sessionId: "s1")
+
+        let held = conn.extensionSurfaces.surface(for: "s1")
+        #expect(held.layout.composableSurfaces["deploy"] == nil)
+        #expect(held.layout.composableSurfaces["release"]?.surface.header.title == "Release 2")
+        #expect(held.layout.composableSurfaceEntries(in: .aboveEditor).map(\.id) == ["release"])
+        // The action on the card that went has nothing left to answer it.
+        #expect(held.pendingAction == nil)
+    }
+
+    @Test func reconnectKeepsASurfaceTheServerStillHolds() async throws {
+        let (conn, pipe) = await makeTestConnection()
+        pipe.handle(.extensionUISurface(surface: try surface("status-card.json"), sessionId: "s1"), sessionId: "s1")
+
+        pipe.handle(.connected(session: makeTestSession(status: .ready)), sessionId: "s1")
+        pipe.handle(
+            .extensionUISurface(surface: try surface("status-card.json", revision: 9, headerTitle: "web → staging"), sessionId: "s1"),
+            sessionId: "s1"
+        )
+        pipe.handle(.extensionUILiveSurfaces(surfaceIds: ["deploy"], sessionId: "s1"), sessionId: "s1")
+
+        let stored = testUnwrap(conn.extensionSurfaces.surface(for: "s1").layout.composableSurfaces["deploy"])
+        #expect(stored.surface.revision == 9)
+        #expect(stored.surface.header.title == "web → staging")
+    }
+
+    @Test func reconnectForgetsDismissalsSoARestartedServerCanPublishAgain() async throws {
+        let (conn, pipe) = await makeTestConnection()
+        pipe.handle(.extensionUISurface(surface: try surface("status-card.json"), sessionId: "s1"), sessionId: "s1")
+        pipe.handle(.extensionUIPatch(patch: patch(surfaceId: "deploy", revision: 8, removed: true)), sessionId: "s1")
+
+        // The server restarted, so its revisions begin again below the removal this phone saw.
+        pipe.handle(.connected(session: makeTestSession(status: .ready)), sessionId: "s1")
+        pipe.handle(.extensionUISurface(surface: try surface("status-card.json", revision: 1), sessionId: "s1"), sessionId: "s1")
+        pipe.handle(.extensionUILiveSurfaces(surfaceIds: ["deploy"], sessionId: "s1"), sessionId: "s1")
+
+        #expect(conn.extensionSurfaces.surface(for: "s1").layout.composableSurfaces["deploy"]?.surface.revision == 1)
+    }
+
     // MARK: - Encoding
 
     @Test(arguments: [

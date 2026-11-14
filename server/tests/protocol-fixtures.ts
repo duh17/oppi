@@ -647,6 +647,11 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     patch: { "sections.0.phase": "queued" },
     sessionId: "test-session-1",
   },
+  extension_ui_live_surfaces: {
+    type: "extension_ui_live_surfaces",
+    surfaceIds: ["deploy"],
+    sessionId: "test-session-1",
+  },
   git_status: {
     type: "git_status",
     workspaceId: "ws-1",
@@ -997,6 +1002,7 @@ const SERVER_MESSAGE_ORDER = [
   "extension_ui_settled",
   "extension_ui_surface",
   "extension_ui_patch",
+  "extension_ui_live_surfaces",
   "git_status",
   "layout_proposal",
   "layout_proposal_problem",

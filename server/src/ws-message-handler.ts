@@ -8,7 +8,10 @@ import {
   type HeldTurnInput,
 } from "./agent-runtime-transport.js";
 import { consumeSyntheticE2EUIRequest, recordE2EUIResponse } from "./e2e-ui-harness-state.js";
-import { buildExtensionUISettledMessage } from "./extension-ui-contract.js";
+import {
+  buildExtensionUIPatchMessage,
+  buildExtensionUISettledMessage,
+} from "./extension-ui-contract.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import {
@@ -204,7 +207,7 @@ export class WsMessageHandler {
       // ── Composable surface actions (extension-native-ui:v2:composites) ──
       // The loop lives with the session that published the surface (`SessionSurfaces`), which
       // runs the panel's handler, sends the answer, and settles the tap's request id itself. A
-      // tap that reaches no surface is answered here, on the same round trip. Reachability is
+      // tap on a Session that is not live is answered here, on the same round trip. Reachability is
       // decided before the handler runs and the work is not awaited: an action can take as long as
       // the plugin's own work, and the socket's next message (a steer, or Stop) must not wait on it.
       case "extension_ui_action": {
@@ -219,7 +222,15 @@ export class WsMessageHandler {
           });
           return;
         }
-        send({ type: "error", error: `Unknown extension surface: ${msg.surfaceId}` });
+        // No live loop holds it, so the card this client taps is stale: clear it and end the tap.
+        log.info("ws.extension_surface_action.refused", {
+          sessionId: session.id,
+          surfaceId: msg.surfaceId,
+          actionId: msg.actionId,
+          reason: "session_not_live",
+        });
+        const revision = Number.isSafeInteger(msg.revision) ? msg.revision + 1 : 1;
+        send(buildExtensionUIPatchMessage(session.id, msg.surfaceId, revision, { removed: true }));
         if (msg.requestId) send(buildExtensionUISettledMessage(session.id, msg.requestId));
         return;
       }

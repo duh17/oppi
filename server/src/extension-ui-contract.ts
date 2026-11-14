@@ -1020,6 +1020,17 @@ export function buildExtensionUISurfaceMessage(
   return { type: "extension_ui_surface", surface, sessionId };
 }
 
+/**
+ * The ids of every surface a client was just handed whole. It ends a subscribe replay, so a client
+ * that was away when a surface went drops it: a removal is sent once and never replayed.
+ */
+export function buildExtensionUILiveSurfacesMessage(
+  sessionId: string,
+  surfaceIds: string[],
+): ServerMessage {
+  return { type: "extension_ui_live_surfaces", surfaceIds, sessionId };
+}
+
 export function buildExtensionUIPatchMessage(
   sessionId: string,
   surfaceId: string,

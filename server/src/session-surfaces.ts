@@ -1,4 +1,5 @@
 import {
+  buildExtensionUILiveSurfacesMessage,
   buildExtensionUINotificationMessage,
   buildExtensionUISurfaceMessage,
   EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
@@ -132,40 +133,53 @@ export class SessionSurfaces {
     this.audiences.delete(clientId);
   }
 
-  /** Every live surface, in the shape this client draws, for a client that has just subscribed. */
+  /**
+   * Every live surface, in the shape this client draws, for a client that has just subscribed. A
+   * v2 client is then told the ids it holds whole: a removal reaches only the clients connected
+   * when it happens, so this is how one that was away drops a surface that ended meanwhile.
+   */
   messages(clientId: string): ServerMessage[] {
-    if (!this.runtime) return [];
     const audience = this.audience(clientId);
     const now = Date.now();
-    return this.runtime
-      .snapshot()
-      .map((surface) =>
-        audienceDrawsWhole(audience, surface)
-          ? buildExtensionUISurfaceMessage(
-              this.options.sessionId,
-              surfaceForAudience(surface, audience, now),
-            )
-          : buildExtensionUINotificationMessage(extensionUISurfaceProjectionRequest(surface)),
-      );
+    const live = this.runtime?.snapshot() ?? [];
+    const frames = live.map((surface) =>
+      audienceDrawsWhole(audience, surface)
+        ? buildExtensionUISurfaceMessage(
+            this.options.sessionId,
+            surfaceForAudience(surface, audience, now),
+          )
+        : buildExtensionUINotificationMessage(extensionUISurfaceProjectionRequest(surface)),
+    );
+    if (audience === "v1-projection") return frames;
+    const held = live.filter((surface) => audienceDrawsWhole(audience, surface));
+    frames.push(
+      buildExtensionUILiveSurfacesMessage(
+        this.options.sessionId,
+        held.map((surface) => surface.id),
+      ),
+    );
+    return frames;
   }
 
   /**
-   * Whether a tap could reach a surface now: this session has a surface loop. Answered before any
-   * handler runs, so a socket decides reachability synchronously and does not hold its inbound
-   * queue on the panel's own work.
+   * Whether a tap could reach this session's surfaces now: until teardown it can, published or
+   * not, because a tap on a surface this loop does not hold still has an answer (the client is
+   * told it is gone). Answered before any handler runs, so a socket decides reachability
+   * synchronously and does not hold its inbound queue on the panel's own work.
    */
   canAct(): boolean {
-    return this.runtime !== undefined;
+    return !this.stopped;
   }
 
   /**
-   * One tap from one client. False when this session has no surface loop (nothing to act on).
-   * The runtime emits the answer and ends the round trip itself; the caller only reports whether
-   * the tap reached a surface, and the work outlives that answer.
+   * One tap from one client. False once the session is torn down. The runtime emits the answer
+   * and ends the round trip itself; the caller only reports whether the tap reached the loop, and
+   * the work outlives that answer. A tap before anything is published starts the loop, so the
+   * revision it clears a stale card at is one a later publish continues above.
    */
   async act(message: ExtensionUISurfaceActionMessage, clientId: string): Promise<boolean> {
-    if (!this.runtime) return false;
-    await this.runtime.act(message, clientId, this.audience(clientId));
+    if (this.stopped) return false;
+    await this.runtimeFor().act(message, clientId, this.audience(clientId));
     return true;
   }
 

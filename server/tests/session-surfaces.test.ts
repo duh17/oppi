@@ -92,6 +92,7 @@ describe("SessionSurfaces", () => {
     expect(upgrades.map((message) => message.type)).toEqual([
       "extension_ui_notification",
       "extension_ui_surface",
+      "extension_ui_live_surfaces",
     ]);
     // The widget the client was handed at subscribe is cleared in the same breath.
     expect(upgrades[0]).toMatchObject({ widgetKey: "surface:deploy", widgetLines: [] });
@@ -169,19 +170,63 @@ describe("SessionSurfaces", () => {
     });
   });
 
-  it("acts on nothing once the session has no surfaces", async () => {
+  it("tells a client that taps a surface the session never published here to clear it", async () => {
+    // A phone still draws a card from before the server restarted: this Session has no surface
+    // loop yet, and the tap is answered by clearing the card rather than with nothing.
     const h = harness();
-    expect(h.surfaces.canAct()).toBe(false);
-    await expect(h.surfaces.act(tap(), "phone")).resolves.toBe(false);
+    h.surfaces.declare("phone", [EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY]);
+    expect(h.surfaces.canAct()).toBe(true);
+    await expect(h.surfaces.act(tap({ revision: 5, requestId: "tap-4" }), "phone")).resolves.toBe(
+      true,
+    );
+    expect(h.of("extension_ui_patch", "composites")).toEqual([
+      expect.objectContaining({ surfaceId: "deploy", revision: 6, removed: true }),
+    ]);
+    expect(h.of("extension_ui_settled", "composites").map((message) => message.id)).toEqual([
+      "tap-4",
+    ]);
+    // A publish of the same id afterwards continues above the removal the phone was sent.
+    h.surfaces.publisher.publish(surfaceOf(), undefined);
+    expect(h.of("extension_ui_surface", "composites").at(-1)?.surface.revision).toBe(7);
   });
 
-  it("says a tap could reach a surface before any handler runs", () => {
+  it("acts on nothing once the session has stopped", async () => {
     const h = harness();
-    expect(h.surfaces.canAct()).toBe(false);
     h.surfaces.publisher.publish(surfaceOf(), async () => ({ patch: {} }));
     expect(h.surfaces.canAct()).toBe(true);
     h.surfaces.stop();
     expect(h.surfaces.canAct()).toBe(false);
+    await expect(h.surfaces.act(tap(), "phone")).resolves.toBe(false);
+  });
+
+  it("tells a v2 client which surfaces it holds, so one removed while it was away clears", () => {
+    const h = harness();
+    // Nothing published yet: a v2 client is still told it holds nothing.
+    expect(h.surfaces.declare("phone", [EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY])).toEqual([
+      { type: "extension_ui_live_surfaces", surfaceIds: [], sessionId: SESSION },
+    ]);
+    h.surfaces.publisher.publish(surfaceOf(), undefined);
+    h.surfaces.publisher.publish(surfaceOf({ id: "release" }), undefined);
+    // The phone goes away, and the panel ends while it is gone: the removal reaches nobody.
+    h.surfaces.forget("phone");
+    h.surfaces.publisher.dismiss("release");
+
+    // It subscribes again: it is handed the surface still live, then the set it now holds.
+    h.surfaces.declare("phone", [EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY]);
+    const replay = h.surfaces.messages("phone");
+    expect(replay.map((message) => message.type)).toEqual([
+      "extension_ui_surface",
+      "extension_ui_live_surfaces",
+    ]);
+    expect(replay.at(-1)).toEqual({
+      type: "extension_ui_live_surfaces",
+      surfaceIds: ["deploy"],
+      sessionId: SESSION,
+    });
+    // A client that draws v1 widgets holds no v2 surfaces, so it is not told the set.
+    expect(h.surfaces.messages("old-phone").map((message) => message.type)).toEqual([
+      "extension_ui_notification",
+    ]);
   });
 
   it("hands a tree only to a client that draws primitives", () => {
@@ -205,6 +250,7 @@ describe("SessionSurfaces", () => {
     expect(forBlocks.map((message) => message.type)).toEqual([
       "extension_ui_notification",
       "extension_ui_surface",
+      "extension_ui_live_surfaces",
     ]);
     expect(h.surfaces.audience("new-phone")).toBe("blocks");
 
@@ -213,13 +259,19 @@ describe("SessionSurfaces", () => {
     ]);
     // A tree is handed to this client as a projection, so nothing is cleared first: the widget it
     // already holds is the projection it is about to be handed again.
-    expect(forComposites.map((message) => message.type)).toEqual(["extension_ui_notification"]);
+    expect(forComposites.map((message) => message.type)).toEqual([
+      "extension_ui_notification",
+      "extension_ui_live_surfaces",
+    ]);
+    // It holds the tree only as a widget, so the set of v2 surfaces it holds is empty.
+    expect(forComposites.at(-1)).toMatchObject({ surfaceIds: [] });
     expect(h.surfaces.audience("old-phone")).toBe("composites");
     // A client that only draws composites still gets a surface that has no tree.
     h.surfaces.publisher.publish(surfaceOf(), undefined);
     expect(h.surfaces.messages("old-phone").map((message) => message.type)).toEqual([
       "extension_ui_notification",
       "extension_ui_surface",
+      "extension_ui_live_surfaces",
     ]);
   });
 
@@ -474,7 +526,7 @@ describe("SessionSurfaces", () => {
       h.surfaces
         .declare("phone", [EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY])
         .map((message) => message.type),
-    ).toEqual(["extension_ui_notification", "extension_ui_surface"]);
+    ).toEqual(["extension_ui_notification", "extension_ui_surface", "extension_ui_live_surfaces"]);
     expect(h.surfaces.audience("phone")).toBe("composites");
 
     // A client that drew composites is still drawing them. A list that drops the capability is a

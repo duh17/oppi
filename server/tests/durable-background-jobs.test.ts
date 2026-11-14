@@ -49,6 +49,13 @@ import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 const loop = vi.hoisted(() => {
   const state = {
     on: false,
+    /**
+     * Bumped to stand for a plugin reload: the reloaded module starts with no panel of its own for
+     * the Session, as `panels` does when the built-in is evaluated again.
+     */
+    generation: 0,
+    /** Runs after each publish, while the panel's own sync is still on the stack. */
+    afterPublish: undefined as ((surface: ExtensionUISurface) => void) | undefined,
     published: [] as Array<{
       surface: ExtensionUISurface;
       dispatch?: SurfaceDispatch;
@@ -62,18 +69,27 @@ const loop = vi.hoisted(() => {
 
 vi.mock("oppi/v1", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/oppi-v1.js")>();
-  const publisher: SurfacePublisher = {
-    publish: (surface, dispatch) => {
-      loop.published.push({ surface, ...(dispatch ? { dispatch } : {}), at: Date.now() });
-    },
-    dismiss: (surfaceId) => {
-      loop.dismissed.push(surfaceId);
-    },
+  const publishers = new Map<number, SurfacePublisher>();
+  const publisher = (): SurfacePublisher => {
+    let found = publishers.get(loop.generation);
+    if (!found) {
+      found = {
+        publish: (surface, dispatch) => {
+          loop.published.push({ surface, ...(dispatch ? { dispatch } : {}), at: Date.now() });
+          loop.afterPublish?.(surface);
+        },
+        dismiss: (surfaceId) => {
+          loop.dismissed.push(surfaceId);
+        },
+      };
+      publishers.set(loop.generation, found);
+    }
+    return found;
   };
   const mocked = {
     ...actual,
     oppiHost: () =>
-      loop.on ? ({ surfaces: () => publisher } as unknown as OppiDurableHost) : actual.oppiHost(),
+      loop.on ? ({ surfaces: publisher } as unknown as OppiDurableHost) : actual.oppiHost(),
   };
   // The plugin host loads the built-ins through this module and reads its `default` too.
   return { ...mocked, default: mocked };
@@ -85,6 +101,8 @@ afterEach(async () => {
   harnesses.clear();
   vi.restoreAllMocks();
   loop.on = false;
+  loop.generation = 0;
+  loop.afterPublish = undefined;
   loop.published.length = 0;
   loop.dismissed.length = 0;
 });
@@ -728,6 +746,25 @@ describe("native Durable background jobs", () => {
       text: "FINAL-OUTPUT",
     });
     expect(panelNode(finished.surface, "stop:bash-1")).toBeUndefined();
+  });
+
+  it("clears the panel once no job is left, even when the panel that drew it was reloaded", async () => {
+    loop.on = true;
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+      answer(),
+    ]);
+    await prompt(f.root);
+    await f.entered.promise;
+    // `/reload` once the finished job is drawn: the code that delivers its result has never drawn
+    // this panel, yet the Session still shows it to every client until something takes it away.
+    loop.afterPublish = (surface) => {
+      if (panelNode(surface, "meta:bash-1")?.text === "bash-1 · Exit 0") loop.generation += 1;
+    };
+    f.finish.resolve();
+    await delivery(f.harness, f.root);
+    expect(loop.dismissed).toContain("background-jobs");
   });
 
   it("draws the panel again from the saved job list when a runner resumes after a restart", async () => {

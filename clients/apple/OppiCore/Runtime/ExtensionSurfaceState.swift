@@ -522,6 +522,13 @@ enum ExtensionSurfaceReducer {
         state.forgetDismissal(for: surface.id)
     }
 
+    /// The server's set of the session's live surfaces, sent after its replay: a surface this
+    /// client still holds that is not in it was removed while the client was away, and that
+    /// removal is never sent again.
+    static func retain(_ surfaceIds: Set<String>, in state: inout ExtensionSurfaceState) {
+        state.composableSurfaces = state.composableSurfaces.filter { surfaceIds.contains($0.key) }
+    }
+
     /// A patch merges into the surface the session holds. A patch for a surface this client does
     /// not hold, one at or below the stored revision, or one that does not apply whole is dropped
     /// without touching the surface.

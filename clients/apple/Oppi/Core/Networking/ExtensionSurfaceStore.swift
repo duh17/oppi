@@ -94,6 +94,28 @@ final class ExtensionSurfaceStore {
         surface.dropPending(surfaceId: patch.surfaceId, whenNewerThan: patch.revision)
     }
 
+    /// A new stream for the session: the dismissals it remembers guarded the old stream's late
+    /// frames, and a restarted server's revisions begin again below them. The surfaces themselves
+    /// stay drawn until the replay's live set says which are gone (`retain`), so nothing blinks.
+    func forgetDismissals(sessionId: String) {
+        let surface = surface(for: sessionId)
+        guard !surface.state.dismissedComposableSurfaces.isEmpty else { return }
+        var state = surface.state
+        state.dismissedComposableSurfaces = []
+        surface.replace(with: state)
+    }
+
+    /// Keep only the surfaces the server says are live, and end an action on one that went.
+    func retain(_ surfaceIds: [String], sessionId: String) {
+        let surface = surface(for: sessionId)
+        var state = surface.state
+        ExtensionSurfaceReducer.retain(Set(surfaceIds), in: &state)
+        surface.replace(with: state)
+        if let pending = surface.pendingAction, state.composableSurfaces[pending.surfaceId] == nil {
+            surface.clearPending()
+        }
+    }
+
     func beginAction(_ action: ExtensionSurfacePendingAction, sessionId: String) {
         surface(for: sessionId).beginAction(action)
     }

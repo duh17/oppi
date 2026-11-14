@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 76
+    "messageCount": 77
   },
   "messages": {
     "connected": {
@@ -1458,6 +1458,13 @@
       "patch": {
         "sections.0.phase": "queued"
       },
+      "sessionId": "test-session-1"
+    },
+    "extension_ui_live_surfaces": {
+      "type": "extension_ui_live_surfaces",
+      "surfaceIds": [
+        "deploy"
+      ],
       "sessionId": "test-session-1"
     },
     "git_status": {

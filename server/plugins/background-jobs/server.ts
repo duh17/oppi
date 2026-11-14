@@ -226,7 +226,11 @@ async function syncPanel(
             .filter((job) => job.status === "running")
             .map((job) => [job.id, outputTail(job.output) ?? ""]),
         );
-      } else if (panel.surface.current() !== undefined) panel.surface.end({ surfaces });
+      } else {
+        // Unconditional: after `/reload` this panel object is new and never drew the surface the
+        // Session still shows, and a dismissal of nothing live is a no-op.
+        panel.surface.end({ surfaces });
+      }
     } catch {
       // The panel is display only; the next change publishes it again.
     }

@@ -1003,18 +1003,18 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return this.surfacesFor(sessionId)?.declare(clientId, capabilities) ?? [];
   }
 
-  /** Whether a tap could reach one of this Session's surfaces now; false without a surface loop. */
+  /** Whether a tap could reach this Session's surface loop now; false when it is not live. */
   canActOnSurface(sessionId: string): boolean {
-    return this.active.get(this.sessionKey(sessionId))?.surfaces?.canAct() ?? false;
+    return this.surfacesFor(sessionId)?.canAct() ?? false;
   }
 
-  /** One tap from one client; false when the Session has no live surface to act on. */
+  /** One tap from one client; false when the Session is not live. */
   actOnSurface(
     sessionId: string,
     message: ExtensionUISurfaceActionMessage,
     clientId: string,
   ): Promise<boolean> {
-    const surfaces = this.active.get(this.sessionKey(sessionId))?.surfaces;
+    const surfaces = this.surfacesFor(sessionId);
     return surfaces ? surfaces.act(message, clientId) : Promise.resolve(false);
   }
 

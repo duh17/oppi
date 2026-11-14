@@ -380,6 +380,8 @@ A server plugin can publish a composable surface: a pill in the strip above or b
 
 The drawer has a maximum height and scrolls. While its body is taller than that, the drawer's header offers full screen: every section without the height cap, following the surface's updates, with working actions.
 
+A surface stays until the plugin ends it, its deadline passes, or the session ends. A client that reconnects is sent the surfaces still live and drops any that ended while it was away. A tap on a surface that has already ended closes it on the client; no handler runs.
+
 ### Blocks nodes
 
 `oppi/v1` has one builder per node kind, with the same name (`row`, `text`, `elapsed`, and so on). Every node can take an `id` and `accessibility` (`label`, `value`, `hint`). An `id` is a stable identifier, unique across the whole surface, and a node that offers an `action` must have one.

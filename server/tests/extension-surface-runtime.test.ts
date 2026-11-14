@@ -509,6 +509,38 @@ describe("lifecycle", () => {
     expect(h.runtime.dismiss("deploy")).toBe(false);
   });
 
+  it("tells clients to clear a surface that is gone when one of them taps it", async () => {
+    let calls = 0;
+    const h = harness({
+      runAction: async () => {
+        calls += 1;
+        return { patch: {} };
+      },
+    });
+    // A phone that missed the removal (it was away, or the server restarted) still draws the
+    // card at revision 12 and taps it.
+    const answer = await h.act(action("retry", { revision: 12, requestId: "tap-1" }));
+    expect(answer).toEqual({ error: { compositeId: "status", message: "This surface is gone." } });
+    expect(calls).toBe(0);
+    // Every client that draws v2 is told it is gone, above the revision the tap was sent at,
+    // and the round trip still ends.
+    for (const audience of ["working", "panel", "elapsed", "blocks", "composites"] as const)
+      expect(h.patches(audience)).toEqual([
+        {
+          type: "extension_ui_patch",
+          surfaceId: "deploy",
+          revision: 13,
+          removed: true,
+          sessionId: SESSION,
+        },
+      ]);
+    expect(h.settled().map((message) => message.id)).toEqual(["tap-1"]);
+
+    // The next publish of that id continues above the removal, so the client does not drop it.
+    h.runtime.publish(surfaceValue());
+    expect(h.surfaces().at(-1)?.surface).toMatchObject({ id: "deploy", revision: 14 });
+  });
+
   it("clears every surface when the session ends", () => {
     const h = harness();
     h.runtime.publish(surfaceValue());

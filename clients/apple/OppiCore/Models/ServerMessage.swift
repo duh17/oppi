@@ -246,6 +246,9 @@ enum ServerMessage: Sendable, Equatable {
     case extensionUISurface(surface: ExtensionUISurface, sessionId: String?)
     /// A change to a surface already held, keyed by its id; `removed` means the surface is gone.
     case extensionUIPatch(patch: ExtensionUISurfacePatch)
+    /// Every composable surface the server just handed this client whole, after its subscribe
+    /// replay or a declaration: any other surface the client holds was removed while it was away.
+    case extensionUILiveSurfaces(surfaceIds: [String], sessionId: String?)
 
     // Git status (workspace/worktree-level, pushed after file-mutating tool calls)
     case gitStatus(workspaceId: String, worktreeId: String?, status: GitStatus)
@@ -449,6 +452,8 @@ extension ServerMessage: Decodable {
         case id, sessionId
         // extension_ui_surface (a composable surface); extension_ui_patch decodes through its own type
         case surface
+        // extension_ui_live_surfaces
+        case surfaceIds
         case message
         // command_result
         case command, requestId, success, data
@@ -725,6 +730,12 @@ extension ServerMessage: Decodable {
         case "extension_ui_patch":
             self = .extensionUIPatch(patch: try ExtensionUISurfacePatch(from: decoder))
 
+        case "extension_ui_live_surfaces":
+            self = .extensionUILiveSurfaces(
+                surfaceIds: try c.decode([String].self, forKey: .surfaceIds),
+                sessionId: try c.decodeIfPresent(String.self, forKey: .sessionId)
+            )
+
         case "git_status":
             let workspaceId = try c.decode(String.self, forKey: .workspaceId)
             let worktreeId = try c.decodeIfPresent(String.self, forKey: .worktreeId)
@@ -954,6 +965,7 @@ extension ServerMessage {
         case .extensionUISettled: "extensionUISettled"
         case .extensionUISurface: "extensionUISurface"
         case .extensionUIPatch: "extensionUIPatch"
+        case .extensionUILiveSurfaces: "extensionUILiveSurfaces"
         case .gitStatus: "gitStatus"
         case .layoutProposal: "layoutProposal"
         case .voiceCallState: "voiceCallState"
