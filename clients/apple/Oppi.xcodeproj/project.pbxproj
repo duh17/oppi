@@ -1424,6 +1424,7 @@
 		9BCB3A7E528CD1AEEC1F6740 /* WebSocketRecoveryPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C7B840A895CE9C0F1817DF0 /* WebSocketRecoveryPolicy.swift */; };
 		9C1B97785448510DEC33EED6 /* SettingsSweepScreenshotPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5671EA739042454D6566347F /* SettingsSweepScreenshotPreview.swift */; };
 		9C2F9267D0DAF7F9EEDDEAA9 /* SSHPreflightViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3BF0AFCA898AD123764BE8D /* SSHPreflightViewController.swift */; };
+		9C331E22A3FF126F7B9DCD98 /* MarkdownReaderStackLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDFC83877505383A173D05F0 /* MarkdownReaderStackLayout.swift */; };
 		9C66AAA40DF5A63FA352153F /* ChatActionHandlerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF84C7B881E1B821310D659B /* ChatActionHandlerTests.swift */; };
 		9CA9128E72535D4E8D58AE54 /* LocalDataProtectionScopeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 510DB118CC51230999AA7D29 /* LocalDataProtectionScopeTests.swift */; };
 		9CAA3419ECA8C097CA4C556A /* SessionLifecycleWireReplayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FDFD8DA3361CE0845E31329 /* SessionLifecycleWireReplayTests.swift */; };
@@ -4127,6 +4128,7 @@
 		BD1E2BCCF033B0B389560C98 /* SSHTerminalTrustViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalTrustViewController.swift; sourceTree = "<group>"; };
 		BD727C62A12001FD4601A988 /* ComposerBarController+Build.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ComposerBarController+Build.swift"; sourceTree = "<group>"; };
 		BDF3FC48464C4933B0A40EAF /* OppiControlWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = OppiControlWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		BDFC83877505383A173D05F0 /* MarkdownReaderStackLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownReaderStackLayout.swift; sourceTree = "<group>"; };
 		BE02A0DA4D10A4291BA38D3C /* ReadMarkdownExpandOverlapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadMarkdownExpandOverlapTests.swift; sourceTree = "<group>"; };
 		BE601A2E5498AF615CB7768C /* ErrorAlertPresenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorAlertPresenterTests.swift; sourceTree = "<group>"; };
 		BE6CCDB676E6CD0A6926B4C8 /* github-html-08-comments-hr.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "github-html-08-comments-hr.html"; sourceTree = "<group>"; };
@@ -8005,6 +8007,7 @@
 				FE97979E194C505189C65004 /* FullScreenMarkdownSegmentCell.swift */,
 				BC605FC77BEFD4B5626A0EE9 /* FullScreenViewingOptionsController.swift */,
 				21CBD76BD8ADAD66AF82E63C /* LargeFileNoteView.swift */,
+				BDFC83877505383A173D05F0 /* MarkdownReaderStackLayout.swift */,
 				E6B41C30678DF10FB8AD0E88 /* NativeFullScreenCodeBody.swift */,
 				A59F9F3AC99FA8B2AE072773 /* NativeFullScreenDiffBody.swift */,
 				9E56EE62AA98643ADE413E76 /* NativeFullScreenMarkdownBody+Find.swift */,
@@ -10194,6 +10197,7 @@
 				2FEE8ED2BFC6D6EBC443A9B3 /* MarkdownNode.swift in Sources */,
 				4C8D350088D2BE6279744FB0 /* MarkdownPrewarmer.swift in Sources */,
 				79B3655D5958E90682FC6BA7 /* MarkdownReaderRenderAhead.swift in Sources */,
+				9C331E22A3FF126F7B9DCD98 /* MarkdownReaderStackLayout.swift in Sources */,
 				C61F901D419206C2FC283EE8 /* MarkdownResourceAccess.swift in Sources */,
 				4594F3C9D799EEA9956C007A /* MarkdownStreamingPerf.swift in Sources */,
 				4CD00140E58DCD7BFC5A97D0 /* MarkdownTableClipText.swift in Sources */,

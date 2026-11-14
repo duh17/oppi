@@ -45,9 +45,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }()
     private var parkedSegmentViews: [MarkdownReaderSegmentID: [UIView]] = [:]
     private var itemHeights: [CGFloat] = []
-    /// Heights captured by the currently installed compositional layout. The
-    /// ledger may advance while interaction defers replacement, so tests and
-    /// anchor math must not treat pending heights as active attributes.
+    /// Heights the installed layout holds. The ledger may advance while
+    /// interaction defers replacement, so tests and anchor math must not treat
+    /// pending heights as active attributes.
     private var activeLayoutItemHeights: [CGFloat] = []
     private var heightLedger = MarkdownReaderHeightLedger()
     private var preparedCanonicalWidth: CGFloat?
@@ -389,40 +389,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private static func makeCollectionLayout(
         spacing: CGFloat,
         itemHeights: [CGFloat]
-    ) -> UICollectionViewLayout {
-        var cachedSection: NSCollectionLayoutSection?
-        return UICollectionViewCompositionalLayout { _, _ in
-            // Heights are fixed absolute values, so the section is identical
-            // on every layout pass. Build the item group once.
-            if let cachedSection { return cachedSection }
-            let heights = itemHeights.isEmpty ? [CGFloat(44)] : itemHeights
-            let items = heights.map { height in
-                NSCollectionLayoutItem(
-                    layoutSize: NSCollectionLayoutSize(
-                        widthDimension: .fractionalWidth(1.0),
-                        heightDimension: .absolute(max(1, height))
-                    )
-                )
-            }
-            let totalHeight = heights.reduce(0, +) + spacing * CGFloat(max(0, heights.count - 1))
-            let group = NSCollectionLayoutGroup.vertical(
-                layoutSize: NSCollectionLayoutSize(
-                    widthDimension: .fractionalWidth(1.0),
-                    heightDimension: .absolute(max(1, totalHeight))
-                ),
-                subitems: items
-            )
-            group.interItemSpacing = .fixed(spacing)
-            let section = NSCollectionLayoutSection(group: group)
-            section.contentInsets = NSDirectionalEdgeInsets(
-                top: 10,
-                leading: 12,
-                bottom: 10,
-                trailing: 12
-            )
-            cachedSection = section
-            return section
-        }
+    ) -> MarkdownReaderStackLayout {
+        MarkdownReaderStackLayout(spacing: spacing, itemHeights: itemHeights)
     }
 
     private func installDeferredRenderPlaceholder(palette: ThemePalette) {
@@ -1470,7 +1438,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                 self.itemHeights = self.heightLedger.heights()
                 if previousHeights != self.itemHeights {
                     if self.isCollectionUserInteracting {
-                        self.needsLayoutReplaceAfterInteraction = true
+                        self.applySettledHeightsBelowViewport()
                     } else {
                         self.replaceCollectionLayout(
                             preserveViewport: true,
@@ -1782,9 +1750,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         }
     }
 
-    /// Item-scoped wrap remasure for the full-screen reader. Absolute
-    /// compositional heights ignore `invalidateLayout()`, so wrap/pretty-JSON
-    /// growth has to commit through the ledger and replace the layout.
+    /// Item-scoped wrap remasure for the full-screen reader. The layout holds
+    /// the ledger's heights, so wrap/pretty-JSON growth has to commit through
+    /// the ledger and replace the layout.
     func scheduleForcedItemRemeasure(from sourceView: UIView) {
         guard let cell = enclosingSegmentCell(from: sourceView),
               let id = cell.appliedSegmentID,
@@ -1896,7 +1864,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         itemHeights = heightLedger.heights()
         if isCollectionUserInteracting {
             if heightChanged {
-                needsLayoutReplaceAfterInteraction = true
+                applySettledHeightsBelowViewport()
                 return
             }
             refreshGeometryPresentationForVisibleCells()
@@ -1993,6 +1961,38 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             }
         }
         return changed
+    }
+
+    /// While a gesture owns the viewport, heights settled for items that start
+    /// below it go into the installed layout in place: nothing on screen moves,
+    /// and render-ahead's measured height, not the estimate, is what each item
+    /// arrives with. On the first pass through a long document an estimate
+    /// left a tall gap under a section (or clipped its last lines) until the
+    /// finger lifted. Items on or above the screen keep their heights until the
+    /// lift replaces the layout.
+    private func applySettledHeightsBelowViewport() {
+        guard let layout = collectionView.collectionViewLayout as? MarkdownReaderStackLayout,
+              layout.itemHeights.count == itemHeights.count else {
+            needsLayoutReplaceAfterInteraction = true
+            return
+        }
+        let viewportMaxY = collectionView.contentOffset.y + collectionView.bounds.height
+        var heights = layout.itemHeights
+        var y = MarkdownReaderStackLayout.contentInsets.top
+        for item in heights.indices {
+            if y >= viewportMaxY {
+                heights.replaceSubrange(item..., with: itemHeights[item...])
+                break
+            }
+            y += heights[item] + layout.spacing
+        }
+        if heights != layout.itemHeights {
+            layout.updateItemHeights(heights)
+            activeLayoutItemHeights = heights
+        }
+        if heights != itemHeights {
+            needsLayoutReplaceAfterInteraction = true
+        }
     }
 
     private func replaceCollectionLayout(

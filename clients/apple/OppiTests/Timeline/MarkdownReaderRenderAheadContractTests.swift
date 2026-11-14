@@ -460,6 +460,89 @@ struct MarkdownReaderRenderAheadContractTests {
         #expect(abs(anchorAfterLift.screenY - anchorBeforeLift.screenY) < 1)
     }
 
+    /// A file reader opens a segment at every heading. On the first pass down a
+    /// long file each section used to arrive at its character-count estimate,
+    /// leaving a tall gap above the next heading (or its last lines clipped)
+    /// until the finger lifted.
+    @MainActor
+    @Test(
+        "sections arrive at their measured height on the first scroll down a file",
+        arguments: [CGSize(width: 744, height: 1133), CGSize(width: 393, height: 852)]
+    )
+    func firstScrollShowsSectionsAtMeasuredHeight(screen: CGSize) async throws {
+        let content = (0..<48).map { index in
+            let paragraphs = (0..<(1 + index % 4)).map { paragraph in
+                "Section \(index) paragraph \(paragraph) "
+                    + String(repeating: "reads like ordinary prose ", count: 3 + (index + paragraph) % 9)
+            }
+            let heading = index % 3 == 2 ? "### Detail \(index)" : "## Section \(index)"
+            return ([heading] + paragraphs).joined(separator: "\n\n")
+        }.joined(separator: "\n\n")
+        let body = NativeFullScreenMarkdownBody(
+            content: content,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            sourceFilePath: "/Users/alex/notes/guide.md",
+            centersReadingColumn: true
+        )
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: screen))
+        window.addSubview(body)
+        body.frame = window.bounds
+        window.makeKeyAndVisible()
+        defer {
+            body.debugSetCollectionUserInteractingForTesting(nil)
+            window.isHidden = true
+        }
+
+        body.layoutIfNeeded()
+        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
+        collection.layoutIfNeeded()
+        #expect(body.debugRenderedSegmentCountForTesting == 48, "each heading opens its own segment")
+
+        body.scrollViewWillBeginDragging(collection)
+        body.debugSetCollectionUserInteractingForTesting(true)
+        body.debugResetOffsetWriteReasonsForTesting()
+        let replacementsBeforeRide = body.debugLayoutReplaceCountForTesting
+
+        var mismatches: [String] = []
+        var seen = Set<Int>()
+        func inspectNewlyVisibleItems() throws {
+            for item in collection.indexPathsForVisibleItems.map(\.item).sorted() where seen.insert(item).inserted {
+                let shown = try #require(collection.layoutAttributesForItem(at: IndexPath(item: item, section: 0))).frame.height
+                let measured = try #require(body.debugFittingHeightForTesting(item))
+                if abs(shown - measured) >= 1 {
+                    mismatches.append("item \(item) first shown \(shown) pt, measures \(measured) pt")
+                }
+            }
+        }
+        while true {
+            // Render-ahead runs between the frames of a real drag; a height it
+            // settles can shorten the content and bring the last items in.
+            await body.debugWaitForDocumentPreparationForTesting()
+            collection.layoutIfNeeded()
+            try inspectNewlyVisibleItems()
+            let maximumY = collection.contentSize.height - collection.bounds.height
+                + collection.adjustedContentInset.bottom
+            guard collection.contentOffset.y < maximumY - 1 else { break }
+            collection.setContentOffset(
+                CGPoint(x: 0, y: min(maximumY, collection.contentOffset.y + collection.bounds.height * 0.8)),
+                animated: false
+            )
+            body.scrollViewDidScroll(collection)
+            collection.layoutIfNeeded()
+            try inspectNewlyVisibleItems()
+        }
+
+        #expect(
+            seen.count == 48,
+            "the ride showed every section; never shown: \((0..<48).filter { !seen.contains($0) })"
+        )
+        #expect(mismatches.isEmpty, "\(mismatches)")
+        #expect(body.debugOffsetWriteReasonsForTesting.isEmpty)
+        #expect(body.debugLayoutReplaceCountForTesting == replacementsBeforeRide)
+    }
+
     @MainActor
     @Test("cold raster and SVG misses stay hidden until prepared geometry is active")
     func coldInternalImageMissesWaitForPreparedGeometry() async throws {
