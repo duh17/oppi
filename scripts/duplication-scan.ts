@@ -432,13 +432,17 @@ function runAppleGuardrails(): GuardrailResult {
     err(`nowMs() duplicated in ${hits.length} files`, "Use a single shared static func", hits);
   }
 
+  // Web views that show Oppi's own content (files, HTML previews, reviews)
+  // use ReviewCommentWKWebView so selected text can become a review comment.
+  // The browser pane is exempt: it shows any web page, which is no workspace
+  // source to comment on, and it keeps Oppi's scripts out of the page.
   hits = filterAllowed(
     rgFiles("(?<!ReviewComment)(?<!Pi)WKWebView\\(frame:", ["Oppi/"], {
       cwd: appleRoot,
       pcre2: true,
       type: "swift",
     }),
-    /(^|\/)ReviewCommentWKWebView\.swift$/,
+    /(^|\/)(ReviewCommentWKWebView|BrowserPaneViewController)\.swift$/,
   );
   if (hits.length > 0) {
     err(

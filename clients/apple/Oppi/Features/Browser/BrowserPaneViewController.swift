@@ -251,6 +251,8 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: Self.dataStoreID)
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        // Not `ReviewCommentWKWebView`: a web page is no workspace source to
+        // comment on, and its Comment action would run script in the page.
         let webView = WKWebView(frame: view.bounds, configuration: configuration)
         webView.isInspectable = false
         webView.allowsBackForwardNavigationGestures = true
@@ -358,9 +360,7 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
 
     private func share() {
         guard let url else { return }
-        let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-        activity.popoverPresentationController?.sourceItem = isBarFolded == true ? moreItem : shareItem
-        Router.topPresenter(from: self).present(activity, animated: true)
+        FileSharePresenter.share(link: url, from: self, sourceItem: isBarFolded == true ? moreItem : shareItem)
     }
 
     // MARK: State

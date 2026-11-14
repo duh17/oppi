@@ -333,11 +333,26 @@ enum FileSharePresenter {
         from screen: UIViewController,
         sourceItem: (any UIPopoverPresentationControllerSourceItem)? = nil
     ) {
+        present(item.activityItems, from: screen, sourceItem: sourceItem)
+    }
+
+    /// Share a web page's address, from `screen`'s window. The sheet gets the
+    /// URL itself, not a file, so it offers what a link offers (Messages,
+    /// Copy, Reading List).
+    static func share(link url: URL, from screen: UIViewController, sourceItem: (any UIPopoverPresentationControllerSourceItem)?) {
+        present([url], from: screen, sourceItem: sourceItem)
+    }
+
+    private static func present(
+        _ activityItems: [Any],
+        from screen: UIViewController,
+        sourceItem: (any UIPopoverPresentationControllerSourceItem)?
+    ) {
         guard screen.viewIfLoaded?.window != nil else { return }
         let topVC = Router.topPresenter(from: screen)
 
         let ac = UIActivityViewController(
-            activityItems: item.activityItems,
+            activityItems: activityItems,
             applicationActivities: nil
         )
         ac.completionWithItemsHandler = { _, _, _, _ in
