@@ -90,11 +90,19 @@ struct SourceSnapshot {
     let finalContent: FullScreenCodeContent?
 
     /// A change of final kind is news; another final payload of the same kind
-    /// waits for the next text.
+    /// waits for the next text. A notebook cell is the exception: its text is
+    /// only the source, and the reader paints the whole cell, so a new call or
+    /// printed line is news too.
     static func isNews(_ current: Self, _ next: Self) -> Bool {
         current.text != next.text
             || current.filePath != next.filePath
             || current.isDone != next.isDone
             || current.finalContent?.kindName != next.finalContent?.kindName
+            || current.notebookPlan != next.notebookPlan
+    }
+
+    private var notebookPlan: NotebookCellPlan? {
+        if case .notebook(let plan)? = finalContent { return plan }
+        return nil
     }
 }

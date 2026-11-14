@@ -824,19 +824,32 @@ final class NotebookCellView: UIView, UITextViewDelegate {
 
 /// Full-screen notebook reader. The cell does not scroll; this wrapper does,
 /// the same shape as the LaTeX body: bounce so a short cell still gets
-/// safe-area insets, default inset adjustment, no tail policy.
+/// safe-area insets, default inset adjustment.
+///
+/// A call whose arguments are still streaming opens at the tail and follows
+/// it while the reader stays at the bottom, as a streaming file does. A drag
+/// away from the bottom stops following; settling back there resumes it.
 @MainActor
-final class NotebookReaderBody: UIScrollView, ReaderBody {
+final class NotebookReaderBody: UIScrollView, ReaderBody, UIScrollViewDelegate {
     private let cell: NotebookCellView
+    private var isStreaming: Bool
+    private lazy var tailFollow = TailFollowScrollCoordinator(
+        scrollView: self,
+        shouldAutoFollowTail: isStreaming,
+        performLayout: { [weak self] in self?.layoutIfNeeded() }
+    )
 
     init(
         plan: NotebookCellPlan,
         selection: NotebookCellView.ReaderSelection,
         palette: ThemePalette,
-        readerPreferences: FullScreenReaderPreferences
+        readerPreferences: FullScreenReaderPreferences,
+        isStreaming: Bool = false
     ) {
         cell = NotebookCellView(mode: .reader(selection))
+        self.isStreaming = isStreaming
         super.init(frame: .zero)
+        delegate = self
         alwaysBounceVertical = true
         showsVerticalScrollIndicator = true
         backgroundColor = palette.ui.bg
@@ -862,6 +875,39 @@ final class NotebookReaderBody: UIScrollView, ReaderBody {
 
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
         cell.applyReaderPreferences(preferences)
+    }
+
+    /// The running call's next cell, painted in place. The finished cell
+    /// arrives here too and ends following.
+    func update(_ plan: NotebookCellPlan, isStreaming: Bool) {
+        self.isStreaming = isStreaming
+        if !isStreaming {
+            tailFollow.shouldAutoFollowTail = false
+        }
+        guard cell.apply(plan) else { return }
+        setNeedsLayout()
+        tailFollow.scheduleAutoFollowToBottomIfNeeded()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        tailFollow.onLayoutPass()
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        tailFollow.handleWillBeginDragging()
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        tailFollow.handleDidScroll(isUserDriven: isDragging || isDecelerating, isStreaming: isStreaming)
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        tailFollow.handleDidEndDragging(willDecelerate: decelerate, isStreaming: isStreaming)
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        tailFollow.handleDidEndDecelerating(isStreaming: isStreaming)
     }
 }
 

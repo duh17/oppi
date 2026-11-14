@@ -113,6 +113,8 @@ enum DebugHarnessLaunch {
         // The shell with its pane tree saved and restored across launches.
         case "pane-restore": return PaneRestorePreviewController()
         case "session-timeline": return SessionTimelinePreviewController(root: root)
+        // One tool call whose long arguments stream in, for its full-screen reader.
+        case "tool-args-stream": return ToolArgsStreamPreviewController(root: root)
         case "markdown-tables": return MarkdownTablesPreviewController(root: root)
         case "markdown-math": return MarkdownMathPreviewController(root: root)
         case "ask-answer": return AskAnswerPreviewController(root: root)

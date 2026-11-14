@@ -33,6 +33,11 @@ enum ToolTimelineRowFullScreenSupport {
                 )
 
             case .notebook(let plan):
+                // A call whose arguments are still streaming: the reader
+                // follows the cell as the row does.
+                if let sourceTrace {
+                    return .liveSource(sourceTrace)
+                }
                 return .notebook(plan)
 
             case .code, .diff, .markdown, .document:

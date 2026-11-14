@@ -566,18 +566,29 @@ extension FullScreenCodeContent {
             body.accessibilityIdentifier = "fullScreen.book"
             return body
         case .notebook(let plan):
-            return NotebookReaderBody(
-                plan: plan,
-                selection: .init(
-                    router: router,
-                    code: context.sourceContext(surface: .fullScreenCode, languageHint: plan.sources.first?.language),
-                    output: context.sourceContext(surface: .fullScreenSource),
-                    markdown: context.sourceContext(surface: .fullScreenMarkdown)
-                ),
-                palette: palette,
-                readerPreferences: readerPreferences
-            )
+            return Self.makeNotebookBody(plan, isStreaming: false, context)
         }
+    }
+
+    @MainActor
+    private static func makeNotebookBody(
+        _ plan: NotebookCellPlan,
+        isStreaming: Bool,
+        _ context: ReaderBodyContext
+    ) -> NotebookReaderBody {
+        let router = context.selection?.dispatcher
+        return NotebookReaderBody(
+            plan: plan,
+            selection: .init(
+                router: router,
+                code: context.sourceContext(surface: .fullScreenCode, languageHint: plan.sources.first?.language),
+                output: context.sourceContext(surface: .fullScreenSource),
+                markdown: context.sourceContext(surface: .fullScreenMarkdown)
+            ),
+            palette: context.themeID.palette,
+            readerPreferences: Self.notebook(plan).readerPreferences,
+            isStreaming: isStreaming
+        )
     }
 
     @MainActor
@@ -606,6 +617,18 @@ extension FullScreenCodeContent {
         let router = context.selection?.dispatcher
         let reading = snapshot.readerContent
         switch showsSource ? nil : reading {
+        case .notebook(let plan)?:
+            let body = makeNotebookBody(plan, isStreaming: true, context)
+            // The finished cell is painted in place, so the reading position
+            // and the tail the reader was following stay put.
+            context.follow(trace, from: body, refreshingChrome: true) { [weak body] snapshot, rebuild in
+                guard case .notebook(let plan) = snapshot.readerContent else {
+                    rebuild(nil)
+                    return
+                }
+                body?.update(plan, isStreaming: !snapshot.isDone)
+            }
+            return body
         case .markdown(let text, let filePath, let resourceAccess, _, _)?:
             let body = NativeMutableFullScreenMarkdownBody(
                 content: text,
@@ -734,8 +757,9 @@ struct ReaderBodyContext {
 
 extension SourceSnapshot {
     /// What a live source shows now: its final content once done; while it
-    /// streams, the final kind (Markdown, HTML) over the text so far; otherwise
-    /// plain text.
+    /// streams, the final kind (Markdown, HTML) over the text so far, or the
+    /// running call's notebook cell, built from the same row; otherwise plain
+    /// text.
     var readerContent: FullScreenCodeContent {
         guard let finalContent else {
             return .plainText(content: text, filePath: filePath)
@@ -752,6 +776,8 @@ extension SourceSnapshot {
             )
         case .html(_, let finalPath):
             return .html(content: text, filePath: finalPath ?? filePath)
+        case .notebook:
+            return finalContent
         default:
             return .plainText(content: text, filePath: filePath)
         }

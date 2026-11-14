@@ -948,7 +948,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedLabelWidthConstraint?.priority = .defaultHigh
         expandedLabelWidthConstraint?.constant = -12
         hostedSurface.updateWidthPriority()
-        setExpandedContainerGestureInterceptionEnabled(false)
     }
 
     private func showCompactHostedView() {
@@ -963,7 +962,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         markdownSurface.retire(.replaced)
         expandedLabelWidthConstraint?.priority = .defaultHigh
         expandedLabelWidthConstraint?.constant = -12
-        setExpandedContainerGestureInterceptionEnabled(false)
     }
 
     /// Activate the expanded viewport height constraint.
@@ -2071,6 +2069,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedPinchGesture.isEnabled = enabled
     }
 
+    /// The interaction policy decides these once per apply
+    /// (`applyInteractionsAndScrolling`). Never switch them off on the way
+    /// there: disabling a recognizer cancels a double tap between its taps,
+    /// and a running call applies many times a second.
     private func setExpandedContainerTapCopyGestureEnabled(_ enabled: Bool) {
         expandedDoubleTapGesture.isEnabled = enabled
         expandedContainerDoubleTapGesture.isEnabled = enabled
