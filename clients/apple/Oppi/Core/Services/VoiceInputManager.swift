@@ -589,6 +589,30 @@ final class VoiceInputManager {
         return base.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The take as the recogniser last reported it, for a consumer that types it as it
+    /// comes (the terminal's Dictate): the text without the typewriter reveal, and how
+    /// many leading characters the recogniser has settled (on-device final results, or
+    /// the server's committed segments, which a server batch pass or the final
+    /// transcript can still correct).
+    struct RecognizedTranscript: Equatable {
+        let text: String
+        let settledCount: Int
+    }
+
+    var recognizedTranscript: RecognizedTranscript {
+        let raw = finalizedTranscript + volatileTranscript
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Server updates replace the whole take; only their committed split is settled.
+        let settled = if replaceTranscriptState.isTracking {
+            replaceTranscriptState.committedVisiblePrefixLength(in: text)
+        } else if activeEngine == .serverDictation {
+            0
+        } else {
+            finalizedTranscript.count - raw.prefix { $0.isWhitespace }.count
+        }
+        return RecognizedTranscript(text: text, settledCount: min(text.count, max(0, settled)))
+    }
+
     /// Visible volatile suffix in the current transcript preview.
     /// Used by the composer to tint unstable text without affecting settled text.
     var currentTranscriptVolatileSuffixLength: Int {

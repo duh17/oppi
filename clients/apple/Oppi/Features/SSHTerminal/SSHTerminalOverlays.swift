@@ -365,6 +365,70 @@ final class SSHTerminalTextBannerView: UIView {
     }
 }
 
+/// The running take's words that are not typed yet (`SSHTerminalDictation.provisional`).
+/// The recogniser may still change them, so they show over the grid instead
+/// of in the shell, newest words kept when they do not fit.
+final class SSHTerminalDictationTailView: UIView {
+    private let glass = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
+    private let label = UILabel()
+    private let icon = UIImageView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        isUserInteractionEnabled = false
+        accessibilityIdentifier = "sshTerminal.dictationTail"
+
+        glass.translatesAutoresizingMaskIntoConstraints = false
+        glass.cornerConfiguration = .corners(radius: 16)
+        glass.layer.cornerRadius = 16
+        glass.clipsToBounds = true
+        addSubview(glass)
+
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.image = UIImage(systemName: "waveform")
+        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .footnote)
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .preferredFont(forTextStyle: .footnote)
+        label.adjustsFontForContentSizeCategory = true
+        label.numberOfLines = 2
+        label.lineBreakMode = .byTruncatingHead
+
+        let row = UIStackView(arrangedSubviews: [icon, label])
+        row.axis = .horizontal
+        row.spacing = 6
+        row.alignment = .center
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.isLayoutMarginsRelativeArrangement = true
+        row.layoutMargins = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+        glass.contentView.addSubview(row)
+
+        NSLayoutConstraint.activate([
+            glass.topAnchor.constraint(equalTo: topAnchor),
+            glass.bottomAnchor.constraint(equalTo: bottomAnchor),
+            glass.leadingAnchor.constraint(equalTo: leadingAnchor),
+            glass.trailingAnchor.constraint(equalTo: trailingAnchor),
+            row.topAnchor.constraint(equalTo: glass.contentView.topAnchor),
+            row.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor),
+        ])
+        isAccessibilityElement = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(text: String, themeID: ThemeID) {
+        label.text = text
+        // Dimmer than typed text: these words are a guess until typed.
+        label.textColor = themeID.palette.ui.fg.withAlphaComponent(0.72)
+        icon.tintColor = themeID.palette.ui.blue
+        accessibilityLabel = text
+    }
+}
+
 final class SSHTerminalCopyNoticeView: UIView {
     private let glass = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
     private let label = UILabel()

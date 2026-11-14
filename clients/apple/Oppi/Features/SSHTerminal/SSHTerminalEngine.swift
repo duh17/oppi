@@ -1452,18 +1452,23 @@ final class SSHTerminalEngine {
         return max(1, lines.count)
     }
 
+    /// The program asked for pasted text to arrive bracketed (DEC mode 2004).
+    var bracketedPaste: Bool {
+        var mode = GhosttyTerminalModeConfig(mode: ghostty_mode_new(2004, false), value: false)
+        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_MODE, &mode)
+        return live && mode.value
+    }
+
     func paste(_ text: String, confirmed: Bool) throws -> Data {
         guard live else { throw SSHTerminalError.disconnected }
         guard text.utf8.count <= Self.maximumPasteBytes else { throw SSHTerminalError.pasteTooLarge }
         guard confirmed || !Self.pasteNeedsConfirmation(text) else { throw SSHTerminalError.unsafePaste }
-        var mode = GhosttyTerminalModeConfig(mode: ghostty_mode_new(2004, false), value: false)
-        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_MODE, &mode)
         var input = text.utf8CString
         var output = [CChar](repeating: 0, count: input.count + 12)
         var written = 0
         let result = input.withUnsafeMutableBufferPointer { source in
             output.withUnsafeMutableBufferPointer { destination in
-                ghostty_paste_encode(source.baseAddress, source.count - 1, mode.value,
+                ghostty_paste_encode(source.baseAddress, source.count - 1, bracketedPaste,
                                      destination.baseAddress, destination.count, &written)
             }
         }

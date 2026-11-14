@@ -51,6 +51,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private let openBanner = SSHTerminalTextBannerView(identifier: "sshTerminal.openNotice")
     private let noticeCard = SSHTerminalNoticeCardView()
     private let copyNotice = SSHTerminalCopyNoticeView()
+    /// A take's words not typed yet, at the grid's bottom (or top, when the
+    /// cursor's row is down there).
+    private let dictationTail = SSHTerminalDictationTailView()
+    private var dictationTailAtBottom: NSLayoutConstraint?
+    private var dictationTailAtTop: NSLayoutConstraint?
     private let backToLive = JumpToBottomButton()
     private var backToLiveThemeID: ThemeID?
     private let statusGlyph = SSHTerminalStatusGlyphButton()
@@ -80,7 +85,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private var roomEndsAtPanes: NSLayoutConstraint?
     private var roomEndsAtEdge: NSLayoutConstraint?
     private var menuTitle: String?
-    private let dictation = SSHTerminalDictation()
+    private let dictation: SSHTerminalDictation
     /// The take failure last shown as a notice, so each is shown once.
     private var shownDictationFailure: VoiceCaptureFailure?
     private let attachPicker = SSHTerminalAttachPicker()
@@ -168,9 +173,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         session: SSHTerminalConnectSession? = nil,
         dictationConnection: ServerConnection? = nil,
         rexPaneOpener: ((RexPaneTarget) -> Void)? = nil,
-        barStore: SSHTerminalBarStore = SSHTerminalBarStore()
+        barStore: SSHTerminalBarStore = SSHTerminalBarStore(),
+        dictation: SSHTerminalDictation = SSHTerminalDictation()
     ) {
         self.rexPaneOpener = rexPaneOpener
+        self.dictation = dictation
         self.barStore = barStore
         self.channel = channel
         self.reconnect = reconnect
@@ -443,6 +450,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         updateBanners(connecting: connecting, connected: connected, networkChanged: networkChanged, themeID: chromeID)
         updateNotice(themeID: chromeID)
         updateCopyAndLive(themeID: chromeID)
+        updateDictationTail(themeID: chromeID)
         for buttons in [barPill.buttons, keyboardBarButtons] {
             buttons.dictate.apply(
                 presentation: dictationShown,
@@ -532,9 +540,21 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         overlay.addSubview(rexMinimap)
         overlay.addSubview(topStack)
         overlay.addSubview(copyNotice)
+        overlay.addSubview(dictationTail)
         overlay.addSubview(backToLive)
         copyNotice.translatesAutoresizingMaskIntoConstraints = false
         backToLive.translatesAutoresizingMaskIntoConstraints = false
+        dictationTail.isHidden = true
+        let tailAtBottom = dictationTail.bottomAnchor.constraint(equalTo: overlay.bottomAnchor, constant: -8)
+        dictationTailAtBottom = tailAtBottom
+        dictationTailAtTop = dictationTail.topAnchor.constraint(equalTo: overlay.topAnchor, constant: 8)
+        NSLayoutConstraint.activate([
+            dictationTail.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            // Clear of Back to Live at the bottom trailing corner, on both sides.
+            dictationTail.widthAnchor.constraint(lessThanOrEqualTo: overlay.widthAnchor, constant: -120),
+            dictationTail.widthAnchor.constraint(lessThanOrEqualToConstant: 560),
+            tailAtBottom,
+        ])
         NSLayoutConstraint.activate([
             // Notices float at the grid's top edge and keep the bar's place
             // out of the way: they never change the grid's size.
@@ -1452,6 +1472,24 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                 self.noticeCard.transform = .identity
             }
         }
+    }
+
+    /// Shows the take's untyped words above the bar while there are any. When
+    /// the live cursor's row would sit under them, they move to the grid's top,
+    /// so the words being typed stay in sight.
+    private func updateDictationTail(themeID: ThemeID) {
+        let text = dictation.provisional
+        dictationTail.isHidden = text.isEmpty
+        guard !text.isEmpty else { return }
+        dictationTail.apply(text: text, themeID: themeID)
+        let covered = max(dictationTail.bounds.height, 44) + 16
+        // The cursor's row, in the grid's points, while the grid shows live output.
+        let cursorRowBottom = gridView.flatMap { grid in
+            channel.engine.following ? CGFloat(channel.engine.cursorCell.row + 1) * grid.cellSize.height : nil
+        }
+        let atTop = cursorRowBottom.map { $0 > overlay.bounds.height - covered } ?? false
+        dictationTailAtBottom?.isActive = !atTop
+        dictationTailAtTop?.isActive = atTop
     }
 
     private func updateCopyAndLive(themeID: ThemeID) {

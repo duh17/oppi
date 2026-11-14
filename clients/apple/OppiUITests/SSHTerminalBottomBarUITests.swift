@@ -129,6 +129,59 @@ final class SSHTerminalBottomBarUITests: XCTestCase, PreviewUITestCase {
         save.tap()
     }
 
+    /// Dictate over a scripted recogniser (`ssh-terminal-dictation`, a shell
+    /// that asked for bracketed paste): stable words reach the host while the
+    /// take still listens, the words still changing show above the bar, and
+    /// Stop types the rest. Nothing sent is a backspace or a Return.
+    ///
+    /// With `OPPI_DICTATION_SHOTS` set (pass `TEST_RUNNER_OPPI_DICTATION_SHOTS=<dir>`),
+    /// a frame every half second of the take is written there as a PNG.
+    func testDictateTypesStableWordsWhileTheTakeListens() {
+        launch(screen: "ssh-terminal-dictation")
+        let dictate = element("sshTerminal.bar.dictate")
+        XCTAssertTrue(dictate.waitUntilExists(timeout: 10))
+        let sent = app.staticTexts["sshTerminal.preview.sent"]
+        XCTAssertTrue(sent.waitUntilExists(timeout: 5))
+        let shots = ProcessInfo.processInfo.environment["OPPI_DICTATION_SHOTS"]
+        var frame = 0
+        func shoot() {
+            guard let shots else { return }
+            try? FileManager.default.createDirectory(atPath: shots, withIntermediateDirectories: true)
+            let path = URL(fileURLWithPath: shots).appendingPathComponent(String(format: "frame-%03d.png", frame))
+            try? app.screenshot().pngRepresentation.write(to: path)
+            frame += 1
+        }
+        shoot()
+        dictate.tap()
+
+        let tail = element("sshTerminal.dictationTail")
+        XCTAssertTrue(tail.waitUntilExists(timeout: 5), "the words being heard show above the bar")
+        let bracketed = "1B 5B 32 30 30 7E"
+        var typedWhileListening = false
+        let deadline = Date().addingTimeInterval(14)
+        while Date() < deadline, !(tail.exists && tail.label.hasSuffix("adding retries")) {
+            shoot()
+            if sent.label.contains(bracketed), dictate.label == "Stop dictation" { typedWhileListening = true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        XCTAssertTrue(typedWhileListening, "stable words reach the shell, bracketed, while the take listens: \(sent.label)")
+        XCTAssertTrue(tail.label.hasSuffix("adding retries"), "the last phrase is still a guess: \(tail.label)")
+        attachScreenshot("dictation-listening")
+
+        dictate.tap()
+        XCTAssertTrue(tail.waitUntilGone(timeout: 5))
+        XCTAssertTrue(waitFor(dictate.label == "Dictate"))
+        shoot()
+        attachScreenshot("dictation-stopped")
+        let bytes = sent.label.split(separator: " ")
+        XCTAssertFalse(bytes.contains("7F") || bytes.contains("08") || bytes.contains("0D") || bytes.contains("0A"),
+                       "no backspace and no Return: \(sent.label)")
+        // "with", a guess the recogniser replaced by "without", is never sent as a word of its own.
+        let withAlone = "20 77 69 74 68 1B"
+        XCTAssertFalse(sent.label.contains(withAlone), "a dropped guess was typed: \(sent.label)")
+        assertRunning()
+    }
+
     func testACustomKeyMadeInBottomBarSettingsIsOnTheBarAndSendsItsKey() {
         launch(screen: "ssh-terminal")
         XCTAssertTrue(app.buttons["sshTerminal.more"].waitUntilExists(timeout: 10))

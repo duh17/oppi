@@ -594,14 +594,21 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         applyTextInput(textInputStorage.deleteBackward(hardwareKeysDown: ignoresSoftwareKeyEcho))
     }
 
-    /// Types a finished dictation take into the shell the way the keyboard's
-    /// own dictation does: one write, no Return, no one-shot modifier, and the
-    /// paste confirmation for text that could run a command. The keyboard's
-    /// document then starts over, since the shell's line now holds text it
-    /// did not type.
+    /// Types dictated words into the shell: one write, no Return, no one-shot
+    /// modifier, and the paste confirmation for text that could run a command.
+    /// A program that asked for bracketed paste gets them bracketed, so it
+    /// inserts them as text instead of reading keys; otherwise, and for text
+    /// that starts with punctuation (it grows the word before the cursor, and a
+    /// program may set a paste apart: pi spaces off a pasted path), they are
+    /// typed as keys. The keyboard's document then starts over.
     func typeDictation(_ text: String) {
         resetTextInput()
-        applyTextInput([.edit(deleting: 0, text: text)])
+        let attaches = text.first.map { $0.isPunctuation || $0.isSymbol } ?? false
+        if channel.engine.bracketedPaste, !attaches, !SSHTerminalEngine.pasteNeedsConfirmation(text) {
+            try? channel.paste(text)
+        } else {
+            applyTextInput([.edit(deleting: 0, text: text)])
+        }
         resetTextInput()
     }
 

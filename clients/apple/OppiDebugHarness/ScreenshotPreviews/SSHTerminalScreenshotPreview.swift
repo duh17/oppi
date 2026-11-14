@@ -14,13 +14,17 @@ enum SSHTerminalScreenshotStatus: String {
     /// thousands of history rows to fling through. `rexBusy` has its two
     /// neighbour panes stream output the whole time.
     case scrollback, rexScrollback, rexBusy
+    /// A shell that asked for bracketed paste and echoes what it gets, under a
+    /// Dictate whose recogniser plays a script (`PreviewScriptedVoiceSession`):
+    /// the live take's words reaching the shell as the person speaks.
+    case dictation
 
     var isRex: Bool { self == .rexPanes || self == .rexScrollback || self == .rexBusy }
     /// Prints the latest scroll gesture's measurement (`SSHTerminalPreviewReadout.scrolled`).
     var measuresScroll: Bool { self == .scrollback || self == .rexScrollback || self == .rexBusy }
 }
 
-/// `SCREENSHOT_SCREEN=ssh-terminal`, `-status-blocked`, `-status-working`, `-rex-panes`: the real
+/// `SCREENSHOT_SCREEN=ssh-terminal`, `-status-blocked`, `-status-working`, `-rex-panes`, `-dictation`: the real
 /// terminal at the root of a router stack, over an in-memory connection. A
 /// Herdr-like screen in the grid, and `herdr api snapshot` answered with one
 /// blocked agent so the toolbar overview and its badge render, beside two saved
@@ -73,7 +77,8 @@ final class SSHTerminalPreviewController: PreviewRootController {
                     hostLabel: hostLabel,
                     dictationConnection: connection,
                     // No host to dial: a pane of another session is recorded, not opened.
-                    rexPaneOpener: { readout.opened($0.blockID) }
+                    rexPaneOpener: { readout.opened($0.blockID) },
+                    dictation: status == .dictation ? PreviewScriptedVoiceSession.dictation() : SSHTerminalDictation()
                 )
             }
         )
@@ -116,6 +121,18 @@ final class SSHTerminalPreviewController: PreviewRootController {
         // over the terminal's own bar. The status variants run a login shell,
         // so only the root record picks the key strip.
         let readout = readout
+        if status == .dictation {
+            // A shell's line editor: pasted text arrives bracketed and is echoed as typed.
+            channel.opened(PreviewConnection { [weak channel] bytes in
+                readout.sent(bytes)
+                let text = String(decoding: bytes, as: UTF8.self)
+                    .replacingOccurrences(of: "\u{1b}[200~", with: "")
+                    .replacingOccurrences(of: "\u{1b}[201~", with: "")
+                channel?.event(.data(Data(text.utf8)))
+            }, command: nil)
+            channel.event(.data(Data(dictationScreen("\u{1b}[").utf8)))
+            return
+        }
         channel.opened(PreviewConnection { [weak channel] bytes in
             readout.sent(bytes)
             let shown = String(decoding: bytes, as: UTF8.self).unicodeScalars.map { scalar -> String in
@@ -133,7 +150,7 @@ final class SSHTerminalPreviewController: PreviewRootController {
         let screen = switch status {
         case .none: herdrScreen(esc)
         case .scrollback: scrollbackScreen(esc, lines: Self.historyLines)
-        case .blocked, .working, .rexPanes, .rexScrollback, .rexBusy: statusScreen(esc)
+        case .blocked, .working, .rexPanes, .rexScrollback, .rexBusy, .dictation: statusScreen(esc)
         }
         var bytes = Data(screen.utf8)
         bytes.append(statusReports(status))
@@ -221,13 +238,23 @@ final class SSHTerminalPreviewController: PreviewRootController {
         (1...lines).map { "\(esc)2mbuild log line \($0)\(esc)0m\r\n" }.joined() + "\(esc)32m$\(esc)0m "
     }
 
+    /// A login shell that turned on bracketed paste, as bash 5.1 and zsh do.
+    private func dictationScreen(_ esc: String) -> String {
+        [
+            "\(esc)2J\(esc)H",
+            "\(esc)2mLast login: Fri Nov 13 09:12:44 on ttys004\(esc)0m\r\n",
+            "\(esc)32malex@mac-studio\(esc)0m \(esc)34m~/oppi\(esc)0m\r\n",
+            "\(esc)?2004h\(esc)1m\u{276F}\(esc)0m ",
+        ].joined()
+    }
+
     private func statusScreen(_ esc: String) -> String {
         "\(esc)2J\(esc)H Allow running rg?  Yes  No  Always\r\n"
     }
 
     private func statusReports(_ status: SSHTerminalScreenshotStatus) -> Data {
         switch status {
-        case .none, .rexPanes, .scrollback, .rexScrollback, .rexBusy:
+        case .none, .rexPanes, .scrollback, .rexScrollback, .rexBusy, .dictation:
             return Data()
         case .blocked:
             return osc("state=blocked:kind=permission:app=pi:msg=\(b64("Allow running rg in the repo?"))")
@@ -239,6 +266,110 @@ final class SSHTerminalPreviewController: PreviewRootController {
     private func osc(_ body: String) -> Data { Data("\u{1b}]7501;\(body)\u{1b}\\".utf8) }
 
     private func b64(_ text: String) -> String { Data(text.utf8).base64EncodedString() }
+}
+
+/// A recogniser that plays one take's reports on a timer, as on-device
+/// dictation sends them: guesses for the phrase being spoken, revised as it
+/// goes, then the phrase's final result. Its last phrase is still a guess when
+/// the script ends, so Stop has words left to type.
+@MainActor
+final class PreviewScriptedVoiceSession: VoiceTranscriptionSession {
+    let events: AsyncThrowingStream<VoiceSessionEvent, Error>
+    let audioLevels: AsyncStream<VoiceSpectrumFrame>
+    private let eventSink: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
+    private let levelSink: AsyncStream<VoiceSpectrumFrame>.Continuation
+    private var playback: Task<Void, Never>?
+
+    static let script: [VoiceSessionEvent] = [
+        .partialTranscript("Find"), .partialTranscript("Find the"), .partialTranscript("Find the flaky"),
+        .partialTranscript("Find the flaky test"), .partialTranscript("Find the flaky test in the"),
+        .partialTranscript("Find the flaky test in the terminal"),
+        .appendFinalTranscript("Find the flaky test in the terminal suite"),
+        .partialTranscript(" and"), .partialTranscript(" and fix it"), .partialTranscript(" and fix it with"),
+        .partialTranscript(" and fix it with out"), .partialTranscript(" and fix it without adding"),
+        .partialTranscript(" and fix it without adding retries"),
+    ]
+
+    /// The terminal's Dictate on a manager whose only recogniser is this one.
+    static func dictation() -> SSHTerminalDictation {
+        SSHTerminalDictation(manager: VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [
+                PreviewScriptedVoiceProvider(engine: .classicDictation),
+                PreviewScriptedVoiceProvider(engine: .modernSpeech),
+            ]),
+            systemAccess: PreviewVoiceSystemAccess()
+        ))
+    }
+
+    init() {
+        (events, eventSink) = AsyncThrowingStream.makeStream()
+        (audioLevels, levelSink) = AsyncStream.makeStream()
+    }
+
+    func start() async throws -> VoiceSessionStartTimings {
+        let eventSink = eventSink
+        let levelSink = levelSink
+        playback = Task {
+            for (step, event) in Self.script.enumerated() {
+                // A voice level every 50 ms, so the orb moves as if someone spoke.
+                for tick in 0..<14 {
+                    try? await Task.sleep(for: .milliseconds(50))
+                    if Task.isCancelled { return }
+                    levelSink.yield(VoiceSpectrumFrame(level: 0.35 + 0.3 * Float((tick + step) % 5) / 4))
+                }
+                eventSink.yield(event)
+            }
+        }
+        return VoiceSessionStartTimings(analyzerStartMs: 0, audioStartMs: 0)
+    }
+
+    func rebuildAudioCapture() async throws {}
+
+    func stop() async { end() }
+
+    func cancel() async { end() }
+
+    private func end() {
+        playback?.cancel()
+        eventSink.finish()
+        levelSink.finish()
+    }
+}
+
+@MainActor
+private final class PreviewScriptedVoiceProvider: VoiceTranscriptionProvider {
+    let id = VoiceProviderID.appleClassicDictation
+    let engine: VoiceInputManager.TranscriptionEngine
+
+    init(engine: VoiceInputManager.TranscriptionEngine) {
+        self.engine = engine
+    }
+
+    func invalidateCache() {}
+    func cancelPreparation() {}
+    func prewarm(context: VoiceProviderContext) async throws {}
+    func prepareSession(context: VoiceProviderContext) async throws -> VoiceProviderPreparation {
+        VoiceProviderPreparation(audioFormat: nil, modelPath: .warmCache)
+    }
+
+    func makeSession(
+        context: VoiceProviderContext, preparation: VoiceProviderPreparation
+    ) throws -> any VoiceTranscriptionSession {
+        PreviewScriptedVoiceSession()
+    }
+}
+
+/// Permissions granted and no audio session: the script needs no microphone.
+@MainActor
+private struct PreviewVoiceSystemAccess: VoiceInputSystemAccessing {
+    var hasPermissions: Bool { true }
+    var hasMicPermission: Bool { true }
+    func requestPermissions() async -> Bool { true }
+    func requestMicPermission() async -> Bool { true }
+    func activateAudioSession(inAppPlaybackActive: Bool) throws {}
+    func activateBuiltInAudioSession(inAppPlaybackActive: Bool) throws {}
+    func deactivateAudioSession() {}
+    func allowServerDictation(to recipient: AISharingConsent.Recipient, serverId: String?) async -> Bool { true }
 }
 
 /// What a driven run (a UI test) reads of the preview: the bytes the terminal

@@ -538,6 +538,63 @@ struct SSHTerminalTests {
         channel.close(reason: "done")
     }
 
+    /// A Dictate take over a scripted recogniser into a shell that asked for
+    /// bracketed paste: each stable stretch reaches the host while the person
+    /// still speaks, bracketed, never with a backspace or Return; the words
+    /// still changing wait in `provisional`; Stop sends only the rest.
+    @Test func aLiveTakeReachesTheShellBracketedAsItsWordsSettle() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        channel.event(.data(Data("\u{1b}[?2004h$ ".utf8)))
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        var made: [MockVoiceSession] = []
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in
+            let session = MockVoiceSession()
+            made.append(session)
+            return session
+        }
+        let dictation = SSHTerminalDictation(manager: VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        ))
+        dictation.type = { grid.typeDictation($0) }
+        var bytes = fixture.bytes.makeAsyncIterator()
+
+        await dictation.toggle(connection: nil)
+        let session = try #require(made.last)
+        // Each report, and the untyped words it leaves above the bar.
+        let script: [(VoiceSessionEvent, String)] = [
+            (.partialTranscript("show"), "show"), (.partialTranscript("show me"), "show me"),
+            (.partialTranscript("show me the"), "show me the"), (.partialTranscript("show me the get"), "me the get"),
+            (.partialTranscript("show me the git log"), "the git log"),
+            (.appendFinalTranscript("show me the git log"), ""),
+        ]
+        for (event, untyped) in script {
+            session.yieldEvent(event)
+            #expect(await waitForMainActorCondition { dictation.provisional == untyped })
+        }
+        #expect(await bytes.next() == Data("\u{1b}[200~show\u{1b}[201~".utf8))
+        #expect(await bytes.next() == Data("\u{1b}[200~ me\u{1b}[201~".utf8))
+        #expect(await bytes.next() == Data("\u{1b}[200~ the git log\u{1b}[201~".utf8))
+        // A full stop grows the word before it, so it goes as a key, not a paste of its own.
+        session.yieldEvent(.appendFinalTranscript("."))
+        #expect(await bytes.next() == Data(".".utf8))
+        session.yieldEvent(.partialTranscript(" for main"))
+        #expect(await waitForMainActorCondition { dictation.provisional == "for main" })
+        #expect(dictation.presentation.isRecording, "all of that while the take still listens")
+
+        await dictation.toggle(connection: nil)
+        #expect(await bytes.next() == Data("\u{1b}[200~ for main\u{1b}[201~".utf8))
+        #expect(dictation.provisional.isEmpty)
+        let sent = await fixture.sentBytes
+        #expect(!sent.contains(0x7F) && !sent.contains(0x08) && !sent.contains(0x0D) && !sent.contains(0x0A),
+                "nothing typed is taken back, and Return stays the person's")
+        dictation.release()
+        channel.close(reason: "done")
+    }
+
     @Test func wordsLeaveTheOneShotModifierForTheNextKey() async throws {
         let fixture = TerminalConnectionFixture()
         let channel = try SSHTerminalChannel()
