@@ -95,11 +95,17 @@ enum WorkspaceSidebarPrimaryUtilities {
         ),
     ]
 
-    /// `items` with a server's plugin entries among them by `order`: the native rows count
-    /// 10, 20, 30 and on, and an entry sorts after a native row of the same order. While its
-    /// experiment is on, a plugin entry says so in its title.
-    static func items(plugins: [PluginScreenSidebarEntry]) -> [WorkspaceSidebarPrimaryUtilityItem] {
-        let native = items.enumerated().map { (order: Double($0.offset + 1) * 10, rank: 0, item: $0.element) }
+    /// `items` the server offers (`offers`, its feature switches), with its plugin entries among
+    /// them by `order`: the native rows count 10, 20, 30 and on, and an entry sorts after a
+    /// native row of the same order. While its experiment is on, a plugin entry says so in its
+    /// title. The server lists only plugin entries whose feature is on.
+    static func items(
+        plugins: [PluginScreenSidebarEntry],
+        offers: (ServerFeature) -> Bool
+    ) -> [WorkspaceSidebarPrimaryUtilityItem] {
+        let native = items.enumerated()
+            .filter { $0.element.target.serverFeature.map(offers) ?? true }
+            .map { (order: Double($0.offset + 1) * 10, rank: 0, item: $0.element) }
         let added = plugins.map { entry in
             (order: entry.order, rank: 1, item: WorkspaceSidebarPrimaryUtilityItem(
                 target: .pluginScreen(entry.id),

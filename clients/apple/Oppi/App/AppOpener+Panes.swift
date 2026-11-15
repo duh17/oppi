@@ -10,7 +10,8 @@ import Foundation
 // A panel opens beside its session's chat (`ScenePanes.openPanel`). A
 // browser link opens its page as a tapped web link does: needing no server,
 // it never switches one. A Godot link opens beside the focused pane on a wide
-// window, else in the primary stack, and only with the Godot Pane experiment on.
+// window, else in the primary stack, and only with the Godot Pane experiment on
+// and a server that offers it (its Godot Pane switch, and games to serve).
 extension AppOpener {
     func performPane(_ link: PaneLink, sourceServerID: String?, generation: UInt64) async -> AppOpenOutcome {
         if case .browser(let url) = link.route {
@@ -25,6 +26,10 @@ extension AppOpener {
         }
         guard let serverId = link.server ?? sourceServerID ?? windowServerId else {
             toast(String(localized: "No server to open this link on"))
+            return .finished
+        }
+        if case .godot = link.route, !coordinator.server(serverId, offers: .godotPane) {
+            toast(String(localized: "Godot Pane is turned off on this server. Turn it on in Server Settings › Features."))
             return .finished
         }
         let entry = PaneStackEntry(serverId: serverId, route: link.route)

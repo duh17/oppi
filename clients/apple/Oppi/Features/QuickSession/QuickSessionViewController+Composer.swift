@@ -78,8 +78,10 @@ extension QuickSessionViewController: ChatComposerSource {
         )
         // Regular width groups who runs the launch at the bottom right:
         // Agent, model, thinking. Compact keeps the Agent at the leading end.
-        if wide { return ComposerActionRow(trailing: [agentAction] + toolbar.trailing) }
-        return ComposerActionRow(leading: [agentAction], trailing: toolbar.trailing)
+        // A server with Agents off launches Pi only: no Agent picker.
+        let agents = model.offersAgents ? [agentAction] : []
+        if wide { return ComposerActionRow(trailing: agents + toolbar.trailing) }
+        return ComposerActionRow(leading: agents, trailing: toolbar.trailing)
     }
 
     /// The action row's Agent list: Pi, then the server's saved Agents.

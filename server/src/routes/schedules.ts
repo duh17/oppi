@@ -23,6 +23,7 @@ import type {
 } from "../agent-schedules.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { recordScheduleRun } from "../schedule-run-metrics.js";
+import { featureOn } from "../server-features.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const MANUAL_RUN_LEASE_MS = 10 * 60_000;
@@ -195,6 +196,15 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     res: ServerResponse,
   ): Promise<boolean> {
     if (method !== "POST") return false;
+    // The Schedules switch off pauses every schedule, run by hand included.
+    if (!featureOn(ctx.storage.getConfig(), "schedules")) {
+      helpers.error(
+        res,
+        409,
+        "The Schedules feature is turned off on this server. Turn it on in Server Settings › Features.",
+      );
+      return true;
+    }
     try {
       const schedules = getSchedules();
       const resolved = resolveScheduleSummary(scheduleId, res);

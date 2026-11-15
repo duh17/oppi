@@ -44,6 +44,7 @@ Do not put these in config: owner tokens and pairing secrets (use `oppi pair` an
 | `auth.module` | Absolute path to an owner auth module (restart; see [Auth module](#auth-module)) |
 | `serverMetrics.enabled` | Server and host samples behind **Server Metrics** (default `false`; the Server Settings toggle applies at once; see [Server Metrics](#server-metrics)) |
 | `experimental.serverDurable` | Offer durable sessions (default `false`; restart; the **Durable Sessions** switch in Server Settings applies at once; see [Durable Sessions](usage.md#durable-sessions)) |
+| `features` / `features.<name>` | Which features this server offers (default all on; restart; Server Settings → **Features** applies at once; see [Features](#features)) |
 
 ## Dictation (ASR / STT)
 
@@ -212,6 +213,25 @@ MCP servers are managed where they load:
 Each list runs one live probe in its own folder; pull to refresh to probe again. Select a server to see its tools and errors, enable or disable it, change exposure, sign in or out, or remove it. **+** adds a URL or command server to the list you are viewing. Use `${NAME}` references for headers, environment variables, and client secrets, because literal values and URL query values are redacted when read back and command arguments are shown as stored. Adding an existing name in the same scope is rejected; remove it first. Changes apply to new sessions or `/reload`.
 
 For OAuth, choose **Open Sign-In Page**. After approval the browser might fail to load the loopback callback; copy the full `http://127.0.0.1:<port>/callback?...` URL and paste it into Oppi, which sends it only to this flow's waiting host listener. Leaving the screen keeps the flow available through **Continue Sign-In** and **Cancel Sign-In** on any MCP Servers list. While a sign-in is active, the list shows the last probe, and add, remove, enable, exposure, and sign-out changes are refused until it ends. A browser on the host can also complete the callback. Credentials stay in Pi's host-side store.
+
+## Features
+
+Plain Pi is chat, sessions and files. Every larger feature is a switch the server owner can turn off for every device that uses the server:
+
+| Switch | Off |
+| --- | --- |
+| `agents` | Hides **Agents** in the sidebar and the Agent picker in Quick Session. Hiding only: schedules can still start a saved Agent |
+| `schedules` | Hides **Schedules** and pauses every schedule: nothing runs on its own, and `oppi schedule run` is refused. Turned back on, each schedule runs at its next slot; slots that came due while it was off are skipped |
+| `skills` | Hides **Skills** in the sidebar and Workspace Settings. Hiding only: sessions still use installed skills |
+| `extensions` | Hides **Extensions** in the sidebar and Workspace Settings. Hiding only: sessions still use installed extensions |
+| `mcp` | Hides **MCP Servers** in the sidebar and Workspace Settings, and new sessions load no MCP servers |
+| `terminal` | Hides **Terminal** in the sidebar, in new panes, and in the chat and workspace bars |
+| `rex` | Hides Rex on the Terminal page and in Rex links, in this server's windows. Also needs Terminal, and the Rex Experiment on each device |
+| `herdr` | A terminal opened from this server's windows on a Herdr host opens a plain shell. Also needs Terminal, and the Herdr Experiment on each device |
+| `godotPane` | Hides Godot games in new panes, and Godot links. Hiding only: sessions keep their Godot tools. Also needs the Godot Pane Experiment on each device |
+| `browserPane` | **Web Pages in Panes**: web links open in a sheet instead of a pane |
+
+Turn them on and off in Server Settings → **Features**, which applies at once on every connected device. **Plain Pi** there turns them all off, and **Turn All On** brings them back. From the host, `oppi config set features plainPi` (or `all`) sets every switch, and `oppi config set features.terminal true` sets one; those apply at the next restart. A switch that is not set is on, so older apps and older config files see every feature. Terminal settings, saved SSH hosts, and terminals already open stay on each device.
 
 ## Server Metrics
 

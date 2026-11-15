@@ -5,7 +5,10 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { WebSocket } from "ws";
+
 import { Server } from "../src/server.js";
+import { SERVER_FEATURE_PRESETS } from "../src/server-features.js";
 import { Storage } from "../src/storage.js";
 
 // The real Server wiring behind the settings routes: its model runtime and its metrics latch.
@@ -94,4 +97,83 @@ describe("settings through a running server", () => {
     expect(await off.json()).toEqual({ enabled: false, revision: 2 });
     expect(await capability()).toBeUndefined();
   }, 30_000);
+
+  it("switches features: every one on by default, Plain Pi turns all off, one comes back, apps hear each change", async () => {
+    const info = async () =>
+      ((await (await request("GET", "/server/info")).json()) as { features: unknown }).features;
+    expect(await info()).toEqual(SERVER_FEATURE_PRESETS.all);
+
+    const events = await openAppEvents();
+    try {
+      const plain = await request("PUT", "/server/features", SERVER_FEATURE_PRESETS.plainPi);
+      expect(await plain.json()).toEqual(SERVER_FEATURE_PRESETS.plainPi);
+      expect(await info()).toEqual(SERVER_FEATURE_PRESETS.plainPi);
+      await events.next("features_changed");
+
+      const mcp = await request("PUT", "/server/features", { mcp: true });
+      expect(await mcp.json()).toEqual({ ...SERVER_FEATURE_PRESETS.plainPi, mcp: true });
+      await events.next("features_changed");
+
+      // A save that changes nothing tells nobody; a name the server lacks changes nothing.
+      await request("PUT", "/server/features", { mcp: true });
+      const unknown = await request("PUT", "/server/features", { voice: false });
+      expect(unknown.status).toBe(400);
+      expect(await (await request("GET", "/server/features")).json()).toEqual({
+        ...SERVER_FEATURE_PRESETS.plainPi,
+        mcp: true,
+      });
+      await request("PUT", "/server/features", { terminal: true });
+      expect(await events.next("features_changed")).toBeDefined();
+      expect(events.count("features_changed")).toBe(3);
+    } finally {
+      events.close();
+    }
+
+    // Saved in config.json: a restarted server reads the same switches.
+    expect(new Storage(dataDir).getConfig().features).toEqual({
+      ...SERVER_FEATURE_PRESETS.plainPi,
+      mcp: true,
+      terminal: true,
+    });
+  }, 30_000);
+
+  /** The app-event socket, with each frame's type in arrival order. */
+  async function openAppEvents(): Promise<{
+    next(type: string): Promise<Record<string, unknown>>;
+    count(type: string): number;
+    close(): void;
+  }> {
+    const ws = new WebSocket(`${baseUrl.replace(/^https:/, "wss:")}/app/events/stream`, {
+      headers: { Authorization: `Bearer ${token}` },
+      rejectUnauthorized: false,
+    });
+    const frames: Record<string, unknown>[] = [];
+    let read = 0;
+    let wake: (() => void) | undefined;
+    ws.on("message", (data) => {
+      frames.push(JSON.parse(String(data)) as Record<string, unknown>);
+      wake?.();
+    });
+    await new Promise<void>((resolve, reject) => {
+      ws.once("open", () => resolve());
+      ws.once("error", reject);
+    });
+    async function next(type: string): Promise<Record<string, unknown>> {
+      for (;;) {
+        const index = frames.findIndex((frame, at) => at >= read && frame.type === type);
+        if (index >= 0) {
+          read = index + 1;
+          return frames[index]!;
+        }
+        await new Promise<void>((resolve) => (wake = resolve));
+      }
+    }
+    // The stream says it is connected before any event can reach it.
+    await next("app_events_connected");
+    return {
+      next,
+      count: (type) => frames.filter((frame) => frame.type === type).length,
+      close: () => ws.close(),
+    };
+  }
 });

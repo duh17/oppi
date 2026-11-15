@@ -94,7 +94,7 @@ struct ChatTopBarLayoutTests {
         // A chat with no workspace has no files, no Git, and no folder to open a
         // terminal in; its ring and its outline timeline are still there.
         let available = ChatBarItems.availableActions(
-            hasWorkspace: false, gitAvailable: true, showsOutline: true, hasTerminalFolder: true
+            hasWorkspace: false, gitAvailable: true, showsOutline: true, hasTerminalFolder: true, offersTerminal: true
         )
         #expect(available == [.outline, .context])
         #expect(allShown.bar(available: available) == [.outline, .context])
@@ -125,13 +125,27 @@ struct ChatTopBarLayoutTests {
         #expect(!ChatBarItems.mayOfferGit(gitStatusEnabled: false, loadedStatus: repo))
 
         let withGit = ChatBarItems.availableActions(
-            hasWorkspace: true, gitAvailable: true, showsOutline: false, hasTerminalFolder: false
+            hasWorkspace: true, gitAvailable: true, showsOutline: false, hasTerminalFolder: false, offersTerminal: true
         )
         #expect(withGit == [.files, .git, .context])
         let withoutGit = ChatBarItems.availableActions(
-            hasWorkspace: true, gitAvailable: false, showsOutline: false, hasTerminalFolder: false
+            hasWorkspace: true, gitAvailable: false, showsOutline: false, hasTerminalFolder: false, offersTerminal: true
         )
         #expect(withoutGit == [.files, .context])
+    }
+
+    /// A server with its Terminal switch off offers no Terminal button or menu item, even in
+    /// a workspace with a folder a shell could start in.
+    @MainActor @Test func terminalLeavesTheBarWhenTheServerTurnsItOff() {
+        let on = ChatBarItems.availableActions(
+            hasWorkspace: true, gitAvailable: false, showsOutline: false, hasTerminalFolder: true, offersTerminal: true
+        )
+        #expect(on == [.files, .context, .terminal])
+        let off = ChatBarItems.availableActions(
+            hasWorkspace: true, gitAvailable: false, showsOutline: false, hasTerminalFolder: true, offersTerminal: false
+        )
+        #expect(off == [.files, .context])
+        #expect(!allShown.menu(available: off).contains(.terminal))
     }
 
     /// A menu item keeps its details on the label's line, after it, so the

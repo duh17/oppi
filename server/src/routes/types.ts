@@ -116,6 +116,11 @@ export interface RouteContext {
   serverMetrics?: ServerMetricsControl;
   /** The Godot pane's games. Optional so route tests can omit it. */
   godot?: GodotService;
+  /**
+   * A feature switch changed (`PUT /server/features`): apps hear `features_changed` and plugin
+   * screens whose feature went off end. Composed in server.ts; optional so route tests can omit it.
+   */
+  featuresChanged?: () => void;
 }
 
 export interface RouteHelpers {

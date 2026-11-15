@@ -19,13 +19,27 @@ struct SSHTerminalFolderTarget: Equatable {
     let label: String
     /// The folder is a session's git worktree, so Herdr opens it as one.
     let isWorktree: Bool
+    /// What the server this folder belongs to offers of Rex and Herdr, as it was when the
+    /// terminal was asked for (`SSHTerminalExperimentAccess.offered(by:)`).
+    let serverOffers: SSHTerminalExperimentAccess
 
-    init(serverHost: String, folder: String, label: String = "", isWorktree: Bool = false) {
+    init(
+        serverHost: String,
+        folder: String,
+        label: String = "",
+        isWorktree: Bool = false,
+        serverOffers: SSHTerminalExperimentAccess = .all
+    ) {
         self.serverHost = serverHost
         self.folder = folder
         self.label = label
         self.isWorktree = isWorktree
+        self.serverOffers = serverOffers
     }
+
+    /// This device's experiments, narrowed to what the folder's server offers: with its
+    /// Herdr switch off a Herdr host opens the folder in a plain shell.
+    var access: SSHTerminalExperimentAccess { SSHTerminalExperimentAccess.current.narrowed(to: serverOffers) }
 
     var isUsable: Bool {
         SSHTerminalFolderCommand.isUsablePath(folder)
@@ -290,7 +304,7 @@ enum SSHTerminalFolderEntry {
         session.listsRexSessions = false
         guard let target else { return }
         // No multiplexer: the plain login shell in the folder.
-        guard let multiplexer = SSHTerminalMultiplexerKind.detected(in: profile.commandOnConnect())?.multiplexer else {
+        guard let multiplexer = SSHTerminalMultiplexerKind.detected(in: profile.commandOnConnect(target.access))?.multiplexer else {
             session.folder = target.folder
             return
         }

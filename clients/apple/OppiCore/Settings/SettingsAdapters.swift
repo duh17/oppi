@@ -116,18 +116,20 @@ struct ServerAdapter: Sendable {
         try await resolved(serverId).loadSettings(endpoint)
     }
 
-    /// Writes one field. `baseRevision` is sent only when the route revisions
-    /// its document and the last document carried a revision; a route without
-    /// revisions has no conflict path.
+    /// Writes `value` to the declarations' fields, all on `endpoint`, in one request (one
+    /// field for a single setting). `baseRevision` is sent only when the route revisions
+    /// its document and the last document carried a revision; a route without revisions
+    /// has no conflict path.
     func save<Value>(
-        _ declaration: SettingDeclaration<Value>,
+        _ declarations: [SettingDeclaration<Value>],
         _ value: Value,
         endpoint: SettingEndpoint,
         revisioned: Bool,
         baseRevision: Int?,
         serverId: String
     ) async throws -> SettingsServerDocument {
-        let fields = [declaration.key: try Self.encode(value)]
+        let encoded = try Self.encode(value)
+        let fields = Dictionary(uniqueKeysWithValues: declarations.map { ($0.key, encoded) })
         return try await resolved(serverId).saveSettings(
             endpoint,
             fields: fields,

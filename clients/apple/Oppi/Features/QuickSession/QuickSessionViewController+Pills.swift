@@ -184,6 +184,7 @@ extension QuickSessionViewController {
             pill.accessibilityTraits = model.isInitialized ? .button : [.button, .notEnabled]
         }
 
+        agentPill.setHiddenIfChanged(!model.offersAgents)
         let agent = model.selectedAgent
         agentPill.apply(QuickSessionPillButton.Content(
             icon: agent.map { .choice($0.icon, purpose: .agent, sandbox: false) } ?? .piAvatar,

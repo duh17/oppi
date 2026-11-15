@@ -1201,6 +1201,10 @@ const APP_EVENT_CANONICAL_EXAMPLES = {
     emittedAt: appEventEmittedAt,
     revision: 4,
   },
+  features_changed: {
+    type: "features_changed",
+    emittedAt: appEventEmittedAt,
+  },
   pairing_approval_requested: {
     type: "pairing_approval_requested",
     emittedAt: appEventEmittedAt,
@@ -1293,6 +1297,7 @@ const APP_EVENT_MESSAGE_ORDER = [
   "workspace_git_changed",
   "workspace_layouts_changed",
   "pins_changed",
+  "features_changed",
   "pairing_approval_requested",
   "pairing_approval_settled",
 ] as const satisfies readonly (

@@ -22,7 +22,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
 
     enum Item: Hashable, Sendable {
         case summary
-        case modelProviders, workspaces, dictionary, pairedDevices, about
+        case modelProviders, workspaces, features, dictionary, pairedDevices, about
         case mobileOutputGuide, serverMetrics, durableSessions, startDurable, settingFailure(String)
         case pushSwitch, pushWorking, pushError
         case liveActivitySwitch, liveActivityWorking, liveActivityError, liveActivitySystemOff
@@ -93,10 +93,13 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
         // Another device may have changed a server setting while this page sat under one it
         // pushed. The first appearance already reads them.
         if hasAppeared, let settings {
+            let hasFeatures = coordinator.serverHasFeatureSwitches(server.id)
             Task {
                 _ = await settings.reload(SettingsCatalog.mobileOutputGuideEnabled)
                 _ = await settings.reload(SettingsCatalog.serverMetricsEnabled)
                 _ = await settings.reload(SettingsCatalog.durableSessionsEnabled)
+                // One read brings every switch: they share the route's document.
+                if hasFeatures { _ = await settings.reload(SettingsCatalog.feature(.agents)) }
             }
         }
         hasAppeared = true
@@ -131,6 +134,9 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
         _ = await settings.reload(SettingsCatalog.serverMetricsEnabled)
         _ = await settings.reload(SettingsCatalog.mobileOutputGuideEnabled)
         _ = await settings.reload(SettingsCatalog.durableSessionsEnabled)
+        if coordinator.serverHasFeatureSwitches(server.id) {
+            _ = await settings.reload(SettingsCatalog.feature(.agents))
+        }
     }
 
     override func failureTitle() -> String? { String(localized: "Couldn't Load Server Settings") }
@@ -184,7 +190,9 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
 
         let serverSections: [ListSection<Section, Item>] = [
             ListSection(.summary, items: summary, state: summaryState),
-            ListSection(.pages, items: [.modelProviders, .workspaces, .dictionary, .pairedDevices, .about]),
+            ListSection(.pages, items: [.modelProviders, .workspaces]
+                + (coordinator.serverHasFeatureSwitches(server.id) ? [.features] : [])
+                + [.dictionary, .pairedDevices, .about]),
             ListSection(
                 .badge,
                 footer: String(localized: "The badge color shows the connection: green connected, blue connecting, orange recovering, red offline."),
@@ -276,6 +284,8 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             return AnyHashable([model.providerSummary, String(describing: model.providerSetupState)])
         case .workspaces:
             return AnyHashable(workspaceCount ?? "")
+        case .features:
+            return AnyHashable(settings.flatMap(ServerFeaturesViewController.summary) ?? "")
         case .pairedDevices:
             return AnyHashable(pairedDeviceCount ?? "")
         case .about:
@@ -376,7 +386,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
         switch item {
         case .summary:
             collectionView.dequeueConfiguredReusableCell(using: summaryRow, for: indexPath, item: item)
-        case .modelProviders, .workspaces, .dictionary, .pairedDevices, .about, .badge:
+        case .modelProviders, .workspaces, .features, .dictionary, .pairedDevices, .about, .badge:
             collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
         case .settingFailure, .pushWorking, .pushError,
              .liveActivityWorking, .liveActivityError, .liveActivitySystemOff:
@@ -464,6 +474,13 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
                 value: workspaceCount,
                 identifier: "server.manageWorkspaces"
             ) { [weak self] in self?.open(.workspaces) }
+        case .features:
+            cell.configure(
+                title: String(localized: "Features"),
+                image: .symbol("switch.2"),
+                value: settings.flatMap(ServerFeaturesViewController.summary),
+                identifier: "server.row.features"
+            ) { [weak self] in self?.open(.features) }
         case .dictionary:
             cell.configure(
                 title: String(localized: "Dictation Dictionary"),
@@ -547,7 +564,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
 
     override func isSelectable(_ item: Item) -> Bool {
         switch item {
-        case .modelProviders, .workspaces, .dictionary, .pairedDevices, .about, .badge: true
+        case .modelProviders, .workspaces, .features, .dictionary, .pairedDevices, .about, .badge: true
         default: false
         }
     }
@@ -568,6 +585,9 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             root.navigation.openModelProviders(ModelProvidersNavTarget(serverId: server.id))
         case .workspaces:
             push(WorkspaceListViewController(server: server, root: root))
+        case .features:
+            guard let settings else { return }
+            push(ServerFeaturesViewController(server: server, settings: settings))
         case .dictionary:
             push(DictationDictionaryViewController.make(root: root, serverId: server.id))
         case .pairedDevices:

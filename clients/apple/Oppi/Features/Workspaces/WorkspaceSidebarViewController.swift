@@ -221,9 +221,11 @@ final class WorkspaceSidebarViewController: UIViewController {
                 && navigation.splitDetailColumn.root == .utility(target)
         }
 
-        // The window's server's plugin entries, while their experiment is on.
-        let plugins = defaults.pluginSidebar ? root.windowConnection?.serverCapabilities?.pluginSidebar ?? [] : []
-        for item in WorkspaceSidebarPrimaryUtilities.items(plugins: plugins) {
+        // The pages the window's server offers, and its plugin entries while their experiment is on.
+        let connection = root.windowConnection
+        let plugins = defaults.pluginSidebar ? connection?.serverCapabilities?.pluginSidebar ?? [] : []
+        let items = WorkspaceSidebarPrimaryUtilities.items(plugins: plugins) { connection?.offers($0) ?? true }
+        for item in items {
             model.utilities[item.target] = UtilityRow(item: item, isSelected: isUtilitySelected(item.target))
             model.mainItems.append(.utility(item.target))
         }

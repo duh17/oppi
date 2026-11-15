@@ -42,16 +42,20 @@ struct PluginScreenProtocolTests {
     @Test func serverInfoListsTheEntriesThisAppDraws() throws {
         let info = try Self.info(try Self.fixture().serverInfo)
         #expect(info.capabilities?.screens?.v == PluginScreens.version)
-        let entries = try #require(info.capabilitiesWithPluginSidebar?.pluginSidebar)
+        let entries = try #require(info.appCapabilities?.pluginSidebar)
         #expect(entries.map(\.id) == info.sidebar?.map(\.id))
         #expect(entries.allSatisfy { $0.scopes.contains("server") })
+        // The switches ride along: every feature on in the fixture.
+        let capabilities = try #require(info.appCapabilities)
+        #expect(ServerFeature.allCases.allSatisfy { info.features?[$0.rawValue] == true })
+        #expect(ServerFeature.allCases.filter { $0 != .godotPane }.allSatisfy(capabilities.offers))
 
         // Another vocabulary hides them all.
         guard case .object(var fields) = try Self.fixture().serverInfo else { return }
         fields["capabilities"] = .object(["screens": .object(["v": .number(Double(PluginScreens.version + 1))])])
         let newer = try Self.info(.object(fields))
         #expect(newer.sidebar?.isEmpty == false)
-        #expect(newer.capabilitiesWithPluginSidebar?.pluginSidebar == nil)
+        #expect(newer.appCapabilities?.pluginSidebar == nil)
     }
 
     @Test func everyPageDecodesWithEveryRowKind() throws {
@@ -93,7 +97,7 @@ struct PluginScreenProtocolTests {
         }
         #expect(results["c3"] == PluginScreenNav(kind: "pop"))
         #expect(results["c4"] == PluginScreenNav(kind: "present", page: "signin"))
-        #expect(ended == ["w2": "gone", "w3": "unsupported"])
+        #expect(ended == ["w2": "gone", "w3": "off", "w4": "unsupported"])
         #expect(refused.count == 1)
     }
 

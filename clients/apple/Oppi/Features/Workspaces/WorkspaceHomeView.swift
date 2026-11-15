@@ -239,6 +239,20 @@ enum WorkspaceUtilityNavTarget: Hashable {
     /// The active host's CPU, memory, disk, and Oppi process over time.
     case serverMetrics
     case appSettings
+
+    /// The server switch that hides this page in that server's windows, or nil for a page
+    /// every server has.
+    var serverFeature: ServerFeature? {
+        switch self {
+        case .agents: .agents
+        case .schedules: .schedules
+        case .skills: .skills
+        case .extensions: .extensions
+        case .mcpServers: .mcp
+        case .sshTerminal: .terminal
+        case .pluginScreen, .manageServers, .serverMetrics, .appSettings: nil
+        }
+    }
 }
 
 struct WorkspaceCreateSheetContext: Identifiable {

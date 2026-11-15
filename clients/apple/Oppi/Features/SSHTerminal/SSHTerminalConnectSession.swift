@@ -206,7 +206,7 @@ final class SSHTerminalConnectSession {
                 if let folder {
                     command = folderCommand ?? SSHTerminalFolderCommand.command(folder: folder)
                 } else {
-                    command = value.commandOnConnect()
+                    command = value.commandOnConnect(access())
                 }
                 if let rexPane {
                     // A Rex pane runs no shell: the signed-in connection carries

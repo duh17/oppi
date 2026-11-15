@@ -57,6 +57,7 @@ describe("schedule routes", () => {
   let sendPrompt: ReturnType<typeof vi.fn>;
   let ctx: RouteContext;
   let helpers: RouteHelpers;
+  let config: { features?: { schedules?: boolean } };
 
   const workspace: Workspace = { id: "ws-1", name: "Workspace" } as Workspace;
 
@@ -85,7 +86,9 @@ describe("schedule routes", () => {
     startSession = vi.fn(async (sessionId: string) => makeSession({ id: sessionId }));
     sendPrompt = vi.fn(async () => undefined);
 
+    config = {};
     const storage = {
+      getConfig: () => config,
       getAgentScheduleStore: () => store,
       getAgentDefinitionStore: () => ({
         getAgent: (agentId: string) => agents.get(agentId),
@@ -238,6 +241,36 @@ describe("schedule routes", () => {
       idempotencyKey: `schedule:${schedule.id}:manual:button-1`,
       modelPolicy: "required",
     });
+  });
+
+  it("refuses a run by hand while the server's Schedules switch is off", async () => {
+    const schedule = store.createSchedule({
+      name: "Morning check",
+      trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+      action: { type: "new_session", workspaceId: workspace.id, prompt: "Run the checks" },
+    });
+    config = { features: { schedules: false } };
+    const path = `/schedules/${schedule.id}/run`;
+
+    await createScheduleRoutes(
+      ctx,
+      helpers,
+    )({
+      method: "POST",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: requestBody({ requestId: "button-1" }),
+      res: {} as ServerResponse,
+    });
+
+    expect(errors).toEqual([
+      {
+        status: 409,
+        message: expect.stringContaining("Schedules feature is turned off on this server"),
+      },
+    ]);
+    expect(store.listRuns(schedule.id)).toEqual([]);
+    expect(startSession).not.toHaveBeenCalled();
   });
 
   it("canonicalizes saved-Agent schedule targets by Agent name", async () => {

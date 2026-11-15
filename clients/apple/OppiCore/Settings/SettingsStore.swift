@@ -237,6 +237,56 @@ final class SettingsStore {
         }
     }
 
+    /// Saves `value` to every one of `declarations` in one write: server settings that share
+    /// one route, whose document takes them together (a preset over a group of switches). Each
+    /// shows `saving`, then settles to the stored value or to `failed` with the reason. Does
+    /// nothing while any of them cannot begin saving.
+    @discardableResult
+    func set<Value>(_ declarations: [SettingDeclaration<Value>], to value: Value) -> Task<Void, Never> {
+        guard let storage = declarations.first?.storage, case .server(let endpoint, let revisioned) = storage,
+              declarations.allSatisfy({ $0.storage == storage && routes($0) }) else { return Task {} }
+        var held: [String: SettingValue<Value>] = [:]
+        for declaration in declarations {
+            let current = read(declaration)
+            guard declaration.validate(value) == nil, let saving = current.beginSaving(value) else { return Task {} }
+            held[declaration.id] = saving
+        }
+        for declaration in declarations {
+            retries[declaration.id] = nil
+            states[declaration.id] = held[declaration.id]
+        }
+        let previous = lastSave[endpoint]
+        let task = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self, let serverId else { return }
+            let state = { (id: String) in self.states[id] as? SettingValue<Value> ?? held[id] ?? .loading }
+            do {
+                let document = try await server.save(
+                    declarations,
+                    value,
+                    endpoint: endpoint,
+                    revisioned: revisioned,
+                    baseRevision: documents[endpoint]?.revision,
+                    serverId: serverId
+                )
+                for declaration in declarations {
+                    states[declaration.id] = state(declaration.id).saved(
+                        stored: ServerAdapter.value(of: declaration, in: document),
+                        revision: document.revision
+                    )
+                }
+                accept(document, for: endpoint)
+                for declaration in declarations { afterWrite(declaration.id) }
+            } catch {
+                for declaration in declarations {
+                    states[declaration.id] = Self.settled(state(declaration.id), after: error)
+                }
+            }
+        }
+        lastSave[endpoint] = task
+        return task
+    }
+
     /// Runs again what failed: the write that was rolled back, or the load that
     /// never arrived.
     @discardableResult
@@ -262,7 +312,7 @@ final class SettingsStore {
             let held = states[declaration.id] as? SettingValue<Value> ?? .loading
             do {
                 let document = try await server.save(
-                    declaration,
+                    [declaration],
                     value,
                     endpoint: endpoint,
                     revisioned: revisioned,

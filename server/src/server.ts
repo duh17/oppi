@@ -160,6 +160,7 @@ import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 import { McpService } from "./mcp-service.js";
 import { ScreensStreamMux } from "./screens-stream.js";
+import { featureOn, serverFeatures } from "./server-features.js";
 import { ProviderQuotaService } from "./provider-quota/service.js";
 import {
   garbageCollectUploadStore,
@@ -759,7 +760,11 @@ export class Server {
     });
     this.sessions.layoutFiles = new LayoutFiles(this.storage, this.appEventStreamMux);
     this.godot = new GodotService(this.storage, { renewAccess });
-    this.screensStreamMux = new ScreensStreamMux(() => this.sessions.pluginScreens(), renewAccess);
+    this.screensStreamMux = new ScreensStreamMux(
+      () => this.sessions.pluginScreens(),
+      () => serverFeatures(this.storage.getConfig()),
+      renewAccess,
+    );
     this.boundSessionStreamMux = new BoundSessionStreamMux(streamContext);
     this.dictationStreamMux = new DictationStreamMux(streamContext);
 
@@ -831,6 +836,7 @@ export class Server {
       appEvents: this.appEventStreamMux,
       metrics: this.opsMetrics,
       dispatchPaused: () => this.drain.isDraining,
+      schedulesOn: () => featureOn(this.storage.getConfig(), "schedules"),
     });
 
     this.localApiSocket = localApiSocketPath(dataDir);
@@ -1000,6 +1006,12 @@ export class Server {
       voiceBackendHealth: this.voiceBackendHealth,
       searchIndex: this.searchIndex ?? undefined,
       appEvents: this.appEventStreamMux,
+      featuresChanged: () => {
+        this.appEventStreamMux.emitFeaturesChanged();
+        this.screensStreamMux.featuresChanged();
+        // A tick now sees the Schedules switch flip at the moment it flipped.
+        void this.scheduleRunner.runOnce();
+      },
       serverStartedAt: Date.now(),
       serverVersion: Server.VERSION,
       networkListener: () => ({ port: this.port, listening: this.remoteAvailable }),

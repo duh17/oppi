@@ -244,7 +244,10 @@ enum AppPreferenceStore {
 
     /// Features on trial, kept on this device (Settings → Experiments). Every flag
     /// but Split Panes defaults to off, and this is the one place their keys live,
-    /// so iOS `AppPreferences.Experiments` and `SettingsCatalog` read one value.
+    /// so iOS `AppPreferences.Experiments` and `SettingsCatalog` read one value. An
+    /// Experiment only hides an unfinished feature; whether Rex, Herdr, the Godot pane
+    /// or a plugin page exists on a server is that server's switch (`ServerFeature`),
+    /// and a feature shows only where both allow it.
     enum Experiments {
         static let rexKey = "\(AppIdentifiers.subsystem).experiments.rex"
         static let herdrKey = "\(AppIdentifiers.subsystem).experiments.herdr"

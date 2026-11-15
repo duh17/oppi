@@ -341,7 +341,8 @@ extension WorkspaceDetailViewController {
             SSHTerminalFolderTarget(
                 serverHost: host,
                 folder: SSHTerminalFolderTarget.workspace(workspace) ?? "",
-                label: workspace.name
+                label: workspace.name,
+                serverOffers: .offered(by: connection)
             ),
             from: self
         )

@@ -84,6 +84,22 @@ export interface AccessTokenRecord {
   lastUsedAt?: number;
 }
 
+/**
+ * A feature the server owner turns off for every device. Plain Pi (chat, sessions and files) has
+ * no switch; each larger feature has one. The list with its order is `SERVER_FEATURES`.
+ */
+export type ServerFeature =
+  | "agents"
+  | "schedules"
+  | "skills"
+  | "extensions"
+  | "mcp"
+  | "terminal"
+  | "rex"
+  | "herdr"
+  | "godotPane"
+  | "browserPane";
+
 export interface ServerConfig {
   configVersion?: number;
   port: number;
@@ -134,6 +150,13 @@ export interface ServerConfig {
     /** Counts saves made through `PUT /server/mobile-output-guide`; absent reads as 0. */
     revision?: number;
   };
+
+  /**
+   * Feature switches (`server-features.ts`): whether each larger feature exists on this server, for
+   * every device. An absent key is on. Saved through `PUT /server/features` (applies at once and
+   * tells apps through `features_changed`) or `oppi config set features…` (at the next restart).
+   */
+  features?: Partial<Record<ServerFeature, boolean>>;
 
   /** Opt-in runtime experiments. Each needs a server restart unless its comment says otherwise. */
   experimental?: {

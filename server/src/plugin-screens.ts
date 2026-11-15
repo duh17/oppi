@@ -4,6 +4,8 @@ import type { JsonValue } from "@earendil-works/chord/json";
 import type { Watchable } from "@earendil-works/chord/watch";
 import { arr, bool, obj, opt, str, union, unknown } from "@earendil-works/pi-schema";
 import { EXTENSION_UI_SURFACE_ICON_NAMES } from "./extension-surface-icons.js";
+import { isServerFeature, type ServerFeatureSwitches } from "./server-features.js";
+import type { ServerFeature } from "./types/config.js";
 import type {
   ScreenNav,
   ScreenPage,
@@ -91,9 +93,13 @@ export function defineScreen(id: string) {
 
 export type ScreenDefinition = ReturnType<typeof defineScreen>;
 
-/** A sidebar entry as a plugin contributes it: what `/server/info` lists, and its screen. */
+/**
+ * A sidebar entry as a plugin contributes it: what `/server/info` lists, its screen, and the
+ * feature switch that hides it while off (`server-features.ts`).
+ */
 export interface SidebarContribution extends ScreenSidebarEntry {
   readonly screen: ScreenDefinition;
+  readonly feature?: ServerFeature;
 }
 
 /** Oppi's registry of sidebar entries; only built-in plugins' contributions are listed. */
@@ -144,6 +150,14 @@ export function sidebarEntryInfo(entry: SidebarContribution): ScreenSidebarEntry
   };
 }
 
+/** Whether `entry` is offered: its feature, when it names one, is on. */
+export function sidebarEntryOn(
+  entry: Pick<SidebarContribution, "feature">,
+  features: Readonly<ServerFeatureSwitches>,
+): boolean {
+  return entry.feature === undefined || features[entry.feature];
+}
+
 /** Why a sidebar contribution cannot be listed, or undefined. Checked when the host composes. */
 export function sidebarProblem(value: unknown): string | undefined {
   if (!isObject(value)) return "not an object";
@@ -151,6 +165,8 @@ export function sidebarProblem(value: unknown): string | undefined {
   if (!isText(value.title)) return "it has no title";
   if (!isIcon(value.icon)) return `icon ${JSON.stringify(value.icon)} is not an allowed symbol`;
   if (typeof value.order !== "number") return "its order is not a number";
+  if (value.feature !== undefined && !isServerFeature(value.feature))
+    return `its feature ${JSON.stringify(value.feature)} is not a feature switch`;
   if (
     !Array.isArray(value.scopes) ||
     value.scopes.length === 0 ||

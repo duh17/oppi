@@ -50,6 +50,7 @@ export const APP_EVENT_ALLOWED_TYPES = [
   "workspace_git_changed",
   "workspace_layouts_changed",
   "pins_changed",
+  "features_changed",
   "pairing_approval_requested",
   "pairing_approval_settled",
 ] as const satisfies readonly AppEventMessage["type"][];
@@ -121,6 +122,8 @@ export interface AppEventEmitter {
   emitStopConfirmed(session: Session, source?: string, reason?: string): void;
   /** The server's pins changed (`routes/pins.ts`); clients read `GET /pins` again. */
   emitPinsChanged(revision: number): void;
+  /** A feature switch changed (`routes/server-features.ts`); clients read `/server/info` again. */
+  emitFeaturesChanged(): void;
   handleSessionBroadcastEvent(payload: SessionBroadcastEvent): void;
 }
 
@@ -318,6 +321,10 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
 
   emitPinsChanged(revision: number): void {
     this.emit({ type: "pins_changed", emittedAt: this.now(), revision });
+  }
+
+  emitFeaturesChanged(): void {
+    this.emit({ type: "features_changed", emittedAt: this.now() });
   }
 
   emitPairingApprovalRequested(approval: PendingPairingApproval): void {

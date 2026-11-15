@@ -14,7 +14,13 @@ import { SourceRateLimiter } from "../source-rate-limit.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
 import { readyVoiceFeatures } from "../voice-backend-health.js";
 import { GODOT_CAPABILITY_VERSION } from "../godot/godot-protocol.js";
-import { loadedScreens, SCREENS_VERSION, sidebarEntryInfo } from "../plugin-screens.js";
+import {
+  loadedScreens,
+  SCREENS_VERSION,
+  sidebarEntryInfo,
+  sidebarEntryOn,
+} from "../plugin-screens.js";
+import { serverFeatures } from "../server-features.js";
 import { MAX_WORKSPACE_FILE_EDIT_BYTES } from "../file-serving-policy.js";
 import { isDeviceAccessPrincipal, type RequestPrincipal } from "../request-principal.js";
 import { checkPushRegistration } from "../push/registration.js";
@@ -439,14 +445,18 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     // and answering). Cached state: this never waits on a probe.
     const voiceBackends = await ctx.voiceBackendHealth.entries();
     const voiceReady = readyVoiceFeatures(voiceBackends);
-    // Plugin sidebar entries: what is loaded now. The first request starts the plugins' load and
-    // never waits for it; until it ends the list is empty and the app keeps its own entries.
+    const features = serverFeatures(config);
+    // Plugin sidebar entries whose feature is on: what is loaded now. The first request starts the
+    // plugins' load and never waits for it; until it ends the list is empty and the app keeps its
+    // own entries.
     void Promise.resolve()
       .then(() => ctx.sessions.pluginScreens())
       .catch((error: unknown) => {
         log.warn("server_info.sidebar_unavailable", { error: String(error) });
       });
-    const sidebar = (loadedScreens()?.entries() ?? []).map(sidebarEntryInfo);
+    const sidebar = (loadedScreens()?.entries() ?? [])
+      .filter((entry) => sidebarEntryOn(entry, features))
+      .map(sidebarEntryInfo);
     helpers.json(res, {
       name: hostname(),
       version: ctx.serverVersion,
@@ -541,6 +551,8 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       },
       // Each voice feature's backend state, for About This Server → Voice.
       voiceBackends,
+      // Every feature switch (`server-features.ts`); an app hides a feature that is off.
+      features,
       sidebar,
       stats: {
         workspaceCount: workspaces.length,

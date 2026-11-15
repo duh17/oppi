@@ -10,8 +10,10 @@ import {
   writeJsonEnvelope,
 } from "../output.js";
 import { isRecord } from "../../json-shape.js";
+import { SERVER_FEATURE_PRESETS, SERVER_FEATURES } from "../../server-features.js";
 
-type ConfigValueType = "string" | "number" | "boolean" | "json";
+/** `features`: a preset name (`plainPi`, `all`) or a JSON object of switches. */
+type ConfigValueType = "string" | "number" | "boolean" | "json" | "features";
 
 type SettableConfigPath = {
   type: ConfigValueType;
@@ -44,6 +46,19 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
     type: "boolean",
     desc: "Make durable sessions available; only creates that ask for engine durable use it (experimental; default false; restart, or toggle live in the app's Server Settings). Existing durable sessions keep working when off",
   },
+  features: {
+    type: "features",
+    desc: `Feature switches: a preset (${Object.keys(SERVER_FEATURE_PRESETS).join(" or ")}; plainPi turns every feature off) or a JSON object of switches (restart, or switch live in the app's Server Settings)`,
+  },
+  ...Object.fromEntries(
+    SERVER_FEATURES.map((feature) => [
+      `features.${feature}`,
+      {
+        type: "boolean",
+        desc: `Offer ${feature} on this server (default true; restart, or switch live in the app's Server Settings)`,
+      } satisfies SettableConfigPath,
+    ]),
+  ),
   tls: { type: "json", desc: "TLS config JSON object" },
   "tls.mode": { type: "string", desc: "TLS mode" },
   "tls.certPath": { type: "string", desc: "Manual TLS certificate path" },
@@ -269,6 +284,8 @@ export function cmdConfig(
             key === "proxy" ||
             key.startsWith("proxy.") ||
             key.startsWith("experimental.") ||
+            key === "features" ||
+            key.startsWith("features.") ||
             key === "push" ||
             key.startsWith("push.") ||
             key === "providerQuotas" ||
@@ -342,6 +359,12 @@ function coerceValue(raw: string, type: ConfigValueType): unknown {
     }
     case "string":
       return raw;
+    case "features": {
+      if (Object.hasOwn(SERVER_FEATURE_PRESETS, raw)) {
+        return { ...SERVER_FEATURE_PRESETS[raw as keyof typeof SERVER_FEATURE_PRESETS] };
+      }
+      return coerceValue(raw, "json");
+    }
     case "json": {
       try {
         return JSON.parse(raw);

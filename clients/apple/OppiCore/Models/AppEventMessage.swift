@@ -29,6 +29,8 @@ enum AppEventMessage: Sendable, Equatable {
     case workspaceLayoutsChanged(workspaceId: String, emittedAt: Int64)
     /// The server's pins changed (`GET /pins` is stale unless it holds `revision`).
     case pinsChanged(revision: Int, emittedAt: Int64)
+    /// A feature switch changed on the server (`features` in `/server/info` is stale).
+    case featuresChanged(emittedAt: Int64)
 
     case pairingApprovalRequested(emittedAt: Int64, approval: PendingPairingApproval)
     case pairingApprovalSettled(emittedAt: Int64, approvalId: String, outcome: PairingApprovalSettlement)
@@ -185,6 +187,9 @@ extension AppEventMessage: Decodable {
                 revision: try c.decode(Int.self, forKey: .revision),
                 emittedAt: try c.decode(Int64.self, forKey: .emittedAt)
             )
+
+        case "features_changed":
+            self = .featuresChanged(emittedAt: try c.decode(Int64.self, forKey: .emittedAt))
 
         case "pairing_approval_requested":
             self = .pairingApprovalRequested(

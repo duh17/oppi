@@ -87,8 +87,8 @@ struct SettingsAdaptersTests {
         let transport = FakeSettingsTransport()
         let adapter = ServerAdapter { _ in transport }
 
-        _ = try await adapter.save(testLabelSetting, "one", endpoint: .serverMetrics, revisioned: true, baseRevision: 4, serverId: "s1")
-        _ = try await adapter.save(testLabelSetting, "two", endpoint: .serverMetrics, revisioned: false, baseRevision: 5, serverId: "s1")
+        _ = try await adapter.save([testLabelSetting], "one", endpoint: .serverMetrics, revisioned: true, baseRevision: 4, serverId: "s1")
+        _ = try await adapter.save([testLabelSetting], "two", endpoint: .serverMetrics, revisioned: false, baseRevision: 5, serverId: "s1")
 
         #expect(transport.saves == [
             .init(endpoint: .serverMetrics, fields: ["label": "one"], baseRevision: 4),

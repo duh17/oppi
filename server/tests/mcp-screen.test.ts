@@ -12,6 +12,7 @@ import {
 } from "../src/durable-extension-api.js";
 import { PluginHost } from "../src/plugin-host.js";
 import { ScreensStreamMux } from "../src/screens-stream.js";
+import { SERVER_FEATURE_PRESETS } from "../src/server-features.js";
 import type {
   McpAddServerRequest,
   McpServerSummary,
@@ -119,7 +120,10 @@ class FakeSocket extends EventEmitter {
 }
 
 function connect() {
-  const mux = new ScreensStreamMux(async () => host.screens());
+  const mux = new ScreensStreamMux(
+    async () => host.screens(),
+    () => SERVER_FEATURE_PRESETS.all,
+  );
   const ws = new FakeSocket();
   mux.handleWebSocket(ws as never);
   const send = (message: ScreensClientMessage) =>

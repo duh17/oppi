@@ -9,6 +9,7 @@ import {
   signInPage,
 } from "../plugins/mcp-screen/pages.js";
 import { SCREENS_VERSION } from "../src/plugin-screens.js";
+import { SERVER_FEATURE_PRESETS } from "../src/server-features.js";
 import type {
   ConversationDocOp,
   ScreenPage,
@@ -90,11 +91,13 @@ export function buildScreensFixture() {
     { type: "result", call: "c3", ok: true, nav: { kind: "pop" } },
     { type: "result", call: "c4", ok: true, nav: { kind: "present", page: "signin" } },
     { type: "ended", watch: "w2", reason: "gone" },
-    { type: "ended", watch: "w3", reason: "unsupported" },
+    { type: "ended", watch: "w3", reason: "off" },
+    { type: "ended", watch: "w4", reason: "unsupported" },
   ];
   return {
     serverInfo: {
       capabilities: { screens: { v: SCREENS_VERSION } },
+      features: SERVER_FEATURE_PRESETS.all,
       sidebar: [MCP_SIDEBAR_ENTRY],
     },
     pages,

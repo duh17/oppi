@@ -321,7 +321,13 @@ final class WorkspaceSettingsViewController: ListScreenController<
         var sections = [
             ListSection<Section, Item>(.summary, items: [.summary]),
         ]
-        var pages: [Item] = [.instructions, .skills, .extensions, .mcpServers, .dictionary]
+        // Skills, Extensions and MCP Servers only while the server's switch for each is on.
+        let offers = { (feature: ServerFeature) in self.connection?.offers(feature) ?? true }
+        var pages: [Item] = [.instructions]
+        if offers(.skills) { pages.append(.skills) }
+        if offers(.extensions) { pages.append(.extensions) }
+        if offers(.mcp) { pages.append(.mcpServers) }
+        pages.append(.dictionary)
         if model.isSandbox { pages.append(.networkAccess) }
         sections.append(ListSection(.pages, items: pages))
         if model.projectTrust != nil {

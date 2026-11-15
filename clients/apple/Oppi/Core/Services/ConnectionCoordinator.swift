@@ -1516,6 +1516,18 @@ final class ConnectionCoordinator {
         connections[serverId]
     }
 
+    /// Whether the server `serverId` offers `feature` (`ServerConnection.offers`): what a leaf, a
+    /// link, or a game reads for its own server. A server with no connection offers everything.
+    func server(_ serverId: String, offers feature: ServerFeature) -> Bool {
+        connections[serverId]?.offers(feature) ?? true
+    }
+
+    /// Whether the server's `/server/info` listed its feature switches: a server older than
+    /// them has no `/server/features` to edit.
+    func serverHasFeatureSwitches(_ serverId: String) -> Bool {
+        connections[serverId]?.serverCapabilities?.features != nil
+    }
+
     #if DEBUG
     /// Install a fixture connection as the focused server without dialing it.
     func installPreviewConnection(_ connection: ServerConnection, serverId: String) {

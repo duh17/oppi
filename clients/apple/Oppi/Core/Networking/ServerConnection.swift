@@ -72,7 +72,9 @@ final class ServerConnection {
     private(set) var missingRequiredSplitStreamCapabilities: [String] = []
     private var streamCapabilitiesLoaded = false
     private var streamCapabilitiesRefreshFailed = false
-    private var streamCapabilitiesRefreshTask: Task<Void, Never>?
+    /// `/server/info` reads, one at a time: a `features_changed` during a read makes it read
+    /// once more, and a read a feature switch saved here (`noteFeature`) overtook is not applied.
+    private let capabilitiesRefresh = RefreshCoalescer<ServerInfo>()
     private var streamCapabilitiesGeneration: UInt64 = 0
     /// The one `/server/info` read scheduled after a load found a voice backend still
     /// `checking` or `unreachable` (`scheduleVoiceBackendFollowUpIfNeeded`).
@@ -192,6 +194,11 @@ final class ServerConnection {
     var scheduleCalendarAvailable: Bool { serverCapabilities?.scheduleCalendar?.version ?? 0 >= 1 }
     /// The server keeps pins (`capabilities.pins`); without it no Pin item or Pinned section shows.
     var pinsAvailable: Bool { serverCapabilities?.pins?.version ?? 0 >= 1 }
+    /// Whether this server offers `feature` (its switch in `/server/info`). Every feature reads on
+    /// until capabilities load, so a pane restored at launch waits for them rather than closing.
+    func offers(_ feature: ServerFeature) -> Bool {
+        serverCapabilities?.offers(feature) ?? true
+    }
     /// Relay the server pushes through (`capabilities.pushNotifications`); nil when it does not.
     var pushRelay: URL? { serverCapabilities?.pushRelay }
 
@@ -486,8 +493,7 @@ final class ServerConnection {
         transportPath: ConnectionTransportPath
     ) {
         disconnectAppEventStream()
-        streamCapabilitiesRefreshTask?.cancel()
-        streamCapabilitiesRefreshTask = nil
+        capabilitiesRefresh.cancel()
         voiceBackendFollowUpTask?.cancel()
         voiceBackendFollowUpTask = nil
         workspaceGitSummaryRefreshTasks.values.forEach { $0.cancel() }
@@ -729,24 +735,17 @@ final class ServerConnection {
         }
     }
 
-    /// Single-flight `/server/info` load. A caller that joins a load in flight gets that
-    /// load's behavior; `schedulesVoiceBackendFollowUp` applies to a load this call starts.
+    /// Single-flight `/server/info` load (`capabilitiesRefresh`): a caller that joins a load in
+    /// flight makes it read once more when it ends and waits for that, and a read that a feature
+    /// switch saved here overtook is not applied. `schedulesVoiceBackendFollowUp` applies to a
+    /// load this call starts.
     func refreshStreamCapabilities(schedulesVoiceBackendFollowUp: Bool = true) async {
         guard let apiClient else { return }
-        if let inFlight = streamCapabilitiesRefreshTask {
-            await inFlight.value
-            return
-        }
-
         let generation = streamCapabilitiesGeneration
-        let task = Task { @MainActor [weak self, apiClient] in
-            guard let self else { return }
-            defer { self.streamCapabilitiesRefreshTask = nil }
-
-            do {
-                let info = try await apiClient.serverInfo()
-                guard self.streamCapabilitiesGeneration == generation else { return }
-
+        await capabilitiesRefresh.refresh(
+            read: { try await apiClient.serverInfo() },
+            apply: { [weak self] info in
+                guard let self, self.streamCapabilitiesGeneration == generation else { return }
                 // Capabilities are loaded whenever a client is installed (setup reads
                 // /server/info first), so a reload leaves a running app-event stream
                 // alone; foreground recovery restarts a stopped one.
@@ -754,8 +753,9 @@ final class ServerConnection {
                 if schedulesVoiceBackendFollowUp {
                     self.scheduleVoiceBackendFollowUpIfNeeded(info.voiceBackends)
                 }
-            } catch {
-                guard self.streamCapabilitiesGeneration == generation else { return }
+            },
+            failed: { [weak self] error in
+                guard let self, self.streamCapabilitiesGeneration == generation else { return }
                 // A transient failure keeps the snapshot setup loaded.
                 self.streamCapabilitiesRefreshFailed = true
 
@@ -767,10 +767,7 @@ final class ServerConnection {
                 metadata.merge(self.diagnosticEndpointMetadata(apiBaseURL, prefix: "api")) { current, _ in current }
                 ClientLog.warning("Network", "Stream capability refresh failed", metadata: metadata)
             }
-        }
-
-        streamCapabilitiesRefreshTask = task
-        await task.value
+        )
     }
 
     static let voiceBackendFollowUpDelay: Duration = .seconds(2)
@@ -807,9 +804,18 @@ final class ServerConnection {
         serverCapabilities?.durableSessions = available ? ServerInfo.CapabilityVersion(version: 1) : nil
     }
 
+    /// A feature switch as the server stored it (Server Settings → Features). The server applies
+    /// a save at once, so the loaded capabilities follow it until the next `/server/info` read.
+    func noteFeature(_ feature: ServerFeature, on: Bool) {
+        capabilitiesRefresh.noteLocalChange()
+        guard var capabilities = serverCapabilities else { return }
+        capabilities.features = (capabilities.features ?? [:]).merging([feature.rawValue: on]) { $1 }
+        serverCapabilities = capabilities
+    }
+
     private func applyStreamCapabilities(_ info: ServerInfo) {
         connectedServerVersion = info.version
-        let capabilities = info.capabilitiesWithPluginSidebar
+        let capabilities = info.appCapabilities
         let previousRelay = pushRelay
         serverCapabilities = capabilities
         voiceBackends = info.voiceBackends
@@ -2166,7 +2172,8 @@ final class ServerConnection {
         liveVoice: Bool = false,
         pushRelay: URL? = nil,
         extensionNativeUICapabilities: [String]? = nil,
-        pins: Bool = false
+        pins: Bool = false,
+        features: [String: Bool]? = nil
     ) {
         func version(_ enabled: Bool) -> ServerInfo.CapabilityVersion? {
             enabled ? ServerInfo.CapabilityVersion(version: 1) : nil
@@ -2188,6 +2195,7 @@ final class ServerConnection {
         )
         serverCapabilities = capabilities
         serverCapabilities?.pins = version(pins)
+        serverCapabilities?.features = features
         dictationStreamUnsupportedByEndpoint = false
         missingRequiredSplitStreamCapabilities = capabilities.missingRequiredSplitStreamCapabilities
         streamCapabilitiesLoaded = true

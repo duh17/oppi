@@ -81,6 +81,10 @@ extension ServerConnection {
         case .pinsChanged(let revision, _):
             pins.noteChanged(revision: revision, api: apiClient)
 
+        case .featuresChanged:
+            // Every surface that reads `offers(_:)` follows the new capabilities.
+            Task { await refreshStreamCapabilities() }
+
         case .pairingApprovalRequested(_, let approval):
             pairingApprovals.upsert(approval)
 

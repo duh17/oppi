@@ -33,7 +33,8 @@ struct ChatTopBarOverflowTests {
 
         let available = Set(ChatBarItems.availableActions(
             hasWorkspace: true, gitAvailable: chat.mayHaveGit,
-            showsOutline: chat.outlineAvailability.isAvailable, hasTerminalFolder: chat.hasUsableTerminalFolder
+            showsOutline: chat.outlineAvailability.isAvailable, hasTerminalFolder: chat.hasUsableTerminalFolder,
+            offersTerminal: chat.connection.offers(.terminal)
         ))
         #expect(available.isSuperset(of: [.files, .git, .context, .terminal]), "the fixture offers four buttons or more: \(available)")
 

@@ -710,6 +710,11 @@ export interface SdkBackendConfig {
   serverConfig?: Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt">;
   /** Reads one atomic Mobile Output Guide snapshot for each managed runtime rebuild. */
   getMobileOutputGuideSettings?: () => RevisionedEnabled;
+  /**
+   * The server's MCP switch (`features.mcp`), read at each runtime build: while off the session
+   * loads no MCP servers, and an Agent's `builtin:mcp` selection is left out. Absent means on.
+   */
+  mcpEnabled?: () => boolean;
   /** Startup-only relay, registered before protected project resources load. */
   onUIBridgeReady?: (bridge: SdkUiBridge | undefined) => void;
   hasUI?: () => boolean;
@@ -1211,13 +1216,21 @@ export class SdkBackend implements AgentBackend {
         managed: managedSession,
         sandbox: sandboxMode,
       });
-      const selectedAgentExtensionPaths = await resolveSelectedAgentExtensionPaths(
-        selectedAgentExtensionIds,
-        hostCwd,
-        runtimeAgentDir,
-        settingsManager,
-        mcpBuiltinNames,
-      );
+      // The server's MCP switch: off loads no MCP servers. An Agent that selects `builtin:mcp`
+      // still starts, without it.
+      const mcpOn = config.mcpEnabled?.() ?? true;
+      const loadedBuiltinNames = mcpOn
+        ? mcpBuiltinNames
+        : mcpBuiltinNames.filter((name) => name !== "mcp");
+      const selectedAgentExtensionPaths = (
+        await resolveSelectedAgentExtensionPaths(
+          selectedAgentExtensionIds,
+          hostCwd,
+          runtimeAgentDir,
+          settingsManager,
+          mcpBuiltinNames,
+        )
+      )?.filter((path) => mcpOn || path !== MCP_BUILTIN_EXTENSION_PATH);
       // A sandbox loads host extensions only by opt-in: its Agent's selection or the
       // workspace's `hostExtensions`. Their tools run in this process, past the VM.
       const sandboxExtensions = sandboxMode
@@ -1238,10 +1251,11 @@ export class SdkBackend implements AgentBackend {
       // A sandbox gets only the global servers its owner picked, with stdio servers
       // run inside the VM. Servers connect at session_start, after the VM exists below.
       let sandboxVm: GondolinVm | undefined;
-      const sandboxMcpPicks = sandboxMode ? (workspace?.sandboxConfig?.mcpServers ?? []) : [];
+      const sandboxMcpPicks =
+        sandboxMode && mcpOn ? (workspace?.sandboxConfig?.mcpServers ?? []) : [];
       // A classic sandbox has no codemode: its servers' codemode tools load through tool_search.
       const sandboxMcp =
-        sandboxMode && workspace
+        sandboxMode && mcpOn && workspace
           ? classicSandboxMcp(
               await sandboxMcpForWorkspace({
                 workspace,
@@ -1366,7 +1380,7 @@ export class SdkBackend implements AgentBackend {
           createLifecycleJournalExtension(sessionManager),
           ...(config.notify ? [createNotifyExtension(session.id, config.notify)] : []),
           ...[config.liveVoiceExtension?.(session.id)].filter((ext) => ext !== undefined),
-          ...createMcpBuiltinExtensions(mcpBuiltinNames, sandboxMcp),
+          ...createMcpBuiltinExtensions(loadedBuiltinNames, sandboxMcp),
           ...(sandboxSkillCommand ? [sandboxSkillCommand] : []),
         ],
         ...(sandboxMode

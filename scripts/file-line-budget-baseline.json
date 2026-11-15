@@ -194,6 +194,11 @@
       "budget": 1700,
       "owner": "server telemetry",
       "reason": "Declared-once event catalog that generates the Swift twin; keep one file. The name-tag rules and review groups moved to their own files."
+    },
+    "server/src/types/protocol.ts": {
+      "budget": 1510,
+      "owner": "protocol type modules",
+      "reason": "The ServerMessage, ClientMessage and AppEventMessage unions in one file; a move-only split by message family later."
     }
   }
 }

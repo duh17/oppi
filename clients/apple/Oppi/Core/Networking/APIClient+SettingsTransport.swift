@@ -12,6 +12,8 @@ extension APIClient: SettingsServerTransport {
             return try await getMobileOutputGuideConfiguration().settingsDocument
         case .durableSessions:
             return try await durableSessionsSettings().settingsDocument
+        case .features:
+            return try await serverFeatures().settingsDocument
         }
     }
 
@@ -52,7 +54,29 @@ extension APIClient: SettingsServerTransport {
             } catch let APIError.codedServer(status, _, code) where status == 409 && code == "revision_conflict" {
                 throw SettingsError.revisionConflict
             }
+        case .features:
+            var switches: [String: Bool] = [:]
+            for (name, value) in fields {
+                guard let on = value.boolValue else {
+                    throw SettingsError.invalidStoredValue(String(localized: "A feature switch needs an on or off value."))
+                }
+                switches[name] = on
+            }
+            return try await saveServerFeatures(switches).settingsDocument
         }
+    }
+
+    /// Every feature switch of the server (`GET /server/features`), by `ServerFeature` raw value.
+    func serverFeatures() async throws -> [String: Bool] {
+        let data = try await get(SettingEndpoint.features.rawValue)
+        return try JSONDecoder().decode([String: Bool].self, from: data)
+    }
+
+    /// Saves the named switches; the server answers every switch and tells apps
+    /// (`features_changed`).
+    func saveServerFeatures(_ switches: [String: Bool]) async throws -> [String: Bool] {
+        let data = try await put(SettingEndpoint.features.rawValue, body: switches)
+        return try JSONDecoder().decode([String: Bool].self, from: data)
     }
 
     /// `experimental.serverDurable` as the running server applies it, and the revision that saved it.
@@ -80,6 +104,12 @@ extension APIClient: SettingsServerTransport {
 private struct EnabledSettingWrite: Encodable {
     let enabled: Bool
     let baseRevision: Int?
+}
+
+private extension Dictionary where Key == String, Value == Bool {
+    var settingsDocument: SettingsServerDocument {
+        SettingsServerDocument(fields: mapValues { .bool($0) })
+    }
 }
 
 private extension APIClient.DurableSessionsSettings {

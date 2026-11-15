@@ -138,8 +138,8 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
 
     override func updateProperties() {
         super.updateProperties()
-        // Observation tracking re-runs this when the host or theme changes.
-        guard GodotPaneAvailability.isOn else { return showOff() }
+        // Observation tracking re-runs this when the host, the theme, or the server's switch changes.
+        guard GodotPaneAvailability.isOn, serverOffersGodot else { return showOff() }
         let phase = currentPhase
         let holds = host.holdsSurface(self)
         _ = host.ownerGeneration
@@ -167,15 +167,22 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         if holds { forwardLog() }
     }
 
-    /// The experiment turned off (or a build without the engine restored
-    /// this pane): nothing plays, and the pane says how to turn it on.
+    /// Whether the game's server offers the Godot pane (its switch, and games to serve).
+    private var serverOffersGodot: Bool {
+        root?.coordinator.server(gameSlot.serverId, offers: .godotPane) ?? true
+    }
+
+    /// The experiment or the server's switch turned off (or a build without the engine
+    /// restored this pane): nothing plays, and the pane says why.
     private func showOff() {
         view.backgroundColor = root?.themeStore.backgroundColor ?? .systemBackground
         for item in [playItem, reloadItem, muteItem] { item.isEnabled = false }
         let palette = root?.themeStore.activeThemeID.palette ?? ThemeRuntimeState.currentPalette()
-        let message = PlatformCapabilities.godotPane
-            ? String(localized: "Turn on Godot Pane in Settings › Experiments to play Godot games here.")
-            : String(localized: "This build of Oppi has no game engine.")
+        let message = !PlatformCapabilities.godotPane
+            ? String(localized: "This build of Oppi has no game engine.")
+            : GodotPaneAvailability.isOn
+                ? String(localized: "Godot Pane is turned off on this server. Turn it on in Server Settings › Features.")
+                : String(localized: "Turn on Godot Pane in Settings › Experiments to play Godot games here.")
         stateView.configuration = UIContentUnavailableConfiguration.loadState(
             .empty(title: String(localized: "Godot Pane Is Off"), systemImage: "gamecontroller", message: message),
             palette: palette, background: .clear
@@ -235,7 +242,7 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
     /// unless the pane waits for Play or another pane plays this game,
     /// applied.
     private func follow() {
-        guard GodotPaneAvailability.isOn else { return }
+        guard GodotPaneAvailability.isOn, serverOffersGodot else { return }
         followTask?.cancel()
         failure = nil
         project = .connecting

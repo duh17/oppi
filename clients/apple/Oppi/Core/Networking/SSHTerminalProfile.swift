@@ -249,6 +249,25 @@ struct SSHTerminalExperimentAccess: Equatable, Sendable {
 
     /// Both experiments on: what a test or a preview asks for explicitly.
     static let all = Self(rex: true, herdr: true)
+
+    /// What a server offers of the two: its Rex and Herdr switches (`ServerFeature`). Nil, a
+    /// window with no server, offers both.
+    @MainActor
+    static func offered(by connection: ServerConnection?) -> Self {
+        Self(rex: connection?.offers(.rex) ?? true, herdr: connection?.offers(.herdr) ?? true)
+    }
+
+    /// What the server `serverId` offers of the two.
+    @MainActor
+    static func offered(by serverId: String, coordinator: ConnectionCoordinator) -> Self {
+        Self(rex: coordinator.server(serverId, offers: .rex), herdr: coordinator.server(serverId, offers: .herdr))
+    }
+
+    /// This access, and only what `server` also offers: a terminal page or folder terminal
+    /// opened from a server's window follows that server's switches.
+    func narrowed(to server: Self) -> Self {
+        Self(rex: rex && server.rex, herdr: herdr && server.herdr)
+    }
 }
 
 struct SSHTerminalCatalog: Codable, Equatable, Sendable {

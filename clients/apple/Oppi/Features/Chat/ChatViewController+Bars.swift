@@ -239,7 +239,8 @@ final class ChatBarItems {
             hasWorkspace: chat.session?.workspaceId != nil,
             gitAvailable: chat.mayHaveGit,
             showsOutline: chat.outlineAvailability.isAvailable,
-            hasTerminalFolder: chat.hasUsableTerminalFolder
+            hasTerminalFolder: chat.hasUsableTerminalFolder,
+            offersTerminal: chat.connection.offers(.terminal)
         )
     }
 
@@ -312,18 +313,20 @@ final class ChatBarItems {
     /// Files, Git, and Terminal need a workspace, Outline needs a timeline, Git
     /// needs a workspace that may be a Git repository (`gitAvailable`), and
     /// Terminal needs a workspace folder a shell can start in, so a sandbox
-    /// workspace or a relative host mount offers no Terminal.
+    /// workspace or a relative host mount offers no Terminal, and a server
+    /// that offers it (`offersTerminal`, its Terminal switch).
     static func availableActions(
         hasWorkspace: Bool,
         gitAvailable: Bool,
         showsOutline: Bool,
-        hasTerminalFolder: Bool
+        hasTerminalFolder: Bool,
+        offersTerminal: Bool
     ) -> Set<ChatTopBarAction> {
         var available: Set<ChatTopBarAction> = [.outline, .context]
         if hasWorkspace {
             available.insert(.files)
             if gitAvailable { available.insert(.git) }
-            if hasTerminalFolder { available.insert(.terminal) }
+            if hasTerminalFolder, offersTerminal { available.insert(.terminal) }
         }
         if !showsOutline { available.remove(.outline) }
         return available
@@ -955,6 +958,7 @@ extension ChatViewController {
         let apiClient = connection.apiClient
         let host = connection.credentials?.host ?? ""
         let workspaceStore = connection.workspaceStore
+        let serverOffers = SSHTerminalExperimentAccess.offered(by: connection)
         model.isOpeningTerminal = true
         Task { [weak self] in
             defer { self?.model.isOpeningTerminal = false }
@@ -978,7 +982,7 @@ extension ChatViewController {
             ) {
             case .folder(path: let folder, label: let label, isWorktree: let isWorktree):
                 let folderTarget = SSHTerminalFolderTarget(
-                    serverHost: host, folder: folder, label: label, isWorktree: isWorktree
+                    serverHost: host, folder: folder, label: label, isWorktree: isWorktree, serverOffers: serverOffers
                 )
                 if openTerminalBeside(folderTarget, workspaceId: workspaceId) { return }
                 SSHTerminalFolderEntry.open(folderTarget, from: self)

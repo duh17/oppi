@@ -8,8 +8,9 @@
  * app watches again and gets the current value.
  *
  * A watch ends `gone` when its entry or page goes (a plugin unloaded, a page that says `gone`),
- * and `unsupported` for a vocabulary version or scope this server does not draw. `act` runs on the watched object and
- * answers its own `result`; it is never retried.
+ * `off` when the entry's feature switch is off (at `watch`, or when `featuresChanged` turns it
+ * off), and `unsupported` for a vocabulary version or scope this server does not draw. `act` runs
+ * on the watched object and answers its own `result`; it is never retried.
  */
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import { diffRevisions } from "@earendil-works/chord/delta";
@@ -22,10 +23,13 @@ import { safeErrorMessage } from "./log-utils.js";
 import {
   checkScreenPage,
   screenPageIdProblem,
+  sidebarEntryOn,
   SCREENS_VERSION,
   type ScreenHost,
   type ScreenReference,
+  type SidebarContribution,
 } from "./plugin-screens.js";
+import type { ServerFeatureSwitches } from "./server-features.js";
 import {
   answerAuthRenew,
   authRenewToken,
@@ -50,12 +54,16 @@ const MAX_WATCHES_PER_SOCKET = 16;
 interface ScreensStreamOptions {
   /** The plugins' entries and screens; loads the plugins on first use. */
   readonly screens: () => Promise<ScreenHost | undefined>;
+  /** The server's feature switches now. */
+  readonly features: () => Readonly<ServerFeatureSwitches>;
   readonly renew?: RenewStreamAccess;
 }
 
 /** One watch, counted from its `watch` message on, before anything it waits for. */
 interface Watching {
   readonly entry: string;
+  /** The entry, once the plugins have loaded and it was found. */
+  contribution?: SidebarContribution;
   readonly abort: AbortController;
   ref?: ScreenReference;
   handle?: WatchHandle<JsonValue>;
@@ -65,14 +73,29 @@ interface Watching {
 
 export class ScreensStreamMux {
   private readonly options: ScreensStreamOptions;
+  private readonly sockets = new Set<ScreensSocket>();
 
-  constructor(screens: ScreensStreamOptions["screens"], renew?: RenewStreamAccess) {
-    this.options = { screens, ...(renew ? { renew } : {}) };
+  constructor(
+    screens: ScreensStreamOptions["screens"],
+    features: ScreensStreamOptions["features"],
+    renew?: RenewStreamAccess,
+  ) {
+    this.options = { screens, features, ...(renew ? { renew } : {}) };
   }
 
   handleWebSocket(ws: WebSocket): void {
     const socket = new ScreensSocket(ws, this.options);
-    ws.on("close", () => socket.close());
+    this.sockets.add(socket);
+    ws.on("close", () => {
+      this.sockets.delete(socket);
+      socket.close();
+    });
+  }
+
+  /** A feature switch changed: every watch of an entry whose feature is now off ends `off`. */
+  featuresChanged(): void {
+    const features = this.options.features();
+    for (const socket of this.sockets) socket.endOff(features);
   }
 }
 
@@ -111,6 +134,14 @@ class ScreensSocket {
     for (const id of [...this.watches.keys()]) this.end(id);
   }
 
+  endOff(features: Readonly<ServerFeatureSwitches>): void {
+    for (const [id, watching] of [...this.watches]) {
+      if (!watching.contribution || sidebarEntryOn(watching.contribution, features)) continue;
+      this.end(id);
+      this.send({ type: "ended", watch: id, reason: "off" });
+    }
+  }
+
   private async watch(message: Extract<ScreensClientMessage, { type: "watch" }>): Promise<void> {
     const { watch: id, entry: entryId, scope, page } = message;
     this.end(id);
@@ -136,6 +167,11 @@ class ScreensSocket {
       this.end(id);
       return ended("gone");
     }
+    if (!sidebarEntryOn(entry, this.options.features())) {
+      this.end(id);
+      return ended("off");
+    }
+    watching.contribution = entry;
     const context = withAbortSignal(watching.abort.signal, BACKGROUND_CONTEXT);
     try {
       const ref = await host.open(entry, { scope, page }, context);

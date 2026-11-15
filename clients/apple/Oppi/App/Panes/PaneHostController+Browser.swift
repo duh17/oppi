@@ -17,12 +17,17 @@ extension PaneHostController {
     /// last), else in a new pane after it, which takes focus. A companion
     /// showing anything else keeps it: replacing a Files or chat pane with a
     /// page on every tapped link would lose that pane's place. False on a
-    /// compact window, or when the window holds all the panes it can.
+    /// compact window, when the window holds all the panes it can, or when the
+    /// focused pane's server turned its Web Pages in Panes switch off.
     @discardableResult
     func openBrowser(_ url: URL) -> Bool {
         guard AdaptiveWidth.isWide(traitCollection) else { return false }
         let source = focusedCell
-        let entry = PaneStackEntry(serverId: panes.context(of: source).serverId, route: .browser(url))
+        let serverId = panes.context(of: source).serverId
+        guard AppRootEnvironment.near(self)?.coordinator.server(serverId, offers: .browserPane) ?? true else {
+            return false
+        }
+        let entry = PaneStackEntry(serverId: serverId, route: .browser(url))
         if let companion = browserCompanion(of: source) {
             if let browser = frontScreen(ofCell: companion) as? BrowserPaneViewController {
                 browser.open(url)

@@ -8,6 +8,7 @@ import { createServerUpdateRoutes } from "./server-update.js";
 import { createServerRestartRoutes } from "./server-restart.js";
 import { createServerMetricsRoutes } from "./server-metrics.js";
 import { createDurableSessionsSettingsRoutes } from "./durable-sessions-settings.js";
+import { createServerFeaturesRoutes } from "./server-features.js";
 import { createDictationDictionaryRoutes } from "./dictation-dictionary.js";
 import { createSpeechRoutes } from "./speech.js";
 import { createSkillRoutes } from "./skills.js";
@@ -44,6 +45,7 @@ export class RouteHandler {
       createServerRestartRoutes(this.ctx, this.helpers),
       createServerMetricsRoutes(this.ctx, this.helpers),
       createDurableSessionsSettingsRoutes(this.ctx, this.helpers),
+      createServerFeaturesRoutes(this.ctx, this.helpers),
       createDictationDictionaryRoutes(this.ctx, this.helpers),
       createSpeechRoutes(this.ctx, this.helpers),
       createServerResourceRoutes(this.ctx, this.helpers),

@@ -99,6 +99,8 @@ Untrusted JSON (parsed files, wire payloads, Pi and provider events) narrows thr
 
 Revisioned saves: responses carry `revision`; a stale `baseRevision` answers `409 { code: "revision_conflict", current }` and changes nothing. The config-stored settings (Server Metrics, Durable Sessions, Mobile Output Guide) save through `applySetting` in `settings/config-settings.ts`, under the config lock; without `baseRevision` that is last-writer-wins, but the Mobile Output Guide route requires it. `oppi config set` does not bump a revision.
 
+Feature switches (`server-features.ts`) are unrevisioned; a change calls `RouteContext.featuresChanged`. Server readers: `mcpEnabled` in both session backends, and plugin sidebar entries.
+
 ### Route registry
 
 `server/src/routes/registry.ts` lists every HTTP and WebSocket route. `RouteHandler` answers 404 for a path with no row and 405 for a disallowed method before any dispatcher runs, so a handler without its row is unreachable (UI fixtures under `/e2e/ui/` are exempt). WebSocket upgrades and `/health` are answered in `server.ts` before the gate. `server/tests/route-registry.integration.test.ts` requires 401 without credentials on exactly the `owner` rows. A new route adds its row and handler together; metrics name requests by the row's template. `protocol/routes.json` is generated from the registry (`npm run protocol:fixtures:update`), and Apple `APIClientRouteContractTests` requires every `APIClient` endpoint method to build a request for one of its rows, so a new endpoint method adds its row there.

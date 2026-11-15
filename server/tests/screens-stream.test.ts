@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PluginHost } from "../src/plugin-host.js";
 import { SCREEN_PAGE_MAX_BYTES, serveScreens } from "../src/plugin-screens.js";
 import { ScreensStreamMux } from "../src/screens-stream.js";
+import { SERVER_FEATURE_PRESETS } from "../src/server-features.js";
 import type { ScreensClientMessage, ScreensServerMessage } from "../src/types.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createIdentityRoutes } from "../src/routes/identity.js";
@@ -28,14 +29,14 @@ function write(path: string, text: string): void {
 }
 
 /** A plugin whose screen lists the words `add` gave it, and can break its own page on purpose. */
-function screenPlugin(id: string, order: number): string {
+function screenPlugin(id: string, order: number, feature?: string): string {
   return `
 import { defineExtension, defineFacet, defineScreen, Extensions, Sidebar } from "oppi/v1";
 const Screen = defineScreen(${JSON.stringify(id)});
 export default defineFacet((host, self) => {
   self.contribute(Extensions, defineExtension({ name: ${JSON.stringify(id)} }));
   self.contribute(Sidebar, { id: ${JSON.stringify(id)}, title: "Things", icon: "list.bullet",
-    order: ${order}, scopes: ["server"], screen: Screen });
+    order: ${order}, scopes: ["server"], screen: Screen${feature ? `, feature: ${JSON.stringify(feature)}` : ""} });
   host.serve(Screen.contract, ({ page }, self) => {
     const doc = self.state(Screen.document);
     const words = [];
@@ -72,7 +73,7 @@ async function loadedHost() {
     }),
   );
   for (const [dir, source] of [
-    ["things", screenPlugin("test.things", 20)],
+    ["things", screenPlugin("test.things", 20, "mcp")],
     ["first", screenPlugin("test.first", 10)],
   ] as const) {
     write(join(builtInDir, dir, "package.json"), JSON.stringify({ name: dir }));
@@ -104,7 +105,12 @@ class FakeSocket extends EventEmitter {
 
 async function connect() {
   const host = await loadedHost();
-  const mux = new ScreensStreamMux(async () => host.screens());
+  /** The server's switches the stream reads; a test turns one off and calls `featuresChanged`. */
+  const features = { ...SERVER_FEATURE_PRESETS.all };
+  const mux = new ScreensStreamMux(
+    async () => host.screens(),
+    () => features,
+  );
   const ws = new FakeSocket();
   sockets.push(ws);
   mux.handleWebSocket(ws as never);
@@ -133,7 +139,7 @@ async function connect() {
   };
   const settled = (id: string, expected: unknown) =>
     vi.waitFor(() => expect(replica(id)).toEqual(expected));
-  return { host, mux, ws, send, frame, replica, settled };
+  return { host, mux, ws, features, send, frame, replica, settled };
 }
 
 const watch = (overrides: Partial<Extract<ScreensClientMessage, { type: "watch" }>> = {}) =>
@@ -150,10 +156,10 @@ const watch = (overrides: Partial<Extract<ScreensClientMessage, { type: "watch" 
 describe("plugin screens", () => {
   it("answers /server/info while the plugins load, then lists only built-in entries in order", async () => {
     let loads = 0;
-    const info = async (pluginScreens: () => Promise<unknown>) => {
+    const info = async (pluginScreens: () => Promise<unknown>, config: object = {}) => {
       const ctx = {
         storage: {
-          getConfig: () => ({}),
+          getConfig: () => config,
           listWorkspaces: () => [],
           listSessions: () => [],
           getDataDir: () => makeTempDir("oppi-screens-info-"),
@@ -199,10 +205,46 @@ describe("plugin screens", () => {
       { id: "test.first", title: "Things", icon: "list.bullet", order: 10, scopes: ["server"] },
       { id: "test.things", title: "Things", icon: "list.bullet", order: 20, scopes: ["server"] },
     ]);
+    expect(loaded.features).toEqual(SERVER_FEATURE_PRESETS.all);
+
+    // An entry whose feature is off is not listed; the switches say which are off.
+    const mcpOff = await info(async () => host.screens(), { features: { mcp: false } });
+    expect((mcpOff.sidebar as { id: string }[]).map((entry) => entry.id)).toEqual(["test.first"]);
+    expect(mcpOff.features).toEqual({ ...SERVER_FEATURE_PRESETS.all, mcp: false });
+  });
+
+  it("ends the watches of an entry whose feature turns off, and refuses new ones while it is off", async () => {
+    const c = await connect();
+    c.send(watch());
+    c.send(watch({ watch: "w2", entry: "test.first" }));
+    await vi.waitFor(() => expect(c.ws.sent.filter((m) => m.type === "value")).toHaveLength(2));
+
+    c.features.mcp = false;
+    c.mux.featuresChanged();
+    expect(c.ws.sent.filter((m) => m.type === "ended")).toEqual([
+      { type: "ended", watch: "w1", reason: "off" },
+    ]);
+    c.send(watch({ watch: "w3" }));
+    await vi.waitFor(() =>
+      expect(c.ws.sent.at(-1)).toEqual({ type: "ended", watch: "w3", reason: "off" }),
+    );
+
+    // The other entry's watch still runs.
+    c.send({
+      type: "act",
+      watch: "w2",
+      call: "c1",
+      action: "add",
+      values: [{ field: "w", value: "on" }],
+    });
+    expect(await c.frame("result")).toEqual({ type: "result", call: "c1", ok: true });
   });
 
   it("counts a watch from its message, so the limit holds while the plugins load", async () => {
-    const mux = new ScreensStreamMux(() => new Promise(() => undefined));
+    const mux = new ScreensStreamMux(
+      () => new Promise(() => undefined),
+      () => SERVER_FEATURE_PRESETS.all,
+    );
     const ws = new FakeSocket();
     mux.handleWebSocket(ws as never);
     for (let n = 1; n <= 17; n++)

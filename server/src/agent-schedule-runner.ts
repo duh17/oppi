@@ -34,6 +34,12 @@ export interface AgentScheduleRunnerDeps extends AgentScheduleDispatchDeps {
    * tick after the restart dispatches them.
    */
   dispatchPaused?: () => boolean;
+  /**
+   * The server's Schedules switch (`features.schedules`). Off, a tick records and runs nothing;
+   * the first tick back on starts the schedules from that moment, so a slot that came due while
+   * off is never run. Absent means on.
+   */
+  schedulesOn?: () => boolean;
 }
 
 export class AgentScheduleRunner {
@@ -43,6 +49,10 @@ export class AgentScheduleRunner {
   // Last minute whose cron slots were evaluated. In memory only: a restart begins at its
   // first tick's minute and does not backfill earlier ones.
   private lastCronMinute: number | null = null;
+  // While the Schedules switch is off: the tick that first found it off. The first tick back
+  // on turns it into `notBefore`, the earliest slot time that may still run. In memory only.
+  private offSince: number | null = null;
+  private notBefore = 0;
   private readonly nowMs: () => number;
   private readonly intervalMs: number;
   private readonly leaseMs: number;
@@ -80,6 +90,15 @@ export class AgentScheduleRunner {
     const run = (async () => {
       try {
         const now = this.nowMs();
+        if (this.deps.schedulesOn?.() === false) {
+          this.offSince ??= now;
+          return;
+        }
+        if (this.offSince !== null) {
+          this.offSince = null;
+          this.notBefore = now;
+          this.lastCronMinute = null;
+        }
         this.materializeDueRuns(now);
         if (this.deps.dispatchPaused?.()) return;
         await this.dispatchReadyRuns();
@@ -115,7 +134,7 @@ export class AgentScheduleRunner {
       if (schedule.status !== "active") continue;
       let slotKeys: string[];
       try {
-        slotKeys = dueSlotKeysForSchedule(schedule, now, cronFromMinute);
+        slotKeys = dueSlotKeysForSchedule(schedule, now, cronFromMinute, this.notBefore);
       } catch (error) {
         log.warn("agent_schedule_runner.schedule_due_check.failed", {
           scheduleId: schedule.id,
@@ -197,15 +216,24 @@ export class AgentScheduleRunner {
 /**
  * Slot keys due at `now`. A cron trigger yields at most one slot: the latest matching minute
  * from `cronFromMinute` (a minute start; default the minute of `now`) through the minute of
- * `now`, so a catch-up never queues a burst of runs.
+ * `now`, so a catch-up never queues a burst of runs. A slot before `notBefore` (when the
+ * Schedules switch came back on) is never due.
  */
 export function dueSlotKeysForSchedule(
   schedule: AgentSchedule,
   now: number,
   cronFromMinute?: number,
+  notBefore = 0,
 ): string[] {
   if (schedule.status !== "active") return [];
-  return dueSlotKeys(schedule.trigger, schedule.createdAt, now, cronFromMinute);
+  return dueSlotKeys(schedule.trigger, schedule.createdAt, now, cronFromMinute).filter(
+    (slotKey) => slotTime(slotKey) >= notBefore,
+  );
+}
+
+/** The time a slot key names: `at:`, `every:` and `cron:` all end in epoch milliseconds. */
+function slotTime(slotKey: string): number {
+  return Number(slotKey.slice(slotKey.indexOf(":") + 1));
 }
 
 function minuteStartOf(ms: number): number {

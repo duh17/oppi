@@ -23,7 +23,8 @@ final class SSHTerminalHostListViewController:
     /// Where the saved hosts live. Tests pass a store over their own defaults.
     private let profileStore: @Sendable () -> SSHTerminalProfileStore
 
-    private let session = SSHTerminalConnectSession()
+    /// A host row's terminal follows the window's server switches, as the page does.
+    private lazy var session = SSHTerminalConnectSession(access: { [weak self] in self?.access ?? .current })
     private var chrome: SSHTerminalConnectChrome?
     private var profiles: [SSHTerminalProfile] = []
     /// The Rex section's hosts, by saved host: each follows its own Rex over
@@ -94,6 +95,14 @@ final class SSHTerminalHostListViewController:
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// This device's experiments, narrowed to what the window's server offers (its Rex and
+    /// Herdr switches). Observed: a switch that changes while the page shows redraws it.
+    private var access: SSHTerminalExperimentAccess {
+        SSHTerminalExperimentAccess.current.narrowed(
+            to: .offered(by: AppRootEnvironment.near(self)?.windowConnection)
+        )
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -205,7 +214,7 @@ final class SSHTerminalHostListViewController:
         // The mode before the rows it decides, and before any follower dials: a page
         // that just switched to Shell must not open a Rex connection for a section
         // nobody sees.
-        let mode = SSHTerminalPageMode.resolved(storedMode, in: SSHTerminalExperimentAccess.current)
+        let mode = SSHTerminalPageMode.resolved(storedMode, in: access)
         let modeChanged = mode != self.mode
         self.mode = mode
         if modeChanged {
@@ -625,7 +634,7 @@ final class SSHTerminalHostListViewController:
     /// (with Rex's experiment off the page is Shell).
     private func installModeButton() {
         guard navigationController?.topViewController === self else { return }
-        guard SSHTerminalPageMode.available(in: SSHTerminalExperimentAccess.current).count > 1 else {
+        guard SSHTerminalPageMode.available(in: access).count > 1 else {
             setToolbarItems(nil, animated: false)
             navigationController?.setToolbarHidden(true, animated: true)
             return
@@ -645,7 +654,7 @@ final class SSHTerminalHostListViewController:
     /// The modes this device can show, with the one on screen checked.
     private func modeMenu() -> UIMenu {
         let current = mode
-        return UIMenu(children: SSHTerminalPageMode.available(in: SSHTerminalExperimentAccess.current).map { candidate in
+        return UIMenu(children: SSHTerminalPageMode.available(in: access).map { candidate in
             UIAction(
                 title: candidate.label,
                 state: candidate == current ? .on : .off
@@ -765,7 +774,7 @@ final class SSHTerminalHostListViewController:
     /// gets one in Rex mode; a host with no `rex` on it says so in one muted line and
     /// its monitor gives up until a pull to refresh, as before.
     private func syncRexHosts() {
-        let wanted = Self.rexDialledHosts(Self.rexFollowedHosts(profiles, mode: mode), noRex: profileStore().rexHosts)
+        let wanted = Self.rexDialledHosts(Self.rexFollowedHosts(profiles, mode: mode, access: access), noRex: profileStore().rexHosts)
         for id in rexHosts.keys where !wanted.contains(where: { $0.id == id }) {
             guard let host = rexHosts[id] else { continue }
             // A host whose read found no Rex is not dialled again: drop what is open
@@ -796,7 +805,7 @@ final class SSHTerminalHostListViewController:
     private func syncTailnetRex(active: Bool) {
         // Rex off, or a mode that does not list them: the nodes, their followers, and
         // discovery all go, so nothing here asks the tailnet about Rex.
-        guard AppPreferenceStore.Experiments.rexEnabled, mode == .rex else {
+        guard access.rex, mode == .rex else {
             tailnetRex.clear()
             for id in tailnetChromes.keys {
                 tailnetChromes[id]?.hostDidDisappear()

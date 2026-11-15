@@ -120,7 +120,10 @@ enum PaneSplitScreens {
     private static func terminal(serverId: String, workspaceId: String, root: AppRootEnvironment?) -> UIViewController {
         if let root, let (workspace, host) = PaneEntries.workspace(workspaceId, serverId: serverId, coordinator: root.coordinator),
            let folder = SSHTerminalFolderTarget.workspace(workspace) {
-            let target = SSHTerminalFolderTarget(serverHost: host, folder: folder, label: workspace.name)
+            let target = SSHTerminalFolderTarget(
+                serverHost: host, folder: folder, label: workspace.name,
+                serverOffers: .offered(by: serverId, coordinator: root.coordinator)
+            )
             if let screen = SSHTerminalFolderEntry.screen(for: target) { return screen }
         }
         let list = SSHTerminalHostListViewController(showsSidebarToggle: false)

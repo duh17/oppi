@@ -951,6 +951,7 @@ export type AppEventMessage =
       workspaceId: string;
     })
   | (AppEventBase & { type: "pins_changed"; revision: number }) // re-read `GET /pins`
+  | (AppEventBase & { type: "features_changed" }) // re-read `/server/info` (its `features`)
   | (AppEventBase & { type: "pairing_approval_requested"; approval: PendingPairingApproval })
   | (AppEventBase & {
       type: "pairing_approval_settled";

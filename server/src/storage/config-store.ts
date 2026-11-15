@@ -24,6 +24,7 @@ import { carryOverLegacyMobileOutputGuide } from "./mobile-output-guide-migratio
 import { parsePushEvents } from "../push/events.js";
 import { isRevision } from "../settings/revision.js";
 import { parseRelayOrigins } from "../push/relay-origin.js";
+import { parseFeaturePatch } from "../server-features.js";
 import type {
   DevicePairingInfo,
   DevicePublicKey,
@@ -276,6 +277,7 @@ function normalizeConfig(
     "oppiCliPrompt",
     "serverMetrics",
     "mobileOutputGuide",
+    "features",
     "experimental",
     "tls",
     "publicUrl",
@@ -367,6 +369,16 @@ function normalizeConfig(
     }
     return value;
   };
+
+  if (obj.features !== undefined) {
+    // A switch this server does not have (written by a newer one) is dropped unless strict.
+    const features = parseFeaturePatch(obj.features, strictUnknown ? "refuse" : "drop");
+    if (typeof features === "string") {
+      errors.push(`config.features: ${features}`);
+    } else {
+      config.features = features;
+    }
+  }
 
   if (obj.experimental !== undefined) {
     if (!isRecord(obj.experimental)) {

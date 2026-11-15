@@ -175,6 +175,20 @@ const rawApiRouteSpecs = [
   },
   {
     method: "GET",
+    path: "/server/features",
+    operationId: "getServerFeatures",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "PUT",
+    path: "/server/features",
+    operationId: "setServerFeatures",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "GET",
     path: "/server/resources/skills",
     operationId: "listServerSkills",
     surface: "admin",

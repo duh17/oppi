@@ -75,7 +75,9 @@ extension WorkspaceDetailViewController {
                 gitStatusEnabled: detail.workspace.gitStatusEnabled,
                 loadedStatus: detail.gitStatus
             ),
-            showsTerminal: SSHTerminalFolderTarget.workspace(detail.workspace) != nil,
+            // Terminal also needs the server's Terminal switch on.
+            showsTerminal: SSHTerminalFolderTarget.workspace(detail.workspace) != nil
+                && connection?.offers(.terminal) ?? true,
             title: title
         )
         if bars != barState {

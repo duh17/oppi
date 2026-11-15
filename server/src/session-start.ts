@@ -11,6 +11,7 @@ import {
 import type { DurableHarness, SessionHost } from "./durable-harness.js";
 import type { DurableBackend as DurableBackendType } from "./durable-backend.js";
 import { createLogger } from "./logger.js";
+import { featureOn } from "./server-features.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { AgentBackend } from "./agent-backend.js";
 import { replayCacheMissHistory } from "./cache-miss.js";
@@ -169,6 +170,7 @@ export class SessionStartCoordinator {
                   dataDir: this.deps.storage.getDataDir(),
                   getMobileOutputGuideSettings: () =>
                     this.deps.storage.getMobileOutputGuideSettings(),
+                  mcpEnabled: () => featureOn(this.deps.storage.getConfig(), "mcp"),
                   metrics: this.deps.metrics,
                   serverConfig: this.deps.config,
                   onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
@@ -296,6 +298,7 @@ export class SessionStartCoordinator {
       metrics: this.deps.metrics,
       serverConfig: this.deps.config,
       getMobileOutputGuideSettings: () => this.deps.storage.getMobileOutputGuideSettings(),
+      mcpEnabled: () => featureOn(this.deps.storage.getConfig(), "mcp"),
     });
   }
 

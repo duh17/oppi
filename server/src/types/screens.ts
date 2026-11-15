@@ -198,7 +198,8 @@ export type ScreensClientMessage =
       values?: ScreenValue[];
     };
 
-export type ScreenEndReason = "gone" | "unsupported";
+/** `off`: the entry's feature switch is off on this server (`server-features.ts`). */
+export type ScreenEndReason = "gone" | "off" | "unsupported";
 
 export type ScreensServerMessage =
   | { type: "value"; watch: string; value: ScreenPage }

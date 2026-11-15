@@ -5,6 +5,18 @@
         "v": 1
       }
     },
+    "features": {
+      "agents": true,
+      "schedules": true,
+      "skills": true,
+      "extensions": true,
+      "mcp": true,
+      "terminal": true,
+      "rex": true,
+      "herdr": true,
+      "godotPane": true,
+      "browserPane": true
+    },
     "sidebar": [
       {
         "id": "oppi.mcp",
@@ -954,6 +966,11 @@
     {
       "type": "ended",
       "watch": "w3",
+      "reason": "off"
+    },
+    {
+      "type": "ended",
+      "watch": "w4",
       "reason": "unsupported"
     }
   ]

@@ -57,8 +57,15 @@ extension ListScreenController {
 
     // MARK: - Toggle
 
-    /// Makes `cell` the switch row of a declared on/off setting. `store` as in `settingInputs`.
-    func settingToggleRow(_ cell: UICollectionViewListCell, _ declaration: SettingDeclaration<Bool>, store: SettingsStore? = nil) {
+    /// Makes `cell` the switch row of a declared on/off setting. `store` as in `settingInputs`;
+    /// `isEnabled` false holds the switch still for a reason of the page's (a switch that needs
+    /// another one on).
+    func settingToggleRow(
+        _ cell: UICollectionViewListCell,
+        _ declaration: SettingDeclaration<Bool>,
+        store: SettingsStore? = nil,
+        isEnabled: Bool = true
+    ) {
         let store = store ?? settings
         let state = store?.read(declaration) ?? .unavailable(reason: Self.noStore)
         var content = content(state.unavailableReason == nil ? .plain : .subtitle)
@@ -69,7 +76,7 @@ extension ListScreenController {
             state.current ?? declaration.default,
             identifier: declaration.id,
             label: declaration.copy.title,
-            isEnabled: state.canBeginSaving,
+            isEnabled: isEnabled && state.canBeginSaving,
             reusing: cell
         ) { [weak store] isOn in
             store?.set(declaration, isOn)

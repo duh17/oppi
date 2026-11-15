@@ -196,6 +196,7 @@ export default function (pi) {
     onEvent?: SdkBackendConfig["onEvent"];
     onUIBridgeReady?: SdkBackendConfig["onUIBridgeReady"];
     hasUI?: SdkBackendConfig["hasUI"];
+    mcpEnabled?: SdkBackendConfig["mcpEnabled"];
   }): Promise<SdkBackend> {
     const backend = await SdkBackend.create({
       session: makeSession(),
@@ -269,6 +270,23 @@ export default function (pi) {
     const backend = await create({});
     expect(extensionPaths(backend)).not.toContain("builtin:mcp");
     expect(extensionPaths(backend)).toContain("builtin:codemode");
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("loads no MCP servers while the server's MCP switch is off, even for an Agent that selects them", async () => {
+    const plain = await create({ mcpEnabled: () => false });
+    expect(extensionPaths(plain)).not.toContain("builtin:mcp");
+    expect(extensionPaths(plain)).toContain("builtin:codemode");
+    await plain.dispose();
+    backends.length = 0;
+
+    // The Agent still starts, without the server it cannot have.
+    const agent = await create({
+      mcpEnabled: () => false,
+      agentDefinition: { name: "Exact", resources: { extensionIds: ["builtin:mcp"] } },
+    });
+    expect(extensionPaths(agent).filter((path) => path.startsWith("builtin:"))).toEqual([]);
+    expect(sessionOf(agent).getActiveToolNames()).not.toContain("mcp__echo__echo");
     expect(existsSync(marker)).toBe(false);
   });
 

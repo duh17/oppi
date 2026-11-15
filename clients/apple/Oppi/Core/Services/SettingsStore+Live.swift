@@ -23,6 +23,9 @@ extension SettingsStore {
     ///   Metrics by it, and the Metrics page opens off it) follows what the server stored.
     /// - Durable Sessions: the connection's `durableSessions` capability follows it, so
     ///   Quick Session's engine switch appears or goes without waiting for `/server/info`.
+    /// - A feature switch: the connection's `offers(_:)` follows it at once; the server's
+    ///   `features_changed` then reads `/server/info` again for what the switch also changed
+    ///   there (a plugin sidebar entry).
     /// The store is the server's own, read back from the coordinator; a removed server
     /// updates nothing.
     static func liveServerAfterWrite(serverId: String, coordinator: ConnectionCoordinator) -> @MainActor (String) -> Void {
@@ -37,7 +40,9 @@ extension SettingsStore {
                 guard let stored = settings.read(SettingsCatalog.durableSessionsEnabled).current else { return }
                 coordinator.connection(for: serverId)?.noteDurableSessionsAvailable(stored)
             default:
-                break
+                guard let feature = ServerFeature.allCases.first(where: { SettingsCatalog.feature($0).id == id }),
+                      let stored = settings.read(SettingsCatalog.feature(feature)).current else { return }
+                coordinator.connection(for: serverId)?.noteFeature(feature, on: stored)
             }
         }
     }

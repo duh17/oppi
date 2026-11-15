@@ -286,6 +286,21 @@ extension QuickSessionModel {
             }
             return
         }
+        // Agents off on this server: Pi, and a launch that asked for an Agent says why it cannot.
+        guard connection.offers(.agents) else {
+            availableAgents = []
+            selectedAgentId = nil
+            if requestedAgentId != nil {
+                holdLaunchAfterAgentLoadFailure(
+                    requestedAgentId: requestedAgentId,
+                    detail: String(localized: "The Agents feature is turned off on this server. Turn it on in Server Settings › Features.")
+                )
+            } else {
+                agentResolution = .resolved
+            }
+            isLoadingAgents = false
+            return
+        }
 
         do {
             let agents = try await api.listAgents()

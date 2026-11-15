@@ -24,13 +24,19 @@ struct ServerInfo: Codable, Sendable, Equatable {
     /// Each voice feature's backend state, for About This Server → Voice. Nil from a
     /// server that does not report it; the section is then hidden.
     var voiceBackends: [VoiceBackend]? = nil
-    /// Sidebar entries the server's built-in plugins add (`protocol/screens.json`).
+    /// Sidebar entries the server's built-in plugins add (`protocol/screens.json`); the server
+    /// lists only those whose feature is on.
     var sidebar: [PluginScreenSidebarEntry]? = nil
+    /// The server's feature switches by `ServerFeature` raw value. Nil from a server older than
+    /// the switches, and a name missing from it, mean on.
+    var features: [String: Bool]? = nil
 
-    /// `capabilities` with the sidebar entries this app can draw: the server speaks this app's
-    /// screen vocabulary, and the entry is offered server-wide.
-    var capabilitiesWithPluginSidebar: Capabilities? {
+    /// `capabilities` with what this app reads beside them: the feature switches, and the
+    /// sidebar entries this app can draw (the server speaks this app's screen vocabulary, and
+    /// the entry is offered server-wide).
+    var appCapabilities: Capabilities? {
         guard var capabilities else { return nil }
+        capabilities.features = features
         guard capabilities.screens?.v == PluginScreens.version else { return capabilities }
         capabilities.pluginSidebar = (sidebar ?? []).filter { entry in
             entry.scopes.contains("server")
@@ -153,8 +159,11 @@ struct ServerInfo: Codable, Sendable, Equatable {
         /// for the whole vocabulary (`protocol/screens.json`).
         var screens: ScreensCapability? = nil
         /// The server's `sidebar` entries this app draws, set from the info that carried these
-        /// capabilities (`capabilitiesWithPluginSidebar`); never on the wire.
+        /// capabilities (`appCapabilities`); never on the wire.
         var pluginSidebar: [PluginScreenSidebarEntry]? = nil
+        /// The info's `features`, set by `appCapabilities`; never on the wire. Read through
+        /// `offers(_:)`.
+        var features: [String: Bool]? = nil
         /// `GET|POST|PUT /pins` and the `pins_changed` app event. Missing means
         /// the app offers no Pin items and shows no Pinned section.
         var pins: CapabilityVersion? = nil
@@ -167,6 +176,14 @@ struct ServerInfo: Codable, Sendable, Equatable {
             if url.scheme == "https" { return url }
             let loopback = host == "127.0.0.1" || host == "localhost" || host == "::1"
             return url.scheme == "http" && loopback ? url : nil
+        }
+
+        /// Whether the server offers `feature`: its switch is not off, Rex and Herdr also need
+        /// Terminal, and the Godot pane also needs a server that serves games (`godot`).
+        func offers(_ feature: ServerFeature) -> Bool {
+            guard features?[feature.rawValue] != false else { return false }
+            if feature == .rex || feature == .herdr, !offers(.terminal) { return false }
+            return feature != .godotPane || godot?.version ?? 0 >= 1
         }
     }
 

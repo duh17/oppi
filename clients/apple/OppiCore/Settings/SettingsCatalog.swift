@@ -10,6 +10,9 @@ enum SettingEndpoint: String, Hashable, Sendable, CaseIterable {
     case mobileOutputGuide = "/server/mobile-output-guide"
     /// `GET`/`PUT /server/durable-sessions/settings`: `{ enabled, revision }` (`experimental.serverDurable`).
     case durableSessions = "/server/durable-sessions/settings"
+    /// `GET`/`PUT /server/features`: one boolean per feature switch; a write names only the
+    /// switches it changes.
+    case features = "/server/features"
 
     /// The route's row in `protocol/settings.json`, where the server lists the
     /// setting's scope and whether its saves carry a revision.
@@ -19,6 +22,7 @@ enum SettingEndpoint: String, Hashable, Sendable, CaseIterable {
         case .serverMetrics: "serverMetrics"
         case .mobileOutputGuide: "mobileOutputGuide"
         case .durableSessions: "durableSessions"
+        case .features: "features"
         }
     }
 }
@@ -256,7 +260,7 @@ enum SettingsCatalog {
         default: AppPreferenceStore.Experiments.enabledDefault,
         copy: SettingCopy(
             title: String(localized: "Rex"),
-            footer: String(localized: "Rex sessions and panes on the Terminal tab, including Rex on your tailnet. While off, a Rex host opens a plain shell and keeps its setting.")
+            footer: String(localized: "Rex sessions and panes on the Terminal tab, including Rex on your tailnet. While off, a Rex host opens a plain shell and keeps its setting. A server can also turn Rex off for its windows in Server Settings › Features.")
         )
     )
 
@@ -269,7 +273,7 @@ enum SettingsCatalog {
         default: AppPreferenceStore.Experiments.enabledDefault,
         copy: SettingCopy(
             title: String(localized: "Herdr"),
-            footer: String(localized: "The Herdr button in the terminal, and Open Terminal Here inside Herdr. While off, a host that runs herdr opens a plain shell and keeps its command.")
+            footer: String(localized: "The Herdr button in the terminal, and Open Terminal Here inside Herdr. While off, a host that runs herdr opens a plain shell and keeps its command. A server can also turn Herdr off for its windows in Server Settings › Features.")
         )
     )
 
@@ -309,7 +313,7 @@ enum SettingsCatalog {
         default: AppPreferenceStore.Experiments.enabledDefault,
         copy: SettingCopy(
             title: String(localized: "Godot Pane"),
-            footer: String(localized: "Adds Godot to a new pane’s choices: Godot projects in the server’s workspaces, played beside the chat. A new export reaches the pane by itself. Oppi plays one game per launch.")
+            footer: String(localized: "Adds Godot to a new pane’s choices: Godot projects in the server’s workspaces, played beside the chat. A new export reaches the pane by itself. Oppi plays one game per launch. A server can also turn it off in Server Settings › Features.")
         )
     )
 
@@ -322,7 +326,7 @@ enum SettingsCatalog {
         default: AppPreferenceStore.Experiments.enabledDefault,
         copy: SettingCopy(
             title: String(localized: "Plugin Sidebar"),
-            footer: String(localized: "Adds the server's plugin pages to the sidebar, marked (plugin), beside the built-in pages they mirror.")
+            footer: String(localized: "Adds the server's plugin pages to the sidebar, marked (plugin), beside the built-in pages they mirror. A page shows only while its feature is on in the server's Server Settings › Features.")
         )
     )
 
@@ -397,9 +401,23 @@ enum SettingsCatalog {
         )
     )
 
+    // MARK: - Features
+
+    /// One feature switch of the server, for every device that uses it (`features` in
+    /// `protocol/settings.json`). Off hides the feature's entry points in this server's windows.
+    static func feature(_ feature: ServerFeature) -> SettingDeclaration<Bool> {
+        SettingDeclaration(
+            id: "server.features.\(feature.rawValue)",
+            key: feature.rawValue,
+            storage: .server(.features, revisioned: false),
+            default: true,
+            copy: SettingCopy(title: feature.title)
+        )
+    }
+
     /// Every declared setting, type-erased. Ids and storage keys are unique
     /// across it (`SettingsCatalogTests`).
-    static let all: [SettingDescriptor] = [
+    static let all: [SettingDescriptor] = ServerFeature.allCases.map { feature($0).descriptor } + [
         hapticFeedback.descriptor,
         keepAwakeAfterActivity.descriptor,
         openLinks.descriptor,

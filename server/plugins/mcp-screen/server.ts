@@ -56,7 +56,7 @@ function mcp(): OppiMcpHost {
 export default defineFacet((host, self) => {
   // The plugin host loads a facet only with an extension; this one gives sessions nothing.
   self.contribute(Extensions, defineExtension({ name: "oppi.mcp-screen", runtimes: ["host"] }));
-  self.contribute(Sidebar, { ...MCP_SIDEBAR_ENTRY, screen: Screen });
+  self.contribute(Sidebar, { ...MCP_SIDEBAR_ENTRY, feature: "mcp", screen: Screen });
 
   host.serve(Screen.contract, ({ page }, self) => {
     const doc = self.state(Screen.document);

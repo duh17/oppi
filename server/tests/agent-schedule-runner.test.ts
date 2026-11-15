@@ -178,6 +178,51 @@ describe("agent schedule runner", () => {
     expect(store.listRuns(schedule.id).map((run) => run.status)).toEqual(["completed"]);
   });
 
+  it("runs nothing while the Schedules switch is off, and resumes at the next slot without catching up", async () => {
+    const hour = 3_600_000;
+    const every = store.createSchedule(
+      {
+        name: "Hourly",
+        trigger: { type: "every", intervalMs: hour, timeZone: "UTC" },
+        action: action(),
+      },
+      0,
+    );
+    const oneShot = store.createSchedule(
+      { name: "Once", trigger: { type: "at", at: 1.5 * hour, timeZone: "UTC" }, action: action() },
+      0,
+    );
+    let now = hour + 1_000;
+    let on = false;
+    const runner = new AgentScheduleRunner({
+      storage: storage(),
+      sessions: { startSession, sendPrompt },
+      ensureSessionContextWindow: (session: Session) => session,
+      nowMs: () => now,
+      schedulesOn: () => on,
+    });
+    const slots = () =>
+      [every.id, oneShot.id].flatMap((id) => store.listRuns(id).map((run) => run.slotKey));
+
+    // Off: the hourly slot and the one-shot come due and nothing is recorded or run.
+    await runner.runOnce();
+    now = 1.75 * hour;
+    await runner.runOnce();
+    expect(slots()).toEqual([]);
+    expect(startSession).not.toHaveBeenCalled();
+
+    // Back on: the slots that came due while off are not caught up.
+    on = true;
+    await runner.runOnce();
+    expect(slots()).toEqual([]);
+
+    // The next slot fires.
+    now = 2 * hour + 1_000;
+    await runner.runOnce();
+    expect(slots()).toEqual([`every:${2 * hour}`]);
+    expect(startSession).toHaveBeenCalledTimes(1);
+  });
+
   it("drains the active dispatch and starts no more work after stop", async () => {
     const scheduleIds: string[] = [];
     for (const name of ["First", "Second"]) {

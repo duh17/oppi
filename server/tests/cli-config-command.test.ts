@@ -8,6 +8,7 @@ import { runCli } from "../src/cli/runner.js";
 import { captureCliOutput } from "../src/cli/output.js";
 import { cmdConfig } from "../src/cli/commands/config.js";
 import { createCliConfigStorage } from "../src/cli/connection-config.js";
+import { SERVER_FEATURE_PRESETS, serverFeatures } from "../src/server-features.js";
 
 const dirs: string[] = [];
 
@@ -205,6 +206,29 @@ describe("config command agent safety", () => {
     expect(
       (sessions.json as { ok: true; data: { restartHint?: string } }).data.restartHint,
     ).toBeUndefined();
+  });
+
+  it("sets feature switches: the Plain Pi preset, then one switch back on, refusing unknown names", async () => {
+    const dataDir = makeDataDir();
+    const set = (key: string, value: string) =>
+      runCli(["config", "set", key, value], { dataDir, captureHuman: true, forceJson: true });
+    const features = () => createCliConfigStorage(dataDir).getConfig().features;
+    expect(serverFeatures({ features: features() })).toEqual(SERVER_FEATURE_PRESETS.all);
+
+    const plain = await set("features", "plainPi");
+    expect(plain.json).toMatchObject({ ok: true, data: { restartHint: expect.any(String) } });
+    expect(features()).toEqual(SERVER_FEATURE_PRESETS.plainPi);
+
+    expect((await set("features.terminal", "on")).ok).toBe(true);
+    expect(serverFeatures({ features: features() })).toEqual({
+      ...SERVER_FEATURE_PRESETS.plainPi,
+      terminal: true,
+    });
+
+    // A switch the server lacks is refused and changes nothing.
+    expect((await set("features", '{"voice":false}')).ok).toBe(false);
+    expect((await set("features.voice", "false")).ok).toBe(false);
+    expect(serverFeatures({ features: features() }).terminal).toBe(true);
   });
 
   it("reports invalid validation as structured data with a clean JSON run", async () => {

@@ -210,6 +210,27 @@ function recordingVm() {
 }
 
 describe("server durable MCP (host)", () => {
+  it("opens no MCP servers while the server's MCP switch is off", async () => {
+    const marker = join(agentDir, "echo.marker");
+    writeMcpJson(agentDir, { echo: echoServer(marker, { exposure: "direct" }) });
+    const f = await fixture([
+      fauxAssistantMessage([fauxToolCall("mcp__echo__echo", { text: "hi" })], {
+        stopReason: "toolUse",
+      }),
+      fauxAssistantMessage("PLAIN_DONE"),
+    ]);
+    f.storage.mutateConfig(() => ({ features: { mcp: false } }));
+    const opened = vi.spyOn(DurableMcp, "open");
+    await f.manager.startSession(f.session.id, f.workspace);
+
+    await prompt(f.manager, f.session.id, "Echo hi");
+    expect(opened).not.toHaveBeenCalled();
+    expect(read(marker)).toBe("");
+    expect(await toolResults(f.manager, f.session.id)).toEqual([
+      expect.stringContaining("mcp__echo__echo"),
+    ]);
+  });
+
   it("offers direct tools on the first prompt, reports a broken server once, and stops its servers with the session", async () => {
     const marker = join(agentDir, "echo.marker");
     writeMcpJson(agentDir, {

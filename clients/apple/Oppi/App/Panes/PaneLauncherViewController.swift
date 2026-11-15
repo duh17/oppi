@@ -2,7 +2,8 @@ import UIKit
 
 /// What a fresh split shows: the workspace's Sessions, Files, a Terminal,
 /// a Web Page or Godot (with the Godot Pane experiment on), as large
-/// choices. Picking one replaces the launcher in its leaf; Web Page opens
+/// choices. Terminal, Web Page and Godot show only while the leaf's server
+/// offers them (`ServerFeature`). Picking one replaces the launcher in its leaf; Web Page opens
 /// the browser with its address field up, Godot the server's Godot projects. New Session
 /// waits for two live chats per server, so a new chat never takes the place
 /// of the one already open. Files and Terminal need a workspace.
@@ -17,9 +18,22 @@ final class PaneLauncherViewController: UIViewController {
     enum Choice: CaseIterable {
         case sessions, files, terminal, web, godot
 
-        /// The choices this device offers now: Godot only with its experiment on.
-        static var offered: [Self] {
-            allCases.filter { $0 != .godot || GodotPaneAvailability.isOn }
+        /// The server switch a choice needs; Sessions and Files are plain Pi.
+        var feature: ServerFeature? {
+            switch self {
+            case .sessions, .files: nil
+            case .terminal: .terminal
+            case .web: .browserPane
+            case .godot: .godotPane
+            }
+        }
+
+        /// The choices for a leaf on a server that `offers` these features: Godot also needs
+        /// its experiment on this device.
+        static func offered(by offers: (ServerFeature) -> Bool) -> [Self] {
+            allCases.filter { choice in
+                (choice.feature.map(offers) ?? true) && (choice != .godot || GodotPaneAvailability.isOn)
+            }
         }
     }
 
@@ -40,6 +54,7 @@ final class PaneLauncherViewController: UIViewController {
     private let grid = UIStackView()
     private let pinned = UIStackView()
     private var buttons: [UIButton] = []
+    private var shownChoices: [Choice] = []
     private var shownPins: [PinnedChoice] = []
     private var preferredWidth: NSLayoutConstraint?
     private(set) var columns = 1
@@ -101,8 +116,7 @@ final class PaneLauncherViewController: UIViewController {
             content.widthAnchor.constraint(lessThanOrEqualTo: frame.widthAnchor, constant: -2 * Self.margin),
             preferredWidth,
         ])
-        buttons = Choice.offered.map(button(for:))
-        arrange(columns: 1)
+        showChoices(offeredChoices)
     }
 
     override func viewDidLayoutSubviews() {
@@ -123,8 +137,24 @@ final class PaneLauncherViewController: UIViewController {
         super.updateProperties()
         // Observation tracking re-runs this when the theme store or the pins change.
         view.backgroundColor = root?.themeStore.backgroundColor ?? .systemBackground
+        // A server switch that changes while the launcher is up adds or takes away its choice.
+        let offered = offeredChoices
+        if offered != shownChoices { showChoices(offered) }
         let choices = (pins?.store.pins ?? []).map { PinnedChoice(pin: $0, workspaceName: workspaceName($0.target.workspaceId)) }
         if choices != shownPins { showPinned(choices) }
+    }
+
+    /// The choices this leaf's server offers now (its connection is observed).
+    private var offeredChoices: [Choice] {
+        guard let coordinator = root?.coordinator else { return Choice.offered { _ in true } }
+        return Choice.offered { coordinator.server(serverId, offers: $0) }
+    }
+
+    private func showChoices(_ choices: [Choice]) {
+        shownChoices = choices
+        buttons = choices.map(button(for:))
+        arrange(columns: 1)
+        view.setNeedsLayout()
     }
 
     /// This leaf's server's pins, never the window's active server's.

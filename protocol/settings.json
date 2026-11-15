@@ -35,6 +35,26 @@
       "revisioned": true
     },
     {
+      "key": "features",
+      "scope": "server",
+      "storage": "config",
+      "type": "{ agents: boolean, schedules: boolean, skills: boolean, extensions: boolean, mcp: boolean, terminal: boolean, rex: boolean, herdr: boolean, godotPane: boolean, browserPane: boolean }",
+      "default": {
+        "agents": true,
+        "schedules": true,
+        "skills": true,
+        "extensions": true,
+        "mcp": true,
+        "terminal": true,
+        "rex": true,
+        "herdr": true,
+        "godotPane": true,
+        "browserPane": true
+      },
+      "validation": "PUT /server/features takes only the switches it changes, each true or false; an unknown name is a 400. Absent from config.json means on.",
+      "revisioned": false
+    },
+    {
       "key": "dictionaryGlobal",
       "scope": "server",
       "storage": "settings-file",

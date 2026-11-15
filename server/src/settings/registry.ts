@@ -11,6 +11,11 @@ import { DEFAULT_ICON_CHOICE, validateIconChoice } from "../icon-choice.js";
 import { parsePushEvents } from "../push/events.js";
 import { validateDictionaryPhrases } from "../storage/dictation-dictionary-store.js";
 import { validatePinOrder, type PinOrderEntry } from "../storage/pins-store.js";
+import {
+  parseFeaturePatch,
+  SERVER_FEATURE_PRESETS,
+  type ServerFeaturePatch,
+} from "../server-features.js";
 import type { IconChoice, PushEvent, WorkspaceSandboxConfig } from "../types.js";
 import { isRecord } from "../json-shape.js";
 
@@ -261,6 +266,17 @@ const SETTINGS = {
     default: { enabled: false } as EnabledPatch,
     revisioned: true,
     validate: validateEnabledPatch,
+  },
+  // The feature switches (`routes/server-features.ts`); a write names only the switches it changes.
+  features: {
+    scope: "server",
+    storage: "config",
+    default: SERVER_FEATURE_PRESETS.all as ServerFeaturePatch,
+    revisioned: false,
+    validate: (value: unknown): ServerFeaturePatch => {
+      const patch = parseFeaturePatch(value, "refuse");
+      return typeof patch === "string" ? fail(patch) : patch;
+    },
   },
   dictionaryGlobal: {
     scope: "server",

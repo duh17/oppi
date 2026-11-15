@@ -300,6 +300,10 @@ final class QuickSessionModel {
     /// The server of the window Quick Session opened in: the default target.
     var windowServerId: String? { navigation.activeServerId(in: coordinator) }
 
+    /// The selected server offers saved Agents (its Agents switch). Off, Quick Session launches
+    /// Pi only and shows no Agent picker.
+    var offersAgents: Bool { selectedServerConnection()?.offers(.agents) ?? true }
+
     func selectedServerConnection() -> ServerConnection? {
         if let selectedServerId {
             return coordinator.connection(for: selectedServerId)

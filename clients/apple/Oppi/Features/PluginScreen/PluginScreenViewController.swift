@@ -105,7 +105,9 @@ final class PluginScreenViewController: ListScreenController<String, String> {
             if reason == "gone" {
                 Router.finish(self)
             } else {
-                problem = String(localized: "Update Oppi to open this page.")
+                problem = reason == "off"
+                    ? String(localized: "This page is turned off on this server. Turn it on in Server Settings › Features.")
+                    : String(localized: "Update Oppi to open this page.")
             }
         case .result, .authRenewResult, .unknown:
             break

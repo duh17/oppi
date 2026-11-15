@@ -168,6 +168,8 @@ interface DurableBackendOptions {
   serverConfig?: Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt">;
   /** Read on every attach and `/reload`, as an SDK session reads it per runtime rebuild. */
   getMobileOutputGuideSettings?: () => RevisionedEnabled;
+  /** The server's MCP switch (`features.mcp`), read at each attach: off opens no MCP servers. */
+  mcpEnabled?: () => boolean;
 }
 
 /**
@@ -426,11 +428,13 @@ export class DurableBackend implements AgentBackend {
     };
     const resources = await loadResources();
     // An Oppi Control session selects an exact extension list; it gets no MCP tools, and an
-    // exact Extension selection without `builtin:mcp` gets none either.
+    // exact Extension selection without `builtin:mcp` gets none either. Nor does any session
+    // while the server's MCP switch is off; its attach closes the servers an earlier one opened.
     const mcp =
       control || launched?.doc?.extensions?.mcp === false
         ? undefined
         : await host.replaceMcp(session.id, async () => {
+            if (options.mcpEnabled?.() === false) return undefined;
             const registry = new ModelRegistry(models);
             return DurableMcp.open({
               sessionId: session.id,
