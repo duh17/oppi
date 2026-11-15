@@ -728,6 +728,37 @@ describe("Storage config validation", () => {
     expect(result.errors).toContain("config.asr.backend: expected http");
   });
 
+  it("drops the retired 50/100 MiB upload caps on load and keeps an owner's own caps", () => {
+    const write = (uploadStore: Record<string, unknown>): Storage => {
+      writeFileSync(
+        join(dir, "config.json"),
+        JSON.stringify({
+          ...Storage.getDefaultConfig(dir),
+          uploadStore: { mode: "local", path: join(dir, "uploads"), ...uploadStore },
+        }),
+      );
+      return new Storage(dir);
+    };
+
+    const retired = write({ maxFileBytes: 50 * 1024 * 1024, maxTurnBytes: 100 * 1024 * 1024 });
+    expect(retired.getConfig().uploadStore).toEqual({
+      mode: "local",
+      path: join(dir, "uploads"),
+      unusedTtlMs: 24 * 60 * 60 * 1000,
+    });
+    const onDisk = JSON.parse(readFileSync(join(dir, "config.json"), "utf8")) as {
+      uploadStore: Record<string, unknown>;
+    };
+    expect(onDisk.uploadStore).not.toHaveProperty("maxFileBytes");
+    expect(onDisk.uploadStore).not.toHaveProperty("maxTurnBytes");
+
+    const owned = write({ maxFileBytes: 10 * 1024 ** 3, maxTurnBytes: 20 * 1024 ** 3 });
+    expect(owned.getConfig().uploadStore).toMatchObject({
+      maxFileBytes: 10 * 1024 ** 3,
+      maxTurnBytes: 20 * 1024 ** 3,
+    });
+  });
+
   it("drops pi-extension asr on Storage load and keeps sttEndpoint", () => {
     const configPath = join(dir, "config.json");
     writeFileSync(

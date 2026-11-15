@@ -126,8 +126,14 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
   uploadStore: { type: "json", desc: "Upload store config JSON object" },
   "uploadStore.mode": { type: "string", desc: "Upload store mode" },
   "uploadStore.path": { type: "string", desc: "Upload store path" },
-  "uploadStore.maxFileBytes": { type: "number", desc: "Max attachment file size" },
-  "uploadStore.maxTurnBytes": { type: "number", desc: "Max attachment bytes per turn" },
+  "uploadStore.maxFileBytes": {
+    type: "number",
+    desc: "Optional cap on one attachment's size (default: free disk space)",
+  },
+  "uploadStore.maxTurnBytes": {
+    type: "number",
+    desc: "Optional cap on one turn's attachment bytes (default: none)",
+  },
   "uploadStore.unusedTtlMs": { type: "number", desc: "Unused upload TTL" },
   "uploadStore.retainedTtlMs": { type: "number", desc: "Retained upload TTL" },
   "uploadStore.allowedMimeTypes": { type: "json", desc: "Allowed MIME types JSON array" },

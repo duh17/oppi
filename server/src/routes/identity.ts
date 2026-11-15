@@ -476,10 +476,15 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       ...(piCliVersion && piCliVersion !== "unknown" ? { piCliVersion } : {}),
       configVersion: config.configVersion ?? 1,
       identity,
+      // A cap appears only when the owner set one; otherwise free disk space is the limit.
       uploadProtocol: {
         version: 1,
-        maxFileBytes: config.uploadStore?.maxFileBytes ?? 50 * 1024 * 1024,
-        maxTurnBytes: config.uploadStore?.maxTurnBytes ?? 100 * 1024 * 1024,
+        ...(config.uploadStore?.maxFileBytes !== undefined
+          ? { maxFileBytes: config.uploadStore.maxFileBytes }
+          : {}),
+        ...(config.uploadStore?.maxTurnBytes !== undefined
+          ? { maxTurnBytes: config.uploadStore.maxTurnBytes }
+          : {}),
       },
       images: {
         autoResize: config.images?.autoResize ?? true,

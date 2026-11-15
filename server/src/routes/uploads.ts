@@ -9,6 +9,9 @@ import {
   writeUploadContent,
 } from "../uploads/local-upload-store.js";
 import { admitSessionRoute } from "../session-route-scope.js";
+import { createLogger } from "../logger.js";
+
+const log = createLogger({ base: { component: "route_uploads" } });
 
 async function parseUploadCreateBody(
   req: IncomingMessage,
@@ -92,7 +95,6 @@ export function createUploadRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
           contentUrl: workspaceId
             ? `/workspaces/${workspaceId}/sessions/${sessionId}/attachments/${record.id}/content`
             : `/control-sessions/${sessionId}/attachments/${record.id}/content`,
-          maxFileBytes: config.maxFileBytes,
           expiresAt: record.expiresAt,
         },
         201,
@@ -124,6 +126,7 @@ export function createUploadRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
       return;
     }
 
+    const startedAt = Date.now();
     try {
       const record = await writeUploadContent({
         config: resolveUploadStoreConfig(ctx.storage.getConfig()),
@@ -131,6 +134,12 @@ export function createUploadRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
         sessionId,
         uploadId,
         req,
+      });
+      // Failures already log as http.request.failed; a large upload's arrival is worth a line too.
+      log.info("uploads.content_complete", {
+        uploadId,
+        sizeBytes: record.sizeBytes,
+        durationMs: Date.now() - startedAt,
       });
       helpers.json(res, { attachment: uploadRecordToAttachmentRef(record) });
     } catch (error) {

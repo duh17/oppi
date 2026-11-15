@@ -38,6 +38,7 @@ Do not put these in config: owner tokens and pairing secrets (use `oppi pair` an
 | `runtimeEnv.<NAME>` | Host runtime env, including TTS URLs (restart) |
 | `push.mode` / `push.relays` | Push (restart; see [Push notifications](#push-notifications)) |
 | `images.autoResize` | Phones resize images over 2000 px before upload (default `true`; `false` keeps originals and leaves resizing to Pi on the server) |
+| `uploadStore.maxFileBytes` / `uploadStore.maxTurnBytes` | Optional caps on one attachment and on one message's attachments, in bytes (default: no cap; see [Attachment uploads](#attachment-uploads)) |
 | `fileEditing.hostFiles` | Edit home files outside every workspace from paired devices (default `true`; `false` keeps them read-only; restart; see [Home files](document-viewers.md#home-files)) |
 | `providerQuotas.openaiUseCodexPlan` | Opt in to legacy Codex plan-wide usage on the OpenAI row (default `false`; restart; see [Provider quotas](provider-quotas.md)) |
 | `auth.tailscalePairing` | Same-user Tailscale pairing; `false` turns it off (default `true`; restart; see [Onboarding](onboarding.md#turn-off-tailscale-pairing)) |
@@ -45,6 +46,21 @@ Do not put these in config: owner tokens and pairing secrets (use `oppi pair` an
 | `serverMetrics.enabled` | Server and host samples behind **Server Metrics** (default `false`; the Server Settings toggle applies at once; see [Server Metrics](#server-metrics)) |
 | `experimental.serverDurable` | Offer durable sessions (default `false`; restart; the **Durable Sessions** switch in Server Settings applies at once; see [Durable Sessions](usage.md#durable-sessions)) |
 | `features` / `features.<name>` | Which features this server offers (default all on; restart; Server Settings → **Features** applies at once; see [Features](#features)) |
+
+## Attachment uploads
+
+Attachments have no fixed size limit. The server refuses an upload only when it would leave less than 2 GB or 5% of the upload volume free, whichever is larger; the error names the free space. Uploads are stored under `uploadStore.path` (default `~/.config/oppi/uploads`), then copied into the workspace's `.pi/attachments/` when the message is sent, as a clone where the volume supports it (APFS).
+
+To cap uploads anyway, set a size in bytes:
+
+```bash
+oppi config set uploadStore.maxFileBytes 10737418240   # 10 GB per file
+oppi config set uploadStore.maxTurnBytes 21474836480   # 20 GB per message
+```
+
+Remove a key to go back to no cap. Configs that still carry the old default caps (50 MB per file, 100 MB per message) lose them when the server next loads the config.
+
+The phone streams each file from disk and shows progress while it sends. The upload keeps going when you switch apps or lock the screen, except through the Tailscale connection built into Oppi, which pauses until you return to Oppi. If the connection drops, the phone starts that file over, up to four more times, before the send fails with the reason. An upload that sends no data for two minutes counts as dropped. Each finished upload logs `uploads.content_complete` with its size and duration.
 
 ## Dictation (ASR / STT)
 

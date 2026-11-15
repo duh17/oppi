@@ -113,8 +113,9 @@ struct ServerInfo: Codable, Sendable, Equatable {
 
     struct UploadProtocolInfo: Codable, Sendable, Equatable {
         let version: Int
-        let maxFileBytes: Int
-        let maxTurnBytes: Int
+        /// Owner-set caps; nil means none (free disk space on the server is the limit).
+        let maxFileBytes: Int?
+        let maxTurnBytes: Int?
     }
 
     struct ImageSettingsInfo: Codable, Sendable, Equatable {

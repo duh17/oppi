@@ -104,8 +104,10 @@ private let composerDraftSidecarIOQueue = DispatchQueue(
     qos: .utility
 )
 
+/// Every chosen file except a photo stays a file: copied once at import, uploaded by
+/// streaming it, never read into memory (a recording or archive can be gigabytes).
 private func composerDraftAttachmentKeepsFileSidecar(_ attachment: ComposerDraftAttachment) -> Bool {
-    attachment.source == .localFile && attachment.mimeType.lowercased().hasPrefix("video/")
+    attachment.source == .localFile && !attachment.mimeType.lowercased().hasPrefix("image/")
 }
 
 private func composerDraftSidecarDirectoryURL(for fileURL: URL) -> URL {
@@ -650,6 +652,9 @@ final class ComposerDraftStore {
         )
         let persistenceFileURL = persistenceFileURL
         for attachment in normalizedPayload.attachments where composerDraftAttachmentKeepsFileSidecar(attachment) {
+            // A small file held as data (from a Shortcut) is written below and
+            // reads back as a file.
+            if blobs[attachment.id] != nil, attachmentFiles[attachment.id] == nil { continue }
             guard let relativePath = attachment.relativePath,
                   let destination = composerDraftSidecarURL(
                     fileURL: persistenceFileURL,

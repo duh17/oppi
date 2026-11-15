@@ -203,13 +203,11 @@ export function createSessionCoordinatorBundle(
     attachmentWorkRoot(session, deps.storage);
 
   const uploadStoreConfig = resolveUploadStoreConfig(deps.config);
-  const maxTurnAttachmentBytes = deps.config.uploadStore?.maxTurnBytes ?? 100 * 1024 * 1024;
 
   const queueCoordinator = new SessionMessageQueueCoordinator({
     getActiveSession: (key) => deps.active.get(key) as SessionMessageQueueState | undefined,
     broadcast: (key, message) => deps.broadcast(key, message),
     resolveWorkspaceRoot,
-    maxTurnAttachmentBytes,
     uploadStoreConfig,
   });
 

@@ -75,7 +75,10 @@ struct ComposerDraftStoreTests {
         await reloaded.load()
         #expect(reloaded.record(for: key)?.payload.attachments.map(\.displayName) == ["photo.png", "notes.txt"])
         #expect(reloaded.attachmentData(for: key, attachmentID: "photo-1") == photoBytes)
-        #expect(reloaded.attachmentData(for: key, attachmentID: "file-1") == fileBytes)
+        // A non-photo file comes back as a file to stream, never loaded into memory.
+        #expect(reloaded.attachmentData(for: key, attachmentID: "file-1") == nil)
+        let fileURL = try #require(reloaded.attachmentFileURL(for: key, attachmentID: "file-1"))
+        #expect(try Data(contentsOf: fileURL) == fileBytes)
     }
 
     @Test func sidecarWriteFailureDoesNotPublishTheDraftRecord() async throws {
@@ -503,7 +506,8 @@ struct ComposerDraftStoreTests {
         let relaunched = fixture.makeStore()
         await relaunched.load()
         #expect(relaunched.record(for: key)?.payload == payload)
-        #expect(relaunched.attachmentData(for: key, attachmentID: "lifecycle-file") == Data("latest log!".utf8))
+        let relaunchedFile = try #require(relaunched.attachmentFileURL(for: key, attachmentID: "lifecycle-file"))
+        #expect(try Data(contentsOf: relaunchedFile) == Data("latest log!".utf8))
 
         relaunched.clearDraft(for: key)
         let afterClear = fixture.makeStore()

@@ -38,6 +38,8 @@ import { isRecord } from "../json-shape.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
 const CONFIG_VERSION = 2;
+const RETIRED_DEFAULT_MAX_FILE_BYTES = 50 * 1024 * 1024;
+const RETIRED_DEFAULT_MAX_TURN_BYTES = 100 * 1024 * 1024;
 
 const log = createLogger({ base: { component: "config_store" } });
 
@@ -235,8 +237,6 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     uploadStore: {
       mode: "local",
       path: join(dataDir, "uploads"),
-      maxFileBytes: 50 * 1024 * 1024,
-      maxTurnBytes: 100 * 1024 * 1024,
       unusedTtlMs: 24 * 60 * 60 * 1000,
     },
   };
@@ -1154,6 +1154,17 @@ function normalizeConfig(
       readOptionalUploadString("path");
       readOptionalUploadInt("maxFileBytes");
       readOptionalUploadInt("maxTurnBytes");
+      // Before uploads were limited only by free disk space, every new config was written
+      // with 50 MiB and 100 MiB caps. Those exact values are that old default, not an
+      // owner's choice: drop them so the file falls back to no cap.
+      if (uploadConfig.maxFileBytes === RETIRED_DEFAULT_MAX_FILE_BYTES) {
+        delete uploadConfig.maxFileBytes;
+        changed = true;
+      }
+      if (uploadConfig.maxTurnBytes === RETIRED_DEFAULT_MAX_TURN_BYTES) {
+        delete uploadConfig.maxTurnBytes;
+        changed = true;
+      }
       readOptionalUploadInt("unusedTtlMs");
       readOptionalUploadInt("retainedTtlMs");
 

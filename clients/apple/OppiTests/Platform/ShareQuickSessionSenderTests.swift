@@ -155,7 +155,7 @@ struct ShareQuickSessionSenderTests {
         defer { try? FileManager.default.removeItem(at: fileURL) }
         let transport = ShareSenderStubTransport(responses: [
             .json(201, #"{"session":{"id":"session-3"}}"#),
-            .json(413, #"{"error":"Upload exceeds max file size"}"#),
+            .json(413, #"{"error":"Upload exceeds this server's 1.0 KB file size limit (uploadStore.maxFileBytes)"}"#),
         ])
         let sender = ShareQuickSessionSender(transport: transport)
         let server = try #require(ShareQuickSessionServer(
@@ -180,51 +180,10 @@ struct ShareQuickSessionSenderTests {
                 workspace: workspace
             )
             Issue.record("Expected server size rejection")
-        } catch ShareQuickSessionSendError.attachmentTooLarge(let name, let maxFileBytes) {
-            #expect(name == "large.txt")
-            #expect(maxFileBytes == nil)
+        } catch ShareQuickSessionSendError.server(let status, let message) {
+            #expect(status == 413)
+            #expect(message == "Upload exceeds this server's 1.0 KB file size limit (uploadStore.maxFileBytes)")
         }
-        #expect(await transport.uploadedFileURLs.isEmpty)
-        #expect(await transport.requests.map(\.httpMethod) == ["POST", "POST"])
-    }
-
-    @Test func rejectsOversizedAttachmentBeforeUploadingBytes() async throws {
-        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try Data("too large".utf8).write(to: fileURL)
-        defer { try? FileManager.default.removeItem(at: fileURL) }
-
-        let transport = ShareSenderStubTransport(responses: [
-            .json(201, #"{"session":{"id":"session-3"}}"#),
-            .json(201, #"{"uploadId":"upload-2","contentUrl":"/content","maxFileBytes":4,"expiresAt":0}"#),
-        ])
-        let sender = ShareQuickSessionSender(transport: transport)
-        let server = try #require(ShareQuickSessionServer(
-            id: "server-1",
-            name: "Mac",
-            baseURL: URL(string: "https://mac.example:7749"),
-            token: "device-token",
-            tlsCertFingerprint: nil,
-            sortOrder: 0
-        ))
-        let workspace = ShareQuickSessionWorkspace(id: "ws-1", name: "Oppi", server: server)
-
-        do {
-            _ = try await sender.send(
-                payloadID: "share-too-large",
-                text: "Review",
-                attachments: [ShareQuickSessionDraftAttachment(
-                    name: "large.txt",
-                    mimeType: "text/plain",
-                    fileURL: fileURL
-                )],
-                workspace: workspace
-            )
-            Issue.record("Expected oversized attachment to fail")
-        } catch ShareQuickSessionSendError.attachmentTooLarge(let name, let maxFileBytes) {
-            #expect(name == "large.txt")
-            #expect(maxFileBytes == 4)
-        }
-
         #expect(await transport.uploadedFileURLs.isEmpty)
         #expect(await transport.requests.map(\.httpMethod) == ["POST", "POST"])
     }

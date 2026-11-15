@@ -183,6 +183,7 @@ actor APIClient: ClientLogUploading {
             delegate: trustDelegate,
             delegateQueue: nil
         )
+        backgroundUploadsAllowed = true
     }
 
     init(
@@ -215,6 +216,7 @@ actor APIClient: ClientLogUploading {
             delegate: trustDelegate,
             delegateQueue: nil
         )
+        backgroundUploadsAllowed = true
     }
 
     // periphery:ignore - used by APIClientTests via @testable import
@@ -239,6 +241,7 @@ actor APIClient: ClientLogUploading {
             delegate: trustDelegate,
             delegateQueue: nil
         )
+        backgroundUploadsAllowed = false
     }
 
     /// Test-only init with custom URLSessionConfiguration.
@@ -269,6 +272,7 @@ actor APIClient: ClientLogUploading {
             delegate: trustDelegate,
             delegateQueue: nil
         )
+        backgroundUploadsAllowed = false
     }
 
     /// A session that is never invalidated keeps its delegate and connection
@@ -276,23 +280,32 @@ actor APIClient: ClientLogUploading {
     /// new client; a request in flight holds its client, so nothing is cut off.
     deinit {
         session.finishTasksAndInvalidate()
-        attachmentUploadSession?.finishTasksAndInvalidate()
+        foregroundUploads?.invalidate()
     }
 
     /// Attachment bodies can take many minutes. The API session ends any request at
-    /// 30 seconds total, which cut every upload over about 30 seconds short; this one
-    /// fails an upload only when no bytes move for `attachmentUploadIdleTimeout`.
-    private var attachmentUploadSession: URLSession?
-    static let attachmentUploadIdleTimeout: TimeInterval = 120
+    /// 30 seconds total; uploads run on `AttachmentUploadTransport`, which fails one
+    /// only when no bytes move for `AttachmentUploadTransport.idleTimeout`.
+    private var foregroundUploads: AttachmentUploadTransport?
+    /// Whether a file upload may run in the app's background session. Only the
+    /// clients the app builds for a server; test clients keep their stub configuration.
+    nonisolated private let backgroundUploadsAllowed: Bool
 
-    private func uploadSession() -> URLSession {
-        if let attachmentUploadSession { return attachmentUploadSession }
-        let configuration = session.configuration
-        configuration.timeoutIntervalForRequest = Self.attachmentUploadIdleTimeout
-        configuration.timeoutIntervalForResource = 7 * 24 * 60 * 60
-        let uploads = URLSession(configuration: configuration, delegate: trustDelegate, delegateQueue: nil)
-        attachmentUploadSession = uploads
-        return uploads
+    /// A file upload keeps going while Oppi is in the background. Not through the
+    /// in-app Tailscale node: its proxy runs in this process and stops when iOS
+    /// suspends it, so such an upload waits for Oppi to come back.
+    nonisolated var fileUploadsContinueInBackground: Bool {
+        backgroundUploadsAllowed && tailnetRoute.proxy == nil
+    }
+
+    private func uploadTransport(for body: AttachmentUploadBody) -> AttachmentUploadTransport {
+        if case .file = body, fileUploadsContinueInBackground {
+            return .background
+        }
+        if let foregroundUploads { return foregroundUploads }
+        let transport = AttachmentUploadTransport(configuration: session.configuration)
+        foregroundUploads = transport
+        return transport
     }
 
     // MARK: - Health & Auth
@@ -1567,7 +1580,6 @@ actor APIClient: ClientLogUploading {
     struct CreateUploadResponse: Decodable, Sendable {
         let uploadId: String
         let contentUrl: String
-        let maxFileBytes: Int
         let expiresAt: Int
     }
 
@@ -1629,12 +1641,14 @@ actor APIClient: ClientLogUploading {
         sessionId: String,
         attachmentId: String,
         data body: Data,
-        contentType: String = "application/octet-stream"
+        contentType: String = "application/octet-stream",
+        progress: AttachmentUploadTransport.Progress? = nil
     ) async throws -> ChatAttachmentRef {
         try await putAttachmentContent(
             path: "\(focusedSessionPath(scope: scope, sessionId: sessionId))/attachments/\(attachmentId)/content",
-            data: body,
-            contentType: contentType
+            body: .data(body),
+            contentType: contentType,
+            progress: progress
         )
     }
 
@@ -1654,42 +1668,35 @@ actor APIClient: ClientLogUploading {
         )
     }
 
+    /// Streams the file from disk; `progress` reports the upload task's sent bytes.
     func uploadSessionAttachmentContent(
         scope: SessionRouteScope,
         sessionId: String,
         attachmentId: String,
         fileURL: URL,
-        contentType: String = "application/octet-stream"
+        contentType: String = "application/octet-stream",
+        progress: AttachmentUploadTransport.Progress? = nil
     ) async throws -> ChatAttachmentRef {
         try await putAttachmentContent(
             path: "\(focusedSessionPath(scope: scope, sessionId: sessionId))/attachments/\(attachmentId)/content",
-            fileURL: fileURL,
-            contentType: contentType
+            body: .file(fileURL),
+            contentType: contentType,
+            progress: progress
         )
     }
 
     private func putAttachmentContent(
         path: String,
-        data body: Data,
-        contentType: String
-    ) async throws -> ChatAttachmentRef {
-        try await putAttachmentContent(path: path, body: .data(body), contentType: contentType)
-    }
-
-    private func putAttachmentContent(
-        path: String,
-        fileURL: URL,
-        contentType: String
-    ) async throws -> ChatAttachmentRef {
-        try await putAttachmentContent(path: path, body: .file(fileURL), contentType: contentType)
-    }
-
-    private func putAttachmentContent(
-        path: String,
         body: AttachmentUploadBody,
-        contentType: String
+        contentType: String,
+        progress: AttachmentUploadTransport.Progress?
     ) async throws -> ChatAttachmentRef {
-        let (data, response) = try await performAuthorizedAttachmentUpload(path: path, body: body, contentType: contentType)
+        let (data, response) = try await performAuthorizedAttachmentUpload(
+            path: path,
+            body: body,
+            contentType: contentType,
+            progress: progress
+        )
         try checkStatus(response, data: data)
         let parsed = try JSONDecoder().decode(UploadContentResponse.self, from: data)
         return parsed.attachment
@@ -2806,11 +2813,12 @@ actor APIClient: ClientLogUploading {
 
     /// Sends attachment bytes (a file streams from disk, never loaded) through the
     /// same auth-refresh, TLS, and error-reporting path as `performAuthorized`, on
-    /// the upload session's idle timeout.
+    /// `AttachmentUploadTransport`'s idle timeout.
     private func performAuthorizedAttachmentUpload(
         path: String,
         body: AttachmentUploadBody,
-        contentType: String
+        contentType: String,
+        progress: AttachmentUploadTransport.Progress?
     ) async throws -> (Data, URLResponse) {
         func makeRequest() throws -> URLRequest {
             var req = try URLRequest(url: self.makeURL(path: path))
@@ -2823,24 +2831,29 @@ actor APIClient: ClientLogUploading {
         var request = try makeRequest()
         var current = try await authorizedToken()
         ServerAuthorization.apply(token: current, to: &request)
-        var (data, response) = try await performUpload(for: request, body: body)
+        var (data, response) = try await performUpload(for: request, body: body, progress: progress)
         if authSessionBox.get() != nil, (response as? HTTPURLResponse)?.statusCode == 401 {
             current = try await authorizedToken(forceRefresh: true, replacing: current)
             var retry = try makeRequest()
             ServerAuthorization.apply(token: current, to: &retry)
-            (data, response) = try await performUpload(for: retry, body: body)
+            (data, response) = try await performUpload(for: retry, body: body, progress: progress)
         }
         return (data, response)
     }
 
-    private func performUpload(for request: URLRequest, body: AttachmentUploadBody) async throws -> (Data, URLResponse) {
+    private func performUpload(
+        for request: URLRequest,
+        body: AttachmentUploadBody,
+        progress: AttachmentUploadTransport.Progress?
+    ) async throws -> (Data, URLResponse) {
         let rejections = trustDelegate.rejectionCount
+        let transport = uploadTransport(for: body)
         do {
             switch body {
             case .data(let data):
-                return try await uploadSession().upload(for: request, from: data)
+                return try await transport.upload(request, from: data, trust: trustDelegate, progress: progress)
             case .file(let fileURL):
-                return try await uploadSession().upload(for: request, fromFile: fileURL)
+                return try await transport.upload(request, fromFile: fileURL, trust: trustDelegate, progress: progress)
             }
         } catch {
             let error = namingCertificateRejection(error, since: rejections)

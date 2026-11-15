@@ -64,7 +64,6 @@ export interface SessionMessageQueueCoordinatorDeps {
   getActiveSession: (key: string) => SessionMessageQueueState | undefined;
   broadcast: (key: string, message: ServerMessage) => void;
   resolveWorkspaceRoot?: (session: Session) => string | null | Promise<string | null>;
-  maxTurnAttachmentBytes?: number;
   uploadStoreConfig?: UploadStoreConfigResolved;
 }
 

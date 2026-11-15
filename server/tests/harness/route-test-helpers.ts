@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import type { IncomingMessage } from "node:http";
 import { PassThrough, Readable } from "node:stream";
 import { MobileRendererRegistry } from "../../src/mobile-renderer.js";
@@ -57,9 +58,15 @@ export function makeRequest(body?: unknown): IncomingMessage {
 
 export function makeRawRequest(body: Buffer | string): IncomingMessage {
   const req = Readable.from([body]) as unknown as IncomingMessage & {
-    socket?: { remoteAddress?: string };
+    socket?: EventEmitter & { remoteAddress?: string; setTimeout: () => unknown };
   };
-  req.socket = { remoteAddress: "127.0.0.1" };
+  // An idle socket: upload content routes arm and clear an idle timeout on it.
+  req.socket = Object.assign(new EventEmitter(), {
+    remoteAddress: "127.0.0.1",
+    setTimeout() {
+      return this;
+    },
+  });
   req.headers = {};
   return req;
 }

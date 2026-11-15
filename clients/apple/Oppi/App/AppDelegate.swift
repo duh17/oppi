@@ -45,12 +45,31 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         LiveActivityManager.shared.startObservingSystem()
         // Before any scene connects, so it sees every phase change.
         _ = AppScenePhase.shared
+        // Reconnect attachment uploads that outlived the last run, so a send of the
+        // same file picks them up instead of starting over.
+        _ = AttachmentUploadTransport.background
         app = OppiApp()
         // Before `didFinishLaunching` returns: a notification response
         // delivered during launch must already have its destination.
         AttentionNotificationService.shared.opener = app?.root.opener
         adoptScenesSavedBySwiftUI()
         return true
+    }
+
+    /// iOS woke or relaunched Oppi because an attachment upload in the background
+    /// session finished. Touching the session reconnects it; its delegate takes the
+    /// results and calls `completionHandler` once they are all delivered.
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        guard identifier == AttachmentUploadTransport.backgroundIdentifier else {
+            completionHandler()
+            return
+        }
+        nonisolated(unsafe) let completion = completionHandler
+        AttachmentUploadTransport.background.finishEventsWhenDelivered { completion() }
     }
 
     /// The window's opener, for entry points that run before a scene lookup

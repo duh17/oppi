@@ -422,23 +422,16 @@ enum ComposerShared {
         let mimeType = PendingAttachment.mimeType(for: url, contentType: values?.contentType)
         let displayName = values?.name ?? url.lastPathComponent
 
-        if mimeType.lowercased().hasPrefix("video/") {
-            guard let store else {
-                throw PhotoLibraryMediaImporter.ImportError.missingDraftStore
-            }
+        // Anything but a photo stays a file on disk and uploads by streaming it, so a
+        // multi-gigabyte recording or archive is never read into memory. Photos load
+        // for their thumbnail and annotation.
+        let isVideo = mimeType.lowercased().hasPrefix("video/")
+        if isVideo && store == nil {
+            throw PhotoLibraryMediaImporter.ImportError.missingDraftStore
+        }
+        if !mimeType.lowercased().hasPrefix("image/"), let store {
             let destination = try store.importAttachmentFile(from: url)
-            do {
-                return try PhotoLibraryMediaImporter.makePendingAttachment(
-                    fromCopiedFile: destination,
-                    kind: .video,
-                    displayName: displayName,
-                    mimeType: mimeType,
-                    store: store
-                )
-            } catch {
-                store.deleteImportedAttachmentFile(destination)
-                throw error
-            }
+            return PendingAttachment.localFile(name: displayName, fileURL: destination, mimeType: mimeType)
         }
 
         let data = try await Task.detached {

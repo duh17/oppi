@@ -508,15 +508,19 @@ describe("identity module", () => {
     expect(rotateToken).not.toHaveBeenCalled();
   });
 
-  it("includes uploadProtocol in GET /server/info", async () => {
+  it.each([
+    {
+      caps: "owner-set caps",
+      uploadStore: { maxFileBytes: 123, maxTurnBytes: 456 },
+      expected: { version: 1, maxFileBytes: 123, maxTurnBytes: 456 },
+    },
+    { caps: "no caps (free disk space limits uploads)", uploadStore: {}, expected: { version: 1 } },
+  ])("advertises uploadProtocol with $caps in GET /server/info", async ({ uploadStore, expected }) => {
     const ctx = {
       storage: {
         getConfig: vi.fn(() => ({
           configVersion: 2,
-          uploadStore: {
-            maxFileBytes: 123,
-            maxTurnBytes: 456,
-          },
+          uploadStore,
           images: {
             autoResize: true,
           },
@@ -555,7 +559,7 @@ describe("identity module", () => {
     expect(handled).toBe(true);
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body) as {
-      uploadProtocol: { version: number; maxFileBytes: number; maxTurnBytes: number };
+      uploadProtocol: { version: number; maxFileBytes?: number; maxTurnBytes?: number };
       images: { autoResize: boolean };
       capabilities: {
         extensionNativeUI: {
@@ -567,7 +571,7 @@ describe("identity module", () => {
         piFileEditing: { version: number; maxBytes: number };
       };
     };
-    expect(body.uploadProtocol).toEqual({ version: 1, maxFileBytes: 123, maxTurnBytes: 456 });
+    expect(body.uploadProtocol).toEqual(expected);
     expect(body.images).toEqual({ autoResize: true });
     expect(body.capabilities.extensionNativeUI).toEqual({
       version: 1,

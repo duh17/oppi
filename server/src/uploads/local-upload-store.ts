@@ -1,8 +1,20 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
-import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  statfs,
+  writeFile,
+} from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import type { IncomingMessage } from "node:http";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 import { HttpStatusError } from "../http-status-error.js";
 import type { AttachmentKind, ChatAttachmentRef, ServerConfig } from "../types.js";
@@ -32,8 +44,10 @@ export interface UploadRecord {
 
 export interface UploadStoreConfigResolved {
   rootPath: string;
-  maxFileBytes: number;
-  maxTurnBytes: number;
+  /** Owner-set cap on one file; absent means only free disk space limits it. */
+  maxFileBytes?: number;
+  /** Owner-set cap on one turn's attachments; absent means no cap. */
+  maxTurnBytes?: number;
   unusedTtlMs: number;
   retainedTtlMs: number;
   allowedMimeTypes: string[];
@@ -47,7 +61,56 @@ export interface UploadStoreGcResult {
 
 const ORPHAN_BLOB_GC_GRACE_MS = 5 * 60 * 1000;
 
+/**
+ * A content PUT that sends nothing for this long is a dead connection (the phone lost its
+ * network without a reset). Its socket closes, the partial file goes, and the phone's
+ * retry starts a fresh upload. Long uploads that keep sending never hit it.
+ */
+const UPLOAD_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
+
+const GIB = 1024 * 1024 * 1024;
+
 export class UploadStoreError extends HttpStatusError {}
+
+/**
+ * Free space an upload must leave on the upload store's volume: 2 GiB or 5% of the
+ * volume, whichever is larger. Uploads have no fixed size limit; this keeps a large one
+ * from filling the disk the server, its sessions, and the system need.
+ */
+export function uploadDiskReserveBytes(volumeBytes: number): number {
+  return Math.max(2 * GIB, Math.ceil(volumeBytes * 0.05));
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= GIB) return `${(bytes / GIB).toFixed(1)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} bytes`;
+}
+
+/** 507 when writing `sizeBytes` would leave less than the reserve free on the store's volume. */
+async function assertDiskSpaceFor(rootPath: string, sizeBytes: number): Promise<void> {
+  const volume = await statfs(rootPath);
+  const availableBytes = volume.bavail * volume.bsize;
+  const reserveBytes = uploadDiskReserveBytes(volume.blocks * volume.bsize);
+  if (sizeBytes <= availableBytes - reserveBytes) return;
+  throw new UploadStoreError(
+    507,
+    `Not enough free disk space on the server for this ${formatBytes(sizeBytes)} upload: ` +
+      `${formatBytes(availableBytes)} free, and uploads always leave ${formatBytes(reserveBytes)} free.`,
+  );
+}
+
+function isNoSpaceError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === "ENOSPC";
+}
+
+function fileCapError(maxFileBytes: number): UploadStoreError {
+  return new UploadStoreError(
+    413,
+    `Upload exceeds this server's ${formatBytes(maxFileBytes)} file size limit (uploadStore.maxFileBytes)`,
+  );
+}
 
 function sanitizeFileName(name: string): string {
   const base = basename(name || "").trim();
@@ -199,9 +262,25 @@ function recordPathFor(rootPath: string, uploadId: string): string {
   return join(rootPath, "records", `${uploadId}.json`);
 }
 
+/** Each content PUT writes its own partial file, so a retry never shares one with a dying attempt. */
 function tmpPathFor(rootPath: string, uploadId: string): string {
-  return join(rootPath, "tmp", `${uploadId}.part`);
+  return join(rootPath, "tmp", `${uploadId}.${randomBytes(4).toString("hex")}.part`);
 }
+
+/**
+ * Partial files of content PUTs running in this process. Garbage collection keeps these and
+ * removes every other partial file: a failed PUT deletes its own, so the rest are leftovers
+ * of a crash.
+ */
+const writingTmpPaths = new Set<string>();
+
+/**
+ * Uploads with a content PUT running. A created upload nothing writes to for an hour was
+ * abandoned (the phone gave up and created a new one); garbage collection removes it then
+ * rather than at its 24-hour expiry.
+ */
+const writingUploadIds = new Map<string, number>();
+const ABANDONED_CREATED_UPLOAD_MS = 60 * 60 * 1000;
 
 async function ensureDirs(rootPath: string): Promise<void> {
   await mkdir(join(rootPath, "records"), { recursive: true });
@@ -272,8 +351,8 @@ export function resolveUploadStoreConfig(config: ServerConfig): UploadStoreConfi
   const unusedTtlMs = config.uploadStore?.unusedTtlMs ?? 24 * 60 * 60 * 1000;
   return {
     rootPath,
-    maxFileBytes: config.uploadStore?.maxFileBytes ?? 50 * 1024 * 1024,
-    maxTurnBytes: config.uploadStore?.maxTurnBytes ?? 100 * 1024 * 1024,
+    maxFileBytes: config.uploadStore?.maxFileBytes,
+    maxTurnBytes: config.uploadStore?.maxTurnBytes,
     unusedTtlMs,
     retainedTtlMs: config.uploadStore?.retainedTtlMs ?? unusedTtlMs,
     allowedMimeTypes: normalizeAllowedMimeTypes(config.uploadStore?.allowedMimeTypes),
@@ -295,8 +374,8 @@ export async function createUploadRecord(args: {
   if (!Number.isInteger(args.sizeBytes) || args.sizeBytes <= 0) {
     throw new UploadStoreError(400, "sizeBytes must be a positive integer");
   }
-  if (args.sizeBytes > args.config.maxFileBytes) {
-    throw new UploadStoreError(413, "Upload exceeds max file size");
+  if (args.config.maxFileBytes !== undefined && args.sizeBytes > args.config.maxFileBytes) {
+    throw fileCapError(args.config.maxFileBytes);
   }
   const safeName = sanitizeFileName(args.name);
   if (!safeName) {
@@ -304,6 +383,8 @@ export async function createUploadRecord(args: {
   }
 
   const declaredMimeType = validateAllowedMimeType(args.config, args.mimeType, "Declared");
+  await ensureDirs(args.config.rootPath);
+  await assertDiskSpaceFor(args.config.rootPath, args.sizeBytes);
   const now = Date.now();
   const id = `upl_${randomBytes(9).toString("hex")}`;
   const record: UploadRecord = {
@@ -358,41 +439,68 @@ export async function writeUploadContent(args: {
   }
 
   await ensureDirs(args.config.rootPath);
+  // Space may have gone since the upload was created (another upload, a session's files).
+  await assertDiskSpaceFor(args.config.rootPath, record.declaredSizeBytes);
   const tmpPath = tmpPathFor(args.config.rootPath, args.uploadId);
-  const writer = createWriteStream(tmpPath, { flags: "w" });
   const hash = createHash("sha256");
   const headerChunks: Buffer[] = [];
+  let headerBytes = 0;
   let totalBytes = 0;
+  const { maxFileBytes } = args.config;
+  // Counts, hashes, and caps the body as it passes to disk. `pipeline` holds the request
+  // while the disk catches up, so memory stays flat whatever the upload's size.
+  const meter = new Transform({
+    transform(chunk: Buffer | string, _encoding, callback) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.length;
+      if (maxFileBytes !== undefined && totalBytes > maxFileBytes) {
+        callback(fileCapError(maxFileBytes));
+        return;
+      }
+      // The free-space check covered the declared size; never write past it.
+      if (totalBytes > record.declaredSizeBytes) {
+        callback(
+          new UploadStoreError(
+            400,
+            `Upload size mismatch: expected ${record.declaredSizeBytes}, got more`,
+          ),
+        );
+        return;
+      }
+      if (headerBytes < 64) {
+        const head = buffer.subarray(0, 64 - headerBytes);
+        headerChunks.push(head);
+        headerBytes += head.length;
+      }
+      hash.update(buffer);
+      callback(null, buffer);
+    },
+  });
 
+  const socket = args.req.socket as IncomingMessage["socket"] | undefined;
+  const onIdle = (): void => {
+    args.req.destroy(new UploadStoreError(408, "Upload stalled"));
+  };
+  socket?.setTimeout(UPLOAD_IDLE_TIMEOUT_MS, onIdle);
+  writingTmpPaths.add(tmpPath);
+  writingUploadIds.set(args.uploadId, (writingUploadIds.get(args.uploadId) ?? 0) + 1);
   try {
-    await new Promise<void>((resolve, reject) => {
-      args.req.on("data", (chunk: Buffer | string) => {
-        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        totalBytes += buffer.length;
-        if (totalBytes > args.config.maxFileBytes) {
-          reject(new UploadStoreError(413, "Upload exceeds max file size"));
-          args.req.destroy();
-          return;
-        }
-        const headerBytes = headerChunks.reduce((sum, item) => sum + item.length, 0);
-        if (headerBytes < 64) {
-          headerChunks.push(buffer.subarray(0, Math.max(0, 64 - headerBytes)));
-        }
-        hash.update(buffer);
-        writer.write(buffer);
-      });
-      args.req.on("end", () => {
-        writer.end(() => resolve());
-      });
-      args.req.on("error", reject);
-      writer.on("error", reject);
-    });
+    await pipeline(args.req, meter, createWriteStream(tmpPath, { flags: "w" }));
   } catch (error) {
+    // The upload stays "created": iOS resends a dropped background upload to the same URL,
+    // and that PUT starts over in a fresh partial file.
     await rm(tmpPath, { force: true }).catch(() => undefined);
-    if (error instanceof UploadStoreError) {
-      throw error;
+    if (isNoSpaceError(error)) {
+      throw new UploadStoreError(507, "The server ran out of disk space during the upload");
     }
     throw error;
+  } finally {
+    socket?.setTimeout(0);
+    socket?.off("timeout", onIdle);
+    writingTmpPaths.delete(tmpPath);
+    const writers = (writingUploadIds.get(args.uploadId) ?? 1) - 1;
+    if (writers > 0) writingUploadIds.set(args.uploadId, writers);
+    else writingUploadIds.delete(args.uploadId);
   }
 
   if (totalBytes !== record.declaredSizeBytes) {
@@ -415,6 +523,13 @@ export async function writeUploadContent(args: {
       415,
       `Upload MIME type mismatch: declared ${declaredMimeType}, detected ${detectedMimeType}`,
     );
+  }
+
+  // Another PUT of the same upload (a resend overlapping the attempt it replaced) got there first.
+  const current = await getUploadRecord(args.config, args.uploadId);
+  if (current?.status === "complete") {
+    await rm(tmpPath, { force: true }).catch(() => undefined);
+    return current;
   }
 
   const sha256 = hash.digest("hex");
@@ -500,7 +615,6 @@ export async function garbageCollectUploadStore(
   await ensureDirs(config.rootPath);
 
   const liveBlobPaths = new Set<string>();
-  const liveTmpPaths = new Set<string>();
   const recordPaths = await collectFiles(join(config.rootPath, "records"));
 
   let removedRecords = 0;
@@ -516,13 +630,13 @@ export async function garbageCollectUploadStore(
       continue;
     }
 
-    const expired = isUploadExpired(record, now);
-    if (expired) {
+    const abandoned =
+      record.status === "created" &&
+      !writingUploadIds.has(record.id) &&
+      record.updatedAt <= now - ABANDONED_CREATED_UPLOAD_MS;
+    if (isUploadExpired(record, now) || abandoned) {
       if (await rmIfExists(recordPath)) {
         removedRecords += 1;
-      }
-      if (await rmIfExists(tmpPathFor(config.rootPath, record.id))) {
-        removedTmpFiles += 1;
       }
       continue;
     }
@@ -530,13 +644,10 @@ export async function garbageCollectUploadStore(
     if (record.blobPath) {
       liveBlobPaths.add(record.blobPath);
     }
-    if (record.status === "created") {
-      liveTmpPaths.add(tmpPathFor(config.rootPath, record.id));
-    }
   }
 
   for (const tmpPath of await collectFiles(join(config.rootPath, "tmp"))) {
-    if (liveTmpPaths.has(tmpPath)) {
+    if (writingTmpPaths.has(tmpPath)) {
       continue;
     }
     if (await rmIfExists(tmpPath)) {

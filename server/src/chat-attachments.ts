@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import { copyFile, mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, join, relative, resolve } from "node:path";
@@ -177,7 +178,9 @@ export async function materializeChatAttachments(
       if (!record.blobPath) {
         throw new Error(`Upload blob missing for ${ref.id}`);
       }
-      await copyFile(record.blobPath, destination);
+      // A clone where the volume supports it (APFS, Btrfs): a multi-gigabyte upload
+      // lands in the workspace instantly and without a second copy's disk space.
+      await copyFile(record.blobPath, destination, fsConstants.COPYFILE_FICLONE);
       const relPath = relative(workspaceRootReal, destination).replaceAll("\\", "/");
       materialized.push({
         id: ref.id,

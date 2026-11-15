@@ -567,18 +567,21 @@ extension ChatViewController {
     private func uploadPendingLocalAttachments(
         _ sourceAttachments: [PendingAttachment]
     ) async throws -> [ChatAttachmentRef] {
-        guard let api = connection.apiClient else {
+        guard connection.apiClient != nil else {
             throw APIError.server(status: 503, message: "No server connection available")
         }
         guard let routeScope = focusedRouteScope else {
             throw TreeNavigationError.sessionNotReady
         }
+        // Each try takes the connection's current client: a retry after the route
+        // changed (LAN to Tailscale) goes the new way.
+        let connection = connection
         return try await PendingAttachmentUploader.upload(
             sourceAttachments,
-            api: api,
+            api: { connection.apiClient },
             scope: routeScope,
             sessionId: sessionId,
-            onProgress: { [weak self] in self?.model.attachmentPreparationText = $0 }
+            onProgress: { [weak self] in self?.model.attachmentPreparationText = $0.statusText }
         )
     }
 

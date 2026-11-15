@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -30,12 +31,12 @@ function makeRequest(body: Buffer): IncomingMessage {
   return stream as unknown as IncomingMessage;
 }
 
-async function waitForFile(path: string): Promise<void> {
+async function waitForPartialFile(root: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (existsSync(path)) return;
+    if (existsSync(join(root, "tmp")) && readdirSync(join(root, "tmp")).length > 0) return;
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
-  throw new Error(`Timed out waiting for file: ${path}`);
+  throw new Error(`Timed out waiting for a partial file in ${root}/tmp`);
 }
 
 function pngBytes(): Buffer {
@@ -279,7 +280,7 @@ describe("local upload store", () => {
       status: 400,
       message: "Upload size mismatch: expected 5, got 4",
     });
-    expect(existsSync(join(root, "tmp", `${record.id}.part`))).toBe(false);
+    expect(readdirSync(join(root, "tmp"))).toEqual([]);
     expect(
       JSON.parse(readFileSync(join(root, "records", `${record.id}.json`), "utf8")),
     ).toMatchObject({ status: "created", declaredSizeBytes: 5 });
@@ -314,7 +315,6 @@ describe("local upload store", () => {
       purpose: "chat_attachment",
     });
     const request = new PassThrough() as unknown as IncomingMessage;
-    const tmpPath = join(root, "tmp", `${record.id}.part`);
     const write = writeUploadContent({
       config,
       workspaceId: "ws-1",
@@ -322,14 +322,14 @@ describe("local upload store", () => {
       req: request,
     });
 
-    await waitForFile(tmpPath);
+    await waitForPartialFile(root);
     request.write(Buffer.from("123456"));
     await expect(write).rejects.toMatchObject({
       status: 413,
-      message: "Upload exceeds max file size",
+      message: "Upload exceeds this server's 5 bytes file size limit (uploadStore.maxFileBytes)",
     });
     expect(request.destroyed).toBe(true);
-    expect(existsSync(tmpPath)).toBe(false);
+    expect(readdirSync(join(root, "tmp"))).toEqual([]);
     expect(
       JSON.parse(readFileSync(join(root, "records", `${record.id}.json`), "utf8")),
     ).toMatchObject({ status: "created" });
@@ -457,7 +457,7 @@ describe("local upload store", () => {
         req: makeRequest(Buffer.from("hello")),
       }),
     ).rejects.toMatchObject({ status: 409, message: "Upload has expired" });
-    expect(existsSync(join(root, "tmp", `${record.id}.part`))).toBe(false);
+    expect(readdirSync(join(root, "tmp"))).toEqual([]);
   });
 
   it("garbage-collects expired records plus orphan tmp files and blobs without breaking dedupe", async () => {

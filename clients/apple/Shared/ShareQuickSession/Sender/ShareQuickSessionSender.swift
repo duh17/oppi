@@ -248,8 +248,10 @@ actor ShareQuickSessionSender {
 
     static func live(server: ShareQuickSessionServer) -> ShareQuickSessionSender {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 15
-        configuration.timeoutIntervalForResource = 30
+        // Idle-only: a shared screen recording can take minutes to send, and a
+        // total-duration limit cut every upload over 30 seconds short.
+        configuration.timeoutIntervalForRequest = 60
+        configuration.timeoutIntervalForResource = 7 * 24 * 60 * 60
         configuration.waitsForConnectivity = false
         let delegate = ShareQuickSessionTrustDelegate(
             pinnedLeafFingerprint: server.tlsCertFingerprint
@@ -443,35 +445,22 @@ actor ShareQuickSessionSender {
         }
         struct CreateUploadResponse: Decodable {
             let uploadId: String
-            let maxFileBytes: Int
         }
         struct UploadResponse: Decodable { let attachment: UploadAttachment }
 
-        let createData: Data
-        do {
-            createData = try await request(
-                server: server,
-                method: "POST",
-                path: ["workspaces", workspaceID, "sessions", sessionID, "attachments"],
-                jsonBody: CreateUploadBody(
-                    name: attachment.name,
-                    mimeType: attachment.mimeType,
-                    sizeBytes: sizeBytes
-                )
-            )
-        } catch ShareQuickSessionSendError.server(let status, _) where status == 413 {
-            throw ShareQuickSessionSendError.attachmentTooLarge(
+        // The server refuses a size it can't take (an owner's cap, or too little free
+        // disk) with a message that says which.
+        let createData = try await request(
+            server: server,
+            method: "POST",
+            path: ["workspaces", workspaceID, "sessions", sessionID, "attachments"],
+            jsonBody: CreateUploadBody(
                 name: attachment.name,
-                maxFileBytes: nil
+                mimeType: attachment.mimeType,
+                sizeBytes: sizeBytes
             )
-        }
+        )
         let createResponse = try JSONDecoder().decode(CreateUploadResponse.self, from: createData)
-        guard sizeBytes <= createResponse.maxFileBytes else {
-            throw ShareQuickSessionSendError.attachmentTooLarge(
-                name: attachment.name,
-                maxFileBytes: createResponse.maxFileBytes
-            )
-        }
         let uploadData = try await uploadFile(
             server: server,
             method: "PUT",
@@ -615,7 +604,6 @@ actor ShareQuickSessionSender {
 enum ShareQuickSessionSendError: LocalizedError {
     case emptyDraft
     case invalidAttachment(String)
-    case attachmentTooLarge(name: String, maxFileBytes: Int?)
     case invalidResponse
     case server(status: Int, message: String)
 
@@ -625,12 +613,6 @@ enum ShareQuickSessionSendError: LocalizedError {
             return "Add text or an attachment before sending."
         case .invalidAttachment(let name):
             return "\(name) is not a readable file."
-        case .attachmentTooLarge(let name, let maxFileBytes):
-            if let maxFileBytes {
-                let limit = ByteCountFormatter.string(fromByteCount: Int64(maxFileBytes), countStyle: .file)
-                return "\(name) is larger than the server’s \(limit) upload limit."
-            }
-            return "\(name) exceeds the server’s upload limit."
         case .invalidResponse:
             return "The server returned an invalid response."
         case .server(_, let message):
