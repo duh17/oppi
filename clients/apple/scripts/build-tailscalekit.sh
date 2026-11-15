@@ -13,8 +13,13 @@
 # Reuse order (cache/vendor hits do not require go, make, or xcodebuild):
 #   1. Vendor stamp matches the pin → exit 0 (seed the cache if it is missing)
 #   2. Else the shared cache matches the pin → copy into Vendor
-#   3. Else build the Go c-archives with OMIT_FEATURES, make ios-fat, write
-#      Vendor and the shared cache
+#   3. Else build the Go c-archives with OMIT_FEATURES, make ios and ios-sim,
+#      assemble the xcframework with each slice's dSYM, write Vendor and the
+#      shared cache
+#
+# Each slice carries its dSYM (xcodebuild -create-xcframework -debug-symbols),
+# so an archive that embeds the framework copies the dSYM into its dSYMs folder
+# and crashes inside TailscaleKit symbolicate.
 #
 # The output is not tracked: the Go c-archive makes it far larger than the
 # repository's 5 MB file limit. A cache miss needs Go (cgo) and Xcode. Go
@@ -34,7 +39,7 @@ LIBTAILSCALE_REPO="https://github.com/tailscale/libtailscale.git"
 LIBTAILSCALE_COMMIT="d1dc45d039edb7759ecbee6ba2aea0c4bca884b8"
 # Bump the suffix whenever OMIT_FEATURES or GO_MODULE_FIXES changes so stale
 # vendor/cache copies rebuild.
-BUILD_ID="$LIBTAILSCALE_COMMIT-omit-v2-mods-v1"
+BUILD_ID="$LIBTAILSCALE_COMMIT-omit-v2-mods-v1-dsym-v1"
 
 # libtailscale d1dc45d still requires dependency versions with published Go
 # advisories (x/net HTTP/2 and html, klauspost/compress frame panic, x/crypto
@@ -193,8 +198,11 @@ export GOEXPERIMENT="nojsonv2"
 # The upstream Makefile hardcodes `-tags ios` and command-line tags override
 # GOFLAGS, so build its three c-archive targets here with the omit tags (same
 # flags and CC wrappers otherwise). -trimpath keeps this machine's module-cache
-# paths out of the shipped binary. Its archive rules have no prerequisites, so
-# `make ios-fat` keeps these files and only builds the frameworks + xcframework.
+# paths out of the shipped binary. Unlike upstream, keep Go's DWARF (no
+# `-ldflags -w`): the Darwin linker leaves it in the archive's object, so only
+# the framework's dSYM carries it and the shipped binary does not grow. Its
+# archive rules have no prerequisites, so `make ios` and `make ios-sim` keep
+# these files and only build the frameworks.
 go_tags="ios"
 for feature in "${OMIT_FEATURES[@]}"; do
   go_tags+=",ts_omit_$feature"
@@ -202,25 +210,36 @@ done
 build_archive() {
   local out="$1" goarch="$2" cc="$3"
   (cd "$SRC_DIR" && CGO_ENABLED=1 GOOS=ios GOARCH="$goarch" CC="$SRC_DIR/swift/script/$cc" \
-    go build -v -trimpath -ldflags -w -tags "$go_tags" -o "$out" -buildmode=c-archive)
+    go build -v -trimpath -tags "$go_tags" -o "$out" -buildmode=c-archive)
 }
 build_archive libtailscale_ios.a arm64 clangwrap-ios.sh
 build_archive libtailscale_ios_sim_arm64.a arm64 clangwrap-ios-sim-arm.sh
 build_archive libtailscale_ios_sim_x86_64.a amd64 clangwrap-ios-sim-x86.sh
 
-(cd "$SRC_DIR/swift" && make ios-fat)
+(cd "$SRC_DIR/swift" && make ios-sim ios)
 
-built="$SRC_DIR/swift/build/Build/Products/Release-iphonefat/TailscaleKit.xcframework"
-[[ -d "$built" ]] || fail "make ios-fat did not produce $built"
-# Fail if an upstream Makefile change rebuilt the archives without the omit tags.
-if grep -q "github.com/aws/aws-sdk-go-v2" "$built/ios-arm64/TailscaleKit.framework/TailscaleKit"; then
-  fail "TailscaleKit still contains omitted features; check libtailscale's Makefile archive rules"
-fi
-# Xcode does not strip prebuilt frameworks it embeds. Drop local symbols (~2 MB);
-# Go tracebacks use pclntab, and exported C/Swift symbols stay.
-for binary in "$built"/*/TailscaleKit.framework/TailscaleKit; do
-  strip -x "$binary"
+products="$SRC_DIR/swift/build/Build/Products"
+built="$products/Release-iphonefat/TailscaleKit.xcframework"
+xcframework_args=()
+for sdk in iphoneos iphonesimulator; do
+  framework="$products/Release-$sdk/TailscaleKit.framework"
+  dsym="$products/Release-$sdk/TailscaleKit.framework.dSYM"
+  [[ -d "$framework" ]] || fail "make did not produce $framework"
+  # Release builds with dwarf-with-dsym; dsymutil ran at link time, before the strip below.
+  [[ -d "$dsym" ]] || fail "make did not produce $dsym"
+  # Fail if an upstream Makefile change rebuilt the archives without the omit tags.
+  if grep -q "github.com/aws/aws-sdk-go-v2" "$framework/TailscaleKit"; then
+    fail "TailscaleKit still contains omitted features; check libtailscale's Makefile archive rules"
+  fi
+  # Xcode does not strip prebuilt frameworks it embeds. Drop local and debug
+  # symbols (~2 MB); the dSYM keeps them, Go tracebacks use pclntab, and
+  # exported C/Swift symbols stay. Stripping keeps the UUID the dSYM matches.
+  strip -x -S "$framework/TailscaleKit"
+  xcframework_args+=(-framework "$framework" -debug-symbols "$dsym")
 done
+rm -rf "$built"
+mkdir -p "$(dirname "$built")"
+xcodebuild -create-xcframework "${xcframework_args[@]}" -output "$built"
 
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
