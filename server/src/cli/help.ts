@@ -2163,9 +2163,12 @@ const HELP_TOPICS: HelpTopic[] = [
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     notes: [
       "Names a row by its ID, its name, or its plugin's extension name; a name two rows share needs the ID.",
-      "A classic extension (a Pi package with a plugin included) is turned on in Pi's settings, and its plugin reloads. A plugin of its own is turned on in experimental.durableExtensions.disabled in the server config: new sessions follow at once, an open session at its next attach (open, resume, or server restart). No restart needed.",
+      "A classic extension (a Pi package with a plugin included) is turned on in Pi's settings, and its plugin reloads. A plugin of its own is turned on in experimental.durableExtensions.disabled in the server config, and a built-in that ships off (the example-* plugins) in experimental.durableExtensions.enabled: new sessions follow at once, an open session at its next attach (open, resume, or server restart). No restart needed.",
     ],
-    examples: [{ command: "oppi extensions enable sql-explorer" }],
+    examples: [
+      { command: "oppi extensions enable sql-explorer" },
+      { command: "oppi extensions enable example-bookmarks" },
+    ],
   },
   {
     path: ["extensions", "disable"],
@@ -2175,7 +2178,7 @@ const HELP_TOPICS: HelpTopic[] = [
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     notes: [
       "Names a row as enable does. A classic extension (a Pi package with a plugin included) is turned off in Pi's settings, and its plugin is uninstalled by the reload that follows.",
-      "A plugin of its own stays installed so its pending work can finish; sessions just stop selecting it and its tools. A saved Agent that selects it starts without it and gets a session warning. Writes experimental.durableExtensions.disabled in the server config. New sessions follow at once; an open session at its next attach. No restart needed.",
+      "A plugin of its own stays installed so its pending work can finish; sessions just stop selecting it and its tools. A saved Agent that selects it starts without it and gets a session warning. Writes experimental.durableExtensions.disabled in the server config (for an example-* plugin, removes it from experimental.durableExtensions.enabled). New sessions follow at once; an open session at its next attach. No restart needed.",
       "A required built-in (plugin.required in the list) cannot be disabled.",
     ],
     examples: [{ command: "oppi extensions disable sql-explorer" }],

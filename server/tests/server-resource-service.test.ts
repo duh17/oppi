@@ -537,7 +537,7 @@ describe("ServerResourceService mutations and skill details", () => {
         listPlugins: async () => {
           throw new Error("Oppi's built-in plugins failed to load: ask (server.ts): boom");
         },
-        setPluginEnabled: () => undefined,
+        setPluginEnabled: async () => undefined,
       },
     });
 

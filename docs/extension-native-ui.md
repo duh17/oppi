@@ -378,6 +378,8 @@ In managed sessions Oppi creates the `ctx.ui` bridge, so the server translates e
 
 A server plugin can publish a composable surface: a pill in the strip above or below the composer, and a drawer of sections with actions. Define it with `surface()` from `oppi/v1` and publish it with `panel.publish({ surfaces: oppiHost().surfaces(env) }, state)`. A section is one of the closed composites (`statusCard`, `checklist`, `dataTable`, `actionBar`) or a `blocks` section, whose `body` is a tree of the nodes below. The pill, when the surface has one, is one row of inline nodes. The server rejects a surface that breaks a rule; it never repairs one.
 
+A UI plugin example is coming. The shipped [example plugins](extensions.md#example-plugins) cover tools and state.
+
 The drawer has a maximum height and scrolls. While its body is taller than that, the drawer's header offers full screen: every section without the height cap, following the surface's updates, with working actions.
 
 A surface stays until the plugin ends it, its deadline passes, or the session ends. A client that reconnects is sent the surfaces still live and drops any that ended while it was away. A tap on a surface that has already ended closes it on the client; no handler runs.

@@ -32,9 +32,7 @@ export async function loadDurableHarness(owner: DurableHarnessOwner): Promise<Du
   const runtime = new DurableHarness(storage.getDataDir());
   runtime.onHostOpened = (host) => owner.fenceStopped([host]);
   runtime.onHostRecovered = (host, failure) => owner.recoverSessions(host, failure);
-  runtime.bindDisabledExtensions(
-    () => storage.getConfig().experimental?.durableExtensions?.disabled ?? [],
-  );
+  runtime.bindExtensionSwitches(() => storage.getConfig().experimental?.durableExtensions ?? {});
   runtime.bindThreads(new DurableThreads({ runtime, storage, ...owner.threads }));
   runtime.bindSessions({
     sessionIdOf: (storeId, conversationId) =>

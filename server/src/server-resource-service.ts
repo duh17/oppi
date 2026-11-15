@@ -145,7 +145,7 @@ export interface ServerPluginSummary {
 export interface ServerPluginCatalog {
   listPlugins(): Promise<PluginCatalog>;
   /** Turn the installed extension `name` on or off for workspace sessions. */
-  setPluginEnabled(name: string, enabled: boolean): void;
+  setPluginEnabled(name: string, enabled: boolean): Promise<void>;
 }
 
 export interface ServerExtensionDetail {
@@ -513,7 +513,7 @@ export class ServerResourceService {
       const resource = this.findResourceById("extension", context.extensions, id);
       this.writeResourceEnabled(context, resource, "extensions", enabled);
       const attached = rows.attached.get(id)?.extension;
-      if (enabled && attached !== undefined) this.plugins?.setPluginEnabled(attached, true);
+      if (enabled && attached !== undefined) await this.plugins?.setPluginEnabled(attached, true);
       await this.finishSettingsWrite(context.settingsManager);
       const latest = await this.resolveContext();
       const authoritative = await this.buildExtensionCatalog(latest);
@@ -531,7 +531,7 @@ export class ServerResourceService {
   async enableAttachedPlugin(id: string): Promise<void> {
     await this.withMutationLock(async () => {
       const name = (await this.pluginRows(await this.resolveContext())).attached.get(id)?.extension;
-      if (name !== undefined) this.plugins?.setPluginEnabled(name, true);
+      if (name !== undefined) await this.plugins?.setPluginEnabled(name, true);
     });
   }
 
@@ -549,7 +549,7 @@ export class ServerResourceService {
       throw new ServerResourceConflictError(
         `${plugin.name} is required by the server and cannot be disabled`,
       );
-    this.plugins.setPluginEnabled(plugin.extension, enabled);
+    await this.plugins.setPluginEnabled(plugin.extension, enabled);
     const { plugins } = await this.plugins.listPlugins();
     const current = plugins.find((p) => p.name === plugin.name);
     if (!current) throw new ServerResourceNotFoundError("extension");

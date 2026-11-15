@@ -338,35 +338,90 @@ Mirror mode sends the same semantic request payloads from a terminal Pi process;
 
 ## Plugins
 
-Durable sessions (`experimental.serverDurable`) do not run a package's classic `index.ts`. They run plugins, in the layout of upstream Chord's plugin guide: a folder with a `package.json` whose `name` is the plugin's, and a `server.ts` whose default export is a facet. The facet contributes one durable extension to Oppi's `Extensions` registry. One folder can hold both entries of a feature, with shared code next to them:
+Plugins run only in [durable sessions](usage.md#durable-sessions). A classic session, and terminal Pi, run a package's classic `index.ts` and never its plugin. To try a plugin:
+
+1. Turn on **Server Settings → Durable Sessions**, or run `oppi config set experimental.serverDurable true` and restart the server.
+2. Put the plugin in `~/.pi/agent/plugins/<name>/` and run `oppi extensions reload`. `oppi extensions list` shows its row, its tools, and any load error.
+3. Start a durable session: in Quick Session, tap the **Classic** pill to make it **∞ Durable**, or run `oppi session create --workspace <id> --prompt <text> --engine durable`.
+
+A plugin follows the layout of [Chord's plugin guide](https://github.com/earendil-works/pi/blob/main/packages/chord/docs/plugin-authoring.md): a folder with a `package.json` whose `name` is the plugin's, and a `server.ts` whose default export is a facet. The facet contributes one durable extension to Oppi's `Extensions` registry. One folder can hold both entries of a feature, with shared code next to them:
 
 ```text
-release-notes/
-  package.json   { "name": "release-notes", "pi": { "extensions": ["./index.ts"] } }
+my-feature/
+  package.json   { "name": "my-feature", "pi": { "extensions": ["./index.ts"] } }
   server.ts      the plugin (durable sessions)
   index.ts       the classic Pi extension (classic sessions, terminal Pi)
 ```
 
-```ts
-// release-notes/server.ts
-import { defineExtension, defineFacet, defineTool, Extensions } from "oppi/v1";
-import { obj } from "oppi/v1/schema";
+The tools, tasks, hooks, and documents a plugin defines are pi-durable's. The [pi-durable README](https://github.com/earendil-works/pi/tree/main/packages/durable#readme) is their reference: [Tools](https://github.com/earendil-works/pi/tree/main/packages/durable#tools), [Environment](https://github.com/earendil-works/pi/tree/main/packages/durable#environment) for `api.env`, and [Your Own State](https://github.com/earendil-works/pi/tree/main/packages/durable#your-own-state) for `defineDoc`, `api.commit`, and `api.snapshot`, with its full [state example](https://github.com/earendil-works/pi/blob/main/packages/durable/test/examples/10-extension-state.ts).
 
+### Example plugins
+
+Oppi ships two example plugins. They are real built-ins that you can read, run, and copy, and they are off until you turn them on:
+
+| Plugin | What it shows | Source |
+| --- | --- | --- |
+| `example-release-notes` | A tool that runs a command through the session's environment and returns its output. | [server/plugins/example-release-notes](https://github.com/duh17/oppi/tree/main/server/plugins/example-release-notes) |
+| `example-bookmarks` | Two tools that keep their state in a durable document, which survives a server restart. | [server/plugins/example-bookmarks](https://github.com/duh17/oppi/tree/main/server/plugins/example-bookmarks) |
+
+Turn one on with `oppi extensions enable example-bookmarks` (or `example-release-notes`), or with its row in **Server Settings → Extensions**. New durable sessions get its tools at once, and an open one the next time it attaches. `oppi extensions disable <name>` turns it off again.
+
+To start your own plugin from an example, copy its folder to `~/.pi/agent/plugins/<your-name>/`. Then rename the package, the extension, its tools, and any document `kind`. A built-in keeps its names even while it is off, so a copy that keeps them fails to load.
+
+A UI plugin example is coming. Until then, [Composable surfaces](extension-native-ui.md#composable-surfaces-version-2) describes the API.
+
+This is the core of `example-release-notes`. `api.env.exec()` resolves to the exit code only: the command's output arrives in `onOutput` chunks.
+
+```ts
 const releaseNotes = defineTool({
-  name: "release_notes",
-  description: "Read the latest release notes.",
-  parameters: obj({}),
-  replay: "safe", // a read; rerun after a crash
-  async execute(_args, api, context) {
-    const result = await api.env!.exec("cat CHANGELOG.md", {}, context);
-    return { output: [{ type: "text", text: result.ok ? result.value.stdout : result.error.message }] };
+  name: "example_release_notes",
+  description: "Read the latest release notes: the top of CHANGELOG.md in the working directory.",
+  parameters: obj({ lines: opt(num()) }),
+  replay: "safe", // a read: safe to run again after a restart
+  async execute(args, api, context) {
+    if (!api.env) throw new Error("No execution environment is available.");
+    let text = "";
+    const result = await api.env.exec(
+      ["head", "-n", String(args.lines ?? 60), "CHANGELOG.md"],
+      { onOutput: (chunk) => (text += chunk) },
+      context,
+    );
+    if (!result.ok) return { output: [{ type: "text", text: result.error.message }], isError: true };
+    return { output: [{ type: "text", text }], isError: result.value.exitCode !== 0 };
   },
 });
 
-export default defineFacet((_host, self) => {
-  self.contribute(Extensions, defineExtension({ name: "release-notes", tools: [releaseNotes], runtimes: ["host", "sandbox"] }));
-});
+export default defineFacet((_host, self) =>
+  self.contribute(Extensions, defineExtension({ name: "example-release-notes", runtimes: ["host", "sandbox"], tools: [releaseNotes] })),
+);
 ```
+
+### Plugin state
+
+A plugin keeps state in a pi-durable document. `example-bookmarks` defines one and writes it in a commit:
+
+```ts
+const Bookmarks = defineDoc<{ items: Bookmark[] }>({
+  kind: "oppi.example.bookmarks",
+  version: 1,
+  scope: "session", // one list per Oppi chat
+  initial: () => ({ items: [] }),
+  checkpointWhen: () => false, // required
+});
+
+// In a tool's execute():
+await api.commit(async (tx) => {
+  (await tx.doc(Bookmarks)).items.push({ url: args.url, title: args.title ?? args.url, addedAt: api.now() });
+}, context);
+```
+
+The store and its scopes map to Oppi like this:
+
+- Each durable chat has its own durable store, which is one pi-durable Session. A `scope: "session"` document is per chat: the chat's conversations share it, including its forks and the subagents it starts. Another chat has its own copy and starts from `initial`.
+- A `scope: "conversation"` document is per conversation within the chat.
+- No document scope is shared across chats. To share state between chats, write a file of your own (through `api.env` or Node's file APIs).
+- A document change is stored with its commit, so it survives a server restart. A plugin needs no save code.
+- `checkpointWhen` is required, and a definition without it fails only at the first write.
 
 - `oppi/v1` is Oppi's plugin API: `defineFacet`, the `Extensions` registry, pi-durable's authoring API (`defineTool`, `defineTask`, `hook`, `section`, `defineDoc`, …) and Oppi's host API below. `oppi/v1/schema` is pi-schema's builders.
 - `defineExtension` takes `runtimes`: `"host"`, `"sandbox"`, or both; it defaults to `["host"]`. Add `"sandbox"` only if every command and file access goes through `api.env`.
@@ -376,12 +431,12 @@ export default defineFacet((_host, self) => {
 A plugin that shows Oppi UI imports it from `oppi/v1`: `requestUI` for dialogs, and the `DurableUI` and `DurableInputCards` documents for status, widgets, and transcript cards. A hook or task that only needs the Oppi Session id of its own conversation (for a link, say) reads `(await api.snapshot(DurableSessionDoc, api.conversationId, context))?.sessionId`, with `DurableSessionDoc` from `oppi/v1`. One that also reads or sets the Session's name calls `await oppiHost().sessionName(api, context)` for its `sessionId`, `get()` and `set(name)`, as `auto-name` does from a generation hook. It names the Session of the conversation `api` is for and takes no Session id, so an extension cannot name another Session by mistake; extension code is trusted like the rest of the server process, and the host cannot tell a hand-built `api` from pi-durable's.
 
 - **Where Oppi looks:** its built-in plugins first, then yours: `~/.pi/agent/plugins/`, and the enabled user-scope Pi packages, resolved as Pi resolves classic extensions (`~/.pi/agent/extensions/<name>/`, packages from `settings.json` and `pi install`, the same enable and disable settings). A saved Agent that selects a package's classic extension gets its plugin in a durable session. Project `.pi/extensions` packages are never loaded.
-- **Shared modules:** `oppi/v1`, `oppi/v1/schema`, `@earendil-works/pi-durable`, `@earendil-works/chord`, `@earendil-works/pi-ai`, and `@earendil-works/pi-schema` resolve to the server's own copies, so your documents and tasks belong to the server's durable store. Ship `server.ts` and every file it imports in the package's `files`.
+- **Shared modules:** `oppi/v1`, `oppi/v1/schema`, `@earendil-works/pi-durable`, `@earendil-works/chord`, `@earendil-works/pi-ai`, and `@earendil-works/pi-schema` resolve to the server's own copies, so the server's durable runtime knows your documents and tasks. Ship `server.ts` and every file it imports in the package's `files`.
 - **Tool schemas:** build them with pi-schema's builders (`obj`, `str`, `opt`, ...). An `obj()` rejects arguments it does not declare, and the model sees which field was unknown; pass `{ open: true }` to accept others.
 - **Which sessions get it:** every durable session whose runtime the extension lists, next to the built-in tools. A sandbox session also gets a host-only one when the workspace's `sandboxConfig.hostExtensions` lists its classic extension's ID, or a saved Agent you start selects it ([Host extensions](sandbox.md#host-extensions)). Oppi Control sessions select none.
 - **Clashes:** an extension name, tool name, or task name another plugin already has is a load error for the newcomer: Oppi's built-ins keep theirs, and a plugin already loaded keeps its own. So are an extension with two tools or two sections of one name, a section key pi-durable does not accept, and a tool of Oppi's own (`read`, `bash`, `codemode`, …). A package named like one of Oppi's built-in plugins (such as `ask`, linked from a checkout) counts as that built-in and is skipped.
 - **Loading:** when the server opens its durable store, on `oppi extensions reload`, and on `/reload` in a durable session. A plugin that fails to load is reported in the server log and the reload output; the others load, and no plugin of yours can keep the durable runtime from opening.
 - **Reload without a restart:** a reload discovers every plugin again and re-reads each `server.ts` and the files it imports, Oppi's built-ins included. Every session on the server shares the new code: an installed extension is replaced in place, so a running tool call finishes on its old code and the next call uses the new code. A plugin that fails to load keeps its previous code, and `/reload` then reports the error. A plugin that is gone is uninstalled. A session picks up a newly added extension the next time it attaches (open, resume, or server restart).
-- **Turn one off:** `oppi extensions list` shows the same list as the app's Extensions page: every classic extension and every plugin, Oppi's built-ins included, whether it is a plugin, a Pi extension or both, whether it is on, whether it is required, and why it failed to load. A Pi package with a plugin is one row: turning it off turns off its classic extension in Pi's settings, and its plugin with it. Only `sql-explorer` of the built-ins can be turned off; the server needs the others. For a plugin without a classic extension, `oppi extensions disable <name>` leaves it out of durable sessions without uninstalling it, and `oppi extensions enable <name>` brings it back (stored as `experimental.durableExtensions.disabled`; no restart). New sessions follow at once and an open session the next time it attaches. A saved Agent session that selected a disabled extension starts without it, shows a session warning, and keeps running without it after you enable it again; start the Agent anew to get it.
+- **Turn one off:** `oppi extensions list` shows the same list as the app's Extensions page: every classic extension and every plugin, Oppi's built-ins included, whether it is a plugin, a Pi extension or both, whether it is on, whether it is required, and why it failed to load. A Pi package with a plugin is one row: turning it off turns off its classic extension in Pi's settings, and its plugin with it. Of the built-ins, `oppi-sql-explorer` (`sql-explorer`), `oppi-godot`, and `oppi-mcp-screen` can be turned off, and the two [examples](#example-plugins) ship off; the server needs the others. For a plugin without a classic extension, `oppi extensions disable <name>` leaves it out of durable sessions without uninstalling it, and `oppi extensions enable <name>` brings it back (stored as `experimental.durableExtensions.disabled`; no restart). The examples are the other way round: `enable` lists them in `experimental.durableExtensions.enabled`, and `disable` removes them. New sessions follow at once and an open session the next time it attaches. A saved Agent session that selected a disabled extension starts without it, shows a session warning, and keeps running without it after you enable it again; start the Agent anew to get it.
 - **Trust:** the code runs in the Oppi server process with your permissions, like a classic extension. It is not sandboxed, even for sandbox sessions.
 - **Prompt sections on the Extensions page:** to show a section's text, the server calls its `render` once per load, outside any conversation, with an `input` and a `context` that throw on any read. A render that returns a string without reading them shows that string. One that reads them, throws, returns nothing, returns a promise, or returns more than 32 KB shows as written for each conversation. An `async` render is never called, so it always shows as written for each conversation. Keep `render` free of side effects, and never keep `input` or `context`: a kept one throws when your code reads it later. A slow synchronous render blocks the server while it runs, once per load.

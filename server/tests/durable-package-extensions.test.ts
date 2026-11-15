@@ -297,7 +297,10 @@ describe("plugins from Pi packages", () => {
       disabled: ["probe", "sql-explorer"],
     });
     const listed = await f.rows();
+    // The examples ship off.
     expect(listed.filter((row) => row.plugin && !row.plugin.enabled)).toEqual([
+      expect.objectContaining({ name: "oppi-example-bookmarks", state: "off" }),
+      expect.objectContaining({ name: "oppi-example-release-notes", state: "off" }),
       expect.objectContaining({ name: "oppi-sql-explorer", source: "built-in", state: "off" }),
       expect.objectContaining({ name: "probe", source: "owner", state: "off" }),
     ]);
@@ -1137,7 +1140,7 @@ describe("plugins on the extension list", () => {
     const settings = SettingsManager.inMemory({ defaultProvider: "faux", defaultModel: "faux-1" });
     vi.mocked(SettingsManager.create).mockReturnValue(settings);
     // Turned off for durable sessions only, as `oppi extensions disable probe` used to.
-    f.manager.setPluginEnabled("probe", false);
+    await f.manager.setPluginEnabled("probe", false);
     const row = rowNamed(await f.rows(), "probe");
     expect(row).toMatchObject({
       id: serverResourceId("extension", join(probe, "index.ts")),

@@ -1,0 +1,1 @@
+- **Docs:** The Plugins guide now says plugins run only in durable sessions and how to start one, links the pi-durable and Chord references, explains that a `scope: "session"` document belongs to one chat, and lists every built-in that can be turned off. Its code example, which returned empty output, is replaced by an excerpt of `example-release-notes`.

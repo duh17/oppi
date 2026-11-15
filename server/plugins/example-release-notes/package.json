@@ -1,0 +1,7 @@
+{
+  "name": "oppi-example-release-notes",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Oppi example plugin (off by default): a tool that runs a command through the session's environment and returns its output.",
+  "type": "module"
+}

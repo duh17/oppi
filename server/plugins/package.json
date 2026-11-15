@@ -1,7 +1,7 @@
 {
   "name": "oppi-built-in-plugins",
   "private": true,
-  "description": "Oppi's built-in plugins, in install order: the order of their prompt sections. auto-name is not listed: it loads as an opt-in Pi package.",
+  "description": "Oppi's built-in plugins, in install order: the order of their prompt sections. auto-name is not listed: it loads as an opt-in Pi package. The example-* plugins ship off (OFF_BY_DEFAULT_PLUGINS).",
   "chord": {
     "plugins": [
       "./file-tools",
@@ -15,7 +15,9 @@
       "./live-voice",
       "./control",
       "./godot",
-      "./mcp-screen"
+      "./mcp-screen",
+      "./example-bookmarks",
+      "./example-release-notes"
     ]
   }
 }

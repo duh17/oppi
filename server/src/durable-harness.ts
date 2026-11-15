@@ -83,7 +83,11 @@ import { DurableSessionDoc } from "./durable-session-doc.js";
 import { godotForConversation } from "./godot/godot-sessions.js";
 import { mcpForPlugins } from "./mcp-service.js";
 import { requireDurableStoreId } from "./session-runtime-capabilities.js";
-import type { ConversationStreamServerMessage, Session } from "./types.js";
+import type {
+  ConversationStreamServerMessage,
+  DurableExtensionSwitches,
+  Session,
+} from "./types.js";
 
 /** Persist the execution boundary so a resumed conversation cannot change runtime. */
 export const DurableRuntime = defineDoc<{
@@ -266,6 +270,16 @@ const REQUIRED_PLUGINS: ReadonlySet<string> = new Set([
   "oppi-notify",
   "oppi-live-voice",
   "oppi-control",
+]);
+
+/**
+ * Built-in plugins that ship off, by plugin name: the examples plugin authors read and copy. A
+ * session selects one only while the server config lists its extension in
+ * `experimental.durableExtensions.enabled`; the `disabled` list is for every other plugin.
+ */
+const OFF_BY_DEFAULT_PLUGINS: ReadonlySet<string> = new Set([
+  "oppi-example-bookmarks",
+  "oppi-example-release-notes",
 ]);
 
 /** Selected only by Oppi Control sessions, never by default. */
@@ -1458,7 +1472,7 @@ export class DurableHarness {
   private notifyBinding?: SessionNotifyPort;
   private liveVoiceBinding?: LiveVoiceRuntimePort;
   private sessionBinding?: DurableSessionBinding;
-  private disabledExtensions: () => readonly string[] = () => [];
+  private extensionSwitches: () => DurableExtensionSwitches = () => ({});
   private shared?: Promise<{
     models: ModelRuntime;
     registry: RegistryReader;
@@ -1627,12 +1641,25 @@ export class DurableHarness {
    * (`experimental.durableExtensions.disabled`, read at each use). A disabled extension stays
    * installed, so its pending tasks still find their definition; new sessions leave it out and a
    * bound one drops it at its next attach. Oppi Control sessions keep their exact selection. A
-   * required built-in is always on.
+   * required built-in is always on; one that ships off is on only while `enabled` lists it.
    */
   isExtensionEnabled(name: string): boolean {
-    if (this.bundled.some((plugin) => plugin.required && plugin.extension.name === name))
-      return true;
-    return !this.disabledExtensions().includes(name);
+    const builtIn = this.bundled.find((plugin) => plugin.extension.name === name);
+    if (builtIn?.required) return true;
+    const switches = this.extensionSwitches();
+    if (builtIn && OFF_BY_DEFAULT_PLUGINS.has(builtIn.name))
+      return switches.enabled?.includes(name) ?? false;
+    return !(switches.disabled ?? []).includes(name);
+  }
+
+  /**
+   * Whether `name` is the extension of a built-in that ships off (`OFF_BY_DEFAULT_PLUGINS`):
+   * `experimental.durableExtensions.enabled` turns it on, where `disabled` turns others off.
+   */
+  offByDefault(name: string): boolean {
+    return this.bundled.some(
+      (plugin) => plugin.extension.name === name && OFF_BY_DEFAULT_PLUGINS.has(plugin.name),
+    );
   }
 
   /**
@@ -1673,9 +1700,9 @@ export class DurableHarness {
   bindThreads(threads: DurableThreads): void {
     this.threads = threads;
   }
-  /** The server config's disabled durable extension names, read at each use. */
-  bindDisabledExtensions(read: () => readonly string[]): void {
-    this.disabledExtensions = read;
+  /** The server config's durable extension switches, read at each use. */
+  bindExtensionSwitches(read: () => DurableExtensionSwitches): void {
+    this.extensionSwitches = read;
   }
   bindControl(control: DurableControlCli): void {
     this.control = control;

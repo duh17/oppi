@@ -674,21 +674,26 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   }
 
   /**
-   * Enable or disable the installed durable extension `name` in the server config
-   * (`experimental.durableExtensions.disabled`). New sessions follow at once; a bound session
-   * at its next attach. A required built-in stays on whatever the config says.
+   * Enable or disable the installed durable extension `name` in the server config: in
+   * `experimental.durableExtensions.enabled` for a built-in that ships off, else in `disabled`.
+   * New sessions follow at once; a bound session at its next attach. A required built-in stays on
+   * whatever the config says.
    */
-  setPluginEnabled(name: string, enabled: boolean): void {
+  async setPluginEnabled(name: string, enabled: boolean): Promise<void> {
+    const harness = await this.durableHarness;
+    // The plugins say which built-ins ship off.
+    await harness.ensureShared();
+    const list = harness.offByDefault(name) ? "enabled" : "disabled";
+    const listed = list === "enabled" ? enabled : !enabled;
     // From the file as it is now: `oppi config set` writes it from another process.
     this.storage.mutateConfig((latest) => {
       const experimental = latest.experimental ?? {};
-      const others = (experimental.durableExtensions?.disabled ?? []).filter(
-        (disabled) => disabled !== name,
-      );
+      const switches = experimental.durableExtensions ?? {};
+      const others = (switches[list] ?? []).filter((other) => other !== name);
       return {
         experimental: {
           ...experimental,
-          durableExtensions: { disabled: enabled ? others : [...others, name] },
+          durableExtensions: { ...switches, [list]: listed ? [...others, name] : others },
         },
       };
     });

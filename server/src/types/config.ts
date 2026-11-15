@@ -26,6 +26,16 @@ export interface UploadStoreConfig {
   allowedMimeTypes?: string[];
 }
 
+/**
+ * Which durable extensions (built-in and owner plugins) workspace sessions select, by extension
+ * name. `disabled` turns a plugin off. `enabled` turns on a built-in that ships off (the
+ * examples). A required built-in stays on whatever either list says.
+ */
+export interface DurableExtensionSwitches {
+  disabled?: string[];
+  enabled?: string[];
+}
+
 /** Coarse capability scope for an authenticated credential. */
 export type DeviceScope = "device" | "admin" | "mirror";
 
@@ -169,11 +179,11 @@ export interface ServerConfig {
     /** Counts saves made through `PUT /server/durable-sessions/settings`; absent reads as 0. */
     serverDurableRevision?: number;
     /**
-     * Durable extensions workspace sessions leave out, by name (of built-in and owner plugins;
-     * a required built-in stays on). Read at each use, no restart; a bound session drops one at its next
-     * attach. Write it with `oppi extensions enable|disable`, which the running server sees.
+     * Durable extensions workspace sessions leave out or add, by extension name. Read at each use,
+     * no restart; a bound session follows at its next attach. Write it with
+     * `oppi extensions enable|disable`, which the running server sees.
      */
-    durableExtensions?: { disabled?: string[] };
+    durableExtensions?: DurableExtensionSwitches;
   };
 
   /** Provider quota display options. */

@@ -28,6 +28,7 @@ import { parseFeaturePatch } from "../server-features.js";
 import type {
   DevicePairingInfo,
   DevicePublicKey,
+  DurableExtensionSwitches,
   PairingTokenOrigin,
   PushConfig,
   PushRegistration,
@@ -413,21 +414,23 @@ function normalizeConfig(
       }
       if ("durableExtensions" in obj.experimental) {
         const value = obj.experimental.durableExtensions;
-        const disabled = isRecord(value) ? value.disabled : undefined;
+        const names = (list: unknown): list is string[] =>
+          Array.isArray(list) && list.every((name) => typeof name === "string" && name.length > 0);
         if (
           !isRecord(value) ||
-          Object.keys(value).some((key) => key !== "disabled") ||
-          (disabled !== undefined &&
-            (!Array.isArray(disabled) ||
-              disabled.some((name) => typeof name !== "string" || name.length === 0)))
+          Object.keys(value).some((key) => key !== "disabled" && key !== "enabled") ||
+          (value.disabled !== undefined && !names(value.disabled)) ||
+          (value.enabled !== undefined && !names(value.enabled))
         ) {
           errors.push(
-            "config.experimental.durableExtensions: expected { disabled?: non-empty string[] }",
+            "config.experimental.durableExtensions: expected { disabled?: non-empty string[], enabled?: non-empty string[] }",
           );
         } else {
-          experimental.durableExtensions = disabled
-            ? { disabled: [...new Set(disabled as string[])] }
-            : {};
+          const { disabled, enabled } = value as DurableExtensionSwitches;
+          experimental.durableExtensions = {
+            ...(disabled ? { disabled: [...new Set(disabled)] } : {}),
+            ...(enabled ? { enabled: [...new Set(enabled)] } : {}),
+          };
         }
       }
       if (Object.keys(experimental).length > 0) {
