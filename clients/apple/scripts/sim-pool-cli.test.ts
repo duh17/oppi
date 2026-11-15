@@ -49,6 +49,15 @@ set -euo pipefail
 dir="${fakeDir}"
 printf '%s\\n' "$*" >> "$dir/xcrun.calls"
 # An xcresult's summary and the tests it lists: whatever the fixture's fake xcodebuild was told ran.
+# Like xcresulttool, a bundle xcodebuild has not finished writing (no Info.plist) cannot be read.
+if [[ "\${1:-}" == "xcresulttool" ]]; then
+  bundle=""; prev=""
+  for a in "$@"; do [ "$prev" = --path ] && bundle="$a"; prev="$a"; done
+  if [[ -n "$bundle" && ! -f "$bundle/Info.plist" ]]; then
+    echo "Error: Failed to create a new result bundle reader, underlying error: Info.plist at $bundle/Info.plist does not exist, the result bundle might be corrupted or the provided path is not a result bundle" >&2
+    exit 64
+  fi
+fi
 if [[ "\${1:-}" == "xcresulttool" && " $* " == *" summary "* && -f "$dir/xcresult-summary.json" ]]; then cat "$dir/xcresult-summary.json"; exit 0; fi
 if [[ "\${1:-}" == "xcresulttool" && " $* " == *" tests "* && -f "$dir/xcresult.json" ]]; then cat "$dir/xcresult.json"; exit 0; fi
 if [[ "\${1:-}" != "simctl" ]]; then
@@ -216,6 +225,11 @@ function runCompletionFixture(text: string, options: {
   summary?: Record<string, unknown>;
   /** The listed xcresult is a leftover from an earlier run (old mtime), not written by this one. */
   staleBundle?: boolean;
+  /**
+   * xcodebuild has not finished the listed xcresult when it prints the log: the bundle holds only
+   * Staging, and `afterLog` (where `$bundle` is its path) may write its Info.plist.
+   */
+  unfinishedBundle?: boolean;
   env?: Record<string, string>;
   afterLog?: string;
   failQuery?: boolean;
@@ -253,6 +267,7 @@ function runCompletionFixture(text: string, options: {
     }));
   }
   if (options.staleBundle) writeFileSync(join(fake, "xcresult.stale"), "");
+  if (options.unfinishedBundle) writeFileSync(join(fake, "xcresult.unfinished"), "");
   if (options.eraseSleep) {
     writeFileSync(join(fake, "erase.sleep"), options.eraseSleep);
   }
@@ -263,7 +278,9 @@ echo attempt >> "${fake}/attempts"
 dd=""; prev=""
 for a in "$@"; do [ "$prev" = -derivedDataPath ] && dd="$a"; prev="$a"; done
 if [ -f "${fake}/xcresult.stale" ]; then mkdir -p "$dd/Logs/Test/Old.xcresult"; touch -t 202001010000 "$dd/Logs/Test/Old.xcresult"
-elif [ -f "${fake}/xcresult.json" ]; then mkdir -p "$dd/Logs/Test/Run.xcresult"; fi
+elif [ -f "${fake}/xcresult.unfinished" ]; then mkdir -p "$dd/Logs/Test/Run.xcresult/Staging"
+elif [ -f "${fake}/xcresult.json" ]; then mkdir -p "$dd/Logs/Test/Run.xcresult"; : > "$dd/Logs/Test/Run.xcresult/Info.plist"; fi
+bundle="$dd/Logs/Test/Run.xcresult"
 cat <<'TEST_LOG'
 ${text}TEST_LOG
 : > "${fake}/started"
@@ -1354,6 +1371,72 @@ sleep 30
       });
     });
   }
+
+  // A failing UI or E2E run: after the summary xcodebuild collects diagnostics and only then writes
+  // the bundle's Info.plist. Stopping it before that left the xcresult unreadable and the shard an
+  // infrastructure failure with no counts.
+  test("a lingering failed XCTest run is stopped only after it finishes writing its result bundle", () => {
+    const result = runCompletionFixture(xctestE2E(1), {
+      args: e2eArgs,
+      listed: { "ChatE2ETests/testSend()": "Failed" },
+      unfinishedBundle: true,
+      // Ten completion waits; the run's 2-second silence window passes too while it writes.
+      afterLog: `/bin/sleep 10; : > "$bundle/Info.plist"; exec /bin/sleep 30`,
+      env: { OPPI_SIM_POOL_RESULT_TIMEOUT: "60", OPPI_SIM_POOL_SILENCE_TIMEOUT: "2" },
+      timeoutMs: 60_000,
+    });
+    expect(result.run.status).toBe(65);
+    expect(result.summary).toMatchObject({
+      exit_code: 65, attempt_count: 1, completion_hang_detected: true,
+      test_completion: { outcome: "failed", tests: 1, issues: 1 },
+      test_results: { result: "Failed", total: 1, passed: 0, failed: 1, bundle: expect.stringMatching(/Run\.xcresult$/) },
+    });
+    expect(result.run.stdout).toContain("Tests: 1 (0 passed, 1 failed, 0 skipped); xcresult Failed");
+    expect(result.run.stdout).toContain("ChatE2ETests/testSend()");
+    expect(result.attempts).toHaveLength(1);
+    expect(result.calls).not.toMatch(/simctl (shutdown|erase)/);
+    expect(result.run.stderr).toContain("xcodebuild is still writing");
+    expect(result.run.stderr).toContain("completion hang:");
+    // Stopped once the bundle was written, well before the result wait ran out.
+    expect(result.summary.elapsed_seconds).toBeGreaterThanOrEqual(10);
+    expect(result.summary.elapsed_seconds).toBeLessThan(40);
+  });
+
+  test("a lingering XCTest run that never finishes its result bundle is still stopped at the result wait", () => {
+    const result = runCompletionFixture(xctestE2E(1), {
+      args: e2eArgs,
+      listed: { "ChatE2ETests/testSend()": "Failed" },
+      unfinishedBundle: true,
+      afterLog: "exec /bin/sleep 120",
+      env: { OPPI_SIM_POOL_RESULT_TIMEOUT: "4" },
+      timeoutMs: 60_000,
+    });
+    expect(result.run.status).toBe(65);
+    expect(result.attempts).toHaveLength(1);
+    expect(result.calls).not.toMatch(/simctl (shutdown|erase)/);
+    expect(result.run.stderr).toMatch(/completion hang: .* xcodebuild still alive after [45]s/);
+    expect(result.summary).toMatchObject({
+      exit_code: 65, completion_hang_detected: true, xcodebuild_exit_code: null, xcodebuild_signal: "SIGTERM",
+      test_results: { bundle: expect.stringMatching(/Run\.xcresult$/), unreadable: expect.stringContaining("Info.plist") },
+    });
+    expect(result.run.stdout).toContain("Tests: result unreadable (xcresulttool exit 64");
+    expect(result.summary.elapsed_seconds).toBeLessThan(15);
+  });
+
+  test("a lingering passed XCTest run collects no diagnostics, so it keeps the plain completion wait", () => {
+    const result = runCompletionFixture(xctestE2E(0), {
+      args: e2eArgs,
+      listed: { "ChatE2ETests/testSend()": "Passed" },
+      unfinishedBundle: true,
+      afterLog: "exec /bin/sleep 120",
+      env: { OPPI_SIM_POOL_RESULT_TIMEOUT: "60" },
+      timeoutMs: 90_000,
+    });
+    expect(result.run.stderr).not.toContain("xcodebuild is still writing");
+    expect(result.run.stderr).toMatch(/completion hang: .* xcodebuild still alive after [12]s/);
+    expect(result.summary).toMatchObject({ completion_hang_detected: true, test_completion: { outcome: "passed", tests: 1 } });
+    expect(result.summary.elapsed_seconds).toBeLessThan(15);
+  });
 
   test("silent build that keeps the CPU busy is progress, not a hang", () => {
     // Like swift-frontend emitting a module: no log output for two silence windows

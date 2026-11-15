@@ -105,6 +105,8 @@ export type PoolConfig = {
   bootRetries: number;
   silenceTimeout: number;
   completionTimeout: number;
+  /** Seconds after a test summary that a lingering xcodebuild may keep writing its result bundle; see bundleStillWriting. */
+  resultTimeout: number;
   heartbeatInterval: number;
   hangRetries: number;
   keepBooted: boolean;
@@ -509,6 +511,11 @@ export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: strin
     completionTimeout: parsePositiveInt(
       env.OPPI_SIM_POOL_COMPLETION_TIMEOUT ?? "30",
       "OPPI_SIM_POOL_COMPLETION_TIMEOUT",
+      1,
+    ),
+    resultTimeout: parsePositiveInt(
+      env.OPPI_SIM_POOL_RESULT_TIMEOUT ?? String(RESULT_TIMEOUT_SECONDS),
+      "OPPI_SIM_POOL_RESULT_TIMEOUT",
       1,
     ),
     heartbeatInterval: parsePositiveInt(
@@ -1480,6 +1487,29 @@ function attemptBundle(argv: string[], derivedData: string, startedMs: number): 
   return fresh.length > 0 ? { path: fresh[0].path } : { reason: `no .xcresult in ${testLogs} written by this run` };
 }
 
+/**
+ * After a failing XCTest run's summary, xcodebuild collects test diagnostics (`simctl diagnose`)
+ * into the bundle's Staging directory and writes the bundle's Info.plist only once that returns;
+ * a stopped xcodebuild leaves a bundle xcresulttool cannot read. Normally that takes 10-20 s, but
+ * `simctl diagnose` can stall gathering a device (stuck at "Gathering list of installed roots")
+ * until its own 600 s limit ("TIMEOUT - Waited 600 seconds for all devices"). So a run that
+ * collects diagnostics and whose bundle is still unfinished gets that long plus a minute to
+ * finish writing it before the completion-hang stop.
+ */
+export const RESULT_TIMEOUT_SECONDS = 660;
+
+/**
+ * This attempt's result bundle while xcodebuild is still writing it (no Info.plist yet), when it
+ * collects diagnostics: always, or by default (on-failure) after a failed run. A passing run collects
+ * none, so a lingering one keeps the plain completion wait.
+ */
+function bundleStillWriting(argv: string[], outcome: TestCompletion["outcome"], derivedData: string, startedMs: number): string | undefined {
+  const diagnostics = extractFlagValue("-collect-test-diagnostics", argv) ?? "on-failure";
+  if (diagnostics !== "always" && !(diagnostics === "on-failure" && outcome === "failed")) return undefined;
+  const bundle = attemptBundle(argv, derivedData, startedMs);
+  return "path" in bundle && !existsSync(join(bundle.path, "Info.plist")) ? bundle.path : undefined;
+}
+
 /** The verdict and counts of a finished test attempt, from its xcresult, or why they cannot be read. */
 function attemptResults(argv: string[], derivedData: string, startedMs: number): RecordedResults {
   const bundle = attemptBundle(argv, derivedData, startedMs);
@@ -1698,6 +1728,7 @@ async function runXcodebuildAttempt(input: {
   let hung = false;
   let completion: TestCompletion | undefined;
   let completionSince = 0;
+  let announcedWriting = false;
   let lastLogSize = -1;
   const exitPromise = spawned.owned.exit;
   const pollMs = Math.max(50, Math.floor(input.config.progressPollSeconds * 1000));
@@ -1733,10 +1764,22 @@ async function runXcodebuildAttempt(input: {
       completion = next;
     }
     const completionWait = completion ? completionWaitSeconds(input.config, completion, input.completionArgv ?? input.argv) : 0;
+    let writingResult = false;
     if (completion && nowMs - completionSince >= completionWait * 1000) {
-      log(`[sim-pool] completion hang: ${completion.summary} — xcodebuild still alive after ${completionWait}s; stopping owned group without retry (pid ${spawned.owned.pid})`);
-      hung = true;
-      break;
+      const waited = Math.round((nowMs - completionSince) / 1000);
+      const writing = nowMs - completionSince < input.config.resultTimeout * 1000
+        ? bundleStillWriting(input.argv, completion.outcome, input.derivedData, attemptStartedMs) : undefined;
+      if (writing === undefined) {
+        log(`[sim-pool] completion hang: ${completion.summary} — xcodebuild still alive after ${waited}s; stopping owned group without retry (pid ${spawned.owned.pid})`);
+        hung = true;
+        break;
+      }
+      if (!announcedWriting) {
+        announcedWriting = true;
+        log(`[sim-pool] tests finished ${waited}s ago; xcodebuild is still writing ${writing} (no Info.plist yet); waiting up to ${input.config.resultTimeout}s after the summary before stopping it`);
+      }
+      // The result wait is the bound here; the log may stay silent while diagnostics are collected.
+      writingResult = true;
     }
     const current = progressMtime(input.logFile, input.derivedData);
     if (current > lastMtime) {
@@ -1772,7 +1815,7 @@ async function runXcodebuildAttempt(input: {
       );
       lastHeartbeat = now;
     }
-    if (silenceTimedOut(nowMs, lastProgressMs, input.config.silenceTimeout)) {
+    if (!writingResult && silenceTimedOut(nowMs, lastProgressMs, input.config.silenceTimeout)) {
       log(
         `[sim-pool] hang detected: no log, DerivedData, or build CPU progress for ${input.config.silenceTimeout}s (pid ${spawned.owned.pid})`,
       );
