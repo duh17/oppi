@@ -91,6 +91,12 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     /// Collapsed thinking renders only one bounded window. Full source remains
     /// available to Copy and the virtualized full-screen reader.
     static let renderWindowUTF8ByteLimit = 4_096
+    /// A live row lays out only the newest whole paragraphs within this budget.
+    /// Paragraphs wrap on their own, so each line of that tail is the same line
+    /// the bounded window lays out; the fixed bubble shows only the bottom few.
+    /// `updateBubbleHeight` falls back to the bounded window when the tail is
+    /// too short to fill the bubble at the current width.
+    static let liveTailUTF8ByteBudget = 2_048
 
     private struct RenderWindow {
         let text: String
@@ -128,6 +134,8 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     private var needsStreamingTailFollow = false
     private var currentSourceText: String
     private var sourceIsOmitted = false
+    /// The live label holds `liveTail(of:)` rather than the bounded window.
+    private var rendersLiveTail = false
 
     #if DEBUG
     private(set) var measurementPassCountForTesting = 0
@@ -338,7 +346,14 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         let themeID = ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
         brainIcon.tintColor = palette.ui.purple.withAlphaComponent(0.7)
-        let renderWindow = Self.renderWindow(for: currentSourceText, isDone: configuration.isDone)
+        let liveTail = configuration.isDone ? nil : Self.liveTail(of: currentSourceText)
+        rendersLiveTail = liveTail != nil
+        let renderWindow = liveTail.map {
+            RenderWindow(
+                text: String($0),
+                omittedSource: currentSourceText.utf8.count > Self.renderWindowUTF8ByteLimit
+            )
+        } ?? Self.renderWindow(for: currentSourceText, isDone: configuration.isDone)
         let text = renderWindow.text.trimmingCharacters(in: .whitespacesAndNewlines)
         sourceIsOmitted = renderWindow.omittedSource
         let sourceLabel = configuration.normalizedSourceLabel
@@ -403,15 +418,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
                 bubbleView.isHidden = false
                 bubbleView.backgroundColor = palette.ui.comment.withAlphaComponent(TimelineBubbleStyle.streamingBgAlpha)
                 if needsTextUpdate {
-                    // Streaming: plain text — skip expensive markdown parsing.
-                    // Full markdown rendering applies once on isDone transition.
-                    measuredTextHeight = nil
-                    textLabel.attributedText = nil
-                    textLabel.text = text
-                    textLabel.textColor = palette.ui.comment.withAlphaComponent(0.88)
-                    textLabel.font = .preferredFont(forTextStyle: .callout)
-                    renderSignature = signature
-                    needsStreamingTailFollow = true
+                    setStreamingText(text, palette: palette, signature: signature)
                 }
                 updateBubbleHeight(forWidth: bounds.width)
                 followStreamingTailIfNeeded()
@@ -419,6 +426,18 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         }
 
         updateReviewCommentSelectionPolicy()
+    }
+
+    /// Streaming: plain text — skip expensive markdown parsing.
+    /// Full markdown rendering applies once on isDone transition.
+    private func setStreamingText(_ text: String, palette: ThemePalette, signature: Int) {
+        measuredTextHeight = nil
+        textLabel.attributedText = nil
+        textLabel.text = text
+        textLabel.textColor = palette.ui.comment.withAlphaComponent(0.88)
+        textLabel.font = .preferredFont(forTextStyle: .callout)
+        renderSignature = signature
+        needsStreamingTailFollow = true
     }
 
     private func updateReviewCommentSelectionPolicy() {
@@ -488,6 +507,26 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         return RenderWindow(text: source, omittedSource: false)
     }
 
+    /// The newest whole paragraphs within `liveTailUTF8ByteBudget`, or nil when
+    /// the source fits the budget or no paragraph starts inside it. The tail
+    /// starts right after a line feed (always a character boundary) at a
+    /// character trimming keeps, so its first paragraph wraps exactly as it does
+    /// inside the bounded window, which always contains it.
+    private static func liveTail(of source: String) -> Substring? {
+        let utf8 = source.utf8
+        guard utf8.count > liveTailUTF8ByteBudget else { return nil }
+        var searchStart = utf8.index(utf8.endIndex, offsetBy: -liveTailUTF8ByteBudget)
+        while let lineFeed = utf8[searchStart...].firstIndex(of: UInt8(ascii: "\n")) {
+            let start = utf8.index(after: lineFeed)
+            guard start < utf8.endIndex else { return nil }
+            if !CharacterSet.whitespacesAndNewlines.contains(source.unicodeScalars[start]) {
+                return source[start...]
+            }
+            searchStart = start
+        }
+        return nil
+    }
+
     private func makeThinkingAttributedText(_ text: String, color: UIColor) -> NSAttributedString {
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .full,
@@ -537,22 +576,28 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         let maxBubbleHeight = currentConfiguration.maxBubbleHeight
         let displayScale = max(1, traitCollection.displayScale)
         let measuredWidth = (textWidth * displayScale).rounded() / displayScale
-        let measurementKey = TextMeasurementKey(
-            renderSignature: renderSignature ?? 0,
-            width: measuredWidth,
-            contentSizeCategory: traitCollection.preferredContentSizeCategory
-        )
-        let textHeight: CGFloat
-        if measuredTextHeight?.key == measurementKey, let cachedHeight = measuredTextHeight?.height {
-            textHeight = cachedHeight
-        } else {
-            textHeight = textLabel.sizeThatFits(
-                CGSize(width: measuredWidth, height: .greatestFiniteMagnitude)
-            ).height
-            measuredTextHeight = (measurementKey, textHeight)
-            #if DEBUG
-            measurementPassCountForTesting += 1
-            #endif
+        var textHeight = measureText(width: measuredWidth)
+        // The bubble shows the text's bottom `maxBubbleHeight - bubblePadding`
+        // at most (tail follow scrolls to the bottom inset). One more line keeps
+        // whatever the bounded window has above the tail out of view.
+        let lineHeight = ceil(textLabel.font?.lineHeight ?? 18)
+        if !isDone, rendersLiveTail,
+           ceil(textHeight) < maxBubbleHeight + Self.bubblePadding * 2 + lineHeight {
+            rendersLiveTail = false
+            let themeID = ThemeRuntimeState.currentThemeID()
+            let text = Self.renderWindow(for: currentSourceText, isDone: false).text
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            setStreamingText(
+                text,
+                palette: themeID.palette,
+                signature: Self.textSignature(
+                    text: text,
+                    omittedSource: sourceIsOmitted,
+                    isDone: false,
+                    themeID: themeID
+                )
+            )
+            textHeight = measureText(width: measuredWidth)
         }
         let intrinsic = ceil(textHeight) + Self.bubblePadding * 2
 
@@ -586,6 +631,25 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
         configureScrollBehavior()
         updateReviewCommentSelectionPolicy()
+    }
+
+    private func measureText(width: CGFloat) -> CGFloat {
+        let measurementKey = TextMeasurementKey(
+            renderSignature: renderSignature ?? 0,
+            width: width,
+            contentSizeCategory: traitCollection.preferredContentSizeCategory
+        )
+        if measuredTextHeight?.key == measurementKey, let cachedHeight = measuredTextHeight?.height {
+            return cachedHeight
+        }
+        let textHeight = textLabel.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude)
+        ).height
+        measuredTextHeight = (measurementKey, textHeight)
+        #if DEBUG
+        measurementPassCountForTesting += 1
+        #endif
+        return textHeight
     }
 
     // MARK: - Scroll Behavior

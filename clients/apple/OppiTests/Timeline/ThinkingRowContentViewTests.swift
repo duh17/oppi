@@ -553,6 +553,62 @@ struct ThinkingRowContentViewTests {
         #expect(view.measurementPassCountForTesting == firstPassCount + 1)
     }
 
+    /// One reused row streams through paragraphs, a long unbroken paragraph (no
+    /// paragraph starts in the tail budget) and paragraphs again (a short tail
+    /// that must fall back), so a tick never inherits the previous mode's text.
+    @Test func liveStreamKeepsTheBoundedTailLinesAcrossTicks() throws {
+        let width: CGFloat = 756
+        let source = liveTailCorpus("prose", bytes: 5_000) + "\n"
+            + liveTailCorpus("unbroken", bytes: 3_000) + "\n"
+            + liveTailCorpus("prose", bytes: 2_000)
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: width, height: 900))
+        window.isHidden = false
+        defer { hideTestWindow(window) }
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: false, previewText: ""
+        ))
+        mountTimelineRow(view, in: window)
+
+        var end = source.startIndex
+        while end < source.endIndex {
+            end = source.index(end, offsetBy: 400, limitedBy: source.endIndex) ?? source.endIndex
+            let text = String(source[..<end])
+            view.configuration = ThinkingTimelineRowConfiguration(isDone: false, previewText: text)
+            _ = view.systemLayoutSizeFitting(
+                CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            )
+            window.layoutIfNeeded()
+            try expectLiveBubbleShowsBoundedTailLines(view, source: text, "\(text.utf8.count)B")
+        }
+    }
+
+    @Test(arguments: [CGFloat(300), 360, 756, 1_000])
+    func liveBubbleShowsTheBoundedTailLinesAtEveryLength(width: CGFloat) throws {
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: width, height: 900))
+        window.isHidden = false
+        defer { hideTestWindow(window) }
+        for kind in ["prose", "unbroken", "nospace", "shortlines", "lastlines", "unicode"] {
+            for length in [120, 1_500, 2_500, 4_200, 40_000] {
+                let source = liveTailCorpus(kind, bytes: length)
+                let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+                    isDone: false, previewText: String(source.dropLast(40))
+                ))
+                mountTimelineRow(view, in: window)
+                view.configuration = ThinkingTimelineRowConfiguration(isDone: false, previewText: source)
+                _ = view.systemLayoutSizeFitting(
+                    CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                    withHorizontalFittingPriority: .required,
+                    verticalFittingPriority: .fittingSizeLevel
+                )
+                window.layoutIfNeeded()
+                try expectLiveBubbleShowsBoundedTailLines(view, source: source, "\(kind) \(length)B at \(width)pt")
+                view.removeFromSuperview()
+            }
+        }
+    }
+
     @Test func sameLengthEditInsideBoundedWindowRepaints() throws {
         let prefix = String(repeating: "x", count: 1_000)
         let suffix = String(repeating: "y", count: 6_000)
@@ -724,6 +780,159 @@ private func privateBubbleView(in view: ThinkingTimelineRowContentView) -> UIVie
 @MainActor
 private func privateTextLabel(in view: ThinkingTimelineRowContentView) -> UITextView? {
     Mirror(reflecting: view).children.first { $0.label == "textLabel" }?.value as? UITextView
+}
+
+/// Deterministic thinking-like text: paragraphs with indented items, one long
+/// paragraph, an unbroken token, many short lines, or mixed scripts.
+private func liveTailCorpus(_ kind: String, bytes: Int) -> String {
+    var state: UInt64 = 42
+    func next() -> Int {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return Int((z ^ (z >> 31)) % 1_000_000)
+    }
+    let words = ["the", "reasoning", "should", "consider", "a", "timeline", "row", "whose",
+                 "bubble", "streams", "text", "and", "measurement", "of", "layout", "is",
+                 "expensive", "when", "width", "grows", "TextKit", "fragment", "tail", "x"]
+    var out = ""
+    while out.utf8.count < bytes {
+        switch kind {
+        case "prose":
+            if next() % 5 == 0 { out += "  - " }
+            for _ in 0..<(1 + next() % 6) {
+                out += (0..<(4 + next() % 14)).map { _ in words[next() % words.count] }.joined(separator: " ")
+                out += ". "
+            }
+            out += next() % 3 == 0 ? "\n\n" : "\n"
+        case "unbroken":
+            out += words[next() % words.count] + " "
+        case "nospace":
+            out += "abcdefghij"
+        case "shortlines":
+            out += "step \(next() % 1_000)\n"
+        case "lastlines":
+            // A long paragraph, then a few short lines: the newest whole
+            // paragraphs alone cannot fill the bubble.
+            out += out.utf8.count < bytes - 40 ? words[next() % words.count] + " " : "\nlast step \(next() % 10)"
+        default:
+            out += "思考 👩🏽‍💻 cafe\u{301} " + words[next() % words.count]
+            out += next() % 4 == 0 ? "\n\u{3000}indent\n" : " "
+        }
+    }
+    var result = ""
+    for character in out {
+        guard result.utf8.count + character.utf8.count <= bytes else { break }
+        result.append(character)
+    }
+    return result
+}
+
+@MainActor
+private func mountTimelineRow(_ view: UIView, in window: UIWindow) {
+    view.translatesAutoresizingMaskIntoConstraints = false
+    window.addSubview(view)
+    NSLayoutConstraint.activate([
+        view.leadingAnchor.constraint(equalTo: window.leadingAnchor),
+        view.trailingAnchor.constraint(equalTo: window.trailingAnchor),
+        view.topAnchor.constraint(equalTo: window.topAnchor),
+    ])
+    window.layoutIfNeeded()
+}
+
+private struct LaidOutLine: Equatable, CustomStringConvertible {
+    let text: String
+    /// Distance from the line's bottom to the bottom of the whole text.
+    let fromBottom: CGFloat
+    var description: String { "\(fromBottom): \(text.debugDescription)" }
+}
+
+@MainActor
+private func laidOutLines(of textView: UITextView) throws -> (lines: [(text: String, frame: CGRect)], bottom: CGFloat) {
+    let layoutManager = try #require(textView.textLayoutManager)
+    var lines: [(text: String, frame: CGRect)] = []
+    layoutManager.enumerateTextLayoutFragments(
+        from: layoutManager.documentRange.location,
+        options: [.ensuresLayout]
+    ) { fragment in
+        let origin = fragment.layoutFragmentFrame.origin
+        for line in fragment.textLineFragments {
+            let text = (line.attributedString.string as NSString).substring(with: line.characterRange)
+            lines.append((text, line.typographicBounds.offsetBy(dx: origin.x, dy: origin.y)))
+        }
+        return true
+    }
+    return (lines, lines.map(\.frame.maxY).max() ?? 0)
+}
+
+/// What the live bubble showed before rows rendered a shorter tail: the newest
+/// whole characters of the trimmed source within the 4 KB render window.
+@MainActor
+private func boundedLiveWindow(_ source: String) -> String {
+    let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+    var bytes = 0
+    var start = trimmed.endIndex
+    while start > trimmed.startIndex {
+        let previous = trimmed.index(before: start)
+        let size = trimmed[previous..<start].utf8.count
+        guard bytes + size <= ThinkingTimelineRowContentView.renderWindowUTF8ByteLimit else { break }
+        bytes += size
+        start = previous
+    }
+    return String(trimmed[start...]).trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// The lines inside the live bubble's viewport, with their offsets from the
+/// text bottom, must be the same lines the whole bounded window lays out at
+/// that width; the bubble must be truncated exactly when that window overflows.
+@MainActor
+private func expectLiveBubbleShowsBoundedTailLines(
+    _ view: ThinkingTimelineRowContentView,
+    source: String,
+    _ context: String = "",
+    sourceLocation: SourceLocation = #_sourceLocation
+) throws {
+    let label = try #require(privateTextLabel(in: view), sourceLocation: sourceLocation)
+    let scrollView = try #require(privateScrollView(in: view), sourceLocation: sourceLocation)
+    let viewport = scrollView.convert(scrollView.bounds, to: label)
+    let shown = try laidOutLines(of: label)
+
+    let reference = UITextView(frame: CGRect(x: 0, y: 0, width: label.bounds.width, height: 10))
+    reference.font = .preferredFont(forTextStyle: .callout)
+    reference.isEditable = false
+    reference.isScrollEnabled = false
+    reference.textContainerInset = .zero
+    reference.textContainer.lineFragmentPadding = 0
+    reference.textContainer.lineBreakMode = .byWordWrapping
+    reference.text = boundedLiveWindow(source)
+    reference.frame.size.height = reference.sizeThatFits(
+        CGSize(width: label.bounds.width, height: .greatestFiniteMagnitude)
+    ).height
+    view.window?.addSubview(reference)
+    reference.layoutIfNeeded()
+    defer { reference.removeFromSuperview() }
+    let expected = try laidOutLines(of: reference)
+
+    func visible(_ laidOut: (lines: [(text: String, frame: CGRect)], bottom: CGFloat), viewportFromBottom: ClosedRange<CGFloat>) -> [LaidOutLine] {
+        laidOut.lines.compactMap { line in
+            let top = laidOut.bottom - line.frame.minY
+            let bottom = laidOut.bottom - line.frame.maxY
+            guard top > viewportFromBottom.lowerBound, bottom < viewportFromBottom.upperBound else { return nil }
+            return LaidOutLine(text: line.text, fromBottom: (bottom * 100).rounded() / 100)
+        }
+    }
+    let window = (shown.bottom - viewport.maxY)...(shown.bottom - viewport.minY)
+    let shownLines = visible(shown, viewportFromBottom: window)
+    #expect(!shownLines.isEmpty, "\(context)", sourceLocation: sourceLocation)
+    #expect(shownLines == visible(expected, viewportFromBottom: window), "\(context)", sourceLocation: sourceLocation)
+    let referenceOverflows = ceil(expected.bottom) + 20 > ThinkingRowHeightPolicy.defaultMaxBubbleHeight
+    #expect(view.contentIsTruncated == referenceOverflows, "\(context)", sourceLocation: sourceLocation)
+    #expect(view.copyableText == source.trimmingCharacters(in: .whitespacesAndNewlines), sourceLocation: sourceLocation)
+    #expect(
+        label.accessibilityLabel == "Thinking: \(source.trimmingCharacters(in: .whitespacesAndNewlines))",
+        sourceLocation: sourceLocation
+    )
 }
 
 @MainActor
