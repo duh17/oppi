@@ -24,6 +24,7 @@ import {
   buildKey,
   compilationCache,
   completionArgvForXctestrun,
+  beginIncrementalBuild,
   forgetBuild,
   markPackagesResolved,
   packagesResolvedMarker,
@@ -32,6 +33,7 @@ import {
   planRun,
   pruneRunDirectories,
   recordBuild,
+  settleIncrementalBuild,
   runDirectory,
   SLOTLESS_BUILD_DESTINATION,
   slotlessBuildSettings,
@@ -1974,6 +1976,10 @@ async function runBuildPhase(input: {
       try {
         log(`[sim-pool] Building without a simulator slot in ${derivedData}`);
         log(`[sim-pool] Build log: ${input.logFile}`);
+        const dropped = beginIncrementalBuild(derivedData);
+        if (dropped.length) {
+          log(`[sim-pool] The last build here did not finish; dropped ${dropped.length} Swift incremental state file(s), so changed modules compile in full`);
+        }
         phase.startedAt = nowEpoch();
         const result = await runXcodebuildAttempt({
           session,
@@ -1994,8 +2000,9 @@ async function runBuildPhase(input: {
       } finally {
         heavy.lock?.release();
       }
-      if (key && phase.code === 0 && !phase.uncertain && !phase.hung) {
-        recordBuild(derivedData, key, keyNow);
+      if (phase.code === 0 && !phase.uncertain && !phase.hung) {
+        settleIncrementalBuild(derivedData);
+        if (key) recordBuild(derivedData, key, keyNow);
       }
     }
     if (phase.code === 0 && !phase.uncertain && input.cloneFor) {

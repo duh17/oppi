@@ -439,6 +439,56 @@ export function recordBuild(derivedData: string, key: string, recheck: () => str
   writeFileSync(join(derivedData, BUILD_STAMP), JSON.stringify({ key, products } satisfies BuildStamp));
 }
 
+/*
+ * Distrust the Swift driver's incremental state after a build that did not finish.
+ *
+ * The driver decides which files a change reaches from its saved dependency graph,
+ * `<Module>-primary.priors`. A build that fails (a test target that does not compile) or is
+ * killed can leave object files newer than that graph: the app module compiled and linked, but
+ * the priors still describe the build before. The next build then compiles an edited file,
+ * sees the interface it remembers, and skips its dependents. A stored-property change to a
+ * struct leaves a dependent's object file on the old layout; the linker keeps one shared
+ * outlined copy function, so even the edited file copies the struct with the stale layout and
+ * crashes (`outlined init with copy of MarkdownTableGridLayout`, 2026-11-12 and 2026-11-14).
+ *
+ * A marker in DerivedData is written before every build and removed only after a clean one.
+ * A build that finds it deletes every priors file first; the driver then compiles each module
+ * in full, mostly from the compilation cache.
+ */
+const UNSETTLED_BUILD = "oppi-build-unsettled";
+
+/** `<dd>/Build/Intermediates.noindex/<project>.build/<config>/<target>.build/Objects-normal/<arch>/*.priors`. */
+function swiftPriors(derivedData: string): string[] {
+  const list = (dir: string): string[] => {
+    try {
+      return readdirSync(dir).map((name) => join(dir, name));
+    } catch {
+      return [];
+    }
+  };
+  return list(join(derivedData, "Build", "Intermediates.noindex"))
+    .flatMap(list)
+    .flatMap(list)
+    .flatMap((target) => list(join(target, "Objects-normal")))
+    .flatMap(list)
+    .filter((path) => path.endsWith(".priors"));
+}
+
+/** Run right before xcodebuild: drops the priors the last unfinished build left; returns the paths dropped. */
+export function beginIncrementalBuild(derivedData: string): string[] {
+  const marker = join(derivedData, UNSETTLED_BUILD);
+  const dropped = existsSync(marker) ? swiftPriors(derivedData) : [];
+  for (const path of dropped) rmSync(path, { force: true });
+  mkdirSync(derivedData, { recursive: true });
+  writeFileSync(marker, "");
+  return dropped;
+}
+
+/** Run after a build that exited 0, stopped cleanly, and did not hang. */
+export function settleIncrementalBuild(derivedData: string): void {
+  rmSync(join(derivedData, UNSETTLED_BUILD), { force: true });
+}
+
 /** A held flock; `release` is idempotent. */
 export type HeldLock = { path: string; release: () => void };
 

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   acquireHeavySlot,
+  beginIncrementalBuild,
   buildIsCurrent,
   buildKey,
   cloneProducts,
@@ -16,6 +17,7 @@ import {
   planRun,
   recordBuild,
   selectsOnlyUiTests,
+  settleIncrementalBuild,
   sharedCacheArguments,
   stripUnitTestBundles,
 } from "./sim-pool-build";
@@ -295,6 +297,42 @@ describe("build stamp", () => {
     const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "build-stamp-nogit-")));
     dirs.push(dir);
     expect(buildKey({ root: dir, appleDir: dir, command: "xcodebuild", argv: [], env: {} })).toBeUndefined();
+  });
+});
+
+describe("Swift incremental state after an unfinished build", () => {
+  const dirs: string[] = [];
+  afterAll(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Where Xcode keeps the Swift driver's dependency graph for the app module and a package module.
+  function derivedData(): { dd: string; priors: string[] } {
+    const dd = mkdtempSync(join(tmpdir(), "incremental-"));
+    dirs.push(dd);
+    const objects = (project: string, target: string) =>
+      join(dd, "Build", "Intermediates.noindex", `${project}.build`, "Debug-iphonesimulator", `${target}.build`, "Objects-normal", "arm64");
+    const priors = [join(objects("Oppi", "Oppi"), "Oppi-primary.priors"), join(objects("swift-markdown", "Markdown"), "Markdown-primary.priors")];
+    for (const path of priors) {
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(path, "graph");
+      writeFileSync(join(path, "..", "A.o"), "object");
+    }
+    return { dd, priors };
+  }
+
+  test("a build after a failed or killed one drops every module's priors; one after a clean build keeps them", () => {
+    const { dd, priors } = derivedData();
+    // First build in this DerivedData, then a clean finish.
+    expect(beginIncrementalBuild(dd)).toEqual([]);
+    settleIncrementalBuild(dd);
+    expect(beginIncrementalBuild(dd)).toEqual([]);
+    expect(priors.every((path) => existsSync(path))).toBe(true);
+
+    // That build never settled (it failed or was killed): the next one starts without priors.
+    expect(beginIncrementalBuild(dd).sort()).toEqual([...priors].sort());
+    expect(priors.some((path) => existsSync(path))).toBe(false);
+    expect(existsSync(join(priors[0], "..", "A.o"))).toBe(true);
   });
 });
 
