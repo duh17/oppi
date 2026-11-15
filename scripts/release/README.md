@@ -3,6 +3,7 @@
 These scripts contain release-critical logic that must remain reviewable from a fresh Oppi checkout. Any wrapper around them must delegate to these files rather than duplicate their behavior.
 
 - `preflight.ts` — verifies component versions, Apple build numbers, What's New, release-note readiness, and tracked release paths.
+- `changelog.ts` — `preview` prints the next release's `CHANGELOG.md` sections from the fragments in `changelog/`; `cut --version X.Y.Z` writes them under a new version heading and deletes the fragments. See [`changelog/README.md`](../../changelog/README.md).
 - `release-notes.ts` — creates and updates the internal changelog. TestFlight What to Test remains a separate brief summary.
 - `apple/testflight.ts` — archives and uploads with Xcode 27.1 (`/Applications/Xcode-27.1.app`, or an explicit `DEVELOPER_DIR`), and exposes separate Internal TestFlight, external-group, and beta-review operations. The archive command logs `xcodebuild -version` before `xcodegen` and `xcodebuild`. Every run (including `--build-only`) first exports the IPA locally and fails unless the signed `Oppi.app` has `aps-environment=production` and the time-sensitive entitlement, and the app and notification extension carry the App Group from their entitlements files; the upload export runs only after that check passes.
 - `apple/asc.ts` — provides read-only App Store Connect release-status and usage helpers.

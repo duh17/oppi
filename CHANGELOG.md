@@ -17,12 +17,14 @@ When a release includes multiple artifacts, the release heading uses the public 
 
 Keep one top-level product changelog for coordinated client/server releases. Use component scopes inside bullets instead of duplicating the same release across multiple files. If `oppi-server` or an Apple client starts releasing on a truly independent cadence, add a component changelog at that artifact root and include it in that artifact's package/release.
 
+Unreleased entries are not written here. Each change adds its bullet as a small file in [`changelog/`](changelog/README.md), in the folder for its section, so two changes never edit the same file. The release cut moves every fragment into a new version section below `[Unreleased]` and deletes the fragments.
+
 An entry tells someone who runs Oppi what is different after they update. Write it for the people using the app and server, not for a reviewer of the diff.
 
 - **Include** what a user, operator, or extension author can notice: new or changed behavior, noticeable performance changes, fixes for bugs that reached a shipped build, security and privacy fixes, removals, and anything that needs action on update.
 - **Leave out** refactors, renames, test and CI work, contributor scripts, internal storage layout, and bugs that appeared and were fixed in the same unreleased cycle. When a refactor changes what users see, describe only that change.
 - **One bullet per feature or fix, one or two sentences.** Say what changed and where (screen, setting, command, or API), not how it works. Edge cases, limits, and wire details belong in `docs/` or the commit message; link the doc.
-- **Update, don't append.** When later work changes an unreleased feature, rewrite its bullet so `[Unreleased]` describes the current state. No bullet may contradict a later one.
+- **Update, don't append.** When later work changes an unreleased feature, rewrite its fragment so the next release describes the current state. No bullet may contradict a later one.
 - **Migration notes** hold whatever needs action or breaks a mixed-version setup: version requirements, breaking protocol changes, irreversible data migrations, and config changes.
 
 Use these component scopes:
@@ -52,7 +54,7 @@ Example:
 ```
 
 ## [Unreleased]
-<!-- Written by the release lane from the delta at release time. Don't add entries in feature or fix work. -->
+<!-- Entries for the next release are fragments in changelog/; the release cut moves them here. Don't add entries to this section. -->
 
 ## [0.55.0] - 2026-11-14
 
