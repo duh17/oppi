@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +14,8 @@ import { Harness, createRegistry } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 
+import { UNSUPPORTED_TARGET_ERROR } from "../plugins/godot/contract.js";
+import { templatesRoot } from "../plugins/godot/export.js";
 import { DurableGodot } from "../plugins/godot/server.js";
 import { GodotService } from "../src/godot/godot-service.js";
 import { GODOT_PANE_CLIENT_CAPABILITY } from "../src/godot/godot-protocol.js";
@@ -44,13 +46,13 @@ afterEach(async () => {
 });
 
 /** A game with one release and a scripted player that answers like the app does. */
-async function playingGodot() {
+async function playingGodot(runtime: "host" | "sandbox" = "host") {
   const root = makeTempDir("oppi-godot-tools-");
   const dir = join(root, "tide");
   mkdirSync(join(dir, "build"), { recursive: true });
   writeFileSync(join(dir, "project.godot"), 'config/name="Tide"\n');
   writeFileSync(join(dir, "build", "tide.pck"), Buffer.from("GDPCbytes"));
-  const workspace = { id: "ws", hostMount: root, runtime: "host" } as unknown as Workspace;
+  const workspace = { id: "ws", hostMount: root, runtime } as unknown as Workspace;
   const dataDir = makeTempDir("oppi-godot-tools-data-");
   const games = new GodotService({
     listWorkspaces: () => [workspace],
@@ -223,6 +225,61 @@ describe("game tools", { timeout: 20_000 }, () => {
     expect(unknown?.isError).toBe(true);
     expect(textOf(unknown?.content)).toMatch(
       /^No game pong in this workspace\.\n- tide-[0-9a-f]{8}: Tide, tide in workspace ws/,
+    );
+  });
+});
+
+describe("godot_export", { timeout: 20_000 }, () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /** A `godot` on PATH that only answers `--version`, and an empty home for its templates. */
+  function fakeGodot(): void {
+    const bin = makeTempDir("oppi-godot-bin-");
+    writeFileSync(join(bin, "godot"), "#!/bin/sh\necho 4.7.2.stable.official.ed1daf0bf\n");
+    chmodSync(join(bin, "godot"), 0o755);
+    const home = makeTempDir("oppi-godot-home-");
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("XDG_DATA_HOME", join(home, "data"));
+  }
+
+  it("names the one-time template install instead of downloading on its own", async () => {
+    await playingGodot();
+    fakeGodot();
+    const [web] = await run([call("godot_export", { target: "web" })]);
+    expect(web?.isError).toBe(true);
+    expect(textOf(web?.content)).toBe(
+      `Godot 4.7.2.stable export templates are not installed (${templatesRoot()}). Call ` +
+        "godot_export again with installTemplates: true to download them once from the official " +
+        "Godot release (about 1.3 GB, verified against its SHA-512 sums), or install them from " +
+        "the Godot editor.",
+    );
+    expect(existsSync(templatesRoot())).toBe(false);
+  });
+
+  it("refuses mobile and unknown targets, unknown games, and sandboxed workspaces", async () => {
+    await playingGodot();
+    const [ios, unknown, missing] = await run([
+      call("godot_export", { target: "ios" }),
+      call("godot_export", { target: "switch" }),
+      call("godot_export", { project: "pong", target: "web" }),
+    ]);
+    expect(ios?.isError).toBe(true);
+    expect(textOf(ios?.content)).toBe(UNSUPPORTED_TARGET_ERROR);
+    expect(unknown?.isError).toBe(true);
+    expect(textOf(unknown?.content)).toContain("target");
+    expect(missing?.isError).toBe(true);
+    expect(textOf(missing?.content)).toMatch(/^No game pong in this workspace\.\n- tide-/);
+
+    services.forEach((service) => service.close());
+    services.clear();
+    await playingGodot("sandbox");
+    const [sandboxed] = await run([call("godot_export", { target: "macos" })]);
+    expect(sandboxed?.isError).toBe(true);
+    expect(textOf(sandboxed?.content)).toBe(
+      "Exporting runs Godot on the host, so it is off in sandboxed workspaces.",
     );
   });
 });

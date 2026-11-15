@@ -13,6 +13,8 @@ const RELEASES = /^\/godot\/([^/]+)\/releases$/;
 const COMMANDS = /^\/godot\/([^/]+)\/commands$/;
 const LOGS = /^\/godot\/([^/]+)\/logs$/;
 const CAPTURE = /^\/godot\/([^/]+)\/captures\/([^/]+)$/;
+/** A Web build `godot_export` stored: its folder (redirected to `/`), or one file in it. */
+const WEB = /^\/godot\/([^/]+)\/web\/([^/]+)(?:\/(.*))?$/;
 const RELEASE_BODY_MAX_BYTES = 64 * 1024;
 const COMMAND_BODY_MAX_BYTES = 256 * 1024;
 
@@ -86,6 +88,39 @@ export function createGodotRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
             level: url.searchParams.get("level") ?? undefined,
           }),
         );
+        return true;
+      }
+      const web = WEB.exec(path);
+      if (web && (method === "GET" || method === "HEAD")) {
+        const [, id = "", exportId = "", rest] = web;
+        if (rest === undefined) {
+          // Relative asset URLs in index.html need the folder's trailing slash.
+          res.writeHead(308, { Location: `${path}/` }).end();
+          return true;
+        }
+        let name: string;
+        try {
+          name = decodeURIComponent(rest || "index.html");
+        } catch {
+          name = "";
+        }
+        const found = await games.webFile(id, exportId, name);
+        if (!found) {
+          helpers.error(res, 404, "No such file");
+          return true;
+        }
+        res.writeHead(200, {
+          "Content-Type": found.contentType,
+          "Content-Length": String(found.size),
+          // The export id is a hash of the build, so its files never change.
+          "Cache-Control": "private, max-age=31536000, immutable",
+          "X-Content-Type-Options": "nosniff",
+        });
+        if (method === "HEAD") res.end();
+        else
+          createReadStream(found.path)
+            .on("error", () => res.destroy())
+            .pipe(res);
         return true;
       }
       const capture = CAPTURE.exec(path);

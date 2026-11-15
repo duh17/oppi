@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Every HTTP and WebSocket route server/src/routes/registry.ts declares: method, path template, path params, operationId, surface, auth, and transport. Generated from the registry by server/tests/route-fixtures.ts; server/tests/route-fixtures.test.ts fails when the committed bytes differ. The Apple client's APIClientRouteContractTests requires every request an APIClient endpoint method builds to match a row, so a client path the server does not serve fails there.",
-    "routeCount": 206
+    "routeCount": 209
   },
   "routes": [
     {
@@ -2137,6 +2137,44 @@
         "captureId"
       ],
       "operationId": "uploadGodotCapture",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/godot/{projectId}/web/{exportId}",
+      "params": [
+        "projectId",
+        "exportId"
+      ],
+      "operationId": "getGodotWebExport",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/godot/{projectId}/web/{exportId}/{file+}",
+      "params": [
+        "projectId",
+        "exportId",
+        "file"
+      ],
+      "operationId": "getGodotWebExportFile",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "HEAD",
+      "path": "/godot/{projectId}/web/{exportId}/{file+}",
+      "params": [
+        "projectId",
+        "exportId",
+        "file"
+      ],
+      "operationId": "headGodotWebExportFile",
       "surface": "core",
       "auth": "owner",
       "transport": "http"

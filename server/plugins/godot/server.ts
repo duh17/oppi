@@ -24,9 +24,16 @@ import {
   GODOT_DESCRIPTIONS,
   GODOT_EXTENSION,
   GODOT_GUIDELINES,
+  GODOT_EXPORT_TARGETS,
   GODOT_TOOL_NAMES,
+  GODOT_UNSUPPORTED_TARGETS,
+  INSTALL_TEMPLATES_PARAMETER,
   PROJECT_PARAMETER,
+  TARGET_PARAMETER,
+  UNSUPPORTED_TARGET_ERROR,
+  type GodotExportTarget,
 } from "./contract.js";
+import { exportGodotProject } from "./export.js";
 
 /** The longest side of a capture the model is shown, unless a call asks for another. */
 const CAPTURE_MAX_SIZE = 1280;
@@ -224,10 +231,37 @@ const godotReload = defineTool({
   },
 });
 
+const godotExport = defineTool({
+  name: GODOT_TOOL_NAMES.export,
+  description: GODOT_DESCRIPTIONS.export,
+  parameters: obj({
+    project,
+    target: oneOf([...GODOT_EXPORT_TARGETS, ...GODOT_UNSUPPORTED_TARGETS], {
+      description: TARGET_PARAMETER,
+    }),
+    installTemplates: opt(bool({ description: INSTALL_TEMPLATES_PARAMETER })),
+  }),
+  async execute(args, api, context) {
+    const wanted = args.target;
+    if (!isExportTarget(wanted)) return failure(UNSUPPORTED_TARGET_ERROR);
+    const found = await target(args.project, api, context);
+    if ("error" in found) return failure(found.error);
+    const outcome = await exportGodotProject(found.games, found.project.id, wanted, {
+      installTemplates: args.installTemplates ?? false,
+      progress: (line) => api.output(`${line}\n`),
+      ...(context.abortSignal ? { signal: context.abortSignal } : {}),
+    });
+    return outcome.ok ? { output: [text(outcome.text)] } : failure(outcome.error);
+  },
+});
+
+const isExportTarget = (value: string): value is GodotExportTarget =>
+  (GODOT_EXPORT_TARGETS as readonly string[]).includes(value);
+
 export const DurableGodot = defineExtension({
   name: GODOT_EXTENSION,
   runtimes: ["host", "sandbox"],
-  tools: [godotStatus, godotLogs, godotCapture, godotInput, godotReload],
+  tools: [godotStatus, godotLogs, godotCapture, godotInput, godotReload, godotExport],
   sections: [section("godot-guidelines", () => GODOT_GUIDELINES.join("\n"))],
 });
 

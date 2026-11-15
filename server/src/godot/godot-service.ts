@@ -14,7 +14,8 @@
  *   announced on the project's links.
  * - Commands are never queued: one goes only to a player attached when it is sent, so a player
  *   that attaches later never sees it (`godot-link.ts`).
- * - The server never runs Godot.
+ * - The service never runs Godot; the `godot_export` tool does (`server/plugins/godot/export.ts`)
+ *   and hands Web builds to `GodotWebExports`.
  */
 import { createHash } from "node:crypto";
 import { existsSync, watch, type FSWatcher } from "node:fs";
@@ -67,6 +68,7 @@ import {
 } from "./godot-protocol.js";
 import { serveGodotToSessions, type SessionGodot } from "./godot-sessions.js";
 import { GodotStore, statKeyOf, type GodotProjectMeta } from "./godot-store.js";
+import { GodotWebExports } from "./godot-web-exports.js";
 
 const log = createLogger({ base: { component: "godot" } });
 
@@ -116,6 +118,7 @@ interface LiveProject {
 export class GodotService implements SessionGodot {
   readonly broker: GodotLinkBroker;
   private readonly store: GodotStore;
+  private readonly web: GodotWebExports;
   private readonly live = new Map<string, LiveProject>();
   private readonly now: () => number;
   private readonly debounceMs: number;
@@ -137,6 +140,7 @@ export class GodotService implements SessionGodot {
     this.settleMs = options.settleMs ?? 250;
     this.renewAccess = options.renewAccess;
     this.store = new GodotStore(join(storage.getDataDir(), "godot"), this.now);
+    this.web = new GodotWebExports(join(storage.getDataDir(), "godot"));
     this.broker = new GodotLinkBroker({ describe: (id) => this.describe(id), now: this.now });
   }
 
@@ -483,6 +487,21 @@ export class GodotService implements SessionGodot {
             ),
       captureBytes: async (id, captureId) =>
         visible(id) ? this.captureBytes(id, captureId) : undefined,
+      exportSource: (id) => {
+        const live = visible(id) ? this.live.get(id) : undefined;
+        if (!live) return { error: `No game ${id} in this workspace.` };
+        // Exporting opens the project in Godot, which runs its tool scripts on the host.
+        if (this.storage.getWorkspace(workspaceId)?.runtime !== "host")
+          return {
+            error: "Exporting runs Godot on the host, so it is off in sandboxed workspaces.",
+          };
+        return { dir: live.project.dir, name: live.project.name };
+      },
+      adoptWebExport: async (id, folder) => {
+        if (!visible(id)) throw new Error(`No game ${id} in this workspace.`);
+        const exportId = await this.web.adopt(id, folder);
+        return { exportId, path: `/godot/${id}/web/${exportId}/` };
+      },
     };
   }
 
@@ -609,6 +628,11 @@ export class GodotService implements SessionGodot {
   ): Promise<{ data: Buffer; mimeType: string } | undefined> {
     const found = await this.store.capture(id, captureId);
     return found ? { data: await fs.readFile(found.path), mimeType: found.mimeType } : undefined;
+  }
+
+  /** A file of a Web build `godot_export` stored, for `GET /godot/{projectId}/web/...`. */
+  webFile(id: string, exportId: string, name: string): ReturnType<GodotWebExports["file"]> {
+    return this.web.file(id, exportId, name);
   }
 
   /** `/godot/{projectId}/link?role=`: the link a WebSocket upgrade asks for, else undefined. */

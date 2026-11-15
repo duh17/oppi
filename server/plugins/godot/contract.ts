@@ -18,7 +18,27 @@ export const GODOT_TOOL_NAMES = {
   capture: "godot_capture",
   input: "godot_input",
   reload: "godot_reload",
+  export: "godot_export",
 } as const;
+
+/** What `godot_export` builds. */
+export const GODOT_EXPORT_TARGETS = ["web", "macos", "linux", "windows"] as const;
+export type GodotExportTarget = (typeof GODOT_EXPORT_TARGETS)[number];
+/** Targets the schema names so the model hears why they are refused. */
+export const GODOT_UNSUPPORTED_TARGETS = ["ios", "android"] as const;
+
+export const UNSUPPORTED_TARGET_ERROR =
+  "godot_export does not build iOS or Android: they need signing identities, provisioning and " +
+  "platform SDKs the server does not manage. Export web, macos, linux, or windows instead.";
+
+export const TARGET_PARAMETER =
+  "web: an HTML5 build the server serves to the owner and paired devices. macos: a zipped " +
+  ".app (universal, ad-hoc signed). linux: an x86_64 executable. windows: an x86_64 .exe. " +
+  "Desktop builds land in the project's build/<target>/ folder. ios and android are not supported.";
+
+export const INSTALL_TEMPLATES_PARAMETER =
+  "Download and install the matching official Godot export templates first when they are " +
+  "missing (once per Godot version, about 1.3 GB, checked against the release's SHA-512 sums)";
 
 export const PROJECT_PARAMETER =
   "The game: its id or name from godot_status, one of this workspace's games. Omit it when only " +
@@ -41,7 +61,22 @@ export const GODOT_DESCRIPTIONS = {
   reload:
     "Apply the game's current release again on the device running it. Exports reload by " +
     "themselves; use this after a failed reload, or to restart the scene (tier scene).",
+  export:
+    "Build a game to play outside Oppi's Godot pane: web (served by this Oppi server at an " +
+    "address only the owner and paired devices can open), or a macOS, Linux, or Windows build in " +
+    "the project's build/ folder. Uses a preset of its own on a copy of the project; the " +
+    "project's export_presets.cfg is neither read nor changed. Needs Godot's export templates, " +
+    "which installTemplates downloads once.",
 } as const;
+
+/** `godot_export` without templates: the one-time step, said once, never done silently. */
+export function templatesMissingError(version: string, folder: string): string {
+  return (
+    `Godot ${version} export templates are not installed (${folder}). Call godot_export again ` +
+    "with installTemplates: true to download them once from the official Godot release " +
+    "(about 1.3 GB, verified against its SHA-512 sums), or install them from the Godot editor."
+  );
+}
 
 export const GODOT_GUIDELINES = [
   "Oppi's Godot pane plays Godot games on the owner's device, next to this chat. A game is a " +
@@ -53,12 +88,15 @@ export const GODOT_GUIDELINES = [
     '--path . --export-pack "<preset>" build/<name>.pck`, with a preset from ' +
     "export_presets.cfg that excludes build/*. " +
     "Oppi notices the new pack and the pane reloads it by itself; do not ask the owner to " +
-    "reload. Oppi never builds games itself.",
+    "reload. Oppi never exports the pane's pack itself.",
   "A change to scripts only reloads in place and keeps the game's state; a scene or resource " +
     "change restarts the scene; a change to project settings or autoloads restarts the game.",
   "To check a change: godot_status for the release and the player's state, godot_logs with " +
     "level error for errors (fix the file and line, then export again), godot_capture to see " +
     "the screen, godot_input to tap, drag, press keys, or trigger actions.",
+  "godot_export builds a game to play outside the pane: a web build this server serves to the " +
+    "owner and paired devices, or a macOS, Linux, or Windows build in the project's build/ " +
+    "folder. It needs Godot's export templates; when they are missing it says how to install them.",
 ];
 
 const kb = (bytes: number): string =>

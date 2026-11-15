@@ -4,7 +4,7 @@ Oppi can play a Godot game in a **Godot pane** beside the chat. You or an agent 
 
 **Status:** experiment. This page covers the server: discovery, releases, the player link, agent tools, and publishing from other machines. It also covers how the pane hands a game to the chat. A server that serves games says so in `GET /server/info` with `capabilities.godot: { "version": 1 }`.
 
-The server stores, checks, and announces game builds. It never runs Godot or the game, and it never builds a game for you: whatever exports the pack (an agent, the Godot editor, a Makefile, CI) only has to write it where Oppi looks.
+The server stores, checks, and announces game builds. It never runs the game, and it never exports the pane's pack for you: whatever exports the pack (an agent, the Godot editor, a Makefile, CI) only has to write it where Oppi looks. The one time the server runs Godot is when an agent calls `godot_export` to build a game to play outside the pane ([Play outside the pane](#play-outside-the-pane)).
 
 ## Put a game in a workspace
 
@@ -69,6 +69,26 @@ The device chooses how to apply a new release from what changed; the release's `
 
 The app plays one game at a time. Opening a pane on another game ends the one playing and starts the new one there; the first game's pane offers **Play** to switch back, which starts that game from the beginning.
 
+## Play outside the pane
+
+The `godot_export` tool builds a game to play without Oppi's Godot pane. It runs the server's `godot` (the one on its PATH) on a copy of the project.
+
+| Target | Result |
+| --- | --- |
+| `web` | An HTML5 build that the server keeps and serves at `/godot/<projectId>/web/<exportId>/`. The export id is a hash of the build, so the same build keeps the same address. The server keeps the newest three web builds of each game. |
+| `macos` | `build/macos/<folder>.zip` in the project folder: a universal `.app`, ad-hoc signed, not notarized. |
+| `linux` | `build/linux/<folder>.x86_64`: one x86_64 executable with the pack inside. |
+| `windows` | `build/windows/<folder>.exe`: one x86_64 executable with the pack inside. |
+
+`<folder>` is the project folder's name. The pane plays only `build/*.pck`, so the pane never plays these builds.
+
+- **Export templates.** Godot needs export templates that match its exact version, in the folder where the Godot editor keeps them (on macOS, `~/Library/Application Support/Godot/export_templates/<version>/`). When they are missing, `godot_export` fails and tells you so. Call it again with `installTemplates: true` to install them one time: the server downloads the official templates archive (about 1.3 GB, 2.1 GB unpacked) from the [godot-builds release](https://github.com/godotengine/godot-builds/releases) for that version, checks it against the release's `SHA512-SUMS.txt`, and unpacks it. Templates that the Godot editor installed work too.
+- **Presets.** The tool does not read or change the project's `export_presets.cfg`. Each export copies the project folder without `build/`, `.git` and `export_presets.cfg`, writes a one-preset file in the copy, and exports the copy. Earlier builds therefore never go into a new one. On APFS the copy is a clone, so it takes almost no space.
+- **Web is single-threaded.** The web build does not use threads. Thus it does not need `SharedArrayBuffer`, cross-origin isolation headers, or a secure context. The same build plays over the server's HTTP address and over its HTTPS address.
+- **Who can open a web build.** Every web build request needs the owner token or a paired device's token, as all other routes do. A browser that cannot send the token gets `401`. No public link exists.
+- iOS and Android are not targets: they need signing identities, provisioning, and platform SDKs that the server does not manage.
+- A game in a sandboxed workspace cannot be exported: Godot runs the project's tool scripts when it opens the project, and on the server they would run outside the sandbox.
+
 ## Hand a game to the chat
 
 The pane can put what you see into the chat's composer as a draft. Add your words, then send it. The pane never sends it for you.
@@ -80,7 +100,7 @@ The draft goes to the chat beside the game: on iPad, the chat in the window's ma
 
 ## For agents
 
-A durable session has five tools for the game in the pane while its workspace has a game; a session in a workspace without one does not get them or their guideline. When a workspace gets its first game during a session, the tools appear the next time that session is opened. The tools reach only the games in the session's own workspace: a game of another workspace, or one only a publish created, is not found. Each takes an optional `project`, a game's id or name. Without it, the tools use the one game of the workspace a pane is playing, else the only game in the session's checkout, else the only one in the workspace; when they cannot tell, they list the workspace's games.
+A durable session has six tools for the games in its workspace while the workspace has a game; a session in a workspace without one does not get them or their guideline. When a workspace gets its first game during a session, the tools appear the next time that session is opened. The tools reach only the games in the session's own workspace: a game of another workspace, or one only a publish created, is not found. Each takes an optional `project`, a game's id or name. Without it, the tools use the one game of the workspace a pane is playing, else the only game in the session's checkout, else the only one in the workspace; when they cannot tell, they list the workspace's games.
 
 | Tool | Use |
 | --- | --- |
@@ -89,13 +109,9 @@ A durable session has five tools for the game in the pane while its workspace ha
 | `godot_capture` | A screenshot of the game on the device, returned as an image you can see. It also shows in the tool row. |
 | `godot_input` | Taps, drags, keys, and input actions, run in order. Points are fractions of the game view from its top-left: `{ "x": 0.5, "y": 0.5 }` is the middle. Set `capture: true` to see the screen after the last step. |
 | `godot_reload` | Applies the current release again. Exports reload by themselves; use this after a failed reload, or with `tier: "scene"` to restart the scene. |
+| `godot_export` | Builds the game to play outside the pane: `target` is `web`, `macos`, `linux`, or `windows`. Set `installTemplates: true` to install missing export templates. See [Play outside the pane](#play-outside-the-pane). |
 
-A good loop:
-
-1. Change the project, then export it with `mkdir -p build && godot --headless --path . --export-pack`. Do not ask the owner to reload.
-2. Call `godot_status` to see that the new release is running, and `godot_logs` with `level: "error"` for errors.
-3. Fix the file and line an error names, then export again.
-4. Use `godot_input` and `godot_capture` to try the change and look at the result.
+To put a change in the pane, export a pack with `mkdir -p build && godot --headless --path . --export-pack "<preset>" build/<name>.pck` from the project folder. The pane reloads by itself.
 
 `godot_input` steps:
 
@@ -142,6 +158,7 @@ Every route needs the owner token or a paired device's token; nothing is public.
 | `POST /godot/{projectId}/releases[?wait=first-frame]` | Publish a release of uploaded packs. |
 | `POST /godot/{projectId}/commands` | Send one command to one player and wait for its answer: `{ "command": { "name": "capture" } }`, with optional `player` and `timeoutMs`. |
 | `GET /godot/{projectId}/logs?since=&limit=&level=` | The game's log, from the newest 2,000 entries. |
+| `GET /godot/{projectId}/web/{exportId}/[file]` | A web build that `godot_export` made. The folder serves `index.html`; the path without the trailing slash redirects to the folder. `HEAD` works for files. |
 | `PUT`, `GET /godot/{projectId}/captures/{captureId}` | A player uploads a PNG or JPEG capture; controllers read it. |
 | `WS /godot/{projectId}/link?role=player` or `?role=follower` | The live link. A player (the app's Godot pane) must first send `attach` naming `godot-pane:v1`; it then gets releases and commands and sends state, logs, and answers. A follower gets releases, players, and log lines. Either renews its access with `auth_renew`, as every device stream does; a link that does not closes when the token it opened with expires. |
 
@@ -158,6 +175,6 @@ Commands are `reload`, `run`, `stop`, `pause`, `resume`, `step`, `capture`, `inp
 
 ## Safety
 
-- The server checks a pack's hash, size, and header only. It never opens, runs, or builds a game.
+- The server checks a pack's hash, size, and header only. It never opens or runs a game. Only `godot_export` opens a project in Godot, and only in a workspace that is not sandboxed.
 - Only the owner and paired devices can publish, play, or read a game, its logs, and its captures.
 - Discovery never follows a link out of a checkout, and a pack an `oppi-godot.json` names must stay inside the checkout.

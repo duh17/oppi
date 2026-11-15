@@ -553,4 +553,16 @@ export interface OppiGodotHost {
     projectId: string,
     captureId: string,
   ): Promise<{ data: Uint8Array; mimeType: string } | undefined>;
+  /**
+   * The host folder `godot_export` exports from (the real path of the project folder) and the
+   * game's name, or why it cannot: a game this Session cannot see, or a sandboxed workspace
+   * (opening a project in Godot runs its tool scripts on the host).
+   */
+  exportSource(projectId: string): { dir: string; name: string } | { error: string };
+  /**
+   * Store a finished Web export folder (flat, with `index.html`) and return the path it is
+   * served at on this server, `/godot/<projectId>/web/<exportId>/`, to the owner and paired
+   * devices. The same bytes keep the same id.
+   */
+  adoptWebExport(projectId: string, folder: string): Promise<{ exportId: string; path: string }>;
 }
