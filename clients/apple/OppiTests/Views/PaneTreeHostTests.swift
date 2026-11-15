@@ -306,6 +306,76 @@ struct PaneTreeHostTests {
         #expect(try #require(leafView(host, split)).frame.minX == 0, "the panes traded places")
     }
 
+    /// A point in `cell`'s zone at `edge`, or its middle.
+    private static func point(in cell: CGRect, at edge: PaneEdge?) -> CGPoint {
+        switch edge {
+        case .left: CGPoint(x: cell.minX + 10, y: cell.midY)
+        case .right: CGPoint(x: cell.maxX - 10, y: cell.midY)
+        case .top: CGPoint(x: cell.midX, y: cell.minY + 10)
+        case .bottom: CGPoint(x: cell.midX, y: cell.maxY - 10)
+        case nil: CGPoint(x: cell.midX, y: cell.midY)
+        }
+    }
+
+    private static func twoPanes(landscape: Bool) -> PaneTestHost {
+        let host = landscape
+            ? PaneTestHost(width: 1133, height: 744, inNavigation: true)
+            : PaneTestHost(width: 744, height: 1133, inNavigation: true)
+        host.act { host.panes.split(axis: landscape ? .row : .column) }
+        return host
+    }
+
+    /// A lifted grip's lit zone is the frame its pane lands in, for every
+    /// zone of its neighbour, in both iPad mini orientations. A pane moved to
+    /// its neighbour's edge leaves its own place first, so beside a pane it
+    /// takes half the window there, not half the neighbour.
+    @Test(arguments: [true, false], [PaneEdge.left, .right, .top, .bottom, nil])
+    func aLiftedPanesPreviewIsTheFrameItLandsIn(landscape: Bool, edge: PaneEdge?) throws {
+        let host = Self.twoPanes(landscape: landscape)
+        defer { host.hide() }
+        let routed = host.scenePanes.routedLeafID
+        let lifted = try #require(host.scenePanes.splitLeaves.first?.id)
+        let cell = try #require(host.panes.cellFrame(routed))
+        let drop = try #require(host.panes.dropTarget(at: Self.point(in: cell, at: edge), payload: .pane(lifted)))
+        host.act {
+            switch drop.target {
+            case .move(let id, let edge): host.panes.move(lifted, to: id, edge: edge)
+            case .swap(let id): host.panes.swap(lifted, with: id)
+            default: Issue.record("a lifted pane only moves or swaps: \(drop.target)")
+            }
+        }
+        let landed = try #require(host.panes.cellFrame(lifted), "the moved pane is in sight")
+        #expect(drop.zone == landed, "preview \(String(describing: drop.zone)), landed \(landed)")
+        #expect(leafView(host, lifted)?.frame == landed)
+    }
+
+    /// A dragged entry's lit zone is the frame its pane gets: a new pane at
+    /// the edge it was dropped on, or the pane it replaces in the middle.
+    @Test(arguments: [true, false], [PaneEdge.left, .right, .top, .bottom, nil])
+    func aDroppedEntrysPreviewIsTheFrameItsPaneGets(landscape: Bool, edge: PaneEdge?) throws {
+        let host = Self.twoPanes(landscape: landscape)
+        defer { host.hide() }
+        let pane = try #require(host.scenePanes.splitLeaves.first?.id)
+        let cell = try #require(host.panes.cellFrame(pane))
+        let file = PaneStackEntry(serverId: "s", route: .file(.host, path: "/tmp/a", line: nil))
+        let drop = try #require(host.panes.dropTarget(at: Self.point(in: cell, at: edge), payload: .entry(file)))
+        var filled: PaneID?
+        host.act {
+            switch drop.target {
+            case .split(let id, let edge):
+                host.panes.split(id, edge: edge, showing: file)
+                filled = host.scenePanes.splitLeaves.first { $0.id != pane }?.id
+            case .open(let id):
+                host.scenePanes.show(file, in: id)
+                host.panes.focus(cell: id)
+                filled = id
+            default: Issue.record("an entry over a pane splits or opens: \(drop.target)")
+            }
+        }
+        let landed = try #require(filled.flatMap(host.panes.cellFrame), "the filled pane is in sight")
+        #expect(drop.zone == landed, "preview \(String(describing: drop.zone)), landed \(landed)")
+    }
+
     /// Close Pane removes the split leaf and its grip; one pane left has none.
     @Test func closePaneLeavesOnePaneWithNoGrip() throws {
         let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)

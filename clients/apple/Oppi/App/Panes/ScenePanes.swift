@@ -320,10 +320,7 @@ final class ScenePanes {
     func split(_ id: PaneID, edge: PaneEdge, showing entry: PaneStackEntry) -> PaneID? {
         guard tree.leaves.count < PaneLayout.maximumLeaves else { return nil }
         let leaf = PaneLeaf(id: freshLeafID(), name: nil, stack: [entry], attachedTo: nil, origin: .split)
-        return changeCells { cells in
-            let split = try cells.split(id, axis: edge.axis, inserting: leaf)
-            return edge.isTrailing ? split : try split.swap(leaf.id, id)
-        } ? leaf.id : nil
+        return changeCells { try $0.split(id, edge: edge, inserting: leaf) } ? leaf.id : nil
     }
 
     /// The screens items opened as whose entries have no link (a file opened
@@ -455,16 +452,7 @@ final class ScenePanes {
     /// A split leaf shows `entry` in place of what it showed.
     func show(_ entry: PaneStackEntry, in id: PaneID) {
         guard id != routedLeafID, tree.leaf(id)?.attachedTo == nil else { return }
-        changeCells { cells in
-            var cells = cells
-            cells.root = cells.root.mapLeaves { leaf in
-                guard leaf.id == id else { return leaf }
-                var leaf = leaf
-                leaf.stack = [entry]
-                return leaf
-            }
-            return cells
-        }
+        changeCells { try $0.showing(entry, in: id) }
     }
 
     /// Closes a split leaf. The routed leaf holds the window's stack and does

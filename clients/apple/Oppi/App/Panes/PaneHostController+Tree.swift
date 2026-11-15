@@ -88,15 +88,23 @@ extension PaneHostController {
     /// Lays the cells out by the fit rule: the routed leaf's cell (which the
     /// host fills with the primary and its companion) and each split leaf.
     func resolveCells() {
-        var cells = panes.cellLayout
-        // A compact window shows one pane at a time, the focused one, and the
-        // chip lists the rest (build plan §1.5). The tree is unchanged.
-        if showsChip(cells) { cells.zoomed = cells.focus }
-        let resolved = presentation(of: cells, keyboardHeight: keyboardHeight, firstResponderCell: keyboardHeight > 0 ? firstResponderCell() : nil)
+        let cells = panes.cellLayout
+        let resolved = shownPresentation(of: cells)
         cellPresentation = resolved
         // A collapsed routed leaf is its strip: the primary and its companion park.
         let routedCollapsed = cells.collapsed[panes.routedLeafID] != nil
         routedCell = routedCollapsed ? .zero : resolved.frames[panes.routedLeafID] ?? .zero
+    }
+
+    /// Where `cells` would be drawn now: the fit rule in this window, with
+    /// its keyboard. A drop's preview lays out the cells the drop would make
+    /// through here too, so it lights the frame the pane will get.
+    func shownPresentation(of cells: PaneLayout) -> PanePresentation {
+        var cells = cells
+        // A compact window shows one pane at a time, the focused one, and the
+        // chip lists the rest (build plan §1.5). The tree is unchanged.
+        if showsChip(cells) { cells.zoomed = cells.focus }
+        return presentation(of: cells, keyboardHeight: keyboardHeight, firstResponderCell: keyboardHeight > 0 ? firstResponderCell() : nil)
     }
 
     /// Where `cells` would sit in the host now, by the fit rule. With the

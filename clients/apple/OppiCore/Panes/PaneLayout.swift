@@ -224,6 +224,11 @@ struct PaneLayout: Hashable, Sendable {
         try inserting(leaf, beside: target, axis: axis, after: true)
     }
 
+    /// Splits `target`, putting `leaf` at its `edge` (a drop on a pane's edge).
+    func split(_ target: PaneID, edge: PaneEdge, inserting leaf: PaneLeaf) throws -> PaneLayout {
+        try inserting(leaf, beside: target, axis: edge.axis, after: edge.isTrailing)
+    }
+
     /// Closes `id` and every leaf attached to it. A closed leaf's share goes
     /// to the sibling before it (after it, when it was first). Focus moves to
     /// the most recent remaining leaf when its leaf closed.
@@ -286,6 +291,19 @@ struct PaneLayout: Hashable, Sendable {
         guard let valid = Self.validWeights(weights, count: children.count) else { throw PaneLayoutError.invalidWeights }
         var layout = self
         layout.root = root.replacing(at: path, with: .split(axis: axis, children: children, weights: Self.scaledToOne(valid)))
+        return layout
+    }
+
+    /// Makes `entry` all `target`'s stack holds (a drop on a pane's middle).
+    func showing(_ entry: PaneStackEntry, in target: PaneID) throws -> PaneLayout {
+        guard leaf(target) != nil else { throw PaneLayoutError.unknownLeaf(target) }
+        var layout = self
+        layout.root = root.mapLeaves { leaf in
+            guard leaf.id == target else { return leaf }
+            var leaf = leaf
+            leaf.stack = [entry]
+            return leaf
+        }
         return layout
     }
 

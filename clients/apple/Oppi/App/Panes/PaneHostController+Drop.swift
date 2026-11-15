@@ -31,21 +31,6 @@ enum PaneDropTarget: Equatable {
     case swap(PaneID)
     case chat
 
-    /// The zone the drop previews, in the host's coordinates.
-    func preview(in cell: CGRect) -> CGRect {
-        let edge: PaneEdge? = switch self {
-        case .split(_, let edge), .move(_, let edge): edge
-        case .open, .swap, .chat: nil
-        }
-        switch edge {
-        case .left: return CGRect(x: cell.minX, y: cell.minY, width: cell.width / 2, height: cell.height)
-        case .right: return CGRect(x: cell.midX, y: cell.minY, width: cell.width / 2, height: cell.height)
-        case .top: return CGRect(x: cell.minX, y: cell.minY, width: cell.width, height: cell.height / 2)
-        case .bottom: return CGRect(x: cell.minX, y: cell.midY, width: cell.width, height: cell.height / 2)
-        case nil: return cell
-        }
-    }
-
     /// The zone of `cell` under `point`: its nearest edge within the outer
     /// quarter (by share of the pane's width or height), else the middle.
     static func zone(at point: CGPoint, in cell: CGRect) -> PaneEdge? {
@@ -82,16 +67,16 @@ extension PaneHostController: UIDropInteractionDelegate {
         return (frontScreen(ofCell: panes.routedLeafID) as? ChatRouteViewController)?.chat
     }
 
-    /// Where a drop at `point` would land, and the zone it lights; nil where
-    /// it would do nothing.
-    func dropTarget(at point: CGPoint, payload: PaneDragPayload.Content?) -> (target: PaneDropTarget, zone: CGRect)? {
+    /// Where a drop at `point` would land, and the zone it lights (nil when
+    /// what it fills would land out of sight); nil where it would do nothing.
+    func dropTarget(at point: CGPoint, payload: PaneDragPayload.Content?) -> (target: PaneDropTarget, zone: CGRect?)? {
         guard let presentation = cellPresentation,
               let (id, cell) = presentation.frames.first(where: { $0.value.contains(point) }) else { return nil }
         let edge = PaneDropTarget.zone(at: point, in: cell)
         if case .pane(let moving)? = payload {
             guard moving != id else { return nil }
             let target: PaneDropTarget = edge.map { .move(id, $0) } ?? .swap(id)
-            return (target, target.preview(in: cell))
+            return (target, landingFrame(of: target, payload: payload))
         }
         let entry: PaneStackEntry? = if case .entry(let entry)? = payload { entry } else { nil }
         let chat = id == panes.routedLeafID && primary.view.frame.contains(point) ? shownChat : nil
@@ -105,15 +90,53 @@ extension PaneHostController: UIDropInteractionDelegate {
         // never lights a pane zone.
         if entry != nil, let edge, canSplit {
             let target = PaneDropTarget.split(id, edge)
-            return (target, target.preview(in: cell))
+            return (target, landingFrame(of: target, payload: payload))
         }
         if chatTakes, edge == nil || entry == nil {
             return (.chat, primary.view.frame)
         }
         if entry != nil, edge == nil, splitLeaves[id] != nil {
-            return (.open(id), cell)
+            let target = PaneDropTarget.open(id)
+            return (target, landingFrame(of: target, payload: payload))
         }
         return nil
+    }
+
+    /// Stands in for the leaf a split drop would make, which has no id until
+    /// it lands.
+    private static let droppedLeafID: PaneID = {
+        guard let id = PaneID("dropping") else { preconditionFailure("dropping is not a pane id") }
+        return id
+    }()
+
+    /// The frame the pane a drop fills will have once it lands: the drop's
+    /// own layout change (`performDrop` and `gripPanned` make the same one
+    /// through `ScenePanes`) applied to the cells and laid out as the host
+    /// lays them out. A pane moved to a neighbour's edge first leaves its
+    /// place, so it can take more than half the neighbour's cell. Nil when
+    /// the pane would land out of sight, or for a chat drop.
+    private func landingFrame(of target: PaneDropTarget, payload: PaneDragPayload.Content?) -> CGRect? {
+        let cells = panes.cellLayout
+        let landed: (cells: PaneLayout, leaf: PaneID)?
+        switch (target, payload) {
+        case (.split(let id, let edge), .entry(let entry)?):
+            let leaf = PaneLeaf(id: Self.droppedLeafID, name: nil, stack: [entry], attachedTo: nil, origin: .split)
+            landed = (try? cells.split(id, edge: edge, inserting: leaf)).map { ($0, leaf.id) }
+        case (.open(let id), .entry(let entry)?):
+            landed = (try? cells.showing(entry, in: id).focusing(id)).map { ($0, id) }
+        case (.move(let id, let edge), .pane(let moving)?):
+            landed = (try? cells.move(moving, to: id, edge: edge)).map { ($0, moving) }
+        case (.swap(let id), .pane(let moving)?):
+            landed = (try? cells.swap(moving, id)).map { ($0, moving) }
+        default:
+            return nil
+        }
+        guard let (next, leaf) = landed else { return nil }
+        if let frame = shownPresentation(of: next).frames[leaf] { return frame }
+        // A split pane that would go straight to overflow takes focus, as
+        // `split(_:edge:showing:)` does.
+        guard case .split = target, let focused = try? next.focusing(leaf) else { return nil }
+        return shownPresentation(of: focused).frames[leaf]
     }
 
     func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
@@ -175,7 +198,11 @@ extension PaneHostController: UIDropInteractionDelegate {
         announceLayoutChange()
     }
 
-    func showDropZone(_ zone: CGRect) {
+    func showDropZone(_ zone: CGRect?) {
+        guard let zone else {
+            dropHighlight.isHidden = true
+            return
+        }
         let accent = view.tintColor ?? .tintColor
         dropHighlight.backgroundColor = accent.withAlphaComponent(0.15)
         dropHighlight.layer.borderColor = accent.cgColor
@@ -201,7 +228,7 @@ extension PaneHostController {
         case .began, .changed:
             let moved = pan.translation(in: view)
             grip.transform = CGAffineTransform(translationX: moved.x, y: moved.y)
-            if let target { showDropZone(target.zone) } else { dropHighlight.isHidden = true }
+            showDropZone(target?.zone)
         case .ended:
             finishGripPan(grip)
             switch target?.target {
