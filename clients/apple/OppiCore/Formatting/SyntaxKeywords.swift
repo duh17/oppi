@@ -118,3 +118,49 @@ let dotKeywords: Set<String> = [
     "plaintext", "point", "doublecircle", "tripleoctagon",
     "solid", "dashed", "dotted", "bold", "invis", "filled",
 ]
+
+// MARK: - Godot
+
+let gdscriptKeywords: Set<String> = [
+    "func", "var", "const", "class", "class_name", "extends", "signal",
+    "enum", "static", "if", "elif", "else", "for", "while", "match",
+    "when", "return", "await", "yield", "preload", "load", "self", "super",
+    "and", "or", "not", "in", "is", "as", "true", "false", "null",
+    "pass", "break", "continue", "breakpoint", "assert",
+    // Godot 3 spellings of today's `@onready`, `@export`, and `@tool`.
+    "onready", "export", "tool",
+    "PI", "TAU", "INF", "NAN",
+]
+
+let gdscriptTypeNames: Set<String> = [
+    "int", "float", "bool", "void",
+]
+
+/// Literal words in Godot's text resource values (`VariantParser`).
+let godotResourceKeywords: Set<String> = [
+    "true", "false", "null", "nil", "inf", "inf_neg", "nan",
+]
+
+let gdshaderKeywords: Set<String> = [
+    "shader_type", "render_mode", "stencil_mode", "uniform", "varying",
+    "const", "global", "instance", "group_uniforms", "struct",
+    "in", "out", "inout", "flat", "smooth",
+    "lowp", "mediump", "highp", "precision",
+    "if", "else", "for", "while", "do", "switch", "case", "default",
+    "break", "continue", "return", "discard", "true", "false",
+    "spatial", "canvas_item", "particles", "sky", "fog",
+    "source_color", "hint_range", "hint_normal", "hint_default_white",
+    "hint_default_black", "hint_enum", "filter_linear", "filter_nearest",
+    "repeat_enable", "repeat_disable", "instance_index",
+    "hint_screen_texture", "hint_depth_texture", "hint_normal_roughness_texture",
+]
+
+let gdshaderTypeNames: Set<String> = [
+    "void", "bool", "bvec2", "bvec3", "bvec4",
+    "int", "ivec2", "ivec3", "ivec4", "uint", "uvec2", "uvec3", "uvec4",
+    "float", "vec2", "vec3", "vec4", "mat2", "mat3", "mat4",
+    "sampler2D", "isampler2D", "usampler2D",
+    "sampler2DArray", "isampler2DArray", "usampler2DArray",
+    "sampler3D", "isampler3D", "usampler3D",
+    "samplerCube", "samplerCubeArray", "samplerExternalOES",
+]

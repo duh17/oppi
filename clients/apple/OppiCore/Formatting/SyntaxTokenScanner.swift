@@ -62,7 +62,7 @@ enum SyntaxTokenScanner {
         guard language != .unknown else { return [] }
         let text = truncatedCode(text)
 
-        if language == .json || language == .xml || language == .diff {
+        if language == .json || language == .xml || language == .diff || language == .godotResource {
             return scanFallbackTokenRanges(text, language: language)
         }
 
@@ -73,6 +73,29 @@ enum SyntaxTokenScanner {
 
         return scanTokenRangesFromUTF8(utf8, language: language)
     }
+
+/// A language's word tables for one scan, read once per call.
+private struct WordRules {
+    let keywords: Set<String>
+    let typeNames: Set<String>
+    /// Longest table entry; longer words skip the `String` allocation.
+    let maxLength: Int
+
+    init(_ language: SyntaxLanguage) {
+        keywords = language.keywords
+        typeNames = language.typeNames
+        maxLength = max(
+            keywords.reduce(0) { max($0, $1.utf8.count) },
+            typeNames.reduce(0) { max($0, $1.utf8.count) }
+        )
+    }
+
+    func kind(of word: String) -> SyntaxTokenKind? {
+        if keywords.contains(word) { return .keyword }
+        if typeNames.contains(word) { return .type }
+        return nil
+    }
+}
 
 /// Run the hand-written fallback scanner and return public UTF-16 ranges.
 private static func scanFallbackTokenRanges(
@@ -141,7 +164,12 @@ private static func scanTokenRangesByCharacter(
         return tokenRanges
     }
 
-    let keywords = language.keywords
+    if language == .godotResource {
+        scanGodotResourceRanges(allChars, ranges: &tokenRanges)
+        return tokenRanges
+    }
+
+    let words = WordRules(language)
     let commentPrefix = language.lineCommentPrefix
 
     var inBlockComment = false
@@ -157,7 +185,7 @@ private static func scanTokenRangesByCharacter(
             scanLineRangesSlice(
                 allChars, start: pos, end: lineEnd,
                 language: language,
-                keywords: keywords,
+                words: words,
                 commentPrefix: commentPrefix,
                 inBlockComment: &inBlockComment,
                 ranges: &tokenRanges
@@ -180,7 +208,7 @@ private static func scanTokenRangesFromUTF8(
     var tokenRanges: [SyntaxTokenRange] = []
     tokenRanges.reserveCapacity(bytes.count / 4)
 
-    let keywords = language.keywords
+    let words = WordRules(language)
     let commentPrefix: [UInt8]? = language.lineCommentPrefix.map { $0.compactMap(\.asciiValue) }
 
     var inBlockComment = false
@@ -195,7 +223,7 @@ private static func scanTokenRangesFromUTF8(
             scanLineRangesUTF8Slice(
                 bytes, start: pos, end: lineEnd,
                 language: language,
-                keywords: keywords,
+                words: words,
                 commentPrefix: commentPrefix,
                 inBlockComment: &inBlockComment,
                 ranges: &tokenRanges
@@ -217,7 +245,7 @@ private static func scanLineRangesUTF8Slice(
     start: Int,
     end: Int,
     language: SyntaxLanguage,
-    keywords: Set<String>,
+    words: WordRules,
     commentPrefix: [UInt8]?,
     inBlockComment: inout Bool,
     ranges: inout [SyntaxTokenRange]
@@ -268,10 +296,34 @@ private static func scanLineRangesUTF8Slice(
             return
         }
 
-        // Preprocessor for C/C++
-        if b == 0x23, language == .c || language == .cpp { // #
+        // Preprocessor for C/C++ and Godot shader includes
+        if b == 0x23, language == .c || language == .cpp || language == .gdshader { // #
             ranges.append(SyntaxTokenRange(location: i, length: end - i, kind: .keyword))
             return
+        }
+
+        if language == .gdscript {
+            // Inferred-type declaration :=
+            if b == 0x3A, i + 1 < end, bytes[i + 1] == 0x3D {
+                ranges.append(SyntaxTokenRange(location: i, length: 2, kind: .operator))
+                i += 2
+                continue
+            }
+            // StringName &"…", NodePath ^"…", node path $"…"
+            if b == 0x26 || b == 0x5E || b == 0x24, i + 1 < end, bytes[i + 1] == 0x22 || bytes[i + 1] == 0x27 {
+                let tokenEnd = scanStringEndUTF8(bytes, from: i + 1, end: end, quote: bytes[i + 1])
+                ranges.append(SyntaxTokenRange(location: i, length: tokenEnd - i, kind: .string))
+                i = tokenEnd
+                continue
+            }
+            // Node path $Child/Grandchild
+            if b == 0x24, i + 1 < end, isIdentStartByteASCII(bytes[i + 1]) {
+                var tokenEnd = i + 1
+                while tokenEnd < end, isIdentByteASCII(bytes[tokenEnd]) || bytes[tokenEnd] == 0x2F { tokenEnd += 1 }
+                ranges.append(SyntaxTokenRange(location: i, length: tokenEnd - i, kind: .string))
+                i = tokenEnd
+                continue
+            }
         }
 
         // Decorator @
@@ -305,13 +357,11 @@ private static func scanLineRangesUTF8Slice(
             while wordEnd < end, isIdentByteASCII(bytes[wordEnd]) { wordEnd += 1 }
             let wordLen = wordEnd - i
 
-            if wordLen >= 2, wordLen <= 12 {
-                let word = String(decoding: bytes[i..<wordEnd], as: UTF8.self)
-                if keywords.contains(word) {
-                    ranges.append(SyntaxTokenRange(location: i, length: wordLen, kind: .keyword))
-                    i = wordEnd
-                    continue
-                }
+            if wordLen >= 2, wordLen <= words.maxLength,
+               let kind = words.kind(of: String(decoding: bytes[i..<wordEnd], as: UTF8.self)) {
+                ranges.append(SyntaxTokenRange(location: i, length: wordLen, kind: kind))
+                i = wordEnd
+                continue
             }
 
             // Type-like: starts uppercase, has lowercase
@@ -423,7 +473,7 @@ private static func scanLineRangesSlice(
     start: Int,
     end: Int,
     language: SyntaxLanguage,
-    keywords: Set<String>,
+    words: WordRules,
     commentPrefix: [Character]?,
     inBlockComment: inout Bool,
     ranges: inout [SyntaxTokenRange]
@@ -469,9 +519,31 @@ private static func scanLineRangesSlice(
             return
         }
 
-        if allChars[i] == "#", language == .c || language == .cpp {
+        if allChars[i] == "#", language == .c || language == .cpp || language == .gdshader {
             ranges.append(SyntaxTokenRange(location: i, length: end - i, kind: .keyword))
             return
+        }
+
+        if language == .gdscript {
+            let c = allChars[i]
+            if c == ":", i + 1 < end, allChars[i + 1] == "=" {
+                ranges.append(SyntaxTokenRange(location: i, length: 2, kind: .operator))
+                i += 2
+                continue
+            }
+            if c == "&" || c == "^" || c == "$", i + 1 < end, allChars[i + 1] == "\"" || allChars[i + 1] == "'" {
+                let tokenEnd = scanStringEndPos(allChars, from: i + 1, end: end, quote: allChars[i + 1])
+                ranges.append(SyntaxTokenRange(location: i, length: tokenEnd - i, kind: .string))
+                i = tokenEnd
+                continue
+            }
+            if c == "$", i + 1 < end, isIdentStart(allChars[i + 1]) {
+                var tokenEnd = i + 1
+                while tokenEnd < end, isIdentChar(allChars[tokenEnd]) || allChars[tokenEnd] == "/" { tokenEnd += 1 }
+                ranges.append(SyntaxTokenRange(location: i, length: tokenEnd - i, kind: .string))
+                i = tokenEnd
+                continue
+            }
         }
 
         if allChars[i] == "@" {
@@ -507,9 +579,9 @@ private static func scanLineRangesSlice(
             }
             let wordLen = wordEnd - i
 
-            // Quick length check: keywords are 2-12 chars. Skip String alloc for longer words.
-            if wordLen >= 2, wordLen <= 12, keywords.contains(String(allChars[i..<wordEnd])) {
-                ranges.append(SyntaxTokenRange(location: i, length: wordLen, kind: .keyword))
+            // Quick length check: skip the String alloc for words longer than any table entry.
+            if wordLen >= 2, wordLen <= words.maxLength, let kind = words.kind(of: String(allChars[i..<wordEnd])) {
+                ranges.append(SyntaxTokenRange(location: i, length: wordLen, kind: kind))
             } else if wordLen >= 2, isUpperASCII(allChars[i]) {
                 // Check isTypeLike without String allocation
                 let hasLower = ((i + 1)..<wordEnd).contains { isLowerASCII(allChars[$0]) }
@@ -918,5 +990,116 @@ private static func scanDiffRanges(
 
         i = lineEnd + 1
     }
+}
+
+// MARK: - Godot Resource Highlighting
+
+/// Godot's text resources (`.tscn`, `.tres`, `project.godot`, `.import`,
+/// `export_presets.cfg`): `[section key=value]` headers, `key = value`
+/// properties, `;` comments, and Variant values whose strings and brackets
+/// may span lines. A header or key only starts a line outside any bracket.
+private static func scanGodotResourceRanges(
+    _ chars: [Character],
+    ranges: inout [SyntaxTokenRange]
+) {
+    let literals = SyntaxLanguage.godotResource.keywords
+    var i = 0
+    var atLineStart = true
+    var depth = 0
+
+    while i < chars.count {
+        let ch = chars[i]
+        if ch == "\n" {
+            atLineStart = true
+            i += 1
+            continue
+        }
+        if ch == " " || ch == "\t" || ch == "\r" {
+            i += 1
+            continue
+        }
+
+        if ch == ";" {
+            let start = i
+            while i < chars.count, chars[i] != "\n" { i += 1 }
+            ranges.append(SyntaxTokenRange(location: start, length: i - start, kind: .comment))
+            continue
+        }
+
+        let startsEntry = atLineStart && depth == 0
+        atLineStart = false
+
+        if startsEntry, ch == "[" {
+            depth += 1
+            i += 1
+            let nameStart = i
+            while i < chars.count, isIdentChar(chars[i]) { i += 1 }
+            if i > nameStart {
+                ranges.append(SyntaxTokenRange(location: nameStart, length: i - nameStart, kind: .keyword))
+            }
+            continue
+        }
+
+        // Property key: `config/name`, `0/position`, `metadata/_edit_lock_`.
+        if startsEntry, isIdentChar(ch) {
+            var keyEnd = i
+            while keyEnd < chars.count, isIdentChar(chars[keyEnd]) || chars[keyEnd] == "/" || chars[keyEnd] == "." {
+                keyEnd += 1
+            }
+            if isFollowedByAssignment(chars, from: keyEnd) {
+                ranges.append(SyntaxTokenRange(location: i, length: keyEnd - i, kind: .type))
+                i = keyEnd
+                continue
+            }
+        }
+
+        // String, StringName &"…", NodePath ^"…"
+        if ch == "\"" || ((ch == "&" || ch == "^") && i + 1 < chars.count && chars[i + 1] == "\"") {
+            let quote = ch == "\"" ? i : i + 1
+            let end = scanStringEnd(chars, from: quote, quote: "\"")
+            ranges.append(SyntaxTokenRange(location: i, length: end - i, kind: .string))
+            i = end
+            continue
+        }
+
+        if isDigitASCII(ch) || (ch == "-" && i + 1 < chars.count && isDigitASCII(chars[i + 1])) {
+            let end = scanNumberEnd(chars, from: ch == "-" ? i + 1 : i)
+            ranges.append(SyntaxTokenRange(location: i, length: end - i, kind: .number))
+            i = end
+            continue
+        }
+
+        if isIdentStart(ch) {
+            var wordEnd = i + 1
+            while wordEnd < chars.count, isIdentChar(chars[wordEnd]) { wordEnd += 1 }
+            let wordLen = wordEnd - i
+            if isFollowedByAssignment(chars, from: wordEnd) {
+                // Header attribute: `[ext_resource type="Script" id="1"]`
+                ranges.append(SyntaxTokenRange(location: i, length: wordLen, kind: .type))
+            } else if isLowerASCII(ch), literals.contains(String(chars[i..<wordEnd])) {
+                ranges.append(SyntaxTokenRange(location: i, length: wordLen, kind: .keyword))
+            } else if wordLen >= 2, isUpperASCII(ch), ((i + 1)..<wordEnd).contains(where: { isLowerASCII(chars[$0]) }) {
+                // Constructors: `ExtResource`, `Vector2`, `PackedStringArray`
+                ranges.append(SyntaxTokenRange(location: i, length: wordLen, kind: .type))
+            }
+            i = wordEnd
+            continue
+        }
+
+        switch ch {
+        case "(", "[", "{": depth += 1
+        case ")", "]", "}": depth = max(0, depth - 1)
+        default: break
+        }
+        i += 1
+    }
+}
+
+/// Whether the next non-blank character on the line is a lone `=`.
+private static func isFollowedByAssignment(_ chars: [Character], from start: Int) -> Bool {
+    var i = start
+    while i < chars.count, chars[i] == " " || chars[i] == "\t" { i += 1 }
+    guard i < chars.count, chars[i] == "=" else { return false }
+    return i + 1 >= chars.count || chars[i + 1] != "="
 }
 }

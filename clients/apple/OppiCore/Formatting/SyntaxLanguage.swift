@@ -35,6 +35,11 @@ enum SyntaxLanguage: Sendable, Hashable {
     case orgMode
     case mermaid
     case dot
+    case gdscript
+    /// Godot's INI-like text formats: scenes, resources, `project.godot`,
+    /// `.import` sidecars, and `export_presets.cfg`.
+    case godotResource
+    case gdshader
     case unknown
 
     /// Detect language from file extension or code fence name.
@@ -70,6 +75,9 @@ enum SyntaxLanguage: Sendable, Hashable {
         case "org": return .orgMode
         case "mmd", "mermaid": return .mermaid
         case "dot", "gv": return .dot
+        case "gd", "gdscript": return .gdscript
+        case "tscn", "tres", "godot", "import", "gdresource": return .godotResource
+        case "gdshader", "gdshaderinc": return .gdshader
         default: return .unknown
         }
     }
@@ -105,6 +113,9 @@ enum SyntaxLanguage: Sendable, Hashable {
         case .orgMode: return "Org"
         case .mermaid: return "Mermaid"
         case .dot: return "Graphviz"
+        case .gdscript: return "GDScript"
+        case .godotResource: return "Godot Resource"
+        case .gdshader: return "Godot Shader"
         case .unknown: return "Text"
         }
     }
@@ -124,8 +135,12 @@ enum SyntaxLanguage: Sendable, Hashable {
             return ["#"]
         case .mermaid:
             return ["%", "%"]
-        case .dot:
+        case .dot, .gdshader:
             return ["/", "/"]
+        case .gdscript:
+            return ["#"]
+        case .godotResource:
+            return [";"]
         case .html, .json, .xml, .diff, .unknown:
             return nil
         }
@@ -134,7 +149,7 @@ enum SyntaxLanguage: Sendable, Hashable {
     var hasBlockComments: Bool {
         switch self {
         case .swift, .typescript, .tsx, .javascript, .jsx, .go, .rust, .c, .cpp, .java, .kotlin, .zig, .css,
-             .protobuf, .graphql, .dot:
+             .protobuf, .graphql, .dot, .gdshader:
             return true
         case .xml:
             return true // <!-- --> handled by XML scanner
@@ -165,8 +180,27 @@ enum SyntaxLanguage: Sendable, Hashable {
             return mermaidKeywords
         case .dot:
             return dotKeywords
+        case .gdscript:
+            return gdscriptKeywords
+        case .godotResource:
+            return godotResourceKeywords
+        case .gdshader:
+            return gdshaderKeywords
         case .typescript, .tsx, .javascript, .jsx, .python, .go, .rust, .ruby, .shell,
              .c, .cpp, .java, .html, .css, .json, .yaml, .toml, .xml, .diff, .unknown:
+            return []
+        }
+    }
+
+    /// Lowercase built-in type names the scanner paints as types. Capitalized
+    /// identifiers (`Vector2`, `String`) are types without a table entry.
+    var typeNames: Set<String> {
+        switch self {
+        case .gdscript:
+            return gdscriptTypeNames
+        case .gdshader:
+            return gdshaderTypeNames
+        default:
             return []
         }
     }

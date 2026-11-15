@@ -23,6 +23,14 @@ struct FileKindTests {
             (".dockerignore", .shell),
             (".env", .shell),
             (".env.local", .shell),
+            ("swordlab/sfx.gd", .gdscript),
+            ("scenes/main.tscn", .godotResource),
+            ("themes/ui.tres", .godotResource),
+            ("project.godot", .godotResource),
+            ("icon.svg.import", .godotResource),
+            ("export_presets.cfg", .godotResource),
+            ("shaders/water.gdshader", .gdshader),
+            ("shaders/common.gdshaderinc", .gdshader),
         ]
         for (path, language) in expectations {
             let kind = FileKind.detect(from: path)

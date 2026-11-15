@@ -81,6 +81,8 @@ struct FileKind: Equatable, Sendable {
             return .code(language: .shell)
         case "rakefile":
             return .code(language: .ruby)
+        case "export_presets.cfg":
+            return .code(language: .godotResource)
         case ".gitignore", ".dockerignore", ".prettierignore", ".eslintignore",
              ".npmignore", ".hgignore":
             return .code(language: .shell)

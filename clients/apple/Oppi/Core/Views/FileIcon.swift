@@ -202,6 +202,14 @@ struct FileIcon: Equatable, Sendable {
         case "zig":
             return Self(symbolName: "z.square.fill", tint: .orange, assetName: "lang-zig")
 
+        // Godot
+        case "gd":
+            return Self(symbolName: "gamecontroller.fill", tint: .blue)
+        case "tscn", "tres", "godot":
+            return Self(symbolName: "gamecontroller.fill", tint: .comment)
+        case "gdshader", "gdshaderinc":
+            return Self(symbolName: "wand.and.stars", tint: .purple)
+
         // HTML / XML / markup
         case "html", "htm", "xml", "xhtml", "svg", "plist", "xib",
              "storyboard":
@@ -283,7 +291,7 @@ struct FileIcon: Equatable, Sendable {
             return Self(symbolName: "point.3.connected.trianglepath.dotted", tint: .purple)
 
         // Env / INI
-        case "env", "ini", "cfg", "conf":
+        case "env", "ini", "cfg", "conf", "import":
             return Self(symbolName: "gearshape.fill", tint: .comment)
 
         // Log
