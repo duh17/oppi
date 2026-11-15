@@ -429,10 +429,56 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// §1.6 rule 5: on a wide window the chat bar's Terminal opens the folder
-    /// terminal in a pane beside the chat, focused, instead of over it. With
-    /// no saved SSH host its first step is Add Host.
-    func testTheChatBarsTerminalOpensBesideTheChat() throws {
-        try openChatInLandscape()
+    /// terminal in a pane below the chat, focused, instead of over it: a
+    /// shell wants the window's width (New Panes' Terminal default). With no
+    /// saved SSH host its first step is Add Host.
+    func testTheChatBarsTerminalOpensBelowTheChatInLandscape() throws {
+        try openChat(in: .landscapeLeft, colorScheme: "dark")
+        let (setup, composer) = openTerminalFromTheChatBar()
+        XCTAssertGreaterThan(setup.frame.minY, composer.frame.maxY - 1, "The terminal is in a pane below the chat")
+        attachScreenCapture("terminal-below-chat-landscape")
+    }
+
+    func testTheChatBarsTerminalOpensBelowTheChatInPortrait() throws {
+        try openChat(in: .portrait, colorScheme: "dark")
+        let (setup, composer) = openTerminalFromTheChatBar()
+        XCTAssertGreaterThan(setup.frame.minY, composer.frame.maxY - 1, "The terminal is in a pane below the chat")
+        attachScreenCapture("terminal-below-chat-portrait")
+    }
+
+    /// New Panes (Settings → Experiments, under Split Panes): Terminal reads
+    /// Below until changed, and set to Right the chat bar's next terminal
+    /// opens to the chat's right.
+    func testNewPanesPutsTheChatBarsTerminalWhereItIsSet() throws {
+        try openChat(in: .landscapeLeft, colorScheme: "dark")
+        openExperiments()
+        let list = app.collectionViews["settings.experiments.list"]
+        let terminalSide = app.buttons["settings.experiments.newPanes.terminal"]
+        for _ in 0..<6 where !(terminalSide.exists && terminalSide.isHittable) { list.swipeUp() }
+        XCTAssertTrue(terminalSide.waitUntilExists(timeout: 5), "Experiments lists New Panes under Split Panes")
+        XCTAssertEqual(terminalSide.value as? String, "Below")
+        XCTAssertEqual(app.buttons["settings.experiments.newPanes.files"].value as? String, "Automatic")
+        hold()
+        attachScreenCapture("settings-new-panes")
+        terminalSide.tap()
+        let right = app.buttons["Right"]
+        XCTAssertTrue(right.waitUntilExists(timeout: 5), "The row offers Automatic, Right and Below")
+        right.tap()
+        XCTAssertTrue(waitFor((terminalSide.value as? String) == "Right"), "Terminal now reads Right")
+
+        app.buttons["workspace.open.routes-workspace"].tap()
+        let row = app.descendants(matching: .any)[sessionRow]
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "The workspace lists the session")
+        row.tap()
+        let (setup, composer) = openTerminalFromTheChatBar()
+        XCTAssertGreaterThan(setup.frame.minX, composer.frame.maxX - 1, "The terminal is in a pane to the chat's right")
+        attachScreenCapture("terminal-right-of-chat")
+    }
+
+    /// Taps the chat bar's Terminal and returns its first step (Add Host,
+    /// with no saved host) and the chat's composer, once the terminal is a
+    /// focused pane of its own beside the chat.
+    private func openTerminalFromTheChatBar() -> (setup: XCUIElement, composer: XCUIElement) {
         app.buttons["chat.toolbar.more"].tap()
         let terminal = app.buttons["chat.toolbar.menu.terminal"]
         XCTAssertTrue(terminal.waitUntilExists(timeout: 5), "The … menu offers Terminal")
@@ -441,12 +487,12 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(setup.waitUntilExists(timeout: 10), "The terminal's first step opened")
         let composer = app.descendants(matching: .any)["chat.input"]
         XCTAssertTrue(composer.isHittable, "The chat stays beside it")
-        XCTAssertGreaterThan(setup.frame.minX, composer.frame.maxX - 1, "The terminal is in a pane to the chat's right")
         let grips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.'"))
         XCTAssertEqual(grips.count, 2, "The terminal is a pane of its own")
         let terminalGrip = grips.matching(NSPredicate(format: "label ENDSWITH '2 of 2'")).firstMatch
         XCTAssertEqual(terminalGrip.value as? String, "Focused", "The new terminal pane has focus")
-        attachScreenCapture("terminal-beside-chat")
+        hold()
+        return (setup, composer)
     }
 
     /// §1.7: a closed pane comes back with Undo, from the toast that offers
@@ -532,6 +578,18 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
     /// Opens Settings → Experiments from the sidebar and sets the Split
     /// Panes switch.
     private func setSplitPanes(_ on: Bool) {
+        openExperiments()
+        let toggle = app.switches["settings.experiments.splitPanes"]
+        XCTAssertTrue(toggle.waitUntilExists(timeout: 10), "Experiments lists Split Panes on the iPad")
+        XCTAssertEqual(toggle.value as? String, on ? "0" : "1")
+        hold()
+        attachScreenCapture(on ? "settings-experiments-off" : "settings-experiments")
+        toggle.tap()
+        XCTAssertTrue(waitFor((toggle.value as? String) == (on ? "1" : "0")), "The switch turned \(on ? "on" : "off")")
+    }
+
+    /// Opens Settings → Experiments from the sidebar.
+    private func openExperiments() {
         let toggleSidebar = app.buttons["workspace.split.sidebarToggle"]
         if toggleSidebar.waitUntilExists(timeout: 5), toggleSidebar.label.localizedCaseInsensitiveContains("show") {
             toggleSidebar.tap()
@@ -545,22 +603,20 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         for _ in 0..<8 where !(experiments.exists && experiments.isHittable) { list.swipeUp() }
         XCTAssertTrue(experiments.waitUntilExists(timeout: 5), "Settings lists Experiments")
         experiments.tap()
-        let toggle = app.switches["settings.experiments.splitPanes"]
-        XCTAssertTrue(toggle.waitUntilExists(timeout: 10), "Experiments lists Split Panes on the iPad")
-        XCTAssertEqual(toggle.value as? String, on ? "0" : "1")
-        hold()
-        attachScreenCapture(on ? "settings-experiments-off" : "settings-experiments")
-        toggle.tap()
-        XCTAssertTrue(waitFor((toggle.value as? String) == (on ? "1" : "0")), "The switch turned \(on ? "on" : "off")")
     }
 
     private func openChatInLandscape() throws {
+        try openChat(in: .landscapeLeft)
+    }
+
+    /// `colorScheme` pins the theme for a test whose captures are review proof.
+    private func openChat(in orientation: UIDeviceOrientation, colorScheme: String? = nil) throws {
         guard UIDevice.current.userInterfaceIdiom == .pad else {
             throw XCTSkip("Splits need a wide window; the iPad mini is the wide simulator")
         }
-        XCUIDevice.shared.orientation = .landscapeLeft
+        XCUIDevice.shared.orientation = orientation
         addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
-        launchPreview(screen: "pane-restore", environment: [:], ready: nil)
+        launchPreview(screen: "pane-restore", environment: [:], colorScheme: colorScheme, ready: nil)
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10), "The shell came up")
         let row = app.descendants(matching: .any)[sessionRow]
         XCTAssertTrue(row.waitUntilExists(timeout: 10), "The fixture session is listed")

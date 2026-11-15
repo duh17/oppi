@@ -21,8 +21,8 @@ extension AppOpener {
             guard await scopedLock.authorize(.server(serverId)), isCurrent(generation) else { return .finished }
         }
         guard isCurrent(generation) else { return .finished }
-        // The push lands in the window's focused leaf: the one the link was
-        // tapped in, since a touch focuses its leaf.
+        // The pane opens beside, or the push lands in, the window's focused
+        // leaf: the one the link was tapped in, since a touch focuses its leaf.
         guard let screen = navigation.window.flatMap(Router.focusedScreen(in:)) else {
             toast(String(localized: "Open a screen first, then tap the terminal link again."))
             return .finished
@@ -59,8 +59,17 @@ enum TerminalLinkPresenter {
             if let list = screen as? SSHTerminalRexSessionsViewController, list.profileID == profile.id {
                 list.openLinkedPane(pane)
             } else {
-                Router.push(SSHTerminalRexSessionsViewController(profile: profile, opening: pane), from: screen)
+                let list = SSHTerminalRexSessionsViewController(profile: profile, opening: pane)
+                if !openBeside(list, from: screen) { Router.push(list, from: screen) }
             }
         }
+    }
+
+    /// The host's Rex list in a pane beside `screen`'s, where `PanePlacement`
+    /// puts Rex; false where it belongs over `screen`.
+    private static func openBeside(_ list: SSHTerminalRexSessionsViewController, from screen: UIViewController) -> Bool {
+        guard let host = PaneHostController.containing(screen), let cell = host.cell(holding: screen) else { return false }
+        let entry = PaneStackEntry(serverId: host.panes.context(of: cell).serverId, route: .local(PaneLocalScreen.rex.token))
+        return host.openBeside(PaneOpenContent(entry: entry), kind: .rex, from: cell, screen: list)
     }
 }

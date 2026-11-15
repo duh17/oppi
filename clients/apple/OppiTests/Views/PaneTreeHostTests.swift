@@ -640,16 +640,17 @@ struct PaneTreeHostTests {
     /// link gets a pane of its own. With Split Panes off, the link is the
     /// main pane's again.
     @Test(arguments: [(CGSize(width: 1133, height: 744), PaneAxis.row), (CGSize(width: 744, height: 1133), .column)])
-    func aTappedFileLinkOpensBesideTheChatAndTheNextReusesItsPane(size: CGSize, axis: PaneAxis) throws {
+    func aTappedFileLinkOpensBesideTheChatAndTheNextReusesItsPane(size: CGSize, axis: PaneAxis) async throws {
         let host = PaneTestHost(width: size.width, height: size.height, inNavigation: true)
         defer { host.hide() }
+        try await newPanes(host)
         let routed = host.scenePanes.routedLeafID
         let file = { (path: String) in
             PaneOpenContent(entry: PaneStackEntry(serverId: "s", route: .file(.host, path: path, line: nil)))
         }
 
         var opened = false
-        host.act { opened = host.panes.openLink(file("/tmp/a.md"), kind: .file) }
+        host.act { opened = host.panes.openBeside(file("/tmp/a.md"), kind: .file) }
         #expect(opened)
         let pane = try #require(host.scenePanes.splitLeaves.first?.id)
         guard case .split(let splitAxis, let children, _) = host.scenePanes.cellLayout.root else {
@@ -664,7 +665,7 @@ struct PaneTreeHostTests {
 
         host.act {
             host.panes.focus(cell: routed)
-            _ = host.panes.openLink(file("/tmp/b.md"), kind: .file)
+            _ = host.panes.openBeside(file("/tmp/b.md"), kind: .file)
         }
         #expect(host.scenePanes.splitLeaves.map(\.id) == [pane], "no second pane")
         #expect(host.scenePanes.topEntry(of: pane).route == .file(.host, path: "/tmp/b.md", line: nil))
@@ -673,7 +674,7 @@ struct PaneTreeHostTests {
         host.act {
             host.scenePanes.show(terminal, in: pane)
             host.panes.focus(cell: routed)
-            _ = host.panes.openLink(file("/tmp/c.md"), kind: .file)
+            _ = host.panes.openBeside(file("/tmp/c.md"), kind: .file)
         }
         #expect(host.scenePanes.topEntry(of: pane) == terminal, "the terminal keeps its pane")
         #expect(host.scenePanes.splitLeaves.count == 2, "the file got a pane of its own")
@@ -682,6 +683,87 @@ struct PaneTreeHostTests {
             host.scenePanes.splitsEnabled = false
             host.panes.updatePropertiesIfNeeded()
         }
-        #expect(!host.panes.openLink(file("/tmp/d.md"), kind: .file), "Split Panes off: the main pane opens it")
+        #expect(!host.panes.openBeside(file("/tmp/d.md"), kind: .file), "Split Panes off: the main pane opens it")
+    }
+
+    /// New Panes settings of the test's own, so a saved side on the
+    /// simulator never reaches it; `sides` are saved through the settings
+    /// store, as the settings rows save them.
+    private func newPanes(
+        _ host: PaneTestHost,
+        _ sides: [AppPreferenceStore.NewPanes.Kind: AppPreferenceStore.NewPanes.Side] = [:]
+    ) async throws {
+        let defaults = try #require(UserDefaults(suiteName: "PaneTreeHostTests-\(UUID().uuidString)"))
+        host.scenePanes.preferences = defaults
+        let store = SettingsStore(serverId: nil, device: DeviceAdapter(defaults: defaults), server: ServerAdapter { _ in nil })
+        for (kind, side) in sides {
+            #expect(await store.set(SettingsCatalog.newPaneSide(kind), side).value.current == side)
+        }
+    }
+
+    /// The split the routed leaf and one new pane make: its axis and the new pane.
+    private func splitBesideChat(_ host: PaneTestHost) throws -> (axis: PaneAxis, pane: PaneID) {
+        let pane = try #require(host.scenePanes.splitLeaves.first?.id)
+        guard case .split(let axis, let children, _) = host.scenePanes.cellLayout.root else {
+            Issue.record("no split: \(host.scenePanes.cellLayout.root)")
+            return (.row, pane)
+        }
+        #expect(children.map(\.leaves.first?.id) == [host.scenePanes.routedLeafID, pane], "after the chat")
+        return (axis, pane)
+    }
+
+    /// The chat bar's Terminal: the folder terminal opens in a pane below the
+    /// chat in landscape and in portrait, focused and showing the terminal's
+    /// screen, so the shell gets the window's width. Set to Right in New
+    /// Panes, it opens to the chat's right instead.
+    @Test(arguments: [CGSize(width: 1133, height: 744), CGSize(width: 744, height: 1133)])
+    func theChatBarsTerminalOpensBelowTheChatAndFollowsNewPanes(size: CGSize) async throws {
+        let entry = PaneStackEntry(serverId: "s", route: .local(PaneLocalScreen.terminal(workspaceId: "w").token))
+        func openTerminal(right: Bool) async throws -> (axis: PaneAxis, frame: CGRect) {
+            let host = PaneTestHost(width: size.width, height: size.height, inNavigation: true)
+            defer { host.hide() }
+            try await newPanes(host, right ? [.terminal: .right] : [:])
+            let screen = UIViewController()
+            var opened = false
+            host.act {
+                opened = host.panes.openBeside(
+                    PaneOpenContent(entry: entry), kind: .terminal, from: host.scenePanes.routedLeafID, screen: screen
+                )
+            }
+            #expect(opened)
+            let (axis, pane) = try splitBesideChat(host)
+            #expect(host.scenePanes.cellLayout.focus == pane, "the terminal's pane has focus")
+            #expect(host.scenePanes.topEntry(of: pane) == entry)
+            #expect(screen.view.window != nil && host.panes.cell(holding: screen) == pane, "the pane shows the terminal's screen")
+            return (axis, try #require(leafView(host, pane)).frame)
+        }
+
+        let below = try await openTerminal(right: false)
+        #expect(below.axis == .column)
+        #expect(below.frame.minY > 0 && below.frame.minX == 0 && below.frame.width == size.width, "below, the window's width")
+        let right = try await openTerminal(right: true)
+        #expect(right.axis == .row)
+        #expect(right.frame.minX > 0 && right.frame.minY == 0, "to the chat's right")
+    }
+
+    /// Open in New Pane to the Right is the person's choice: it opens there
+    /// even with New Panes set to put files below, where a tap puts them.
+    @Test func openInNewPaneToTheRightWinsOverNewPanes() async throws {
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer { host.hide() }
+        // The menu's open needs the app root. A window's trait override reaches
+        // the host only on a later trait pass, which the await below may or may
+        // not give it in a busy test process: give it to the host directly.
+        host.panes.traitOverrides.appRootEnvironment = host.root
+        host.panes.updateTraitsIfNeeded()
+        try #require(AppRootEnvironment.near(host.panes) != nil, "the host sees the app root")
+        try await newPanes(host, [.files: .below])
+        let file = PaneOpenContent(entry: PaneStackEntry(serverId: "s", route: .file(.host, path: "/tmp/a.md", line: nil)))
+        host.act { host.panes.open(file, .newPane(.right), from: host.scenePanes.routedLeafID) }
+        #expect(try splitBesideChat(host).axis == .row)
+        host.act { host.panes.undoPanes() }
+        #expect(host.scenePanes.splitLeaves.isEmpty)
+        host.act { _ = host.panes.openBeside(file, kind: .file) }
+        #expect(try splitBesideChat(host).axis == .column, "a tap follows the setting")
     }
 }

@@ -51,6 +51,9 @@ final class ScenePanes {
     /// switch without a relaunch.
     var splitsEnabled: Bool
     @ObservationIgnored private var experimentObserver: NSObjectProtocol?
+    /// Where the New Panes settings are read as a pane opens
+    /// (`PaneHostController.openBeside`); a test's own defaults.
+    @ObservationIgnored var preferences: UserDefaults = .standard
 
     @ObservationIgnored private var sceneIdentifier: String?
     @ObservationIgnored private var store = PaneTreeStore()

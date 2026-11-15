@@ -205,6 +205,66 @@ struct SettingsExperimentsPageTests {
         #expect(defaults.object(forKey: AppPreferenceStore.Experiments.splitPanesKey) as? Bool == false)
     }
 
+    /// New Panes sits under Split Panes while it is on: one side per kind,
+    /// a terminal Below and the rest Automatic until changed, and a choice
+    /// saves that kind's side. Split Panes off hides it.
+    @Test("New Panes lists a side per kind while Split Panes is on")
+    func newPanesFollowsSplitPanes() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "SettingsExperimentsPageTests-\(UUID().uuidString)"))
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let page = SettingsExperimentsViewController(defaults: defaults)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 1133, height: 1400)
+        window.traitOverrides.horizontalSizeClass = .regular
+        window.rootViewController = page
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        func rows() async -> [String: UIButton] {
+            var found: [String: UIButton] = [:]
+            for _ in 0..<50 {
+                page.view.layoutIfNeeded()
+                found = Dictionary(
+                    Self.buttons(in: page.view).compactMap { button in
+                        button.accessibilityIdentifier.flatMap { $0.hasPrefix("settings.experiments.newPanes.") ? ($0, button) : nil }
+                    },
+                    uniquingKeysWith: { first, _ in first }
+                )
+                if found.count == 5 { break }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            return found
+        }
+        let kinds = PlatformCapabilities.godotPane ? 5 : 4
+        let shown = await rows()
+        #expect(shown.count == kinds, "\(shown.keys.sorted())")
+        let terminal = try #require(shown["settings.experiments.newPanes.terminal"])
+        #expect(terminal.accessibilityValue == "Below")
+        #expect(shown["settings.experiments.newPanes.files"]?.accessibilityValue == "Automatic")
+        try KitMenuRow.choose("Right", in: terminal)
+        for _ in 0..<50 where AppPreferenceStore.NewPanes.side(for: .terminal, in: defaults) != .right {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(AppPreferenceStore.NewPanes.side(for: .terminal, in: defaults) == .right)
+        #expect(AppPreferenceStore.NewPanes.side(for: .files, in: defaults) == .automatic, "one kind at a time")
+
+        let split = try #require(Self.switches(in: page.view).first { $0.accessibilityIdentifier == "settings.experiments.splitPanes" })
+        split.isOn = false
+        split.sendActions(for: .valueChanged)
+        var gone = false
+        for _ in 0..<50 where !gone {
+            try? await Task.sleep(for: .milliseconds(20))
+            page.view.layoutIfNeeded()
+            gone = !Self.buttons(in: page.view).contains { $0.accessibilityIdentifier?.hasPrefix("settings.experiments.newPanes.") == true }
+        }
+        #expect(gone, "Split Panes off hides New Panes")
+    }
+
+    /// Buttons the user can see, as `switches(in:)` finds switches.
+    private static func buttons(in view: UIView) -> [UIButton] {
+        guard !view.isHidden else { return [] }
+        return (view as? UIButton).map { [$0] } ?? view.subviews.flatMap(buttons(in:))
+    }
+
     @Test("The root count includes Live Voice")
     func enabledCountIncludesLiveVoice() {
         let key = AppPreferences.Experiments.liveVoiceKey

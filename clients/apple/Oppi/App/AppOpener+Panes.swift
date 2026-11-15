@@ -2,8 +2,9 @@ import Foundation
 
 // Pane links (`oppi://sessions`, `file`, `files`, `git`, `panel`), decoded by
 // `PaneLinkCodec`. A link opens on the server it names, else the server it
-// came from, else the active one. A file or folder opens beside the focused
-// pane where there is room (`openBesideFocusedPane`); what else the primary
+// came from, else the active one. A file, a folder or a workspace's sessions
+// open beside the focused pane where there is room (`openBesideFocusedPane`);
+// what else the primary
 // leaf can show opens there; content the app cannot show yet (a server this device has not
 // paired, a server still connecting, a session it must look up, content
 // behind a scoped lock) opens as the entry's leaf state
@@ -82,7 +83,9 @@ extension AppOpener {
         }
         switch PaneEntries.element(for: entry, coordinator: coordinator) {
         case .workspace(let target)?:
-            navigation.openWorkspace(target)
+            if !openBesideFocusedPane(PaneOpenContent(entry: entry), kind: .sessions) {
+                navigation.openWorkspace(target)
+            }
         case .fileBrowser(let target)?:
             if !openBesideFocusedPane(PaneOpenContent(entry: entry), kind: .folder) {
                 navigation.openWorkspaceFileBrowser(target)
@@ -97,13 +100,13 @@ extension AppOpener {
         return .finished
     }
 
-    /// Opens a link's file, folder or web page in a pane beside the focused
-    /// one, where `PaneHostController.openLink` puts it. False when it opens
+    /// Opens a link's content in a pane beside the focused one, where
+    /// `PaneHostController.openBeside` puts it. False when it opens
     /// in the main pane as before: a compact window, Split Panes off, no room
     /// for a pane, a sheet in front, or Open Here (`opensInMainPane`).
-    func openBesideFocusedPane(_ content: PaneOpenContent, kind: PaneLinkKind) -> Bool {
+    func openBesideFocusedPane(_ content: PaneOpenContent, kind: PaneContentKind) -> Bool {
         guard !opensInMainPane, let window = navigation.window,
               let host = PaneHostController.focused(in: window) else { return false }
-        return host.openLink(content, kind: kind)
+        return host.openBeside(content, kind: kind)
     }
 }

@@ -835,19 +835,6 @@ extension PaneHostController {
         announceLayoutChange()
     }
 
-    /// Opens `screen` in a new pane to the right of `id`, focused, with
-    /// `entry` as what the pane shows. False when the window cannot split.
-    @discardableResult
-    func split(_ id: PaneID, showing entry: PaneStackEntry, screen: UIViewController) -> Bool {
-        guard canSplit, let made = panes.split(id, edge: .right, showing: entry) else { return false }
-        openingScreens[made] = screen
-        syncSplitLeaves()
-        openingScreens[made] = nil
-        focus(cell: made)
-        announceLayoutChange()
-        return true
-    }
-
     /// Zooms `id` to the whole window; nil restores every pane.
     func zoom(_ id: PaneID?) {
         panes.zoom(id)

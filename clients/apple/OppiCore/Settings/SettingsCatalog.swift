@@ -304,6 +304,21 @@ enum SettingsCatalog {
         )
     )
 
+    /// New Panes: the side a new pane of `kind` opens on when nothing says
+    /// (`PanePlacement`). Listed under Split Panes while it is on, on a wide window.
+    static func newPaneSide(_ kind: AppPreferenceStore.NewPanes.Kind) -> SettingDeclaration<AppPreferenceStore.NewPanes.Side> {
+        SettingDeclaration(
+            id: "settings.experiments.newPanes.\(kind.rawValue)",
+            key: AppPreferenceStore.NewPanes.key(kind),
+            storage: .device(perServer: false),
+            default: AppPreferenceStore.NewPanes.sideDefault(kind),
+            copy: SettingCopy(
+                title: kind.title,
+                footer: String(localized: "Where a pane you open from a link or a button goes. Automatic puts it to the right in landscape and below in portrait. With no room on that side, it opens on the other.")
+            )
+        )
+    }
+
     /// Godot Pane: Godot games from the server in a pane beside the chat. Nothing
     /// runs until a Godot pane opens; the engine then runs for the app's launch.
     static let experimentGodotPane = SettingDeclaration<Bool>(
@@ -432,7 +447,8 @@ enum SettingsCatalog {
 
     /// Every declared setting, type-erased. Ids and storage keys are unique
     /// across it (`SettingsCatalogTests`).
-    static let all: [SettingDescriptor] = ServerFeature.allCases.map { feature($0).descriptor } + [
+    static let all: [SettingDescriptor] = ServerFeature.allCases.map { feature($0).descriptor }
+        + AppPreferenceStore.NewPanes.Kind.allCases.map { newPaneSide($0).descriptor } + [
         hapticFeedback.descriptor,
         keepAwakeAfterActivity.descriptor,
         openLinks.descriptor,

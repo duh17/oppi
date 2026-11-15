@@ -322,6 +322,55 @@ enum AppPreferenceStore {
         }
     }
 
+    // MARK: - New Panes
+
+    /// Which side of the pane it comes from a new pane opens on, per kind of
+    /// content, when nothing says (Settings › Experiments › New Panes, wide
+    /// windows with Split Panes on). `PanePlacement` reads it; an explicit
+    /// choice (Open in New Pane Below, a drop on an edge, Split Right) wins.
+    enum NewPanes {
+        /// The kinds a person can set: Rex goes with Terminal, and a file with
+        /// a folder (Files).
+        enum Kind: String, CaseIterable, Sendable {
+            case terminal, files, web, games, sessions
+
+            var title: String {
+                switch self {
+                case .terminal: String(localized: "Terminal")
+                case .files: String(localized: "Files")
+                case .web: String(localized: "Web")
+                case .games: String(localized: "Games")
+                case .sessions: String(localized: "Sessions")
+                }
+            }
+        }
+
+        enum Side: String, CaseIterable, Sendable, Codable {
+            /// To the right in a landscape window, below in a portrait one.
+            case automatic
+            case right
+            case below
+
+            var title: String {
+                switch self {
+                case .automatic: String(localized: "Automatic")
+                case .right: String(localized: "Right")
+                case .below: String(localized: "Below")
+                }
+            }
+        }
+
+        static func key(_ kind: Kind) -> String { "\(AppIdentifiers.subsystem).panes.newPaneSide.\(kind.rawValue)" }
+
+        /// A shell wants width, so a terminal opens below in either
+        /// orientation; everything else follows the window.
+        static func sideDefault(_ kind: Kind) -> Side { kind == .terminal ? .below : .automatic }
+
+        static func side(for kind: Kind, in defaults: UserDefaults = .standard) -> Side {
+            defaults.string(forKey: key(kind)).flatMap(Side.init(rawValue:)) ?? sideDefault(kind)
+        }
+    }
+
     // MARK: - Browser
 
     /// Where regular web links open. Key matches iOS `AppPreferences.Browser`.

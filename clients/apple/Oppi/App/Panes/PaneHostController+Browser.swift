@@ -12,8 +12,8 @@ extension PaneHostController {
         return containing(screen)
     }
 
-    /// Opens `url` in a pane beside the focused one, where a tapped link's
-    /// page goes (`openLink`): a web page pane already open loads it in
+    /// Opens `url` in a pane beside the focused one, where a web page goes
+    /// (`openBeside`): a web page pane already open loads it in
     /// place. False when it belongs in Safari's sheet: on a compact window,
     /// with no room for a pane, or when the focused pane's server turned its
     /// Web Pages in Panes switch off.
@@ -21,7 +21,7 @@ extension PaneHostController {
     func openBrowser(_ url: URL) -> Bool {
         let serverId = panes.context(of: focusedCell).serverId
         guard AppRootEnvironment.near(self)?.coordinator.server(serverId, offers: .browserPane) ?? true else { return false }
-        return openLink(PaneOpenContent(entry: PaneStackEntry(serverId: serverId, route: .browser(url))), kind: .webPage)
+        return openBeside(PaneOpenContent(entry: PaneStackEntry(serverId: serverId, route: .browser(url))), kind: .webPage)
     }
 
     /// A split leaf's screen moved on by itself to `entry`: the tree records
