@@ -86,6 +86,7 @@ type ActiveSession = SessionStartActiveSession;
 
 import type { DurableExtensionReport, DurableHarness, SessionHost } from "./durable-harness.js";
 import type { PluginCatalog } from "./plugin-host.js";
+import { loadedScreens, type ScreenHost } from "./plugin-screens.js";
 import { loadDurableHarness } from "./session-durable-harness.js";
 import { createDurableSearchSource } from "./durable-search-source.js";
 import {
@@ -657,6 +658,12 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   /** Discover and load every plugin again into the Harness registry. */
   async reloadDurableExtensions(): Promise<DurableExtensionReport> {
     return (await this.durableHarness).reloadExtensions();
+  }
+
+  /** The plugins' sidebar entries and screens, loading the plugins first. */
+  async pluginScreens(): Promise<ScreenHost | undefined> {
+    await (await this.durableHarness).ensureShared();
+    return loadedScreens();
   }
 
   /** Every plugin, installed or failed, as the extension list shows it (`listPlugins`). */

@@ -15,6 +15,7 @@ import type { Job } from "../plugins/background-jobs/contract.js";
 import type { SubagentWorktree, SubagentWorktreeState } from "../plugins/subagents/contract.js";
 import type { NotifyInput, NotifyOutcome } from "../plugins/notify/contract.js";
 import type { SchemeReader } from "./internal-urls.js";
+import type { McpService } from "./mcp-service.js";
 import type { TraceEvent } from "./trace.js";
 import type {
   GodotCommandRequest,
@@ -184,7 +185,18 @@ export interface OppiDurableHost {
   ): Promise<OppiGodotHost | undefined>;
   /** Pi's file tools over the host or a sandbox session's Gondolin VM. */
   readonly files: OppiFileToolsHost;
+  /**
+   * The server's MCP management (the global and project `mcp.json`, Pi's probe, OAuth sign-in),
+   * for a built-in's sidebar screen. Undefined while the server has none.
+   */
+  mcp(): OppiMcpHost | undefined;
 }
+
+/** `oppiHost().mcp()`: the server's MCP management, as the HTTP routes use it. */
+export type OppiMcpHost = Pick<
+  McpService,
+  "list" | "add" | "patch" | "remove" | "login" | "logout"
+> & { readonly auth: Pick<McpService["auth"], "get" | "cancel" | "submit" | "active"> };
 
 /** A Session's name, as Oppi lists it. */
 export interface DurableSessionName {

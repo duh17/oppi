@@ -134,6 +134,10 @@ function runAxIdGuard(repoRoot) {
   runRepoGuard(repoRoot, "ax-id-guard.ts");
 }
 
+function runPluginScreenGuard(repoRoot) {
+  runRepoGuard(repoRoot, "plugin-screen-guard.ts");
+}
+
 function run(options) {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const repoRoot = path.resolve(scriptDir, "../..");
@@ -197,6 +201,7 @@ function run(options) {
       runDocumentEditGuard(repoRoot);
       runScreenshotScreenGuard(repoRoot);
       runAxIdGuard(repoRoot);
+      runPluginScreenGuard(repoRoot);
     }
     console.log(`Architecture boundary checks passed (scope: ${options.scope}).`);
     return;

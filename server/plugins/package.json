@@ -14,7 +14,8 @@
       "./notify",
       "./live-voice",
       "./control",
-      "./godot"
+      "./godot",
+      "./mcp-screen"
     ]
   }
 }

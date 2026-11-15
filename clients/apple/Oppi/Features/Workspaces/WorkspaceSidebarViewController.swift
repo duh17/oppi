@@ -53,12 +53,14 @@ final class WorkspaceSidebarViewController: UIViewController {
     /// What `AppStorage` read before: the same defaults keys.
     private struct Defaults: Equatable {
         var workspacesExpanded: Bool
+        var pluginSidebar: Bool
 
         static func read() -> Self {
             let defaults = UserDefaults.standard
             return Self(
                 workspacesExpanded: defaults.object(forKey: AppIdentifiers.workspaceSidebarExpandedKey) as? Bool
-                    ?? WorkspaceSidebarDisclosurePolicy.defaultExpanded
+                    ?? WorkspaceSidebarDisclosurePolicy.defaultExpanded,
+                pluginSidebar: AppPreferenceStore.Experiments.pluginSidebarEnabled
             )
         }
     }
@@ -219,7 +221,9 @@ final class WorkspaceSidebarViewController: UIViewController {
                 && navigation.splitDetailColumn.root == .utility(target)
         }
 
-        for item in WorkspaceSidebarPrimaryUtilities.items {
+        // The window's server's plugin entries, while their experiment is on.
+        let plugins = defaults.pluginSidebar ? root.windowConnection?.serverCapabilities?.pluginSidebar ?? [] : []
+        for item in WorkspaceSidebarPrimaryUtilities.items(plugins: plugins) {
             model.utilities[item.target] = UtilityRow(item: item, isSelected: isUtilitySelected(item.target))
             model.mainItems.append(.utility(item.target))
         }

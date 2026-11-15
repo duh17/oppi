@@ -483,6 +483,8 @@ const constructs: Construct[] = [
     // The base's own definition is `func toggleRow(`; a declared setting calls `settingToggleRow(`.
     pattern: /(?<![\w.])(?<!func\s)toggleRow\s*\(/g,
     disallowed: false,
+    // A plugin page's switch is the plugin's own data, sent through its stream: never a setting.
+    exemptFiles: ["clients/apple/Oppi/Features/PluginScreen/PluginScreenViewController.swift"],
     pathMustMatch: featuresOnly,
   },
   {

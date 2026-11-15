@@ -35,6 +35,18 @@ export * from "@earendil-works/pi-durable";
 export * from "./durable-extension-api.js";
 
 export type { PluginRuntime } from "./plugin-runtimes.js";
+/** Sidebar entries and their list screens (built-in plugins only). */
+export {
+  defineScreen,
+  LOADING_PAGE,
+  SCREEN_REFRESH_ACTION,
+  Sidebar,
+  type ScreenActArgs,
+  type ScreenActResult,
+  type ScreenDefinition,
+  type SidebarContribution,
+} from "./plugin-screens.js";
+export type * from "./types/screens.js";
 
 /** A durable extension with the runtimes whose sessions may select it. */
 export interface PluginExtension<

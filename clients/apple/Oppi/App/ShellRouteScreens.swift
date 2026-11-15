@@ -101,6 +101,11 @@ enum ShellRouteScreens {
                 root: root,
                 showsSidebarToggle: showsSidebarToggle
             )
+        case .pluginScreen(let entry):
+            let title = root.windowConnection?.serverCapabilities?.pluginSidebar?.first { $0.id == entry }?.title
+            return PluginScreenViewController(
+                entry: entry, page: "list", title: title ?? "", root: root, showsSidebarToggle: showsSidebarToggle
+            )
         case .skills:
             return ServerSkillsViewController(root: root, showsSidebarToggle: showsSidebarToggle)
         case .appSettings:
@@ -152,6 +157,10 @@ enum ShellRouteScreens {
         }
         if let list = screen as? McpServersViewController {
             list.showsSidebarToggle = placement == .splitDetailRoot
+            return
+        }
+        if let page = screen as? PluginScreenViewController {
+            page.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
         if let chatRoute = screen as? ChatRouteViewController {

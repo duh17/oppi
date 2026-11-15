@@ -43,6 +43,14 @@ import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import * as oppiV1 from "./oppi-v1.js";
 import { Extensions } from "./oppi-v1.js";
+import {
+  serveScreens,
+  Sidebar,
+  sidebarProblem,
+  type ScreenHost,
+  type ScreenReference,
+  type SidebarContribution,
+} from "./plugin-screens.js";
 import { isPathWithinRoot } from "./path-utils.js";
 import { pluginRuntimes, type PluginRuntime } from "./plugin-runtimes.js";
 import * as oppiV1Schema from "./oppi-v1-schema.js";
@@ -271,6 +279,8 @@ export class PluginHost {
   };
   private sync: Promise<unknown> = Promise.resolve();
   private reader?: RegistryReader;
+  /** The composed sidebar entries: built-in plugins' only, by `order`. */
+  private sidebar?: { readonly value: readonly SidebarContribution[] };
   /** The host's own extensions outside plugins: per-session MCP. */
   private readonly overlay: Registry = createRegistry();
   private readonly coreNames: ReadonlySet<string>;
@@ -372,6 +382,21 @@ export class PluginHost {
     this.overlay.uninstall(extension);
   }
 
+  /** The plugins' sidebar entries and their screen objects (`screens-stream.ts`). */
+  screens(): ScreenHost {
+    return {
+      entries: () => this.sidebar?.value ?? [],
+      open: async (entry, params, context) => {
+        if (!this.host) throw new Error("Plugins are not loaded");
+        return (await this.host.get(
+          entry.screen.contract,
+          params,
+          context,
+        )) as unknown as ScreenReference;
+      },
+    };
+  }
+
   async close(): Promise<void> {
     await this.host?.close(BACKGROUND_CONTEXT);
   }
@@ -386,6 +411,25 @@ export class PluginHost {
   private readonly core = defineFacet((host) => {
     host.serve(Extensions, {
       compose: (table, { report }) => this.compose(table, report),
+    });
+    // Only built-ins may add a sidebar entry (an owner plugin's is a reported conflict), and an
+    // entry lives exactly while its plugin does.
+    host.serve(Sidebar, {
+      compose: (table, { report }) => {
+        const entries: SidebarContribution[] = [];
+        for (const { plugin, value } of table) {
+          const problem = this.composition.builtIns.has(plugin)
+            ? sidebarProblem(value)
+            : "only Oppi's built-in plugins add sidebar entries";
+          if (problem || entries.some((entry) => entry.id === value.id))
+            report({
+              message: `Sidebar entry ${JSON.stringify(value?.id)}: ${problem ?? "its id is taken"}`,
+              plugins: [plugin],
+            });
+          else entries.push(value);
+        }
+        return entries.sort((a, b) => a.order - b.order);
+      },
     });
   });
 
@@ -605,6 +649,8 @@ export class PluginHost {
         }
         const value = await host.registry(Extensions, BACKGROUND_CONTEXT);
         this.reader = withOverlay(registryReader(value, BACKGROUND_CONTEXT), this.overlay);
+        this.sidebar = await host.registry(Sidebar, BACKGROUND_CONTEXT);
+        serveScreens(this.screens());
       } else {
         const failed = accepted
           .filter((entry) => !entry.fresh)

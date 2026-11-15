@@ -14,6 +14,7 @@ import { SourceRateLimiter } from "../source-rate-limit.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
 import { readyVoiceFeatures } from "../voice-backend-health.js";
 import { GODOT_CAPABILITY_VERSION } from "../godot/godot-protocol.js";
+import { loadedScreens, SCREENS_VERSION, sidebarEntryInfo } from "../plugin-screens.js";
 import { MAX_WORKSPACE_FILE_EDIT_BYTES } from "../file-serving-policy.js";
 import { isDeviceAccessPrincipal, type RequestPrincipal } from "../request-principal.js";
 import { checkPushRegistration } from "../push/registration.js";
@@ -438,6 +439,14 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     // and answering). Cached state: this never waits on a probe.
     const voiceBackends = await ctx.voiceBackendHealth.entries();
     const voiceReady = readyVoiceFeatures(voiceBackends);
+    // Plugin sidebar entries: what is loaded now. The first request starts the plugins' load and
+    // never waits for it; until it ends the list is empty and the app keeps its own entries.
+    void Promise.resolve()
+      .then(() => ctx.sessions.pluginScreens())
+      .catch((error: unknown) => {
+        log.warn("server_info.sidebar_unavailable", { error: String(error) });
+      });
+    const sidebar = (loadedScreens()?.entries() ?? []).map(sidebarEntryInfo);
     helpers.json(res, {
       name: hostname(),
       version: ctx.serverVersion,
@@ -517,6 +526,9 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         // Godot pane (`types/godot.ts`): `/godot` routes and `WS /godot/{id}/link` for players that
         // declare `godot-pane:v1`.
         godot: { version: GODOT_CAPABILITY_VERSION },
+        // Plugin screens (`types/screens.ts`): the `sidebar` entries below and `WS /screens/stream`,
+        // one integer for the whole vocabulary.
+        screens: { v: SCREENS_VERSION },
         extensionNativeUI: {
           version: 1,
           capabilities: [...EXTENSION_NATIVE_UI_SERVER_CAPABILITIES],
@@ -527,6 +539,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       },
       // Each voice feature's backend state, for About This Server → Voice.
       voiceBackends,
+      sidebar,
       stats: {
         workspaceCount: workspaces.length,
         activeSessionCount: activeSessions.length,

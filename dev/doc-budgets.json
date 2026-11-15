@@ -34,8 +34,8 @@
       "reason": "Server map and cross-cutting owners: program status, push, Live Voice and barge-in, the protocol boundary checklist, settings and route registries, and the boundary rules the architecture check links to. 1476 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/blocks-and-boundaries.md": {
-      "words": 750,
-      "reason": "Server block owners, listener trust boundaries, current-file read and write rules, and WebSocket upgrade owners. 648 words; headroom max(15%, 100 words)."
+      "words": 760,
+      "reason": "Server block owners, listener trust boundaries, current-file read and write rules, and WebSocket upgrade owners (the plugin screens stream included). 648 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/code-map.md": {
       "words": 450,
@@ -88,6 +88,10 @@
     "dev/testing/qa-verification.md": {
       "words": 490,
       "reason": "QA verification owner, journeys and their oracles, commands, and what the driver refuses. 381 words; headroom max(15%, 100 words)."
+    },
+    "dev/architecture-server/plugin-screens.md": {
+      "words": 420,
+      "reason": "Plugin screen owners on both sides, the stream's invariants, the generic-UI guard, and their tests. About 330 words; headroom max(15%, 100 words)."
     }
   }
 }

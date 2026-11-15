@@ -95,6 +95,24 @@ enum WorkspaceSidebarPrimaryUtilities {
         ),
     ]
 
+    /// `items` with a server's plugin entries among them by `order`: the native rows count
+    /// 10, 20, 30 and on, and an entry sorts after a native row of the same order. While its
+    /// experiment is on, a plugin entry says so in its title.
+    static func items(plugins: [PluginScreenSidebarEntry]) -> [WorkspaceSidebarPrimaryUtilityItem] {
+        let native = items.enumerated().map { (order: Double($0.offset + 1) * 10, rank: 0, item: $0.element) }
+        let added = plugins.map { entry in
+            (order: entry.order, rank: 1, item: WorkspaceSidebarPrimaryUtilityItem(
+                target: .pluginScreen(entry.id),
+                title: "\(entry.title) (plugin)",
+                systemImage: entry.icon,
+                accessibilityLabel: "Open \(entry.title) (plugin)",
+                accessibilityIdentifier: "workspace.plugin.\(entry.id).open",
+                accessibilityHint: nil
+            ))
+        }
+        return (native + added).sorted { ($0.order, $0.rank) < ($1.order, $1.rank) }.map(\.item)
+    }
+
     /// Pinned below New Workspace; not part of `items`.
     static let appSettings = WorkspaceSidebarPrimaryUtilityItem(
         target: .appSettings,

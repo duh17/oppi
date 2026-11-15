@@ -735,6 +735,14 @@ const rawApiRouteSpecs = [
   },
   {
     method: "GET",
+    path: "/screens/stream",
+    operationId: "openScreensStream",
+    surface: "core",
+    auth: "owner",
+    transport: "websocket",
+  },
+  {
+    method: "GET",
     path: "/mirror/v1/bridge",
     operationId: "openMirrorBridge",
     surface: "internal",

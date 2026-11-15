@@ -313,6 +313,19 @@ enum SettingsCatalog {
         )
     )
 
+    /// Plugin Sidebar: sidebar entries the server's built-in plugins add, drawn by the app's
+    /// generic list screen, each beside the native entry it may replace.
+    static let experimentPluginSidebar = SettingDeclaration<Bool>(
+        id: "settings.experiments.pluginSidebar",
+        key: AppPreferenceStore.Experiments.pluginSidebarKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.Experiments.enabledDefault,
+        copy: SettingCopy(
+            title: String(localized: "Plugin Sidebar"),
+            footer: String(localized: "Adds the server's plugin pages to the sidebar, marked (plugin), beside the built-in pages they mirror.")
+        )
+    )
+
     /// The calendars whose events Schedules leaves out. Stored as the hidden ones, so a
     /// calendar added later shows until it is hidden.
     static let calendarEventsHiddenCalendars = SettingDeclaration<[String]>(
@@ -396,6 +409,7 @@ enum SettingsCatalog {
         experimentHerdr.descriptor,
         experimentCalendarEvents.descriptor,
         experimentSplitPanes.descriptor,
+        experimentPluginSidebar.descriptor,
         calendarEventsHiddenCalendars.descriptor,
         serverMetricsEnabled.descriptor,
         mobileOutputGuideEnabled.descriptor,

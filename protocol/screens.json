@@ -1,0 +1,960 @@
+{
+  "serverInfo": {
+    "capabilities": {
+      "screens": {
+        "v": 1
+      }
+    },
+    "sidebar": [
+      {
+        "id": "oppi.mcp",
+        "title": "MCP Servers",
+        "icon": "network",
+        "order": 50,
+        "scopes": [
+          "server"
+        ]
+      }
+    ]
+  },
+  "pages": {
+    "loading": {
+      "title": "MCP Servers",
+      "state": {
+        "kind": "loading",
+        "message": "Probing MCP servers…"
+      },
+      "sections": []
+    },
+    "failed": {
+      "title": "MCP Servers",
+      "state": {
+        "kind": "failed",
+        "title": "Couldn't Load MCP Servers",
+        "message": "MCP management is busy. Retry refresh when it finishes."
+      },
+      "sections": []
+    },
+    "list": {
+      "title": "MCP Servers",
+      "bar": [
+        {
+          "id": "add",
+          "title": "Add MCP Server",
+          "symbol": "plus",
+          "present": "add"
+        }
+      ],
+      "sections": [
+        {
+          "id": "servers",
+          "footer": "Global servers from ~/.pi/agent/mcp.json load in every host workspace. Each workspace’s own servers are in its Workspace Settings.",
+          "rows": [
+            {
+              "kind": "item",
+              "id": "server.echo",
+              "title": "echo",
+              "subtitle": "stdio · 1 tools · Code Mode",
+              "status": {
+                "text": "Connected",
+                "tone": "success",
+                "symbol": "checkmark.circle"
+              },
+              "push": "server/echo"
+            },
+            {
+              "kind": "item",
+              "id": "server.remote",
+              "title": "remote",
+              "subtitle": "HTTP · 0 tools · Code Mode",
+              "status": {
+                "text": "Needs sign-in",
+                "tone": "warning",
+                "symbol": "circle"
+              },
+              "push": "server/remote"
+            },
+            {
+              "kind": "item",
+              "id": "server.failed",
+              "title": "failed",
+              "subtitle": "stdio · 0 tools · Deferred",
+              "status": {
+                "text": "Failed",
+                "tone": "danger",
+                "symbol": "circle"
+              },
+              "push": "server/failed"
+            },
+            {
+              "kind": "item",
+              "id": "server.disabled",
+              "title": "disabled",
+              "subtitle": "HTTP · 0 tools · Hidden",
+              "status": {
+                "text": "Disabled",
+                "tone": "secondary",
+                "symbol": "circle"
+              },
+              "push": "server/disabled"
+            }
+          ]
+        },
+        {
+          "id": "note",
+          "rows": [
+            {
+              "kind": "text",
+              "id": "note",
+              "style": "footnote",
+              "tone": "secondary",
+              "text": "Refresh probes Pi's configured servers, not running sessions. Configuration changes apply to new sessions or /reload."
+            }
+          ]
+        }
+      ]
+    },
+    "listDuringSignIn": {
+      "title": "MCP Servers",
+      "bar": [
+        {
+          "id": "add",
+          "title": "Add MCP Server",
+          "symbol": "plus",
+          "present": "add"
+        }
+      ],
+      "sections": [
+        {
+          "id": "signin",
+          "header": "Sign-In on remote",
+          "rows": [
+            {
+              "kind": "button",
+              "id": "signin.continue",
+              "title": "Continue Sign-In",
+              "action": "signin.continue"
+            },
+            {
+              "kind": "button",
+              "id": "signin.cancel",
+              "title": "Cancel Sign-In",
+              "role": "destructive",
+              "action": "signin.cancel"
+            }
+          ]
+        },
+        {
+          "id": "servers",
+          "footer": "Global servers from ~/.pi/agent/mcp.json load in every host workspace. Each workspace’s own servers are in its Workspace Settings.",
+          "rows": [
+            {
+              "kind": "item",
+              "id": "server.echo",
+              "title": "echo",
+              "subtitle": "stdio · 1 tools · Code Mode",
+              "status": {
+                "text": "Connected",
+                "tone": "success",
+                "symbol": "checkmark.circle"
+              },
+              "push": "server/echo"
+            },
+            {
+              "kind": "item",
+              "id": "server.remote",
+              "title": "remote",
+              "subtitle": "HTTP · 0 tools · Code Mode",
+              "status": {
+                "text": "Needs sign-in",
+                "tone": "warning",
+                "symbol": "circle"
+              },
+              "push": "server/remote"
+            },
+            {
+              "kind": "item",
+              "id": "server.failed",
+              "title": "failed",
+              "subtitle": "stdio · 0 tools · Deferred",
+              "status": {
+                "text": "Failed",
+                "tone": "danger",
+                "symbol": "circle"
+              },
+              "push": "server/failed"
+            },
+            {
+              "kind": "item",
+              "id": "server.disabled",
+              "title": "disabled",
+              "subtitle": "HTTP · 0 tools · Hidden",
+              "status": {
+                "text": "Disabled",
+                "tone": "secondary",
+                "symbol": "circle"
+              },
+              "push": "server/disabled"
+            }
+          ]
+        },
+        {
+          "id": "note",
+          "rows": [
+            {
+              "kind": "text",
+              "id": "note",
+              "style": "footnote",
+              "tone": "secondary",
+              "text": "Refresh probes Pi's configured servers, not running sessions. Configuration changes apply to new sessions or /reload."
+            }
+          ]
+        }
+      ]
+    },
+    "http": {
+      "title": "remote",
+      "sections": [
+        {
+          "id": "info",
+          "header": "Global",
+          "rows": [
+            {
+              "kind": "value",
+              "id": "status",
+              "label": "Status",
+              "value": "Needs sign-in"
+            },
+            {
+              "kind": "value",
+              "id": "transport",
+              "label": "Transport",
+              "value": "HTTP"
+            },
+            {
+              "kind": "text",
+              "id": "url",
+              "text": "https://example.test/mcp",
+              "selectable": true
+            }
+          ]
+        },
+        {
+          "id": "config",
+          "footer": "Scripts find and call tools; the model doesn't see them. Saved in this scope's mcp.json. New sessions or /reload pick up configuration changes.",
+          "rows": [
+            {
+              "kind": "toggle",
+              "id": "enabled",
+              "label": "Enabled",
+              "value": true,
+              "action": "enabled",
+              "disabled": false
+            },
+            {
+              "kind": "choice",
+              "id": "exposure",
+              "label": "Exposure",
+              "value": "codemode",
+              "options": [
+                {
+                  "value": "codemode",
+                  "title": "Code Mode"
+                },
+                {
+                  "value": "deferred",
+                  "title": "Deferred"
+                },
+                {
+                  "value": "direct",
+                  "title": "Direct"
+                },
+                {
+                  "value": "hidden",
+                  "title": "Hidden"
+                }
+              ],
+              "action": "exposure",
+              "disabled": false
+            }
+          ]
+        },
+        {
+          "id": "oauth",
+          "header": "OAuth",
+          "rows": [
+            {
+              "kind": "button",
+              "id": "login",
+              "title": "Sign In",
+              "action": "login",
+              "disabled": false
+            },
+            {
+              "kind": "button",
+              "id": "logout",
+              "title": "Sign Out",
+              "role": "destructive",
+              "action": "logout",
+              "disabled": false,
+              "confirm": {
+                "title": "Sign out of remote?",
+                "message": "This removes stored OAuth credentials on the host. You will need to sign in again to use this server.",
+                "button": "Sign Out"
+              }
+            }
+          ]
+        },
+        {
+          "id": "headers",
+          "header": "Headers",
+          "rows": [
+            {
+              "kind": "value",
+              "id": "headers.X-Key",
+              "label": "X-Key",
+              "value": "[redacted]",
+              "mono": true
+            },
+            {
+              "kind": "value",
+              "id": "headers.X-Reference",
+              "label": "X-Reference",
+              "value": "!get-key",
+              "mono": true
+            }
+          ]
+        },
+        {
+          "id": "connection",
+          "header": "Connection Error",
+          "rows": [
+            {
+              "kind": "text",
+              "id": "connection.error",
+              "text": "Sign-in required",
+              "tone": "danger",
+              "selectable": true
+            }
+          ]
+        },
+        {
+          "id": "tools",
+          "header": "Tools (0)",
+          "rows": [
+            {
+              "kind": "text",
+              "id": "tools.none",
+              "text": "No tools available",
+              "tone": "secondary"
+            }
+          ]
+        },
+        {
+          "id": "remove",
+          "rows": [
+            {
+              "kind": "button",
+              "id": "remove",
+              "title": "Remove Server",
+              "role": "destructive",
+              "action": "remove",
+              "disabled": false,
+              "confirm": {
+                "title": "Remove remote from Global?",
+                "message": "The configuration entry will be removed. Stored OAuth credentials are not deleted; sign out first if needed.",
+                "button": "Remove Server"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "stdio": {
+      "title": "echo",
+      "sections": [
+        {
+          "id": "info",
+          "header": "Global",
+          "rows": [
+            {
+              "kind": "value",
+              "id": "status",
+              "label": "Status",
+              "value": "Connected"
+            },
+            {
+              "kind": "value",
+              "id": "transport",
+              "label": "Transport",
+              "value": "stdio"
+            },
+            {
+              "kind": "text",
+              "id": "command",
+              "text": "node echo.cjs",
+              "mono": true,
+              "selectable": true
+            },
+            {
+              "kind": "value",
+              "id": "cwd",
+              "label": "Working Directory",
+              "value": "/tmp/project"
+            }
+          ]
+        },
+        {
+          "id": "config",
+          "footer": "Scripts find and call tools; the model doesn't see them. Saved in this scope's mcp.json. New sessions or /reload pick up configuration changes.",
+          "rows": [
+            {
+              "kind": "toggle",
+              "id": "enabled",
+              "label": "Enabled",
+              "value": true,
+              "action": "enabled",
+              "disabled": false
+            },
+            {
+              "kind": "choice",
+              "id": "exposure",
+              "label": "Exposure",
+              "value": "codemode",
+              "options": [
+                {
+                  "value": "codemode",
+                  "title": "Code Mode"
+                },
+                {
+                  "value": "deferred",
+                  "title": "Deferred"
+                },
+                {
+                  "value": "direct",
+                  "title": "Direct"
+                },
+                {
+                  "value": "hidden",
+                  "title": "Hidden"
+                }
+              ],
+              "action": "exposure",
+              "disabled": false
+            }
+          ]
+        },
+        {
+          "id": "env",
+          "header": "Environment",
+          "rows": [
+            {
+              "kind": "value",
+              "id": "env.KEY",
+              "label": "KEY",
+              "value": "[redacted]",
+              "mono": true
+            },
+            {
+              "kind": "value",
+              "id": "env.REF",
+              "label": "REF",
+              "value": "${TOKEN}",
+              "mono": true
+            }
+          ]
+        },
+        {
+          "id": "tools",
+          "header": "Tools (1)",
+          "rows": [
+            {
+              "kind": "text",
+              "id": "tool.echo",
+              "text": "echo",
+              "mono": true,
+              "selectable": true
+            }
+          ]
+        },
+        {
+          "id": "remove",
+          "rows": [
+            {
+              "kind": "button",
+              "id": "remove",
+              "title": "Remove Server",
+              "role": "destructive",
+              "action": "remove",
+              "disabled": false,
+              "confirm": {
+                "title": "Remove echo from Global?",
+                "message": "The configuration entry will be removed. Stored OAuth credentials are not deleted; sign out first if needed.",
+                "button": "Remove Server"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "add": {
+      "title": "Add MCP Server",
+      "submit": {
+        "title": "Add",
+        "action": "add"
+      },
+      "sections": [
+        {
+          "id": "configuration",
+          "header": "Configuration",
+          "footer": "Code Mode: Scripts find and call tools; the model doesn't see them.\nDeferred: Tool search loads matching tools into the model context.\nDirect: Tools are always declared to the model.\nHidden: Tools cannot be called.",
+          "rows": [
+            {
+              "kind": "value",
+              "id": "scope",
+              "label": "Scope",
+              "value": "Global"
+            },
+            {
+              "kind": "field",
+              "id": "name",
+              "placeholder": "Server name"
+            },
+            {
+              "kind": "choice",
+              "id": "transport",
+              "label": "Transport",
+              "value": "http",
+              "options": [
+                {
+                  "value": "http",
+                  "title": "HTTP"
+                },
+                {
+                  "value": "stdio",
+                  "title": "stdio"
+                }
+              ]
+            },
+            {
+              "kind": "choice",
+              "id": "exposure",
+              "label": "Exposure",
+              "value": "codemode",
+              "options": [
+                {
+                  "value": "codemode",
+                  "title": "Code Mode"
+                },
+                {
+                  "value": "deferred",
+                  "title": "Deferred"
+                },
+                {
+                  "value": "direct",
+                  "title": "Direct"
+                },
+                {
+                  "value": "hidden",
+                  "title": "Hidden"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "http",
+          "header": "Streamable HTTP",
+          "footer": "Use ${NAME} references instead of literal secrets. For example: API_KEY=${TOOLS_KEY}, or Authorization=Bearer ${TOKEN}. Values are resolved on the host; literal values are redacted when read back.",
+          "when": {
+            "field": "transport",
+            "is": "http"
+          },
+          "rows": [
+            {
+              "kind": "field",
+              "id": "url",
+              "placeholder": "https://example.com/mcp",
+              "input": "url"
+            },
+            {
+              "kind": "field",
+              "id": "headers",
+              "placeholder": "Headers: one KEY=VALUE per line",
+              "input": "multiline"
+            }
+          ]
+        },
+        {
+          "id": "oauth",
+          "header": "Optional OAuth Client",
+          "when": {
+            "field": "transport",
+            "is": "http"
+          },
+          "rows": [
+            {
+              "kind": "field",
+              "id": "clientId",
+              "placeholder": "Client ID"
+            },
+            {
+              "kind": "field",
+              "id": "clientSecret",
+              "placeholder": "Client secret reference: ${NAME}"
+            },
+            {
+              "kind": "field",
+              "id": "callbackPort",
+              "placeholder": "Callback port (automatic if empty)",
+              "input": "number"
+            }
+          ]
+        },
+        {
+          "id": "stdio",
+          "header": "Standard Input / Output",
+          "footer": "Use ${NAME} references instead of literal secrets. For example: API_KEY=${TOOLS_KEY}, or Authorization=Bearer ${TOKEN}. Values are resolved on the host; literal values are redacted when read back.\nAdding a command authorizes Pi to run it on the host when the scope is trusted and the server is enabled.",
+          "when": {
+            "field": "transport",
+            "is": "stdio"
+          },
+          "rows": [
+            {
+              "kind": "field",
+              "id": "command",
+              "placeholder": "Executable (not a shell command)"
+            },
+            {
+              "kind": "field",
+              "id": "arguments",
+              "placeholder": "Arguments: one per line (no secrets)",
+              "input": "multiline"
+            },
+            {
+              "kind": "field",
+              "id": "cwd",
+              "placeholder": "Working directory (optional)"
+            },
+            {
+              "kind": "field",
+              "id": "environment",
+              "placeholder": "Environment: one KEY=VALUE per line",
+              "input": "multiline"
+            }
+          ]
+        }
+      ]
+    },
+    "signIn": {
+      "title": "Sign In",
+      "sections": [
+        {
+          "id": "summary",
+          "header": "remote",
+          "rows": [
+            {
+              "kind": "value",
+              "id": "status",
+              "label": "Status",
+              "value": "Waiting for approval"
+            }
+          ]
+        },
+        {
+          "id": "signin",
+          "header": "Sign In",
+          "footer": "After approval, the browser may fail to load 127.0.0.1. Copy its full callback URL and paste it below. You can also complete sign-in using a browser on the host.",
+          "rows": [
+            {
+              "kind": "button",
+              "id": "open",
+              "title": "Open Sign-In Page",
+              "url": "https://auth.example/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Fcallback&state=fixture"
+            },
+            {
+              "kind": "field",
+              "id": "callback",
+              "placeholder": "Paste the full callback URL",
+              "input": "url"
+            }
+          ]
+        },
+        {
+          "id": "cancel",
+          "rows": [
+            {
+              "kind": "button",
+              "id": "cancel",
+              "title": "Cancel Sign-In",
+              "role": "destructive",
+              "action": "signin.cancel"
+            }
+          ]
+        }
+      ],
+      "submit": {
+        "title": "Submit",
+        "action": "callback"
+      }
+    },
+    "signInDone": {
+      "title": "Sign In",
+      "sections": [
+        {
+          "id": "summary",
+          "header": "remote",
+          "rows": [
+            {
+              "kind": "value",
+              "id": "status",
+              "label": "Status",
+              "value": "Signed in"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "client": [
+    {
+      "type": "watch",
+      "watch": "w1",
+      "entry": "oppi.mcp",
+      "scope": "server",
+      "page": "list",
+      "v": 1
+    },
+    {
+      "type": "act",
+      "watch": "w2",
+      "call": "c1",
+      "action": "enabled",
+      "row": "enabled",
+      "values": [
+        {
+          "field": "enabled",
+          "value": false
+        }
+      ]
+    },
+    {
+      "type": "act",
+      "watch": "w3",
+      "call": "c2",
+      "action": "add",
+      "values": [
+        {
+          "field": "name",
+          "value": "docs"
+        },
+        {
+          "field": "transport",
+          "value": "http"
+        },
+        {
+          "field": "url",
+          "value": "https://example.test/mcp"
+        }
+      ]
+    },
+    {
+      "type": "unwatch",
+      "watch": "w1"
+    }
+  ],
+  "server": [
+    {
+      "type": "value",
+      "watch": "w1",
+      "value": {
+        "title": "MCP Servers",
+        "state": {
+          "kind": "loading",
+          "message": "Probing MCP servers…"
+        },
+        "sections": []
+      }
+    },
+    {
+      "type": "ops",
+      "watch": "w1",
+      "ops": [
+        [
+          "s",
+          [
+            "bar"
+          ],
+          [
+            {
+              "id": "add",
+              "title": "Add MCP Server",
+              "symbol": "plus",
+              "present": "add"
+            }
+          ]
+        ],
+        [
+          "p",
+          [
+            "sections"
+          ],
+          0,
+          0,
+          [
+            {
+              "id": "servers",
+              "footer": "Global servers from ~/.pi/agent/mcp.json load in every host workspace. Each workspace’s own servers are in its Workspace Settings.",
+              "rows": [
+                {
+                  "kind": "item",
+                  "id": "server.echo",
+                  "title": "echo",
+                  "subtitle": "stdio · 1 tools · Code Mode",
+                  "status": {
+                    "text": "Connected",
+                    "tone": "success",
+                    "symbol": "checkmark.circle"
+                  },
+                  "push": "server/echo"
+                },
+                {
+                  "kind": "item",
+                  "id": "server.remote",
+                  "title": "remote",
+                  "subtitle": "HTTP · 0 tools · Code Mode",
+                  "status": {
+                    "text": "Needs sign-in",
+                    "tone": "warning",
+                    "symbol": "circle"
+                  },
+                  "push": "server/remote"
+                },
+                {
+                  "kind": "item",
+                  "id": "server.failed",
+                  "title": "failed",
+                  "subtitle": "stdio · 0 tools · Deferred",
+                  "status": {
+                    "text": "Failed",
+                    "tone": "danger",
+                    "symbol": "circle"
+                  },
+                  "push": "server/failed"
+                },
+                {
+                  "kind": "item",
+                  "id": "server.disabled",
+                  "title": "disabled",
+                  "subtitle": "HTTP · 0 tools · Hidden",
+                  "status": {
+                    "text": "Disabled",
+                    "tone": "secondary",
+                    "symbol": "circle"
+                  },
+                  "push": "server/disabled"
+                }
+              ]
+            },
+            {
+              "id": "note",
+              "rows": [
+                {
+                  "kind": "text",
+                  "id": "note",
+                  "style": "footnote",
+                  "tone": "secondary",
+                  "text": "Refresh probes Pi's configured servers, not running sessions. Configuration changes apply to new sessions or /reload."
+                }
+              ]
+            }
+          ]
+        ],
+        [
+          "d",
+          [
+            "state"
+          ]
+        ]
+      ]
+    },
+    {
+      "type": "ops",
+      "watch": "w1",
+      "ops": [
+        [
+          "p",
+          [
+            "sections"
+          ],
+          0,
+          0,
+          [
+            {
+              "id": "signin",
+              "header": "Sign-In on remote",
+              "rows": [
+                {
+                  "kind": "button",
+                  "id": "signin.continue",
+                  "title": "Continue Sign-In",
+                  "action": "signin.continue"
+                },
+                {
+                  "kind": "button",
+                  "id": "signin.cancel",
+                  "title": "Cancel Sign-In",
+                  "role": "destructive",
+                  "action": "signin.cancel"
+                }
+              ]
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "type": "failed",
+      "watch": "w1",
+      "message": "The page was refused: row kind \"chart\" is not one of the seven"
+    },
+    {
+      "type": "result",
+      "call": "c1",
+      "ok": true
+    },
+    {
+      "type": "result",
+      "call": "c2",
+      "ok": false,
+      "message": "Enter the server's URL."
+    },
+    {
+      "type": "result",
+      "call": "c3",
+      "ok": true,
+      "nav": {
+        "kind": "pop"
+      }
+    },
+    {
+      "type": "result",
+      "call": "c4",
+      "ok": true,
+      "nav": {
+        "kind": "present",
+        "page": "signin"
+      }
+    },
+    {
+      "type": "ended",
+      "watch": "w2",
+      "reason": "gone"
+    },
+    {
+      "type": "ended",
+      "watch": "w3",
+      "reason": "unsupported"
+    }
+  ]
+}

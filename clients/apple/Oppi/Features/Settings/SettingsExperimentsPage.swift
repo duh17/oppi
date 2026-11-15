@@ -15,9 +15,9 @@ import UIKit
 /// access, its section offers Calendars (which ones Schedules shows); refused, it
 /// offers the system Settings page where access is given back.
 final class SettingsExperimentsViewController: ListScreenController<SettingsExperimentsViewController.Section, SettingsExperimentsViewController.Item> {
-    enum Section: Hashable, Sendable { case splitPanes, liveVoice, rex, herdr, calendarEvents, godotPane }
+    enum Section: Hashable, Sendable { case splitPanes, liveVoice, rex, herdr, calendarEvents, godotPane, pluginSidebar }
     enum Item: Hashable, Sendable {
-        case splitPanes, liveVoice, rex, herdr, calendarEvents, godotPane
+        case splitPanes, liveVoice, rex, herdr, calendarEvents, godotPane, pluginSidebar
         /// Which calendars Schedules shows; with access only.
         case calendars
         /// Access was refused: opens Oppi's page in the system Settings.
@@ -77,6 +77,7 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
             AppPreferenceStore.Experiments.herdrEnabled,
             AppPreferenceStore.Experiments.calendarEventsEnabled,
             PlatformCapabilities.godotPane && AppPreferenceStore.Experiments.godotPaneEnabled,
+            AppPreferenceStore.Experiments.pluginSidebarEnabled,
         ].count { $0 }
     }
 
@@ -126,7 +127,11 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
                 footer: calendarFooter,
                 items: settingRows(calendarEvents, .calendarEvents) { .failure($0) } + calendarRows
             ),
-        ] + godotPaneSection
+        ] + godotPaneSection + [ListSection(
+            .pluginSidebar,
+            footer: SettingsCatalog.experimentPluginSidebar.copy.footer,
+            items: settingRows(SettingsCatalog.experimentPluginSidebar, .pluginSidebar) { .failure($0) }
+        )]
     }
 
     /// Calendars with access; the way back to access when it was refused.
@@ -153,6 +158,7 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
         case .herdr: settingInputs(SettingsCatalog.experimentHerdr)
         case .calendarEvents: settingInputs(SettingsCatalog.experimentCalendarEvents)
         case .godotPane: settingInputs(SettingsCatalog.experimentGodotPane)
+        case .pluginSidebar: settingInputs(SettingsCatalog.experimentPluginSidebar)
         case .calendars: AnyHashable([
             settingInputs(SettingsCatalog.calendarEventsHiddenCalendars), AnyHashable(deviceCalendar.calendars().map(\.id)),
         ])
@@ -200,7 +206,8 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         switch item {
-        case .splitPanes, .liveVoice, .rex, .herdr, .calendarEvents, .godotPane: super.dequeue(item, at: indexPath)
+        case .splitPanes, .liveVoice, .rex, .herdr, .calendarEvents, .godotPane, .pluginSidebar:
+            super.dequeue(item, at: indexPath)
         case .calendars: collectionView.dequeueConfiguredReusableCell(using: calendarsRow, for: indexPath, item: item)
         case .calendarAccess: collectionView.dequeueConfiguredReusableCell(using: calendarAccessRow, for: indexPath, item: item)
         case .failure(let id): dequeueSettingFailure(id, at: indexPath)
@@ -229,6 +236,8 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
             settingToggleRow(cell, SettingsCatalog.experimentCalendarEvents)
         case .godotPane:
             settingToggleRow(cell, SettingsCatalog.experimentGodotPane)
+        case .pluginSidebar:
+            settingToggleRow(cell, SettingsCatalog.experimentPluginSidebar)
         case .liveVoice:
             toggleRow(cell, title: String(localized: "Live Voice"), isOn: isOn(AppPreferences.Experiments.liveVoiceKey), identifier: "settings.experiments.liveVoice") { [weak self] in
                 self?.set(AppPreferences.Experiments.liveVoiceKey, $0)

@@ -24,6 +24,19 @@ struct ServerInfo: Codable, Sendable, Equatable {
     /// Each voice feature's backend state, for About This Server → Voice. Nil from a
     /// server that does not report it; the section is then hidden.
     var voiceBackends: [VoiceBackend]? = nil
+    /// Sidebar entries the server's built-in plugins add (`protocol/screens.json`).
+    var sidebar: [PluginScreenSidebarEntry]? = nil
+
+    /// `capabilities` with the sidebar entries this app can draw: the server speaks this app's
+    /// screen vocabulary, and the entry is offered server-wide.
+    var capabilitiesWithPluginSidebar: Capabilities? {
+        guard var capabilities else { return nil }
+        guard capabilities.screens?.v == PluginScreens.version else { return capabilities }
+        capabilities.pluginSidebar = (sidebar ?? []).filter { entry in
+            entry.scopes.contains("server")
+        }
+        return capabilities
+    }
 
     /// One `voiceBackends` entry. Labels and text come from the server; the app maps only
     /// `state` to a title and symbol (`VoiceBackendPresentation`).
@@ -136,6 +149,12 @@ struct ServerInfo: Codable, Sendable, Equatable {
         /// The Godot pane's `/godot` routes and `WS /godot/{id}/link` (`protocol/godot.json`).
         /// Missing means the server lists and serves no games.
         var godot: CapabilityVersion? = nil
+        /// Plugin screens: the sidebar's plugin entries and `WS /screens/stream`, one integer
+        /// for the whole vocabulary (`protocol/screens.json`).
+        var screens: ScreensCapability? = nil
+        /// The server's `sidebar` entries this app draws, set from the info that carried these
+        /// capabilities (`capabilitiesWithPluginSidebar`); never on the wire.
+        var pluginSidebar: [PluginScreenSidebarEntry]? = nil
 
         /// The relay origin, when the server pushes and names an https relay (http only on
         /// loopback, for local testing).
@@ -162,6 +181,10 @@ struct ServerInfo: Codable, Sendable, Equatable {
 
     struct CapabilityVersion: Codable, Sendable, Equatable {
         let version: Int
+    }
+
+    struct ScreensCapability: Codable, Sendable, Equatable {
+        let v: Int
     }
 
     struct ExtensionNativeUICapability: Codable, Sendable, Equatable {

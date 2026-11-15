@@ -805,7 +805,7 @@ final class ServerConnection {
 
     private func applyStreamCapabilities(_ info: ServerInfo) {
         connectedServerVersion = info.version
-        let capabilities = info.capabilities
+        let capabilities = info.capabilitiesWithPluginSidebar
         let previousRelay = pushRelay
         serverCapabilities = capabilities
         voiceBackends = info.voiceBackends

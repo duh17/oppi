@@ -1,0 +1,7 @@
+{
+  "name": "oppi-mcp-screen",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Oppi built-in: MCP Servers as a plugin sidebar entry, drawn by the app's generic list screen.",
+  "type": "module"
+}

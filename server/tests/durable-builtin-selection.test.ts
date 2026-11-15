@@ -54,6 +54,7 @@ const PINNED = {
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "oppi.mcp-screen",
         "codemode",
         "oppi.sessions",
       ],
@@ -65,6 +66,7 @@ const PINNED = {
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "oppi.mcp-screen",
         "codemode",
         "oppi.sessions",
       ],
@@ -111,6 +113,7 @@ const PINNED = {
         "oppi.sessions",
         "project-context",
         "sql-explorer",
+        "oppi.mcp-screen",
         "codemode",
       ],
       tools: [
@@ -201,6 +204,7 @@ const PINNED = {
         "oppi.sessions",
         "project-context",
         "sql-explorer",
+        "oppi.mcp-screen",
         "codemode",
       ],
       tools: [
@@ -234,6 +238,7 @@ const PINNED = {
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "oppi.mcp-screen",
         "codemode",
       ],
       extensions: [
@@ -244,6 +249,7 @@ const PINNED = {
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "oppi.mcp-screen",
         "codemode",
       ],
       tools: [
@@ -285,6 +291,7 @@ const PINNED = {
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "oppi.mcp-screen",
         "codemode",
       ],
       tools: [

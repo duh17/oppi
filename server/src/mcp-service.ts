@@ -79,6 +79,21 @@ function summarize(
     ];
   });
 }
+/**
+ * The running server's MCP management as built-in plugins reach it (`oppiHost().mcp()`): the
+ * newest service, until it is disposed. One process-wide slot like the Godot one, outside
+ * `oppi/v1`, so plugin code cannot replace it.
+ */
+let servedToPlugins: McpService | undefined;
+
+export function mcpForPlugins(): McpService | undefined {
+  return servedToPlugins;
+}
+
+function serveToPlugins(service: McpService | undefined): void {
+  servedToPlugins = service;
+}
+
 export class McpService {
   private readonly cli: McpCli;
   readonly auth: McpAuthManager;
@@ -115,6 +130,7 @@ export class McpService {
       void child.done.then(settled, settled);
     });
     this.auth = new McpAuthManager(this.cli, options.loginTtlMs);
+    serveToPlugins(this);
   }
   private get cliTimeoutMs(): number {
     return this.options.cliTimeoutMs ?? 20_000;
@@ -584,6 +600,7 @@ export class McpService {
   dispose(): Promise<void> {
     if (this.disposal) return this.disposal;
     this.disposed = true;
+    if (servedToPlugins === this) serveToPlugins(undefined);
     // Shutdown must not depend on a grace timer surviving process exit. This
     // includes probes/mutations as well as OAuth children from the same CLI.
     const children = [...this.children];

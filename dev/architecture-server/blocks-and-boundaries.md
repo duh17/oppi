@@ -51,4 +51,5 @@ Part of [Oppi server architecture](../architecture-server.md).
 | `/control-sessions/:sessionId/stream` | `BoundSessionStreamMux` | control sessions through the same path |
 | `/app/events/stream` | `AppEventStreamMux` | session rows, extension attention |
 | `/dictation/stream` | `DictationStreamMux` | dictation control and audio |
+| `/screens/stream` | `ScreensStreamMux` | [plugin screen](plugin-screens.md) pages |
 | `/mirror/v1/bridge` (Unix socket only) | `PiTuiMirrorRuntime` | terminal mirror registration and commands |

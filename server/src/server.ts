@@ -159,6 +159,7 @@ import { DictationDictionaryStore } from "./storage/dictation-dictionary-store.j
 import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 import { McpService } from "./mcp-service.js";
+import { ScreensStreamMux } from "./screens-stream.js";
 import { ProviderQuotaService } from "./provider-quota/service.js";
 import {
   garbageCollectUploadStore,
@@ -525,6 +526,7 @@ export class Server {
   private appEventStreamMux!: AppEventStreamMux;
   private boundSessionStreamMux!: BoundSessionStreamMux;
   private dictationStreamMux!: DictationStreamMux;
+  private screensStreamMux!: ScreensStreamMux;
   private mirrorRuntime!: PiTuiMirrorRuntime;
   private sessionRuntimes!: SessionRuntimes;
   // REST route handler (dispatch + all HTTP handlers)
@@ -757,6 +759,7 @@ export class Server {
     });
     this.sessions.layoutFiles = new LayoutFiles(this.storage, this.appEventStreamMux);
     this.godot = new GodotService(this.storage, { renewAccess });
+    this.screensStreamMux = new ScreensStreamMux(() => this.sessions.pluginScreens(), renewAccess);
     this.boundSessionStreamMux = new BoundSessionStreamMux(streamContext);
     this.dictationStreamMux = new DictationStreamMux(streamContext);
 
@@ -1994,8 +1997,15 @@ export class Server {
     const sessionStreamMatch = matchFocusedSessionStreamPath(url.pathname);
     const appEventStreamMatch = url.pathname === "/app/events/stream";
     const dictationStreamMatch = url.pathname === "/dictation/stream";
+    const screensStreamMatch = url.pathname === "/screens/stream";
     const godotLink = this.godot.linkTarget(url);
-    if (!sessionStreamMatch && !appEventStreamMatch && !dictationStreamMatch && !godotLink) {
+    if (
+      !sessionStreamMatch &&
+      !appEventStreamMatch &&
+      !dictationStreamMatch &&
+      !screensStreamMatch &&
+      !godotLink
+    ) {
       writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
         Connection: "close",
         "Content-Length": "0",
@@ -2031,6 +2041,7 @@ export class Server {
       });
       this.socketAccess.track(ws, gateRequest);
       if (godotLink) return this.godot.serveLink(ws, godotLink);
+      if (screensStreamMatch) return this.screensStreamMux.handleWebSocket(ws);
       this.routeAuthenticatedUpgrade(ws, {
         sessionStreamMatch,
         appEventStreamMatch,

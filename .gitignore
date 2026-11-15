@@ -35,6 +35,7 @@ scripts/*
 !scripts/screenshot-screen-guard.ts
 !scripts/ax-id-guard.ts
 !scripts/ax-id-baseline.json
+!scripts/plugin-screen-guard.ts
 !scripts/apple-warnings.ts
 !scripts/apple-warnings.test.ts
 !scripts/apple-warnings-baseline.json

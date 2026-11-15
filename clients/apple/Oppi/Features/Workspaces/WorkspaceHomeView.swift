@@ -232,6 +232,8 @@ enum WorkspaceUtilityNavTarget: Hashable {
     case skills
     case extensions
     case mcpServers
+    /// A server plugin's sidebar entry, by its id (`PluginScreenViewController`).
+    case pluginScreen(String)
     case sshTerminal
     case manageServers
     /// The active host's CPU, memory, disk, and Oppi process over time.
