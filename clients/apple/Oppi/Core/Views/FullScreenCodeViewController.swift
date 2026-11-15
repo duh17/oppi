@@ -105,6 +105,14 @@ final class FullScreenCodeViewController: UIViewController {
     private weak var viewingOptionsController: FullScreenViewingOptionsController?
     private(set) weak var contentHostController: UIViewController?
     private var viewingOptionsBarItem: UIBarButtonItem?
+    /// `.contentOnly` draws no bar: Copy, the source toggle, and Viewing
+    /// Options go to the embedding screen's bar instead (`onBarOffersChange`).
+    private(set) var barOffers: [ReaderBarAction: [UIBarButtonItem]] = [:]
+    /// Runs when `barOffers` change, so the embedding screen lays out its bar.
+    var onBarOffersChange: (() -> Void)?
+    /// Whether the embedding screen's bar shows `item` now, so Viewing Options
+    /// points at it; else (in its … menu) the panel opens as a sheet.
+    var hostBarShows: (UIBarButtonItem) -> Bool = { _ in false }
     private var annotateBarItem: UIBarButtonItem?
     private var stashBarItem: UIBarButtonItem?
     private var backSwipeDismissHandler: HorizontalBackSwipeGestureInstaller?
@@ -749,6 +757,15 @@ final class FullScreenCodeViewController: UIViewController {
         }
 
         syncFloatingControlVisibility(on: viewController)
+        if case .contentOnly = presentationMode {
+            // The embedding screen's bar shows these, in its own tint; an item
+            // is in one bar only, so the hidden one here stays empty.
+            let exported = offers.filter { [.copy, .sourceToggle, .viewingOptions].contains($0.key) }
+            exported.values.joined().forEach { $0.tintColor = nil }
+            barOffers = exported
+            onBarOffersChange?()
+            return
+        }
         readerBar.update(offers: offers, documentActions: hostMenu)
         viewController.navigationItem.rightBarButtonItems = readerBar.trailingItems
         viewController.navigationItem.additionalOverflowItems = readerBar.overflow
@@ -1106,7 +1123,11 @@ final class FullScreenCodeViewController: UIViewController {
 
         // Turned off, the item runs from the … menu and has no place to point
         // at, so the options open as a sheet.
-        let onBar = readerBar.trailingItems.contains { $0 === viewingOptionsBarItem }
+        let onBar: Bool = if case .contentOnly = presentationMode {
+            viewingOptionsBarItem.map(hostBarShows) ?? false
+        } else {
+            readerBar.trailingItems.contains { $0 === viewingOptionsBarItem }
+        }
         options.configurePresentation(barItem: onBar ? viewingOptionsBarItem : nil)
         present(options, animated: true)
     }

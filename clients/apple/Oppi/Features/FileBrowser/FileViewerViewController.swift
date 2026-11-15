@@ -679,6 +679,14 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     }
 
     private func mountReaderPage(_ reader: FullScreenCodeViewController) -> UIView {
+        // Without a bar of its own, the reader's Copy, source toggle, and
+        // Viewing Options join this viewer's (`updateBar`).
+        reader.onBarOffersChange = { [weak self] in self?.updateBar() }
+        reader.hostBarShows = { [weak self] item in
+            sequence(first: self as UIViewController?, next: { $0?.parent }).contains { screen in
+                screen?.navigationItem.rightBarButtonItems?.contains { $0 === item } == true
+            }
+        }
         let page = UIView()
         addPage(page)
         mountChild(reader) {
@@ -774,6 +782,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             if !sharesReaderBar, !loading {
                 // The entry's items are trailing-first; offers read leading first.
                 offers = editOwner.readerOffers.merging(readerNavigationItems()) { own, _ in own }
+                    .merging(reader?.barOffers ?? [:]) { own, _ in own }
                 documentActions = documentMenu
             }
             // Share and the previous and next file are on every file's bar. A

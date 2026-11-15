@@ -127,6 +127,74 @@ struct ChatFileAccessReviewCommentStashTests {
         #expect(stashButton(in: fixture.host.view) != nil)
     }
 
+    /// The File tab's reader draws no bar of its own: its Copy, source toggle,
+    /// and Viewing Options join the review's, beside the review's other items.
+    @Test func reviewFileTabPutsItsReadersControlsOnTheReviewBar() async throws {
+        let file = GitFileStatus(status: "??", path: "notes/Plan.md", addedLines: 3, removedLines: 0).toReviewFile()
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            guard let path = request.url?.path else { return nil }
+            if path.hasSuffix("/quick-actions") {
+                return try mockJSONResponse(encoding: WorkspaceQuickActionsResponse(actions: []), for: request)
+            }
+            if path.hasSuffix("/diff") {
+                return try mockJSONResponse(json: """
+                {"workspaceId": "w1", "path": "notes/Plan.md", "baselineText": "",
+                 "currentText": "# Plan", "addedLines": 3, "removedLines": 0, "hunks": []}
+                """, for: request)
+            }
+            guard path == "/files/current" else { return nil }
+            return try mockBinaryResponse(
+                contentType: "text/plain", body: Data("# Plan\n\nShip the **bar**.\n".utf8), for: request
+            )
+        })
+        defer { routes.end() }
+        let fixture = try makeReviewDetailFixture(stagedCount: 0, file: file, apiClient: makeTestURLProtocolClient())
+        defer { fixture.window.isHidden = true }
+        let detail = try #require((fixture.host as? UINavigationController)?.topViewController)
+
+        let readerIDs = ["fullscreen-code.copy", "fileViewer.sourceToggle", "fullscreen.viewingOptions.button"]
+        let onBar = await waitForMainActorCondition {
+            fixture.host.view.layoutIfNeeded()
+            let ids = Set((detail.navigationItem.rightBarButtonItems ?? []).compactMap(\.accessibilityIdentifier))
+            return readerIDs.allSatisfy(ids.contains)
+        }
+        #expect(onBar, "bar: \((detail.navigationItem.rightBarButtonItems ?? []).map { $0.accessibilityIdentifier ?? "?" })")
+    }
+
+    /// A file with no text diff shows the file itself; its viewer's Share, which
+    /// sends the file it read, is on the review's bar.
+    @Test func reviewOfAFileWithNoTextDiffSharesItFromTheBar() async throws {
+        let file = GitFileStatus(status: "D", path: "art/logo.png", addedLines: 0, removedLines: 0).toReviewFile()
+        let png = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).pngData { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+        }
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            guard let path = request.url?.path else { return nil }
+            if path.hasSuffix("/quick-actions") {
+                return try mockJSONResponse(encoding: WorkspaceQuickActionsResponse(actions: []), for: request)
+            }
+            if path.hasSuffix("/diff") {
+                return try mockJSONResponse(json: """
+                {"workspaceId": "w1", "path": "art/logo.png", "baselineText": "", "currentText": "",
+                 "addedLines": 0, "removedLines": 0, "hunks": [], "nonText": {"before": true, "after": false}}
+                """, for: request)
+            }
+            guard path.hasSuffix("/git/blob") else { return nil }
+            return try mockBinaryResponse(contentType: "image/png", body: png, for: request)
+        })
+        defer { routes.end() }
+        let fixture = try makeReviewDetailFixture(stagedCount: 0, file: file, apiClient: makeTestURLProtocolClient())
+        defer { fixture.window.isHidden = true }
+        let detail = try #require((fixture.host as? UINavigationController)?.topViewController)
+
+        let shared = await waitForMainActorCondition {
+            fixture.host.view.layoutIfNeeded()
+            return (detail.navigationItem.rightBarButtonItems ?? []).contains { $0.accessibilityIdentifier == "fileViewer.share" }
+        }
+        #expect(shared, "bar: \((detail.navigationItem.rightBarButtonItems ?? []).map { $0.accessibilityIdentifier ?? "?" })")
+    }
+
     @Test func commitFileDiffShowsStashWhenCommentsAreStaged() async throws {
         let comments = try makeIsolatedReviewComments(stagedCount: 1)
         let router = ReviewCommentSelectionRouter(dispatch: { _ in }, stash: comments)

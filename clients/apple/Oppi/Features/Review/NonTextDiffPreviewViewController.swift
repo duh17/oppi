@@ -44,7 +44,10 @@ final class NonTextDiffPreviewViewController: UIViewController {
     private let configuration: Configuration
     private let services: FileViewerViewController.Services
     private let contentView = UIView()
-    private var viewer: FileViewerViewController?
+    /// The version on screen; its bar's offers (Share) go on the host's bar.
+    private(set) var viewer: FileViewerViewController?
+    /// Runs when another version replaces the viewer, so the host reads its bar again.
+    var onViewerChange: (() -> Void)?
     private var shownIndex: Int?
 
     init(configuration: Configuration, services: FileViewerViewController.Services) {
@@ -127,5 +130,6 @@ final class NonTextDiffPreviewViewController: UIViewController {
         ])
         next.didMove(toParent: self)
         viewer = next
+        onViewerChange?()
     }
 }

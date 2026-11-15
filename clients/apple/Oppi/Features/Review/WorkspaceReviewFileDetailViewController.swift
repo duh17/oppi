@@ -177,6 +177,13 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     private var diffReader: DiffReaderView?
     private var summary: ReviewFileSummaryBarView?
     private(set) var currentFileViewer: FileViewerViewController?
+    /// The file itself for a diff with no text; its viewer's Share joins the bar.
+    private var nonTextPreview: NonTextDiffPreviewViewController?
+    /// The viewer whose bar offers join this screen's: the File tab's, or the
+    /// shown version of a file with no text diff.
+    private var barViewer: FileViewerViewController? {
+        currentFileViewer ?? nonTextPreview?.viewer
+    }
     private var backSwipe: HorizontalBackSwipeGestureInstaller?
 #if DEBUG
     private var motionMarker: FileMotionDebugMarker?
@@ -614,6 +621,8 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
                 sessionStore: connection.sessionStore
             )
         )
+        preview.onViewerChange = { [weak self] in self?.setNeedsUpdateProperties() }
+        nonTextPreview = preview
         let container = UIView()
         addChild(preview)
         add(preview.view, to: container)
@@ -647,6 +656,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         divider = nil
         diffReader = nil
         currentFileViewer = nil
+        nonTextPreview = nil
         backSwipe = nil
 #if DEBUG
         motionMarker = nil
@@ -742,7 +752,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         navigationItem.title = currentFile.path.lastPathComponentForDisplay
         var leading: [UIBarButtonItem] = []
         if onClose != nil { leading.append(closeItem) }
-        let viewerBar = currentFileViewer?.bar
+        let viewerBar = barViewer?.bar
         if viewerBar?.isEditing == true, let viewerBar {
             // The editor owns the bar while typing: status, Preview, Done.
             setItems(leading: leading, trailing: viewerBar.trailingItems)
@@ -761,12 +771,13 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         }
     }
 
-    /// What the bar offers now: the File tab viewer's actions (its Edit, Find,
-    /// Outline, and Share of the file it read), else this screen's Share of
-    /// the shown tab, then the diff's Viewing Options and the previous and
-    /// next file.
+    /// What the bar offers now: the embedded viewer's actions (the File tab's
+    /// Edit, Find, Outline, Copy, source toggle, Viewing Options, and Share;
+    /// a file with no text diff's Share), else this screen's Share of the
+    /// shown tab, then the diff's Viewing Options and the previous and next
+    /// file.
     private func updateReaderBarOffers() {
-        let viewer = currentFileViewer?.bar.reader
+        let viewer = barViewer?.bar.reader
         var offers = viewer?.offers ?? [:]
         if offers[.share] == nil, let share = shareBarItem() { offers[.share] = [share] }
         if let diffReader, diffReader.offersViewingOptions {
