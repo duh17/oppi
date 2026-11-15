@@ -66,11 +66,19 @@ final class ExtensionNativeActivityListView: UIView, ExtensionNativeBlockRenderi
     }
 }
 
-/// One activity row, as a list row: the state symbol on the title's first line, then the title and
-/// subtitle laid out by `UIListContentConfiguration.subtitleCell()` as a list cell's are, the
-/// detail on one quieter line under them, and a thin bar for a row that sends `progress`.
-/// Trailing: the time since `since`, ticking, then the chevron of a row that opens something. A
-/// row with `blocks` is a disclosure row: tapping shows or hides the blocks, which are built only
+/// One activity row, as a list row: the state symbol on the title's first line, then the title, the
+/// subtitle under it, the detail on one quieter line under them, and a thin bar for a row that
+/// sends `progress`. Trailing, also on the title's line: the time since `since`, ticking, then the
+/// chevron of a row that opens something, and a disclosure row's link button. A row shorter than
+/// its 44 pt target centres its text in it.
+///
+/// The title and subtitle are plain labels in the row's own stack, not a `UIListContentView`: that
+/// view gives itself a cell's minimum height, centres its text inside it, and publishes where the
+/// title landed only through a layout guide it settles in its own later layout pass. A host that
+/// laid the row out once (a panel pane) then left the symbol and the accessories above the title,
+/// and every row carried slack under its text.
+///
+/// A row with `blocks` is a disclosure row: tapping shows or hides the blocks, which are built only
 /// while shown, and a link moves to its own trailing button. Nested children list under the row,
 /// indented. Expansion survives snapshots because list views reuse row views by row id.
 ///
@@ -101,8 +109,9 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
     private let marker = UIImageView()
     /// A running row's state: the app's static working icon, in the symbol's place.
     private let workingMark = WorkingMarkView(textStyle: .body)
-    private let content = UIListContentView(configuration: .subtitleCell())
-    /// The quiet one-line detail under the content's subtitle.
+    private let titleLabel = UILabel()
+    private let subtitleLabel = ExtensionNativeBlockStyle.label(.footnote)
+    /// The quiet one-line detail under the subtitle.
     private let detailLabel = ExtensionNativeBlockStyle.label(.caption1)
     private let progressBar = ExtensionNativeProgressBar()
     private let text = UIStackView()
@@ -115,9 +124,13 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
     private let linkButton = UIButton(type: .system)
     private var detailStack: ExtensionNativeBlockStackView?
     private var isExpanded = false
-    /// The symbol's and the trailing time's center on the title's first line. The content view's
-    /// text guide exists once it lays out text, so this is made on the first render.
-    private var markerCenter: NSLayoutConstraint?
+    /// The symbol's center, and the accessories' with it, half the title's line under its top.
+    private lazy var markerCenter = marker.centerYAnchor.constraint(equalTo: titleLabel.topAnchor)
+    /// The control stops short of the link button while the row shows one.
+    private lazy var controlBesideLink = control.trailingAnchor.constraint(equalTo: linkButton.leadingAnchor, constant: -4)
+    private lazy var controlToEdge = control.trailingAnchor.constraint(equalTo: header.trailingAnchor)
+    private let header = UIView()
+    private let column = UIStackView()
     /// The symbol's column, scaled with the text up to a cap so a large symbol never crowds out
     /// the title.
     private lazy var markerWidth = marker.widthAnchor.constraint(equalToConstant: 22)
@@ -129,20 +142,20 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
     override init(frame: CGRect) {
         super.init(frame: frame)
 
-        content.isUserInteractionEnabled = false
         marker.contentMode = .center
         marker.isAccessibilityElement = false
+        subtitleLabel.lineBreakMode = .byTruncatingTail
         detailLabel.lineBreakMode = .byTruncatingTail
         progressBar.isHidden = true
-        // The detail lines up under the content's text; the stack's bottom margin takes over the
-        // content's while there is one.
-        for view in [content, detailLabel, progressBar] as [UIView] { text.addArrangedSubview(view) }
+        for view in [titleLabel, subtitleLabel, detailLabel, progressBar] as [UIView] { text.addArrangedSubview(view) }
         text.axis = .vertical
-        text.spacing = 0
+        text.spacing = 2
         text.setCustomSpacing(6, after: detailLabel)
         text.isLayoutMarginsRelativeArrangement = true
+        text.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0)
         text.isUserInteractionEnabled = false
-        content.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.required, for: .vertical)
         elapsed.isAccessibilityElement = false
         chevron.contentMode = .center
         chevron.isAccessibilityElement = false
@@ -156,7 +169,7 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
         trailing.alignment = .firstBaseline
         trailing.spacing = 6
         trailing.isUserInteractionEnabled = false
-        // The text fills the row's height; the symbol and the time hang off the title's line.
+        // The text sets the row's height; the symbol and the time hang off the title's line.
         for view in [marker, text, trailing, workingMark] as [UIView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             control.addSubview(view)
@@ -171,12 +184,12 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
         detailContainer.isHidden = true
         linkButton.isHidden = true
         linkButton.addTarget(self, action: #selector(handleLinkTap), for: .touchUpInside)
-        linkButton.setContentHuggingPriority(.required, for: .horizontal)
-        let header = UIStackView(arrangedSubviews: [control, linkButton])
-        header.axis = .horizontal
-        header.alignment = .center
-        header.spacing = 4
-        let column = UIStackView(arrangedSubviews: [header, detailContainer, childContainer])
+        // The row's tap target, and beside it a row's separate link button, on the title's line.
+        for view in [control, linkButton] as [UIView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            header.addSubview(view)
+        }
+        for view in [header, detailContainer, childContainer] as [UIView] { column.addArrangedSubview(view) }
         column.axis = .vertical
         column.spacing = 6
         column.translatesAutoresizingMaskIntoConstraints = false
@@ -187,15 +200,27 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
 
         // One device pixel, from the screen this row lands on.
         let separatorHeight = separator.heightAnchor.constraint(equalToConstant: 1 / max(1, traitCollection.displayScale))
+        let hugText = control.heightAnchor.constraint(equalTo: text.heightAnchor)
+        hugText.priority = .defaultLow
         NSLayoutConstraint.activate([
             column.topAnchor.constraint(equalTo: topAnchor),
             column.leadingAnchor.constraint(equalTo: leadingAnchor),
             column.trailingAnchor.constraint(equalTo: trailingAnchor),
             column.bottomAnchor.constraint(equalTo: bottomAnchor),
+            control.topAnchor.constraint(equalTo: header.topAnchor),
+            control.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            control.bottomAnchor.constraint(equalTo: header.bottomAnchor),
+            controlToEdge,
+            linkButton.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            linkButton.centerYAnchor.constraint(equalTo: marker.centerYAnchor),
             marker.leadingAnchor.constraint(equalTo: control.leadingAnchor),
+            markerCenter,
             text.leadingAnchor.constraint(equalTo: marker.trailingAnchor, constant: 12),
-            text.topAnchor.constraint(equalTo: control.topAnchor),
-            text.bottomAnchor.constraint(equalTo: control.bottomAnchor),
+            // A row shorter than the 44 pt target centres its text in it, so the slack splits
+            // above and below the text instead of trailing it as a gap.
+            text.centerYAnchor.constraint(equalTo: control.centerYAnchor),
+            control.heightAnchor.constraint(greaterThanOrEqualTo: text.heightAnchor),
+            hugText,
             trailing.leadingAnchor.constraint(equalTo: text.trailingAnchor, constant: 8),
             trailing.trailingAnchor.constraint(equalTo: control.trailingAnchor),
             control.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
@@ -279,36 +304,26 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
         if working {
             workingMark.apply(palette: palette)
         }
-        var configuration = UIListContentConfiguration.subtitleCell()
         // No hyphens inside names: `catalyst-ghostty-spike` wraps at its own hyphens. An attributed
         // title takes its line breaks from its paragraph style: one line cut in the middle keeps
         // both ends of a long name.
         let titleStyle = NSMutableParagraphStyle()
         titleStyle.hyphenationFactor = 0
         titleStyle.lineBreakMode = accessibilitySize ? .byWordWrapping : .byTruncatingMiddle
-        configuration.attributedText = NSAttributedString(
+        titleLabel.attributedText = NSAttributedString(
             string: row.title,
             attributes: [.font: titleFont, .foregroundColor: palette.ui.fg, .paragraphStyle: titleStyle]
         )
-        configuration.textProperties.numberOfLines = accessibilitySize ? 0 : 1
-        configuration.textProperties.lineBreakMode = titleStyle.lineBreakMode
-        configuration.secondaryText = subtitle
-        configuration.secondaryTextProperties.font = ExtensionNativeBlockStyle.font(.footnote)
-        configuration.secondaryTextProperties.color = palette.ui.fg.withAlphaComponent(0.72)
+        titleLabel.numberOfLines = accessibilitySize ? 0 : 1
+        titleLabel.lineBreakMode = titleStyle.lineBreakMode
+        markerCenter.constant = titleFont.lineHeight / 2
+        subtitleLabel.text = subtitle
+        subtitleLabel.isHidden = subtitle == nil
+        subtitleLabel.textColor = palette.ui.fg.withAlphaComponent(0.72)
         let readWhole = tone == .warning || tone == .error
-        configuration.secondaryTextProperties.numberOfLines = accessibilitySize ? 0 : (readWhole ? 2 : 1)
-        configuration.textToSecondaryTextVerticalPadding = 2
+        subtitleLabel.numberOfLines = accessibilitySize ? 0 : (readWhole ? 2 : 1)
         let detail = row.detail?.trimmedNonEmpty
         let progress = ExtensionNativeBlockPresentation.normalizedProgress(row.progress)
-        let hasFooter = detail != nil || progress != nil
-        configuration.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 0, bottom: hasFooter ? 2 : 8, trailing: 0)
-        content.configuration = configuration
-        if markerCenter == nil, let guide = content.textLayoutGuide {
-            markerCenter = marker.centerYAnchor.constraint(equalTo: guide.topAnchor)
-            markerCenter?.isActive = true
-        }
-        markerCenter?.constant = titleFont.lineHeight / 2
-        text.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: hasFooter ? 8 : 0, trailing: 0)
         detailLabel.text = detail
         detailLabel.textColor = palette.ui.comment
         detailLabel.isHidden = detail == nil
@@ -359,6 +374,13 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
 
         let separateLink = hasDetail ? rowLink : nil
         linkButton.isHidden = separateLink == nil
+        if linkButton.isHidden {
+            controlBesideLink.isActive = false
+            controlToEdge.isActive = true
+        } else {
+            controlToEdge.isActive = false
+            controlBesideLink.isActive = true
+        }
         linkButton.setImage(UIImage(
             systemName: "arrow.up.right",
             withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption1, scale: .default)
@@ -373,6 +395,10 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
             }
         }
 
+        // A disclosed list continues the rows above it, as the next row of a list would; other
+        // blocks, and nested children, keep a little air under the row.
+        let disclosesList = if hasDetail, isExpanded, case .activityList? = detailBlocks.first { true } else { false }
+        column.setCustomSpacing(disclosesList ? 0 : column.spacing, after: header)
         if hasDetail, isExpanded {
             let stack = detailStack ?? makeDetailStack()
             stack.apply(blocks: detailBlocks, context: context)

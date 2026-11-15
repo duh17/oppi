@@ -1080,6 +1080,50 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         assertDrawerKeepsTheComposer(surface: "subagents", shot: "subagents-wide")
     }
 
+    /// Each running activity row's working mark sits on its own title's line, the first under its
+    /// section's header, in the drawer and in the panel pane. The pane lays its rows out once where
+    /// the drawer measures them again and again, so a mark placed from a stale title position showed
+    /// only there: half a row up, on the separator above, the first on the "Working" header.
+    func testActivityRowMarkSitsOnItsTitleLineInTheDrawerAndThePane() {
+        launchWide(environment: ["CHAT_ROUTES_SURFACE": "subagents-many", "CHAT_ROUTES_REVIEW_COMMENT": "none"])
+        let pill = app.descendants(matching: .any)["extension-strip-aboveEditor-pill-widget-subagents"]
+        XCTAssertTrue(pill.waitUntilExists(timeout: 10), "The surface shows its pill")
+        pill.tap()
+        let drawer = app.descendants(matching: .any)["extension-strip-aboveEditor-drawer-widget-subagents"]
+        XCTAssertTrue(drawer.waitUntilExists(timeout: 5), "Tapping the pill opens its drawer")
+        assertWorkingMarkOnItsTitleLine(in: drawer, host: "drawer")
+
+        app.buttons["extension.strip.fullScreen.aboveEditor"].tap()
+        let reader = app.descendants(matching: .any)["extension-native-surface-widget-subagents-detail"]
+        XCTAssertTrue(reader.waitUntilExists(timeout: 5), "The drawer's button opens the surface's reader")
+        assertWorkingMarkOnItsTitleLine(in: reader, host: "pane")
+        attachScreenshot("subagents-pane-rows")
+    }
+
+    /// The row's top margin is 8 pt and its title a subheadline line, so the title's line centres
+    /// about 17 pt under the row's top.
+    private func assertWorkingMarkOnItsTitleLine(in host: XCUIElement, host name: String) {
+        let header = host.staticTexts["Working"]
+        XCTAssertTrue(header.waitUntilExists(timeout: 5), "The \(name) draws the Working header")
+        let first = host.buttons["extension.native.activity.row.a1"].images["play.circle.fill"]
+        XCTAssertTrue(first.exists, "The first running row draws its working mark in the \(name)")
+        XCTAssertGreaterThanOrEqual(
+            first.frame.minY, header.frame.maxY,
+            "The \(name)'s first working mark must sit under the Working header: mark \(first.frame), header \(header.frame)"
+        )
+        // `subagents-many`: a1, then six more working rows.
+        for id in ["a1"] + (0 ..< 6).map({ "w\($0)" }) {
+            let row = host.buttons["extension.native.activity.row.\(id)"]
+            let mark = row.images["play.circle.fill"]
+            XCTAssertTrue(mark.exists, "Row \(id) draws its working mark in the \(name)")
+            let offset = mark.frame.midY - row.frame.minY
+            XCTAssertTrue(
+                (12 ... 24).contains(offset),
+                "Row \(id)'s working mark in the \(name) must centre on its title's line, about 17 pt under the row's top: \(offset)"
+            )
+        }
+    }
+
     func testOpeningASurfaceDrawerKeepsTheComposerWidthWide() {
         launchWide(environment: ["CHAT_ROUTES_SURFACE": "jobs", "CHAT_ROUTES_REVIEW_COMMENT": "none"])
         assertDrawerKeepsTheComposer(surface: "surface-background_2djobs", shot: "jobs-wide")

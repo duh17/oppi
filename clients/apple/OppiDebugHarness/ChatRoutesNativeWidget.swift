@@ -35,14 +35,15 @@ enum ChatRoutesNativeWidget {
 
     /// The Subagents widget as `server/plugins/subagents` publishes it for one working child (a
     /// long step line) and two finished ones: a Working and a Recent section of activity rows.
-    /// `extraWorking` adds that many more working children, so the drawer's body scrolls well
-    /// past its cap (`CHAT_ROUTES_SURFACE=subagents-many`).
+    /// `extraWorking` adds that many more working children, each with its own ticking time, so the
+    /// drawer's body scrolls well past its cap (`CHAT_ROUTES_SURFACE=subagents-many`).
     static func subagentsJSON(extraWorking: Int = 0) -> Data {
         let since = Int(Date().timeIntervalSince1970 * 1000) - 9_000
         let extra = (0..<extraWorking).map { index in
             #"""
             ,{ "id": "w\#(index)", "title": "worker-\#(index + 2)", "subtitle": "$ rg -n \"nb check\" ~/.config/oppi",
-               "detail": "opus-5-5 high", "state": "running", "link": "oppi://session/w\#(index)" }
+               "detail": "opus-5-5 high", "state": "running", "link": "oppi://session/w\#(index)",
+               "since": \#(since - index * 60_000) }
             """#
         }.joined()
         return Data(subagentsTemplate
