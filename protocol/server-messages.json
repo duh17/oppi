@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 77
+    "messageCount": 78
   },
   "messages": {
     "connected": {
@@ -1637,6 +1637,11 @@
       "text": "hello world",
       "committedText": "hello world",
       "activeText": ""
+    },
+    "dictation_final_incomplete": {
+      "type": "dictation_final",
+      "text": "hello wor",
+      "incomplete": true
     },
     "dictation_error": {
       "type": "dictation_error",

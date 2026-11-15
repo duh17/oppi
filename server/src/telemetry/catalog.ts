@@ -266,6 +266,8 @@ const TAGS = {
       "oversized_chunk",
       "avfoundation",
       "stt",
+      "stt_final_incomplete",
+      "stt_audio_lost",
       "request_too_large",
       "overloaded",
       "rate_limit",
@@ -1562,12 +1564,13 @@ const EVENTS = {
   },
   "server.dictation_finalize": {
     description:
-      "How did a server dictation session finish: session length, final STT latency and real-time factor, and total finalize time?",
+      "How did a server dictation session finish: session length, final STT latency and real-time factor, total finalize time, and retried audio uploads? error_kind stt_final_incomplete counts takes the backend never finalized; stt_audio_lost counts takes whose audio upload failed past its retries. Both keep their best text, marked incomplete for the app.",
     group: "dictation_backend",
     fields: {
       session_ms: "ms",
       audio_duration_ms: "ms",
       result_updates: "count",
+      audio_retries: OPT_COUNT,
       stt_ms: OPT_MS,
       stt_audio_ratio: { unit: "ratio", optional: true },
       finalize_ms: OPT_MS,
@@ -1576,7 +1579,7 @@ const EVENTS = {
       ...SERVER_STT_TAGS,
       status: { required: true, values: ["ok", "error"] },
       result: { values: ["transcribed", "no_audio"] },
-      error_kind: { values: ["stt"] },
+      error_kind: { values: ["stt", "stt_final_incomplete", "stt_audio_lost"] },
     },
     slo: [
       { field: "stt_ms", tm99: 200, label: "STT inference" },

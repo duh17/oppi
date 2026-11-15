@@ -887,7 +887,8 @@ final class ComposerAttachmentFilePillView: UIView {
 
 /// The "Dictation stopped" notice. Retry starts a new take; Dismiss (and the
 /// manager's auto-dismiss timer) clears the notice, and the draft is already
-/// restored, so neither loses anything. Touching the notice holds the timer.
+/// restored (or, for a take kept as possibly incomplete, already holds its
+/// text), so neither loses anything. Touching the notice holds the timer.
 final class ComposerDictationFailureView: UIView {
     var onRetry: (() -> Void)?
     var onDismiss: (() -> Void)?

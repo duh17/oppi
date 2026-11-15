@@ -301,6 +301,11 @@ describe("StreamingSttProvider", () => {
     await flush();
     // The new session's first text is shown again even when it repeats the old one.
     expect(updates).toEqual([{ text: "recovered" }, { text: "recovered" }]);
+    // The chunk the stale session refused is replayed into the new one, ahead of later audio.
+    const s2Feeds = calls.filter((c) => isFeed(c.url, c.method) && c.url === `${STREAM_URL}/s2`);
+    expect(Buffer.concat(s2Feeds.map((c) => c.body ?? Buffer.alloc(0)))).toEqual(
+      Buffer.from([3, 4, 5, 6]),
+    );
 
     const creates = createBodies(calls);
     expect(creates.length).toBeGreaterThanOrEqual(2);
@@ -523,12 +528,13 @@ describe("StreamingSttProvider", () => {
     vi.advanceTimersByTime(100);
     await flush();
     expect(calls.filter((c) => isCreate(c.url, c.method)).length).toBeGreaterThanOrEqual(1);
-    await provider.dispose();
+    // The refused chunk has no session left to reach, so the take must not finish as if whole.
+    await expect(provider.stop()).resolves.toEqual({ text: "", incomplete: "stt_audio_lost" });
   });
 
-  it("handles fetch throwing during flushAudio", async () => {
+  it("replays a chunk whose upload failed once the backend recovers", async () => {
     let feedShouldThrow = false;
-    const { fetchFn } = createMockFetch([
+    const { fetchFn, calls } = createMockFetch([
       { match: isCreate, response: jsonResponse({ session_id: "s1" }) },
       {
         match: isFeed,
@@ -556,7 +562,155 @@ describe("StreamingSttProvider", () => {
     await flush();
     expect(tokens).toEqual(["ok"]);
 
-    await provider.stop();
+    feedShouldThrow = false;
+    provider.feedAudio(Buffer.from([5, 6]));
+    vi.advanceTimersByTime(100);
+    await flush();
+
+    const feeds = feedPcmCalls(calls);
+    expect(feeds.at(-2)?.body).toEqual(Buffer.from([3, 4]));
+    expect(feeds.at(-1)?.body).toEqual(Buffer.from([3, 4, 5, 6]));
+    expect(provider.audioRetries).toBe(1);
+    await expect(provider.stop()).resolves.toEqual({ text: "done" });
+  });
+
+  it("marks the take incomplete, keeping the backend's final, once a chunk exhausts its retries", async () => {
+    const { fetchFn, calls } = createMockFetch([
+      { match: isCreate, response: jsonResponse({ session_id: "s1" }) },
+      { match: isFeed, response: errorResponse(503) },
+      { match: isDelete, response: jsonResponse({ text: "partial" }) },
+    ]);
+
+    const provider = makeProvider(fetchFn);
+    await provider.start();
+    provider.feedAudio(Buffer.from([1, 2]));
+    for (let i = 0; i < 6; i++) await vi.advanceTimersByTimeAsync(100);
+
+    // One upload plus three retries, then the take stops feeding.
+    expect(feedPcmCalls(calls)).toHaveLength(4);
+    expect(feedPcmCalls(calls).every((c) => c.body?.equals(Buffer.from([1, 2])))).toBe(true);
+    provider.feedAudio(Buffer.from([3, 4]));
+    await vi.advanceTimersByTimeAsync(300);
+    expect(feedPcmCalls(calls)).toHaveLength(4);
+
+    await expect(provider.stop()).resolves.toEqual({
+      text: "partial",
+      incomplete: "stt_audio_lost",
+    });
+    expect(provider.audioRetries).toBe(3);
+    expect(calls.some((c) => isDelete(c.url, c.method))).toBe(true);
+  });
+
+  it("stop retries an unsent chunk a bounded number of times, then marks the take incomplete", async () => {
+    const { fetchFn, calls } = createMockFetch([
+      { match: isCreate, response: jsonResponse({ session_id: "s1" }) },
+      { match: isFeed, response: jsonResponse({ text: "hello" }) },
+      { match: isDelete, response: jsonResponse({ text: "hello" }) },
+    ]);
+    let feedsDown = false;
+    const flaky = (async (input: string | URL | Request, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (feedsDown && method === "POST" && String(input).startsWith(`${STREAM_URL}/`)) {
+        calls.push({ url: String(input), method });
+        throw new Error("ECONNRESET");
+      }
+      return fetchFn(input, init);
+    }) as typeof globalThis.fetch;
+
+    const provider = makeProvider(flaky);
+    await provider.start();
+    provider.feedAudio(Buffer.from([1, 2]));
+    await vi.advanceTimersByTimeAsync(100);
+
+    feedsDown = true;
+    provider.feedAudio(Buffer.from([3, 4]));
+    const stopped = provider.stop();
+    const outcome = expect(stopped).resolves.toEqual({
+      text: "hello",
+      incomplete: "stt_audio_lost",
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await outcome;
+    // One delivered chunk, then the unsent one tried four times.
+    expect(feedPcmCalls(calls)).toHaveLength(5);
+  });
+
+  it.each([
+    ["times out", () => Promise.reject(new DOMException("timed out", "TimeoutError"))],
+    ["answers with an error", () => Promise.resolve(new Response("", { status: 500 }))],
+    ["lost the session", () => Promise.resolve(new Response("", { status: 404 }))],
+  ])("keeps the last partial but marks it incomplete when the stop %s", async (_, del) => {
+    const { fetchFn } = createMockFetch([
+      { match: isCreate, response: jsonResponse({ session_id: "s1" }) },
+      { match: isFeed, response: jsonResponse({ text: "hello wor" }) },
+      { match: isDelete, response: del },
+    ]);
+
+    const provider = makeProvider(fetchFn);
+    const tokens: string[] = [];
+    provider.onToken((update) => tokens.push(update.text));
+    await provider.start();
+    provider.feedAudio(Buffer.from([1, 2]));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(tokens).toEqual(["hello wor"]);
+
+    await expect(provider.stop()).resolves.toEqual({
+      text: "hello wor",
+      incomplete: "stt_final_incomplete",
+    });
+  });
+
+  describe("model label", () => {
+    const INFO_URL = `${BASE}/v1/info`;
+
+    it("reports the engine's own model id while still requesting the configured one", async () => {
+      let infoModel: string | undefined = "mlx-community--Confucius4-R2T2-8bit";
+      const { fetchFn, calls } = createMockFetch([
+        {
+          match: (url, method) => method === "GET" && url === INFO_URL,
+          response: () =>
+            infoModel === undefined
+              ? errorResponse(503)()
+              : jsonResponse({ status: "ready", model: infoModel })(),
+        },
+        { match: isCreate, response: jsonResponse({ session_id: "s1" }) },
+        { match: isDelete, response: jsonResponse({ text: "" }) },
+      ]);
+
+      const provider = makeProvider(fetchFn);
+      expect(provider.model).toBe("test-model");
+      const manager = new DictationManager(provider);
+      const sent: DictationServerMessage[] = [];
+      manager.handleControlMessage({ type: "dictation_start" }, (msg) => sent.push(msg));
+      await flush();
+
+      expect(sent).toContainEqual(
+        expect.objectContaining({
+          type: "dictation_ready",
+          sttModel: "mlx-community--Confucius4-R2T2-8bit",
+        }),
+      );
+      expect(createBodies(calls)).toEqual([{ model: "test-model" }]);
+      manager.handleControlMessage({ type: "dictation_stop" }, (msg) => sent.push(msg));
+      await flush();
+
+      // A failed info read keeps the last id the engine reported.
+      infoModel = undefined;
+      await provider.start();
+      expect(provider.model).toBe("mlx-community--Confucius4-R2T2-8bit");
+      await provider.dispose();
+    });
+
+    it("keeps the configured id for an engine without /v1/info", async () => {
+      const { fetchFn } = createMockFetch([
+        { match: isCreate, response: jsonResponse({ session_id: "s1" }) },
+        { match: isDelete, response: jsonResponse({ text: "" }) },
+      ]);
+      const provider = makeProvider(fetchFn);
+      await provider.start();
+      expect(provider.model).toBe("test-model");
+      await provider.dispose();
+    });
   });
 
   it("dispose handles network errors gracefully", async () => {
@@ -923,6 +1077,8 @@ describe("StreamingSttProvider", () => {
       const feedsBeforeBurst = feedPcmCalls(calls).length;
       const burst = patternPcm(STARTUP_EXIT_BYTES, STARTUP_FEED_BYTES * 8);
       provider.feedAudio(burst);
+      // The refused slice is retried on the next tick, ahead of the burst.
+      await vi.advanceTimersByTimeAsync(100);
       await waitUntil(
         () =>
           feedPcmCalls(calls).length >= feedsBeforeBurst + STARTUP_EXIT_BYTES / STARTUP_FEED_BYTES,
@@ -935,23 +1091,23 @@ describe("StreamingSttProvider", () => {
       await provider.stop();
     });
 
-    it("does not replay a failed dequeued startup slice", async () => {
+    it("replays a failed startup slice on the next tick, before the rest of the burst", async () => {
       const { fetchFn, calls, maxFeedInFlight } = createRecordingFetch({ failSeq: 1 });
       const provider = makeProvider(fetchFn);
       await provider.start();
 
       const burst = patternPcm(STARTUP_FEED_BYTES + 40);
       provider.feedAudio(burst);
-      await waitUntil(() => feedPcmCalls(calls).length === 2, "failed slice then remainder");
+      await waitUntil(() => feedPcmCalls(calls).length === 1, "failed slice");
+      await vi.advanceTimersByTimeAsync(100);
+      await waitUntil(() => feedPcmCalls(calls).length === 3, "replayed slice then remainder");
 
-      expect(feedPcmCalls(calls)[0]?.body?.equals(burst.subarray(0, STARTUP_FEED_BYTES))).toBe(
-        true,
-      );
-      expect(feedPcmCalls(calls)[1]?.body?.equals(burst.subarray(STARTUP_FEED_BYTES))).toBe(true);
-      expect(concatFeedBodies(calls).equals(burst)).toBe(true);
-      expect(feedPcmCalls(calls).length).toBe(2);
+      const bodies = feedPcmCalls(calls).map((c) => c.body);
+      expect(bodies[0]).toEqual(burst.subarray(0, STARTUP_FEED_BYTES));
+      expect(bodies[1]).toEqual(burst.subarray(0, STARTUP_FEED_BYTES));
+      expect(bodies[2]).toEqual(burst.subarray(STARTUP_FEED_BYTES));
       expect(maxFeedInFlight()).toBe(1);
-      await provider.stop();
+      await expect(provider.stop()).resolves.toEqual({ text: "done" });
     });
   });
 

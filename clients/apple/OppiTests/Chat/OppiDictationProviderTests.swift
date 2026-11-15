@@ -131,6 +131,12 @@ struct DictationServerMessageDecodingTests {
         #expect(message == .dictationFinal(text: "Hello"))
     }
 
+    @Test func decodesIncompleteFinal() throws {
+        let json = #"{"type":"dictation_final","text":"Hello wor","incomplete":true}"#
+        let message = try decode(json)
+        #expect(message == .dictationFinal(text: "Hello wor", incomplete: true))
+    }
+
     @Test func decodesError() throws {
         let json = #"{"type":"dictation_error","error":"STT backend unreachable","fatal":true}"#
         let message = try decode(json)
@@ -337,7 +343,7 @@ struct DictationEventMappingTests {
                 committedText: split?.committedText,
                 activeText: split?.activeText
             )
-        case .dictationFinal(let text, let split):
+        case .dictationFinal(let text, let split, _):
             return text.isEmpty ? nil : .replaceFinalTranscript(
                 text,
                 snap: true,
@@ -935,6 +941,30 @@ struct OppiDictationSessionMessageListenerTests {
         // Should have received the settled final transcript
         #expect(events.contains(.replaceFinalTranscript("Final transcript", snap: true)))
         // Stream should finish cleanly (no error)
+        #expect(error == nil)
+    }
+
+    @Test func incompleteDictationFinalKeepsTextThenMarksItIncomplete() async {
+        let transport = TestDictationTransport()
+        let (messageStream, messageCont) = AsyncStream.makeStream(of: ServerMessage.self)
+        let session = OppiDictationSession(
+            transport: transport,
+            readinessTask: Task { nil },
+            messages: messageStream
+        )
+
+        let collectTask = Task {
+            await collectAllEvents(from: session.events)
+        }
+
+        session._startMessageListenerForTesting()
+        messageCont.yield(.dictationFinal(text: "Hello wor", incomplete: true))
+
+        let (events, error) = await collectTask.value
+        #expect(events.suffix(2) == [
+            .replaceFinalTranscript("Hello wor", snap: true),
+            .transcriptIncomplete,
+        ])
         #expect(error == nil)
     }
 
@@ -2079,6 +2109,8 @@ extension VoiceSessionEvent: @retroactive Equatable {
                 && activeA == activeB
         case (.sttResolved(let backendA, let modelA), .sttResolved(let backendB, let modelB)):
             return backendA == backendB && modelA == modelB
+        case (.transcriptIncomplete, .transcriptIncomplete):
+            return true
         default:
             return false
         }

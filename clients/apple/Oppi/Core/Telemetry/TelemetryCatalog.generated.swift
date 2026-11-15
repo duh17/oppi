@@ -308,6 +308,8 @@ enum TelemetryTag {
         case oversizedChunk = "oversized_chunk"
         case avfoundation
         case stt
+        case sttFinalIncomplete = "stt_final_incomplete"
+        case sttAudioLost = "stt_audio_lost"
         case requestTooLarge = "request_too_large"
         case overloaded
         case rateLimit = "rate_limit"

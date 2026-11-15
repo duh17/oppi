@@ -19,7 +19,8 @@ enum DictationAudioInput: Sendable {
 /// - `dictation_result` maps to `.replaceFinalTranscript`, forwarding the
 ///   backend's committed/active split when available
 /// - `dictation_final` maps to a settled `.replaceFinalTranscript(..., snap: true)`
-///   when needed, then completes the stream
+///   when needed, then `.transcriptIncomplete` when the server marked it, then
+///   completes the stream
 ///
 /// **Optimistic recording:** Audio capture starts immediately on `start()`. A background
 /// drain task retains PCM losslessly until `readinessTask` (WS `dictation_ready`) resolves,
@@ -434,14 +435,17 @@ final class OppiDictationSession: VoiceTranscriptionSession {
                         activeText: split?.activeText
                     )
 
-                case .dictationFinal(let text, let split):
-                    logger.info("Dictation final: \(text.count) chars")
+                case .dictationFinal(let text, let split, let incomplete):
+                    logger.info("Dictation final: \(text.count) chars\(incomplete ? " (incomplete)" : "")")
                     yieldTranscriptIfChanged(
                         text,
                         snap: true,
                         committedText: split?.committedText,
                         activeText: split?.activeText
                     )
+                    if incomplete {
+                        eventContinuation.yield(.transcriptIncomplete)
+                    }
                     eventContinuation.finish()
                     return
 

@@ -49,6 +49,12 @@ struct VoiceCaptureFailure: Equatable, Sendable {
     let take: VoiceCaptureTakeIdentity
     let source: String
     let message: String
+    /// True for a take that finished with its text kept (the server said the text
+    /// may be incomplete): the notice shows, but nothing rolls the draft back.
+    var keepsTake = false
+
+    /// The take's text is withdrawn and the draft from before it is restored.
+    var discardsTake: Bool { !keepsTake }
 }
 
 /// On-device speech-to-text using `SpeechAnalyzer` (iOS 26+).
@@ -469,7 +475,8 @@ final class VoiceInputManager {
     /// The failed take's notice. It auto-dismisses like every transient notice
     /// (kept under VoiceOver because it offers Retry) and the person can
     /// dismiss it. Neither loses anything: the earlier draft was already
-    /// restored when the take failed.
+    /// restored when the take failed, or, for a kept take (`keepsTake`), the
+    /// take's text is already in the draft.
     private(set) var captureFailure: VoiceCaptureFailure? {
         didSet {
             guard captureFailure != oldValue else { return }
@@ -703,6 +710,8 @@ final class VoiceInputManager {
     private var dictationSessionStart: ContinuousClock.Instant?
     private var recordingStart: ContinuousClock.Instant?
     private var resultUpdateCount = 0
+    /// The server marked this take's final text as possibly incomplete.
+    private var takeTranscriptIncomplete = false
     /// Loudest capture level this take (`VoiceSpectrumFrame.level`), reported at stop: a
     /// take that stays near 0 recorded silence, whatever the transcript says.
     private var inputLevelPeak: Float = 0
@@ -1144,6 +1153,7 @@ final class VoiceInputManager {
         dictationSessionStart = nil
         recordingStart = nil
         resultUpdateCount = 0
+        takeTranscriptIncomplete = false
         inputLevelPeak = 0
         replaceTranscriptState.reset()
         activeRecordingSource = source
@@ -1325,6 +1335,9 @@ final class VoiceInputManager {
         }
     }
 
+    /// The dictation notice for a take the server marked as possibly incomplete.
+    static let incompleteTakeMessage = "The end of this take may be missing."
+
     /// Stop recording. Finalizes transcription and waits for last results.
     /// Returns the final transcript captured before session teardown.
     @discardableResult
@@ -1372,6 +1385,16 @@ final class VoiceInputManager {
         )
 
         let result = currentTranscript
+
+        // The text stays in the draft; the dictation notice says it may be short.
+        if takeTranscriptIncomplete, let stoppingTake, let source = activeRecordingSource {
+            captureFailure = VoiceCaptureFailure(
+                take: stoppingTake,
+                source: source,
+                message: Self.incompleteTakeMessage,
+                keepsTake: true
+            )
+        }
 
         teardownSession()
         releaseAudioSessionAfterCapture()
@@ -1917,6 +1940,9 @@ final class VoiceInputManager {
             // events (first result, end) carry the real values.
             activeTake?.provider.sttBackend = backend
             activeTake?.provider.sttModel = model
+
+        case .transcriptIncomplete:
+            takeTranscriptIncomplete = true
         }
     }
 

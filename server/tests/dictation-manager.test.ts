@@ -871,6 +871,35 @@ describe("DictationManager", () => {
       expect(errors[0].fatal).toBe(true);
       expect(mgr.isActive()).toBe(false);
     });
+
+    it.each(["stt_final_incomplete", "stt_audio_lost"] as const)(
+      "keeps a %s take's text, marks it incomplete, and counts it with its retries",
+      async (kind) => {
+        const { telemetry, stored } = catalogTelemetry();
+        const provider = Object.assign(mockSttProvider(["hello"]), {
+          stop: vi.fn(async () => ({ text: "hello wor", incomplete: kind })),
+          audioRetries: 3,
+        });
+        const mgr = new DictationManager(provider, telemetry);
+        const mgrSent: DictationServerMessage[] = [];
+
+        mgr.handleControlMessage({ type: "dictation_start" }, (msg) => mgrSent.push(msg));
+        await drain();
+        mgr.handleAudioData(silencePcm(500));
+        mgr.handleControlMessage({ type: "dictation_stop" }, (msg) => mgrSent.push(msg));
+        await drain();
+
+        expect(messagesOfType(mgrSent, "dictation_error")).toHaveLength(0);
+        expect(messagesOfType(mgrSent, "dictation_final")).toEqual([
+          { type: "dictation_final", text: "hello wor", incomplete: true },
+        ]);
+        const finalize = stored().find((r) => r.name === "server.dictation_finalize");
+        expect(finalize).toMatchObject({
+          fields: { audio_retries: 3 },
+          tags: { status: "error", result: "transcribed", error_kind: kind },
+        });
+      },
+    );
   });
 
   describe("final transcript forwarding", () => {

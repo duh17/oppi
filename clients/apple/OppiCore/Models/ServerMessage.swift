@@ -263,7 +263,8 @@ enum ServerMessage: Sendable, Equatable {
     // Dictation (session audio stream)
     case dictationReady(provider: DictationProviderInfo?, contextApplied: Bool? = nil)
     case dictationResult(text: String, snap: Bool, split: DictationTranscriptSplit? = nil)
-    case dictationFinal(text: String, split: DictationTranscriptSplit? = nil)
+    /// `incomplete`: the text may miss part of the take (the server kept its best text).
+    case dictationFinal(text: String, split: DictationTranscriptSplit? = nil, incomplete: Bool = false)
     case dictationError(error: String, fatal: Bool)
 
     // Errors
@@ -472,7 +473,7 @@ extension ServerMessage: Decodable {
         case partialTranscript
         // dictation
         case sttProvider, sttModel, contextApplied
-        case text, snap, committedText, activeText
+        case text, snap, committedText, activeText, incomplete
     }
 
     init(from decoder: Decoder) throws {
@@ -814,7 +815,8 @@ extension ServerMessage: Decodable {
             )
             self = .dictationFinal(
                 text: text,
-                split: split.committedText == nil && split.activeText == nil ? nil : split
+                split: split.committedText == nil && split.activeText == nil ? nil : split,
+                incomplete: try c.decodeIfPresent(Bool.self, forKey: .incomplete) ?? false
             )
 
         case "dictation_error":

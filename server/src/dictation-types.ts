@@ -280,6 +280,8 @@ export interface DictationFinalMessage {
   committedText?: string;
   /** Final active tail from the backend, usually empty on completion. */
   activeText?: string;
+  /** The text may miss the end or part of the take (no backend final, or audio never uploaded). */
+  incomplete?: true;
 }
 
 export interface DictationErrorMessage {

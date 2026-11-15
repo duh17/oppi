@@ -119,7 +119,7 @@ enum ComposerShared {
         setTextBeforeRecording: @escaping (String?) -> Void,
         setSuppressKeyboard: @escaping (Bool) -> Void
     ) {
-        guard captureFailure(manager, owner: owner) != nil else { return }
+        guard captureFailure(manager, owner: owner)?.discardsTake == true else { return }
         if let prefix = getTextBeforeRecording() {
             setText(prefix)
             setTextBeforeRecording(nil)
@@ -536,7 +536,7 @@ enum ComposerShared {
     ) -> String {
         // Render the rollback immediately, even before SwiftUI's onChange
         // commits it to the shared draft binding.
-        if captureFailure(manager, owner: owner) != nil, let textBeforeRecording {
+        if captureFailure(manager, owner: owner)?.discardsTake == true, let textBeforeRecording {
             return textBeforeRecording
         }
         return currentComposerText(

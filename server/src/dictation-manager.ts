@@ -325,7 +325,7 @@ export class DictationManager {
         finalSttMs = Math.round(performance.now() - sttT0);
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
-        this.metrics?.record("server.dictation_finalize", sessionFields, {
+        this.metrics?.record("server.dictation_finalize", this.withAudioRetries(sessionFields), {
           ...this.sttTags(),
           status: "error",
           error_kind: "stt",
@@ -337,14 +337,23 @@ export class DictationManager {
       this.metrics?.record(
         "server.dictation_finalize",
         {
-          ...sessionFields,
+          ...this.withAudioRetries(sessionFields),
           stt_ms: finalSttMs,
           stt_audio_ratio: Math.round((finalSttMs / (audioSeconds * 1000)) * 100) / 100,
           finalize_ms: Math.round(performance.now() - finalizeT0),
         },
-        { ...this.sttTags(), status: "ok", result: "transcribed" },
+        finalTranscript.incomplete
+          ? {
+              ...this.sttTags(),
+              status: "error",
+              result: "transcribed",
+              error_kind: finalTranscript.incomplete,
+            }
+          : { ...this.sttTags(), status: "ok", result: "transcribed" },
       );
 
+      // An incomplete take keeps its best text; the flag lets the app say so.
+      // Apps that predate the flag ignore it and keep the text as before.
       this.send({
         type: "dictation_final",
         text: finalTranscript.text,
@@ -354,6 +363,7 @@ export class DictationManager {
         ...(finalTranscript.activeText !== undefined
           ? { activeText: finalTranscript.activeText }
           : {}),
+        ...(finalTranscript.incomplete ? { incomplete: true } : {}),
       });
     } finally {
       // Keep isActive() true until the terminal frame has been handed to send().
@@ -364,6 +374,11 @@ export class DictationManager {
   }
 
   // ─── Metrics ───
+
+  private withAudioRetries<T extends object>(fields: T): T & { audio_retries?: number } {
+    const retries = this.sttProvider.audioRetries;
+    return retries === undefined ? fields : { ...fields, audio_retries: retries };
+  }
 
   private sttTags(): EventTags<"server.dictation_first_audio"> {
     return {

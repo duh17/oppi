@@ -807,6 +807,11 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     committedText: "hello world",
     activeText: "",
   },
+  dictation_final_incomplete: {
+    type: "dictation_final",
+    text: "hello wor",
+    incomplete: true,
+  },
   dictation_error: {
     type: "dictation_error",
     error: "STT backend unavailable",
@@ -1011,6 +1016,7 @@ const SERVER_MESSAGE_ORDER = [
   "dictation_ready",
   "dictation_result",
   "dictation_final",
+  "dictation_final_incomplete",
   "dictation_error",
   "auth_renew_result_renewed",
   "auth_renew_result_rejected",

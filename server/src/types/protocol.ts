@@ -1240,6 +1240,8 @@ export type ServerMessage =
         text: string;
         committedText?: string;
         activeText?: string;
+        /** The text may miss part of the take; older apps ignore it and keep the text. */
+        incomplete?: true;
       }
     | { type: "dictation_error"; error: string; fatal: boolean }
     | StreamAuthRenewResultMessage

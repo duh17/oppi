@@ -92,6 +92,8 @@ enum VoiceSessionEvent: Sendable {
     /// The STT backend and model the server resolved after async readiness;
     /// unknown at setup time, so later events of the take carry the real values.
     case sttResolved(backend: String, model: String)
+    /// The take's final text may miss part of what was said; the text is kept.
+    case transcriptIncomplete
 }
 
 @MainActor

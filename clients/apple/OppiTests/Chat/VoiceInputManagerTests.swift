@@ -2780,6 +2780,58 @@ struct VoiceInputManagerTests {
         #expect(textBinding.isEmpty, "Text must stay cleared after send")
     }
 
+    /// A final the server marked incomplete keeps its text in the draft and
+    /// shows the dictation notice, without the failed-take rollback.
+    @Test func incompleteFinalKeepsTakeTextAndShowsNotice() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let session = MockVoiceSession()
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        let owner = ComposerShared.VoiceInputOwner.inlineComposer
+
+        try await manager.startRecording(keyboardLanguage: "en-US", source: owner.rawValue)
+        session.stopHandler = { @MainActor [weak session] in
+            guard let session else { return }
+            session.yieldEvent(.replaceFinalTranscript("hello wor", snap: true))
+            session.yieldEvent(.transcriptIncomplete)
+            session.finishEvents()
+        }
+
+        var draft = "note: "
+        await ComposerShared.stopVoiceInput(
+            manager: manager,
+            setText: { draft = $0 },
+            getTextBeforeRecording: { "note: " },
+            setTextBeforeRecording: { _ in }
+        )
+
+        #expect(draft == "note: hello wor")
+        #expect(manager.state == .idle)
+        let notice = try #require(ComposerShared.captureFailure(manager, owner: owner))
+        #expect(notice.message == VoiceInputManager.incompleteTakeMessage)
+        #expect(!notice.discardsTake)
+
+        // Neither rollback path restores the pre-take draft.
+        #expect(ComposerShared.currentComposerText(
+            storedText: draft, textBeforeRecording: "note: ", manager: manager, owner: owner
+        ) == "note: hello wor")
+        ComposerShared.discardFailedTake(
+            manager: manager,
+            owner: owner,
+            setText: { draft = $0 },
+            getTextBeforeRecording: { "note: " },
+            setTextBeforeRecording: { _ in },
+            setSuppressKeyboard: { _ in }
+        )
+        #expect(draft == "note: hello wor")
+    }
+
     /// Verifies that stopRecording returns the correct transcript even when
     /// the typewriter animator was mid-animation at the time of stop.
     @Test func stopRecordingReturnValueIncludesAnimatedText() async throws {
