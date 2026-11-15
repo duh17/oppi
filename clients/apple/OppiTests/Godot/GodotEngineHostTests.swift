@@ -344,5 +344,6 @@ private final class FakeGodotRuntime: GodotEngineRuntime {
     func key(named name: String, pressed: Bool) -> Bool { true }
     func action(_ name: String, pressed: Bool, strength: Float) -> Bool { true }
     func capturePNG() -> Data? { nil }
+    func currentScene() -> String? { nil }
     func perf() -> GodotPerf { GodotPerf(framesDrawn: frames) }
 }

@@ -66,6 +66,8 @@ protocol GodotEngineRuntime: AnyObject {
     /// The current frame as PNG; nil while nothing is drawn.
     func capturePNG() -> Data?
     func perf() -> GodotPerf
+    /// The current scene's file (`res://…`); nil while none is loaded from one.
+    func currentScene() -> String?
 }
 
 /// Whether this device offers the Godot pane now: its experiment is on, in a

@@ -84,18 +84,55 @@ struct GodotChatHandoffTests {
         await fixture.tearDown()
     }
 
-    @Test func sendFrameLeavesTheFrameAloneAndNeedsOne() async throws {
+    @Test func aSnapshotCarriesTheGamesStateAndRecentLog() {
+        let state = GodotChatHandoff.State(
+            scene: "res://levels/dock.tscn", paused: true, size: CGSize(width: 700.4, height: 783), fps: 29.6, frameMilliseconds: 4.12
+        )
+        let quiet = [
+            entry(.print, "sample ready"),
+            entry(.warning, "Texture is too large", scriptLine: 7),
+            scriptError,
+        ]
+        let text = GodotChatHandoff.text(.init(game: "Tide", release: 2, state: state, log: quiet), hasFrame: true)
+        #expect(text == """
+        A snapshot of the Godot game “Tide” (release 2):
+
+        - Scene: res://levels/dock.tscn
+        - State: paused
+        - View: 700 × 783 pt
+        - Frame rate: 30 fps, 4.1 ms a frame
+
+        Recent log:
+        - print: sample ready
+        - warning: Texture is too large (res://main.gd:7)
+        - error: Invalid call. Nonexistent function 'explode'. (res://probe.gd:41)
+
+        The current frame is attached.
+        """)
+
+        // A chatty game's prints would push out its warnings and errors.
+        let chatty = [entry(.warning, "old warning")] + (1...10).map { entry(.print, "tick \($0)") } + [scriptError]
+        let busy = GodotChatHandoff.text(.init(game: "Tide", release: 2, state: state, log: chatty), hasFrame: true)
+        #expect(!busy.contains("tick"), "Prints stay out when there are many")
+        #expect(busy.contains("- warning: old warning") && busy.contains("- error: Invalid call."))
+    }
+
+    @Test func snapshotToChatLeavesTheStateAndFrameAndNeedsAFrame() async throws {
         let fixture = try await Fixture.make()
         let pane = UIViewController()
         fixture.navigation.pushViewController(pane, animated: false)
-        let subject = GodotChatHandoff.Subject(game: "Tide", release: 1)
+        let subject = GodotChatHandoff.Subject(
+            game: "Tide", release: 1, state: .init(scene: "res://main.tscn", paused: false, size: CGSize(width: 375, height: 600))
+        )
 
         #expect(!GodotChatHandoff.handOff(subject, frame: nil, from: pane), "No frame, nothing to send")
         #expect(fixture.chat.composerDraftController.text.isEmpty)
         #expect(fixture.navigation.topViewController === pane, "The game stays")
 
         #expect(GodotChatHandoff.handOff(subject, frame: Self.png, from: pane))
-        #expect(fixture.chat.composerDraftController.text == "Here is the current frame of the Godot game “Tide” (release 1).")
+        let text = fixture.chat.composerDraftController.text
+        #expect(text.hasPrefix("A snapshot of the Godot game “Tide” (release 1):\n\n- Scene: res://main.tscn\n- State: playing\n- View: 375 × 600 pt"))
+        #expect(!text.contains("Frame rate"), "No rate when the host has none")
         #expect(fixture.chat.composerDraftController.pendingAttachments.count == 1)
         await fixture.tearDown()
     }

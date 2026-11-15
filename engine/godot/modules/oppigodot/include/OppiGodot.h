@@ -128,6 +128,11 @@ bool oppigodot_action(const char *name, bool pressed, float strength);
 size_t oppigodot_capture_png(uint8_t **out_png);
 void oppigodot_free(void *pointer);
 
+// The current scene's file (res://…) as a NUL-terminated UTF-8 string for
+// the caller to release with oppigodot_free; NULL while no game runs or its
+// current scene was not loaded from a file.
+char *oppigodot_current_scene(void);
+
 typedef struct {
 	double fps;
 	double process_ms;

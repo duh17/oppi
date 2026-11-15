@@ -894,6 +894,19 @@ void oppigodot_free(void *pointer) {
 	free(pointer);
 }
 
+char *oppigodot_current_scene(void) {
+	SceneTree *tree = instance ? SceneTree::get_singleton() : nullptr;
+	Node *scene = tree ? tree->get_current_scene() : nullptr;
+	if (!scene || scene->get_scene_file_path().is_empty()) {
+		return nullptr;
+	}
+	CharString path = scene->get_scene_file_path().utf8();
+	char *out = (char *)malloc(path.length() + 1);
+	ERR_FAIL_NULL_V(out, nullptr);
+	memcpy(out, path.get_data(), path.length() + 1);
+	return out;
+}
+
 void oppigodot_perf(OppiGodotPerf *out) {
 	ERR_FAIL_NULL(out);
 	*out = {};

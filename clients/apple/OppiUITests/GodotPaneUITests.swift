@@ -184,27 +184,31 @@ final class GodotPaneUITests: XCTestCase, PreviewUITestCase {
         capture("ask-agent-draft")
     }
 
-    /// The bar's More › Send Frame to Chat leaves the current frame in the
-    /// chat's composer with the game's name and release.
-    func testSendFrameToChatLeavesTheFrameInTheComposer() throws {
+    /// The bar's Snapshot to Chat leaves the game's state and the current
+    /// frame in the chat's composer: the game and release, the scene the
+    /// engine plays, playing or paused, and its recent log.
+    func testSnapshotToChatLeavesTheGamesStateAndFrameInTheComposer() throws {
         try openChat(orientation: .landscapeLeft)
         try open(tideRunner)
         hold(for: 1.5)
-        let more = app.buttons["godot.more"]
-        XCTAssertTrue(more.waitUntilExists(timeout: 5), "The bar offers More")
-        more.tap()
-        let send = app.buttons["godot.sendFrame"]
-        XCTAssertTrue(send.waitUntilExists(timeout: 5), "More offers Send Frame to Chat")
-        capture("send-frame-menu")
-        send.tap()
+        let snapshot = app.buttons["godot.snapshot"]
+        XCTAssertTrue(snapshot.waitUntilExists(timeout: 5), "The bar offers Snapshot to Chat")
+        XCTAssertEqual(snapshot.label, "Snapshot to Chat")
+        capture("snapshot-bar")
+        snapshot.tap()
         let input = app.textViews["chat.input"]
         XCTAssertTrue(
-            waitFor((input.value as? String) == "Here is the current frame of the Godot game “Tide Runner” (release 1)."),
+            waitFor(((input.value as? String) ?? "").hasPrefix("A snapshot of the Godot game “Tide Runner” (release 1):")),
             "The draft names the game and release (value: \(input.value ?? "nil"))"
         )
+        let draft = (input.value as? String) ?? ""
+        // The engine's own startup prints outnumber the few a snapshot keeps.
+        for line in ["- Scene: res://main.tscn", "- State: playing", "- View: ", "\nRecent log:\n- "] {
+            XCTAssertTrue(draft.contains(line), "The snapshot has \(line): \(draft)")
+        }
         XCTAssertTrue(composerImage().waitUntilExists(timeout: 5), "The frame is attached")
         hold(for: 1)
-        capture("send-frame-draft")
+        capture("snapshot-draft")
     }
 
     /// A pack exported by a newer Godot is refused before the engine reads it.

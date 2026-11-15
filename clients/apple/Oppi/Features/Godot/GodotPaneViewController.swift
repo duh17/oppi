@@ -18,8 +18,8 @@ import UIKit
 /// - A pane a relaunch restored waits for Play. A pane nobody sees pauses
 ///   the game; focus elsewhere keeps keys and controllers away from it.
 /// - The newest error from the game's own code shows over it with its file
-///   and line (`GodotErrorOverlayView`); its Ask Agent, and the bar's More ›
-///   Send Frame to Chat, hand the game to the chat beside it as a draft
+///   and line (`GodotErrorOverlayView`); its Ask Agent, and the bar's
+///   Snapshot to Chat, hand the game to the chat beside it as a draft
 ///   (`GodotChatHandoff`).
 /// - The pane keeps its theme's background in every state; the game's view
 ///   is black only inside its own frame, and runs to the pane's bottom edge,
@@ -70,13 +70,9 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
     private lazy var muteItem = barItem("speaker.wave.2.fill", String(localized: "Mute"), "godot.mute") {
         $0.host.setPersonMuted(!$0.host.isPersonMuted)
     }
-    /// More: Send Frame to Chat. Built once; it reads the game when it opens.
-    private lazy var moreItem: UIBarButtonItem = {
-        let menu = UIMenu(children: [makeMoreMenu()])
-        let item = UIBarButtonItem(title: String(localized: "More"), image: UIImage(systemName: "ellipsis"), menu: menu)
-        item.accessibilityIdentifier = "godot.more"
-        return item
-    }()
+    private lazy var snapshotItem = barItem("camera.viewfinder", String(localized: "Snapshot to Chat"), "godot.snapshot") {
+        $0.handOffToChat(error: nil)
+    }
 
     init(serverId: String, project: String, restored: Bool, root: AppRootEnvironment?) {
         gameSlot = GodotSlot(serverId: serverId, project: project)
@@ -87,8 +83,8 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         super.init(nibName: nil, bundle: nil)
         title = project
         navigationItem.largeTitleDisplayMode = .never
-        // Rightmost first: Reload, Mute, Play, More from the leading side.
-        navigationItem.rightBarButtonItems = [moreItem, playItem, muteItem, reloadItem]
+        // Rightmost first: Snapshot, Reload, Mute, Play from the leading side.
+        navigationItem.rightBarButtonItems = [playItem, muteItem, reloadItem, snapshotItem]
     }
 
     @available(*, unavailable)
@@ -198,7 +194,7 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
     private func showOff() {
         view.backgroundColor = root?.themeStore.backgroundColor ?? .systemBackground
         for item in [playItem, reloadItem, muteItem] { item.isEnabled = false }
-        moreItem.isHidden = true
+        snapshotItem.isHidden = true
         let palette = root?.themeStore.activeThemeID.palette ?? ThemeRuntimeState.currentPalette()
         let message = !PlatformCapabilities.godotPane
             ? String(localized: "This build of Oppi has no game engine.")
@@ -614,27 +610,20 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
     // MARK: Hand-off to the chat
 
     /// Hands the game to the chat beside it (`GodotChatHandoff`): the error
-    /// the overlay shows with the log's recent errors, or the frame alone.
+    /// the overlay shows, or a snapshot of the game's state.
     private func handOffToChat(error: GodotEngineLog?) {
+        let runtime = host.liveRuntime
+        let state = error != nil ? nil : GodotChatHandoff.State(
+            scene: runtime?.currentScene(),
+            paused: currentPhase == .paused,
+            size: host.surface.bounds.size,
+            fps: runtime?.perf().fps,
+            frameMilliseconds: host.frameMilliseconds
+        )
         let subject = GodotChatHandoff.Subject(
-            game: summary?.name ?? gameSlot.project, release: buildRelease?.seq, error: error, log: error == nil ? [] : host.log
+            game: summary?.name ?? gameSlot.project, release: buildRelease?.seq, error: error, state: state, log: host.log
         )
         GodotChatHandoff.handOff(subject, frame: GodotFrameCapture.png(from: host), from: self)
-    }
-
-    private func makeMoreMenu() -> UIDeferredMenuElement {
-        UIDeferredMenuElement.uncached { [weak self] completion in
-            // The menu asks on the main thread.
-            MainActor.assumeIsolated { completion(self?.moreActions() ?? []) }
-        }
-    }
-
-    private func moreActions() -> [UIMenuElement] {
-        let send = UIAction(title: String(localized: "Send Frame to Chat"), image: UIImage(systemName: "photo.badge.arrow.down")) { [weak self] _ in
-            self?.handOffToChat(error: nil)
-        }
-        send.accessibilityIdentifier = "godot.sendFrame"
-        return [send]
     }
 
     // MARK: Bar and state
@@ -667,8 +656,8 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         playItem.isHidden = unplayable
         reloadItem.isHidden = unplayable
         muteItem.isHidden = unplayable
-        // A frame to send needs the game here and a chat to take it.
-        moreItem.isHidden = !(host.holdsSurface(self) && (phase == .running || phase == .paused))
+        // A snapshot needs the game here and a chat to take it.
+        snapshotItem.isHidden = !(host.holdsSurface(self) && (phase == .running || phase == .paused))
             || GodotChatHandoff.chat(beside: self) == nil
         let muted = host.isPersonMuted
         muteItem.image = UIImage(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")

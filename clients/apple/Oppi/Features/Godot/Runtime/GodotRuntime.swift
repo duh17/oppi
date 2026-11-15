@@ -111,6 +111,12 @@ final class GodotRuntime: GodotEngineRuntime {
         return Data(bytesNoCopy: bytes, count: count, deallocator: .custom { pointer, _ in oppigodot_free(pointer) })
     }
 
+    func currentScene() -> String? {
+        guard let path = oppigodot_current_scene() else { return nil }
+        defer { oppigodot_free(path) }
+        return String(cString: path)
+    }
+
     func perf() -> GodotPerf {
         var perf = OppiGodotPerf()
         oppigodot_perf(&perf)

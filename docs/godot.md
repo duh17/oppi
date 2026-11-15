@@ -74,7 +74,7 @@ The app plays one game at a time. Opening a pane on another game ends the one pl
 The pane can put what you see into the chat's composer as a draft. Add your words, then send it. The pane never sends it for you.
 
 - **Ask Agent** shows on the card of an error the game raised. The draft holds the game's name and release, the error with its file, line and backtrace, and the game's last five other errors. The current frame is attached as an image.
-- **More › Send Frame to Chat** in the pane's bar attaches the current frame, with the game's name and release. It shows while the game plays in that pane.
+- **Snapshot to Chat** (the viewfinder button in the pane's bar) attaches the current frame and describes the game's state: its name and release, the current scene, whether it is playing or paused, the size of its view, and its frame rate and frame time. It adds the last eight errors and warnings from the game's log, and its prints too while the recent log has three or fewer. The button shows while the game plays in that pane.
 
 The draft goes to the chat beside the game: on iPad, the chat in the window's main pane. On iPhone, and when no pane fits beside the chat, it goes to the chat you opened the game from, and Oppi goes back to that chat, which closes the game's pane. When no chat can take the draft, neither control shows.
 
