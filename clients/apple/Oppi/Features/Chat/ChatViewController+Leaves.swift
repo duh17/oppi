@@ -51,7 +51,7 @@ extension ChatViewController {
                 options: .init(
                     onReviewInCurrentSession: { [weak self] prompt, files in
                         closePanel()
-                        self?.stageWorkspaceReviewInCurrentSession(prompt: prompt, files: files)
+                        self?.stageInComposer(prompt: prompt, files: files)
                     },
                     fileDetailReviewCommentScope: SessionFilePages.closingPanelScope(
                         .activeSession(self.reviewCommentSelectionRouter),

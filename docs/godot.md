@@ -2,7 +2,7 @@
 
 Oppi can play a Godot game in a **Godot pane** beside the chat. You or an agent change the game in a workspace and export it; the server finds the new export and sends it to the pane, which reloads by itself. The loop is talking to the agent next to the running game.
 
-**Status:** experiment. This page covers the server: discovery, releases, the player link, agent tools, and publishing from other machines. A server that serves games says so in `GET /server/info` with `capabilities.godot: { "version": 1 }`.
+**Status:** experiment. This page covers the server: discovery, releases, the player link, agent tools, and publishing from other machines. It also covers how the pane hands a game to the chat. A server that serves games says so in `GET /server/info` with `capabilities.godot: { "version": 1 }`.
 
 The server stores, checks, and announces game builds. It never runs Godot or the game, and it never builds a game for you: whatever exports the pack (an agent, the Godot editor, a Makefile, CI) only has to write it where Oppi looks.
 
@@ -68,6 +68,15 @@ The device chooses how to apply a new release from what changed; the release's `
 | `restart` | Project settings or autoloads changed. | Nothing. The pane ends the game's engine and starts it again on the new release. |
 
 The app plays one game at a time. Opening a pane on another game ends the one playing and starts the new one there; the first game's pane offers **Play** to switch back, which starts that game from the beginning.
+
+## Hand a game to the chat
+
+The pane can put what you see into the chat's composer as a draft. Add your words, then send it. The pane never sends it for you.
+
+- **Ask Agent** shows on the card of an error the game raised. The draft holds the game's name and release, the error with its file, line and backtrace, and the game's last five other errors. The current frame is attached as an image.
+- **More › Send Frame to Chat** in the pane's bar attaches the current frame, with the game's name and release. It shows while the game plays in that pane.
+
+The draft goes to the chat beside the game: on iPad, the chat in the window's main pane. On iPhone, and when no pane fits beside the chat, it goes to the chat you opened the game from, and Oppi goes back to that chat, which closes the game's pane. When no chat can take the draft, neither control shows.
 
 ## For agents
 

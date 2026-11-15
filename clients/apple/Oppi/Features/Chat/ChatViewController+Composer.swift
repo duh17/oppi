@@ -319,7 +319,11 @@ extension ChatViewController {
         model.showComposer = true
     }
 
-    func stageWorkspaceReviewInCurrentSession(prompt: String, files: [PendingFileReference]) {
+    /// Adds `prompt` after the draft, a blank line apart, with `files` as
+    /// references and `attachments` beside the draft's own, then shows the
+    /// composer. Nothing is sent: the person adds words and sends. Used by a
+    /// workspace review and by a game's hand-off (`GodotChatHandoff`).
+    func stageInComposer(prompt: String, files: [PendingFileReference] = [], attachments: [PendingAttachment] = []) {
         composerDraftController.mutateMessage { text, repoPointers in
             if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 text = prompt
@@ -335,6 +339,9 @@ extension ChatViewController {
                 repoPointers.append(file)
             }
         }
+        let current = composerDraftController.pendingAttachments
+        let added = attachments.filter { attachment in !current.contains { $0.id == attachment.id } }
+        if !added.isEmpty { composerDraftController.setPendingAttachments(current + added) }
 
         revealComposer()
     }

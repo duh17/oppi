@@ -61,10 +61,23 @@ extension PaneHostController: UIDropInteractionDelegate {
         session.localDragSession?.items.lazy.compactMap { ($0.localObject as? PaneDragPayload)?.content }.first
     }
 
+    /// The chat in front in the primary's cell, shown or not: the window's
+    /// current chat, which a pane beside it hands things to.
+    var routedChat: ChatViewController? {
+        (frontScreen(ofCell: panes.routedLeafID) as? ChatRouteViewController)?.chat
+    }
+
     /// The chat in the primary's cell, while it shows.
     private var shownChat: ChatViewController? {
         guard routedCell.width > 0, !primary.view.isHidden else { return nil }
-        return (frontScreen(ofCell: panes.routedLeafID) as? ChatRouteViewController)?.chat
+        return routedChat
+    }
+
+    /// Brings the primary's cell into view and gives it focus: out of
+    /// another cell's zoom, and in place of the pane a compact window shows.
+    func showRoutedCell() {
+        if let zoomed = panes.cellLayout.zoomed, zoomed != panes.routedLeafID { zoom(nil) }
+        focus(cell: panes.routedLeafID)
     }
 
     /// Where a drop at `point` would land, and the zone it lights (nil when

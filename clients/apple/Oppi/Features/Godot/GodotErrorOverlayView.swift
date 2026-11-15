@@ -4,18 +4,22 @@ import UIKit
 /// (design §8): the message, the script file and line, and the backtrace
 /// when there is one. File and line are context for the agent beside the
 /// game; nothing opens an editor. Dismiss hides it until the next error.
+/// Ask Agent hands the error to the chat beside the game
+/// (`GodotChatHandoff`); it shows only while a chat can take it.
 ///
 /// The card is dark material whatever the theme, since it sits over the
 /// game's own pixels. Its pane caps its height; the text scrolls inside, so
 /// no line limit hides part of a long backtrace. Touch and hold copies it.
 final class GodotErrorOverlayView: UIView, UIContextMenuInteractionDelegate {
     var onDismiss: (() -> Void)?
+    var onAskAgent: (() -> Void)?
 
     private let message = UILabel()
     private let location = UILabel()
     private let backtrace = UILabel()
     private let scroll = UIScrollView()
     private let dismiss = UIButton(type: .system)
+    private let askAgent = UIButton(type: .system)
     private(set) var shown: GodotEngineLog?
 
     override init(frame: CGRect) {
@@ -56,6 +60,20 @@ final class GodotErrorOverlayView: UIView, UIContextMenuInteractionDelegate {
         dismiss.accessibilityIdentifier = "godot.error.dismiss"
         dismiss.addAction(UIAction { [weak self] _ in self?.onDismiss?() }, for: .primaryActionTriggered)
 
+        var ask = UIButton.Configuration.filled()
+        ask.title = String(localized: "Ask Agent")
+        ask.image = UIImage(systemName: "text.bubble")
+        ask.imagePadding = 6
+        ask.cornerStyle = .capsule
+        ask.baseBackgroundColor = UIColor(white: 1, alpha: 0.18)
+        ask.baseForegroundColor = .white
+        askAgent.configuration = ask
+        askAgent.accessibilityIdentifier = "godot.error.askAgent"
+        askAgent.isHidden = true
+        askAgent.addAction(UIAction { [weak self] _ in self?.onAskAgent?() }, for: .primaryActionTriggered)
+        askAgent.setContentHuggingPriority(.required, for: .vertical)
+        askAgent.setContentCompressionResistancePriority(.required, for: .vertical)
+
         let text = UIStackView(arrangedSubviews: [message, location, backtrace])
         text.axis = .vertical
         text.spacing = 4
@@ -63,7 +81,12 @@ final class GodotErrorOverlayView: UIView, UIContextMenuInteractionDelegate {
         scroll.addSubview(text)
         scroll.indicatorStyle = .white
         scroll.alwaysBounceVertical = false
-        for view in [scroll, dismiss] as [UIView] {
+        // The text scrolls; Ask Agent stays under it, whatever its length.
+        let column = UIStackView(arrangedSubviews: [scroll, askAgent])
+        column.axis = .vertical
+        column.alignment = .leading
+        column.spacing = 10
+        for view in [column, dismiss] as [UIView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -76,10 +99,12 @@ final class GodotErrorOverlayView: UIView, UIContextMenuInteractionDelegate {
             material.bottomAnchor.constraint(equalTo: bottomAnchor),
             material.leadingAnchor.constraint(equalTo: leadingAnchor),
             material.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            scroll.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            scroll.trailingAnchor.constraint(equalTo: dismiss.leadingAnchor, constant: -2),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            column.trailingAnchor.constraint(equalTo: dismiss.leadingAnchor, constant: -2),
+            scroll.widthAnchor.constraint(equalTo: column.widthAnchor),
+            askAgent.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             fit,
             text.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
             text.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
@@ -104,7 +129,9 @@ final class GodotErrorOverlayView: UIView, UIContextMenuInteractionDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func show(_ entry: GodotEngineLog) {
+    /// Shows `entry`, with Ask Agent while `canAskAgent` (a chat can take it).
+    func show(_ entry: GodotEngineLog, canAskAgent: Bool) {
+        askAgent.isHidden = !canAskAgent
         guard entry != shown else { return }
         shown = entry
         message.text = entry.message

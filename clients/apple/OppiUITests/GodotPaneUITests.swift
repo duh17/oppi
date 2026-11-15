@@ -152,6 +152,61 @@ final class GodotPaneUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(waitFor(!overlay.exists), "Dismiss hides it")
     }
 
+    /// Ask Agent on a game's error leaves a draft in the composer of the chat
+    /// beside it: the game, the error with its file and line, and the current
+    /// frame attached, unsent. The game is Star Courier's script error, or
+    /// the first of `OPPI_GODOT_PANE_GAMES` (a game with a broken script).
+    func testAskAgentLeavesTheErrorAndTheFrameInTheChatsComposer() throws {
+        try openChat(orientation: .landscapeLeft)
+        try open(errorGame)
+        let overlay = app.descendants(matching: .any)["godot.error"]
+        XCTAssertTrue(overlay.waitUntilExists(timeout: 15), "The script's error shows over the game")
+        let location = app.staticTexts["godot.error.location"]
+        XCTAssertTrue(location.waitUntilExists(timeout: 5))
+        let ask = app.buttons["godot.error.askAgent"]
+        XCTAssertTrue(ask.waitUntilExists(timeout: 5), "A chat is beside the game, so Ask Agent shows")
+        XCTAssertGreaterThanOrEqual(ask.frame.height, 44, "Ask Agent is a full touch target")
+        hold(for: 1.5)
+        capture("ask-agent-overlay")
+        ask.tap()
+
+        let input = app.textViews["chat.input"]
+        let fileLine = location.label
+        XCTAssertTrue(
+            waitFor(((input.value as? String) ?? "").contains("shows this error:")),
+            "The draft is in the composer (value: \(input.value ?? "nil"))"
+        )
+        let draft = (input.value as? String) ?? ""
+        XCTAssertTrue(draft.contains(fileLine), "The draft names the error's file and line \(fileLine): \(draft)")
+        XCTAssertTrue(composerImage().waitUntilExists(timeout: 5), "The frame is attached")
+        hold(for: 1.5)
+        XCTAssertEqual(input.value as? String, draft, "Nothing was sent")
+        capture("ask-agent-draft")
+    }
+
+    /// The bar's More › Send Frame to Chat leaves the current frame in the
+    /// chat's composer with the game's name and release.
+    func testSendFrameToChatLeavesTheFrameInTheComposer() throws {
+        try openChat(orientation: .landscapeLeft)
+        try open(tideRunner)
+        hold(for: 1.5)
+        let more = app.buttons["godot.more"]
+        XCTAssertTrue(more.waitUntilExists(timeout: 5), "The bar offers More")
+        more.tap()
+        let send = app.buttons["godot.sendFrame"]
+        XCTAssertTrue(send.waitUntilExists(timeout: 5), "More offers Send Frame to Chat")
+        capture("send-frame-menu")
+        send.tap()
+        let input = app.textViews["chat.input"]
+        XCTAssertTrue(
+            waitFor((input.value as? String) == "Here is the current frame of the Godot game “Tide Runner” (release 1)."),
+            "The draft names the game and release (value: \(input.value ?? "nil"))"
+        )
+        XCTAssertTrue(composerImage().waitUntilExists(timeout: 5), "The frame is attached")
+        hold(for: 1)
+        capture("send-frame-draft")
+    }
+
     /// A pack exported by a newer Godot is refused before the engine reads it.
     func testANewerExportIsRefused() throws {
         try openChat(orientation: .landscapeLeft)
@@ -358,6 +413,20 @@ final class GodotPaneUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(play.waitUntilExists(timeout: 10), "The Godot pane opened with its bar")
         XCTAssertTrue(waitFor((play.value as? String) == "running", timeout: 30), "The game started (value: \(play.value ?? "nil"))")
         XCTAssertTrue(app.descendants(matching: .any)["godot.surface"].waitUntilExists(timeout: 5), "The game draws in the pane")
+    }
+
+    /// The game whose error Ask Agent hands off: the first of
+    /// `OPPI_GODOT_PANE_GAMES`, by the harness's id, else Star Courier.
+    private var errorGame: String {
+        guard let name = (ProcessInfo.processInfo.environment["OPPI_GODOT_PANE_GAMES"] ?? "")
+            .split(separator: ";").first?.split(separator: "=").first, !name.isEmpty else { return starCourier }
+        return "godot.projects.row." + name.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).joined(separator: "-")
+    }
+
+    /// The composer's first image attachment.
+    private func composerImage() -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat.attachment.image.")).firstMatch
     }
 
     /// The switching test's two rows: the first two of `OPPI_GODOT_PANE_GAMES`,
