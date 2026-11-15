@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Oppi <noreply@oppi.invalid>
 Date: Fri, 13 Nov 2026 22:10:00 -0800
-Subject: [PATCH 4/4] iOS: host-supplied user data folder
+Subject: [PATCH 4/5] iOS: host-supplied user data folder
 
 ---
  core/extension/libgodot.h                   | 3 +++

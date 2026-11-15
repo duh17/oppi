@@ -153,7 +153,7 @@ struct GodotProtocolContractTests {
             return
         }
         #expect(attach.capabilities == [ClientCapability.godotPane])
-        #expect(messages.contains { if case .state(let s) = $0 { s.phase == .relaunch && s.tier == .restart } else { false } })
+        #expect(messages.contains { if case .state(let s) = $0 { s.phase == .error && s.tier == .restart } else { false } })
         for message in messages { #expect(try Self.reencode(message) == message) }
     }
 

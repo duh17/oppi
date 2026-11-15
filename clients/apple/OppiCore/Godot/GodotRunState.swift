@@ -19,19 +19,19 @@ enum GodotLoadStep: Hashable, Sendable {
 }
 
 /// What a Godot pane shows (design §9). The engine is app-wide and runs one
-/// game per launch; a pane shows its own project's place in that.
+/// game at a time; a pane shows its own project's place in that.
 enum GodotPanePhase: Hashable, Sendable {
     case connecting
     case missing
     case noBuild
     case loading(GodotLoadStep)
-    /// Not started yet (a pane a relaunch restored): Play starts it.
+    /// Not playing: a pane a relaunch restored, a game that quit, or one
+    /// another game took the engine from. Play starts it.
     case ready
     case running
     case paused
     /// Another pane shows this game: Play Here moves it.
     case elsewhere
-    case needsRelaunch(GodotRelaunchReason)
     case refused(GodotPackRefusal)
     /// Fetching or starting failed; the message says why.
     case failed(String)
@@ -53,38 +53,22 @@ enum GodotPanePhase: Hashable, Sendable {
         switch engine {
         case .starting(let starting) where starting == slot:
             return holdsSurface ? .loading(.starting) : .elsewhere
-        case .starting:
-            return .needsRelaunch(.otherGame)
         case .running(let running) where running == slot:
-            // The game keeps playing whatever its project now says; a build
-            // it cannot take shows as a notice (`relaunchNotice`).
             guard holdsSurface else { return .elsewhere }
             if let loading { return .loading(loading) }
             if let failure { return .failed(failure) }
             return paused ? .paused : .running
-        case .running:
-            return .needsRelaunch(.otherGame)
-        case .stopped:
-            // The pane that started it says why; the engine cannot start again.
-            if holdsSurface, let failure { return .failed(failure) }
-            return .needsRelaunch(.engineStopped)
-        case .idle:
-            if let failure { return .failed(failure) }
-            switch project {
-            case .connecting: return .connecting
-            case .missing: return .missing
-            case .noBuild: return .noBuild
-            case .build: return loading.map(Self.loading) ?? .ready
-            }
+        case .idle, .starting, .running:
+            // No game, or another one: this game is not playing.
+            break
         }
-    }
-
-    /// The relaunch a running game's newer build waits for, if any: the game
-    /// plays on with the build it has.
-    static func relaunchNotice(plan: GodotApplyPlan?, engine: GodotEngineState, slot: GodotSlot) -> GodotRelaunchReason? {
-        guard case .running(let running) = engine, running == slot,
-              case .relaunch(let reason)? = plan else { return nil }
-        return reason
+        if let failure { return .failed(failure) }
+        switch project {
+        case .connecting: return .connecting
+        case .missing: return .missing
+        case .noBuild: return .noBuild
+        case .build: return loading.map(Self.loading) ?? .ready
+        }
     }
 }
 

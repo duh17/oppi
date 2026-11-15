@@ -34,7 +34,19 @@ extension ConnectionCoordinator {
     }
 
     private static func previewServerInfo(durableSessions: Bool, scheduleCalendar: Bool) -> ServerInfo {
-        ServerInfo(
+        var capabilities = ServerInfo.Capabilities(
+            sessionStream: .init(version: 1),
+            dictationStream: nil,
+            appEventStream: nil,
+            extensionNativeUI: nil,
+            durableSessions: durableSessions ? .init(version: 1) : nil,
+            scheduleCalendar: scheduleCalendar ? .init(version: 1) : nil
+        )
+        // The chat-routes server serves games (`ChatRoutesGodot`); the Godot pane needs it to say so.
+        if ProcessInfo.processInfo.environment["CHAT_ROUTES_GODOT"] != nil {
+            capabilities.godot = .init(version: 1)
+        }
+        return ServerInfo(
             name: "Preview",
             version: ServerReleaseVersion.minimumSupported,
             uptime: 1,
@@ -47,14 +59,7 @@ extension ConnectionCoordinator {
             identity: nil,
             uploadProtocol: nil,
             images: nil,
-            capabilities: .init(
-                sessionStream: .init(version: 1),
-                dictationStream: nil,
-                appEventStream: nil,
-                extensionNativeUI: nil,
-                durableSessions: durableSessions ? .init(version: 1) : nil,
-                scheduleCalendar: scheduleCalendar ? .init(version: 1) : nil
-            ),
+            capabilities: capabilities,
             stats: .init(
                 workspaceCount: 0,
                 activeSessionCount: 0,

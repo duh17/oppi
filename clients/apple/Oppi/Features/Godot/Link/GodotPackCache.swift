@@ -34,13 +34,18 @@ enum GodotPackCache {
     /// Downloads in flight, by destination file. A second download of one
     /// file would write the same `.part` file at the same time.
     private static var downloads: [URL: Task<Void, any Error>] = [:]
-    /// Packs the engine has mounted this launch: it reads them for as long as
-    /// it runs, so pruning leaves them.
+    /// Packs the running engine has mounted: it reads them for as long as it
+    /// runs, so pruning leaves them.
     private static var mounted: Set<URL> = []
 
     /// The engine mounted `packs`.
     static func pin(_ packs: [URL]) {
         mounted.formUnion(packs.map(\.standardizedFileURL))
+    }
+
+    /// The engine ended and reads none of them now.
+    static func unpinAll() {
+        mounted.removeAll()
     }
 
     /// The release's packs on disk with their file tables, fetched as needed.

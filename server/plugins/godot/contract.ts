@@ -55,8 +55,7 @@ export const GODOT_GUIDELINES = [
     "Oppi notices the new pack and the pane reloads it by itself; do not ask the owner to " +
     "reload. Oppi never builds games itself.",
   "A change to scripts only reloads in place and keeps the game's state; a scene or resource " +
-    "change restarts the scene; a change to project settings or autoloads needs the app " +
-    "relaunched, which godot_status shows as relaunch.",
+    "change restarts the scene; a change to project settings or autoloads restarts the game.",
   "To check a change: godot_status for the release and the player's state, godot_logs with " +
     "level error for errors (fix the file and line, then export again), godot_capture to see " +
     "the screen, godot_input to tap, drag, press keys, or trigger actions.",

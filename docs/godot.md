@@ -59,13 +59,15 @@ A field with the wrong type is ignored, and the game's log says why. The file it
 
 ### How a release reloads
 
-The device chooses how to apply a new release from what changed; the release's `reload` value is only a hint. When `project.godot` (project settings and autoloads) changed since the last export, the server marks the release `restart`; otherwise the hint is `oppi-godot.json`'s `reload`, or `scene`. The player reports the way it used.
+The device chooses how to apply a new release from what changed; the release's `reload` value is a hint, and only `restart` always wins. When `project.godot` (project settings and autoloads) changed since the last export, the server marks the release `restart`; otherwise the hint is `oppi-godot.json`'s `reload`, or `scene`. The player reports the way it used.
 
 | Way | When | What is kept |
 | --- | --- | --- |
 | `scripts` | Only existing scripts changed. | Everything: the game keeps running with the new code. New `_ready` code does not run again. |
 | `scene` | Scenes or resources changed. | Autoloads. The current scene starts over. |
-| `restart` | Project settings or autoloads changed. | Nothing. The engine cannot start a second time in the same app run, so the pane shows **relaunch** and applies the release after Oppi is relaunched. |
+| `restart` | Project settings or autoloads changed. | Nothing. The pane ends the game's engine and starts it again on the new release. |
+
+The app plays one game at a time. Opening a pane on another game ends the one playing and starts the new one there; the first game's pane offers **Play** to switch back, which starts that game from the beginning.
 
 ## For agents
 
@@ -73,7 +75,7 @@ A durable session has five tools for the game in the pane while its workspace ha
 
 | Tool | Use |
 | --- | --- |
-| `godot_status` | The current release, the devices playing it with their state (`running`, `paused`, `error`, `relaunch`) and frame rate, and the latest errors. Without a game to choose, it lists the workspace's games. |
+| `godot_status` | The current release, the devices playing it with their state (`running`, `paused`, `error`) and frame rate, and the latest errors. Without a game to choose, it lists the workspace's games. |
 | `godot_logs` | The game's log as the device reports it. Errors carry file, line, function, and a backtrace. Pass `since` (the `next` of the last read) to read only new lines, and `level: "error"` for errors only. |
 | `godot_capture` | A screenshot of the game on the device, returned as an image you can see. It also shows in the tool row. |
 | `godot_input` | Taps, drags, keys, and input actions, run in order. Points are fractions of the game view from its top-left: `{ "x": 0.5, "y": 0.5 }` is the middle. Set `capture: true` to see the screen after the last step. |
@@ -116,7 +118,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 - A project id that no workspace has creates a published game; use `name` in the release to name it. Ids are 1 to 64 letters, digits, `.`, `_`, or `-`, starting with a letter or digit.
 - `HEAD .../packs/<sha256>` tells you whether the server has a pack already; uploading the same pack again does not store it twice.
 - Later packs replace files in earlier ones, so a release can list a base pack and patches made with `--export-patch`.
-- `?wait=first-frame` holds the answer up to 30 seconds for the first device that runs, fails, or must relaunch for the release, and returns its state as `applied`.
+- `?wait=first-frame` holds the answer up to 30 seconds for the first device that runs or fails the release, and returns its state as `applied`.
 
 ## Reference
 

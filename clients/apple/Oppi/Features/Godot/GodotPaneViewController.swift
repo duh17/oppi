@@ -9,19 +9,20 @@ import UIKit
 ///   and the commands agents send (capture, input, pause, reload, perf),
 ///   and reports the pane's state and the game's log back. A new build
 ///   reaches the running game by itself, in the fastest way the engine can
-///   take it (`GodotPackPolicy`). A build that changes project settings or
-///   autoloads, or another game while one ran, needs Oppi to relaunch: the
-///   engine starts once per launch. The pane says so and keeps playing.
+///   take it (`GodotPackPolicy`); one that changes project settings or
+///   autoloads starts the game again.
 /// - One game runs app-wide (`GodotEngineHost`); one pane holds its view. A
-///   second pane on the same game shows the last frame it had and Play Here.
+///   pane opened on another game takes the engine from the game playing,
+///   whose pane then offers Play to switch back. A second pane on the same
+///   game shows the last frame it had and Play Here.
 /// - A pane a relaunch restored waits for Play. A pane nobody sees pauses
 ///   the game; focus elsewhere keeps keys and controllers away from it.
 /// - The newest error from the game's own code shows over it with its file
 ///   and line (`GodotErrorOverlayView`).
 /// - The pane keeps its theme's background in every state; the game's view
 ///   is black only inside its own frame, and runs to the pane's bottom edge,
-///   as the browser pane's page does. A relaunch or heat notice takes its own
-///   row between the bar and the game (`GodotNoticeBanner`); a paused game
+///   as the browser pane's page does. A heat notice takes its own row
+///   between the bar and the game (`GodotNoticeBanner`); a paused game
 ///   dims under a Play button (`GodotPauseCover`).
 final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVisibilityObserving, PaneLiveResizing {
     let gameSlot: GodotSlot
@@ -31,6 +32,9 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
     private let root: AppRootEnvironment?
     /// Restored by a relaunch and not played yet: Play starts it.
     private var waitsForPlay: Bool
+    /// Opened by the person and not played yet: its build plays as soon as
+    /// it is here, taking the engine from any other game.
+    private var opensToPlay: Bool
     private var project: GodotProjectStatus = .connecting
     private var summary: GodotProject?
     private var build: GodotBuild?
@@ -68,6 +72,7 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
     init(serverId: String, project: String, restored: Bool, root: AppRootEnvironment?) {
         gameSlot = GodotSlot(serverId: serverId, project: project)
         waitsForPlay = restored
+        opensToPlay = !restored
         self.root = root
         host = root?.godot ?? .shared
         super.init(nibName: nil, bundle: nil)
@@ -144,6 +149,8 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         let holds = host.holdsSurface(self)
         _ = host.ownerGeneration
         view.backgroundColor = root?.themeStore.backgroundColor ?? .systemBackground
+        // The release this pane plays, as the player reports it.
+        view.accessibilityValue = holds ? buildRelease.map { "release \($0.seq)" } : nil
         updateState(phase)
         updateBar(phase)
         let frozen = phase == .elsewhere && lastFrameView.image != nil
@@ -156,13 +163,7 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         } else {
             errorOverlay.isHidden = true
         }
-        if holds, host.isTooHot {
-            showNotice(Self.tooHotMessage)
-        } else if let reason = GodotPanePhase.relaunchNotice(plan: plan, engine: host.engine, slot: gameSlot), holds {
-            showNotice(Self.relaunchMessage(reason))
-        } else {
-            showNotice(nil)
-        }
+        showNotice(holds && host.isTooHot ? Self.tooHotMessage : nil)
         report(phase)
         if holds { forwardLog() }
     }
@@ -366,22 +367,24 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
     }
 
     /// Applies the newest build when this pane plays the game: it holds the
-    /// view, or no game runs yet and it does not wait for Play. A pane never
-    /// takes the game from the pane that plays it.
+    /// view, no game runs and it does not wait for Play, or the person just
+    /// opened it on another game than the one playing. A pane never takes its
+    /// game from the pane that plays it, and a later build never takes the
+    /// engine from another game.
     private func applyIfPlaying() async {
         guard let build, !waitsForPlay else { return }
         let plays = switch host.engine {
         case .idle: true
-        case .running(let slot): slot == gameSlot && host.holdsSurface(self)
-        case .starting, .stopped: false
+        case .running(let slot): slot == gameSlot ? host.holdsSurface(self) : opensToPlay
+        case .starting(let slot): slot != gameSlot && opensToPlay
         }
         guard plays else { return }
         await play(build)
     }
 
-    /// Plays `build` here; what the engine still needs (a relaunch) shows as
-    /// the pane's plan afterwards.
+    /// Plays `build` here.
     private func play(_ build: GodotBuild) async {
+        opensToPlay = false
         let applied = await host.play(build, in: self)
         if applied.tier != nil || applied == .start { appliedTier = applied.tier }
         // A newer build that arrived while this one went in goes in next.
@@ -393,6 +396,18 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
     }
 
     // MARK: Actions
+
+    /// The failed state's Retry: follows the project again when reaching it
+    /// failed, else has the engine try the build again (`GodotEngineHost.retry`).
+    private func retry() {
+        guard failure == nil, let build else { return follow() }
+        Task { [weak self] in
+            guard let self else { return }
+            opensToPlay = false
+            await host.retry(build, in: self)
+            view.setNeedsUpdateProperties()
+        }
+    }
 
     private func playOrPause() {
         switch currentPhase {
@@ -434,17 +449,15 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         case .running: .running
         case .paused: .paused
         case .loading: .loading
-        case .needsRelaunch: .relaunch
         case .failed, .refused: .error
         case .connecting, .missing, .noBuild, .ready, .elsewhere: .idle
         }
         let message: String? = switch phase {
-        case .needsRelaunch(let reason): Self.relaunchMessage(reason)
         case .failed(let text): text
         case .refused(.nativeCode(let path)): "Refused: native code (\(path))"
         case .refused(.newerEngine(let version)): "Refused: made with Godot \(version.description)"
         case .elsewhere: "Playing in another pane"
-        default: GodotPanePhase.relaunchNotice(plan: plan, engine: host.engine, slot: gameSlot).map(Self.relaunchMessage)
+        default: nil
         }
         return GodotPlayerState(
             phase: gamePhase,
@@ -515,7 +528,8 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
             case .scripts?:
                 guard runtime.reloadScripts([]) >= 0 else { return fail(.failed, "This engine cannot reload scripts.") }
             case .restart?:
-                return fail(.failed, Self.relaunchMessage(.engineStopped))
+                guard let build else { return fail(.failed, "Only the current release can restart.") }
+                await host.restart(build)
             default:
                 host.reloadScene()
             }
@@ -600,7 +614,7 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         reloadItem.isEnabled = phase == .running || phase == .paused
         // Nothing here can play: no Play or Reload to offer.
         let unplayable = switch phase {
-        case .noBuild, .refused, .missing, .needsRelaunch: true
+        case .noBuild, .refused, .missing: true
         default: false
         }
         playItem.isHidden = unplayable
@@ -639,9 +653,12 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         case .loading(.starting):
             state = .loading(String(localized: "Starting \(name)…"))
         case .ready:
+            let another = host.engine != .idle
             state = .empty(
                 title: String(localized: "Ready to Play"), systemImage: "play.circle",
-                message: String(localized: "The game starts when you tap Play.")
+                message: another
+                    ? String(localized: "Another game is playing. Play ends it and starts this one.")
+                    : String(localized: "The game starts when you tap Play.")
             )
             button = (String(localized: "Play"), { [weak self] in self?.playOrPause() })
         case .elsewhere:
@@ -650,8 +667,6 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
                 message: String(localized: "Play Here moves the game to this pane.")
             )
             button = (String(localized: "Play Here"), { [weak self] in self?.playOrPause() })
-        case .needsRelaunch(let reason):
-            state = .empty(title: String(localized: "Relaunch Oppi to Play"), systemImage: "arrow.clockwise.circle", message: Self.relaunchMessage(reason))
         case .refused(.nativeCode(let path)):
             state = .failed(
                 title: String(localized: "Oppi Won’t Run This Build"),
@@ -667,7 +682,7 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         case .failed(let message):
             state = .failed(
                 title: String(localized: "The Game Didn’t Load"), message: message,
-                retry: host.engine == .stopped ? nil : RetryAction { [weak self] in self?.follow() }
+                retry: RetryAction { [weak self] in self?.retry() }
             )
         }
         stateView.accessibilityValue = phase.kind
@@ -684,17 +699,6 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
     static var tooHotMessage: String {
         String(localized: "This device is too hot, so Oppi paused the game. It plays again once the device cools down.")
     }
-
-    static func relaunchMessage(_ reason: GodotRelaunchReason) -> String {
-        switch reason {
-        case .otherGame:
-            String(localized: "Another game ran since Oppi opened. Oppi plays one game per launch: quit and reopen Oppi to play this one.")
-        case .projectSettings:
-            String(localized: "This build changed project settings, autoloads or global classes. Quit and reopen Oppi to play it.")
-        case .engineStopped:
-            String(localized: "The game stopped. Oppi starts its engine once per launch: quit and reopen Oppi to play again.")
-        }
-    }
 }
 
 extension GodotPanePhase {
@@ -709,7 +713,6 @@ extension GodotPanePhase {
         case .running: "running"
         case .paused: "paused"
         case .elsewhere: "elsewhere"
-        case .needsRelaunch: "needsRelaunch"
         case .refused: "refused"
         case .failed: "failed"
         }

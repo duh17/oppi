@@ -43,6 +43,9 @@ static CALayer *container_layer = nil;
 static void *rendering_layer = nullptr; // +1 retained CALayer from libgodot
 static double view_width = 0, view_height = 0, view_scale = 1;
 static bool muted = false;
+// The scene the host last asked for (a swap or a reload). Until the next
+// frame it is only pending: the tree has no current scene then.
+static String requested_scene;
 
 static OppiGodotLogCallback log_callback = nullptr;
 static void *log_context = nullptr;
@@ -658,6 +661,7 @@ void oppigodot_stop(void) {
 	sandbox_writable.clear();
 	sandbox_readable.clear();
 	sandbox_configured = false;
+	requested_scene = String();
 }
 
 bool oppigodot_is_running(void) {
@@ -754,13 +758,31 @@ bool oppigodot_swap_pack(const char *path, const char *scene) {
 	String scene_path = (scene && scene[0]) ? String::utf8(scene) : String(GLOBAL_GET("application/run/main_scene"));
 	Ref<PackedScene> packed = ResourceLoader::load(scene_path, "PackedScene", ResourceFormatLoader::CACHE_MODE_REPLACE_DEEP);
 	ERR_FAIL_COND_V_MSG(packed.is_null(), false, vformat("Cannot load %s from the new pack.", scene_path));
-	return SceneTree::get_singleton()->change_scene_to_packed(packed) == OK;
+	if (SceneTree::get_singleton()->change_scene_to_packed(packed) != OK) {
+		return false;
+	}
+	requested_scene = scene_path;
+	return true;
 }
 
 bool oppigodot_reload_scene(void) {
 	ERR_FAIL_COND_V(!instance, false);
 	SceneTree *tree = SceneTree::get_singleton();
-	return tree && tree->reload_current_scene() == OK;
+	ERR_FAIL_NULL_V(tree, false);
+	// A scene change (a swap, an earlier reload) leaves no current scene
+	// until the next frame runs, and a paused game runs none: reload the
+	// scene that change asked for. SceneTree::reload_current_scene would
+	// fail there. Else the current scene's file, else the main scene.
+	Node *current = tree->get_current_scene();
+	String path = current ? current->get_scene_file_path() : requested_scene;
+	if (path.is_empty()) {
+		path = GLOBAL_GET("application/run/main_scene");
+	}
+	if (tree->change_scene_to_file(path) != OK) {
+		return false;
+	}
+	requested_scene = path;
+	return true;
 }
 
 void oppigodot_touch(int32_t index, OppiGodotTouchPhase phase, double x, double y, double previous_x, double previous_y, float pressure, bool double_tap) {

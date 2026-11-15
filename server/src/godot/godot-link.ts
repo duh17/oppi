@@ -78,7 +78,7 @@ class ProjectLink {
 const POLICY_CLOSE = 1008;
 /** A player link that has not attached by then is closed. */
 const ATTACH_WITHIN_MS = 10_000;
-const APPLIED_PHASES: ReadonlySet<string> = new Set(["running", "paused", "error", "relaunch"]);
+const APPLIED_PHASES: ReadonlySet<string> = new Set(["running", "paused", "error"]);
 
 export interface GodotLinkBrokerOptions {
   /** The project as `attached` describes it, players included; undefined for an unknown id. */
@@ -243,8 +243,8 @@ export class GodotLinkBroker {
   }
 
   /**
-   * The first player report of release `seq` running, paused, failed, or waiting for a
-   * relaunch; null after `timeoutMs`.
+   * The first player report of release `seq` running, paused, or failed; null after
+   * `timeoutMs`.
    */
   waitForApplied(
     projectId: string,

@@ -40,20 +40,20 @@ enum GodotPauseReason: Hashable, Sendable {
     case thermal
 }
 
-/// The app's one game engine (design §5, §9). Godot 4.7 starts once per
-/// process, so the host starts it for the first game played this launch and
-/// keeps it: a new build of that game swaps packs or reloads scripts
-/// (`GodotPackPolicy`), and another game waits for a relaunch. One pane holds
-/// the engine's view at a time (`GodotSurfaceView`, moved, never rebuilt); a
-/// publish never takes it from the pane being played.
+/// The app's one game engine (design §5, §9). One game runs at a time: a new
+/// build of it reloads scripts or swaps packs in place (`GodotPackPolicy`);
+/// another game, a build that changes project settings, or Play after the
+/// game quit ends the engine and starts it again (patch 0005 lets Godot start
+/// again in a process). One pane holds the engine's view at a time
+/// (`GodotSurfaceView`, moved, never rebuilt); a publish never takes it from
+/// the pane being played.
 ///
 /// - The display link drives `iterate` at the display's rate (30–120 Hz),
 ///   30 Hz at most when the device is seriously hot, and stops while any
 ///   `GodotPauseReason` holds.
 /// - Audio follows `GodotAudioPolicy`; the error overlay shows the latest
 ///   error the game's own code raised (`GodotEngineLog.isGameError`).
-/// - A memory warning keeps the engine: it cannot start again, and stopping
-///   it would lose the game until the app relaunches.
+/// - A memory warning keeps the engine: ending it would lose the game's state.
 @MainActor @Observable
 final class GodotEngineHost {
     static let shared = GodotEngineHost(runtime: GodotRuntimes.make())
@@ -68,7 +68,8 @@ final class GodotEngineHost {
     private(set) var isThrottled = false
     /// The pane's mute button; the game is also silent while the microphone is held.
     private(set) var isPersonMuted = false
-    /// How long the last start took to the first drawn frame.
+    /// How long the last start took to the first drawn frame, ending the
+    /// game before it included.
     private(set) var startMilliseconds: Double?
     /// Recent engine log lines, oldest first, published at most four times a
     /// second (`logBatchInterval`) so a chatty game never redraws its pane
@@ -150,50 +151,22 @@ final class GodotEngineHost {
         GodotPackPolicy.plan(slot: build.slot, packs: build.indexes, hint: build.hint, loaded: loaded, engine: engine)
     }
 
-    /// Plays `build` in `owner`'s pane: starts the engine on the first game
-    /// this launch, or applies a new build of the running game. The pane
-    /// takes the surface; nothing happens for a build that needs a relaunch.
+    /// Plays `build` in `owner`'s pane: starts the engine on it, ending the
+    /// game it ran, or applies a new build of the running game by the
+    /// policy's tier. The pane takes the surface.
     @discardableResult
     func play(_ build: GodotBuild, in owner: any GodotSurfaceOwner) async -> GodotApplyPlan {
-        guard let runtime else { return .relaunch(.engineStopped) }
+        guard let runtime else { return plan(for: build) }
+        // Another game is coming up: this one takes the engine once it is up.
+        while case .starting(let starting) = engine, starting != build.slot {
+            await Self.nextFrame()
+        }
         let plan = plan(for: build)
         switch plan {
-        case .relaunch, .refuse:
+        case .refuse:
             return plan
-        case .start:
-            // Starting from now: a second play while setup runs plans against
-            // it, never a second start.
-            engine = .starting(build.slot)
-            take(for: owner)
-            failure = nil
-            gameError = nil
-            loading = .starting
-            // The pane draws "Starting…" before setup blocks the main thread.
-            await Self.nextFrame()
-            runtime.attach(to: surface.layer)
-            if let (size, scale) = engineSize { runtime.resize(to: size, scale: scale) }
-            startedAt = CACurrentMediaTime()
-            let started = runtime.start(GodotStartConfig(
-                packs: build.packs,
-                userFolder: GodotFolders.user(for: build.slot),
-                cacheFolder: GodotFolders.engineCache(for: build.slot),
-                readableFolders: [URL(filePath: "/System/Library/Fonts")],
-                arguments: (build.scene.map { [$0] } ?? []) + (build.arguments.isEmpty ? [] : ["--"] + build.arguments)
-            ))
-            loading = nil
-            guard started else {
-                engine = .stopped
-                failure = String(localized: "The game didn’t start. Its log says why.")
-                logger.error("Godot start failed for \(build.slot.project, privacy: .public)")
-                return plan
-            }
-            engine = .running(build.slot)
-            GodotPackCache.pin(build.packs)
-            loaded = GodotLoadedBuild(slot: build.slot, files: GodotPackPolicy.merged(build.indexes))
-            runtime.setMuted(audio.isMuted)
-            audio.gameDidStart()
-            startLink()
-            applyPause()
+        case .start, .restart:
+            await start(build, in: owner, runtime: runtime)
         case .unchanged:
             take(for: owner)
         case .scripts(let resources):
@@ -221,6 +194,66 @@ final class GodotEngineHost {
             loaded = GodotLoadedBuild(slot: build.slot, files: GodotPackPolicy.merged(build.indexes))
         }
         return plan
+    }
+
+    /// The failed state's Retry: plays `build` in `owner`'s pane, starting the
+    /// running game again when it is this one. Whatever failed (a start, a
+    /// load, a reload), the failure clears or the next try reports its own.
+    func retry(_ build: GodotBuild, in owner: any GodotSurfaceOwner) async {
+        guard let runtime else { return }
+        if case .running(let slot) = engine, slot == build.slot {
+            await start(build, in: owner, runtime: runtime)
+        } else {
+            await play(build, in: owner)
+        }
+    }
+
+    /// Starts the running game again on `build` in the pane that shows it
+    /// (a controller's restart).
+    func restart(_ build: GodotBuild) async {
+        guard let runtime, let owner, case .running(let slot) = engine, slot == build.slot else { return }
+        await start(build, in: owner, runtime: runtime)
+    }
+
+    /// Starts the engine on `build` in `owner`'s pane, ending the game it ran.
+    private func start(_ build: GodotBuild, in owner: any GodotSurfaceOwner, runtime: any GodotEngineRuntime) async {
+        // Starting from now: a second play of this game while setup runs
+        // plans against it, never a second start.
+        let ending = engine
+        engine = .starting(build.slot)
+        startedAt = CACurrentMediaTime()
+        take(for: owner)
+        failure = nil
+        gameError = nil
+        loading = .starting
+        if case .running = ending { stopEngine(runtime) }
+        // The pane draws "Starting…" before setup blocks the main thread.
+        await Self.nextFrame()
+        runtime.attach(to: surface.layer)
+        if let (size, scale) = engineSize { runtime.resize(to: size, scale: scale) }
+        let started = runtime.start(GodotStartConfig(
+            packs: build.packs,
+            userFolder: GodotFolders.user(for: build.slot),
+            cacheFolder: GodotFolders.engineCache(for: build.slot),
+            readableFolders: [URL(filePath: "/System/Library/Fonts")],
+            arguments: (build.scene.map { [$0] } ?? []) + (build.arguments.isEmpty ? [] : ["--"] + build.arguments)
+        ))
+        loading = nil
+        guard started else {
+            runtime.stop()
+            engine = .idle
+            startedAt = nil
+            failure = String(localized: "The game didn’t start. Its log says why.")
+            logger.error("Godot start failed for \(build.slot.project, privacy: .public)")
+            return
+        }
+        engine = .running(build.slot)
+        GodotPackCache.pin(build.packs)
+        loaded = GodotLoadedBuild(slot: build.slot, files: GodotPackPolicy.merged(build.indexes))
+        runtime.setMuted(audio.isMuted)
+        audio.gameDidStart()
+        startLink()
+        applyPause()
     }
 
     /// Reloads the running game's scene from its packs (the pane's Reload).
@@ -333,10 +366,9 @@ final class GodotEngineHost {
             logger.info("Godot frames: \(report.description, privacy: .public)")
         }
         guard alive else {
-            // The game quit. The engine cannot start again this launch.
-            engine = .stopped
-            link?.invalidate()
-            link = nil
+            // The game quit: its engine ends, and Play starts it again.
+            stopEngine(runtime)
+            engine = .idle
             record(GodotEngineLog(
                 kind: .print, message: "The game quit.", file: "", line: 0, function: "",
                 scriptFile: "", scriptLine: 0, backtrace: ""
@@ -349,6 +381,18 @@ final class GodotEngineHost {
             startMilliseconds = elapsed
             logger.info("Godot first frame after \(Int(elapsed)) ms")
         }
+    }
+
+    /// Ends the running engine: its frames, held input, mounted packs and
+    /// view go with it. The surface stays in its pane for the next game.
+    private func stopEngine(_ runtime: any GodotEngineRuntime) {
+        link?.invalidate()
+        link = nil
+        surface.input.cancelAll()
+        runtime.stop()
+        loaded = nil
+        frameTimes = GodotFrameTimes()
+        GodotPackCache.unpinAll()
     }
 
     /// The display link retains its target; the host must not be. The link

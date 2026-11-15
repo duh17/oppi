@@ -3,11 +3,11 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// The app's one engine and what each Godot pane shows of it: the first game
-/// played this launch starts the engine; a new build of it goes in by the
-/// tier the policy picks; another game, or any game after the engine
-/// stopped, waits for a relaunch; one pane holds the game's view, and a
-/// second pane on the same game offers Play Here.
+/// The app's one engine and what each Godot pane shows of it: a game played
+/// starts the engine, ending any other game; a new build of it goes in by the
+/// tier the policy picks, a fresh engine included; a game that quit or failed
+/// to start plays again; one pane holds the game's view, and a second pane on
+/// the same game offers Play Here.
 @MainActor
 @Suite("GodotEngineHost")
 struct GodotEngineHostTests {
@@ -50,17 +50,39 @@ struct GodotEngineHostTests {
         #expect(runtime.started.count == 1)
     }
 
-    @Test func anotherGameWaitsForARelaunchAndTakesNothing() async {
+    @Test func anotherGameEndsTheRunningOneAndTakesTheView() async {
         let runtime = FakeGodotRuntime()
         let host = GodotEngineHost(runtime: runtime)
         let playing = FakeGodotPane(tide)
         let other = FakeGodotPane(reef)
-        await host.play(build(tide, ["project.binary": 1]), in: playing)
+        await host.play(build(tide, ["project.binary": 1, "main.gd": 2]), in: playing)
         let plan = await host.play(build(reef, ["project.binary": 7]), in: other)
-        #expect(plan == .relaunch(.otherGame))
-        #expect(host.holdsSurface(playing), "The game being played keeps its view")
-        #expect(runtime.started.count == 1)
-        #expect(phase(host, other) == .needsRelaunch(.otherGame))
+        #expect(plan == .start)
+        #expect(runtime.events == [.start("games~tide"), .stop, .start("games~reef")], "The first game ends before the next starts")
+        #expect(host.engine == .running(reef))
+        #expect(host.loaded?.slot == reef)
+        #expect(host.holdsSurface(other))
+        #expect(host.surface.superview === other.surfaceSlot)
+        #expect(phase(host, other) == .running)
+        #expect(phase(host, playing) == .ready, "The first game's pane offers Play to switch back")
+
+        await host.play(build(tide, ["project.binary": 1, "main.gd": 2]), in: playing)
+        #expect(runtime.events.suffix(2) == [.stop, .start("games~tide")])
+        #expect(phase(host, playing) == .running)
+        #expect(phase(host, other) == .ready)
+    }
+
+    @Test func aBuildThatChangesProjectSettingsStartsTheGameAgainInItsPane() async {
+        let runtime = FakeGodotRuntime()
+        let host = GodotEngineHost(runtime: runtime)
+        let pane = FakeGodotPane(tide)
+        await host.play(build(tide, ["project.binary": 1, "main.gd": 2]), in: pane)
+        let plan = await host.play(build(tide, ["project.binary": 9, "main.gd": 2]), in: pane)
+        #expect(plan == .restart)
+        #expect(runtime.events == [.start("games~tide"), .stop, .start("games~tide")])
+        #expect(host.loaded?.files["project.binary"] == Data(repeating: 9, count: 16))
+        #expect(host.holdsSurface(pane))
+        #expect(phase(host, pane) == .running)
     }
 
     @Test func aSecondPaneOnTheGameOffersPlayHereAndTakesTheView() async {
@@ -80,7 +102,7 @@ struct GodotEngineHostTests {
         #expect(runtime.started.count == 1)
     }
 
-    @Test func aGameThatQuitsStopsTheEngineForTheLaunch() async {
+    @Test func aGameThatQuitsEndsTheEngineAndPlaysAgain() async {
         let runtime = FakeGodotRuntime()
         let host = GodotEngineHost(runtime: runtime)
         let pane = FakeGodotPane(tide)
@@ -88,23 +110,52 @@ struct GodotEngineHostTests {
         runtime.quits = true
         // The display link's next frame finds the game gone.
         try? await Task.sleep(for: .milliseconds(200))
-        #expect(host.engine == .stopped)
-        #expect(await host.play(build(tide, ["project.binary": 1]), in: pane) == .relaunch(.engineStopped))
-        #expect(runtime.started.count == 1)
+        #expect(host.engine == .idle)
+        #expect(runtime.events == [.start("games~tide"), .stop])
+        #expect(phase(host, pane) == .ready, "Play starts it again")
+        runtime.quits = false
+        #expect(await host.play(build(tide, ["project.binary": 1]), in: pane) == .start)
+        #expect(host.engine == .running(tide))
     }
 
-    @Test func aFailedStartSaysSoAndNeedsARelaunch() async {
+    @Test func aFailedStartSaysSoAndCanTryAgain() async {
         let runtime = FakeGodotRuntime()
         runtime.startSucceeds = false
         let host = GodotEngineHost(runtime: runtime)
         let pane = FakeGodotPane(tide)
         await host.play(build(tide, ["project.binary": 1]), in: pane)
-        #expect(host.engine == .stopped)
+        #expect(host.engine == .idle)
+        #expect(runtime.events == [.start("games~tide"), .stop], "A half-made engine is ended")
         guard case .failed = phase(host, pane) else {
             Issue.record("The pane that started it shows the failure")
             return
         }
-        #expect(phase(host, FakeGodotPane(tide)) == .needsRelaunch(.engineStopped))
+        #expect(phase(host, FakeGodotPane(tide)) == .ready)
+        runtime.startSucceeds = true
+        #expect(await host.play(build(tide, ["project.binary": 1]), in: pane) == .start)
+        #expect(phase(host, pane) == .running)
+    }
+
+    @Test func retryAfterAFailedReloadStartsTheGameAgainAndClearsTheFailure() async {
+        let runtime = FakeGodotRuntime()
+        let host = GodotEngineHost(runtime: runtime)
+        let pane = FakeGodotPane(tide)
+        let current = build(tide, ["project.binary": 1, "main.tscn": 2])
+        await host.play(current, in: pane)
+        runtime.reloadSucceeds = false
+        host.reloadScene()
+        guard case .failed = phase(host, pane) else {
+            Issue.record("A failed reload shows over the game")
+            return
+        }
+        // Playing the same build again changes nothing, so it cannot clear it.
+        #expect(await host.play(current, in: pane) == .unchanged)
+        #expect(host.failure != nil)
+
+        await host.retry(current, in: pane)
+        #expect(host.failure == nil)
+        #expect(runtime.events == [.start("games~tide"), .stop, .start("games~tide")])
+        #expect(phase(host, pane) == .running)
     }
 
     @Test func pausingFollowsThePersonAndThePanesVisibility() async {
@@ -158,10 +209,11 @@ struct GodotEngineHostTests {
         while host.engine == .idle { await Task.yield() }
         #expect(host.engine == .starting(tide))
         #expect(await host.play(build(tide, files), in: second) == .unchanged)
-        #expect(await host.play(build(reef, ["project.binary": 7]), in: other) == .relaunch(.otherGame))
+        // Another game waits for the start, then takes the engine.
+        #expect(await host.play(build(reef, ["project.binary": 7]), in: other) == .start)
         #expect(await starting.value == .start)
-        #expect(runtime.started.count == 1)
-        #expect(host.engine == .running(tide))
+        #expect(runtime.events == [.start("games~tide"), .stop, .start("games~reef")])
+        #expect(host.engine == .running(reef))
     }
 
     @Test func pausingLiftsTheFingersTheGameHolds() async {
@@ -241,9 +293,17 @@ private final class FakeGodotPane: GodotSurfaceOwner {
 @MainActor
 private final class FakeGodotRuntime: GodotEngineRuntime {
     var onLog: ((GodotEngineLog) -> Void)?
+    enum Event: Equatable {
+        case start(String)
+        case stop
+    }
+
     var startSucceeds = true
+    var reloadSucceeds = true
     var quits = false
     private(set) var started: [GodotStartConfig] = []
+    /// Starts by the pack's name, and stops, in order.
+    private(set) var events: [Event] = []
     private(set) var reloadedScripts: [[String]] = []
     private(set) var swaps: [URL] = []
     private var frames: Int64 = 0
@@ -252,7 +312,11 @@ private final class FakeGodotRuntime: GodotEngineRuntime {
     func resize(to size: CGSize, scale: CGFloat) {}
     func start(_ config: GodotStartConfig) -> Bool {
         started.append(config)
+        events.append(.start(config.packs.first?.deletingPathExtension().lastPathComponent ?? ""))
         return startSucceeds
+    }
+    func stop() {
+        events.append(.stop)
     }
     func iterate() -> Bool {
         frames += 1
@@ -271,7 +335,7 @@ private final class FakeGodotRuntime: GodotEngineRuntime {
         swaps.append(pack)
         return true
     }
-    func reloadScene() -> Bool { true }
+    func reloadScene() -> Bool { reloadSucceeds }
     private(set) var touches: [(index: Int, phase: GodotTouchPhase)] = []
     func touch(index: Int, phase: GodotTouchPhase, at point: CGPoint, from previous: CGPoint, pressure: Float, doubleTap: Bool) {
         touches.append((index, phase))

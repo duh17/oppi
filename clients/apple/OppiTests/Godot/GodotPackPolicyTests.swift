@@ -2,11 +2,12 @@ import Foundation
 import Testing
 @testable import Oppi
 
-/// How a new build reaches the one engine: the first game starts it; a new
-/// build of that game reloads scripts in place only when nothing but existing
-/// scripts changed; anything that the engine would have to start again for
-/// (another game, project settings, autoloads, global classes, a game that
-/// quit) waits for a relaunch; native code and newer exports are refused.
+/// How a new build reaches the one engine: a game that is not running starts
+/// it, ending any other; a new build of the running game reloads scripts in
+/// place only when nothing but existing scripts changed, and starts the engine
+/// again for what only a fresh engine reads (project settings, autoloads,
+/// global classes) or when its hint asks; native code and newer exports are
+/// refused.
 @Suite("GodotPackPolicy")
 struct GodotPackPolicyTests {
     let slot = GodotSlot(serverId: "sha256:studio", project: "games~tide")
@@ -49,9 +50,10 @@ struct GodotPackPolicyTests {
         #expect(plan([base, patch], loaded: loaded([base]), engine: .running(slot)) == .scripts(["res://player.gd"]))
     }
 
-    @Test func aRestartHintRulesOutTheScriptTier() {
+    @Test func aRestartHintStartsTheGameAgain() {
         let next = pack(["project.binary": 1, "main.gd": 9, "main.tscn": 3, "player.gd": 4])
-        #expect(plan([next], hint: .restart, loaded: loaded([base]), engine: .running(slot)) == .scene)
+        #expect(plan([next], hint: .restart, loaded: loaded([base]), engine: .running(slot)) == .restart)
+        #expect(plan([base], hint: .restart, loaded: loaded([base]), engine: .running(slot)) == .unchanged)
     }
 
     @Test(arguments: [
@@ -73,19 +75,17 @@ struct GodotPackPolicyTests {
     }
 
     @Test(arguments: ["project.binary", ".godot/global_script_class_cache.cfg"])
-    func projectSettingsOrGlobalClassesNeedARelaunch(_ path: String) {
+    func projectSettingsOrGlobalClassesStartTheGameAgain(_ path: String) {
         var files: [String: UInt8?] = ["project.binary": 1, "main.gd": 2, "main.tscn": 3, "player.gd": 4]
         files[path] = 42
-        #expect(plan([pack(files)], loaded: loaded([base]), engine: .running(slot)) == .relaunch(.projectSettings))
+        #expect(plan([pack(files)], hint: .scripts, loaded: loaded([base]), engine: .running(slot)) == .restart)
     }
 
-    @Test func anotherGameWaitsForARelaunch() {
+    @Test func anotherGameTakesTheEngine() {
         let other = GodotSlot(serverId: "sha256:studio", project: "games~other")
-        #expect(plan([base], loaded: GodotLoadedBuild(slot: other, files: [:]), engine: .running(other)) == .relaunch(.otherGame))
-    }
-
-    @Test func aStoppedEngineWaitsForARelaunch() {
-        #expect(plan([base], loaded: loaded([base]), engine: .stopped) == .relaunch(.engineStopped))
+        #expect(plan([base], loaded: GodotLoadedBuild(slot: other, files: [:]), engine: .running(other)) == .start)
+        #expect(plan([base], loaded: nil, engine: .starting(other)) == .start)
+        #expect(plan([base], loaded: nil, engine: .starting(slot)) == .unchanged, "A second play of the starting game waits for it")
     }
 
     @Test(arguments: [

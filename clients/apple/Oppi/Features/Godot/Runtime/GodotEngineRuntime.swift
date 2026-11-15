@@ -27,8 +27,9 @@ enum GodotTouchPhase: Sendable {
     case began, moved, ended, cancelled
 }
 
-/// The engine-neutral surface the host drives (design §5): one engine per
-/// process, on the main thread. `GodotRuntime` is the one implementation;
+/// The engine-neutral surface the host drives (design §5): one engine at a
+/// time, on the main thread; `stop` ends it, and `start` may follow on
+/// another game. `GodotRuntime` is the one implementation;
 /// an app built without the engine has none (`GodotRuntimes.make`).
 @MainActor
 protocol GodotEngineRuntime: AnyObject {
@@ -39,6 +40,8 @@ protocol GodotEngineRuntime: AnyObject {
     /// The container's size in points and its scale.
     func resize(to size: CGSize, scale: CGFloat)
     func start(_ config: GodotStartConfig) -> Bool
+    /// Ends the running engine and takes its view off the layer.
+    func stop()
     /// One frame; false once the game asked to quit.
     func iterate() -> Bool
     func pause()

@@ -4,8 +4,8 @@ import QuartzCore
 import UIKit
 
 /// `GodotEngineRuntime` over Oppi's Godot build (`engine/godot`, C API in
-/// `OppiGodot.h`). Godot 4.7 starts once per process: after `start` the
-/// engine lives until the app quits, and a new build swaps packs in it.
+/// `OppiGodot.h`). One engine at a time: `stop` ends it, and `start` makes
+/// the next one, on any game (patch 0005 lets Godot start again in a process).
 @MainActor
 final class GodotRuntime: GodotEngineRuntime {
     var onLog: ((GodotEngineLog) -> Void)? {
@@ -56,6 +56,7 @@ final class GodotRuntime: GodotEngineRuntime {
         return true
     }
 
+    func stop() { oppigodot_stop() }
     func iterate() -> Bool { oppigodot_iterate() }
     func pause() { oppigodot_pause() }
     func resume() { oppigodot_resume() }

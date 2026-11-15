@@ -1,11 +1,11 @@
 // OppiGodot: the whole surface Oppi's thin host uses to run one Godot game
 // inside a UIKit view. Everything runs on the main thread unless noted.
 //
-// One engine per process, once: stock Godot 4.7 cannot start again after
-// stop in the same process (class registration is static), so a new build of
-// the same game swaps packs inside the running engine (oppigodot_swap_pack),
-// and another game, or a change to project settings or autoloads, needs the
-// app to relaunch.
+// One engine at a time: oppigodot_stop ends it, and oppigodot_start may make
+// the next one, on any game (patch 0005 resets what stock Godot 4.7 keeps in
+// statics). A new build of the running game swaps packs inside it
+// (oppigodot_swap_pack); another game, or a change to project settings or
+// autoloads, stops the engine and starts it again.
 #pragma once
 
 #include <stdbool.h>
@@ -90,13 +90,14 @@ bool oppigodot_mount_pack(const char *path, bool replace_files);
 // instance state. NULL or count 0 reloads every loaded script. Returns the
 // number reloaded, or -1 when the engine has no script reload (release builds).
 int32_t oppigodot_reload_scripts(const char *const *paths, int32_t count);
-// The in-engine pack swap, for when a second engine cannot start in the same
-// process: mounts the pack over the running game, reloads scripts, and
-// changes to `scene` (NULL: the project's main scene) loaded past the cache.
-// Project settings and autoloads keep the first pack's values.
+// The in-engine pack swap: mounts the pack over the running game, reloads
+// scripts, and changes to `scene` (NULL: the project's main scene) loaded
+// past the cache. Project settings and autoloads keep the first pack's values.
 bool oppigodot_swap_pack(const char *path, const char *scene);
 
-// Reloads the current scene from the mounted packs.
+// Reloads the current scene from the mounted packs. While a scene change is
+// pending (a paused game runs no frame to finish a swap or a reload), it
+// reloads the scene that change asked for.
 bool oppigodot_reload_scene(void);
 
 typedef enum {

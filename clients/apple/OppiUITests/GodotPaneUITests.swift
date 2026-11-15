@@ -11,7 +11,9 @@ import XCTest
 /// Captures go to the result bundle and, with `OPPI_GODOT_PANE_SHOTS` set, to
 /// that folder upright at 1400 px at most, named with `OPPI_GODOT_PANE_SHOTS_SUFFIX`.
 /// `OPPI_GODOT_PANE_SHOTS_SCHEME` picks the theme and `OPPI_GODOT_PANE_CONTENT_SIZE`
-/// the Dynamic Type size.
+/// the Dynamic Type size. `OPPI_GODOT_PANE_GAMES` (`Name=/path/to/game.pck;…`)
+/// lists real games first (the harness's `CHAT_ROUTES_GODOT_GAMES`), and the
+/// switching test plays the first two.
 @MainActor
 final class GodotPaneUITests: XCTestCase, PreviewUITestCase {
     var app: XCUIApplication!
@@ -174,15 +176,49 @@ final class GodotPaneUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// A new build that changes project settings arrives while the game runs:
-    /// the game plays on, and a banner says Oppi must be reopened for it.
-    func testABuildThatChangesSettingsAsksForARelaunch() throws {
+    /// the engine starts again on it in the same pane, with no relaunch.
+    func testABuildThatChangesSettingsStartsTheGameAgain() throws {
         try openChat(orientation: .landscapeLeft, settingsBuild: true)
         try open(tideRunner)
-        let notice = app.descendants(matching: .any)["godot.notice"]
-        XCTAssertTrue(notice.waitUntilExists(timeout: 20), "The relaunch notice shows")
-        XCTAssertEqual(app.buttons["godot.play"].value as? String, "running", "The game plays on")
+        let pane = app.descendants(matching: .any)["godot.pane"]
+        let play = app.buttons["godot.play"]
+        XCTAssertEqual(pane.value as? String, "release 1")
+        // The scripted server sends the settings build three seconds in.
+        XCTAssertTrue(
+            waitFor((pane.value as? String) == "release 2" && (play.value as? String) == "running", timeout: 30),
+            "The settings build plays (pane: \(pane.value ?? "nil"), play: \(play.value ?? "nil"))"
+        )
+        XCTAssertFalse(app.descendants(matching: .any)["godot.notice"].exists, "Nothing asks for a relaunch")
         hold(for: 1)
-        capture("relaunch-banner")
+        capture("settings-restarted")
+    }
+
+    /// A pane opened on another game ends the game playing and starts its
+    /// own there; the first game's pane offers Play, which switches back.
+    func testOpeningAnotherGameSwitchesToIt() throws {
+        try openChat(orientation: .landscapeLeft)
+        let (first, second) = switchingGames
+        try open(first)
+        hold(for: 1.5)
+        capture("switch-first")
+
+        try openGodotList()
+        let row = app.cells[second]
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "\(second) is listed")
+        row.tap()
+        XCTAssertTrue(waitFor(playValues() == ["ready", "running"], timeout: 30), "The second game took the engine (\(playValues()))")
+        XCTAssertTrue(surfaceIsIn(pane: 1), "The game draws in the second game's pane")
+        let state = app.descendants(matching: .any)["godot.state"]
+        XCTAssertTrue(state.waitUntilExists(timeout: 5), "The first game's pane says it is ready")
+        XCTAssertFalse(app.staticTexts["Relaunch Oppi to Play"].exists)
+        hold(for: 1.5)
+        capture("switch-second")
+
+        state.buttons["Play"].tap()
+        XCTAssertTrue(waitFor(playValues() == ["running", "ready"], timeout: 30), "Play switched back (\(playValues()))")
+        XCTAssertTrue(surfaceIsIn(pane: 0), "The game draws in the first game's pane again")
+        hold(for: 1.5)
+        capture("switch-back")
     }
 
     /// A critically hot device pauses the game: the notice row says why, the
@@ -271,6 +307,7 @@ final class GodotPaneUITests: XCTestCase, PreviewUITestCase {
             environment["CHAT_ROUTES_GODOT_PACK_SETTINGS"] = try pack("godot-sample-settings").base64EncodedString()
         }
         if hot { environment["CHAT_ROUTES_GODOT_HOT"] = "1" }
+        if let games = ProcessInfo.processInfo.environment["OPPI_GODOT_PANE_GAMES"] { environment["CHAT_ROUTES_GODOT_GAMES"] = games }
         if let seed { environment["PANE_RESTORE_SEED"] = seed }
         launchPreview(
             screen: "pane-restore",
@@ -321,6 +358,34 @@ final class GodotPaneUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(play.waitUntilExists(timeout: 10), "The Godot pane opened with its bar")
         XCTAssertTrue(waitFor((play.value as? String) == "running", timeout: 30), "The game started (value: \(play.value ?? "nil"))")
         XCTAssertTrue(app.descendants(matching: .any)["godot.surface"].waitUntilExists(timeout: 5), "The game draws in the pane")
+    }
+
+    /// The switching test's two rows: the first two of `OPPI_GODOT_PANE_GAMES`,
+    /// by the harness's id (the name's slug), else Tide Runner and Star Courier.
+    private var switchingGames: (String, String) {
+        let names = (ProcessInfo.processInfo.environment["OPPI_GODOT_PANE_GAMES"] ?? "")
+            .split(separator: ";").compactMap { $0.split(separator: "=").first.map(String.init) }
+        guard names.count >= 2 else { return (tideRunner, starCourier) }
+        func row(_ name: String) -> String {
+            "godot.projects.row." + name.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).joined(separator: "-")
+        }
+        return (row(names[0]), row(names[1]))
+    }
+
+    /// Each Godot pane's Play value, leftmost pane first.
+    private func playValues() -> [String] {
+        app.buttons.matching(identifier: "godot.play").allElementsBoundByIndex
+            .sorted { $0.frame.minX < $1.frame.minX }
+            .map { ($0.value as? String) ?? "" }
+    }
+
+    /// Whether the game's view sits in the `index`th Godot pane from the left.
+    private func surfaceIsIn(pane index: Int) -> Bool {
+        let panes = app.descendants(matching: .any).matching(identifier: "godot.pane").allElementsBoundByIndex
+            .sorted { $0.frame.minX < $1.frame.minX }
+        let surface = app.descendants(matching: .any)["godot.surface"]
+        guard panes.indices.contains(index), surface.exists else { return false }
+        return panes[index].frame.contains(CGPoint(x: surface.frame.midX, y: surface.frame.midY))
     }
 
     private func pack(_ name: String) throws -> Data {

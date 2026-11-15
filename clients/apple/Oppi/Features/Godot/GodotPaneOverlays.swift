@@ -1,7 +1,7 @@
 import UIKit
 
-/// The Godot pane's notice row between its bar and the game: a build that
-/// needs Oppi relaunched, or a device too hot to play. It takes its own row,
+/// The Godot pane's notice row between its bar and the game: a device too
+/// hot to play. It takes its own row,
 /// so it never covers the game, on opaque material with the theme's text.
 final class GodotNoticeBanner: UIView {
     private let label = UILabel()

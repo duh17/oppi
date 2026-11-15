@@ -359,10 +359,10 @@ const playerMessages: GodotLinkPlayerMessage[] = [
   {
     type: "state",
     state: {
-      phase: "relaunch",
-      release: 6,
+      phase: "error",
+      release: 7,
       tier: "restart",
-      message: "Project settings changed; relaunch Oppi to apply release 7.",
+      message: "The game didn’t start. Its log says why.",
     },
   },
   {

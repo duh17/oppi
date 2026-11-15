@@ -7,18 +7,6 @@ struct GodotSlot: Hashable, Sendable {
 }
 
 
-/// Why a build cannot run until the app relaunches. Godot 4.7 starts once per
-/// process and cannot start again (its class registration is static), so the
-/// engine keeps the first game's project settings and autoloads for life.
-enum GodotRelaunchReason: Hashable, Sendable {
-    /// The engine runs another game this launch.
-    case otherGame
-    /// The build changed project settings, autoloads or global classes.
-    case projectSettings
-    /// The game quit, or failed to start; the engine cannot start again.
-    case engineStopped
-}
-
 /// A pack the player will not hand the engine.
 enum GodotPackRefusal: Hashable, Sendable {
     /// Native code, a .NET assembly or a GDExtension: Oppi runs GDScript only.
@@ -29,8 +17,12 @@ enum GodotPackRefusal: Hashable, Sendable {
 
 /// How a release reaches the engine.
 enum GodotApplyPlan: Hashable, Sendable {
-    /// The first game this launch: start the engine on it.
+    /// Start the engine on this game, ending the game it runs, if any.
     case start
+    /// A build of the running game that only a fresh engine reads (project
+    /// settings, autoloads, global classes), or that asks for one: end the
+    /// engine and start it again on this build.
+    case restart
     /// Same files as the engine has.
     case unchanged
     /// Only existing scripts changed: reload them in place, keeping state.
@@ -38,17 +30,15 @@ enum GodotApplyPlan: Hashable, Sendable {
     case scripts([String])
     /// Mount the packs over the running game and reload its scene.
     case scene
-    case relaunch(GodotRelaunchReason)
     case refuse(GodotPackRefusal)
 
-    /// The tier a player reports for this plan (`protocol/godot.json`): a
-    /// relaunch is the restart tier; a first start, no change and a refusal
-    /// report none.
+    /// The tier a player reports for this plan (`protocol/godot.json`); a
+    /// start, no change and a refusal report none.
     var tier: GodotReloadTier? {
         switch self {
         case .scripts: .scripts
         case .scene: .scene
-        case .relaunch: .restart
+        case .restart: .restart
         case .start, .unchanged, .refuse: nil
         }
     }
@@ -61,14 +51,15 @@ struct GodotLoadedBuild: Hashable, Sendable {
     var files: [String: Data]
 }
 
-/// Decides how a new release of a game reaches the one engine (design §7,
-/// with the spike's finding that the engine starts once per launch). Pure.
+/// Decides how a new release of a game reaches the one engine (design §7):
+/// one game runs at a time, and the engine starts again for another game or
+/// for what only a fresh engine reads. Pure.
 enum GodotPackPolicy {
     /// The engine the app links; a pack from a newer Godot is refused.
     static let engineVersion = GodotEngineVersion(major: 4, minor: 7)
 
-    /// Files whose change needs a fresh engine: project settings (autoloads
-    /// live there) and the global class list.
+    /// Files only a fresh engine reads: project settings (autoloads live
+    /// there) and the global class list.
     static let settingsFiles: Set<String> = ["project.binary", "project.godot", ".godot/global_script_class_cache.cfg"]
 
     /// The files `packs` give the game, base first: a later pack replaces a
@@ -99,20 +90,18 @@ enum GodotPackPolicy {
             return .start
         case .starting(let starting):
             // The engine is coming up on a build of this game: the next build
-            // waits for it, and another game for a relaunch.
-            return starting == slot ? .unchanged : .relaunch(.otherGame)
-        case .stopped:
-            return .relaunch(.engineStopped)
+            // waits for it. Another game starts once it is up.
+            return starting == slot ? .unchanged : .start
         case .running(let running):
-            guard running == slot, let loaded, loaded.slot == slot else { return .relaunch(.otherGame) }
+            guard running == slot, let loaded, loaded.slot == slot else { return .start }
             let files = merged(packs)
             let changed = Set(files.keys).union(loaded.files.keys).filter { files[$0] != loaded.files[$0] }
             if changed.isEmpty { return .unchanged }
-            if !changed.isDisjoint(with: settingsFiles) { return .relaunch(.projectSettings) }
+            if hint == .restart || !changed.isDisjoint(with: settingsFiles) { return .restart }
             let existingScriptsOnly = changed.allSatisfy { path in
                 isScript(path) && loaded.files[path] != nil && files[path] != nil
             }
-            if hint != .restart, existingScriptsOnly {
+            if existingScriptsOnly {
                 return .scripts(Set(changed.map(scriptResource)).sorted())
             }
             return .scene
@@ -131,11 +120,9 @@ enum GodotPackPolicy {
     }
 }
 
-/// The app's one engine over a launch: never started, starting or running one
-/// game, or stopped for good (Godot 4.7 cannot start a second time in a process).
+/// The app's one engine: no game, or starting or running one.
 enum GodotEngineState: Hashable, Sendable {
     case idle
     case starting(GodotSlot)
     case running(GodotSlot)
-    case stopped
 }

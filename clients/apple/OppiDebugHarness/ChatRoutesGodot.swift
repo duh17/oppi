@@ -18,7 +18,9 @@ import Foundation
 ///
 /// Releases are a few minutes to a day old. `CHAT_ROUTES_GODOT_HOT` makes the
 /// device critically hot a few seconds after Tide Runner's pane attaches
-/// (`GodotEngineHost`).
+/// (`GodotEngineHost`). `CHAT_ROUTES_GODOT_GAMES` lists more games before
+/// those, `Name=/path/to/game.pck` separated by `;`, read from the Mac's disk
+/// (the simulator shares it): real games for demos and proof recordings.
 ///
 /// Everything else under /godot is a 404. The player link is scripted in
 /// process (`playerLink`), since a preview connection has no server socket.
@@ -52,9 +54,19 @@ enum ChatRoutesGodot {
         return pack
     }
 
+    /// `CHAT_ROUTES_GODOT_GAMES`'s games; the id is the name's slug.
+    private static let extraGames: [Project] = (environment["CHAT_ROUTES_GODOT_GAMES"] ?? "")
+        .split(separator: ";")
+        .compactMap { entry in
+            let parts = entry.split(separator: "=", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let pack = FileManager.default.contents(atPath: parts[1]) else { return nil }
+            let slug = parts[0].lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).joined(separator: "-")
+            return Project(id: slug, name: parts[0], label: nil, pack: pack, args: nil, packHangs: false)
+        }
+
     static var projects: [Project] {
         guard environment["CHAT_ROUTES_GODOT"] == "1" else { return [] }
-        return [
+        return extraGames + [
             Project(id: "tide-runner-3fa9c2b1", name: "Tide Runner", label: "Faster waves", pack: samplePack, args: nil, packHangs: false, age: 3 * 60),
             Project(id: "moss-garden-7c1d2e3f", name: "Moss Garden", label: nil, pack: nil, args: nil, packHangs: false),
             Project(id: "star-courier-9b2e4a10", name: "Star Courier", label: "Cargo bay doors", pack: samplePack, args: ["--probe"], packHangs: false, age: 2 * 3600),

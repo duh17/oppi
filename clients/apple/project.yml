@@ -778,7 +778,7 @@ targets:
       # The Godot pane's sample build (engine/godot/sample, exported), served by the fixture server.
       - path: OppiTests/Fixtures/godot-sample.pck
         buildPhase: resources
-      # The same game exported with a changed project setting: a build that needs a relaunch.
+      # The same game exported with a changed project setting: a build that starts the game again.
       - path: OppiTests/Fixtures/godot-sample-settings.pck
         buildPhase: resources
       - path: QAVerificationSupport

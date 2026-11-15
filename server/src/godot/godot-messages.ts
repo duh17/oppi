@@ -35,14 +35,7 @@ type Parsed<T> = { ok: true; value: T } | { ok: false; reason: string };
 const ok = <T>(value: T): Parsed<T> => ({ ok: true, value });
 const fail = <T>(reason: string): Parsed<T> => ({ ok: false, reason });
 
-const PHASES: ReadonlySet<string> = new Set([
-  "idle",
-  "loading",
-  "running",
-  "paused",
-  "error",
-  "relaunch",
-]);
+const PHASES: ReadonlySet<string> = new Set(["idle", "loading", "running", "paused", "error"]);
 const TIERS: ReadonlySet<string> = new Set(["scripts", "scene", "restart"]);
 const LEVELS: ReadonlySet<string> = new Set(["debug", "info", "warn", "error"]);
 const ERROR_CODES: ReadonlySet<string> = new Set([

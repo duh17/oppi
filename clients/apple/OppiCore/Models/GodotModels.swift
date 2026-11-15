@@ -42,8 +42,7 @@ struct GodotEntry: Codable, Sendable, Hashable {
 ///
 /// - `scripts`: reload changed scripts in the running game; everything is kept.
 /// - `scene`: mount the new packs into the running engine and reload the current scene.
-/// - `restart`: needs a fresh engine. Godot 4.7 cannot start twice in one process, so the
-///   player reports `GodotPhase.relaunch` and applies it after the app relaunches.
+/// - `restart`: needs a fresh engine; the player ends the game's engine and starts it again.
 struct GodotReloadTier: RawRepresentable, Codable, Sendable, Hashable {
     let rawValue: String
     init(rawValue: String) { self.rawValue = rawValue }
@@ -145,8 +144,7 @@ struct GodotViewport: Codable, Sendable, Hashable {
     var scale: Double?
 }
 
-/// `idle`, `loading`, `running`, `paused`, `error`, or `relaunch` (a `restart`-tier change waits
-/// for the app to relaunch).
+/// `idle`, `loading`, `running`, `paused`, or `error`.
 struct GodotPhase: RawRepresentable, Codable, Sendable, Hashable {
     let rawValue: String
     init(rawValue: String) { self.rawValue = rawValue }
@@ -156,7 +154,6 @@ struct GodotPhase: RawRepresentable, Codable, Sendable, Hashable {
     static let running = Self(rawValue: "running")
     static let paused = Self(rawValue: "paused")
     static let error = Self(rawValue: "error")
-    static let relaunch = Self(rawValue: "relaunch")
 }
 
 struct GodotPlayerState: Codable, Sendable, Hashable {

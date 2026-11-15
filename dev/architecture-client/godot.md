@@ -5,7 +5,7 @@ The Godot pane plays a Godot project from a paired server beside the chat (exper
 ## Owners
 
 - `GodotEngineHost` (`Oppi/Features/Godot/`, `AppRootEnvironment.godot`) owns the app's one engine, its display link, pauses, audio and log.
-- Godot 4.7 cannot start twice in a process. The first game played starts the engine for the launch; another game, or a build that changes project settings, autoloads or global classes, waits for a relaunch. `GodotPackPolicy` (OppiCore) decides how each build applies.
+- One game runs at a time; the engine stops and starts again in the process (patch 0005). `GodotPackPolicy` (OppiCore) decides how each build applies.
 - `GodotPanePhase.resolve` (OppiCore) is the one answer to what a pane shows.
 - One pane at a time holds the one `GodotSurfaceView`, which moves between panes and is never rebuilt. A publish never takes it from the pane being played.
 - Each Godot pane reads its project over HTTP and attaches as a player on the project's link (`GodotPlayerLink`, `protocol/godot.json`; the connection makes it, with the `StreamAuthRenewer` every stream uses): releases and controllers' commands arrive there, and the pane reports its state, the game's log and command results. Commands act on the running game from whichever pane receives them, and never move its view.

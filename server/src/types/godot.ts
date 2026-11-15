@@ -41,8 +41,7 @@ export interface GodotEntry {
  * - `scene`: mount the new packs into the running engine and reload the current scene.
  *   Autoloads are kept; the scene starts over.
  * - `restart`: the change needs a fresh engine (project settings, autoloads, the class
- *   registry). An engine that cannot start twice in one process (Godot 4.7) applies it only
- *   after the app relaunches: the player reports phase `relaunch`.
+ *   registry): the player ends the game's engine and starts it again on the release.
  */
 export type GodotReloadTier = "scripts" | "scene" | "restart";
 
@@ -131,10 +130,8 @@ export interface GodotViewport {
  * - `idle`: attached, nothing loaded. `loading`: fetching or mounting packs.
  * - `running`, `paused`: a release is live.
  * - `error`: the release failed to load or apply; `message` says why.
- * - `relaunch`: a `restart`-tier change waits for the app to relaunch; the last release keeps
- *   running if it can.
  */
-export type GodotPhase = "idle" | "loading" | "running" | "paused" | "error" | "relaunch";
+export type GodotPhase = "idle" | "loading" | "running" | "paused" | "error";
 
 export interface GodotPlayerState {
   phase: GodotPhase;
@@ -368,8 +365,8 @@ export interface GodotReleaseRequest {
 export interface GodotReleaseResponse {
   release: GodotRelease;
   /**
-   * With `wait=first-frame`: the first player to report this release running, paused, in
-   * error, or waiting for a relaunch; null when none did within 30 s.
+   * With `wait=first-frame`: the first player to report this release running, paused, or in
+   * error; null when none did within 30 s.
    */
   applied?: { playerId: string; state: GodotPlayerState } | null;
 }
