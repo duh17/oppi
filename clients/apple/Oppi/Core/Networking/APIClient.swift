@@ -276,6 +276,23 @@ actor APIClient: ClientLogUploading {
     /// new client; a request in flight holds its client, so nothing is cut off.
     deinit {
         session.finishTasksAndInvalidate()
+        attachmentUploadSession?.finishTasksAndInvalidate()
+    }
+
+    /// Attachment bodies can take many minutes. The API session ends any request at
+    /// 30 seconds total, which cut every upload over about 30 seconds short; this one
+    /// fails an upload only when no bytes move for `attachmentUploadIdleTimeout`.
+    private var attachmentUploadSession: URLSession?
+    static let attachmentUploadIdleTimeout: TimeInterval = 120
+
+    private func uploadSession() -> URLSession {
+        if let attachmentUploadSession { return attachmentUploadSession }
+        let configuration = session.configuration
+        configuration.timeoutIntervalForRequest = Self.attachmentUploadIdleTimeout
+        configuration.timeoutIntervalForResource = 7 * 24 * 60 * 60
+        let uploads = URLSession(configuration: configuration, delegate: trustDelegate, delegateQueue: nil)
+        attachmentUploadSession = uploads
+        return uploads
     }
 
     // MARK: - Health & Auth
@@ -1656,15 +1673,7 @@ actor APIClient: ClientLogUploading {
         data body: Data,
         contentType: String
     ) async throws -> ChatAttachmentRef {
-        let (data, response) = try await request(
-            "PUT",
-            path: path,
-            body: body,
-            contentType: contentType
-        )
-        try checkStatus(response, data: data)
-        let parsed = try JSONDecoder().decode(UploadContentResponse.self, from: data)
-        return parsed.attachment
+        try await putAttachmentContent(path: path, body: .data(body), contentType: contentType)
     }
 
     private func putAttachmentContent(
@@ -1672,7 +1681,15 @@ actor APIClient: ClientLogUploading {
         fileURL: URL,
         contentType: String
     ) async throws -> ChatAttachmentRef {
-        let (data, response) = try await performAuthorizedFileUpload(path: path, fileURL: fileURL, contentType: contentType)
+        try await putAttachmentContent(path: path, body: .file(fileURL), contentType: contentType)
+    }
+
+    private func putAttachmentContent(
+        path: String,
+        body: AttachmentUploadBody,
+        contentType: String
+    ) async throws -> ChatAttachmentRef {
+        let (data, response) = try await performAuthorizedAttachmentUpload(path: path, body: body, contentType: contentType)
         try checkStatus(response, data: data)
         let parsed = try JSONDecoder().decode(UploadContentResponse.self, from: data)
         return parsed.attachment
@@ -2782,36 +2799,49 @@ actor APIClient: ClientLogUploading {
 
     /// Streams attachment bytes from disk through the same auth-refresh, TLS,
     /// and error-reporting path as `performAuthorized` without loading the file.
-    private func performAuthorizedFileUpload(
+    private enum AttachmentUploadBody {
+        case data(Data)
+        case file(URL)
+    }
+
+    /// Sends attachment bytes (a file streams from disk, never loaded) through the
+    /// same auth-refresh, TLS, and error-reporting path as `performAuthorized`, on
+    /// the upload session's idle timeout.
+    private func performAuthorizedAttachmentUpload(
         path: String,
-        fileURL: URL,
+        body: AttachmentUploadBody,
         contentType: String
     ) async throws -> (Data, URLResponse) {
         func makeRequest() throws -> URLRequest {
             var req = try URLRequest(url: self.makeURL(path: path))
             req.httpMethod = "PUT"
             req.setValue(contentType, forHTTPHeaderField: "Content-Type")
-            logger.debug("PUT \(path) [file]")
+            logger.debug("PUT \(path) [attachment]")
             return req
         }
 
         var request = try makeRequest()
         var current = try await authorizedToken()
         ServerAuthorization.apply(token: current, to: &request)
-        var (data, response) = try await performUpload(for: request, fromFile: fileURL)
+        var (data, response) = try await performUpload(for: request, body: body)
         if authSessionBox.get() != nil, (response as? HTTPURLResponse)?.statusCode == 401 {
             current = try await authorizedToken(forceRefresh: true, replacing: current)
             var retry = try makeRequest()
             ServerAuthorization.apply(token: current, to: &retry)
-            (data, response) = try await performUpload(for: retry, fromFile: fileURL)
+            (data, response) = try await performUpload(for: retry, body: body)
         }
         return (data, response)
     }
 
-    private func performUpload(for request: URLRequest, fromFile fileURL: URL) async throws -> (Data, URLResponse) {
+    private func performUpload(for request: URLRequest, body: AttachmentUploadBody) async throws -> (Data, URLResponse) {
         let rejections = trustDelegate.rejectionCount
         do {
-            return try await session.upload(for: request, fromFile: fileURL)
+            switch body {
+            case .data(let data):
+                return try await uploadSession().upload(for: request, from: data)
+            case .file(let fileURL):
+                return try await uploadSession().upload(for: request, fromFile: fileURL)
+            }
         } catch {
             let error = namingCertificateRejection(error, since: rejections)
             reportAvailabilityFailure(for: error)
