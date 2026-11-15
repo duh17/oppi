@@ -2530,15 +2530,21 @@ describe("durable-native threads", () => {
     const parentConversation = conversationOf(f.storage, f.parent);
     await f.manager.sendPrompt(f.parent.id, "Delegate lead");
     await until(
-      async () => (await reports(harness, parentConversation)).length === 1,
-      "Lead's first report",
+      () => f.storage.listSessions().some((session) => session.name === "Grand"),
+      "Grand's session",
     );
-    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
     const lead = f.storage.listSessions().find((session) => session.name === "Lead")!;
     const leadConversation = conversationOf(f.storage, lead);
     // Lead answered and is idle; its only pending waker is its reporter of Grand, still working.
-    expect((await harness.snapshot(LiveDoc, leadConversation, context))?.run).toBeUndefined();
+    await until(
+      async () =>
+        (await harness.snapshot(LiveDoc, leadConversation, context))?.run === undefined &&
+        (await harness.snapshot(LiveDoc, parentConversation, context))?.run === undefined,
+      "Lead and the parent idle",
+    );
     expect(await (await f.owner()).pendingWakers(leadConversation)).toHaveLength(1);
+    // Grand ends on its own, so Lead's answer meanwhile is interim and held.
+    expect(await reports(harness, parentConversation)).toEqual([]);
 
     await f.manager.sendPrompt(f.parent.id, "Wait for Lead");
     const slot = async () =>
@@ -2562,27 +2568,34 @@ describe("durable-native threads", () => {
       ),
     ).toEqual([]);
 
-    // Grand's answer wakes Lead, whose answer then reaches the parent as a report.
+    // Grand's answer wakes Lead, whose answer then reaches the parent as its one report.
     held.open();
     await until(
-      async () => (await reports(harness, parentConversation)).length === 2,
+      async () => (await reports(harness, parentConversation)).length === 1,
       "Lead's report after Grand",
     );
-    const header = `[session Lead (${lead.id}) finished, no reply needed] `;
     expect(await reports(harness, parentConversation)).toEqual([
-      `${header}LEAD_WAITING`,
-      `${header}LEAD_DONE`,
+      `[session Lead (${lead.id}) finished, no reply needed] LEAD_DONE\n\n` +
+        "[1 earlier answer was held while its background work ran]",
     ]);
   });
 
   describe("a child that answers while its background job runs", () => {
     /**
-     * Builder's model: on its task it starts `command()` as a job, ends that turn (once `turn`
-     * resolves), then answers on its receipt.
+     * Builder's model: on its task it starts `command()` as a job (with `start`'s extra
+     * arguments), ends that turn (once `turn` resolves), then answers on its receipt.
      */
-    const jobModel = (command: () => string, turn?: Promise<void>) =>
+    const jobModel = (
+      command: () => string,
+      turn?: Promise<void>,
+      start: Record<string, unknown> = {},
+    ) =>
       model(async ({ last, text }) => {
         if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (text.includes("Break Builder"))
+          return subagentCall("send", { name: "Builder", message: "FAIL_ME" });
+        if (last.role === "user" && text.includes("FAIL_ME"))
+          return fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider down" });
         if (last.role === "toolResult" && last.toolName === "background_job") {
           await turn;
           return fauxAssistantMessage("WAITING_ON_JOB");
@@ -2594,7 +2607,7 @@ describe("durable-native threads", () => {
         if (text.includes("Wait for Builder")) return subagentCall("wait", { names: ["Builder"] });
         if (text.includes("List them")) return subagentCall("list");
         if (text.includes("BUILD_TASK"))
-          return toolCall("background_job", { action: "start", command: command() });
+          return toolCall("background_job", { action: "start", command: command(), ...start });
         // The job's receipt, finished or interrupted.
         if (text.includes("Background job bash-1")) return fauxAssistantMessage("BUILD_DONE");
         return fauxAssistantMessage("OTHER");
@@ -2995,6 +3008,106 @@ describe("durable-native threads", () => {
       expect(inspected?.state).toMatchObject({ kind: "blocked", reason: "task_too_old" });
       // A blocked task never ends by itself, so it must not hold the parent's idle timeout.
       expect(await (await f.owner()).hasPendingWake(parentConversation)).toBe(false);
+    });
+
+    describe("with a job that ends on its own", () => {
+      /** Builder starts a gated job with a timeout and ends its turn, idle while it runs. */
+      async function timedJobFixture() {
+        let command = "";
+        const f = await fixture(jobModel(() => command, undefined, { timeout: 600 }));
+        const gatePath = join(f.dir, "job-gate");
+        command = gated(gatePath);
+        await f.manager.startSession(f.parent.id, f.workspace);
+        await f.manager.sendPrompt(f.parent.id, "Delegate the build");
+        const harness = await f.harness();
+        const parentConversation = conversationOf(f.storage, f.parent);
+        await until(() => f.storage.listSessions().length === 2, "the child session");
+        const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+        const childConversation = conversationOf(f.storage, child);
+        await until(async () => {
+          const newest = (
+            await (await harness.conversation(childConversation, context))!.entries(
+              {},
+              1,
+              undefined,
+              context,
+            )
+          ).items[0]?.model?.[0];
+          return (
+            newest?.role === "assistant" &&
+            textOf(newest) === "WAITING_ON_JOB" &&
+            (await harness.snapshot(LiveDoc, childConversation, context))?.run === undefined
+          );
+        }, "the child idle after its job's start");
+        await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+        return { f, harness, child, parentConversation, childConversation, gatePath };
+      }
+
+      it("holds the answer it gives while the job runs and reports only its answer after, noting the held one", async () => {
+        const { f, harness, child, parentConversation, childConversation, gatePath } =
+          await timedJobFixture();
+        // Idle with its job running: its answer is held.
+        expect(
+          (await harness.snapshot(DurableJobs, childConversation, context))?.jobs,
+        ).toMatchObject([{ id: "bash-1", status: "running", timeout: 600 }]);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        expect(await reports(harness, parentConversation)).toEqual([]);
+
+        writeFileSync(gatePath, "");
+        await until(
+          async () => !(await (await f.owner()).hasPendingWake(parentConversation)),
+          "the parent's reporter to end",
+        );
+        await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+        expect(await reports(harness, parentConversation)).toEqual([
+          `[session Builder (${child.id}) finished, no reply needed] BUILD_DONE\n\n` +
+            "[1 earlier answer was held while its background work ran]",
+        ]);
+        expect(requestIds(f.storage, f.dir, f.parent.id, "oppi-report:")).toHaveLength(1);
+      });
+
+      it("still returns the held answer from wait at once, with its note, and reports only the answer after", async () => {
+        const { f, harness, child, parentConversation, gatePath } = await timedJobFixture();
+        await f.manager.sendPrompt(f.parent.id, "Wait for Builder");
+        await until(
+          async () => (await toolResults(harness, parentConversation)).length === 2,
+          "the wait result",
+        );
+        await expectAnswerNamingRunningJob(
+          f,
+          child,
+          (await toolResults(harness, parentConversation))[1]!.text,
+          "Builder: WAITING_ON_JOB",
+        );
+        await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+
+        writeFileSync(gatePath, "");
+        await until(
+          async () => (await reports(harness, parentConversation)).length === 1,
+          "the report after the job",
+        );
+        // wait took the held answer, so the report counts none.
+        expect(await reports(harness, parentConversation)).toEqual([
+          `[session Builder (${child.id}) finished, no reply needed] BUILD_DONE`,
+        ]);
+      });
+
+      it("reports a failed run at once while the job still runs", async () => {
+        const { f, harness, child, parentConversation, childConversation, gatePath } =
+          await timedJobFixture();
+        await f.manager.sendPrompt(f.parent.id, "Break Builder");
+        const failed = `[session Builder (${child.id}) failed: `;
+        await until(
+          async () =>
+            (await userTexts(harness, parentConversation)).some((text) => text.startsWith(failed)),
+          "the failure report",
+        );
+        expect(
+          (await harness.snapshot(DurableJobs, childConversation, context))?.jobs[0]?.status,
+        ).toBe("running");
+        expect(await reports(harness, parentConversation)).toEqual([]);
+        writeFileSync(gatePath, "");
+      });
     });
   });
 

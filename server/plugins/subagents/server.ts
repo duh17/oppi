@@ -35,7 +35,7 @@ import {
   type SessionSender,
   type SubagentWorktreeRequest,
 } from "oppi/v1";
-import { DurableJobs } from "../background-jobs/contract.js";
+import { DurableJobs, endsOnItsOwn } from "../background-jobs/contract.js";
 import { agentMessageEntry, type MessageOrigin } from "./agent-message.js";
 import { Subagents, ensureSubagentWidget, type Child, type SubagentWorktree } from "./contract.js";
 import { isLive, liveTasks } from "./wakers.js";
@@ -254,30 +254,119 @@ async function followChild(
 }
 
 /** A background job of a child whose command still runs. */
-type RunningJob = { id: string; command: string };
+type RunningJob = { id: string; command: string; endsOnItsOwn: boolean };
 
 /**
- * The jobs behind `wakers`, a child's live pending wakers, when every one is a background job of
- * its own whose command still runs; else undefined. Such a job may never end (a dev server, a
- * watcher), so `wait` returns the child's answer rather than wait for it. A reporter of the
- * child (a subagent of its own) and a finished job whose receipt is not delivered yet each wake
- * the child soon to answer again, so `wait` keeps following those.
+ * What `wakers`, a child's live pending wakers, are: its background jobs whose command still
+ * runs (`running`), and whether any other waker is left (`others`): a reporter of the child (a
+ * subagent of its own) or a finished job whose receipt is not delivered yet, each of which wakes
+ * the child soon to answer again. A running job may never end (a dev server, a watcher), so
+ * `wait` returns the child's answer once only running jobs are left, and a follower holds the
+ * child's answers only while each running job ends on its own (`endsOnItsOwn`).
  */
-async function runningJobsOnly(
+async function wakerJobs(
   tx: Tx,
   conversationId: ConversationId,
   wakers: readonly TaskId[],
-): Promise<RunningJob[] | undefined> {
-  // Reporters first: a child without jobs has no jobs document, and a read must not create it.
-  for (const id of wakers) if ((await tx.task(id))?.kind === SESSION_REPORTER_TASK) return;
+): Promise<{ running: RunningJob[]; others: boolean }> {
+  let others = false;
+  const jobTasks: TaskId[] = [];
+  for (const id of wakers)
+    if ((await tx.task(id))?.kind === SESSION_REPORTER_TASK) others = true;
+    else jobTasks.push(id);
+  // A child without jobs has no jobs document, and a read must not create it.
+  if (jobTasks.length === 0) return { running: [], others };
   const jobs = (await tx.doc(DurableJobs, conversationId)).jobs;
   const running: RunningJob[] = [];
-  for (const id of wakers) {
+  for (const id of jobTasks) {
     const job = jobs.find((candidate) => candidate.taskId === id);
-    if (job?.status !== "running") return undefined;
-    running.push({ id: job.id, command: job.command });
+    if (job?.status === "running")
+      running.push({ id: job.id, command: job.command, endsOnItsOwn: endsOnItsOwn(job) });
+    else others = true;
   }
-  return running;
+  return { running, others };
+}
+
+/**
+ * Whether a follower holds the answer a child gave with `wakers` still live: its own background
+ * work will wake it to answer again, so that answer is interim. Not when a running job may never
+ * end on its own: the child may not answer again, so its answer goes out now.
+ */
+async function holds(
+  tx: Tx,
+  conversationId: ConversationId,
+  wakers: readonly TaskId[],
+): Promise<boolean> {
+  if (wakers.length === 0) return false;
+  const { running } = await wakerJobs(tx, conversationId, wakers);
+  return running.every((job) => job.endsOnItsOwn);
+}
+
+/** The child's final answers after `after` and before `answer` that no report or `wait` took. */
+async function heldAnswers(
+  tx: Tx,
+  conversationId: ConversationId,
+  after: EntryId,
+  answer: EntryId,
+  reported: readonly EntryId[],
+): Promise<number> {
+  let held = 0;
+  let cursor;
+  do {
+    const page = await tx.scanEntries({ conversationId }, 50, cursor);
+    for (const entry of page.items) {
+      if (entry.id <= after) return held;
+      const message = entry.model?.[0];
+      if (entry.id >= answer || message?.role !== "assistant") continue;
+      const { stopReason } = message as AssistantMessage;
+      if (
+        stopReason !== "toolUse" &&
+        stopReason !== "error" &&
+        stopReason !== "aborted" &&
+        !reported.includes(entry.id)
+      )
+        held++;
+    }
+    cursor = page.next;
+  } while (cursor);
+  return held;
+}
+
+/**
+ * The report checkpoint for the child's answer `answer`, recorded in `record`'s `reported`. It
+ * counts the answers after `after` a follower held, and adds the worktree line `state`.
+ */
+async function answerReport(
+  tx: Tx,
+  { conversationId, name, sessionId }: ReporterInput,
+  record: Child | undefined,
+  answer: { id: EntryId; message: AssistantMessage | undefined },
+  after: EntryId,
+  state: string | undefined,
+): Promise<{ status: "running"; checkpoint: ReporterState }> {
+  // Read back from the draft: `??=` yields the plain value, not the stored draft.
+  if (record) {
+    record.reported ??= [];
+    record.reported.push(answer.id);
+  }
+  const held = await heldAnswers(tx, conversationId, after, answer.id, record?.reported ?? []);
+  const header = reportHeader(name, sessionId);
+  const report =
+    `${header}${textOf(answer.message)}` +
+    (held === 0
+      ? ""
+      : `\n\n[${held === 1 ? "1 earlier answer was" : `${held} earlier answers were`} held while its background work ran]`) +
+    (state ? `\n\n[${state}]` : "");
+  return {
+    status: "running",
+    checkpoint: {
+      phase: "report",
+      report,
+      textOffset: header.length,
+      after: answer.id,
+      answer: answer.id,
+    },
+  };
 }
 
 /** What `wait` and `spawn` with `wait: true` add to the answer of a child whose jobs still run. */
@@ -462,13 +551,18 @@ async function undelivered(
  * each report once; the registry's `reported` list makes several messages that end in one
  * answer report it once.
  *
- * Then it follows the child, so answers no parent message caused still come back: a child that
- * ends its turn waiting on a background job of its own answers again when the job's receipt
- * wakes it. While the child has pending wakers (`pendingWakers`: undelivered jobs, its own
- * reporters; never tickers, which do not end), the reporter waits for one to end or for the
- * child to run, then reports the child's newest unreported answer. One reporter per child
- * follows (`follower`); it ends once the child is idle with no pending wakers, so it never keeps
- * the store open longer than the child's own work does.
+ * A failure to start or to answer is reported at once, and so is the answer, unless it is
+ * interim (`holds`): given idle while the child's pending wakers (`pendingWakers`: undelivered
+ * jobs, its own reporters; never tickers, which do not end) will wake it to answer again, none
+ * of them a running job that may never end on its own.
+ *
+ * Then it follows the child, so held answers and answers no parent message caused come back: a
+ * child that ends its turn waiting on a background job of its own answers again when the job's
+ * receipt wakes it. While the child has pending wakers, the reporter waits for one to end or for
+ * the child to run, then reports the child's newest unreported answer that is not interim, with
+ * a count of the answers it held. One reporter per child follows (`follower`); it ends once the
+ * child is idle with no pending wakers, so it never keeps the store open longer than the child's
+ * own work does.
  */
 function defineReporter(
   host: (env: ExecutionEnv | undefined) => DurableSessionsHost,
@@ -513,49 +607,53 @@ function defineReporter(
           return;
         }
         const settled = await delivered.submitted.wait(context);
+        const answered = settled.status === "done" && settled.type === "input";
+        const sessions = host(await runtime.env(context));
+        // Read outside the commit, as `followChild` does; the commit keeps those still live.
+        const wakers = answered ? await sessions.pendingWakers(conversationId) : [];
         // Read outside the commit: where a worktree child's tree stands is git work, not a
         // document read, and the Session line must not wait on it.
         const worktree = await worktreeReport(
-          host(await runtime.env(context)),
+          sessions,
           (await runtime.snapshot(Subagents, runtime.conversationId, context))?.children[name]
             ?.worktree,
         );
-        const state = worktree?.line;
         // One commit decides the report and records the answer, so a restart does not decide again.
         await runtime.commit(async (tx) => {
-          const next = (after: EntryId, report?: string, textOffset?: number, answer?: EntryId) =>
-            ({
+          const follow = (after: EntryId) =>
+            ({ status: "running", checkpoint: { phase: "follow", after } }) as const;
+          // A failure is reported at once. Aborted: stopped or withdrawn; whoever stopped it
+          // knows, so nothing to report.
+          if (settled.status === "unanswered")
+            return {
               status: "running",
               checkpoint: {
                 phase: "report",
-                after,
-                ...(report !== undefined ? { report } : {}),
-                ...(textOffset ? { textOffset } : {}),
-                ...(answer !== undefined ? { answer } : {}),
+                after: await newestEntry(tx, conversationId),
+                ...(settled.reason === "aborted"
+                  ? {}
+                  : { report: `[session ${name} (${sessionId}) failed: ${settled.reason}]` }),
               },
-            }) as const;
-          // Aborted: stopped or withdrawn. Whoever stopped it knows; nothing to report.
-          if (settled.status === "unanswered")
-            return next(
-              await newestEntry(tx, conversationId),
-              settled.reason === "aborted"
-                ? undefined
-                : `[session ${name} (${sessionId}) failed: ${settled.reason}]`,
-            );
-          if (settled.type !== "input") return next(await newestEntry(tx, conversationId));
+            };
+          if (settled.type !== "input") return follow(await newestEntry(tx, conversationId));
+          // An answer given idle while the child's own work that ends on its own runs is
+          // interim: the follower, after the message's entry, reports it or a newer one.
+          const busy = (await tx.doc(LiveDoc, conversationId)).run !== undefined;
+          if (!busy && (await holds(tx, conversationId, await liveTasks(tx, wakers))))
+            return follow(settled.entry);
           const record = (await tx.doc(Subagents, runtime.conversationId)).children[name];
           noteProgress(record, worktree);
-          if (record) {
-            // Read back from the draft: `??=` yields the plain value, not the stored draft.
-            record.reported ??= [];
-            if (record.reported.includes(settled.answer)) return next(settled.answer);
-            record.reported.push(settled.answer);
-          }
-          const answer = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0] as
+          if (record?.reported?.includes(settled.answer)) return follow(settled.answer);
+          const message = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0] as
             AssistantMessage | undefined;
-          const header = reportHeader(name, sessionId);
-          const report = `${header}${textOf(answer)}${state ? `\n\n[${state}]` : ""}`;
-          return next(settled.answer, report, header.length, settled.answer);
+          return answerReport(
+            tx,
+            reporter.input,
+            record,
+            { id: settled.answer, message },
+            settled.entry,
+            worktree?.line,
+          );
         }, context);
       },
       report: async (reporter, runtime, context) => {
@@ -633,22 +731,13 @@ function defineReporter(
                   return undefined;
                 }
                 const answer = await newestAnswer(tx, conversationId);
-                record.reported ??= [];
-                if (answer && answer.id > after && !record.reported.includes(answer.id)) {
-                  record.reported.push(answer.id);
-                  const header = reportHeader(name, sessionId);
-                  const report = `${header}${textOf(answer.message)}${state ? `\n\n[${state}]` : ""}`;
-                  return {
-                    status: "running",
-                    checkpoint: {
-                      phase: "report",
-                      report,
-                      textOffset: header.length,
-                      after: answer.id,
-                      answer: answer.id,
-                    },
-                  };
-                }
+                if (
+                  answer &&
+                  answer.id > after &&
+                  !record.reported?.includes(answer.id) &&
+                  !(await holds(tx, conversationId, live))
+                )
+                  return answerReport(tx, reporter.input, record, answer, after, state);
                 if (live.length === 0) return COMPLETED;
                 pending = live;
                 return undefined;
@@ -674,6 +763,9 @@ const GUIDANCE =
   "saved Agent; model and thinking override it. send messages a child (steer by default, " +
   "followUp: true after its current answer); its answer also arrives later as a follow-up " +
   "message, as does any later answer of a child that finishes background work of its own. " +
+  "An answer a child gives while background work of its own that ends by itself still runs " +
+  "(its subagents, jobs with a timeout or started in the foreground) is held: only its answer " +
+  "after that work arrives, noting how many it held. " +
   "wait blocks until children answered your messages and are idle with no background work of " +
   "their own pending, and returns their latest answers instead; an answer wait returns does " +
   "not also arrive as a follow-up. A child idle with only background jobs of its own still " +
@@ -750,8 +842,8 @@ export function createDurableSessions(
             note = undefined;
             const live = await check(tx);
             if (live === "again" || live.length === 0) return live;
-            const jobs = await runningJobsOnly(tx, conversationId, live);
-            if (!jobs) return live;
+            const { running: jobs, others } = await wakerJobs(tx, conversationId, live);
+            if (others) return live;
             // A reporter that follows the child reports its next answer to the caller. One that
             // only reports a failure to start (`report` without `after`) ends after it.
             const followed = (await liveReporters(tx, api.conversationId, conversationId)).some(
