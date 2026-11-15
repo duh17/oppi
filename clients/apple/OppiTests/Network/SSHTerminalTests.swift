@@ -1302,7 +1302,7 @@ struct SSHTerminalTests {
         host.requests.filter { $0.method == "session.view" && $0.string("session_id") == Self.rexSession }
     }
 
-    /// The sheet shows each session with its panes in window order: the
+    /// A Rex host's screen shows each session with its panes in window order: the
     /// program that reported names a pane, a blocked child record wins over a
     /// working root (Rex passes OSC 7501 through, so the kind survives), a pane
     /// that never reported has no status, and only the active window's focused
@@ -1326,7 +1326,7 @@ struct SSHTerminalTests {
         ).sorted())
         #expect(requests.first?.string("event_scope") == "all")
 
-        let sessions = monitor.sections
+        let sessions = SSHTerminalRexSessionsContent.rexSections(monitor)
         #expect(sessions.map(\.rows.first?.title) == ["shy-cedar", "empty"])
         #expect(sessions[1].rows.count == 1, "a session without windows lists no panes")
         let panes = sessions[0].rows.dropFirst().map { row -> (String, SSHTerminalOverviewRow.Kind) in (row.title, row.kind) }
@@ -1508,8 +1508,8 @@ struct SSHTerminalTests {
         // Rex stops: the failure shows, the last list stays, the badge goes dark.
         secondHost.end(status: 4)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { monitor.failure == "Rex is not running on this host." })
-        #expect(monitor.sections.first?.rows.first?.kind == .failure)
-        #expect(monitor.sections.count == 3, "the last list stays under the failure")
+        #expect(SSHTerminalRexSessionsContent.rexSections(monitor).first?.rows.first?.kind == .failure)
+        #expect(SSHTerminalRexSessionsContent.rexSections(monitor).count == 3, "the last list stays under the failure")
         #expect(monitor.needsAttention == 0)
         #expect(retries.last?.0 == .notRunning && retries.last?.1 == 1)
         #expect(monitor.absence == .notRunning && !monitor.gaveUp)
@@ -1532,7 +1532,7 @@ struct SSHTerminalTests {
             #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.monitor.absence == expected.absence })
             #expect(rig.monitor.gaveUp == expected.gaveUp)
             #expect(!rig.monitor.available)
-            #expect(rig.monitor.sections.first?.rows.first?.title == expected.absence.advice)
+            #expect(SSHTerminalRexSessionsContent.rexSections(rig.monitor).first?.rows.first?.title == expected.absence.advice)
             if expected.gaveUp {
                 await rig.task.value // `run` has returned: nothing is asked again
                 #expect(await rig.fixture.streamCommands.count == 1)
@@ -1584,10 +1584,10 @@ struct SSHTerminalTests {
         #expect((1...5).map { RexMonitor.Retry.delay(.notRunning, failures: $0) } == [15, 30, 60, 60, 60].map { .seconds($0) })
     }
 
-    /// Opening the sheet reads Rex once more over the open stream (a safety
+    /// Opening a list (`watching`) reads Rex once more over the open stream (a safety
     /// net for what events missed), and so does a pull to refresh, which
     /// waits for it. Setting the flag again changes nothing.
-    @Test func rexOpeningTheSheetReadsTheServerOnceMore() async throws {
+    @Test func rexOpeningAListReadsTheServerOnceMore() async throws {
         let world = RexWorld()
         let host = world.host()
         let rig = try await startRex([host])
@@ -1603,7 +1603,7 @@ struct SSHTerminalTests {
 
         monitor.watching = true
         world.state.withLock { $0.label = "pulled" }
-        await monitor.refresh(on: rig.channel)
+        await monitor.resync()
         #expect(monitor.snapshot?.sessions.first?.label == "pulled")
         #expect(attaches() == 3)
 

@@ -585,8 +585,9 @@ enum RexAbsence: Equatable, Sendable {
 }
 
 /// Follows a host's Rex server while a terminal is connected, or while a Rex
-/// host's sessions screen shows, so the bar can offer the session list and a
-/// needs-you count, and a tapped pane opens on this device.
+/// list shows (the Rex panel, a Rex host's sessions screen, the Terminal tab's
+/// Rex sections), so they can list its sessions and panes, Back's dot can count
+/// the panes that need you, and a tapped pane opens on this device.
 ///
 /// It subscribes instead of polling: one control connection, over Tailscale
 /// when its `RexRoutePlan` allows, else an `nc -U` stream (`RexBridge.command`)
@@ -597,7 +598,8 @@ enum RexAbsence: Equatable, Sendable {
 /// views, and attaching would put this client in every session's client list.
 ///
 /// Rex replays no events, so whatever the stream missed is caught up by
-/// reading everything again: after a dropped stream, and when the sheet opens.
+/// reading everything again: after a dropped stream, and when the Rex panel or a
+/// Rex host's screen opens (`watching`).
 /// Backgrounding needs nothing of its own: the connection closes (the terminal
 /// registry after its grace period, the sessions screen at once), the stream
 /// ends with it, and the screen restarts `run` when it is back.
@@ -607,7 +609,7 @@ enum RexAbsence: Equatable, Sendable {
 /// that drops, is retried with backoff, since Rex may start or the network
 /// return.
 @MainActor @Observable
-final class RexMonitor: SSHTerminalOverviewContent {
+final class RexMonitor {
     /// Why a subscription ended, for the delay before the next one.
     enum Retry: Equatable {
         /// Rex is not running (bridge exit 4); it may be started, so ask
@@ -624,8 +626,6 @@ final class RexMonitor: SSHTerminalOverviewContent {
         }
     }
 
-    let title = "Rex"
-    let identifierPrefix = "sshTerminal.rex"
     /// Which way the stream that last read Rex reached it.
     private(set) var route: RexRoute?
     /// The last snapshot read. A stream that fails keeps it on screen, as what
@@ -635,8 +635,9 @@ final class RexMonitor: SSHTerminalOverviewContent {
     /// Why Rex could not be read, until it is read again.
     private(set) var absence: RexAbsence?
     private(set) var focusFailure: String?
-    /// The sheet is open. Opening it reads Rex once more, as a safety net for
-    /// anything the stream missed; the stream itself stays as quick as it is.
+    /// The Rex panel or a Rex host's screen is on screen. Opening one reads Rex
+    /// once more, as a safety net for anything the stream missed; the stream
+    /// itself stays as quick as it is.
     var watching = false {
         didSet {
             if !watching {
@@ -724,7 +725,7 @@ final class RexMonitor: SSHTerminalOverviewContent {
         return RexMonitor(directHost: profile.map(RexDirectHost.init))
     }
 
-    /// The terminal's overview source: `run(over:)` on its channel, or straight
+    /// The terminal's Rex reader: `run(over:)` on its channel, or straight
     /// to a Rex reached over Tailscale alone while the terminal is connected.
     func run(on channel: SSHTerminalChannel) async {
         if tailnet != nil {
@@ -799,10 +800,6 @@ final class RexMonitor: SSHTerminalOverviewContent {
 
     /// Reads Rex once more; a pull-to-refresh waits for it. With no stream
     /// open, it does not wait out the retry delay.
-    func refresh(on channel: SSHTerminalChannel) async {
-        await resync()
-    }
-
     func resync() async {
         guard inbox != nil else {
             backoff?.cancel()
@@ -828,7 +825,7 @@ final class RexMonitor: SSHTerminalOverviewContent {
         inbox.nudge()
     }
 
-    /// Sleeps out a retry delay; `refresh` and the sheet opening cut it short.
+    /// Sleeps out a retry delay; `resync` and `watching` turning on cut it short.
     private func pause(_ delay: Duration) async {
         let sleeper = Task<Void, Never> { _ = try? await Task.sleep(for: delay) }
         backoff = sleeper
@@ -1118,52 +1115,5 @@ final class RexMonitor: SSHTerminalOverviewContent {
         }
         openPane(RexPaneTarget(sessionID: sessionID, blockID: pane.blockID, label: pane.displayName))
         return true
-    }
-
-    /// One section per session: the session, then its panes in window order,
-    /// each with its program's status. The pane Rex types into is bold. A
-    /// session with several windows names each pane's window.
-    var sections: [SSHTerminalOverviewSection] {
-        var sections: [SSHTerminalOverviewSection] = []
-        // Why Rex cannot be read, with what to do about it; any other failure
-        // shows as it came.
-        if let reason = absence?.advice ?? failure {
-            sections.append(.init(id: "failure", rows: [.init(id: "failure", title: reason, kind: .failure, focus: nil)]))
-            if gaveUp { return sections }
-        }
-        guard let snapshot else {
-            if failure == nil {
-                sections.append(.init(id: "loading", rows: [.init(id: "loading", title: "Loading\u{2026}", kind: .placeholder, focus: nil)]))
-            }
-            return sections
-        }
-        if snapshot.sessions.isEmpty {
-            sections.append(.init(id: "empty", rows: [.init(id: "empty", title: "No Rex sessions.", kind: .placeholder, focus: nil)]))
-        }
-        for session in snapshot.sessions {
-            let key = "session|\(session.sessionID)"
-            let namesWindows = session.windows.count > 1
-            var rows: [SSHTerminalOverviewRow] = [.init(
-                id: key, title: session.label ?? "Session", kind: .group(focused: false), focus: nil
-            )]
-            for window in session.windows {
-                for pane in window.panes {
-                    let name = pane.displayName
-                    let title = pane.title.flatMap { $0.isEmpty || $0 == name ? nil : $0 }
-                    rows.append(.init(
-                        id: key + "|" + pane.blockID,
-                        title: name,
-                        kind: .item(
-                            subtitle: [title, namesWindows ? window.label : nil].compactMap { $0 }.joined(separator: " \u{00B7} "),
-                            focused: session.isFocused(pane, in: window),
-                            status: pane.status.map { .known($0) } ?? .none
-                        ),
-                        focus: .init(scope: session.sessionID, id: pane.blockID, isGroup: false)
-                    ))
-                }
-            }
-            sections.append(.init(id: key, rows: rows))
-        }
-        return sections
     }
 }

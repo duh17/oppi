@@ -187,7 +187,7 @@ struct RexTailnetTests {
             host: Self.rex
         )
         #expect(monitor.absence == expected.map { .refused($0) })
-        #expect(monitor.sections.first?.rows.first?.title == expected)
+        #expect(SSHTerminalRexSessionsContent.rexSections(monitor).first?.rows.first?.title == expected)
 
         let registry = Self.registry()
         defer { registry.closeAll(reason: "done") }

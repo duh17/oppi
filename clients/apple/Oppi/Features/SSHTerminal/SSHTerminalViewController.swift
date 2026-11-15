@@ -1811,12 +1811,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                 return SSHTerminalRexPanelContent.statusRows(from: state?.panes.first { $0.blockID == state?.shown }?.records ?? [])
             }
         )
-        let channel = channel
         Router.present(
             SSHTerminalOverviewViewController(
                 content: content,
                 isSheet: true,
-                refresh: { await monitor.refresh(on: channel) },
+                refresh: { await monitor.resync() },
                 activate: { [weak self] focus in self?.activateRexPanel(focus, sessionID: sessionID) ?? false }
             ),
             presentation: .sheet.detents([.medium(), .large()]).inNavigation(),

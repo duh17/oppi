@@ -184,8 +184,8 @@ final class SSHTerminalRexSessionsContent: SSHTerminalOverviewContent {
         self.session = session
     }
 
-    var title: String { monitor.title }
-    var identifierPrefix: String { monitor.identifierPrefix }
+    let title = "Rex"
+    let identifierPrefix = "sshTerminal.rex"
     var focusFailure: String? { monitor.focusFailure }
     var watching: Bool {
         get { monitor.watching }
@@ -214,6 +214,54 @@ final class SSHTerminalRexSessionsContent: SSHTerminalOverviewContent {
         if monitor.snapshot != nil, monitor.failure == nil, let route = monitor.route {
             footer = [.init(id: "route", rows: [.init(id: "route", title: route.label, kind: .placeholder, focus: nil)])]
         }
-        return connection + monitor.sections + footer
+        return connection + Self.rexSections(monitor) + footer
+    }
+
+    /// What Rex reports: one section per session, the session, then its panes
+    /// in window order, each with its program's status. The pane Rex types
+    /// into is bold. A session with several windows names each pane's window.
+    /// A pane row opens that pane on this device; a session row offers nothing.
+    static func rexSections(_ monitor: RexMonitor) -> [SSHTerminalOverviewSection] {
+        var sections: [SSHTerminalOverviewSection] = []
+        // Why Rex cannot be read, with what to do about it; any other failure
+        // shows as it came.
+        if let reason = monitor.absence?.advice ?? monitor.failure {
+            sections.append(.init(id: "failure", rows: [.init(id: "failure", title: reason, kind: .failure, focus: nil)]))
+            if monitor.gaveUp { return sections }
+        }
+        guard let snapshot = monitor.snapshot else {
+            if monitor.failure == nil {
+                sections.append(.init(id: "loading", rows: [.init(id: "loading", title: "Loading\u{2026}", kind: .placeholder, focus: nil)]))
+            }
+            return sections
+        }
+        if snapshot.sessions.isEmpty {
+            sections.append(.init(id: "empty", rows: [.init(id: "empty", title: "No Rex sessions.", kind: .placeholder, focus: nil)]))
+        }
+        for session in snapshot.sessions {
+            let key = "session|\(session.sessionID)"
+            let namesWindows = session.windows.count > 1
+            var rows: [SSHTerminalOverviewRow] = [.init(
+                id: key, title: session.label ?? "Session", kind: .group(focused: false), focus: nil
+            )]
+            for window in session.windows {
+                for pane in window.panes {
+                    let name = pane.displayName
+                    let title = pane.title.flatMap { $0.isEmpty || $0 == name ? nil : $0 }
+                    rows.append(.init(
+                        id: key + "|" + pane.blockID,
+                        title: name,
+                        kind: .item(
+                            subtitle: [title, namesWindows ? window.label : nil].compactMap { $0 }.joined(separator: " \u{00B7} "),
+                            focused: session.isFocused(pane, in: window),
+                            status: pane.status.map { .known($0) } ?? .none
+                        ),
+                        focus: .init(scope: session.sessionID, id: pane.blockID, isGroup: false)
+                    ))
+                }
+            }
+            sections.append(.init(id: key, rows: rows))
+        }
+        return sections
     }
 }
