@@ -10,7 +10,7 @@ import {
 } from "../mcp-requests.js";
 
 export function createMcpRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
-  return async ({ method, path, req, res }) => {
+  return async ({ method, path, url, req, res }) => {
     if (path !== "/mcp" && !path.startsWith("/mcp/")) return false;
     if (!ctx.mcp) {
       helpers.error(res, 503, "MCP management unavailable");
@@ -26,7 +26,9 @@ export function createMcpRoutes(ctx: RouteContext, helpers: RouteHelpers): Route
     try {
       const scopeServers = path.match(/^\/mcp\/scopes\/([^/]+)\/servers$/);
       if (scopeServers && method === "GET") {
-        helpers.json(res, await ctx.mcp.list(decodeURIComponent(scopeServers[1])));
+        // `?cached=true`: the last known status at once, while a probe runs in the background.
+        const cached = url.searchParams.get("cached") === "true";
+        helpers.json(res, await ctx.mcp.list(decodeURIComponent(scopeServers[1]), { cached }));
         return true;
       }
       if (scopeServers && method === "POST") {

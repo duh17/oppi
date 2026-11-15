@@ -89,12 +89,13 @@ export default defineFacet((host, self) => {
     };
 
     let seenChanges = changes;
-    const reprobe = async (context: Context): Promise<void> => {
+    /** `cached`: the last known status at once (a page opening), not Pi's live probe. */
+    const reprobe = async (context: Context, cached = false): Promise<void> => {
       seenChanges = changes;
       if (page === "signin") flowId ??= mcp().auth.active()?.flowId;
       if (page === "add" || page === "signin") return render(context);
       try {
-        probe = { response: await mcp().list(GLOBAL_SCOPE) };
+        probe = { response: await mcp().list(GLOBAL_SCOPE, { cached }) };
       } catch (error) {
         probe = { ...probe, error: failure(error).message };
       }
@@ -102,6 +103,8 @@ export default defineFacet((host, self) => {
     };
 
     self.onLive(async (context) => {
+      // The rows show at once; the live probe the cached read started fills in their status.
+      await reprobe(context, true);
       await reprobe(context);
       // A sign-in changes on the host without a tap here: follow it while it is live, and probe
       // again once it ends, since it changed the server's state. A change another page made

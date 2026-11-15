@@ -102,7 +102,9 @@ export class McpService {
   /** One live probe per scope. Probes of different scopes may overlap, as they did when
    * one refresh probed every scope; mutations still wait for none of them to be running. */
   private readonly listFlights = new Map<string, Promise<McpServersResponse>>();
-  /** Last live probe per scope, served while a sign-in owns Pi's credential store. */
+  /** Last live probe per scope: a cached list answers with it at once, and a sign-in, which
+   * owns Pi's credential store, serves it instead of probing. A change drops every scope's,
+   * since a global edit also changes each project's inherited rows. */
   private readonly lastProbe = new Map<string, McpScopeSnapshot>();
   private get globalPath(): string {
     return join(this.options.agentDir, "mcp.json");
@@ -129,7 +131,8 @@ export class McpService {
       };
       void child.done.then(settled, settled);
     });
-    this.auth = new McpAuthManager(this.cli, options.loginTtlMs);
+    // A finished sign-in changed the server's status, like any other change.
+    this.auth = new McpAuthManager(this.cli, options.loginTtlMs, () => this.lastProbe.clear());
     serveToPlugins(this);
   }
   private get cliTimeoutMs(): number {
@@ -263,15 +266,18 @@ export class McpService {
         : "Signing in to project MCP servers needs a remembered trust. Choose Trust (remember) when a session in this workspace asks, or trust the project in Pi on the host.",
     );
   }
-  /** Serialize mutations and reject them during login or while any list probe runs.
+  /** Serialize mutations, reject them during login, and run each after the list probes running
+   * when it arrives: a page opens while its probe runs in the background, so a change made
+   * there waits a few seconds instead of failing. New probes wait for the mutation (`list`).
    * Probes of different scopes may overlap; independent Pi processes may refresh credentials. */
   private exclusive<T>(operation: () => Promise<T> | T): Promise<T> {
     if (this.disposed) return Promise.reject(new McpError(503, "MCP management is shutting down"));
-    // A queued mutation could outlive the phone deadline before its CLI even starts.
-    if (this.pendingOperations > 0)
+    // A mutation queued behind another could outlive the phone deadline before its CLI starts.
+    if (this.pendingOperations > this.listFlights.size)
       return Promise.reject(new McpError(409, "MCP management is busy. Retry when it finishes."));
     this.pendingOperations += 1;
-    const result = this.queue
+    const probes = Promise.allSettled(this.listFlights.values());
+    const result = Promise.all([this.queue, probes])
       .then(() => {
         if (this.disposed) throw new McpError(503, "MCP management is shutting down");
         if (this.auth.hasActive())
@@ -284,8 +290,11 @@ export class McpService {
     this.queue = result.catch(() => undefined);
     return result;
   }
-  /** Lists one scope: the global file, or one host workspace's project file. */
-  async list(scopeId: string): Promise<McpServersResponse> {
+  /** Lists one scope: the global file, or one host workspace's project file. Pi's live probe
+   * starts every configured server, which takes seconds. With `cached`, the answer comes at once:
+   * the scope's last probe, or its configured rows with status `unknown` before the first, and a
+   * probe starts (or continues) in the background for the caller's live list to join. */
+  async list(scopeId: string, options: { cached?: boolean } = {}): Promise<McpServersResponse> {
     const scope = this.scope(scopeId, "list");
     if (scope.kind === "sandbox") {
       const activeSignIn = this.auth.active();
@@ -298,9 +307,19 @@ export class McpService {
     const activeSignIn = this.auth.active();
     if (activeSignIn && !this.disposed)
       return {
-        scope: this.lastProbe.get(scope.id) ?? (await this.probe(scope, false)),
+        scope: this.lastProbe.get(scope.id) ?? (await this.probe(scope, "paused")),
         activeSignIn,
       };
+    if (options.cached) {
+      const cached = this.lastProbe.get(scope.id) ?? (await this.probe(scope, "config"));
+      // Busy (a change is running) or shutting down: the caller's live list says so.
+      void this.refresh(scope).catch(() => undefined);
+      return { scope: cached };
+    }
+    return this.refresh(scope);
+  }
+  /** Pi's live probe of one scope, shared by every caller while it runs. */
+  private async refresh(scope: Scope): Promise<McpServersResponse> {
     // Coalesce simultaneous refreshes of a scope instead of starting another 20-second probe.
     const existing = this.listFlights.get(scope.id);
     if (existing) return existing;
@@ -318,11 +337,14 @@ export class McpService {
     return flight;
   }
   private async listScope(scope: Scope): Promise<McpServersResponse> {
-    const live = await this.probe(scope, true);
+    const live = await this.probe(scope, "live");
     this.lastProbe.set(scope.id, live);
     return { scope: live };
   }
-  private async probe(scope: Scope, live: boolean): Promise<McpScopeSnapshot> {
+  /** `live` asks Pi; `config` and `paused` (a sign-in owns the credential store) list the
+   * configured rows without a status. */
+  private async probe(scope: Scope, mode: "live" | "config" | "paused"): Promise<McpScopeSnapshot> {
+    const live = mode === "live";
     // The same answer Workspace settings show for skills and extensions. It says whether a
     // session loads the project file; the probe below reads it only for a remembered Trust.
     const projectTrust =
@@ -352,8 +374,9 @@ export class McpService {
         globalDocument = {};
       }
     let reports: PiReport[] = [];
-    if (!live) snapshot.errors.push("Live status is paused while a sign-in is in progress.");
-    else
+    if (mode === "paused")
+      snapshot.errors.push("Live status is paused while a sign-in is in progress.");
+    else if (live)
       try {
         // Pi skips the project file without a remembered Trust; global servers still probe here.
         const result = await this.cli.run(["list", "--json"], scope.cwd, {
@@ -415,8 +438,18 @@ export class McpService {
     }
     return snapshot;
   }
-  add(scopeId: string, input: McpAddServerRequest): Promise<void> {
+  /** A mutation: a cached list after it never shows the probe from before it. */
+  private change(operation: () => Promise<void> | void): Promise<void> {
     return this.exclusive(async () => {
+      try {
+        await operation();
+      } finally {
+        this.lastProbe.clear();
+      }
+    });
+  }
+  add(scopeId: string, input: McpAddServerRequest): Promise<void> {
+    return this.change(async () => {
       if (!isRecord(input)) throw new McpError(400, "Expected an MCP server object");
       const allowed = new Set([
         "name",
@@ -539,7 +572,7 @@ export class McpService {
     });
   }
   patch(scopeId: string, name: string, patch: McpPatchServerRequest): Promise<void> {
-    return this.exclusive(() => {
+    return this.change(() => {
       if (
         !isRecord(patch) ||
         !Object.keys(patch).length ||
@@ -556,7 +589,7 @@ export class McpService {
     });
   }
   remove(scopeId: string, name: string): Promise<void> {
-    return this.exclusive(async () => {
+    return this.change(async () => {
       const scope = this.scope(scopeId);
       this.entry(scope, name);
       const result = await this.cli.run(
@@ -583,7 +616,7 @@ export class McpService {
     });
   }
   logout(scopeId: string, name: string): Promise<void> {
-    return this.exclusive(async () => {
+    return this.change(async () => {
       const scope = this.scope(scopeId);
       this.entry(scope, name);
       this.requireCliTrust(scope);

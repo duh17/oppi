@@ -43,10 +43,14 @@ final class McpServersModel {
         snapshotHostId = hostId
     }
 
+    /// Pi's live probe takes seconds. With `cached`, the host's last known answer shows
+    /// first, so the rows are there while `list` probes; the probe then replaces it. A cached
+    /// read that fails changes nothing: the live one reports the failure.
     func refresh(
         hostId: String,
         hostName: String,
         flowClient: any ProviderAuthFlowClient,
+        cached: (() async throws -> McpServersResponse)? = nil,
         list: () async throws -> McpServersResponse
     ) async {
         switchHost(to: hostId)
@@ -54,6 +58,10 @@ final class McpServersModel {
         let token = generation
         loading = true
         defer { if token == generation { loading = false } }
+        if let cached, let result = try? await cached() {
+            guard token == generation else { return }
+            snapshot = result
+        }
         for _ in 0...Self.settlePollLimit {
             do {
                 let result = try await list()

@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -183,7 +184,7 @@ async function oauthServer(): Promise<string> {
 }
 
 describe("MCP configuration boundary", () => {
-  it("overlaps probes of different scopes, shares one per scope, and keeps mutations exclusive of probes", async () => {
+  it("overlaps probes of different scopes, shares one per scope, and runs a change after the probes it arrived during", async () => {
     const { service } = fixture();
     const gates: Array<() => void> = [];
     const run = vi.spyOn(McpCli.prototype, "run").mockImplementation(
@@ -199,21 +200,68 @@ describe("MCP configuration boundary", () => {
       const shared = service.list("global");
       const project = service.list("workspace-one");
       await expect.poll(() => gates.length).toBe(2);
-      await expect(service.add("global", { name: "new", command: "echo" })).rejects.toMatchObject({
-        status: 409,
+      // A change during the probes waits for them, then runs; a second change does not queue.
+      let added = false;
+      const mutation = service.add("global", { name: "new", command: "echo" }).then(() => {
+        added = true;
       });
+      await expect(service.remove("global", "new")).rejects.toMatchObject({ status: 409 });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(added).toBe(false);
+      expect(run.mock.calls.filter(([args]) => args[0] === "add")).toHaveLength(0);
       for (const open of gates.splice(0)) open();
       expect(await global).toBe(await shared);
       expect((await project).scope.id).toBe("workspace-one");
-      const mutation = service.add("global", { name: "new", command: "echo" });
-      await expect(service.list("global")).rejects.toMatchObject({ status: 409 });
       await mutation;
+      expect(run.mock.calls.filter(([args]) => args[0] === "add")).toHaveLength(1);
+      const blocked = service.add("global", { name: "other", command: "echo" });
+      await expect(service.list("global")).rejects.toMatchObject({ status: 409 });
+      await blocked;
       const next = service.list("global");
       await expect.poll(() => gates.length).toBe(1);
       gates[0]();
       await next;
     } finally {
       run.mockRestore();
+    }
+  });
+  it("drops the saved probe when a sign-in's Pi child exits", async () => {
+    const { service, agentDir } = fixture();
+    writeFileSync(
+      join(agentDir, "mcp.json"),
+      JSON.stringify({ mcpServers: { remote: { url: "https://example.test/mcp" } } }),
+    );
+    let state = "needs-auth";
+    const run = vi.spyOn(McpCli.prototype, "run").mockImplementation(async () => ({
+      code: 0,
+      stdout: JSON.stringify({
+        servers: [{ name: "remote", scope: "global", state, tools: [] }],
+        errors: [],
+      }),
+    }));
+    let exit!: (code: number) => void;
+    const start = vi.spyOn(McpCli.prototype, "start").mockImplementation(() => ({
+      child: {} as ChildProcess,
+      done: new Promise((resolve) => {
+        exit = (code) => resolve({ code, stdout: "" });
+      }),
+      stop: () => {},
+    }));
+    const cached = async () =>
+      (await service.list("global", { cached: true })).scope.servers.map((row) => row.state);
+    try {
+      await service.list("global");
+      const flow = await service.login("global", "remote", "phone_browser");
+      // While it runs, the list keeps the probe from before it.
+      expect(await cached()).toEqual(["needs-auth"]);
+      state = "connected";
+      exit(0);
+      await expect.poll(() => service.auth.get(flow.flowId).status).toBe("completed");
+      expect(service.auth.active()).toBeUndefined();
+      expect(await cached()).toEqual(["unknown"]);
+    } finally {
+      run.mockRestore();
+      start.mockRestore();
     }
   });
   it("bounds mutation CLIs below the phone deadline and rejects waiting behind another mutation", async () => {
@@ -234,6 +282,66 @@ describe("MCP configuration boundary", () => {
       // Patch is synchronous file editing, not an unbounded CLI.
       await service.patch("global", "remote", { enabled: false });
       expect(run).toHaveBeenCalledTimes(3);
+    } finally {
+      run.mockRestore();
+    }
+  });
+  it("answers a cached list at once, refreshes it in the background, and never serves a probe from before a change", async () => {
+    const { service, agentDir } = fixture();
+    writeFileSync(
+      join(agentDir, "mcp.json"),
+      JSON.stringify({ mcpServers: { remote: { url: "https://example.test/mcp" } } }),
+    );
+    const probes: Array<(state: string) => void> = [];
+    const run = vi.spyOn(McpCli.prototype, "run").mockImplementation(
+      (args) =>
+        new Promise((resolve) => {
+          if (args[0] !== "list") return resolve({ code: 0, stdout: "" });
+          probes.push((state) =>
+            resolve({
+              code: 0,
+              stdout: JSON.stringify({
+                servers: [{ name: "remote", scope: "global", state, tools: ["echo"] }],
+                errors: [],
+              }),
+            }),
+          );
+        }),
+    );
+    const rows = async (options?: { cached: boolean }) =>
+      (await service.list("global", options)).scope.servers.map((row) => [row.name, row.state]);
+    try {
+      // Before any probe: the configured rows at once, without a status, and one probe starts.
+      expect(await rows({ cached: true })).toEqual([["remote", "unknown"]]);
+      expect(probes).toHaveLength(1);
+      // A live list joins the background probe instead of starting a second one.
+      const live = rows();
+      expect(await rows({ cached: true })).toEqual([["remote", "unknown"]]);
+      expect(probes).toHaveLength(1);
+      probes[0]("connected");
+      expect(await live).toEqual([["remote", "connected"]]);
+
+      // The last probe at once, refreshed in the background.
+      expect(await rows({ cached: true })).toEqual([["remote", "connected"]]);
+      expect(probes).toHaveLength(2);
+      const background = rows();
+      probes[1]("needs-auth");
+      await background;
+      expect(await rows({ cached: true })).toEqual([["remote", "needs-auth"]]);
+      const settled = rows();
+      probes[2]("needs-auth");
+      await settled;
+
+      // A live list (pull to refresh) waits for Pi's answer, not the cache.
+      const forced = rows();
+      expect(probes).toHaveLength(4);
+      probes[3]("connected");
+      expect(await forced).toEqual([["remote", "connected"]]);
+
+      // After a change, a cached list shows the file as it is now, not the probe before it.
+      await service.patch("global", "remote", { enabled: false });
+      expect(await rows({ cached: true })).toEqual([["remote", "disabled"]]);
+      probes[4]("connected");
     } finally {
       run.mockRestore();
     }

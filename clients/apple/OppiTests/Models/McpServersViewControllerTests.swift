@@ -57,6 +57,34 @@ struct McpServersViewControllerTests {
         #expect(Self.button(withIdentifier: alpha, in: screen.view) == nil)
     }
 
+    /// Pi's live probe takes seconds: the page shows the host's configured rows from its
+    /// cached answer at once, as being checked, and fills in their status when the probe lands.
+    @Test("rows show before the live probe answers, then take its status")
+    func rowsShowBeforeTheProbe() async throws {
+        let server = McpListStubProtocol.Host()
+        let client = server.client(
+            host: "cached.mcp-list.test", serverNames: ["alpha"], holdsAnswers: false, holdsLive: true
+        )
+        let root = try await makeTestAppRoot(readyServers: [
+            TestReadyServer(id: firstId, name: "First", host: "cached.mcp-list.test", client: client),
+        ])
+        let screen = McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root)
+        let window = try show(UINavigationController(rootViewController: screen))
+        defer { hide(window) }
+        let alpha = "mcp.server.global.alpha"
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            screen.view.layoutIfNeeded()
+            return Self.button(withIdentifier: alpha, in: screen.view)?.accessibilityValue?.hasSuffix("Checking…") == true
+        }, "the cached row shows while the probe runs")
+
+        server.releaseHeldAnswers()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            screen.view.layoutIfNeeded()
+            return Self.button(withIdentifier: alpha, in: screen.view)?.accessibilityValue?.hasSuffix("Connected") == true
+        }, "the probe's status replaces it")
+    }
+
     private func show(_ controller: UIViewController) throws -> UIWindow {
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
@@ -99,13 +127,16 @@ struct McpServersViewControllerTests {
 }
 
 /// Answers `GET /mcp/scopes/global/servers` per host with that host's server
-/// names, holding a host's answers back until the test releases them.
+/// names, holding a host's answers (or only its live ones) back until the test
+/// releases them. A cached answer has no status yet (`unknown`).
 private final class McpListStubProtocol: URLProtocol {
     /// The routes one test registers; hosts are unique per test, so tests that
     /// run together never share an entry.
     final class Host: @unchecked Sendable {
-        func client(host: String, serverNames: [String], holdsAnswers: Bool) -> APIClient {
-            McpListStubProtocol.state.withLock { $0.routes[host] = Route(names: serverNames, holds: holdsAnswers) }
+        func client(host: String, serverNames: [String], holdsAnswers: Bool, holdsLive: Bool = false) -> APIClient {
+            McpListStubProtocol.state.withLock {
+                $0.routes[host] = Route(names: serverNames, holds: holdsAnswers, holdsLive: holdsLive)
+            }
             let configuration = URLSessionConfiguration.ephemeral
             configuration.protocolClasses = [McpListStubProtocol.self]
             return APIClient(
@@ -117,12 +148,15 @@ private final class McpListStubProtocol: URLProtocol {
 
         func releaseHeldAnswers() {
             McpListStubProtocol.state.withLock { state in
-                for key in state.routes.keys { state.routes[key]?.holds = false }
+                for key in state.routes.keys {
+                    state.routes[key]?.holds = false
+                    state.routes[key]?.holdsLive = false
+                }
             }
         }
     }
 
-    struct Route { var names: [String]; var holds: Bool }
+    struct Route { var names: [String]; var holds: Bool; var holdsLive: Bool }
     struct State { var routes: [String: Route] = [:] }
     static let state = LockedState(State())
 
@@ -148,7 +182,8 @@ private final class McpListStubProtocol: URLProtocol {
         let host = request.url?.host ?? ""
         let route = Self.state.withLock { $0.routes[host] }
         guard let route else { return }
-        if route.holds {
+        let cached = request.url?.query?.contains("cached=true") == true
+        if route.holds || (route.holdsLive && !cached) {
             DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(25)) { [weak self] in
                 self?.answerWhenReleased()
             }
@@ -157,7 +192,7 @@ private final class McpListStubProtocol: URLProtocol {
         let servers = route.names.map { name in
             McpServerSummary(
                 name: name, transport: "http", config: McpServerConfig(url: "https://\(name).example/mcp"),
-                enabled: true, exposure: .codemode, state: "connected", tools: [], toolExposure: nil,
+                enabled: true, exposure: .codemode, state: cached ? "unknown" : "connected", tools: [], toolExposure: nil,
                 error: nil, supportsOAuth: false
             )
         }

@@ -92,6 +92,8 @@ export class McpAuthManager {
   constructor(
     private readonly cli: McpCli,
     private readonly ttlMs = 300_000,
+    /** Pi's login child exited, whatever the outcome: it may have changed credentials. */
+    private readonly onChildSettled: () => void,
   ) {
     this.store = new ProviderAuthFlowStore({ ttlMs });
   }
@@ -155,6 +157,7 @@ export class McpAuthManager {
     void process.done
       .then(({ code }) => {
         attempt.childSettled = true;
+        this.onChildSettled();
         if (code === 0) this.store.markCompleted(id);
         else
           this.store.markFailed(
@@ -164,6 +167,7 @@ export class McpAuthManager {
       })
       .catch(() => {
         attempt.childSettled = true;
+        this.onChildSettled();
         this.store.markFailed(id, "Pi MCP sign-in could not finish. Try again.");
       });
     return this.get(id);

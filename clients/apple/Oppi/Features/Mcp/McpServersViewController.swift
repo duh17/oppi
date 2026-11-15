@@ -6,7 +6,8 @@ import UIKit
 /// extensions.
 ///
 /// The list probes the host on every appearance, on pull to refresh, when the
-/// active server changes, and when a sign-in ends. A sign-in the host still
+/// active server changes, and when a sign-in ends. A list with no rows yet shows
+/// the host's last known status first, so the probe never blocks the page. A sign-in the host still
 /// has open is adopted here (Continue / Cancel), and the sheet it opens is
 /// presented from whichever MCP screen is on top (`McpSignInPresenter`).
 ///
@@ -184,9 +185,13 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
         preparingCount -= 1
         guard let client, root.windowServerId == server.id else { return }
         let scopeId = scopeId
+        // Without rows yet, the host's last known status shows at once while Pi probes.
+        let cached: (() async throws -> McpServersResponse)? = model.snapshot(forHost: server.id) == nil
+            ? { try await client.listMcpServers(scopeId: scopeId, cached: true) }
+            : nil
         await model.refresh(
             hostId: server.id, hostName: server.name,
-            flowClient: McpFlowClient(client: client)
+            flowClient: McpFlowClient(client: client), cached: cached
         ) { try await client.listMcpServers(scopeId: scopeId) }
     }
 
@@ -301,12 +306,12 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
             guard let entry = state.snapshot?.scope.servers.first(where: { $0.name == name }) else { return AnyHashable(0) }
             return AnyHashable([AnyHashable(entry.transport), AnyHashable(entry.tools.count),
                                 AnyHashable(entry.exposure.rawValue), AnyHashable(entry.state),
-                                AnyHashable(state.snapshot?.scope.id)])
+                                AnyHashable(statusText(entry)), AnyHashable(state.snapshot?.scope.id)])
         case .inherited(let name):
             guard let entry = state.snapshot?.scope.inherited?.first(where: { $0.name == name }) else { return AnyHashable(0) }
             return AnyHashable([AnyHashable(entry.transport), AnyHashable(entry.tools.count),
                                 AnyHashable(entry.exposure.rawValue), AnyHashable(entry.state),
-                                AnyHashable(state.snapshot?.scope.id)])
+                                AnyHashable(statusText(entry)), AnyHashable(state.snapshot?.scope.id)])
         // The empty-list row and the note hold nothing a reconfigure would
         // disturb, so the kit's default draws them again.
         default:
@@ -398,17 +403,17 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
                 cell,
                 identifier: "mcp.server.\(scope.id).\(entry.name)",
                 label: entry.name,
-                value: Self.summary(entry)
+                value: Self.summary(entry, status: statusText(entry))
             ) { [weak self] in
                 self?.openDetail(name)
             }
-            cell.contentConfiguration = Self.serverContent(entry, palette: palette)
+            cell.contentConfiguration = Self.serverContent(entry, status: statusText(entry), palette: palette)
             cell.accessories = [.disclosureIndicator()]
         case .inherited(let name):
             guard let scope = state.snapshot?.scope,
                   let entry = scope.inherited?.first(where: { $0.name == name }) else { return }
             ListScreen.staticRow(cell, identifier: "mcp.inherited.\(scope.id).\(entry.name)")
-            cell.contentConfiguration = Self.serverContent(entry, palette: palette)
+            cell.contentConfiguration = Self.serverContent(entry, status: statusText(entry), palette: palette)
         case .note:
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
@@ -440,11 +445,17 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
         }
     }
 
-    private static func summary(_ entry: McpServerSummary) -> String {
-        "\(entry.transportLabel) · \(entry.tools.count) tools · \(entry.exposure.title), \(entry.stateLabel)"
+    private static func summary(_ entry: McpServerSummary, status: String) -> String {
+        "\(entry.transportLabel) · \(entry.tools.count) tools · \(entry.exposure.title), \(status)"
     }
 
-    private static func serverContent(_ entry: McpServerSummary, palette: ThemePalette) -> ControlViewContent {
+    /// A row from the host's last known answer has no status before its first probe: it is
+    /// being checked while the live probe runs.
+    private func statusText(_ entry: McpServerSummary) -> String {
+        entry.state == "unknown" && state.loading ? String(localized: "Checking…") : entry.stateLabel
+    }
+
+    private static func serverContent(_ entry: McpServerSummary, status: String, palette: ThemePalette) -> ControlViewContent {
         ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
             let title = ControlRowViews.label(entry.name, style: .headline, color: palette.ui.fg)
             let detail = ControlRowViews.label(
@@ -453,7 +464,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
                 color: palette.ui.comment
             )
             let status = ControlRowViews.symbolLabel(
-                entry.stateLabel,
+                status,
                 systemImage: entry.state == "connected" ? "checkmark.circle" : "circle",
                 style: .caption1,
                 color: statusColor(entry.state, palette: palette)

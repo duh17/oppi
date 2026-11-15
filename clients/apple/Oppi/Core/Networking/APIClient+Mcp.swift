@@ -1,10 +1,13 @@
 import Foundation
 
 extension APIClient {
-    func listMcpServers(scopeId: String) async throws -> McpServersResponse {
+    /// `cached`: the host's last known status at once (configured rows with status `unknown`
+    /// before its first probe) while it probes in the background. Otherwise Pi's live probe.
+    func listMcpServers(scopeId: String, cached: Bool = false) async throws -> McpServersResponse {
         // Pi probes are bounded at 20 seconds. Leave termination/transport headroom
         // without changing the 30-second resource deadline or ordinary API requests.
-        let (data, response) = try await request("GET", path: mcpScopePath(scopeId) + "/servers", timeoutInterval: 25)
+        let path = mcpScopePath(scopeId) + "/servers" + (cached ? "?cached=true" : "")
+        let (data, response) = try await request("GET", path: path, timeoutInterval: 25)
         try checkStatus(response, data: data)
         return try JSONDecoder().decode(McpServersResponse.self, from: data)
     }
