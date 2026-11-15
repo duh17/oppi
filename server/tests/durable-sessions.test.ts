@@ -637,7 +637,7 @@ describe("durable-native threads", () => {
     await until(async () => (await pill()) === undefined, "done again");
   });
 
-  it("counts every child in the pill, keeps an old working child in its rows, promotes a hidden one that starts again, and links the whole thread", async () => {
+  it("counts every child in the pill, keeps an old working child in its rows, lists the finished ones under Recent and Earlier, and moves one that starts again to Working", async () => {
     const slowGate = gate();
     const againGate = gate();
     const names = Array.from({ length: 10 }, (_, index) => `C${index}`);
@@ -671,25 +671,29 @@ describe("durable-native threads", () => {
       f.storage.listSessions().find((session) => session.name === name)!;
     const finished = async () => (await rows()).filter((row) => row.state === "success").length;
 
-    // The oldest child is still working; nine others finished, the three newest under Recent.
+    // The oldest child is still working; nine others finished, the three newest under Recent and
+    // the rest under Earlier. Every child has a row, so none links the thread.
     await until(
-      async () => (await pill())?.presentation.subtitle === "1 working" && (await finished()) === 3,
+      async () => (await pill())?.presentation.subtitle === "1 working" && (await finished()) === 9,
       "nine children done",
     );
     expect((await pill())?.presentation.title).toBe("Subagents");
-    expect((await pill())?.blocks.map((section) => section.title)).toEqual(["Working", "Recent"]);
+    expect((await pill())?.blocks.map((section) => section.title)).toEqual([
+      "Working",
+      "Recent",
+      "Earlier",
+    ]);
     let shown = await rows();
-    expect(shown).toHaveLength(5);
+    expect(shown).toHaveLength(10);
     expect(shown[0]).toMatchObject({ title: "C0", state: "running" });
-    expect(shown.slice(1, 4).every((row) => row.state === "success")).toBe(true);
-    expect(shown[4]).toEqual({
-      id: "thread",
-      title: "All 10 in Thread",
-      link: `oppi://thread/${f.parent.id}`,
-    });
+    expect(shown.slice(1).every((row) => row.state === "success")).toBe(true);
+    expect(JSON.stringify(await pill())).not.toContain("oppi://thread");
+    // A finished row discloses its answer.
+    expect(JSON.stringify(shown[1])).toContain("CHILD_OK");
 
-    // A child that is not shown starts again: it takes a row, and the count stays whole.
-    const hidden = names.slice(1).find((name) => !shown.some((row) => row.id === byName(name).id))!;
+    // A child under Earlier starts again: it moves to Working, and the count stays whole.
+    const recent = shown.slice(1, 4).map((row) => row.id);
+    const hidden = names.slice(1).find((name) => !recent.includes(byName(name).id))!;
     const again = byName(hidden);
     await f.manager.startSession(again.id, f.workspace);
     await f.manager.sendPrompt(again.id, "AGAIN please");
@@ -4039,7 +4043,17 @@ type PillView<Row> = {
   blocks: Array<{ title?: string; blocks: Array<{ rows: Row[] }> }>;
 };
 
-/** The pill's rows across its sections (Needs You, Working, Recent), in order. */
+/**
+ * The pill's child rows across its sections (Needs You, Working, Recent, and Earlier, whose one
+ * row holds the earlier children's rows), in order.
+ */
 function pillRows<Row>(view: PillView<Row> | undefined): Row[] {
-  return view?.blocks.flatMap((section) => section.blocks[0]?.rows ?? []) ?? [];
+  return (
+    view?.blocks.flatMap((section) =>
+      (section.blocks[0]?.rows ?? []).flatMap((row) => {
+        const nested = (row as { id?: string; blocks?: Array<{ rows?: Row[] }> }).blocks;
+        return (row as { id?: string }).id === "earlier" ? (nested?.[0]?.rows ?? []) : [row];
+      }),
+    ) ?? []
+  );
 }

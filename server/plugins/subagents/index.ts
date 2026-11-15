@@ -21,16 +21,13 @@ import {
   isMissingSession,
   isLive,
   launcherFromGet,
-  pillSections,
   refreshLaunched,
   selectPillRows,
-  rowFallback,
-  sectionRows,
   sessionIdFromCreateOutput,
   sessionLink,
   subagentFromCreate,
+  subagentPanel,
   renderSubagentTerminal,
-  widgetChrome,
   type Subagent,
   type SubagentTerminalStyle,
 } from "./subagents.ts";
@@ -289,8 +286,7 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
       return;
     }
     const agents = shown;
-    const sections = pillSections(agents, threadId);
-    const chrome = widgetChrome(agents);
+    const { chrome, sections, fallback } = subagentPanel(agents, threadId);
     ui.setStatus(WIDGET_KEY, chrome.subtitle);
     ui.setWidget(WIDGET_KEY, (_tui, theme) => ({
       // Phone activity rows stay on renderNative. This band is the terminal only.
@@ -310,7 +306,7 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
           subtitle: chrome.subtitle,
         },
         blocks: sections,
-        fallback: { lines: sectionRows(sections).map(rowFallback) },
+        fallback: { lines: fallback },
       }),
       invalidate() {},
     }));

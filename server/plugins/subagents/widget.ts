@@ -28,26 +28,27 @@ import { SUBAGENT_WIDGET_TASK, Subagents, type Child } from "./contract.js";
 import { DurableJobs } from "../background-jobs/contract.js";
 import { liveTasks, wakingReporters } from "./wakers.js";
 import {
+  ANSWER_EXCERPT_MAX,
+  EARLIER_EXCERPT_MAX,
+  cutMarkdown,
   isLive,
-  pillSections,
   renderSubagentTerminal,
-  rowFallback,
-  sectionRows,
-  selectPillRows,
   sessionLink,
+  subagentPanel,
   titledWithAgent,
-  widgetChrome,
   type Subagent,
+  type SubagentPanel,
 } from "./subagents.js";
 
 // The durable form of the reference `subagents` extension's pill: the same activity rows, built by
 // the same helpers, published through the `oppi.extension-ui` notification slots. Rows link to
-// `oppi://session/<id>`, which the app already opens; the last row links to
-// `oppi://thread/<this session>`, the whole thread, when children are not shown as rows.
+// `oppi://session/<id>`, which the app already opens; when the surface limits leave children
+// without a row, a last row links to `oppi://thread/<this session>`, the whole thread.
 //
-// The pill shows while a child needs you or works; its subtitle counts those, and the rows are the
-// ones that matter (`selectPillRows`): those that need you (a dialog, or a failure not stopped
-// since), the working ones, then the newest finished ones under Recent.
+// The pill shows while a child needs you or works; its subtitle counts those, and the rows
+// (`subagentPanel`) are every child: those that need you (a dialog, or a failure not stopped
+// since), the working ones, the newest finished ones under Recent, and the rest under Earlier. A
+// row discloses the child's answer, kept from the same read as its first line.
 // So every child's state is followed, not only the shown ones: a child that was done and starts
 // again, or opens a dialog, takes a row at once. Each child's `pi.live` (busy, its current
 // activity, and why its newest run failed) and `oppi.extension-ui` (an open dialog, and when the
@@ -82,8 +83,10 @@ import {
 // child ran and ended in between): it only watches the child's two documents. A child that moved
 // on since, or that had not run yet, is read as at first sight. The
 // checkpoint is written when what it carries changes (a run ended and its answer was read), and
-// at every invocation end; it holds about a hundred bytes per child, so a pill of 500 children
-// writes some 50 kB when a run ends.
+// at every invocation end. It holds about 400 bytes per child: an Earlier child's answer is
+// carried cut to what its row shows (`EARLIER_EXCERPT_MAX`), and only the dozen or so live and
+// Recent children carry up to `ANSWER_EXCERPT_MAX`. A pill of 500 children writes some 200 kB
+// when a run ends.
 //
 // A child without `pi.live` or `oppi.extension-ui` (not started yet, or never asked anything) is
 // looked for again with a backoff, from `DOCS_RETRY_MIN_MS` doubling to `DOCS_RETRY_MAX_MS`, not at
@@ -119,6 +122,11 @@ type Answer = {
   failed: boolean;
   /** The first line of its text, or of its error. */
   line?: string;
+  /**
+   * Its text, or its error, cut to `ANSWER_EXCERPT_MAX` characters: the row's disclosure. The
+   * checkpoint carries an Earlier child's cut to `EARLIER_EXCERPT_MAX`, all its row shows.
+   */
+  text?: string;
   /** When it was written, epoch ms. */
   at?: number;
 };
@@ -292,7 +300,8 @@ async function newestAnswer(
       .filter((block): block is { type: "text"; text: string } => block.type === "text")
       .map((block) => block.text)
       .join("\n");
-    const line = firstLine(failed ? errorMessage : text);
+    const said = (failed ? errorMessage : text) ?? "";
+    const line = firstLine(said);
     return {
       head,
       asked,
@@ -300,7 +309,7 @@ async function newestAnswer(
         provider,
         model,
         failed,
-        ...(line ? { line: clip(line) } : {}),
+        ...(line ? { line: clip(line), text: cutMarkdown(said, ANSWER_EXCERPT_MAX) } : {}),
         ...(timestamp ? { at: timestamp } : {}),
       },
     };
@@ -417,10 +426,7 @@ function shortId(sessionId: string): string {
   return sessionId.replace(/-/g, "").slice(0, 8);
 }
 
-function notifications(
-  children: Subagent[],
-  threadSessionId: string | undefined,
-): Record<string, UINotification> {
+function notifications(children: Subagent[], panel: SubagentPanel): Record<string, UINotification> {
   const status: UINotification = {
     id: "subagents:status",
     method: "setStatus",
@@ -435,8 +441,7 @@ function notifications(
   };
   // The pill shows while a child needs you or works; finished children alone do not keep it.
   if (children.some(isLive)) {
-    const chrome = widgetChrome(children);
-    const sections = pillSections(children, threadSessionId);
+    const { chrome, sections, fallback } = panel;
     if (chrome.subtitle) status.statusText = chrome.subtitle;
     widget.widgetLines = renderSubagentTerminal(children);
     widget.nativeSurface = {
@@ -449,7 +454,7 @@ function notifications(
         ...(chrome.subtitle ? { subtitle: chrome.subtitle } : {}),
       },
       blocks: sections,
-      fallback: { lines: sectionRows(sections).map(rowFallback) },
+      fallback: { lines: fallback },
     } as unknown as JsonObject;
   }
   return { [`status:${WIDGET_KEY}`]: status, [`widget:${WIDGET_KEY}`]: widget };
@@ -782,16 +787,34 @@ export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
                   : {}),
                 ...(entry.cost !== undefined ? { cost: entry.cost } : {}),
                 ...(worktree ? { worktree } : {}),
+                ...(answer?.text ? { answer: answer.text } : {}),
               });
             }
-            shownIds = new Set(selectPillRows(rows).map((row) => row.id));
+            const panel = subagentPanel(rows, threadSessionId);
+            shownIds = panel.shown;
+            // Live and Recent rows show a long answer; the rest, Earlier, a short one.
+            const fullAnswers = new Set(
+              panel.sections
+                .filter((section) => section.id !== "subagents:earlier")
+                .flatMap((section) => section.blocks[0].rows.map((row) => row.id)),
+            );
             carry = {};
             for (const { child, entry } of rowsOf)
               if (entry.live && entry.read && entry.head !== undefined)
                 carry[String(child.conversationId)] = {
                   busy: entry.busy,
                   head: entry.head,
-                  ...(entry.answer ? { answer: entry.answer } : {}),
+                  ...(entry.answer
+                    ? {
+                        answer:
+                          entry.answer.text && !fullAnswers.has(child.sessionId)
+                            ? {
+                                ...entry.answer,
+                                text: cutMarkdown(entry.answer.text, EARLIER_EXCERPT_MAX),
+                              }
+                            : entry.answer,
+                      }
+                    : {}),
                   ...(entry.model ? { model: entry.model } : {}),
                   ...(entry.thinking ? { thinking: entry.thinking } : {}),
                   wakers: [...entry.wakers],
@@ -800,7 +823,7 @@ export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
                   ...(entry.cost !== undefined ? { cost: entry.cost } : {}),
                 };
             const ui = await tx.doc(DurableUI, parent);
-            for (const [slot, next] of Object.entries(notifications(rows, threadSessionId))) {
+            for (const [slot, next] of Object.entries(notifications(rows, panel))) {
               const current = ui.notifications[slot];
               // Nothing shown yet: no clear to publish.
               if (current === undefined && !rows.some(isLive)) continue;

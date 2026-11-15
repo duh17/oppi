@@ -1,10 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import { normalizeExtensionUINativeSurface } from "../../src/extension-ui-contract.ts";
 import {
   applyGet,
   applyWaitReading,
   isMissingSession,
   launcherFromGet,
-  pillSections,
+  ANSWER_EXCERPT_MAX,
+  EARLIER_EXCERPT_MAX,
+  cutMarkdown,
+  subagentPanel,
+  type SubagentRow,
+  type SubagentSection,
   refreshLaunched,
   renderSubagentTerminal,
   rowFallback,
@@ -292,19 +298,178 @@ describe("subagents", () => {
     ]);
   });
 
-  test("sections leave out empty groups, and a last row opens the thread when children are hidden", () => {
-    const sections = pillSections(many(111, { 0: "running" }), "parent-1");
-    expect(sections.map((section) => section.title)).toEqual(["Working", "Recent"]);
-    const recent = sections[1]!.blocks[0].rows;
-    expect(recent).toHaveLength(4);
-    expect(recent.at(-1)).toEqual({
-      id: "thread",
-      title: "All 111 in Thread",
-      link: "oppi://thread/parent-1",
-    });
-    expect(pillSections(many(2, { 0: "warning" }), "parent-1").at(-1)!.blocks[0].rows).toHaveLength(
-      1,
+  /** The rows of a section, or of the Earlier row's list in it. */
+  const rowsIn = (section: SubagentSection): SubagentRow[] => {
+    const rows = section.blocks[0].rows;
+    const list = rows[0]?.id === "earlier" ? rows[0].blocks?.[0] : undefined;
+    return list?.type === "activityList" ? list.rows : rows;
+  };
+  const markdownOf = (row: SubagentRow | undefined): string | undefined => {
+    const block = row?.blocks?.[0];
+    return block?.type === "markdown" ? block.markdown : undefined;
+  };
+
+  test("the panel lists every child: Needs You, Working, Recent, then Earlier behind one row", () => {
+    const at = (item: Subagent, fields: Partial<Subagent>): Subagent => ({ ...item, ...fields });
+    const children = many(12).map((item, index) => at(item, { finishedAt: 1_000 - index * 10 }));
+    children[4] = at(children[4]!, { state: "warning", since: 5 });
+    children[7] = at(children[7]!, { state: "running", since: 3 });
+    // Finished later than its place in the list says: Earlier is newest first by finish.
+    children[11] = at(children[11]!, { finishedAt: 955 });
+    const panel = subagentPanel(children, "parent-1");
+    expect(panel.sections.map((section) => section.title)).toEqual([
+      "Needs You",
+      "Working",
+      "Recent",
+      "Earlier",
+    ]);
+    expect(panel.sections.map((section) => rowsIn(section).map((row) => row.id))).toEqual([
+      ["child-8"],
+      ["child-5"],
+      ["child-12", "child-11", "child-10"],
+      ["child-9", "child-1", "child-7", "child-6", "child-4", "child-3", "child-2"],
+    ]);
+    // Earlier is one row, closed until opened, holding the other finished children.
+    const earlier = panel.sections[3]!.blocks[0].rows;
+    expect(earlier).toHaveLength(1);
+    expect(earlier[0]).toMatchObject({ id: "earlier", title: "7 finished" });
+    expect(earlier[0]!.link).toBeUndefined();
+    // Every child has a row that opens its session and discloses its details; none is cut, so
+    // there is no thread row.
+    expect(panel.shown.size).toBe(12);
+    for (const section of panel.sections)
+      for (const row of rowsIn(section)) {
+        expect(row.link).toBe(`oppi://session/${row.id}`);
+        expect(markdownOf(row)).toBeDefined();
+      }
+    expect(JSON.stringify(panel.sections)).not.toContain("oppi://thread");
+    // The text fallback stays the terminal band's rows, not the whole thread.
+    expect(panel.fallback).toHaveLength(5);
+    // Without finished children beyond Recent, there is no Earlier.
+    expect(
+      subagentPanel(many(2, { 0: "warning" }), "parent-1").sections.map((s) => s.title),
+    ).toEqual(["Needs You", "Recent"]);
+  });
+
+  test("every live child gets a row, and the subtitle counts no more than the rows hide", () => {
+    const busy = many(
+      20,
+      Object.fromEntries(Array.from({ length: 11 }, (_, i) => [i, "running" as const])),
     );
+    const panel = subagentPanel(busy);
+    expect(rowsIn(panel.sections[0]!)).toHaveLength(11);
+    expect(panel.chrome.subtitle).toBe("11 working");
+  });
+
+  test("a row discloses its answer, its current step while it works, and its model and spend", () => {
+    const long = `${"The answer goes on. ".repeat(200)}`;
+    const at = (item: Subagent, fields: Partial<Subagent>): Subagent => ({ ...item, ...fields });
+    const [working, recent, , , older] = many(5).map((item, index) =>
+      at(item, { finishedAt: 100 - index, answer: long, model: "anthropic/claude-opus-5-5" }),
+    );
+    const panel = subagentPanel([
+      at(working!, { state: "running", activity: "Running bash", answer: undefined, cost: 1.5 }),
+      recent!,
+      ...many(5)
+        .slice(1, 3)
+        .map((item, index) => at(item, { id: `mid-${index}`, finishedAt: 99 - index })),
+      older!,
+    ]);
+    const [live, newest] = [rowsIn(panel.sections[0]!)[0], rowsIn(panel.sections[1]!)[0]];
+    expect(markdownOf(live)).toBe(
+      "**Now:** Running bash\n\n`anthropic/claude-opus-5-5` \u00b7 $1.50",
+    );
+    // Recent shows a long answer, Earlier a glance; both cut at a word, with an ellipsis.
+    const recentText = markdownOf(newest)!.split("\n\n")[0]!;
+    expect(recentText.length).toBeLessThanOrEqual(ANSWER_EXCERPT_MAX);
+    expect(recentText.length).toBeGreaterThan(ANSWER_EXCERPT_MAX - 300);
+    expect(recentText.endsWith("\u2026")).toBe(true);
+    expect(long[recentText.length - 1]).toBe(" ");
+    const earlierText = markdownOf(rowsIn(panel.sections[2]!)[0])!.split("\n\n")[0]!;
+    expect(earlierText.length).toBeLessThanOrEqual(EARLIER_EXCERPT_MAX);
+    expect(earlierText.endsWith("\u2026")).toBe(true);
+  });
+
+  test("a cut answer closes a code fence it leaves open", () => {
+    const cut = cutMarkdown(`Look:\n\n\`\`\`ts\n${"const a = 1;\n".repeat(50)}\`\`\`\nDone.`, 100);
+    expect(cut.endsWith("\u2026\n```")).toBe(true);
+    expect(cut.match(/```/g)).toHaveLength(2);
+    expect(cutMarkdown("Short.", 100)).toBe("Short.");
+  });
+
+  test("a thread too big for one surface shows the newest that fit and counts the rest", () => {
+    // Wide answers, names, and branches in several scripts, so bytes outgrow characters.
+    const answer = `## Result\n\n${'\u5b8c\u6210 done \u2705 "quoted" \\ '.repeat(120)}`;
+    for (const live of [0, 6, 200]) {
+      const children = many(200).map((item, index) => ({
+        ...item,
+        id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        link: `oppi://session/00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        title: `\ud83e\udd16 subagent-with-a-long-name-${index}-\u4efb\u52a1`,
+        state: index < live ? ("running" as const) : ("success" as const),
+        activity: "Running a step with a long description \u2192 ".repeat(3),
+        since: index,
+        finishedAt: 10_000 - index,
+        took: 60_000,
+        model: "anthropic/claude-opus-5-5",
+        thinking: "high",
+        cost: 12.34,
+        worktree: { branch: `feature/branch-${index}`, ahead: 3, dirty: true },
+        answer,
+      }));
+      const panel = subagentPanel(children, "parent-1");
+      const surface = {
+        version: 1,
+        id: "widget:subagents",
+        source: "widget",
+        presentation: { style: "surfacePanel", ...panel.chrome },
+        blocks: panel.sections,
+        fallback: { lines: panel.fallback },
+      };
+      // The server accepts it: it would drop a surface over any limit.
+      expect(normalizeExtensionUINativeSurface(surface)).toBeDefined();
+      const rows = panel.sections.flatMap(rowsIn);
+      const more = rows.at(-1)!;
+      expect(more).toEqual({
+        id: "thread",
+        title: `${200 - panel.shown.size} more in Thread`,
+        link: "oppi://thread/parent-1",
+      });
+      // The newest that fit, in order: the shown children are a prefix of the panel's order.
+      const shown = rows.slice(0, -1).map((row) => row.id);
+      expect(shown).toHaveLength(panel.shown.size);
+      expect(panel.shown.size).toBeGreaterThan(30);
+      expect(shown).toEqual(children.slice(0, shown.length).map((c) => c.id));
+    }
+  });
+
+  test("a thread of 45 shows every child, answers in full under Recent and a glance under Earlier", () => {
+    const answer = `Done: the feature works.\n\n${"Some **detail** about the change and `code`. ".repeat(60)}`;
+    const children = many(45).map((item, index) => ({
+      ...item,
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      link: `oppi://session/00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      title: `worker-feature-${index}`,
+      state: index < 3 ? ("running" as const) : ("success" as const),
+      activity: index < 3 ? "Running bash" : "Done: the feature works.",
+      since: index,
+      finishedAt: 10_000 - index,
+      model: "anthropic/claude-opus-5-5",
+      cost: 3.21,
+      answer,
+    }));
+    const panel = subagentPanel(children, "parent-1");
+    expect(panel.shown.size).toBe(45);
+    const rows = panel.sections.flatMap(rowsIn);
+    expect(rows.map((row) => row.id)).toEqual(children.map((c) => c.id));
+    const excerpt = (row: SubagentRow): string =>
+      markdownOf(row)!.split("\n\n").slice(0, -1).join("\n\n");
+    for (const row of rows.slice(3, 6))
+      expect(excerpt(row).length).toBeGreaterThan(ANSWER_EXCERPT_MAX - 100);
+    for (const row of rows.slice(6)) {
+      expect(excerpt(row).startsWith("Done: the feature works.")).toBe(true);
+      expect(excerpt(row).length).toBeLessThanOrEqual(EARLIER_EXCERPT_MAX);
+    }
   });
 
   test("a row's second line is what changes, the third its model, spend, worktree, and run time", () => {

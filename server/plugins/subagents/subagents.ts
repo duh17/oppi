@@ -36,6 +36,11 @@ export interface Subagent {
    * spawn named after the child: the title already says that one.
    */
   worktree?: { branch?: string; ahead?: number; dirty?: boolean };
+  /**
+   * Its newest answer as Markdown (or the error that ended its run), already cut to at most
+   * `ANSWER_EXCERPT_MAX` characters: what its row's disclosure shows.
+   */
+  answer?: string;
 }
 
 export interface SubagentRow {
@@ -43,10 +48,27 @@ export interface SubagentRow {
   title: string;
   subtitle?: string;
   detail?: string;
-  /** `inactive`: a child finished by a stop. The thread row has no state. */
+  /** `inactive`: a child finished by a stop. The Earlier and thread rows have no state. */
   state?: Subagent["state"] | "inactive";
-  link: string;
+  link?: string;
   since?: number;
+  /**
+   * A disclosure row's content: a child's answer and details as Markdown, or, on the Earlier row,
+   * the list of earlier children.
+   */
+  blocks?: [SubagentMarkdown] | [SubagentList];
+}
+
+export interface SubagentMarkdown {
+  type: "markdown";
+  id: string;
+  markdown: string;
+}
+
+export interface SubagentList {
+  type: "activityList";
+  id: string;
+  rows: SubagentRow[];
 }
 
 /** A titled group of rows, as the native surface's `section` block holding an `activityList`. */
@@ -54,7 +76,7 @@ export interface SubagentSection {
   type: "section";
   id: string;
   title: string;
-  blocks: [{ type: "activityList"; id: string; rows: SubagentRow[] }];
+  blocks: [SubagentList];
 }
 
 export interface WidgetChrome {
@@ -62,17 +84,45 @@ export interface WidgetChrome {
   subtitle?: string;
 }
 
-/** Most live children (asking, failed, working) the pill shows as rows; the subtitle counts all. */
+/** The pill's body: its sections, the text fallback, and which children have a row. */
+export interface SubagentPanel {
+  chrome: WidgetChrome;
+  sections: SubagentSection[];
+  fallback: string[];
+  /** Ids of the children drawn as rows. */
+  shown: Set<string>;
+}
+
+/** Most live children (asking, failed, working) the terminal band shows as rows. */
 export const MAX_PILL_ROWS = 8;
 /** Finished children listed under Recent, newest first. */
 export const MAX_RECENT_ROWS = 3;
+/** Longest answer, in characters, a live or Recent row's disclosure shows. */
+export const ANSWER_EXCERPT_MAX = 1500;
+/** Longest answer an Earlier row's disclosure shows: a glance; the session has the rest. */
+export const EARLIER_EXCERPT_MAX = 240;
+
+/**
+ * The server's native-surface limits (docs/extension-native-ui.md, Limits): it drops a surface
+ * over any of them, so the panel is built under them. Text counts every string in the surface.
+ */
+const SURFACE_TEXT_BYTES = 32 * 1024;
+const SURFACE_BYTES = 64 * 1024;
+const SURFACE_BLOCKS = 80;
+const SURFACE_ROWS = 160;
+/**
+ * Room kept for what the budget does not measure row by row: the surface's id and presentation,
+ * the sections and their lists, the Earlier row, and the thread row.
+ */
+const SURFACE_RESERVE_TEXT = 1024;
+const SURFACE_RESERVE_BYTES = 2048;
 
 export function sessionLink(sessionId: string, workspaceId?: string): string {
   const url = `oppi://session/${sessionId}`;
   return workspaceId ? `${url}?workspaceId=${encodeURIComponent(workspaceId)}` : url;
 }
 
-/** The session list with `sessionId`'s thread open: the way from the pill to every child. */
+/** The session list with `sessionId`'s thread open: where the children the pill cannot fit are. */
 export function threadLink(sessionId: string): string {
   return `oppi://thread/${sessionId}`;
 }
@@ -294,7 +344,8 @@ export function isLive(item: Subagent): boolean {
 }
 
 /**
- * The children the pill draws as rows, from every child, newest first: those that need you, the
+ * The children the terminal band draws as rows (and the text fallback lists, and the reference
+ * extension refreshes first), from every child, newest first: those that need you, the
  * oldest question or failure first; then the working ones, the oldest run first, so a row does
  * not move while it works; up to `max` of those. Then the newest `MAX_RECENT_ROWS` finished, by
  * when they finished. A child without times keeps the order it came in.
@@ -315,42 +366,219 @@ export function selectPillRows(subagents: Subagent[], max = MAX_PILL_ROWS): Suba
 }
 
 /**
- * The pill's body: Needs You, Working, and Recent, each a section of rows, leaving out an empty
- * one. When any child has no row, a last row in the last section opens the whole thread.
+ * The pill's body, every child: Needs You (the oldest question or failure first), Working (the
+ * oldest run first), Recent (the `MAX_RECENT_ROWS` newest finished), and Earlier (every other
+ * finished child, newest first), leaving out an empty section. Earlier is one disclosure row that
+ * holds their rows, so the drawer stays as short as before until someone opens it.
+ *
+ * Each child's row is a disclosure row (its answer, its current step while it works, and its
+ * model, spend, and worktree) that keeps its link to the session. The surface is built under the
+ * server's limits, which drop an over-limit surface whole: children are taken in that order while
+ * their rows fit, and answers then get the room left, live and Recent ones first. Children that do
+ * not fit are counted in a last row, `N more in Thread`, that opens the whole thread.
  */
-export function pillSections(
-  subagents: Subagent[],
-  threadSessionId?: string,
-  max = MAX_PILL_ROWS,
-): SubagentSection[] {
-  const selected = selectPillRows(subagents, max);
-  const groups: Array<[id: string, title: string, rows: Subagent[]]> = [
-    ["needs-you", "Needs You", selected.filter(needsYou)],
-    ["working", "Working", selected.filter((item) => item.state === "running")],
-    ["recent", "Recent", selected.filter((item) => !isLive(item))],
-  ];
-  const sections = groups
-    .filter(([, , rows]) => rows.length > 0)
-    .map(([id, title, rows]): SubagentSection => ({
-      type: "section",
-      id: `subagents:${id}`,
-      title,
-      blocks: [{ type: "activityList", id: `subagents:${id}:rows`, rows: subagentRows(rows) }],
-    }));
-  const last = sections.at(-1);
-  if (last && threadSessionId && selected.length < subagents.length) {
-    last.blocks[0].rows.push({
-      id: "thread",
-      title: `All ${subagents.length} in Thread`,
-      link: threadLink(threadSessionId),
-    });
+export function subagentPanel(subagents: Subagent[], threadSessionId?: string): SubagentPanel {
+  const oldestFirst = (a: Subagent, b: Subagent): number =>
+    (a.since ?? Number.POSITIVE_INFINITY) - (b.since ?? Number.POSITIVE_INFINITY);
+  // Array.prototype.sort is stable: children without a time keep their order.
+  const finished = subagents
+    .filter((item) => !isLive(item))
+    .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0));
+  const groups = {
+    "needs-you": subagents.filter(needsYou).sort(oldestFirst),
+    working: subagents.filter((item) => item.state === "running").sort(oldestFirst),
+    recent: finished.slice(0, MAX_RECENT_ROWS),
+    earlier: finished.slice(MAX_RECENT_ROWS),
+  };
+
+  // The fallback is the terminal band's rows: it does not grow with the thread.
+  const fallback = subagentRows(selectPillRows(subagents)).map(rowFallback);
+  const fallbackCost = { text: textBytes(fallback), bytes: jsonBytes(fallback) };
+  // Four sections with their lists, the Earlier row and its list, and the thread row.
+  const left = {
+    text: SURFACE_TEXT_BYTES - SURFACE_RESERVE_TEXT - fallbackCost.text,
+    bytes: SURFACE_BYTES - SURFACE_RESERVE_BYTES - fallbackCost.bytes,
+    blocks: SURFACE_BLOCKS - 4 * 2 - 1,
+    rows: SURFACE_ROWS - 2,
+  };
+  const fits = (row: SubagentRow): boolean =>
+    textBytes(row) <= left.text && jsonBytes(row) <= left.bytes;
+  const spend = (row: SubagentRow, sign: 1 | -1): void => {
+    left.text -= sign * textBytes(row);
+    left.bytes -= sign * jsonBytes(row);
+    left.blocks -= sign;
+    left.rows -= sign;
+  };
+  /** `item`'s row with the longest cut of its answer, up to `cap`, that fits; else none. */
+  const withAnswer = (item: Subagent, cap: number): SubagentRow | undefined => {
+    const answer = item.answer;
+    if (!answer) return undefined;
+    const cut = (chars: number): SubagentRow | undefined => {
+      const row = disclosureRow(item, cutMarkdown(answer, chars));
+      return fits(row) ? row : undefined;
+    };
+    const whole = cut(cap);
+    if (whole) return whole;
+    // The longest cut that fits; none shorter than a line is worth showing.
+    let best: SubagentRow | undefined;
+    let low = MIN_EXCERPT;
+    let high = cap - 1;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      const row = cut(middle);
+      if (row) {
+        best = row;
+        low = middle + 1;
+      } else high = middle - 1;
+    }
+    return best;
+  };
+
+  // A row for every child that fits first, in the panel's order: seeing each child comes before
+  // reading any answer.
+  const taken = new Map<Subagent, SubagentRow>();
+  for (const item of [
+    ...groups["needs-you"],
+    ...groups.working,
+    ...groups.recent,
+    ...groups.earlier,
+  ]) {
+    const row = disclosureRow(item, undefined);
+    if (!fits(row) || left.blocks < 1 || left.rows < 1) break;
+    spend(row, 1);
+    taken.set(item, row);
   }
-  return sections;
+  // Then answers with the room left: in full what needs you and what just finished; a glance at a
+  // working child's previous answer and at Earlier ones.
+  const answers: Array<[Subagent[], number]> = [
+    [groups["needs-you"], ANSWER_EXCERPT_MAX],
+    [groups.recent, ANSWER_EXCERPT_MAX],
+    [groups.working, EARLIER_EXCERPT_MAX],
+    [groups.earlier, EARLIER_EXCERPT_MAX],
+  ];
+  for (const [items, cap] of answers)
+    for (const item of items) {
+      const row = taken.get(item);
+      if (!row) continue;
+      spend(row, -1);
+      const next = withAnswer(item, cap) ?? row;
+      spend(next, 1);
+      taken.set(item, next);
+    }
+
+  const shown = new Set([...taken.keys()].map((item) => item.id));
+  const rowsOf = (items: Subagent[]): SubagentRow[] =>
+    items.flatMap((item) => taken.get(item) ?? []);
+  const section = (id: string, title: string, rows: SubagentRow[]): SubagentSection => ({
+    type: "section",
+    id: `subagents:${id}`,
+    title,
+    blocks: [{ type: "activityList", id: `subagents:${id}:rows`, rows }],
+  });
+  const sections: SubagentSection[] = [];
+  for (const [id, title] of [
+    ["needs-you", "Needs You"],
+    ["working", "Working"],
+    ["recent", "Recent"],
+  ] as const) {
+    const rows = rowsOf(groups[id]);
+    if (rows.length > 0) sections.push(section(id, title, rows));
+  }
+  const earlier = rowsOf(groups.earlier);
+  if (earlier.length > 0) {
+    sections.push(
+      section("earlier", "Earlier", [
+        {
+          id: "earlier",
+          title: `${earlier.length} finished`,
+          blocks: [{ type: "activityList", id: "subagents:earlier:list", rows: earlier }],
+        },
+      ]),
+    );
+  }
+
+  const hidden = subagents.length - shown.size;
+  if (hidden > 0) {
+    const more: SubagentRow = {
+      id: "thread",
+      title: threadSessionId ? `${hidden} more in Thread` : `${hidden} more`,
+      ...(threadSessionId ? { link: threadLink(threadSessionId) } : {}),
+    };
+    // After the oldest shown: inside Earlier when it is there.
+    (earlier.length > 0 ? earlier : sections.at(-1)?.blocks[0].rows)?.push(more);
+    fallback.push(rowFallback(more));
+  }
+
+  const liveShown = [...taken.keys()].filter(isLive).length;
+  return { chrome: widgetChrome(subagents, liveShown), sections, fallback, shown };
 }
 
-/** Every row of the sections, for the surface's text fallback. */
-export function sectionRows(sections: SubagentSection[]): SubagentRow[] {
-  return sections.flatMap((section) => section.blocks[0].rows);
+/** The shortest answer cut worth showing, in characters. */
+const MIN_EXCERPT = 80;
+
+/**
+ * A child's row as a disclosure row: what it is doing while it works, its answer (`excerpt`, or a
+ * note that it did not fit), and a line of its model, spend, and worktree.
+ */
+function disclosureRow(item: Subagent, excerpt: string | undefined): SubagentRow {
+  const parts: string[] = [];
+  if (item.state === "running" && item.activity) parts.push(`**Now:** ${item.activity}`);
+  if (excerpt) parts.push(excerpt);
+  else if (item.answer) parts.push("_Open the session to read its answer._");
+  const meta = metaLine(item);
+  if (meta) parts.push(meta);
+  if (parts.length === 0) parts.push("_Open the session for its details._");
+  return {
+    ...subagentRow(item),
+    blocks: [{ type: "markdown", id: "answer", markdown: parts.join("\n\n") }],
+  };
+}
+
+/** The full model and thinking level, the exact spend, the worktree, and the run time. */
+function metaLine(item: Subagent): string | undefined {
+  const tree = item.worktree;
+  const parts = [
+    item.model ? `\`${item.model}\`` : undefined,
+    item.thinking && item.thinking !== "off" ? `thinking ${item.thinking}` : undefined,
+    item.cost !== undefined && item.cost > 0 ? `$${item.cost.toFixed(2)}` : undefined,
+    tree?.branch ? `branch \`${tree.branch}\`` : undefined,
+    tree?.ahead !== undefined && tree.ahead > 0 ? `${tree.ahead} ahead` : undefined,
+    tree?.dirty ? "dirty" : undefined,
+    !isLive(item) && item.took !== undefined ? `took ${durationLabel(item.took)}` : undefined,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" \u00b7 ") : undefined;
+}
+
+/**
+ * `markdown` cut to at most `max` characters, at a line or word end when one is near, with an
+ * ellipsis; a code fence the cut leaves open is closed.
+ */
+export function cutMarkdown(markdown: string, max: number): string {
+  const text = markdown.trim();
+  const chars = Array.from(text);
+  if (chars.length <= max) return text;
+  let cut = chars.slice(0, Math.max(1, max - 5)).join("");
+  const end = Math.max(cut.lastIndexOf("\n"), cut.lastIndexOf(" "));
+  if (end > cut.length * 0.8) cut = cut.slice(0, end);
+  cut = `${cut.trimEnd()}\u2026`;
+  const fences = cut.match(/^\s*```/gm)?.length ?? 0;
+  return fences % 2 === 1 ? `${cut}\n\`\`\`` : cut;
+}
+
+const encoder = new TextEncoder();
+
+/** Every string in `value`, in UTF-8 bytes: at least what the server counts as surface text. */
+function textBytes(value: unknown): number {
+  if (typeof value === "string") return encoder.encode(value).length;
+  if (Array.isArray(value)) return value.reduce((sum: number, item) => sum + textBytes(item), 0);
+  if (value && typeof value === "object")
+    return Object.values(value).reduce((sum: number, item) => sum + textBytes(item), 0);
+  return 0;
+}
+
+/** `value` as JSON, in UTF-8 bytes, with the comma that follows it in a list. */
+function jsonBytes(value: unknown): number {
+  return encoder.encode(JSON.stringify(value)).length + 1;
 }
 
 /** Title and subtitle; the subtitle counts every live child, not the rows shown. */
@@ -366,28 +594,30 @@ export function widgetChrome(subagents: Subagent[], max = MAX_PILL_ROWS): Widget
  * how long a finished run took. A live row's `since` lets the client tick its time.
  */
 export function subagentRows(subagents: Subagent[]): SubagentRow[] {
-  return subagents.map((item) => {
-    const detail = [
-      [shortModelName(item.model), item.thinking === "off" ? undefined : item.thinking]
-        .filter(Boolean)
-        .join(" "),
-      item.cost !== undefined && item.cost > 0 ? `$${item.cost.toFixed(2)}` : undefined,
-      worktreeLabel(item),
-      !isLive(item) && item.took !== undefined ? `took ${durationLabel(item.took)}` : undefined,
-    ]
+  return subagents.map(subagentRow);
+}
+
+function subagentRow(item: Subagent): SubagentRow {
+  const detail = [
+    [shortModelName(item.model), item.thinking === "off" ? undefined : item.thinking]
       .filter(Boolean)
-      .join(" \u00b7 ");
-    const activity = item.activity ?? (item.stopped ? "Stopped" : undefined);
-    return {
-      id: item.id,
-      title: item.title,
-      ...(activity ? { subtitle: activity } : {}),
-      ...(detail ? { detail } : {}),
-      state: item.stopped && !isLive(item) ? "inactive" : item.state,
-      link: item.link,
-      ...(isLive(item) && item.since !== undefined ? { since: item.since } : {}),
-    };
-  });
+      .join(" "),
+    item.cost !== undefined && item.cost > 0 ? `$${item.cost.toFixed(2)}` : undefined,
+    worktreeLabel(item),
+    !isLive(item) && item.took !== undefined ? `took ${durationLabel(item.took)}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" \u00b7 ");
+  const activity = item.activity ?? (item.stopped ? "Stopped" : undefined);
+  return {
+    id: item.id,
+    title: item.title,
+    ...(activity ? { subtitle: activity } : {}),
+    ...(detail ? { detail } : {}),
+    state: item.stopped && !isLive(item) ? "inactive" : item.state,
+    link: item.link,
+    ...(isLive(item) && item.since !== undefined ? { since: item.since } : {}),
+  };
 }
 
 /** The worktree's progress: its branch when the spawn did not name it, commits ahead, dirty. */
