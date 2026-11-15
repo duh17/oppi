@@ -15,13 +15,7 @@ import { listenerHostLabel } from "./network-listeners.js";
 import { existsSync, rmdirSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { basename, dirname, join, resolve } from "node:path";
-import {
-  getLocalHostname,
-  getLocalIp,
-  getTailscaleHostname,
-  getTailscaleIp,
-  printServeListeners,
-} from "./cli/status.js";
+import { getTailscaleHostname, printServeListeners } from "./cli/status.js";
 import type { Storage } from "./storage.js";
 import { MAX_PAIRING_TOKEN_TTL_MS } from "./storage/auth-store.js";
 import { SHORT_INVITE_MAX_TTL_MS } from "./device-pairing.js";
@@ -44,7 +38,7 @@ import {
   validateTailscaleMaterial,
 } from "./tls.js";
 import type { ServerConfig } from "./types.js";
-import { generateInvite, type GeneratedInvite } from "./invite.js";
+import { generateInvite, resolveInviteHost, type GeneratedInvite } from "./invite.js";
 import { activePushRelays, releasePushPermissions } from "./push/push-sender.js";
 import { allowsTrustedPrivateHttpBind, parsePublicUrl } from "./proxy-config.js";
 import { getPackageInfo } from "./version.js";
@@ -92,25 +86,6 @@ import { setCapturedCliExitCode, writeHumanLine, writeJsonEnvelope } from "./cli
 // commands that need them. `oppi --version`, `help`, and the other light commands never load them.
 
 const cliLog = createLogger({ base: { component: "cli" } });
-
-function resolveInviteHost(config: ServerConfig, hostOverride?: string): string | null {
-  if (hostOverride?.trim()) return hostOverride.trim();
-
-  if (config.publicUrl) {
-    const parsed = parsePublicUrl(config.publicUrl);
-    if (parsed.ok) return parsed.value.host;
-  }
-
-  if (config.tls?.mode === "tailscale") {
-    return getTailscaleHostname();
-  }
-
-  // Outside tailscale TLS mode a *.ts.net name cannot carry the leaf pin (see
-  // generateInvite), so phones get the Tailscale IP. The default listeners never
-  // serve the local network; only an explicit host does, and then it comes first.
-  if (config.host === undefined) return getTailscaleIp();
-  return getLocalHostname() || getLocalIp() || getTailscaleIp();
-}
 
 function shortHostLabel(host: string): string {
   // Keep IPs as-is, trim FQDNs to first label.

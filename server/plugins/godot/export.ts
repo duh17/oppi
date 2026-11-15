@@ -13,7 +13,8 @@
  * - Web is the single-threaded variant (`variant/thread_support=false`): no SharedArrayBuffer,
  *   so it needs no cross-origin isolation headers and no secure context, and plays over the
  *   server's plain-HTTP or HTTPS address alike. The finished folder goes to the server
- *   (`OppiGodotHost.adoptWebExport`), which serves it to the owner and paired devices.
+ *   (`OppiGodotHost.adoptWebExport`), which serves it to the owner and paired devices and signs
+ *   a 24-hour link to it.
  * - Desktop builds replace `build/<target>/<file>` in the project folder. `build/` holds them in
  *   a subfolder so the pane, which plays the newest `build/*.pck`, never picks one up.
  */
@@ -418,10 +419,14 @@ export async function exportGodotProject(
       const served = await games.adoptWebExport(projectId, out);
       return {
         ok: true,
-        text:
-          `Exported ${source.name} for the web, single-threaded (${sizeOf(size)}). This Oppi ` +
-          `server serves it at ${served.path} to the owner and paired devices: every request ` +
-          "needs the owner token or a paired device's token, so a browser without one is refused.",
+        text: [
+          `Exported ${source.name} for the web, single-threaded (${sizeOf(size)}).`,
+          `Play link, valid until ${new Date(served.expiresAt).toISOString()} (24 h): ` +
+            `${served.link}`,
+          "Anyone with the link can play this build in Oppi's browser pane or any browser that " +
+            "reaches this server. It opens nothing else. Export again for a new link.",
+          `With the owner's or a paired device's token: ${served.path}`,
+        ].join("\n"),
       };
     }
     const folder = join(source.dir, "build", target);

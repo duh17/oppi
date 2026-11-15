@@ -15,6 +15,9 @@ const LOGS = /^\/godot\/([^/]+)\/logs$/;
 const CAPTURE = /^\/godot\/([^/]+)\/captures\/([^/]+)$/;
 /** A Web build `godot_export` stored: its folder (redirected to `/`), or one file in it. */
 const WEB = /^\/godot\/([^/]+)\/web\/([^/]+)(?:\/(.*))?$/;
+/** A signed link to one Web build (`GodotWebExports`): the grant instead of the export id. */
+export const GODOT_PLAY_PATH = /^\/godot\/([^/]+)\/play\/([^/]+)(?:\/(.*))?$/;
+const PLAY = GODOT_PLAY_PATH;
 const RELEASE_BODY_MAX_BYTES = 64 * 1024;
 const COMMAND_BODY_MAX_BYTES = 256 * 1024;
 
@@ -93,34 +96,34 @@ export function createGodotRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       const web = WEB.exec(path);
       if (web && (method === "GET" || method === "HEAD")) {
         const [, id = "", exportId = "", rest] = web;
-        if (rest === undefined) {
-          // Relative asset URLs in index.html need the folder's trailing slash.
-          res.writeHead(308, { Location: `${path}/` }).end();
-          return true;
-        }
-        let name: string;
-        try {
-          name = decodeURIComponent(rest || "index.html");
-        } catch {
-          name = "";
-        }
-        const found = await games.webFile(id, exportId, name);
-        if (!found) {
-          helpers.error(res, 404, "No such file");
-          return true;
-        }
-        res.writeHead(200, {
-          "Content-Type": found.contentType,
-          "Content-Length": String(found.size),
-          // The export id is a hash of the build, so its files never change.
-          "Cache-Control": "private, max-age=31536000, immutable",
-          "X-Content-Type-Options": "nosniff",
-        });
-        if (method === "HEAD") res.end();
+        // The export id is a hash of the build, so its files never change.
+        await serveWebFile(games, req, res, method, path, id, exportId, rest, "immutable", () =>
+          helpers.error(res, 404, "No such file"),
+        );
+        return true;
+      }
+      // A signed link: dispatched without credentials (`server.ts`). Every refusal is the
+      // same bare 404, so a probe learns nothing about which part was wrong.
+      const play = PLAY.exec(path);
+      if (play && (method === "GET" || method === "HEAD")) {
+        const [, id = "", grant = "", rest] = play;
+        const exportId = games.grantedWebExport(id, grant);
+        const notFound = (): void => helpers.error(res, 404, "Not found");
+        if (!exportId) notFound();
+        // The link stops working when it expires, so a browser asks again each time (304).
         else
-          createReadStream(found.path)
-            .on("error", () => res.destroy())
-            .pipe(res);
+          await serveWebFile(
+            games,
+            req,
+            res,
+            method,
+            path,
+            id,
+            exportId,
+            rest,
+            "revalidate",
+            notFound,
+          );
         return true;
       }
       const capture = CAPTURE.exec(path);
@@ -153,6 +156,64 @@ export function createGodotRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       return true;
     }
   };
+}
+
+/**
+ * One file of a stored Web build, in the encoding the client takes when one is stored
+ * (`Content-Encoding`, `Vary`), with the type of the file itself. The folder serves
+ * `index.html`; the folder without its slash redirects, because the page's relative asset URLs
+ * need it. `ETag` names the build and the encoding.
+ */
+async function serveWebFile(
+  games: NonNullable<RouteContext["godot"]>,
+  req: IncomingMessage,
+  res: ServerResponse,
+  method: string,
+  path: string,
+  id: string,
+  exportId: string,
+  rest: string | undefined,
+  caching: "immutable" | "revalidate",
+  notFound: () => void,
+): Promise<void> {
+  if (rest === undefined) {
+    res.writeHead(308, { Location: `${path}/` }).end();
+    return;
+  }
+  let name: string;
+  try {
+    name = decodeURIComponent(rest || "index.html");
+  } catch {
+    name = "";
+  }
+  const accept = req.headers["accept-encoding"];
+  const found = await games.webFile(id, exportId, name, typeof accept === "string" ? accept : "");
+  if (!found) {
+    notFound();
+    return;
+  }
+  const etag = `"${exportId}-${found.encoding ?? "identity"}"`;
+  const headers = {
+    "Content-Type": found.contentType,
+    ...(found.encoding ? { "Content-Encoding": found.encoding } : {}),
+    Vary: "Accept-Encoding",
+    ETag: etag,
+    "Cache-Control":
+      caching === "immutable" ? "private, max-age=31536000, immutable" : "private, no-cache",
+    "X-Content-Type-Options": "nosniff",
+  };
+  if (req.headers["if-none-match"] === etag) {
+    res.writeHead(304, headers).end();
+    return;
+  }
+  res.writeHead(200, { ...headers, "Content-Length": String(found.size) });
+  if (method === "HEAD") {
+    res.end();
+    return;
+  }
+  createReadStream(found.path)
+    .on("error", () => res.destroy())
+    .pipe(res);
 }
 
 /** A pack's bytes: `ETag` is its sha256, `If-None-Match` answers 304, one byte range. */

@@ -66,13 +66,33 @@ enum PaneWebAddress {
         return UInt32(bigEndian: v4.s_addr) >> 24 == 127
     }
 
-    /// Whether `url` is the origin of one of `servers` (host and port), which
-    /// a browser leaf never loads: a page there would run beside Oppi's own
-    /// API. Either scheme counts; a URL without a port uses its scheme's.
-    static func isServerOrigin(_ url: URL, servers: [(host: String, port: Int)]) -> Bool {
+    /// Whether a browser leaf refuses to load `url` with `method`: any page at
+    /// the origin of one of `servers` (host and port), where it would run
+    /// beside Oppi's own API. Either scheme counts; a URL without a port uses
+    /// its scheme's. The one exception is a GET of a Godot web build's signed
+    /// play link (`isGodotPlayLink`): that link carries its own capability for
+    /// one build and the page never gets Oppi's credentials.
+    static func refusesServerPage(_ url: URL, method: String, servers: [(host: String, port: Int)]) -> Bool {
         guard let host = url.host(percentEncoded: false).map(normalisedHost) else { return false }
         let port = url.port ?? (url.scheme?.lowercased() == "http" ? 80 : 443)
-        return servers.contains { normalisedHost($0.host) == host && $0.port == port }
+        guard servers.contains(where: { normalisedHost($0.host) == host && $0.port == port }) else { return false }
+        return !(method.uppercased() == "GET" && isGodotPlayLink(url))
+    }
+
+    /// Whether `url`'s path is a file of a Godot web build's play link,
+    /// `/godot/<game>/play/<grant>[/<file>…]`, as the server's
+    /// `GodotWebExports` signs it. Read from the encoded path, so a `..`, `.`,
+    /// or encoded slash or dot never passes for one: the server sees the path
+    /// this check saw.
+    static func isGodotPlayLink(_ url: URL) -> Bool {
+        let segments = url.path(percentEncoded: true).split(separator: "/", omittingEmptySubsequences: false)
+        guard segments.count >= 5, segments[0].isEmpty, segments[1] == "godot", segments[3] == "play",
+              segments[2].wholeMatch(of: /[A-Za-z0-9][A-Za-z0-9._-]{0,63}/) != nil,
+              segments[4].wholeMatch(of: /[0-9a-f]{16}\.[0-9]{1,12}\.[A-Za-z0-9_-]{43}/) != nil
+        else { return false }
+        return segments.dropFirst(5).allSatisfy { segment in
+            segment != "." && segment != ".." && !segment.contains("%")
+        }
     }
 
     private static func normalisedHost(_ host: String) -> String {

@@ -32,7 +32,8 @@ export const UNSUPPORTED_TARGET_ERROR =
   "platform SDKs the server does not manage. Export web, macos, linux, or windows instead.";
 
 export const TARGET_PARAMETER =
-  "web: an HTML5 build the server serves to the owner and paired devices. macos: a zipped " +
+  "web: an HTML5 build this server serves, with a 24-hour play link any browser can open. " +
+  "macos: a zipped " +
   ".app (universal, ad-hoc signed). linux: an x86_64 executable. windows: an x86_64 .exe. " +
   "Desktop builds land in the project's build/<target>/ folder. ios and android are not supported.";
 
@@ -62,8 +63,9 @@ export const GODOT_DESCRIPTIONS = {
     "Apply the game's current release again on the device running it. Exports reload by " +
     "themselves; use this after a failed reload, or to restart the scene (tier scene).",
   export:
-    "Build a game to play outside Oppi's Godot pane: web (served by this Oppi server at an " +
-    "address only the owner and paired devices can open), or a macOS, Linux, or Windows build in " +
+    "Build a game to play outside Oppi's Godot pane: web (served by this Oppi server, with a " +
+    "play link valid for 24 hours that opens that build in any browser), or a macOS, Linux, or " +
+    "Windows build in " +
     "the project's build/ folder. Uses a preset of its own on a copy of the project; the " +
     "project's export_presets.cfg is neither read nor changed. Needs Godot's export templates, " +
     "which installTemplates downloads once.",
@@ -94,8 +96,8 @@ export const GODOT_GUIDELINES = [
   "To check a change: godot_status for the release and the player's state, godot_logs with " +
     "level error for errors (fix the file and line, then export again), godot_capture to see " +
     "the screen, godot_input to tap, drag, press keys, or trigger actions.",
-  "godot_export builds a game to play outside the pane: a web build this server serves to the " +
-    "owner and paired devices, or a macOS, Linux, or Windows build in the project's build/ " +
+  "godot_export builds a game to play outside the pane: a web build this server serves, with a " +
+    "24-hour play link for any browser, or a macOS, Linux, or Windows build in the project's build/ " +
     "folder. It needs Godot's export templates; when they are missing it says how to install them.",
 ];
 

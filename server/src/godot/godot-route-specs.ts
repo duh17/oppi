@@ -1,7 +1,8 @@
 /**
  * The Godot pane's rows of the route registry (`routes/registry.ts` spreads them into its list;
  * nothing else imports this). Types and messages: `server/src/types/godot.ts`. Every row needs the owner
- * bearer or a paired device's token; nothing here is public.
+ * bearer or a paired device's token, except a Web build's signed link (`.../play/...`), whose
+ * path carries a signed, expiring grant for that one build.
  */
 export const godotRouteSpecs = [
   {
@@ -100,6 +101,29 @@ export const godotRouteSpecs = [
     operationId: "headGodotWebExportFile",
     surface: "core",
     auth: "owner",
+  },
+  {
+    method: "GET",
+    path: "/godot/{projectId}/play/{grant}",
+    operationId: "getGodotWebLink",
+    surface: "core",
+    auth: "none",
+    description: "A signed link to one Web build; redirects to its folder. Invalid links 404.",
+  },
+  {
+    method: "GET",
+    path: "/godot/{projectId}/play/{grant}/{file+}",
+    operationId: "getGodotWebLinkFile",
+    surface: "core",
+    auth: "none",
+    description: "One file of the build a signed link opens; the grant is the capability.",
+  },
+  {
+    method: "HEAD",
+    path: "/godot/{projectId}/play/{grant}/{file+}",
+    operationId: "headGodotWebLinkFile",
+    surface: "core",
+    auth: "none",
   },
   {
     method: "GET",

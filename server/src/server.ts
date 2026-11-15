@@ -24,6 +24,8 @@ import type { SessionBroadcastEvent } from "./session-broadcast.js";
 import { AppEventStreamMux } from "./app-event-stream.js";
 import { LayoutFiles } from "./layout-files.js";
 import { GodotService } from "./godot/godot-service.js";
+import { advertisedOrigin } from "./invite.js";
+import { GODOT_PLAY_PATH } from "./routes/godot.js";
 import { BoundSessionStreamMux, DictationStreamMux } from "./stream.js";
 import { SocketAccessDeadlines, type RenewStreamAccess } from "./stream-auth-renewal.js";
 import { RouteHandler } from "./routes/index.js";
@@ -759,7 +761,10 @@ export class Server {
       authModule: this.authModule,
     });
     this.sessions.layoutFiles = new LayoutFiles(this.storage, this.appEventStreamMux);
-    this.godot = new GodotService(this.storage, { renewAccess });
+    this.godot = new GodotService(this.storage, {
+      renewAccess,
+      origin: () => advertisedOrigin(this.storage.getConfig()),
+    });
     this.screensStreamMux = new ScreensStreamMux(
       () => this.sessions.pluginScreens(),
       () => serverFeatures(this.storage.getConfig()),
@@ -1828,6 +1833,20 @@ export class Server {
         // The caller is not authenticated yet, and error text can name host paths and
         // config details. It stays in the log.
         this.error(res, 500, "Internal error");
+      }
+      return;
+    }
+
+    // A Godot Web build's signed link carries its own capability in the path, so it opens in a
+    // browser that has no Oppi credentials (the app's browser pane, a browser on the tailnet).
+    // The route checks the signature and answers 404 for anything it does not open.
+    if ((method === "GET" || method === "HEAD") && GODOT_PLAY_PATH.test(path)) {
+      try {
+        await this.routes.dispatch(method, path, url, req, res);
+      } catch (err: unknown) {
+        log.error("http.request.failed", { method, path, error: safeErrorMessage(err) });
+        if (!res.headersSent) this.error(res, 404, "Not found");
+        else res.destroy();
       }
       return;
     }

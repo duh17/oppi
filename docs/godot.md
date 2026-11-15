@@ -75,7 +75,7 @@ The `godot_export` tool builds a game to play without Oppi's Godot pane. It runs
 
 | Target | Result |
 | --- | --- |
-| `web` | An HTML5 build that the server keeps and serves at `/godot/<projectId>/web/<exportId>/`. The export id is a hash of the build, so the same build keeps the same address. The server keeps the newest three web builds of each game. |
+| `web` | An HTML5 build that the server keeps. The tool returns a play link that is valid for 24 hours, and the build's address for paired clients, `/godot/<projectId>/web/<exportId>/`. The export id is a hash of the build, so the same build keeps the same id. The server keeps the newest three web builds of each game. |
 | `macos` | `build/macos/<folder>.zip` in the project folder: a universal `.app`, ad-hoc signed, not notarized. |
 | `linux` | `build/linux/<folder>.x86_64`: one x86_64 executable with the pack inside. |
 | `windows` | `build/windows/<folder>.exe`: one x86_64 executable with the pack inside. |
@@ -85,7 +85,12 @@ The `godot_export` tool builds a game to play without Oppi's Godot pane. It runs
 - **Export templates.** Godot needs export templates that match its exact version, in the folder where the Godot editor keeps them (on macOS, `~/Library/Application Support/Godot/export_templates/<version>/`). When they are missing, `godot_export` fails and tells you so. Call it again with `installTemplates: true` to install them one time: the server downloads the official templates archive (about 1.3 GB, 2.1 GB unpacked) from the [godot-builds release](https://github.com/godotengine/godot-builds/releases) for that version, checks it against the release's `SHA512-SUMS.txt`, and unpacks it. Templates that the Godot editor installed work too.
 - **Presets.** The tool does not read or change the project's `export_presets.cfg`. Each export copies the project folder without `build/`, `.git` and `export_presets.cfg`, writes a one-preset file in the copy, and exports the copy. Earlier builds therefore never go into a new one. On APFS the copy is a clone, so it takes almost no space.
 - **Web is single-threaded.** The web build does not use threads. Thus it does not need `SharedArrayBuffer`, cross-origin isolation headers, or a secure context. The same build plays over the server's HTTP address and over its HTTPS address.
-- **Who can open a web build.** Every web build request needs the owner token or a paired device's token, as all other routes do. A browser that cannot send the token gets `401`. No public link exists.
+- **Who can open a web build.** Two addresses serve a web build:
+  - The **play link**, `/godot/<projectId>/play/<grant>/`, opens in Oppi's browser pane or in any browser that can reach the server, and it needs no Oppi credentials. The browser pane opens no other page at a paired server's address, and it never sends Oppi's credentials. The grant in the path is signed with a key that only the server has. It is valid for one build of one game for 24 hours, and it opens nothing else. An expired, changed, or wrong link gets `404`, with no reason. Anyone who has the link can play that build until it expires, so share it only with people you want to play it. Export again to get a new link.
+  - The **build address**, `/godot/<projectId>/web/<exportId>/`, needs the owner token or a paired device's token, as all other routes do.
+
+  The tool gives a full play URL when the server knows the address that phones use to reach it (its `publicUrl`, its Tailscale name, or its Tailscale IP). Otherwise it gives the path.
+- **Compression.** When the server stores a web build, it also stores brotli and gzip copies of the larger files. A browser that accepts one of these gets it, so the 39.5 MB engine `.wasm` downloads as about 8 MB.
 - iOS and Android are not targets: they need signing identities, provisioning, and platform SDKs that the server does not manage.
 - A game in a sandboxed workspace cannot be exported: Godot runs the project's tool scripts when it opens the project, and on the server they would run outside the sandbox.
 
@@ -147,7 +152,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 
 ## Reference
 
-Every route needs the owner token or a paired device's token; nothing is public.
+Every route needs the owner token or a paired device's token, except a web build's play link (`.../play/...`). That link carries its own signed, expiring grant for one build.
 
 | Route | Purpose |
 | --- | --- |
@@ -158,7 +163,8 @@ Every route needs the owner token or a paired device's token; nothing is public.
 | `POST /godot/{projectId}/releases[?wait=first-frame]` | Publish a release of uploaded packs. |
 | `POST /godot/{projectId}/commands` | Send one command to one player and wait for its answer: `{ "command": { "name": "capture" } }`, with optional `player` and `timeoutMs`. |
 | `GET /godot/{projectId}/logs?since=&limit=&level=` | The game's log, from the newest 2,000 entries. |
-| `GET /godot/{projectId}/web/{exportId}/[file]` | A web build that `godot_export` made. The folder serves `index.html`; the path without the trailing slash redirects to the folder. `HEAD` works for files. |
+| `GET /godot/{projectId}/web/{exportId}/[file]` | A web build that `godot_export` made. The folder serves `index.html`; the path without the trailing slash redirects to the folder. `HEAD` works for files. Files come brotli- or gzip-encoded when the request accepts it. |
+| `GET /godot/{projectId}/play/{grant}/[file]` | The same build through its play link, with no credentials. Any grant that is not valid gets `404`. |
 | `PUT`, `GET /godot/{projectId}/captures/{captureId}` | A player uploads a PNG or JPEG capture; controllers read it. |
 | `WS /godot/{projectId}/link?role=player` or `?role=follower` | The live link. A player (the app's Godot pane) must first send `attach` naming `godot-pane:v1`; it then gets releases and commands and sends state, logs, and answers. A follower gets releases, players, and log lines. Either renews its access with `auth_renew`, as every device stream does; a link that does not closes when the token it opened with expires. |
 
@@ -176,5 +182,5 @@ Commands are `reload`, `run`, `stop`, `pause`, `resume`, `step`, `capture`, `inp
 ## Safety
 
 - The server checks a pack's hash, size, and header only. It never opens or runs a game. Only `godot_export` opens a project in Godot, and only in a workspace that is not sandboxed.
-- Only the owner and paired devices can publish, play, or read a game, its logs, and its captures.
+- Only the owner and paired devices can publish, play, or read a game, its logs, and its captures. The one exception is a web build's play link: it opens that one build for 24 hours to anyone who has the link.
 - Discovery never follows a link out of a checkout, and a pack an `oppi-godot.json` names must stay inside the checkout.

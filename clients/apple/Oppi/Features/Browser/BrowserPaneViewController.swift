@@ -25,7 +25,9 @@ import WebKit
 /// - The page never gets Oppi's credentials: no script message handlers, no
 ///   injected scripts, not inspectable, its own website data store apart
 ///   from Safari and Oppi's other web views, and no page at a paired
-///   server's own origin. Only http and https load; a tapped link to another
+///   server's own origin except a Godot web build's signed play link
+///   (`PaneWebAddress.refusesServerPage`), which carries its own access to
+///   that one build. Only http and https load; a tapped link to another
 ///   scheme goes through the app's opener, pop-ups load in this pane, and a
 ///   file the page cannot show is left to Safari.
 /// - A pane nobody sees (overflow, behind a zoom, collapsed) drops its web
@@ -424,7 +426,11 @@ extension BrowserPaneViewController: WKNavigationDelegate, WKUIDelegate {
         guard let target = action.request.url else { return (.cancel, preferences) }
         let isMainFrame = action.targetFrame?.isMainFrame ?? true
         if PaneWebAddress.isHTTP(target) {
-            guard !PaneWebAddress.isServerOrigin(target, servers: serverOrigins) else {
+            guard !PaneWebAddress.refusesServerPage(
+                target,
+                method: action.request.httpMethod ?? "GET",
+                servers: serverOrigins
+            ) else {
                 if isMainFrame {
                     show(
                         failure: String(localized: "Oppi Won\u{2019}t Open This Page"),

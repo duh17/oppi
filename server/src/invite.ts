@@ -8,6 +8,12 @@ import type {
   ServerConfig,
   SignedInviteEnvelopeV3,
 } from "./types.js";
+import {
+  getLocalHostname,
+  getLocalIp,
+  getTailscaleHostname,
+  getTailscaleIp,
+} from "./cli/status.js";
 import { parsePublicUrl } from "./proxy-config.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import {
@@ -18,6 +24,41 @@ import {
   resolveTlsConfig,
   validateTailscaleMaterial,
 } from "./tls.js";
+
+/** The host phones reach this server at: an override, `publicUrl`, else by TLS mode and bind. */
+export function resolveInviteHost(config: ServerConfig, hostOverride?: string): string | null {
+  if (hostOverride?.trim()) return hostOverride.trim();
+
+  if (config.publicUrl) {
+    const parsed = parsePublicUrl(config.publicUrl);
+    if (parsed.ok) return parsed.value.host;
+  }
+
+  if (config.tls?.mode === "tailscale") {
+    return getTailscaleHostname();
+  }
+
+  // Outside tailscale TLS mode a *.ts.net name cannot carry the leaf pin (see
+  // generateInvite), so phones get the Tailscale IP. The default listeners never
+  // serve the local network; only an explicit host does, and then it comes first.
+  if (config.host === undefined) return getTailscaleIp();
+  return getLocalHostname() || getLocalIp() || getTailscaleIp();
+}
+
+/**
+ * The origin this server is reached at, as an invite advertises it: `publicUrl`'s, else the
+ * invite host with the listener's scheme and port. Undefined when no host is known.
+ */
+export function advertisedOrigin(config: ServerConfig): string | undefined {
+  if (config.publicUrl) {
+    const parsed = parsePublicUrl(config.publicUrl);
+    if (parsed.ok) return parsed.value.origin;
+  }
+  const host = resolveInviteHost(config);
+  if (!host) return undefined;
+  const scheme = !config.tls?.mode || config.tls.mode === "disabled" ? "http" : "https";
+  return new URL(`${scheme}://${host.includes(":") ? `[${host}]` : host}:${config.port}`).origin;
+}
 
 export interface GeneratedInvite {
   name: string;

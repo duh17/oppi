@@ -560,9 +560,13 @@ export interface OppiGodotHost {
    */
   exportSource(projectId: string): { dir: string; name: string } | { error: string };
   /**
-   * Store a finished Web export folder (flat, with `index.html`) and return the path it is
-   * served at on this server, `/godot/<projectId>/web/<exportId>/`, to the owner and paired
-   * devices. The same bytes keep the same id.
+   * Store a finished Web export folder (flat, with `index.html`). `path` serves it to the owner
+   * and paired devices (`/godot/<projectId>/web/<exportId>/`); `link` opens that one build for
+   * anyone holding it until `expiresAt` (ms), with no other access: a full URL when the server
+   * knows the address phones reach it at, else a path on it. The same bytes keep the same id.
    */
-  adoptWebExport(projectId: string, folder: string): Promise<{ exportId: string; path: string }>;
+  adoptWebExport(
+    projectId: string,
+    folder: string,
+  ): Promise<{ exportId: string; path: string; link: string; expiresAt: number }>;
 }

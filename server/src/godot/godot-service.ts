@@ -68,7 +68,7 @@ import {
 } from "./godot-protocol.js";
 import { serveGodotToSessions, type SessionGodot } from "./godot-sessions.js";
 import { GodotStore, statKeyOf, type GodotProjectMeta } from "./godot-store.js";
-import { GodotWebExports } from "./godot-web-exports.js";
+import { GODOT_WEB_LINK_TTL_MS, GodotWebExports } from "./godot-web-exports.js";
 
 const log = createLogger({ base: { component: "godot" } });
 
@@ -101,6 +101,8 @@ export interface GodotServiceOptions {
   settleMs?: number;
   /** `auth_renew` on a link: the server's socket access deadlines. */
   renewAccess?: RenewStreamAccess;
+  /** The origin phones reach this server at, for signed links; undefined when unknown. */
+  origin?: () => string | undefined;
 }
 
 interface LiveProject {
@@ -119,6 +121,7 @@ export class GodotService implements SessionGodot {
   readonly broker: GodotLinkBroker;
   private readonly store: GodotStore;
   private readonly web: GodotWebExports;
+  private readonly origin: () => string | undefined;
   private readonly live = new Map<string, LiveProject>();
   private readonly now: () => number;
   private readonly debounceMs: number;
@@ -139,8 +142,9 @@ export class GodotService implements SessionGodot {
     this.debounceMs = options.debounceMs ?? 300;
     this.settleMs = options.settleMs ?? 250;
     this.renewAccess = options.renewAccess;
+    this.origin = options.origin ?? (() => undefined);
     this.store = new GodotStore(join(storage.getDataDir(), "godot"), this.now);
-    this.web = new GodotWebExports(join(storage.getDataDir(), "godot"));
+    this.web = new GodotWebExports(join(storage.getDataDir(), "godot"), this.now);
     this.broker = new GodotLinkBroker({ describe: (id) => this.describe(id), now: this.now });
   }
 
@@ -500,7 +504,14 @@ export class GodotService implements SessionGodot {
       adoptWebExport: async (id, folder) => {
         if (!visible(id)) throw new Error(`No game ${id} in this workspace.`);
         const exportId = await this.web.adopt(id, folder);
-        return { exportId, path: `/godot/${id}/web/${exportId}/` };
+        const expiresAt = this.now() + GODOT_WEB_LINK_TTL_MS;
+        const signed = this.web.signedPath(id, exportId, expiresAt);
+        return {
+          exportId,
+          path: `/godot/${id}/web/${exportId}/`,
+          link: `${this.origin() ?? ""}${signed}`,
+          expiresAt,
+        };
       },
     };
   }
@@ -631,8 +642,18 @@ export class GodotService implements SessionGodot {
   }
 
   /** A file of a Web build `godot_export` stored, for `GET /godot/{projectId}/web/...`. */
-  webFile(id: string, exportId: string, name: string): ReturnType<GodotWebExports["file"]> {
-    return this.web.file(id, exportId, name);
+  webFile(
+    id: string,
+    exportId: string,
+    name: string,
+    acceptEncoding?: string,
+  ): ReturnType<GodotWebExports["file"]> {
+    return this.web.file(id, exportId, name, acceptEncoding);
+  }
+
+  /** The build a signed link's grant opens now (`GET /godot/{projectId}/play/...`), if any. */
+  grantedWebExport(id: string, grant: string): string | undefined {
+    return this.web.grantedExport(id, grant);
   }
 
   /** `/godot/{projectId}/link?role=`: the link a WebSocket upgrade asks for, else undefined. */

@@ -72,13 +72,37 @@ struct PaneWebAddressTests {
     @Test func aPairedServersOwnOriginIsNoPage() throws {
         let servers = [(host: "Mac-Studio.local", port: 7749), (host: "100.64.0.7", port: 443)]
         func refused(_ address: String) throws -> Bool {
-            PaneWebAddress.isServerOrigin(try #require(URL(string: address)), servers: servers)
+            PaneWebAddress.refusesServerPage(try #require(URL(string: address)), method: "GET", servers: servers)
         }
         #expect(try refused("https://mac-studio.local:7749/files/current"))
         #expect(try refused("http://mac-studio.local.:7749/"), "either scheme, and a trailing dot")
         #expect(try refused("https://100.64.0.7/"), "https without a port is 443")
         #expect(try !refused("http://mac-studio.local:5173/"), "a dev server on the same Mac is another origin")
         #expect(try !refused("http://100.64.0.7/"), "http without a port is 80")
+    }
+
+    /// A Godot web build's signed play link opens at a paired server's origin;
+    /// nothing else there does, however much it looks like one.
+    @Test func aGodotPlayLinkIsTheOnePageAtAServersOrigin() throws {
+        let servers = [(host: "mac-studio.tail1234.ts.net", port: 7749)]
+        let origin = "https://mac-studio.tail1234.ts.net:7749"
+        let grant = "a8b5f2bbe966dbad.1794870526.RG0_x-toodG0gRNJfZn4NPB-uyBDi5gi33q9VMMrmF0"
+        func refused(_ path: String, method: String = "GET") throws -> Bool {
+            PaneWebAddress.refusesServerPage(try #require(URL(string: origin + path)), method: method, servers: servers)
+        }
+        #expect(try !refused("/godot/spark-d76024f1/play/\(grant)/"))
+        #expect(try !refused("/godot/spark-d76024f1/play/\(grant)"), "before the server's redirect to the folder")
+        #expect(try !refused("/godot/spark-d76024f1/play/\(grant)/index.html"))
+
+        #expect(try refused("/godot/spark-d76024f1/play/\(grant)/", method: "POST"), "GET only")
+        #expect(try refused("/godot/spark-d76024f1/web/a8b5f2bbe966dbad/"), "the paired clients' address")
+        #expect(try refused("/godot/spark-d76024f1/play/\(grant)/../../../sessions"))
+        #expect(try refused("/godot/spark-d76024f1/play/\(grant)/%2E%2E/%2E%2E/%2E%2E/sessions"))
+        #expect(try refused("/godot/spark-d76024f1/play/\(grant)/..%2F..%2Fsessions"))
+        #expect(try refused("/godot/../play/\(grant)/"))
+        #expect(try refused("/godot/spark-d76024f1/play/not-a-grant/"))
+        #expect(try refused("/x/godot/spark-d76024f1/play/\(grant)/"))
+        #expect(try refused("/sessions"))
     }
 
     private static func webLeaves(_ node: JSONValue, path: String) -> [(String, String)] {
