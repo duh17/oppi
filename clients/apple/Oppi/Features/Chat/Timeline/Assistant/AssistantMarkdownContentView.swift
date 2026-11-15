@@ -263,8 +263,31 @@ final class AssistantMarkdownContentView: UIView {
     /// the real width arrives.
     private var intrinsicCapturedWidth: CGFloat = -1
 
+    /// The width a host's measurement is taken at, while it runs
+    /// (`measure(atWidth:_:)`).
+    private var measuringWidth: CGFloat?
+
+    /// Runs a host's Auto Layout measurement with this view sized for
+    /// `width` instead of its bounds. Auto Layout reads a subview's height from
+    /// `intrinsicContentSize`, which follows the bounds; a row measured for a
+    /// new width (a pane opened or closed beside the chat, a rotation) still
+    /// had the old bounds, so its text and tables measured at the width before,
+    /// and the timeline kept that height for the new width: a gap under the
+    /// reply when it widened, a clipped last line when it narrowed.
+    func measure<T>(atWidth width: CGFloat, _ body: () -> T) -> T {
+        // A view never laid out keeps its first-layout path (`intrinsicCapturedWidth`).
+        guard width.isFinite, width > 0, bounds.width > 0, abs(width - bounds.width) > 0.5 else { return body() }
+        measuringWidth = width
+        invalidateIntrinsicContentSize()
+        defer {
+            measuringWidth = nil
+            invalidateIntrinsicContentSize()
+        }
+        return body()
+    }
+
     override func layoutSubviews() {
-        segmentApplier.fitTextBlocks(toWidth: bounds.width)
+        segmentApplier.fitBlocks(toWidth: bounds.width)
         super.layoutSubviews()
         guard abs(intrinsicCapturedWidth - bounds.width) > 0.5 else { return }
         intrinsicCapturedWidth = bounds.width
@@ -360,8 +383,8 @@ final class AssistantMarkdownContentView: UIView {
     }
 
     override var intrinsicContentSize: CGSize {
-        let width = bounds.width > 0 ? bounds.width : 320
-        segmentApplier.fitTextBlocks(toWidth: width)
+        let width = measuringWidth ?? (bounds.width > 0 ? bounds.width : 320)
+        segmentApplier.fitBlocks(toWidth: width)
         let size = stackView.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
@@ -378,7 +401,7 @@ final class AssistantMarkdownContentView: UIView {
         let width = targetSize.width.isFinite && targetSize.width > 0
             ? targetSize.width
             : max(1, bounds.width)
-        segmentApplier.fitTextBlocks(toWidth: width)
+        segmentApplier.fitBlocks(toWidth: width)
         let size = stackView.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,

@@ -1,0 +1,1 @@
+- **Client:** A chat reply now takes the right height when the chat's width changes, for example when a pane opens or closes beside it or you drag the divider. A reply ending in a table no longer leaves a large empty gap above its read-aloud button, and a wrapped last line is no longer hidden under the next message.

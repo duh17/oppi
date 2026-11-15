@@ -342,15 +342,22 @@ final class AssistantMarkdownSegmentApplier {
 
     /// Text blocks are sized by their host, not by their own intrinsic size
     /// (`BaselineSafeTextView.isScrollingOnlyForSizing`): it calls
-    /// `fitTextBlocks(toWidth:)` before it measures or lays out the stack, so a
+    /// `fitBlocks(toWidth:)` before it measures or lays out the stack, so a
     /// block whose text did not change is not measured again on the next
     /// streaming tick. Set before the first apply.
     var sizesTextBlocks = false
 
-    func fitTextBlocks(toWidth width: CGFloat) {
-        guard sizesTextBlocks else { return }
-        for textView in textViews.values {
-            textView.fitHeight(toWidth: width)
+    /// Sizes the stack's width-dependent blocks for `width` before the host
+    /// measures or lays out the stack: its text blocks (when it sizes them)
+    /// and its tables, whose columns and wrapped rows follow the width.
+    func fitBlocks(toWidth width: CGFloat) {
+        if sizesTextBlocks {
+            for textView in textViews.values {
+                textView.fitHeight(toWidth: width)
+            }
+        }
+        for tableView in tableViews.values {
+            tableView.fit(toWidth: width)
         }
     }
 

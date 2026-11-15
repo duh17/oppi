@@ -135,11 +135,23 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
         verticalFittingPriority: UILayoutPriority
     ) -> CGSize {
-        let fitted = super.systemLayoutSizeFitting(
-            targetSize,
-            withHorizontalFittingPriority: horizontalFittingPriority,
-            verticalFittingPriority: verticalFittingPriority
-        )
+        // The Markdown is measured at the width it gets inside this row's
+        // chrome at `targetSize`, not at the width its bounds still hold
+        // from the layout before (`AssistantMarkdownContentView.measure`).
+        // Only a measurement pinned to a width has one to measure at.
+        let card = currentConfiguration.chromeStyle.assistantBubble
+        let markdownWidth = horizontalFittingPriority == .required
+            ? targetSize.width
+                - card.margins.leading - card.margins.trailing
+                - card.padding.leading - card.padding.trailing
+            : 0
+        let fitted = markdownView.measure(atWidth: markdownWidth) {
+            super.systemLayoutSizeFitting(
+                targetSize,
+                withHorizontalFittingPriority: horizontalFittingPriority,
+                verticalFittingPriority: verticalFittingPriority
+            )
+        }
 
         let fallbackWidth = targetSize.width.isFinite ? targetSize.width : bounds.width
         let width = fitted.width.isFinite && fitted.width > 0 ? fitted.width : max(1, fallbackWidth)

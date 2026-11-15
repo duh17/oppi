@@ -1060,8 +1060,19 @@ final class NativeTableBlockView: UIView {
             : max(1, bounds.width)
         // The height depends on the width the columns are fit to: plan for the
         // width being measured, not the last one laid out.
-        if replanIfNeeded(forWidth: width) { cachedTableHeight = nil }
+        fit(toWidth: width)
         return CGSize(width: width, height: cachedOrMeasureTableHeight())
+    }
+
+    /// Plans the columns for `width`, so the next intrinsic height is the
+    /// height there: a host measuring for a new width calls it before its
+    /// bounds change (`AssistantMarkdownSegmentApplier.fitBlocks`).
+    func fit(toWidth width: CGFloat) {
+        guard width.isFinite, width > 0 else { return }
+        if replanIfNeeded(forWidth: width) {
+            cachedTableHeight = nil
+            invalidateIntrinsicContentSize()
+        }
     }
 
     private func cachedOrMeasureTableHeight() -> CGFloat {
