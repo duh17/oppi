@@ -1,8 +1,9 @@
 import UIKit
 
-// Open Here, Open in New Pane and Open in Pane ▸ on every file link and file
-// row (build plan §1.6 rule 4). Each surface keeps its own open (a tap, its
-// menu's Open) as Open Here and says what the item is (`PaneOpenContent`);
+// Open Here, Open in New Pane (to the right or below) and Open in Pane ▸ on
+// every file, folder and web link and file row (build plan §1.6 rule 4).
+// Each surface keeps its own open (a tap, its menu's Open) as Open Here and
+// says what the item is (`PaneOpenContent`);
 // `PaneOpenMenu` builds the items, their accessibility actions and the opens
 // from the pane the item sits in. A compact window, or a screen outside the
 // panes (a sheet), offers none of them: the window has one pane there
@@ -12,8 +13,8 @@ import UIKit
 enum PaneOpenPlacement: Hashable {
     /// The surface's own open, as a tap does.
     case here
-    /// A new pane to the right of the item's pane.
-    case newPane
+    /// A new pane at this edge of the item's pane: `.right` or `.bottom`.
+    case newPane(PaneEdge)
     /// Another pane of the window, in place of what it shows.
     case pane(PaneID)
 }
@@ -40,17 +41,37 @@ struct PaneOpenContent {
             ?? PaneStackEntry(serverId: target.serverId, route: .local(PaneLocalToken(raw: "file/\(UUID().uuidString)")))
     }
 
+    /// A folder in the File Browser; a worktree's folder has no link, so its
+    /// entry stands in for the screen as a chat's file does.
+    @MainActor
+    init(folder target: FileBrowserNavTarget) {
+        let element = WorkspaceStackRouteElement.fileBrowser(target)
+        self.element = element
+        entry = PaneEntries.entry(for: element)
+            ?? PaneStackEntry(serverId: target.serverId, route: .local(PaneLocalToken(raw: "folder/\(UUID().uuidString)")))
+    }
+
     /// The scoped lock that holds the item.
     @MainActor
     var lockTarget: ScopedLockTarget {
-        if case .linkedFile(let target)? = element { return WorkspaceLinkedFileViewController.lockTarget(for: target) }
-        return PaneEntries.lockTarget(entry)
+        switch element {
+        case .linkedFile(let target)?:
+            return WorkspaceLinkedFileViewController.lockTarget(for: target)
+        case .fileBrowser(let target)?:
+            if case .workspace(let workspaceId, _) = target.scope {
+                return .workspace(serverId: target.serverId, workspaceId: workspaceId)
+            }
+            return .server(target.serverId)
+        default:
+            return PaneEntries.lockTarget(entry)
+        }
     }
 }
 
 /// What an item menu offers from one pane: whether Open in New Pane can make
-/// a pane and whether that pane opens full by the fit rule (build plan
-/// §1.3), and the panes Open in Pane ▸ lists. Nil on a compact window.
+/// a pane to the right or below, and whether that pane opens full by the fit
+/// rule (build plan §1.3), and the panes Open in Pane ▸ lists. Nil on a
+/// compact window.
 struct PaneOpenChoices: Equatable {
     struct Target: Equatable {
         let id: PaneID
@@ -65,8 +86,11 @@ struct PaneOpenChoices: Equatable {
         case full
     }
 
-    /// Nil when the window already holds its most panes.
-    var newPane: NewPane?
+    /// A new pane to the item's pane's right; nil when the window already
+    /// holds its most panes.
+    var right: NewPane?
+    /// A new pane below the item's pane; nil as `right` is.
+    var below: NewPane?
     /// The other panes that take a file, in tree order: a split leaf shows
     /// it in place of its screen, the routed leaf pushes it.
     var targets: [Target]
@@ -100,21 +124,31 @@ struct PaneOpenChoices: Equatable {
     ) -> Self? {
         guard isWide, cells.leaf(source) != nil else { return nil }
         let targets = cells.leaves.filter { $0.id != source && takesFile($0) }.map { Target(id: $0.id, title: title($0.id)) }
-        guard canAddPane else { return Self(newPane: nil, targets: targets) }
-        return Self(newPane: fits(beside: source, in: cells, presentation: presentation) ? .beside : .full, targets: targets)
+        guard canAddPane else { return Self(right: nil, below: nil, targets: targets) }
+        func newPane(_ edge: PaneEdge) -> NewPane {
+            fits(edge, of: source, in: cells, presentation: presentation) ? .beside : .full
+        }
+        return Self(right: newPane(.right), below: newPane(.bottom), targets: targets)
     }
 
-    /// Whether a document opened beside `source`, focused as Open in New
-    /// Pane leaves it, keeps every pane shown now on screen.
-    private static func fits(beside source: PaneID, in cells: PaneLayout, presentation: (PaneLayout) -> PanePresentation) -> Bool {
+    /// Whether `route` opened at `edge` of `source` (`.right` or `.bottom`),
+    /// focused as Open in New Pane leaves it, keeps every pane shown now on
+    /// screen.
+    static func fits(
+        _ edge: PaneEdge,
+        of source: PaneID,
+        in cells: PaneLayout,
+        showing route: PaneRoute = .file(.host, path: "", line: nil),
+        presentation: (PaneLayout) -> PanePresentation
+    ) -> Bool {
         guard let probeID = (1...PaneLayout.maximumLeaves + 1).lazy.compactMap({ PaneID("open-\($0)") })
             .first(where: { cells.leaf($0) == nil }) else { return false }
         let probe = PaneLeaf(
             id: probeID, name: nil,
-            stack: [PaneStackEntry(serverId: "", route: .file(.host, path: "", line: nil))],
+            stack: [PaneStackEntry(serverId: "", route: route)],
             attachedTo: nil, origin: .split
         )
-        guard let opened = try? cells.split(source, axis: .row, inserting: probe).focusing(probeID) else { return false }
+        guard let opened = try? cells.split(source, axis: edge.axis, inserting: probe).focusing(probeID) else { return false }
         let before = presentation(cells)
         let after = presentation(opened)
         let shownBefore = Set(before.frames.keys)
@@ -130,9 +164,12 @@ enum PaneOpenMenu {
     /// Empty on a compact window and outside the panes. `includesOpenHere`
     /// is false where the surface's own menu already has its Open, or where
     /// the item is already shown here (a reader's own file).
+    /// `offersOtherPanes` is false for a web page, which no pane but a new
+    /// one takes.
     static func items(
         near view: UIView,
         includesOpenHere: Bool = true,
+        offersOtherPanes: Bool = true,
         open: @escaping @MainActor (PaneOpenPlacement) -> Void
     ) -> [PaneMenuItem] {
         guard let (host, cell) = locate(view), let choices = host.openChoices(from: cell) else { return [] }
@@ -144,14 +181,21 @@ enum PaneOpenMenu {
                 run: { open(.here) }
             ))
         }
-        if choices.newPane != nil {
+        if choices.right != nil {
             items.append(PaneMenuItem(
-                title: String(localized: "Open in New Pane"), symbol: "rectangle.split.2x1",
-                actionName: String(localized: "Open in New Pane"), identifier: "pane.open.newPane",
-                run: { open(.newPane) }
+                title: String(localized: "Open in New Pane to the Right"), symbol: "rectangle.split.2x1",
+                actionName: String(localized: "Open in New Pane to the Right"), identifier: "pane.open.newPane.right",
+                run: { open(.newPane(.right)) }
             ))
         }
-        if !choices.targets.isEmpty {
+        if choices.below != nil {
+            items.append(PaneMenuItem(
+                title: String(localized: "Open in New Pane Below"), symbol: "rectangle.split.1x2",
+                actionName: String(localized: "Open in New Pane Below"), identifier: "pane.open.newPane.below",
+                run: { open(.newPane(.bottom)) }
+            ))
+        }
+        if offersOtherPanes, !choices.targets.isEmpty {
             items.append(PaneMenuItem(
                 title: String(localized: "Open in Pane"), symbol: "rectangle.on.rectangle",
                 actionName: String(localized: "Open in Pane"), identifier: "pane.open.inPane",
@@ -172,9 +216,10 @@ enum PaneOpenMenu {
     static func section(
         near view: UIView,
         includesOpenHere: Bool = true,
+        offersOtherPanes: Bool = true,
         open: @escaping @MainActor (PaneOpenPlacement) -> Void
     ) -> UIMenu? {
-        let items = items(near: view, includesOpenHere: includesOpenHere, open: open)
+        let items = items(near: view, includesOpenHere: includesOpenHere, offersOtherPanes: offersOtherPanes, open: open)
         return items.isEmpty ? nil : UIMenu(options: .displayInline, children: items.map(\.element))
     }
 
@@ -314,9 +359,9 @@ extension PaneHostController {
         switch placement {
         case .here:
             return
-        case .newPane:
-            guard let newPane = choices.newPane,
-                  let made = panes.open(content.entry, besideCell: source, full: newPane == .full) else { return }
+        case .newPane(let edge):
+            guard let newPane = edge == .bottom ? choices.below : choices.right,
+                  let made = panes.open(content.entry, at: edge, ofCell: source, full: newPane == .full) else { return }
             openingScreens[made] = screen()
             syncSplitLeaves()
             openingScreens[made] = nil

@@ -52,6 +52,12 @@ final class PaneRestorePreviewController: PreviewRootController {
         }
         let root = AppRootEnvironment.preview(coordinator: Self.makeCoordinator())
         root.navigation.app.revealPairedServerShell()
+        // The fixture server answers HTTP in process but has no live transport
+        // to switch to: a tapped file or folder link opens on it as on a
+        // connected server.
+        root.opener._serverReadyForTesting = { serverId in
+            root.coordinator.serverStore.server(for: serverId) != nil && serverId != Self.offlineServerId
+        }
         self.root = root
         super.init(root: root, themeStore: root.themeStore, content: WorkspaceShellController(root: root))
     }
@@ -76,6 +82,10 @@ final class PaneRestorePreviewController: PreviewRootController {
         }
         panes.connect(scene: scene)
         panes.restore(navigation: root.navigation, coordinator: root.coordinator)
+        // The app's launch tells its opener the scene is in front and launch
+        // is over (`OppiApp`); without that every open but a web link parks.
+        root.opener.sceneDidBecomeActive()
+        root.opener.launchDidFinish()
         keepChatsSeeded()
     }
 

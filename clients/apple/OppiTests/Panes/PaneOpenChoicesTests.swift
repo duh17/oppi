@@ -53,12 +53,15 @@ struct PaneOpenChoicesTests: PaneFixtureBuilding {
         // 375 + 1 + 360 = 736 of the mini's 744 pt.
         let cells = PaneLayout(single: leaf("chat"))
         let offered = choices(cells, from: "chat", width: 744)
-        #expect(offered == PaneOpenChoices(newPane: .beside, targets: []))
+        #expect(offered == PaneOpenChoices(right: .beside, below: .beside, targets: []))
     }
 
+    /// Each edge has its own fit: too narrow for a file to the right, the
+    /// window is tall enough for one below.
     @Test func aPaneTooNarrowForBothOpensTheNewOneFull() {
         let cells = PaneLayout(single: leaf("chat"))
-        #expect(choices(cells, from: "chat", width: 700)?.newPane == .full)
+        #expect(choices(cells, from: "chat", width: 700)?.right == .full)
+        #expect(choices(cells, from: "chat", width: 700)?.below == .beside)
     }
 
     /// The fit rule weighs the whole window, not the pane's share now: the
@@ -66,14 +69,14 @@ struct PaneOpenChoicesTests: PaneFixtureBuilding {
     /// still takes a file beside it; with the sidebar's 320 pt gone it does not.
     @Test func theFitRuleCountsWhatOtherPanesCanGiveUp() {
         let cells = row([(leaf("chat"), 0.5), (leaf("b", files), 0.5)])
-        #expect(choices(cells, from: "b", width: 1133)?.newPane == .beside)
-        #expect(choices(cells, from: "b", width: 813)?.newPane == .full)
+        #expect(choices(cells, from: "b", width: 1133)?.right == .beside)
+        #expect(choices(cells, from: "b", width: 813)?.right == .full)
     }
 
     @Test func overTheLivePaneCapTheNewPaneOpensFull() {
         let cells = row([(leaf("chat"), 0.25), (leaf("b", files), 0.25), (leaf("c", files), 0.25), (leaf("d", files), 0.25)])
-        #expect(choices(cells, from: "chat", width: 2400, liveCap: 4)?.newPane == .full)
-        #expect(choices(cells, from: "chat", width: 2400, liveCap: 5)?.newPane == .beside)
+        #expect(choices(cells, from: "chat", width: 2400, liveCap: 4)?.right == .full)
+        #expect(choices(cells, from: "chat", width: 2400, liveCap: 5)?.right == .beside)
     }
 
     @Test func openInPaneListsEveryOtherPaneInTreeOrder() {
@@ -112,7 +115,7 @@ struct PaneOpenChoicesTests: PaneFixtureBuilding {
     @Test func aWindowAtItsMostPanesStillOpensInTheOthers() {
         let cells = row(("chat", 0.5), ("b", 0.5))
         let offered = choices(cells, from: "chat", width: 1133, canAddPane: false)
-        #expect(offered?.newPane == nil)
+        #expect(offered?.right == nil && offered?.below == nil)
         #expect(offered?.targets.map(\.id) == [id("b")])
     }
 }

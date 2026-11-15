@@ -334,15 +334,15 @@ final class ScenePanes {
         standIns[token] = element
     }
 
-    /// Open in New Pane: `entry` in a new leaf to the right of `id`, focused,
-    /// filling the window when `full` (the fit rule: it cannot sit beside
-    /// it). Undo takes it back. Returns the new leaf's id.
+    /// Open in New Pane: `entry` in a new leaf at `edge` of `id` (`.right` or
+    /// `.bottom`), focused, filling the window when `full` (the fit rule: it
+    /// cannot sit beside it). Undo takes it back. Returns the new leaf's id.
     @discardableResult
-    func open(_ entry: PaneStackEntry, besideCell id: PaneID, full: Bool) -> PaneID? {
-        guard tree.leaves.count < PaneLayout.maximumLeaves else { return nil }
+    func open(_ entry: PaneStackEntry, at edge: PaneEdge = .right, ofCell id: PaneID, full: Bool) -> PaneID? {
+        guard edge.isTrailing, tree.leaves.count < PaneLayout.maximumLeaves else { return nil }
         let leaf = PaneLeaf(id: freshLeafID(), name: nil, stack: [entry], attachedTo: nil, origin: .split)
         undoable(Self.openAction) { cells in
-            let opened = try cells.split(id, axis: .row, inserting: leaf).focusing(leaf.id)
+            let opened = try cells.split(id, axis: edge.axis, inserting: leaf).focusing(leaf.id)
             return full ? try opened.zoom(leaf.id) : opened
         }
         return tree.leaf(leaf.id) == nil ? nil : leaf.id

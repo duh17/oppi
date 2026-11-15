@@ -23,7 +23,7 @@ final class FileBrowserShareUITests: XCTestCase, PreviewUITestCase {
     /// stands in for it, with Open in New Pane beside it (`PaneOpenMenu`).
     private var rowOpenAction: XCUIElement { app.buttons["fileBrowser.rowMenu.open"].firstMatch }
     private var openHereAction: XCUIElement { app.buttons["pane.open.here"].firstMatch }
-    private var openInNewPaneAction: XCUIElement { app.buttons["pane.open.newPane"].firstMatch }
+    private var openInNewPaneAction: XCUIElement { app.buttons["pane.open.newPane.right"].firstMatch }
     private var openAction: XCUIElement { isPad ? openHereAction : rowOpenAction }
     private var paneItems: XCUIElementQuery {
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.open.'"))

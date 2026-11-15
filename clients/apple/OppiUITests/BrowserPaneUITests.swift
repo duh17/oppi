@@ -37,8 +37,8 @@ final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
         }
     }
 
-    /// A link tapped in the chat opens its page in a pane beside the chat in
-    /// portrait (the chat at its 375 pt minimum), the chat stays where it
+    /// A link tapped in the chat opens its page in a pane below the chat in
+    /// portrait, where a tall window has its room, the chat stays where it
     /// was, and turning to landscape keeps both.
     func testAChatLinkOpensItsPageBesideTheChat() throws {
         try startPages()
@@ -59,8 +59,8 @@ final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
             XCTAssertTrue(waitFor((window.frame.width > window.frame.height) == (orientation != .portrait)))
             hold()
             let composer = app.descendants(matching: .any)["chat.input"]
-            XCTAssertTrue(composer.isHittable, "The chat stays beside the page")
-            XCTAssertLessThanOrEqual(composer.frame.maxX, pane.frame.minX + 1, "The page sits after the chat")
+            XCTAssertTrue(composer.isHittable, "The chat stays above the page")
+            XCTAssertLessThanOrEqual(composer.frame.maxY, pane.frame.minY + 1, "The page sits below the chat")
             XCTAssertEqual(pane.frame.maxX, window.frame.maxX, accuracy: 1)
             attachScreenCapture("chat-link-\(orientation == .portrait ? "portrait" : "landscape")")
         }

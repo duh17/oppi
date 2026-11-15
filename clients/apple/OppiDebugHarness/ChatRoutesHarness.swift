@@ -731,10 +731,11 @@ enum ChatRoutesFixture {
         for turn in 1...4 {
             events.append(traceEvent(id: "chat-routes-assistant-\(turn)", type: .assistant, text: "ROUTES_FILL_\(turn) reply."))
         }
-        // Two file links, for the link menu's panes (`PaneLinkMenuUITests`).
+        // Two file links and a folder link, for the link menu's panes and
+        // where a tapped link opens (`PaneLinkMenuUITests`).
         events.append(traceEvent(
             id: "chat-routes-assistant-links", type: .assistant,
-            text: "The routes are in [[Route.md]], the first entry in [[Alpha.txt]]."
+            text: "The routes are in [[Route.md]], the first entry in [[Alpha.txt]].\n\nViews: [Sources](Sources/)."
         ))
         if let turns = environment["CHAT_ROUTES_LONG_TURNS"].flatMap(Int.init) {
             events += longSessionEvents(turns: turns)

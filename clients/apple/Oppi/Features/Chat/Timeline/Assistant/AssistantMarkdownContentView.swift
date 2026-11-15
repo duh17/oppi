@@ -506,24 +506,31 @@ enum MarkdownLinkInteractionSupport {
             shareWebLink(normalizedURL, textView)
         }
 
+        // The page's own open (what a tap does) stands in for Open Here.
         return UITextItem.MenuConfiguration(
-            menu: UIMenu(children: [openAction, copyAction, shareAction])
+            menu: withPaneItems(request, defaultMenu: UIMenu(children: [openAction, copyAction, shareAction]), textView: textView)
         )
     }
 
-    /// A file link's menu: Open Here, Open in New Pane and Open in Pane ▸
-    /// above the system's items, on a window wide enough for panes. Open
-    /// Here is the tap's open.
+    /// A file, folder or web link's menu: Open Here (a file or folder in the
+    /// main pane), Open in New Pane to the Right or Below, and for a file or
+    /// folder Open in Pane ▸, above the system's items, on a window wide
+    /// enough for panes. A tap opens it beside the chat where there is room
+    /// (`PaneLinkPlacement`).
     private static func withPaneItems(_ request: AppOpenRequest?, defaultMenu: UIMenu, textView: UITextView) -> UIMenu {
-        guard let request, AppOpener.opensInPane(request),
-              let section = PaneOpenMenu.section(near: textView, open: { [weak textView] placement in
-                  guard let textView, let opener = AppRootEnvironment.near(textView)?.opener else { return }
-                  guard placement != .here else {
-                      opener.open(request)
-                      return
-                  }
-                  PaneOpenMenu.open(placement, from: textView) { await opener.paneContent(for: request) }
-              }) else { return defaultMenu }
+        guard let request, AppOpener.opensInPane(request) else { return defaultMenu }
+        let isWebPage = if case .webLink = request { true } else { false }
+        guard let section = PaneOpenMenu.section(
+            near: textView, includesOpenHere: !isWebPage, offersOtherPanes: !isWebPage,
+            open: { [weak textView] placement in
+                guard let textView, let opener = AppRootEnvironment.near(textView)?.opener else { return }
+                guard placement != .here else {
+                    opener.open(request, inMainPane: true)
+                    return
+                }
+                PaneOpenMenu.open(placement, from: textView) { await opener.paneContent(for: request) }
+            }
+        ) else { return defaultMenu }
         return UIMenu(children: [section] + defaultMenu.children)
     }
 }

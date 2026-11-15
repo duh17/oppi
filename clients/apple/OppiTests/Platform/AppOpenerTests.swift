@@ -1951,6 +1951,53 @@ struct AppOpenerTests {
         #expect(AppOpenRequest(url: loopback, origin: .externalURL) == .invalidLink(loopback))
     }
 
+    /// A chat link opens as what it names: a file in the file viewer, a
+    /// folder (no file has its name) in the File Browser at that folder, and
+    /// a web page in the browser. A name the checkout has neither of opens
+    /// nothing.
+    @Test func aLinkOpensAsTheFileFolderOrPageItNames() async throws {
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
+        harness.connection("server-a").workspaceStore.workspaces = [makeTestWorkspace(id: "w1")]
+        harness.listings.withLock {
+            $0 = [
+                "/workspaces/w1/contents": #"""
+                {"path":"","truncated":false,"entries":[
+                {"name":"Sources","path":"Sources/","type":"directory","size":0,"modifiedAt":0},
+                {"name":"Route.md","path":"Route.md","type":"file","size":4,"modifiedAt":0}]}
+                """#,
+                "/workspaces/w1/contents/Sources": #"{"path":"Sources/","truncated":false,"entries":[]}"#,
+            ]
+        }
+        func open(_ path: String) async {
+            harness.opener.open(.resourceReference(ResourceReference(
+                target: path, sourceServerID: "server-a", workspaceID: "w1", sourceSessionID: nil, fileCandidatePath: path
+            )))
+            await harness.settle()
+        }
+
+        await open("Route.md")
+        guard case .linkedFile(let file)? = harness.navigation.workspaceStackRouteElements.last,
+              case .workspaceFile(let path, _) = file.kind else {
+            Issue.record("no file opened: \(harness.navigation.workspaceStackRouteElements)")
+            return
+        }
+        #expect(path == "Route.md")
+
+        await open("Sources/")
+        #expect(harness.navigation.workspaceStackRouteElements.last
+            == .fileBrowser(FileBrowserNavTarget(serverId: "server-a", workspaceId: "w1", path: "Sources/")))
+
+        let before = harness.navigation.workspaceStackRouteElements
+        await open("Missing/")
+        #expect(harness.navigation.workspaceStackRouteElements == before, "nothing by that name")
+
+        let page = try #require(URL(string: "https://example.com/docs"))
+        harness.opener._browserLinkPreferenceForTesting = .inApp
+        harness.opener.open(.webLink(page))
+        await harness.settle()
+        #expect(harness.recorder.browserURLs == [page])
+    }
+
     @Test func webLinkAndSystemLinkNeverWaitForLaunch() async throws {
         let harness = await OpenerHarness(servers: [], launch: false)
         let web = try #require(URL(string: "https://example.com/docs"))
@@ -2038,8 +2085,10 @@ private final class OpenerHarness {
     /// Configured connections of the servers paired at init, not yet seeded.
     private var configuredConnections: [String: ServerConnection] = [:]
     private let traceRequests = OSAllocatedUnfairLock(initialState: 0)
-    /// The fixture's network: every request fails, and the handler ends with the harness.
+    /// The fixture's network: every request fails but these directory
+    /// listings (JSON by request path), and the handler ends with the harness.
     private let networkRoutes: TestURLProtocol.RouteScope
+    let listings = OSAllocatedUnfairLock(initialState: [String: String]())
 
     /// Timeline prefetches (`…/trace-page` requests) the fixture's network saw.
     var traceReads: Int { traceRequests.withLock { $0 } }
@@ -2104,7 +2153,11 @@ private final class OpenerHarness {
         )
         self.opener = opener
         let traceRequests = traceRequests
+        let listings = listings
         networkRoutes = TestURLProtocol.routeScope { request in
+            if let path = request.url?.path, let json = listings.withLock({ $0[path.hasSuffix("/") ? String(path.dropLast()) : path] }) {
+                return try mockJSONResponse(json: json, for: request)
+            }
             if request.url?.path.hasSuffix("/trace-page") == true {
                 traceRequests.withLock { $0 += 1 }
             }

@@ -12,48 +12,16 @@ extension PaneHostController {
         return containing(screen)
     }
 
-    /// Opens `url` beside the focused pane: in the browser pane that is its
-    /// companion (the next pane in its split, or the one before when it is
-    /// last), else in a new pane after it, which takes focus. A companion
-    /// showing anything else keeps it: replacing a Files or chat pane with a
-    /// page on every tapped link would lose that pane's place. False on a
-    /// compact window, when the window holds all the panes it can, or when the
-    /// focused pane's server turned its Web Pages in Panes switch off.
+    /// Opens `url` in a pane beside the focused one, where a tapped link's
+    /// page goes (`openLink`): a web page pane already open loads it in
+    /// place. False when it belongs in Safari's sheet: on a compact window,
+    /// with no room for a pane, or when the focused pane's server turned its
+    /// Web Pages in Panes switch off.
     @discardableResult
     func openBrowser(_ url: URL) -> Bool {
-        guard AdaptiveWidth.isWide(traitCollection) else { return false }
-        let source = focusedCell
-        let serverId = panes.context(of: source).serverId
-        guard AppRootEnvironment.near(self)?.coordinator.server(serverId, offers: .browserPane) ?? true else {
-            return false
-        }
-        let entry = PaneStackEntry(serverId: serverId, route: .browser(url))
-        if let companion = browserCompanion(of: source) {
-            if let browser = frontScreen(ofCell: companion) as? BrowserPaneViewController {
-                browser.open(url)
-            } else {
-                panes.show(entry, in: companion)
-                syncSplitLeaves()
-            }
-            focus(cell: companion)
-            return true
-        }
-        guard canSplit, let made = panes.split(source, edge: .right, showing: entry) else { return false }
-        syncSplitLeaves()
-        focus(cell: made)
-        UIAccessibility.post(notification: .layoutChanged, argument: nil)
-        return true
-    }
-
-    /// The pane beside `id` in its split when it shows a web page.
-    private func browserCompanion(of id: PaneID) -> PaneID? {
-        let cells = panes.cellLayout
-        guard let path = cells.root.path(of: id), let index = path.last,
-              case .split(_, let children, _)? = cells.root.node(at: Array(path.dropLast())) else { return nil }
-        let neighbour = index + 1 < children.count ? index + 1 : index - 1
-        guard children.indices.contains(neighbour), case .leaf(let leaf) = children[neighbour],
-              case .browser? = leaf.stack.last?.route else { return nil }
-        return leaf.id
+        let serverId = panes.context(of: focusedCell).serverId
+        guard AppRootEnvironment.near(self)?.coordinator.server(serverId, offers: .browserPane) ?? true else { return false }
+        return openLink(PaneOpenContent(entry: PaneStackEntry(serverId: serverId, route: .browser(url))), kind: .webPage)
     }
 
     /// A split leaf's screen moved on by itself to `entry`: the tree records

@@ -633,4 +633,55 @@ struct PaneTreeHostTests {
         for _ in 0..<(ScenePanes.undoDepth + 2) { host.act { host.panes.swap(first, with: second) } }
         #expect(host.scenePanes.undoSteps.count == ScenePanes.undoDepth)
     }
+
+    /// A tapped file link opens beside the chat, to its right in landscape
+    /// and below it in portrait, focused; a second file link replaces what
+    /// that pane shows. A terminal in that pane is never replaced: the next
+    /// link gets a pane of its own. With Split Panes off, the link is the
+    /// main pane's again.
+    @Test(arguments: [(CGSize(width: 1133, height: 744), PaneAxis.row), (CGSize(width: 744, height: 1133), .column)])
+    func aTappedFileLinkOpensBesideTheChatAndTheNextReusesItsPane(size: CGSize, axis: PaneAxis) throws {
+        let host = PaneTestHost(width: size.width, height: size.height, inNavigation: true)
+        defer { host.hide() }
+        let routed = host.scenePanes.routedLeafID
+        let file = { (path: String) in
+            PaneOpenContent(entry: PaneStackEntry(serverId: "s", route: .file(.host, path: path, line: nil)))
+        }
+
+        var opened = false
+        host.act { opened = host.panes.openLink(file("/tmp/a.md"), kind: .file) }
+        #expect(opened)
+        let pane = try #require(host.scenePanes.splitLeaves.first?.id)
+        guard case .split(let splitAxis, let children, _) = host.scenePanes.cellLayout.root else {
+            Issue.record("no split: \(host.scenePanes.cellLayout.root)")
+            return
+        }
+        #expect(splitAxis == axis)
+        #expect(children.map(\.leaves.first?.id) == [routed, pane], "after the chat")
+        #expect(host.scenePanes.cellLayout.focus == pane, "the file's pane has focus")
+        let frame = try #require(leafView(host, pane)).frame
+        #expect(axis == .row ? frame.minX > 0 : frame.minY > 0)
+
+        host.act {
+            host.panes.focus(cell: routed)
+            _ = host.panes.openLink(file("/tmp/b.md"), kind: .file)
+        }
+        #expect(host.scenePanes.splitLeaves.map(\.id) == [pane], "no second pane")
+        #expect(host.scenePanes.topEntry(of: pane).route == .file(.host, path: "/tmp/b.md", line: nil))
+
+        let terminal = PaneStackEntry(serverId: "s", route: .local(PaneLocalScreen.terminal(workspaceId: "w").token))
+        host.act {
+            host.scenePanes.show(terminal, in: pane)
+            host.panes.focus(cell: routed)
+            _ = host.panes.openLink(file("/tmp/c.md"), kind: .file)
+        }
+        #expect(host.scenePanes.topEntry(of: pane) == terminal, "the terminal keeps its pane")
+        #expect(host.scenePanes.splitLeaves.count == 2, "the file got a pane of its own")
+
+        host.act {
+            host.scenePanes.splitsEnabled = false
+            host.panes.updatePropertiesIfNeeded()
+        }
+        #expect(!host.panes.openLink(file("/tmp/d.md"), kind: .file), "Split Panes off: the main pane opens it")
+    }
 }

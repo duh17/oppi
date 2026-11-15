@@ -144,7 +144,7 @@ extension AppOpener {
             return .unreachable
         }
         await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
-            guard let self else { return }
+            guard let self, !openBesideFocusedPane(PaneOpenContent(file: target), kind: .file) else { return }
             NotificationCenter.default.post(
                 name: .workspaceLinkedFileWillOpen,
                 object: target.sourceSessionId,
@@ -204,6 +204,12 @@ extension AppOpener {
         case .authorizationFailed:
             toast("Could not authorize host file [[\(reference.target)]]")
         case .resolution(.unresolved(let target)):
+            // No file by that name: a folder opens in the File Browser.
+            if let folder = await folderTarget(for: reference) {
+                guard isCurrent(generation) else { return .finished }
+                return await openFolder(folder, generation: generation)
+            }
+            guard isCurrent(generation) else { return .finished }
             toast("Could not resolve [[\(target)]]")
         case .resolution(.resolved(let match)):
             return await openResourceReferenceMatch(
@@ -260,7 +266,7 @@ extension AppOpener {
 
         let scopes: [(serverID: String, connection: ServerConnection)]
         if let sourceServerID = reference.sourceServerID {
-            guard let connection = coordinator.connection(for: sourceServerID) else {
+            guard let connection = sourceConnection(of: reference) else {
                 return .unavailable
             }
             scopes = [(sourceServerID, connection)]
@@ -306,7 +312,7 @@ extension AppOpener {
 
         let scopes: [(serverID: String, connection: ServerConnection, workspace: Workspace)]
         if let sourceServerID = reference.sourceServerID {
-            guard let connection = coordinator.connection(for: sourceServerID),
+            guard let connection = sourceConnection(of: reference),
                   let workspace = connection.workspaceStore.workspaces.first(where: { $0.id == workspaceID }) else {
                 return .unavailable
             }
@@ -488,9 +494,11 @@ extension AppOpener {
 
             await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
                 guard let self else { return }
+                let target = Self.linkedFileTarget(file, reference: reference)
+                guard !openBesideFocusedPane(PaneOpenContent(file: target), kind: .file) else { return }
                 postWorkspaceLinkedFileWillOpen(reference: reference)
                 navigation.openReferencedWorkspaceLinkedFile(
-                    Self.linkedFileTarget(file, reference: reference),
+                    target,
                     workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace),
                     sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
                         reference.sourceServerID.map { sourceServerID in
@@ -521,11 +529,13 @@ extension AppOpener {
 
             await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
                 guard let self else { return }
+                let target = Self.linkedFileTarget(file, reference: reference)
+                guard !openBesideFocusedPane(PaneOpenContent(file: target), kind: .file) else { return }
                 postWorkspaceLinkedFileWillOpen(reference: reference)
                 // Host files stay on the current stack. Do not select another
                 // workspace or pretend the file lives in this checkout.
                 navigation.openReferencedWorkspaceLinkedFile(
-                    Self.linkedFileTarget(file, reference: reference),
+                    target,
                     sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
                         reference.sourceServerID.map { sourceServerID in
                             WorkspaceSessionNavTarget(
@@ -573,14 +583,15 @@ extension AppOpener {
 
     // MARK: - Opening in a pane
 
-    /// Whether a link names a file or folder an item menu can open in a pane
-    /// (`PaneOpenMenu`): a `[[path]]`, a session's file, a `file://` link,
-    /// or an `oppi://file` or `oppi://files` link.
+    /// Whether a link names a file, folder or web page an item menu can open
+    /// in a pane (`PaneOpenMenu`): a `[[path]]`, a session's file, a
+    /// `file://` link, an `oppi://file` or `oppi://files` link, or an
+    /// http(s) page.
     nonisolated static func opensInPane(_ request: AppOpenRequest) -> Bool {
         switch request {
         case .resourceReference(let reference):
             return reference.fileCandidatePath?.isEmpty == false
-        case .sessionFile, .fileLink:
+        case .sessionFile, .fileLink, .webLink:
             return true
         case .pane(let link, _):
             switch link.route {
@@ -593,21 +604,27 @@ extension AppOpener {
     }
 
     /// What a link opens as in a pane, found as a tap finds it: a `[[path]]`
-    /// resolves against its checkout (a file only; an ambiguous one is
-    /// left to the tap's chooser). Nil when it names no file this device
-    /// can open.
+    /// resolves against its checkout (a file, else a folder; an ambiguous
+    /// one is left to the tap's chooser), and a web page opens on the
+    /// window's server unless it turned Web Pages in Panes off. Nil when it
+    /// names nothing this device can open in a pane.
     func paneContent(for request: AppOpenRequest) async -> PaneOpenContent? {
         switch request {
         case .resourceReference(let reference):
-            guard let lookup = try? await currentFileMatches(for: reference),
-                  case .resolution(.resolved(let match)) = ResourceReferenceCandidateCollector.resolve(
-                      reference, sessionMatches: [], fileLookup: lookup
-                  ) else { return nil }
-            switch match {
-            case .workspaceFile(let file): return PaneOpenContent(file: Self.linkedFileTarget(file, reference: reference))
-            case .hostFile(let file): return PaneOpenContent(file: Self.linkedFileTarget(file, reference: reference))
-            case .session: return nil
+            guard let lookup = try? await currentFileMatches(for: reference) else { return nil }
+            switch ResourceReferenceCandidateCollector.resolve(reference, sessionMatches: [], fileLookup: lookup) {
+            case .resolution(.resolved(.workspaceFile(let file))):
+                return PaneOpenContent(file: Self.linkedFileTarget(file, reference: reference))
+            case .resolution(.resolved(.hostFile(let file))):
+                return PaneOpenContent(file: Self.linkedFileTarget(file, reference: reference))
+            case .resolution(.unresolved):
+                return await folderTarget(for: reference).map { PaneOpenContent(folder: $0) }
+            default:
+                return nil
             }
+        case .webLink(let url):
+            guard let serverId = windowServerId, coordinator.server(serverId, offers: .browserPane) else { return nil }
+            return PaneOpenContent(entry: PaneStackEntry(serverId: serverId, route: .browser(url)))
         case .sessionFile(let reference):
             return Self.sessionFileTarget(for: reference).map { PaneOpenContent(file: $0) }
         case .fileLink(let payload):
@@ -680,7 +697,61 @@ extension AppOpener {
             workspace = nil
         }
         await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
-            self?.navigation.openWorkspaceLinkedFile(resolution.target, workspace: workspace)
+            guard let self, !openBesideFocusedPane(PaneOpenContent(file: resolution.target), kind: .file) else { return }
+            navigation.openWorkspaceLinkedFile(resolution.target, workspace: workspace)
+        }
+        return .finished
+    }
+
+    // MARK: - Folders
+
+    /// The connection of the server a reference came from: its files and
+    /// folders resolve there, never on the window's server.
+    private func sourceConnection(of reference: ResourceReference) -> ServerConnection? {
+        reference.sourceServerID.flatMap { coordinator.connection(for: $0) }
+    }
+
+    /// The folder a `[[path]]` or `[label](path/)` names when no file does: a
+    /// folder in the reference's workspace checkout, or one in the host's
+    /// home (`~/…`, the only host folders the File Browser reads). Nil when
+    /// the server lists no folder there.
+    func folderTarget(for reference: ResourceReference) async -> FileBrowserNavTarget? {
+        guard let path = reference.fileCandidatePath?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty,
+              let serverID = reference.sourceServerID,
+              let connection = sourceConnection(of: reference), let api = connection.apiClient else { return nil }
+        switch ResourceReferenceFileLookupPolicy.kind(for: reference) {
+        case .hostFile:
+            guard path == "~" || path.hasPrefix("~/") else { return nil }
+            let folder = FileBrowserHostHomePath.directoryPath(rawPath: path)
+            guard (try? await api.listHostDirectory(path: folder)) != nil else { return nil }
+            return FileBrowserNavTarget(serverId: serverID, scope: .hostHome, path: folder)
+        case .workspaceFile:
+            guard let workspaceID = reference.workspaceID else { return nil }
+            // The source session's checkout, as its files resolve.
+            let worktreeID = reference.sourceSessionID
+                .flatMap { connection.sessionStore.session(id: $0) }
+                .flatMap { $0.workspaceId == workspaceID ? $0.worktreeId : nil }
+            let folder = path.hasSuffix("/") ? path : path + "/"
+            guard (try? await api.listWorkspaceDirectory(workspaceId: workspaceID, path: folder, worktreeId: worktreeID)) != nil
+            else { return nil }
+            return FileBrowserNavTarget(serverId: serverID, workspaceId: workspaceID, worktreeId: worktreeID, path: folder)
+        }
+    }
+
+    /// Opens a linked folder in the File Browser, beside the focused pane
+    /// where there is room, once its lock allows.
+    func openFolder(_ target: FileBrowserNavTarget, generation: UInt64) async -> AppOpenOutcome {
+        let content = PaneOpenContent(folder: target)
+        guard await scopedLock.authorize(content.lockTarget), isCurrent(generation) else { return .finished }
+        let switched = await openServer(target.serverId, generation: generation)
+        guard isCurrent(generation) else { return .finished }
+        guard switched else {
+            toastUnreachableIfFirstAttempt(target.serverId)
+            return .unreachable
+        }
+        await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
+            guard let self, !openBesideFocusedPane(content, kind: .folder) else { return }
+            navigation.openWorkspaceFileBrowser(target)
         }
         return .finished
     }

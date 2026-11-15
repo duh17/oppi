@@ -155,7 +155,7 @@ struct PaneSplitTests: PaneFixtureBuilding {
         #expect(panes.cellLayout.focus == panes.routedLeafID, "the chat has focus while it is the only pane")
 
         #expect(panes.split(panes.routedLeafID, axis: .row) == nil, "no split")
-        #expect(panes.open(entry(.files(workspace: "ws-1", path: "Sources")), besideCell: panes.routedLeafID, full: false) == nil,
+        #expect(panes.open(entry(.files(workspace: "ws-1", path: "Sources")), ofCell: panes.routedLeafID, full: false) == nil,
                 "no Open in New Pane")
         panes.close(files)
         panes.resetPanes()

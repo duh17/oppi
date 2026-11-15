@@ -22,6 +22,7 @@ final class PaneLinkMenuUITests: XCTestCase, PreviewUITestCase {
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.'"))
     }
 
+
     /// The owner's ask: a file link in the chat opens in a pane of its own
     /// beside the chat, a second link replaces what that pane shows, and
     /// Undo brings the first file back.
@@ -29,7 +30,7 @@ final class PaneLinkMenuUITests: XCTestCase, PreviewUITestCase {
         try openChat()
         let route = link("Route.md")
         route.press(forDuration: 1.2)
-        let newPane = app.buttons["pane.open.newPane"]
+        let newPane = app.buttons["pane.open.newPane.right"]
         XCTAssertTrue(newPane.waitUntilExists(timeout: 5), "The link's menu offers Open in New Pane")
         XCTAssertTrue(app.buttons["pane.open.here"].exists, "and Open Here")
         XCTAssertFalse(app.buttons["pane.open.inPane"].exists, "With one pane there is no other pane to open in")
@@ -65,6 +66,124 @@ final class PaneLinkMenuUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(waitFor(filePane.label.contains("Route.md")), "Undo brought Route.md back: \(filePane.label)")
     }
 
+    /// The owner's ask: a tapped file, folder and web link each open beside
+    /// the chat, in landscape to its right, with the chat still in reach.
+    func testTappedLinksOpenBesideTheChatInLandscape() throws {
+        try tapLinksOpenBesideTheChat(.landscapeLeft)
+    }
+
+    /// In portrait the window's room is below the chat, so a tapped link's
+    /// pane opens there.
+    func testTappedLinksOpenBelowTheChatInPortrait() throws {
+        try tapLinksOpenBesideTheChat(.portrait)
+    }
+
+    /// Touch and hold a link for the explicit places: Open in New Pane to the
+    /// Right or Below and Open Here for a file, the two new panes beside Copy
+    /// Link and Share for a web page. Open Here keeps the file in the main
+    /// pane, over the chat, with no new pane.
+    func testALinksMenuOffersRightBelowAndHere() throws {
+        let pages = try startPages()
+        try openChat(environment: ["CHAT_ROUTES_WEB_LINK": pages.url("one").absoluteString])
+        link("Route.md").press(forDuration: 1.2)
+        let below = app.buttons["pane.open.newPane.below"]
+        XCTAssertTrue(below.waitUntilExists(timeout: 5), "The menu offers Open in New Pane Below")
+        XCTAssertTrue(app.buttons["pane.open.newPane.right"].exists, "and to the Right")
+        XCTAssertTrue(app.buttons["pane.open.here"].exists, "and Open Here")
+        hold()
+        attachScreenCapture("file-link-menu")
+        below.tap()
+        XCTAssertTrue(waitFor(self.grips.count == 2), "Below made a second pane")
+        let filePane = grips.matching(NSPredicate(format: "label CONTAINS 'Route.md'")).firstMatch
+        XCTAssertTrue(filePane.waitUntilExists(timeout: 5), "showing Route.md")
+        let composer = app.descendants(matching: .any)["chat.input"]
+        XCTAssertGreaterThanOrEqual(filePane.frame.minY, composer.frame.maxY - 1, "below the chat")
+        hold()
+        attachScreenCapture("file-link-below")
+
+        let web = app.links["Open the preview"]
+        XCTAssertTrue(web.waitUntilExists(timeout: 5))
+        web.press(forDuration: 1.2)
+        XCTAssertTrue(app.buttons["pane.open.newPane.right"].waitUntilExists(timeout: 5), "A web link offers a new pane")
+        XCTAssertTrue(app.buttons["pane.open.newPane.below"].exists)
+        XCTAssertFalse(app.buttons["pane.open.here"].exists, "its own open stands in for Open Here")
+        XCTAssertFalse(app.buttons["pane.open.inPane"].exists, "no other pane takes a page")
+        XCTAssertTrue(app.buttons["Copy Link"].exists, "beside Copy Link")
+        hold()
+        attachScreenCapture("web-link-menu")
+        app.buttons["pane.open.newPane.right"].tap()
+        XCTAssertTrue(app.webViews.staticTexts["First fixture page"].waitUntilExists(timeout: 15), "The page opened in a pane")
+        XCTAssertTrue(waitFor(self.grips.count == 3), "in a third pane")
+
+        let panes = grips.count
+        link("Alpha.txt").press(forDuration: 1.2)
+        let here = app.buttons["pane.open.here"]
+        XCTAssertTrue(here.waitUntilExists(timeout: 5))
+        here.tap()
+        XCTAssertTrue(waitFor(self.grips.matching(NSPredicate(format: "label CONTAINS 'Alpha.txt'")).firstMatch.exists),
+                      "Open Here showed Alpha.txt in the main pane")
+        XCTAssertEqual(grips.count, panes, "with no new pane")
+        hold()
+        attachScreenCapture("file-link-here")
+    }
+
+    private func tapLinksOpenBesideTheChat(_ orientation: UIDeviceOrientation) throws {
+        let pages = try startPages()
+        try openChat(orientation: orientation, environment: ["CHAT_ROUTES_WEB_LINK": pages.url("one").absoluteString])
+        let composer = app.descendants(matching: .any)["chat.input"]
+        let isPortrait = orientation == .portrait
+        func assertBeside(_ pane: XCUIElement, _ what: String) {
+            if isPortrait {
+                XCTAssertGreaterThanOrEqual(pane.frame.minY, composer.frame.maxY - 1, "\(what) opened below the chat")
+            } else {
+                XCTAssertGreaterThanOrEqual(pane.frame.minX, composer.frame.maxX - 1, "\(what) opened right of the chat")
+            }
+        }
+        hold()
+        attachScreenCapture("tap-\(orientation.isPortrait ? "portrait" : "landscape")-0-chat")
+
+        tapLink("Route.md")
+        let filePane = grips.matching(NSPredicate(format: "label CONTAINS 'Route.md'")).firstMatch
+        XCTAssertTrue(filePane.waitUntilExists(timeout: 10), "The file link opened Route.md in a pane")
+        XCTAssertEqual(grips.count, 2)
+        assertBeside(filePane, "Route.md")
+        XCTAssertTrue(composer.isHittable, "The chat stays")
+        hold()
+        attachScreenCapture("tap-\(orientation.isPortrait ? "portrait" : "landscape")-1-file")
+
+        tapLink("Alpha.txt")
+        let alphaPane = grips.matching(NSPredicate(format: "label CONTAINS 'Alpha.txt'")).firstMatch
+        XCTAssertTrue(alphaPane.waitUntilExists(timeout: 10), "A second file link opened Alpha.txt")
+        XCTAssertFalse(filePane.exists, "in place of Route.md")
+        XCTAssertEqual(grips.count, 2, "in the file's pane, not a new one")
+
+        tapLink("Sources")
+        let folderRow = app.descendants(matching: .any)["fileBrowser.row.Sources/App.swift"]
+        XCTAssertTrue(folderRow.waitUntilExists(timeout: 10), "The folder link opened Files in Sources")
+        XCTAssertTrue(composer.isHittable, "The chat stays")
+        hold()
+        attachScreenCapture("tap-\(orientation.isPortrait ? "portrait" : "landscape")-2-folder")
+
+        tapLink("Open the preview")
+        XCTAssertTrue(app.webViews.staticTexts["First fixture page"].waitUntilExists(timeout: 15), "The web link opened its page")
+        XCTAssertTrue(app.descendants(matching: .any)["browser.pane"].exists, "in a pane")
+        XCTAssertFalse(app.descendants(matching: .any)["inAppBrowser.view"].exists, "not Safari's sheet")
+        XCTAssertTrue(composer.isHittable, "The chat stays")
+        hold()
+        attachScreenCapture("tap-\(orientation.isPortrait ? "portrait" : "landscape")-3-web")
+    }
+
+    /// The iPad mini and a page server on the simulator's loopback, which
+    /// stops with the test.
+    private func startPages() throws -> BrowserFixtureServer {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("Panes need a wide window; the iPad mini is the wide simulator")
+        }
+        let pages = try BrowserFixtureServer()
+        addTeardownBlock { @MainActor in pages.stop() }
+        return pages
+    }
+
     /// A Files row's menu opens the file in a new pane, and Undo closes it.
     func testAFilesRowOpensInANewPaneAndUndoClosesIt() throws {
         try openChat()
@@ -77,7 +196,7 @@ final class PaneLinkMenuUITests: XCTestCase, PreviewUITestCase {
         XCTAssertEqual(grips.count, 2)
 
         row.press(forDuration: 1.2)
-        let newPane = app.buttons["pane.open.newPane"]
+        let newPane = app.buttons["pane.open.newPane.right"]
         XCTAssertTrue(newPane.waitUntilExists(timeout: 5), "The row's menu offers Open in New Pane")
         XCTAssertTrue(app.buttons["fileBrowser.rowMenu.share"].exists, "beside the row's own Share")
         XCTAssertTrue(app.buttons["fileBrowser.rowMenu.copyPath"].exists, "and Copy Path")
@@ -116,13 +235,15 @@ final class PaneLinkMenuUITests: XCTestCase, PreviewUITestCase {
         XCTAssertEqual(paneItems.count, 0, "No pane items on a compact window")
     }
 
-    private func openChat() throws {
+    private func openChat(orientation: UIDeviceOrientation = .landscapeLeft, environment: [String: String] = [:]) throws {
         guard UIDevice.current.userInterfaceIdiom == .pad else {
             throw XCTSkip("Panes need a wide window; the iPad mini is the wide simulator")
         }
-        XCUIDevice.shared.orientation = .landscapeLeft
+        XCUIDevice.shared.orientation = orientation
         addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
-        launchPreview(screen: "pane-restore", environment: [:], ready: nil)
+        launchPreview(screen: "pane-restore", environment: environment, colorScheme: "dark", ready: nil)
+        let window = app.windows.firstMatch
+        XCTAssertTrue(waitFor((window.frame.width > window.frame.height) == !orientation.isPortrait), "The window turned")
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10), "The shell came up")
         let row = app.descendants(matching: .any)[sessionRow]
         XCTAssertTrue(row.waitUntilExists(timeout: 10), "The fixture session is listed")
@@ -135,6 +256,18 @@ final class PaneLinkMenuUITests: XCTestCase, PreviewUITestCase {
         let link = app.links[label]
         XCTAssertTrue(link.waitUntilExists(timeout: 10), "The reply links \(label)")
         return link
+    }
+
+    /// Taps a link in the chat's last replies, scrolling them into view when
+    /// panes beside the chat left it short.
+    private func tapLink(_ label: String) {
+        let link = app.links[label]
+        let timeline = app.collectionViews["chat.timeline"]
+        for _ in 0..<4 where !(link.exists && link.isHittable) {
+            timeline.swipeUp()
+        }
+        XCTAssertTrue(link.waitUntilExists(timeout: 10) && link.isHittable, "The reply links \(label)")
+        link.tap()
     }
 
     /// The screen's capture: in landscape `app.screenshot()` draws the iPad

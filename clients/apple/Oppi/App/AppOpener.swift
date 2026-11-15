@@ -352,8 +352,15 @@ final class AppOpener {
         self.systemOpen = systemOpen
     }
 
-    /// The only way in.
-    func open(_ request: AppOpenRequest) {
+    /// Whether the current request's file, folder or page opens in the main
+    /// pane even where a tapped link's would open beside it (a link menu's
+    /// Open Here).
+    @ObservationIgnored var opensInMainPane = false
+
+    /// The only way in. `inMainPane`: the request's file, folder or page
+    /// opens in the main pane, not in a pane beside the focused one
+    /// (`openBesideFocusedPane`).
+    func open(_ request: AppOpenRequest, inMainPane: Bool = false) {
 #if DEBUG
         if let observer = _openRequestObserverForTesting, observer(request) {
             return
@@ -366,6 +373,7 @@ final class AppOpener {
             return
         }
         supersede()
+        opensInMainPane = inMainPane
         let generation = generation
         deferredRequest = request
         appLock.performWhenUnlocked({ [weak self] in
