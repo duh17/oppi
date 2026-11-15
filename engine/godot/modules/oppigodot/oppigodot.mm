@@ -496,17 +496,31 @@ static GDExtensionBool host_init(GDExtensionInterfaceGetProcAddress, GDExtension
 
 // MARK: - C API
 
+// The host's size (oppigodot_resize) is the one size the game draws at: its
+// layer's frame, the drawable and the display server's window all follow it.
+// The container may be larger or smaller for a while (a divider drag, where
+// the host stretches this layer to it); a game started then still draws at
+// the host's size, which that stretch expects. Before the host gives a size,
+// the container's bounds.
+static CGRect rendering_frame() {
+	if (view_width > 0 && view_height > 0) {
+		return CGRectMake(0, 0, view_width, view_height);
+	}
+	return container_layer.bounds;
+}
+
 static void layout_rendering_layer() {
 	if (!rendering_layer || !container_layer) {
 		return;
 	}
 	CALayer *layer = (__bridge CALayer *)rendering_layer;
+	CGRect frame = rendering_frame();
 	[CATransaction begin];
 	[CATransaction setDisableActions:YES];
-	layer.frame = container_layer.bounds;
+	layer.frame = frame;
 	layer.contentsScale = view_scale;
 	if ([layer isKindOfClass:[CAMetalLayer class]]) {
-		((CAMetalLayer *)layer).drawableSize = CGSizeMake(view_width * view_scale, view_height * view_scale);
+		((CAMetalLayer *)layer).drawableSize = CGSizeMake(frame.size.width * view_scale, frame.size.height * view_scale);
 	}
 	[CATransaction commit];
 	libgodot_ios_layout_rendering_layer(rendering_layer);
@@ -615,7 +629,7 @@ bool oppigodot_start(const OppiGodotConfig *config) {
 		return false;
 	}
 	CALayer *layer = (__bridge CALayer *)rendering_layer;
-	layer.frame = container_layer.bounds;
+	layer.frame = rendering_frame();
 	layer.contentsScale = view_scale;
 	[container_layer addSublayer:layer];
 	libgodot_ios_initialize_rendering_layer(rendering_layer);

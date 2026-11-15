@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Oppi <noreply@oppi.invalid>
 Date: Sun, 15 Nov 2026 07:23:52 -0800
-Subject: [PATCH 5/5] iOS: libgodot can start again in the same process
+Subject: [PATCH 5/6] iOS: libgodot can start again in the same process
 
 A host that destroys its instance may create another, on another project. Classes register again after ClassDB::cleanup, ObjectDB starts from empty slots, static StringNames keep the table they point into, driver, writer and idle-callback lists take each registration once, the audio driver list and frame limiter start over, and singletons and cached shader RIDs that outlived their engine are cleared.
 ---

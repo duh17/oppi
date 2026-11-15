@@ -61,12 +61,14 @@ typedef struct {
 } OppiGodotConfig;
 
 // The container layer the engine draws into: it adds its own rendering
-// sublayer sized to the container. Set before start; it stays retained
+// sublayer at the top left, at the size `oppigodot_resize` last gave (the
+// container's bounds until then). Set before start; it stays retained
 // until stop.
 void oppigodot_set_layer(void *container_layer);
 
-// Size of the container in points and its scale. Call before start and on
-// every settled size change.
+// The size the game draws at, in points, and its scale: the one size its
+// layer, drawable and window take, also across a stop and start. Call
+// before start and on every settled size change.
 void oppigodot_resize(double width, double height, double scale);
 
 bool oppigodot_start(const OppiGodotConfig *config);

@@ -314,6 +314,9 @@ final class GodotEngineHost {
         surface.frame = slot.bounds
         surface.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         slot.addSubview(surface)
+        // A hold belongs to a divider beside the pane it left; here the
+        // engine takes this pane's size.
+        surface.settleSize()
         setPaused(.hidden, surface.window == nil)
     }
 

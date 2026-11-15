@@ -603,8 +603,11 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         if host.holdsSurface(self) { host.surface.holdSize() }
     }
 
+    /// Settles at a pause as well as at rest: after a pause the host sends no
+    /// final settle unless the divider moves again (`PaneResizeHold`), and a
+    /// surface left held stays stretched over whatever size the pane takes.
     func paneSettleLiveResize(to size: CGSize, final: Bool) {
-        if final, host.holdsSurface(self) { host.surface.settleSize() }
+        if host.holdsSurface(self) { host.surface.settleSize() }
     }
 
     // MARK: Hand-off to the chat

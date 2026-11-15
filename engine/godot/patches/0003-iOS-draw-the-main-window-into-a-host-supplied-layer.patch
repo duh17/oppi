@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Oppi <noreply@oppi.invalid>
 Date: Fri, 13 Nov 2026 22:09:59 -0800
-Subject: [PATCH 3/5] iOS: draw the main window into a host-supplied layer
+Subject: [PATCH 3/6] iOS: draw the main window into a host-supplied layer
 
 A host app that embeds libgodot supplies the main window's rendering layer. Inside such a host the game opens no URL (shell_open) and has no pasteboard, and does not keep the screen awake: those belong to the host.
 ---

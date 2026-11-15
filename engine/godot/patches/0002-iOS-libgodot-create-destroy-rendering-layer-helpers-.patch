@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Oppi <noreply@oppi.invalid>
 Date: Fri, 13 Nov 2026 22:09:59 -0800
-Subject: [PATCH 2/5] iOS: libgodot create/destroy, rendering layer helpers,
+Subject: [PATCH 2/6] iOS: libgodot create/destroy, rendering layer helpers,
  SDL shims
 
 ---

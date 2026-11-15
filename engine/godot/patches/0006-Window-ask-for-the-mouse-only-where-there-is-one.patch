@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oppi <noreply@oppi.invalid>
+Date: Sun, 15 Nov 2026 12:00:00 -0800
+Subject: [PATCH 6/6] Window: ask for the mouse only where there is one
+
+The root window simulated a mouse-enter by asking the display server for the mouse position on every start. A display server without a mouse (iOS) answers that with an error, so every game logged "Mouse is not supported by this display server." at launch.
+---
+ scene/main/window.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/scene/main/window.cpp b/scene/main/window.cpp
+index bc56ddb..bbd75cb 100644
+--- a/scene/main/window.cpp
++++ b/scene/main/window.cpp
+@@ -1699,7 +1699,8 @@ void Window::_notification(int p_what) {
+ 					_update_viewport_size(); // Then feed back to the viewport.
+ 					_update_window_callbacks();
+ 					// Simulate mouse-enter event when mouse is over the window, since OS event might arrive before setting callbacks.
+-					if (!mouse_in_window && Rect2(position, size).has_point(DisplayServer::get_singleton()->mouse_get_position())) {
++					// A display server without a mouse has no position to ask for.
++					if (!mouse_in_window && DisplayServer::get_singleton()->has_feature(DisplayServerEnums::FEATURE_MOUSE) && Rect2(position, size).has_point(DisplayServer::get_singleton()->mouse_get_position())) {
+ 						_event_callback(DisplayServerEnums::WINDOW_EVENT_MOUSE_ENTER);
+ 					}
+ 					RS::get_singleton()->viewport_set_update_mode(get_viewport_rid(), RSE::VIEWPORT_UPDATE_WHEN_VISIBLE);
