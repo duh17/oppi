@@ -146,6 +146,7 @@ extension WorkspaceDetailViewController {
 
             connection.sessionStore.applyWorkspaceRecentSnapshot(
                 workspaceId: workspaceId,
+                worktreeId: state.selectedWorktreeId,
                 summaries: response.sessionSummaries,
                 requestStartedAt: startedAt
             )

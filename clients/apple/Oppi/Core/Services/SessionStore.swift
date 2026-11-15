@@ -452,15 +452,22 @@ final class SessionStore {
     /// workspace partition unless it is a likely optimistic local row or an
     /// ancestor needed for visible tree structure. `requestStartedAt` protects
     /// optimistic local creates from older in-flight refreshes.
+    ///
+    /// The server answers one worktree's sessions (`worktreeId`), so only that
+    /// worktree's rows may fall out. A thread's children run in their own
+    /// worktrees; evicting them on every poll emptied the thread's live rows and
+    /// the sidebar's working count until each child's next summary re-added it.
     @discardableResult
     func applyWorkspaceRecentSnapshot(
         workspaceId: String,
+        worktreeId: String,
         summaries incomingSummaries: [SessionSummary],
         requestStartedAt: Date = Date(),
         preserveRecentWindow: TimeInterval = 180
     ) -> Bool {
         applyRecentWorkspaceSummaries(
             workspaceIds: Set([workspaceId]),
+            worktreeId: worktreeId,
             summaries: incomingSummaries,
             requestStartedAt: requestStartedAt,
             preserveRecentWindow: preserveRecentWindow
@@ -470,10 +477,13 @@ final class SessionStore {
     /// Apply the authoritative recent workspace snapshot used by workspace detail.
     ///
     /// The detail refresh owns the focused workspace's hot backing partition, so
-    /// missing rows can leave both the full store and list projection.
+    /// missing rows can leave both the full store and list projection. A
+    /// `worktreeId` narrows what the snapshot owns to that worktree's rows; nil
+    /// means the snapshot covers every worktree of the workspaces.
     @discardableResult
     func applyRecentWorkspaceSummaries(
         workspaceIds: Set<String>,
+        worktreeId: String? = nil,
         summaries incomingSummaries: [SessionSummary],
         requestStartedAt: Date = Date(),
         preserveRecentWindow: TimeInterval = 180
@@ -489,6 +499,7 @@ final class SessionStore {
         let next = recentWorkspaceSnapshot(
             current: current,
             targetWorkspaceIds: targetWorkspaceIds,
+            targetWorktreeId: worktreeId,
             incomingForWorkspaces: incomingForWorkspaces,
             requestStartedAt: requestStartedAt,
             preserveRecentWindow: preserveRecentWindow,
@@ -496,7 +507,8 @@ final class SessionStore {
         )
         let didMutateAttention = applyListAttentionCounts(
             from: incomingSummaries,
-            replacingWorkspaceIds: targetWorkspaceIds
+            replacingWorkspaceIds: targetWorkspaceIds,
+            worktreeId: worktreeId
         )
         guard next != current else { return didMutateAttention }
 
@@ -552,6 +564,7 @@ final class SessionStore {
         var nextProjection = recentWorkspaceSnapshot(
             current: currentProjection,
             targetWorkspaceIds: targetWorkspaceIds,
+            targetWorktreeId: nil,
             incomingForWorkspaces: incomingForWorkspaces,
             requestStartedAt: requestStartedAt,
             preserveRecentWindow: preserveRecentWindow,
@@ -604,9 +617,22 @@ final class SessionStore {
         }
     }
 
+    /// Whether a recent snapshot of `workspaceIds` (one worktree's, when `worktreeId` is set) speaks for
+    /// `session`: only a row it covers may fall out when it is missing, or lose its attention counts.
+    private func recentSnapshotCovers(
+        _ session: Session,
+        workspaceIds: Set<String>,
+        worktreeId: String?
+    ) -> Bool {
+        guard let workspaceId = session.workspaceId, workspaceIds.contains(workspaceId) else { return false }
+        guard let worktreeId else { return true }
+        return (session.worktreeId ?? WorkspaceWorktree.mainId) == worktreeId
+    }
+
     private func recentWorkspaceSnapshot(
         current: [Session],
         targetWorkspaceIds: Set<String>,
+        targetWorktreeId: String?,
         incomingForWorkspaces: [Session],
         requestStartedAt: Date,
         preserveRecentWindow: TimeInterval,
@@ -626,8 +652,7 @@ final class SessionStore {
         var nextById: [String: Session] = [:]
 
         for existing in current {
-            guard let workspaceId = existing.workspaceId,
-                  targetWorkspaceIds.contains(workspaceId) else {
+            guard recentSnapshotCovers(existing, workspaceIds: targetWorkspaceIds, worktreeId: targetWorktreeId) else {
                 if keepUntargetedRows {
                     nextById[existing.id] = existing
                 }
@@ -684,14 +709,16 @@ final class SessionStore {
 
     private func applyListAttentionCounts(
         from summaries: [SessionSummary],
-        replacingWorkspaceIds workspaceIds: Set<String>?
+        replacingWorkspaceIds workspaceIds: Set<String>?,
+        worktreeId: String? = nil
     ) -> Bool {
         let key = activeServerKey
         var counts = serverListAttentionCounts[key] ?? [:]
         let original = counts
 
         if let workspaceIds {
-            for session in listProjectionSessions where session.workspaceId.map({ workspaceIds.contains($0) }) == true {
+            for session in listProjectionSessions
+            where recentSnapshotCovers(session, workspaceIds: workspaceIds, worktreeId: worktreeId) {
                 counts.removeValue(forKey: session.id)
             }
         }

@@ -360,7 +360,7 @@ struct SessionStorePartitioningTests {
         store.switchServer(to: "srv1")
 
         let incoming = makeTestSession(id: "s1", workspaceId: nil, status: .stopped)
-        store.applyWorkspaceRecentSnapshot(workspaceId: "w1", summaries: [SessionSummary(from: incoming)])
+        store.applyWorkspaceRecentSnapshot(workspaceId: "w1", worktreeId: "main", summaries: [SessionSummary(from: incoming)])
 
         #expect(store.session(id: "s1")?.workspaceId == "w1")
     }
@@ -370,7 +370,7 @@ struct SessionStorePartitioningTests {
         store.switchServer(to: "srv1")
 
         let hot = makeTestSession(id: "hot", workspaceId: "w1", status: .stopped)
-        store.applyWorkspaceRecentSnapshot(workspaceId: "w1", summaries: [SessionSummary(from: hot)])
+        store.applyWorkspaceRecentSnapshot(workspaceId: "w1", worktreeId: "main", summaries: [SessionSummary(from: hot)])
 
         let archived = makeTestSession(
             id: "archived",
@@ -680,7 +680,7 @@ struct SessionStorePartitioningTests {
             case "upsertManySummaries":
                 _ = store.upsertManySummaries([lossySummary])
             case "applyWorkspaceRecentSnapshot":
-                _ = store.applyWorkspaceRecentSnapshot(workspaceId: "w1", summaries: [lossySummary])
+                _ = store.applyWorkspaceRecentSnapshot(workspaceId: "w1", worktreeId: "main", summaries: [lossySummary])
             case "applyRecentWorkspaceSummaries":
                 _ = store.applyRecentWorkspaceSummaries(workspaceIds: Set(["w1"]), summaries: [lossySummary])
             case "applyRecentWorkspaceSummaryProjection":
@@ -875,6 +875,7 @@ struct SessionStorePartitioningTests {
 
         store.applyWorkspaceRecentSnapshot(
             workspaceId: "w1",
+            worktreeId: "main",
             summaries: [
                 SessionSummary(from: makeTestSession(id: "incoming", workspaceId: "w1", status: .ready, lastActivity: now)),
                 SessionSummary(from: makeTestSession(id: "recent-stopped", workspaceId: "w1", status: .stopped, lastActivity: now.addingTimeInterval(-60)))
@@ -888,6 +889,35 @@ struct SessionStorePartitioningTests {
         #expect(ids.contains("other-workspace"))
         #expect(!ids.contains("active-old"))
         #expect(!ids.contains("old-stopped"))
+    }
+
+    /// The workspace screen's poll lists one worktree; a thread's children run in theirs. They must stay
+    /// listed (and keep their pending asks) instead of dropping out until their next summary.
+    @Test func worktreeSnapshotKeepsOtherWorktreesRows() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let now = Date(timeIntervalSince1970: 1_700_100_000)
+        let lead = makeTestSession(id: "lead", workspaceId: "w1", status: .busy, lastActivity: now)
+        var child = makeTestSession(id: "child", workspaceId: "w1", status: .busy, lastActivity: now)
+        child.worktreeId = "wt_child"
+        child.parentSessionId = "lead"
+        var gone = makeTestSession(id: "gone", workspaceId: "w1", status: .busy, lastActivity: now)
+        gone.worktreeId = WorkspaceWorktree.mainId
+        var asking = SessionSummary(from: child)
+        asking.pendingAskCount = 1
+        store.upsertManySummaries([SessionSummary(from: lead), asking, SessionSummary(from: gone)])
+
+        store.applyWorkspaceRecentSnapshot(
+            workspaceId: "w1",
+            worktreeId: WorkspaceWorktree.mainId,
+            summaries: [SessionSummary(from: lead)],
+            requestStartedAt: now
+        )
+
+        let listed = store.listProjectionSessions(workspaceId: "w1")
+        #expect(Set(listed.map(\.id)) == ["lead", "child"])
+        #expect(listed.first { $0.id == "child" }?.status == .busy)
+        #expect(store.listPendingAskCount(for: "child") == 1)
     }
 
     @Test func recentWorkspaceSummariesPruneMissingRowsForKnownWorkspaces() {
@@ -999,6 +1029,7 @@ struct SessionStorePartitioningTests {
 
         store.applyWorkspaceRecentSnapshot(
             workspaceId: "w1",
+            worktreeId: "main",
             summaries: [],
             requestStartedAt: now
         )
@@ -1015,6 +1046,7 @@ struct SessionStorePartitioningTests {
         store.remove(id: "ghost")
         store.applyWorkspaceRecentSnapshot(
             workspaceId: "w1",
+            worktreeId: "main",
             summaries: [SessionSummary(from: makeTestSession(id: "ghost", workspaceId: "w1", status: .stopped, lastActivity: now))],
             requestStartedAt: now
         )
