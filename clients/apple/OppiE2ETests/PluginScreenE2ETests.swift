@@ -8,6 +8,8 @@ final class PluginScreenE2ETests: E2ETestCase {
     /// The server's own MCP Servers entry, as `/server/info` lists it.
     private var entry = ""
 
+    /// The plugin-sidebar experiment is a launch argument, which only a fresh launch applies.
+    override var e2eRequiresFreshLaunch: Bool { true }
     override var e2eLaunchesSessionsInboxOnly: Bool { true }
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
 
