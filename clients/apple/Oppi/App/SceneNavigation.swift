@@ -847,7 +847,16 @@ final class SceneNavigation {
     private func pushServerPage(_ element: WorkspaceStackRouteElement) {
         selectedTab = .workspaces
         workspaceStackRouteElements.append(element)
-        if isSplit { splitColumnVisibility = .all }
+        showSidebarBesideServerPage()
+    }
+
+    /// The split shell shows its sidebar beside a server page, unless the
+    /// window has split panes: there the page is the routed pane's content,
+    /// beside the other panes, and the sidebar shows only when the person
+    /// asks for it (the page's sidebar toggle).
+    private func showSidebarBesideServerPage() {
+        guard isSplit, panes.splitLeaves.isEmpty else { return }
+        splitColumnVisibility = .all
     }
 
     func openServerDetails(_ target: ServerDetailsNavTarget) {
@@ -882,7 +891,7 @@ final class SceneNavigation {
         if isSplit {
             // Each job replaces the detail column beside the sidebar.
             selectedWorkspaceFilter = nil
-            splitColumnVisibility = .all
+            showSidebarBesideServerPage()
             workspaceStackRouteElements = page.map { [$0] } ?? []
             return
         }
