@@ -82,47 +82,49 @@ struct ChatFileAccessReviewCommentStashTests {
         #expect(stashButton(in: fixture.host.view) == nil)
     }
 
-    @Test func gitContextReviewFileStacksStashAbovePreviousFile() async throws {
-        let previous = GitFileStatus(
-            status: " M",
-            path: "benchmarks/lib/prior.py",
-            addedLines: 2,
-            removedLines: 0
-        ).toReviewFile()
-        let current = GitFileStatus(
-            status: "??",
-            path: "benchmarks/lib/headline.py",
-            addedLines: 340,
-            removedLines: 0
-        ).toReviewFile()
+    /// The diff's Viewing Options and the previous and next file are items in
+    /// the review's one bar, as in the file viewer: nothing floats over the
+    /// diff but the staged-comment button, alone in its corner.
+    @Test func gitContextReviewFileKeepsViewingOptionsAndFileSteppingOnItsBar() async throws {
+        let files = ["Sources/Prior.swift", "Sources/App.swift", "Sources/Later.swift"].map {
+            GitFileStatus(status: " M", path: $0, addedLines: 1, removedLines: 1).toReviewFile()
+        }
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            guard let path = request.url?.path else { return nil }
+            if path.hasSuffix("/quick-actions") {
+                return try mockJSONResponse(encoding: WorkspaceQuickActionsResponse(actions: []), for: request)
+            }
+            guard path.hasSuffix("/diff") else { return nil }
+            return try mockJSONResponse(json: """
+            {"workspaceId": "w1", "path": "Sources/App.swift", "baselineText": "let a = 1",
+             "currentText": "let a = 2", "addedLines": 1, "removedLines": 1,
+             "hunks": [{"oldStart": 1, "oldCount": 1, "newStart": 1, "newCount": 1, "lines": [
+               {"kind": "removed", "text": "let a = 1", "oldLine": 1, "newLine": null, "spans": null},
+               {"kind": "added", "text": "let a = 2", "oldLine": null, "newLine": 1, "spans": null}]}]}
+            """, for: request)
+        })
+        defer { routes.end() }
         let fixture = try makeReviewDetailFixture(
             stagedCount: 1,
-            file: current,
-            navigationFiles: [previous, current]
+            file: files[1],
+            navigationFiles: files,
+            apiClient: makeTestURLProtocolClient()
         )
+        defer { fixture.window.isHidden = true }
+        let detail = try #require((fixture.host as? UINavigationController)?.topViewController)
 
-        let appeared = await waitForMainActorCondition {
+        let barIDs = ["fullscreen.viewingOptions.button", "fileViewer.previous", "fileViewer.next"]
+        let onBar = await waitForMainActorCondition {
             fixture.host.view.layoutIfNeeded()
-            return stashButton(in: fixture.host.view) != nil
+            let ids = Set((detail.navigationItem.rightBarButtonItems ?? []).compactMap(\.accessibilityIdentifier))
+            return barIDs.allSatisfy(ids.contains)
         }
-        #expect(appeared)
-        let stash = try #require(stashButton(in: fixture.host.view))
-        let stashFrame = stash.convert(stash.bounds, to: fixture.host.view)
-        let previousFile = try #require(
-            timelineAllViews(in: fixture.host.view).first { view in
-                let frame = view.convert(view.bounds, to: fixture.host.view)
-                return view !== stash
-                    && view.accessibilityIdentifier != FullScreenReviewCommentStashControl.accessibilityIdentifier
-                    && abs(frame.width - FullScreenFloatingControlChrome.controlSize) <= 1
-                    && abs(frame.height - FullScreenFloatingControlChrome.controlSize) <= 1
-                    && abs(frame.minX - stashFrame.minX) <= 8
-                    && frame.minY >= stashFrame.maxY - 1
-            }
-        )
-        let previousFrame = previousFile.convert(previousFile.bounds, to: fixture.host.view)
-        #expect(stashFrame.maxY <= previousFrame.minY + 1)
-        #expect(abs(stashFrame.minX - previousFrame.minX) <= 8)
-        fixture.window.isHidden = true
+        #expect(onBar, "bar: \((detail.navigationItem.rightBarButtonItems ?? []).map { $0.accessibilityIdentifier ?? "?" })")
+        let floating = timelineAllViews(in: detail.view).filter { view in
+            barIDs.contains(view.accessibilityIdentifier ?? "") && timelineViewIsVisible(view)
+        }
+        #expect(floating.isEmpty, "Nothing but the stash may float over the diff")
+        #expect(stashButton(in: fixture.host.view) != nil)
     }
 
     @Test func commitFileDiffShowsStashWhenCommentsAreStaged() async throws {
@@ -219,7 +221,8 @@ private struct ReviewDetailStashFixture {
 private func makeReviewDetailFixture(
     stagedCount: Int,
     file: WorkspaceReviewFile? = nil,
-    navigationFiles: [WorkspaceReviewFile] = []
+    navigationFiles: [WorkspaceReviewFile] = [],
+    apiClient: APIClient? = nil
 ) throws -> ReviewDetailStashFixture {
     let comments = try makeIsolatedReviewComments(stagedCount: stagedCount)
     let router = ReviewCommentSelectionRouter(dispatch: { _ in }, stash: comments)
@@ -238,7 +241,7 @@ private func makeReviewDetailFixture(
             navigationFiles: navigationFiles
         ),
         connection: ServerConnection(),
-        apiClient: nil,
+        apiClient: apiClient,
         navigation: SceneNavigation()
     )
     let host = UINavigationController(rootViewController: detail)

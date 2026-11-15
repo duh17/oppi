@@ -1107,7 +1107,7 @@ final class FullScreenCodeViewController: UIViewController {
         // Turned off, the item runs from the … menu and has no place to point
         // at, so the options open as a sheet.
         let onBar = readerBar.trailingItems.contains { $0 === viewingOptionsBarItem }
-        options.configurePresentation(barItem: onBar ? viewingOptionsBarItem : nil, sourceButton: nil)
+        options.configurePresentation(barItem: onBar ? viewingOptionsBarItem : nil)
         present(options, animated: true)
     }
 

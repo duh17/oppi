@@ -12,7 +12,8 @@ import UIKit
 ///
 /// Text size and wrapping follow the shared full-screen diff preferences
 /// (`FullScreenReaderContentFamily.diff`) through the same Viewing Options
-/// control as the full-screen readers.
+/// panel as the full-screen readers. Its control is `viewingOptionsItem`,
+/// which the host puts in its own bar: nothing floats over the diff.
 final class DiffReaderView: UIView {
     private static let preparedChunkCacheLimit = 24
     private static let runwayChunkCount = 2
@@ -23,18 +24,23 @@ final class DiffReaderView: UIView {
 
     var reviewCommentSelectionContext: ReviewCommentSelectionContext?
     var sourceContext: ReviewCommentSourceContext?
-    /// Floating controls the host already shows in the trailing bottom corner
-    /// (the next-file button). Viewing Options stacks above them.
-    var trailingAccessoryCount = 0 {
-        didSet {
-            guard trailingAccessoryCount != oldValue else { return }
-            viewingOptionsBottomConstraint?.constant = -viewingOptionsBottomPadding
-        }
-    }
-    private var viewingOptionsBottomConstraint: NSLayoutConstraint?
-    private var viewingOptionsBottomPadding: CGFloat {
-        FullScreenReviewCommentStashControl.bottomPadding(leadingAccessoryCount: trailingAccessoryCount)
-    }
+    /// Viewing Options for the host's bar, offered while there is a diff to
+    /// read (`offersViewingOptions`).
+    private(set) lazy var viewingOptionsItem: UIBarButtonItem = {
+        let item = UIBarButtonItem(
+            title: String(localized: "Viewing Options"),
+            image: UIImage(systemName: FullScreenViewingOptionsSymbols.readerModeIconName),
+            primaryAction: UIAction { [weak self] _ in self?.showViewingOptions() }
+        )
+        item.accessibilityIdentifier = "fullscreen.viewingOptions.button"
+        item.accessibilityHint = String(localized: "Adjust text size, wrapping, and spacing")
+        item.accessibilityValue = FullScreenViewingOptionsController.accessibilityValue(for: readerPreferences)
+        return item
+    }()
+    /// Whether `viewingOptionsItem` shows on the host's bar now, so the panel
+    /// points at it; turned off into the host's … menu, the panel is a sheet.
+    var viewingOptionsItemIsOnBar: () -> Bool = { true }
+    var offersViewingOptions: Bool { hunks?.isEmpty == false }
 
     private let layout = ReaderChunkStackLayout()
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
@@ -42,11 +48,6 @@ final class DiffReaderView: UIView {
     private var emptyView: UIView?
     private let backSwipeCoordinator = HorizontalBackSwipeActionCoordinator()
     private let scrollSampler = DiffReaderScrollSampler()
-    private lazy var viewingOptionsButton: UIButton = {
-        let button = FullScreenViewingOptionsController.makeFloatingButton(palette: currentPalette)
-        button.addTarget(self, action: #selector(showViewingOptions), for: .touchUpInside)
-        return button
-    }()
     private weak var viewingOptionsController: FullScreenViewingOptionsController?
     private var readerPreferences = FullScreenReaderPreferencesStore.shared.preferences(for: DiffReaderView.family)
     /// Width the current chunks wrapped to; a different width re-lays them out.
@@ -119,15 +120,6 @@ final class DiffReaderView: UIView {
         spinner.hidesWhenStopped = true
         addSubview(spinner)
 
-        viewingOptionsButton.translatesAutoresizingMaskIntoConstraints = false
-        viewingOptionsButton.isHidden = true
-        addSubview(viewingOptionsButton)
-
-        let viewingOptionsBottom = viewingOptionsButton.bottomAnchor.constraint(
-            equalTo: safeAreaLayoutGuide.bottomAnchor,
-            constant: -viewingOptionsBottomPadding
-        )
-        viewingOptionsBottomConstraint = viewingOptionsBottom
         NSLayoutConstraint.activate([
             collectionView.leadingAnchor.constraint(equalTo: leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -135,13 +127,6 @@ final class DiffReaderView: UIView {
             collectionView.bottomAnchor.constraint(equalTo: bottomAnchor),
             spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: centerYAnchor),
-            viewingOptionsButton.trailingAnchor.constraint(
-                equalTo: safeAreaLayoutGuide.trailingAnchor,
-                constant: -FullScreenFloatingControlChrome.trailingPadding
-            ),
-            viewingOptionsBottom,
-            viewingOptionsButton.widthAnchor.constraint(equalToConstant: FullScreenFloatingControlChrome.controlSize),
-            viewingOptionsButton.heightAnchor.constraint(equalToConstant: FullScreenFloatingControlChrome.controlSize),
         ])
         applyReaderScrolling()
 
@@ -161,11 +146,6 @@ final class DiffReaderView: UIView {
         let background = currentPalette.ui.bgDark
         backgroundColor = background
         collectionView.backgroundColor = background
-        FullScreenViewingOptionsController.updateFloatingButton(
-            viewingOptionsButton,
-            palette: currentPalette,
-            preferences: readerPreferences
-        )
     }
 
     /// Chunk text and tints carry theme colors; the index does not, so a theme
@@ -186,7 +166,7 @@ final class DiffReaderView: UIView {
 
     // MARK: - Viewing options
 
-    @objc private func showViewingOptions() {
+    private func showViewingOptions() {
         if let open = viewingOptionsController {
             open.dismiss(animated: true)
             return
@@ -207,10 +187,7 @@ final class DiffReaderView: UIView {
                 self?.applyReaderPreferences(Self.family.defaultPreferences)
             }
         )
-        options.configurePresentation(
-            barItem: nil,
-            sourceButton: viewingOptionsButton
-        )
+        options.configurePresentation(barItem: viewingOptionsItemIsOnBar() ? viewingOptionsItem : nil)
         viewingOptionsController = options
         presenter.present(options, animated: true)
     }
@@ -227,11 +204,7 @@ final class DiffReaderView: UIView {
         let wrapChanged = preferences.wrapsText != readerPreferences.wrapsText
         readerPreferences = preferences
         viewingOptionsController?.apply(family: Self.family, preferences: preferences)
-        FullScreenViewingOptionsController.updateFloatingButton(
-            viewingOptionsButton,
-            palette: currentPalette,
-            preferences: preferences
-        )
+        viewingOptionsItem.accessibilityValue = FullScreenViewingOptionsController.accessibilityValue(for: preferences)
         applyReaderScrolling()
         if wrapChanged {
             collectionView.setContentOffset(
@@ -264,12 +237,9 @@ final class DiffReaderView: UIView {
 
         guard let hunks, !hunks.isEmpty else {
             spinner.stopAnimating()
-            viewingOptionsButton.isHidden = true
             showEmptyState()
             return
         }
-        viewingOptionsButton.isHidden = false
-        bringSubviewToFront(viewingOptionsButton)
 
         spinner.startAnimating()
         openStartedAt = CACurrentMediaTime()

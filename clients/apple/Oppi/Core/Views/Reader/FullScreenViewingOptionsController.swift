@@ -374,10 +374,10 @@ final class FullScreenViewingOptionsController: UIViewController {
         }
     }
 
-    /// A popover from a rail bar item or the floating button, which UIKit
-    /// adapts to a sheet sized to the panel when compact. With neither control
-    /// it is a sheet.
-    func configurePresentation(barItem: UIBarButtonItem?, sourceButton: UIView?) {
+    /// A popover from the bar's Viewing Options item, which UIKit adapts to a
+    /// sheet sized to the panel when compact. Without the item (turned off
+    /// into the … menu) it is a sheet.
+    func configurePresentation(barItem: UIBarButtonItem?) {
         let detentIdentifier = UISheetPresentationController.Detent.Identifier("viewing-options")
         var presentation = ModalPresentation.popoverOrSheet(
             detents: [
@@ -389,48 +389,11 @@ final class FullScreenViewingOptionsController: UIViewController {
             grabber: true,
             cornerRadius: 24
         )
-        // The floating button sits at the bottom trailing corner; a bar item keeps any direction.
-        if barItem == nil { presentation = presentation.arrowDirections([.down, .right]) }
-        if barItem == nil, sourceButton == nil { presentation.style = .pageSheet }
-        presentation.apply(to: self, source: sourceButton)
+        if barItem == nil { presentation.style = .pageSheet }
+        presentation.apply(to: self, source: nil)
         if let barItem {
             popoverPresentationController?.barButtonItem = barItem
         }
-    }
-
-    /// The floating glass Viewing Options button. Callers add the target.
-    static func makeFloatingButton(palette: ThemePalette) -> UIButton {
-        var config = UIButton.Configuration.glass()
-        config.image = UIImage(systemName: FullScreenViewingOptionsSymbols.readerModeIconName)
-        config.preferredSymbolConfigurationForImage = .init(
-            pointSize: FullScreenFloatingControlChrome.symbolPointSize,
-            weight: .semibold
-        )
-        let contentPadding = FullScreenFloatingControlChrome.standaloneContentPadding
-        config.contentInsets = NSDirectionalEdgeInsets(
-            top: contentPadding,
-            leading: contentPadding,
-            bottom: contentPadding,
-            trailing: contentPadding
-        )
-        FullScreenFloatingControlChrome.applyGlassBackground(to: &config, palette: palette)
-
-        let button = UIButton(configuration: config)
-        button.accessibilityIdentifier = "fullscreen.viewingOptions.button"
-        button.accessibilityLabel = String(localized: "Viewing Options")
-        button.accessibilityHint = String(localized: "Adjust text size, wrapping, and spacing")
-        return button
-    }
-
-    static func updateFloatingButton(
-        _ button: UIButton,
-        palette: ThemePalette,
-        preferences: FullScreenReaderPreferences
-    ) {
-        var config = button.configuration ?? .plain()
-        FullScreenFloatingControlChrome.applyGlassBackground(to: &config, palette: palette)
-        button.configuration = config
-        button.accessibilityValue = accessibilityValue(for: preferences)
     }
 
     /// What VoiceOver says for the Viewing Options control: the text size.

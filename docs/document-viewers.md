@@ -71,7 +71,7 @@ You are running in Oppi: your Markdown renders in a native iPhone/iPad app.
 
 ## Viewing Options
 
-**Viewing Options**, in a full-screen viewer's bar ([The reader's bar](#the-readers-bar)), adapts to the content. A Git diff opened from a review keeps its own control near the bottom-right.
+**Viewing Options**, in a full-screen viewer's bar ([The reader's bar](#the-readers-bar)), adapts to the content. A Git diff opened from a review or a commit has it in the diff's bar too.
 
 | Content | Options |
 | --- | --- |
@@ -149,7 +149,7 @@ Markdown in chat, in the reader, and in tool output draws a small set of the HTM
 
 ## The reader's bar
 
-The reader's bar holds **Edit**, **Find**, **Outline**, **Copy**, **Share**, the source toggle, **Viewing Options**, and **Previous File** and **Next File** for a file opened from a list (the File Browser or a chat's files), each where the file offers it. On a side toolbar (iPhone Duo), **Annotate** and **Staged Comments** join the bar; elsewhere they float over the page. Every button the reader offers is on the bar until you change it. When the bar is too narrow for all of them, the buttons at the end of your order move into the **…** menu.
+The reader's bar holds **Edit**, **Find**, **Outline**, **Copy**, **Share**, the source toggle, **Viewing Options**, and **Previous File** and **Next File** for a file opened from a list (the File Browser, a chat's files, or the changed files of a Git review), each where the file offers it. On a side toolbar (iPhone Duo), **Annotate** and **Staged Comments** join the bar; elsewhere they float over the page. Every button the reader offers is on the bar until you change it. When the bar is too narrow for all of them, the buttons at the end of your order move into the **…** menu.
 
 **Share** opens the share sheet with the file in its default format, a PDF for Markdown and Org. To choose PDF, Image, or the source file, touch and hold **Share**, or use **Share As** in the **…** menu. The source toggle stays highlighted while the source shows; in the **…** menu it has a checkmark.
 

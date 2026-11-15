@@ -714,6 +714,11 @@ final class CommitFileDiffViewController: UIViewController {
         divider.backgroundColor = palette.ui.comment.withAlphaComponent(0.2)
         navigationItem.leftBarButtonItem?.tintColor = palette.ui.blue
         reconcileBody()
+        // The diff's Viewing Options is this screen's one bar item.
+        let trailing = diffReader.flatMap { $0.offersViewingOptions ? [$0.viewingOptionsItem] : nil } ?? []
+        if !(navigationItem.rightBarButtonItems ?? []).elementsEqual(trailing, by: ===) {
+            navigationItem.rightBarButtonItems = trailing
+        }
         stashButton.update(
             on: view,
             presenter: self,

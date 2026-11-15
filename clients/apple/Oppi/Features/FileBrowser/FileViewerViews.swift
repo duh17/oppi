@@ -1,51 +1,5 @@
 import UIKit
 
-/// Previous/next file buttons in the bottom corners. Horizontal swipes stay
-/// reserved for back. Hidden while the editor is open.
-@MainActor
-final class AdjacentFileNavigatorButtons {
-    private var buttons: [AdjacentFileNavigatorLayout.Corner: UIButton] = [:]
-    private var themeID: ThemeID?
-    private let onSelect: (FileBrowserNavigationDirection) -> Void
-
-    init(onSelect: @escaping (FileBrowserNavigationDirection) -> Void) {
-        self.onSelect = onSelect
-    }
-
-    /// Shows the buttons `canGoPrevious` and `canGoNext` allow on `host`.
-    func update(on host: UIView, canGoPrevious: Bool, canGoNext: Bool, themeID: ThemeID) {
-        let slots = AdjacentFileNavigatorLayout.slots(canGoPrevious: canGoPrevious, canGoNext: canGoNext)
-        let palette = themeID.palette
-        let paletteChanged = self.themeID != themeID
-        self.themeID = themeID
-        for corner in [AdjacentFileNavigatorLayout.Corner.leading, .trailing] {
-            guard let slot = slots.first(where: { $0.corner == corner }) else {
-                buttons[corner]?.removeFromSuperview()
-                buttons[corner] = nil
-                continue
-            }
-            if let button = buttons[corner] {
-                if paletteChanged {
-                    FullScreenFloatingControlChrome.updateStandaloneButton(button, palette: palette)
-                }
-                host.bringSubviewToFront(button)
-                continue
-            }
-            let button = FullScreenFloatingControlChrome.makeStandaloneButton(
-                systemImage: slot.systemImage,
-                accessibilityLabel: slot.accessibilityLabel,
-                palette: palette
-            )
-            let direction: FileBrowserNavigationDirection = corner == .leading ? .previous : .next
-            button.accessibilityIdentifier = corner == .leading ? "fileViewer.previous" : "fileViewer.next"
-            button.addAction(UIAction { [weak self] _ in self?.onSelect(direction) }, for: .primaryActionTriggered)
-            host.addSubview(button)
-            FullScreenFloatingControlChrome.pinStandaloneButton(button, to: host, leading: corner == .leading)
-            buttons[corner] = button
-        }
-    }
-}
-
 #if DEBUG
 /// `OPPI_FILE_MOTION_MARKER=1`: the shown file's path in a colored strip
 /// across the top, so motion tests see which page is on screen.

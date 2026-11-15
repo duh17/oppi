@@ -32,14 +32,6 @@ struct FileBrowserPushTransitionMotionTests {
         #expect(context.selection(adjacentTo: "b.swift", direction: .next)?.path == "c.swift")
         #expect(context.selection(adjacentTo: "a.swift", direction: .previous) == nil)
         #expect(context.selection(adjacentTo: "c.swift", direction: .next) == nil)
-        #expect(
-            AdjacentFileNavigatorLayout.slots(canGoPrevious: false, canGoNext: true)
-                .map(\.accessibilityLabel) == ["Next file"]
-        )
-        #expect(
-            AdjacentFileNavigatorLayout.slots(canGoPrevious: true, canGoNext: false)
-                .map(\.accessibilityLabel) == ["Previous file"]
-        )
     }
 
     @Test func reviewPreviousAndNextDoNotWrapAndKeepLoadingReplacement() {

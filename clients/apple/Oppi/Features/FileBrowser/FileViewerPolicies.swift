@@ -88,49 +88,6 @@ enum FileBrowserContentRenderingPolicy {
     }
 }
 
-/// Previous file stays in the leading bottom corner; next file stays trailing.
-/// When Viewing Options / Reader is also present, it stacks above next.
-/// A missing direction omits that button instead of recentering the other one.
-enum AdjacentFileNavigatorLayout {
-    enum Corner: Equatable {
-        case leading
-        case trailing
-    }
-
-    struct Slot: Equatable {
-        var corner: Corner
-        var systemImage: String
-        var accessibilityLabel: String
-    }
-
-    static func slots(canGoPrevious: Bool, canGoNext: Bool) -> [Slot] {
-        var slots: [Slot] = []
-        if canGoPrevious {
-            slots.append(Slot(
-                corner: .leading,
-                systemImage: "chevron.left",
-                accessibilityLabel: "Previous file"
-            ))
-        }
-        if canGoNext {
-            slots.append(Slot(
-                corner: .trailing,
-                systemImage: "chevron.right",
-                accessibilityLabel: "Next file"
-            ))
-        }
-        return slots
-    }
-
-    static func leadingAccessoryCount(canGoPrevious: Bool, canGoNext: Bool) -> Int {
-        canGoPrevious ? 1 : 0
-    }
-
-    static func trailingAccessoryCount(canGoPrevious: Bool, canGoNext: Bool) -> Int {
-        canGoNext ? 1 : 0
-    }
-}
-
 /// Shared previous/next file transition. Directional travel and the 220 ms
 /// ease-in-out are one policy for every UIKit viewer's slide. Reduce Motion
 /// drops the travel.

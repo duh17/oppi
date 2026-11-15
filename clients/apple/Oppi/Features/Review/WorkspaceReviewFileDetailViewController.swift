@@ -62,9 +62,9 @@ enum WorkspaceReviewFileDetailPhase: Equatable {
 
 /// One changed file of a workspace: its header, Changes (the diff) and File
 /// (the current bytes in this checkout, editable) tabs, previous/next across
-/// the review's files, a file list (an attached leaf in regular width, or,
-/// hosted in an attached leaf's own panel navigation, pushed there with a
-/// back button to this screen), sharing, and prompt templates that start a
+/// the review's files (bar items, as in the file viewer), a file list (an
+/// attached leaf in regular width, or, hosted in an attached leaf's own panel
+/// navigation, pushed there with a back button to this screen), sharing, and prompt templates that start a
 /// session about the file. Hosted in a panel, a started session's chat goes
 /// to `pushChat`, which closes the leaf and pushes the chat beside it.
 ///
@@ -183,9 +183,12 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
 #endif
     /// "Starting new session…" or a template's progress over the review.
     private let progressPanel = FloatingProgressPanel(borderWidth: 1)
-    private lazy var adjacentButtons = AdjacentFileNavigatorButtons { [weak self] direction in
-        self?.navigateToAdjacentReviewFile(direction)
-    }
+    /// The screen's one bar: Share, the diff's Viewing Options, the previous
+    /// and next file, and the File tab viewer's actions, placed by the
+    /// person's Reader Bar layout like any file reader's.
+    private let readerBar = ReaderBar()
+    private lazy var previousFileItem = makeAdjacentItem(.previous)
+    private lazy var nextFileItem = makeAdjacentItem(.next)
     private let stashButton = ReviewCommentStashFloatingButton()
     private lazy var fileListLeaf = AttachedLeafController(screen: self)
     private weak var fileList: ReviewFileListViewController?
@@ -348,19 +351,18 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         )
     }
 
-    private var leadingAccessoryCount: Int {
-        AdjacentFileNavigatorLayout.leadingAccessoryCount(
-            canGoPrevious: adjacentReviewFile(.previous) != nil,
-            canGoNext: adjacentReviewFile(.next) != nil
+    /// Previous or next file as a reader bar item. Horizontal swipes stay
+    /// reserved for Back.
+    private func makeAdjacentItem(_ direction: FileBrowserNavigationDirection) -> UIBarButtonItem {
+        let action: ReaderBarAction = direction == .previous ? .previousFile : .nextFile
+        let item = UIBarButtonItem(
+            title: action.label,
+            image: UIImage(systemName: action.systemImage),
+            primaryAction: UIAction { [weak self] _ in self?.navigateToAdjacentReviewFile(direction) }
         )
-    }
-
-    /// The next-file button sits in the trailing corner; Viewing Options stacks above it.
-    private var trailingAccessoryCount: Int {
-        AdjacentFileNavigatorLayout.trailingAccessoryCount(
-            canGoPrevious: adjacentReviewFile(.previous) != nil,
-            canGoNext: adjacentReviewFile(.next) != nil
-        )
+        item.accessibilityLabel = direction == .previous ? "Previous file" : "Next file"
+        item.accessibilityIdentifier = direction == .previous ? "fileViewer.previous" : "fileViewer.next"
+        return item
     }
 
     // MARK: Lifecycle
@@ -394,6 +396,8 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         registerForTraitChanges([UITraitHorizontalSizeClass.self]) { (screen: Self, _) in
             screen.setNeedsUpdateProperties()
         }
+        readerBar.presenter = self
+        readerBar.onLayoutChange = { [weak self] in self?.setNeedsUpdateProperties() }
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -421,17 +425,11 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         view.backgroundColor = palette.ui.bgDark
         reconcileContent()
         updateMountedContent(themeID: themeID)
-        adjacentButtons.update(
-            on: view,
-            canGoPrevious: !isEditingCurrentFile && adjacentReviewFile(.previous) != nil,
-            canGoNext: !isEditingCurrentFile && adjacentReviewFile(.next) != nil,
-            themeID: themeID
-        )
         stashButton.update(
             on: view,
             presenter: self,
             stash: configuration.reviewCommentSelectionScope?.router.stash,
-            leadingAccessoryCount: leadingAccessoryCount,
+            leadingAccessoryCount: 0,
             palette: palette
         )
         progressPanel.apply(palette)
@@ -626,6 +624,10 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
 
     private func mountDiffReader() -> UIView {
         let reader = DiffReaderView()
+        reader.viewingOptionsItemIsOnBar = { [weak self, weak reader] in
+            guard let self, let reader else { return false }
+            return readerBar.trailingItems.contains { $0 === reader.viewingOptionsItem }
+        }
         diffReader = reader
         return reader
     }
@@ -677,7 +679,6 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
             diffReader.reviewCommentSelectionContext = selection
             diffReader.sourceContext = selection?.sourceContext(surface: .fullScreenDiff, filePath: currentFile.path)
             diffReader.installBackSwipe(action: horizontalBackSwipeAction)
-            diffReader.trailingAccessoryCount = trailingAccessoryCount
             diffReader.setDiff(
                 hunks: diff.hunks,
                 filePath: currentFile.path,
@@ -751,16 +752,29 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         if pushesFileList ? showsFileListEntry : (usesReviewFileColumn && !showsFileListColumn) {
             leading.append(showFilesItem)
         }
-        var trailing: [UIBarButtonItem] = []
-        if let share = shareBarItem() {
-            trailing.append(share)
-        }
-        // The viewer's Edit, left of Share.
-        trailing.append(contentsOf: viewerBar?.trailingItems ?? [])
-        setItems(leading: leading, trailing: trailing)
+        // Read so this bar follows the viewer's as its offers arrive (`FileViewerBar` is observed).
+        _ = viewerBar?.trailingItems
+        updateReaderBarOffers()
+        setItems(leading: leading, trailing: readerBar.trailingItems)
         if navigationItem.additionalOverflowItems !== actionMenu {
             navigationItem.additionalOverflowItems = actionMenu
         }
+    }
+
+    /// What the bar offers now: the File tab viewer's actions (its Edit, Find,
+    /// Outline, and Share of the file it read), else this screen's Share of
+    /// the shown tab, then the diff's Viewing Options and the previous and
+    /// next file.
+    private func updateReaderBarOffers() {
+        let viewer = currentFileViewer?.bar.reader
+        var offers = viewer?.offers ?? [:]
+        if offers[.share] == nil, let share = shareBarItem() { offers[.share] = [share] }
+        if let diffReader, diffReader.offersViewingOptions {
+            offers[.viewingOptions] = [diffReader.viewingOptionsItem]
+        }
+        if adjacentReviewFile(.previous) != nil { offers[.previousFile] = [previousFileItem] }
+        if adjacentReviewFile(.next) != nil { offers[.nextFile] = [nextFileItem] }
+        readerBar.update(offers: offers, documentActions: viewer?.documentActions ?? [])
     }
 
     /// New Session and the prompt templates in the system overflow (vertical
@@ -813,14 +827,14 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         return .fromText(diff.currentText, filePath: currentFile.path)
     }
 
-    /// The open file's own … entries (its turned-off reader actions and
-    /// Customize Bar…), then New Session and the prompt templates: one system
-    /// overflow, never a second.
+    /// The bar's … entries (turned-off reader actions, the viewer's document
+    /// actions, and Customize Bar…), then New Session and the prompt
+    /// templates: one system overflow, never a second.
     private func actionMenuElements() -> [UIMenuElement] {
         let busy = launchActionInFlightTitle != nil
-        let reader: [UIMenuElement] = currentFileViewer?.bar.overflow == nil
-            ? []
-            : [UIMenu(options: .displayInline, children: currentFileViewer?.bar.reader.overflowElements() ?? [])]
+        // The viewer's offers are not observed, so read them fresh as the menu opens.
+        updateReaderBarOffers()
+        let reader: [UIMenuElement] = [UIMenu(options: .displayInline, children: readerBar.overflowElements())]
         return reader + WorkspaceQuickActionMenu.elements(
             options: quickActionOptions,
             isLoading: isLoadingQuickActions,
