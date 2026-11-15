@@ -75,12 +75,15 @@
 // like the UI and unit shards: a pass on the rerun is a flake, recorded in the rerun ledger, and the
 // step passes. Quarantined E2E tests are skipped and run in non-blocking steps.
 // Every lane runs even when an earlier one failed, so one gate reports every red suite.
-// Lane output is prefixed with the lane name; SIGTERM/SIGINT stop every lane's process group.
+// Lane output is prefixed with the lane name; SIGTERM/SIGINT stop every lane's process group, and so
+// does the death of the process that started the gate (a land-queue run killed by a host restart).
+// A sim-pool step's test count is the xcresult's, from its summary's test_results.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { loadQuarantine, runExecutedTestIds, runFailures, unmatchedSelectors, UNIT_RUN_RECORD, untangledRunLines, type QuarantineEntry } from "../clients/apple/scripts/unit-shards";
+import { loadQuarantine, runExecutedTestIds, runFailures, unmatchedSelectors, UNIT_RUN_RECORD, type QuarantineEntry, type RecordedResults } from "../clients/apple/scripts/unit-shards";
+import { forgetGroupOnExit, killGroupOnExit } from "../clients/apple/scripts/sim-pool-supervise";
 import { resolveDeveloperDir } from "../clients/apple/scripts/xcode-toolchain";
 import {
   budgetVerdict, failedTestsInOutput, failedXCTestCases, flakesAtHead, hiddenFlakesLine, lastArtifact, loadBudgets, logOfSummary, passedXCTestCases,
@@ -493,18 +496,19 @@ export function prePushRanUnitShards(worktree: string, target: string | undefine
   return { ran: plan.apple !== "none", why: `the pre-push plan for ${sha.slice(0, 9)}..HEAD has apple=${plan.apple}`, apple: plan.apple };
 }
 
-/** Tests a finished sim-pool run executed, from the log its summary artifact names. */
-export function executedTests(output: string): number {
-  const summary = [...output.matchAll(/^Artifact: (.+)$/gm)].at(-1)?.[1];
-  if (!summary || !existsSync(summary)) return 0;
-  const log = JSON.parse(readFileSync(summary, "utf8")).log_path as string | undefined;
-  if (!log || !existsSync(log)) return 0;
-  const text = untangledRunLines(readFileSync(log, "utf8"));
-  // Not `\u200b*`-tolerant on purpose: a run whose tests were all skipped prints its result line behind
-  // a zero-width space, and for a gate an all-skipped run is zero tests run.
-  const swift = [...text.matchAll(/^[\u2714\u2718] Test run with ([0-9]+) tests?/gm)].at(-1);
-  const xctest = [...text.matchAll(/^Test Suite '(?:All tests|Selected tests)' (?:passed|failed) at .+\r?\n[ \t]+Executed ([0-9]+) tests?/gm)].at(-1);
-  return Math.max(swift ? Number(swift[1]) : 0, xctest ? Number(xctest[1]) : 0);
+/**
+ * Tests a finished sim-pool run executed, from the xcresult counts its summary artifact records
+ * (`test_results`). A skipped test is not executed: for a gate an all-skipped run is zero tests run.
+ * Zero when there is no summary or no test result (the run never reached its tests); `unreadable`
+ * when it reached them but their result cannot be read, which is never reported as zero tests.
+ */
+export function executedTests(output: string): { tests: number } | { unreadable: string } {
+  const summary = lastArtifact(output);
+  if (!summary || !existsSync(summary)) return { tests: 0 };
+  const results = JSON.parse(readFileSync(summary, "utf8")).test_results as RecordedResults | undefined;
+  if (!results) return { tests: 0 };
+  if ("unreadable" in results) return { unreadable: results.unreadable };
+  return { tests: results.total - results.skipped };
 }
 
 const running = new Set<ChildProcess>();
@@ -545,6 +549,7 @@ function runStep(name: string, step: Step, onSpawn?: (child: ChildProcess) => vo
     detached: true,
   });
   running.add(child);
+  if (child.pid) killGroupOnExit(child.pid);
   onSpawn?.(child);
   if (step.input !== undefined) child.stdin!.end(step.input);
   let output = "";
@@ -570,6 +575,7 @@ function runStep(name: string, step: Step, onSpawn?: (child: ChildProcess) => vo
     });
     child.on("close", (status, signal) => {
       running.delete(child);
+      if (child.pid) forgetGroupOnExit(child.pid);
       resolve({ code: status ?? (signal ? 128 : 1), output });
     });
   });
@@ -593,7 +599,11 @@ async function runGateStep(lane: Lane, step: Step): Promise<GateStepRun> {
   // Only a step that is a sim-pool run has its own log; a shard runner names its red tests itself.
   const artifact = step.requireTests ? lastArtifact(run.output) : undefined;
   const log = logOfSummary(artifact);
-  if (step.requireTests && executedTests(run.output) === 0) {
+  const executed = step.requireTests ? executedTests(run.output) : undefined;
+  if (executed && "unreadable" in executed) {
+    say(`result unreadable for ${(step.selectors ?? []).join(", ")}: ${executed.unreadable}`);
+    if (code === 0) code = 1;
+  } else if (executed?.tests === 0) {
     say(zeroTestLine(step.selectors ?? [], code === 0));
     if (code === 0) code = 1;
   }
@@ -883,6 +893,16 @@ async function main(argv: string[]): Promise<number> {
   const results: LaneResult[] = [];
   let prePush: PrePushRun | undefined;
   for (const signal of ["SIGTERM", "SIGINT"] as const) process.on(signal, () => stopAll(signal));
+  // The gate lives and dies with the run that started it. A queue run killed alone (a host restart)
+  // leaves this process with a new parent: stop as for SIGTERM. A kill that takes this process too
+  // skips every handler; then the lane groups die through killGroupOnExit.
+  const parent = process.ppid;
+  setInterval(() => {
+    if (process.ppid !== parent && !stopping) {
+      console.log(`[batch-gate] the process that started the gate (pid ${parent}) is gone; stopping every lane`);
+      stopAll("SIGTERM");
+    }
+  }, 1000).unref();
   // The pre-push gate only syncs server deps for server changes; named lanes may need them. Before
   // the hook starts, so the two never install into one node_modules at once.
   const syncDeps = async () => (await runStep("server-deps", { cwd: join(worktree, "server"), command: "node", args: ["scripts/ensure-installed-deps.mjs"] })).code;

@@ -7,7 +7,9 @@
 //   lane passed) or `failed` (failed again);
 // - the red-lane ledger `$(git rev-parse --git-common-dir)/oppi/land-queue/red-lanes.jsonl`: one row per
 //   lane that failed in a land-queue batch, with a cause guessed from the lane's output
-//   (`cause_guess`), left for a person or the night triage to confirm (`cause_confirmed`);
+//   (`cause_guess`), left for a person or the night triage to confirm (`cause_confirmed`), and the
+//   folder its logs were copied to (`logs`, `<git common dir>/oppi/land-queue/red-logs/<batch>/<lane>/`),
+//   which outlives the queue's reused scratch worktree;
 // - lane time budgets (dev/testing/lane-budgets.json): over budget is a warning, never a failure.
 //
 //   bun scripts/gate-report.ts budget <lane> <wall seconds>
@@ -16,7 +18,7 @@
 // The CLI is for the pre-push hook's bash lanes; `red-lane` records nothing outside a land-queue
 // batch (LAND_QUEUE_BATCH unset), so a developer's own push never writes the queue's ledger.
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -231,20 +233,65 @@ export type RedLane = {
   cause_evidence: string | null;
   /** Set by a person or the night triage once the cause is known: one of the Cause classes, or a short note. */
   cause_confirmed: null;
+  /** Where keepLaneLogs copied the lane's logs and summaries; null when its output named none. */
+  logs: string | null;
 };
 
 export const redLanesPath = (cwd: string): string => join(oppiDir(cwd), "land-queue", "red-lanes.jsonl");
 
+/** Kept red-lane logs older than this are deleted when another red lane is kept. */
+const KEPT_LOGS_DAYS = 14;
+/** An absolute path to a log, shard output, or summary, as the runners print them and summaries hold them. */
+const LOG_PATH = /\/[^\s'"`,;()[\]{}]+\.(?:log|out|json)\b/g;
+
+/**
+ * Copy the files a red lane's output names into `<oppi dir>/land-queue/red-logs/<batch>/<lane>/`, at
+ * their path within the checkout, and return that folder (undefined when the output names none). A
+ * land queue reuses its scratch worktree for the next batch, which deletes the sim-pool logs, shard
+ * outputs, and summaries a red gate's log points to. Files a shard output or summary names (its
+ * sim-pool log and summary, a summary's log) are kept too; logs are not read for more paths. Only
+ * files inside the checkout are copied; xcresult bundles are not.
+ */
+export function keepLaneLogs(cwd: string, batch: string, lane: string, output: string, now = new Date()): string | undefined {
+  const top = git(cwd, ["rev-parse", "--show-toplevel"]);
+  if (!top) return undefined;
+  // As the runners spell it: `.build` may be a link into a RAM-disk build root (OPPI_BUILD_ROOT), so a
+  // named path is matched as written (normalized), against either spelling of the checkout.
+  const checkouts = [...new Set([top, realpathSync.native(top)])].map((path) => `${path}/`);
+  const root = join(oppiDir(cwd), "land-queue", "red-logs");
+  const dest = join(root, batch.replace(/[^\w.-]/g, "_"), lane.replace(/[^\w.-]/g, "_"));
+  const seen = new Set<string>();
+  const pending = [...output.matchAll(LOG_PATH)].map((match) => match[0]);
+  while (pending.length > 0) {
+    const path = resolve(pending.shift()!);
+    const checkout = checkouts.find((prefix) => path.startsWith(prefix));
+    if (!checkout || seen.has(path) || !existsSync(path) || !statSync(path).isFile()) continue;
+    seen.add(path);
+    const copy = join(dest, path.slice(checkout.length));
+    mkdirSync(dirname(copy), { recursive: true });
+    copyFileSync(path, copy);
+    if (!path.endsWith(".log")) pending.push(...[...readFileSync(path, "utf8").matchAll(LOG_PATH)].map((match) => match[0]));
+  }
+  if (seen.size === 0) return undefined;
+  const cutoff = now.getTime() - KEPT_LOGS_DAYS * 86_400_000;
+  for (const name of readdirSync(root)) {
+    const old = join(root, name);
+    if (statSync(old).mtimeMs < cutoff) rmSync(old, { recursive: true, force: true });
+  }
+  return dest;
+}
+
 /**
  * Append one red lane of the current land-queue batch (LAND_QUEUE_BATCH, LAND_QUEUE_BRANCHES), with a
- * cause guessed from `output`. Returns the ledger path, or undefined outside a batch.
+ * cause guessed from `output`, and keep the logs it names (keepLaneLogs). Returns the ledger path, or
+ * undefined outside a batch, and the kept logs' folder.
  */
 export function recordRedLane(
   cwd: string,
   lane: { lane: string; profile: string | null; exit: number; seconds: number | null; tests: string[]; output: string },
   env: NodeJS.ProcessEnv = process.env,
   now = new Date(),
-): { path: string | undefined; cause: Cause; evidence: string | null } {
+): { path: string | undefined; cause: Cause; evidence: string | null; logs?: string | null } {
   const { cause, evidence } = guessCause(lane.output, lane.tests);
   const batch = env.LAND_QUEUE_BATCH;
   if (!batch) return { path: undefined, cause, evidence };
@@ -261,17 +308,18 @@ export function recordRedLane(
     cause_guess: cause,
     cause_evidence: evidence,
     cause_confirmed: null,
+    logs: keepLaneLogs(cwd, batch, lane.lane, lane.output, now) ?? null,
   };
   const path = redLanesPath(cwd);
   mkdirSync(dirname(path), { recursive: true });
   appendFileSync(path, `${JSON.stringify(record)}\n`);
-  return { path, cause, evidence };
+  return { path, cause, evidence, logs: record.logs };
 }
 
 /** The summary line for a recorded (or, outside a batch, unrecorded) red lane. */
-export function redLaneLine(lane: string, result: { path: string | undefined; cause: Cause; evidence: string | null }): string {
+export function redLaneLine(lane: string, result: { path: string | undefined; cause: Cause; evidence: string | null; logs?: string | null }): string {
   const guess = `cause guess ${result.cause}${result.evidence ? ` (${result.evidence})` : ""}`;
-  return `red lane ${lane}: ${guess}; ${result.path ? `recorded in ${result.path}` : "not recorded (no LAND_QUEUE_BATCH)"}`;
+  return `red lane ${lane}: ${guess}; ${result.path ? `recorded in ${result.path}` : "not recorded (no LAND_QUEUE_BATCH)"}${result.logs ? `; logs kept in ${result.logs}` : ""}`;
 }
 
 // ── Lane budgets ──

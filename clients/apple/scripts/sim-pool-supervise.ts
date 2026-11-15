@@ -56,6 +56,50 @@ export type GroupQuery =
   | { ok: true; pids: number[] }
   | { ok: false; reason: string };
 
+/**
+ * Every process group this process starts is detached, so a stop can signal the whole tree. A
+ * caller killed by SIGKILL never runs its stop: a cancelled background job gets SIGKILL on its own
+ * process group, which skips the SIGTERM handlers and leaves xcodebuild (or a gate lane) running
+ * with ppid 1, holding its DerivedData's build.db. So a detached bash watcher reads `+<pgid>` and
+ * `-<pgid>` lines from a pipe this process holds open; when the pipe closes, however this process
+ * ended, it sends SIGTERM to each group still listed, then SIGKILL two seconds later. It only
+ * signals groups this process listed and has not finished with; a normal exit lists none.
+ */
+const REAPER_SCRIPT = `groups=" "
+while read -r op pgid; do
+  case "$op" in
+    +) groups="$groups$pgid " ;;
+    -) groups="\${groups/ $pgid / }" ;;
+  esac
+done
+[ "$groups" = " " ] && exit 0
+for g in $groups; do kill -TERM -- "-$g" 2>/dev/null; done
+sleep 2
+for g in $groups; do kill -KILL -- "-$g" 2>/dev/null; done`;
+
+let reaper: ChildProcess | undefined;
+
+function tellReaper(line: string): void {
+  if (!reaper) {
+    reaper = spawn("/bin/bash", ["-c", REAPER_SCRIPT], { stdio: ["pipe", "ignore", "ignore"], detached: true });
+    reaper.on("error", () => {});
+    reaper.stdin!.on("error", () => {});
+    // Neither the watcher nor its pipe keeps this process alive.
+    reaper.unref();
+    (reaper.stdin as unknown as { unref?: () => void }).unref?.();
+  }
+  reaper.stdin!.write(`${line}\n`);
+}
+
+/** Kill process group `pgid` if this process dies before `forgetGroupOnExit(pgid)`. */
+export function killGroupOnExit(pgid: number): void {
+  if (pgid > 0) tellReaper(`+ ${pgid}`);
+}
+
+export function forgetGroupOnExit(pgid: number): void {
+  if (pgid > 0 && reaper) tellReaper(`- ${pgid}`);
+}
+
 function pgrepBin(): string {
   return process.env.OPPI_SIM_POOL_PGREP ?? "/usr/bin/pgrep";
 }
@@ -635,6 +679,7 @@ export class CommandSession {
       return spawned;
     }
     this.children.push(spawned.gated.owned);
+    killGroupOnExit(spawned.gated.owned.pgid);
     try {
       this.onSpawned?.(spawned.gated.owned);
     } catch (error) {
@@ -663,6 +708,7 @@ export class CommandSession {
 
   retire(owned: Supervised): void {
     owned.retired = true;
+    forgetGroupOnExit(owned.pgid);
     const index = this.children.indexOf(owned);
     if (index >= 0) {
       this.children.splice(index, 1);
@@ -748,6 +794,7 @@ export class CommandSession {
         firstSignal: options.firstSignal ?? "SIGTERM",
       });
       this.rememberStop(completed.stop);
+      forgetGroupOnExit(child.pgid);
     }
     this.children.splice(0, this.children.length);
     return this.joinedStop;

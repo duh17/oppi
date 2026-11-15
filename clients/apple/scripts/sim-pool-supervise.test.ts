@@ -236,6 +236,32 @@ wait || true
     }
   });
 
+  test("a SIGKILLed owner's running process groups die with it", async () => {
+    // A cancelled background job gets SIGKILL on its process group: the session's handlers never run.
+    const dir = tempDir("reap");
+    const out = join(dir, "pgids");
+    const owner = join(dir, "owner.ts");
+    writeFileSync(
+      owner,
+      `import { writeFileSync } from "node:fs";
+import { CommandSession } from ${JSON.stringify(join(import.meta.dir, "sim-pool-supervise.ts"))};
+const session = new CommandSession();
+const running = await session.spawn("sleep", ["300"]);
+if (!running.ok) throw new Error(running.reason);
+writeFileSync(${JSON.stringify(out)}, \`\${running.owned.pgid}\\n\`);
+await new Promise(() => {});
+`,
+    );
+    const child = Bun.spawn(["bun", owner], { stdout: "ignore", stderr: "inherit" });
+    const pgid = Number((await waitForFile(out)).trim());
+    expect(queryProcessGroup(pgid)).toEqual({ ok: true, pids: [pgid] });
+    child.kill("SIGKILL");
+    await child.exited;
+    const deadline = Date.now() + SPAWN_WAIT_MS;
+    while (alive(pgid) && Date.now() < deadline) await Bun.sleep(50);
+    expect(alive(pgid)).toBe(false);
+  });
+
   test("stopOwned does not report quiescent while the group still has members", async () => {
     const spawned = await spawnOwned("sleep", ["60"]);
     if (!spawned.ok) {

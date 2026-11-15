@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +15,8 @@ afterEach(() => {
 
 /**
  * A stand-in for sim-pool.sh or e2e.sh: call N appends its arguments to `<name>.calls`, copies
- * `<name>-N.log` (empty when absent) into the log its summary names, prints the `Artifact:` line,
+ * `<name>-N.log` (empty when absent) into the log its summary names, records `<name>-N.results`
+ * (one passed test when absent) as the summary's xcresult counts, prints the `Artifact:` line,
  * and exits with `<name>-N.exit` (0 when absent).
  */
 function fakeRunner(state: string, name: string): string {
@@ -24,7 +26,8 @@ echo $n > "${state}/${name}.count"
 echo "$*" >> "${state}/${name}.calls"
 log="${state}/${name}-run-$n.log"
 cp "${state}/${name}-$n.log" "$log" 2>/dev/null || : > "$log"
-echo "{\\"log_path\\":\\"$log\\"}" > "${state}/${name}-$n.summary.json"
+results=$(cat "${state}/${name}-$n.results" 2>/dev/null || echo '${JSON.stringify(counts(1))}')
+echo "{\\"log_path\\":\\"$log\\",\\"test_results\\":$results}" > "${state}/${name}-$n.summary.json"
 echo "Artifact: ${state}/${name}-$n.summary.json"
 exit $(cat "${state}/${name}-$n.exit" 2>/dev/null || echo 0)
 `;
@@ -58,8 +61,9 @@ function fakeCheckout() {
   git("init", "-q", "-b", "main");
   git("add", ".");
   git("commit", "-q", "-m", "base");
-  const script = (name: string, runs: { log?: string; exit?: number }[]) => runs.forEach((run, index) => {
+  const script = (name: string, runs: { log?: string; exit?: number; results?: object }[]) => runs.forEach((run, index) => {
     if (run.log !== undefined) writeFileSync(join(state, `${name}-${index + 1}.log`), run.log);
+    if (run.results !== undefined) writeFileSync(join(state, `${name}-${index + 1}.results`), JSON.stringify(run.results));
     if (run.exit !== undefined) writeFileSync(join(state, `${name}-${index + 1}.exit`), String(run.exit));
   });
   const calls = (name: string) => (existsSync(join(state, `${name}.calls`)) ? readFileSync(join(state, `${name}.calls`), "utf8").trim().split("\n") : []);
@@ -89,6 +93,11 @@ function fakeCheckout() {
   return { checkout, git, script, calls, run, ledger, unitRun };
 }
 
+/** The xcresult counts sim-pool records as a run's `test_results`: `passed` tests that passed, none skipped. */
+function counts(passed: number, skipped = 0) {
+  return { bundle: "/r/Run.xcresult", result: passed > 0 ? "Passed" : "Skipped", total: passed + skipped, passed, failed: 0, skipped, expectedFailures: 0, failures: [] };
+}
+
 /** A finished XCTest run of OppiE2ETests cases. */
 function e2eLog(cases: Record<string, "passed" | "failed">): string {
   const lines = Object.entries(cases).map(([name, result]) => `Test Case '-[OppiE2ETests.ChatE2ETests ${name}]' ${result} (40.0 seconds).`);
@@ -99,7 +108,7 @@ function e2eLog(cases: Record<string, "passed" | "failed">): string {
 describe("batch gate: zero-test selectors", () => {
   test("a unit selector whose Swift Testing run executed zero tests fails the lane, names the selector, and is a red lane guessed as a selector", () => {
     const fx = fakeCheckout();
-    fx.script("sim-pool", [{ log: "Test Suite 'All tests' passed at 2026-11-01 10:00:00.000.\n\t Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds\n◇ Test run started.\n✔ Test run with 0 tests passed after 0.001 seconds.\n" }]);
+    fx.script("sim-pool", [{ results: counts(0) }]);
     const result = fx.run(["--test", "OppiTests/FooTests/a"]);
     expect(result.code).toBe(1);
     expect(result.out).toContain("[batch-gate] ios-unit: zero tests ran for OppiTests/FooTests/a: no test matches the selector");
@@ -110,11 +119,29 @@ describe("batch gate: zero-test selectors", () => {
 
   test("an E2E selector whose XCTest run executed zero tests fails the lane and names the selector", () => {
     const fx = fakeCheckout();
-    fx.script("e2e", [{ log: "Test Suite 'Selected tests' passed at 2026-11-01 10:00:00.000.\n\t Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds\n" }]);
+    fx.script("e2e", [{ results: counts(0, 2) }]);
     const result = fx.run(["--test", "OppiE2ETests/ChatE2ETests/testSend"]);
     expect(result.code).toBe(1);
     expect(result.out).toContain("[batch-gate] e2e: zero tests ran for OppiE2ETests/ChatE2ETests/testSend: no test matches the selector");
     expect(fx.ledger("land-queue/red-lanes.jsonl")[0]).toMatchObject({ lane: "e2e", cause_guess: "selector" });
+  });
+
+  test("a run counts the tests its xcresult records, whatever its log shows", () => {
+    const fx = fakeCheckout();
+    // The Swift Testing run line never reached the log, so it reads as XCTest's zero-test prelude.
+    fx.script("sim-pool", [{ log: "Test Suite 'All tests' passed at 2026-11-14 20:00:00.000.\n\t Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds\n", results: counts(5127) }]);
+    const result = fx.run(["--test", "OppiTests/FooTests"]);
+    expect(result.out).not.toContain("zero tests ran");
+    expect(result.code).toBe(0);
+  });
+
+  test("a run whose test result cannot be read fails the lane as unreadable, not as zero tests", () => {
+    const fx = fakeCheckout();
+    fx.script("sim-pool", [{ results: { bundle: "/r/Run.xcresult", unreadable: "xcresulttool exit 1: Info.plist does not exist" } }]);
+    const result = fx.run(["--test", "OppiTests/FooTests"]);
+    expect(result.code).toBe(1);
+    expect(result.out).toContain("[batch-gate] ios-unit: result unreadable for OppiTests/FooTests: xcresulttool exit 1: Info.plist does not exist");
+    expect(result.out).not.toContain("zero tests ran");
   });
 });
 
@@ -538,5 +565,64 @@ describe("batch gate: budgets and hidden flakes", () => {
       ["OppiE2ETests/ChatE2ETests/testOther", "failed"],
     ]);
     expect(result.out).toContain("[batch-gate] no flakes hidden by rerun");
+  });
+});
+
+describe("batch gate: the gate dies with the run that started it", () => {
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const until = async (done: () => boolean) => {
+    const deadline = Date.now() + 20_000;
+    while (!done() && Date.now() < deadline) await Bun.sleep(100);
+    return done();
+  };
+
+  /** A queue run (bash, in its own process group like a background job) whose gate runs a lane that hangs; the lane's pid once it runs. */
+  async function hangingRun() {
+    const fx = fakeCheckout();
+    const state = join(fx.checkout, "..", "state");
+    writeFileSync(join(fx.checkout, "clients", "apple", "scripts", "sim-pool.sh"), `#!/bin/sh\necho $$ > "${state}/lane.pid"\nexec sleep 300\n`);
+    const run = spawn("bash", ["-c", `bun "${gate}" --worktree "${fx.checkout}" --test OppiTests/FooTests; sleep 300`], { detached: true, stdio: "ignore" });
+    await until(() => existsSync(join(state, "lane.pid")) && readFileSync(join(state, "lane.pid"), "utf8").trim() !== "");
+    return { run: run.pid!, lane: Number(readFileSync(join(state, "lane.pid"), "utf8").trim()) };
+  }
+
+  const cleanup = (pids: number[]) => {
+    for (const pid of pids) {
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        // Gone.
+      }
+    }
+  };
+
+  test("a queue run killed alone stops the gate's lanes", async () => {
+    const { run, lane } = await hangingRun();
+    try {
+      expect(alive(lane)).toBe(true);
+      process.kill(run, "SIGKILL");
+      expect(await until(() => !alive(lane))).toBe(true);
+    } finally {
+      cleanup([run, lane]);
+    }
+  });
+
+  test("a queue run killed with its whole process group, gate included, still stops the gate's lanes", async () => {
+    // A cancelled background job: SIGKILL to the job's group, so no SIGTERM handler runs.
+    const { run, lane } = await hangingRun();
+    try {
+      expect(alive(lane)).toBe(true);
+      process.kill(-run, "SIGKILL");
+      expect(await until(() => !alive(lane))).toBe(true);
+    } finally {
+      cleanup([run, lane]);
+    }
   });
 });

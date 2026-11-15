@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
-  budgetVerdict, failedTestsInOutput, flakesAt, flakesAtHead, guessCause, hiddenFlakesLine, loadBudgets, parseFlakes, recordRedLane, recordRerun, xctestRerun,
+  budgetVerdict, failedTestsInOutput, flakesAt, flakesAtHead, guessCause, hiddenFlakesLine, loadBudgets, parseFlakes, recordRedLane, recordRerun, redLaneLine, xctestRerun,
 } from "./gate-report";
 
 const temps: string[] = [];
@@ -138,9 +138,47 @@ describe("red lanes", () => {
     const [row] = rows(written.path!);
     expect(row).toEqual({
       at: "2026-11-01T12:00:00.000Z", batch: "b20261101-1", branches: ["a", "b"], head: row.head, lane: "ui-ipad", profile: "ipad", exit: 1, seconds: 612,
-      tests: ["OppiUITests/A/testB"], cause_guess: "test-failure", cause_evidence: "OppiUITests/A/testB", cause_confirmed: null,
+      tests: ["OppiUITests/A/testB"], cause_guess: "test-failure", cause_evidence: "OppiUITests/A/testB", cause_confirmed: null, logs: null,
     });
     expect(row.head).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  test("a red lane's logs and summaries outlive the scratch worktree that wrote them", () => {
+    const dir = checkout();
+    const wt = join(dir, "..", `${basename(dir)}-scratch`);
+    temps.push(wt);
+    Bun.spawnSync(["git", "-C", dir, "worktree", "add", "-q", "--detach", wt]);
+    // `.build` is a link into a RAM-disk build root (OPPI_BUILD_ROOT), outside the checkout.
+    const buildRoot = mkdtempSync(join(tmpdir(), "gate-report-build-root-"));
+    temps.push(buildRoot);
+    mkdirSync(join(wt, "clients", "apple"), { recursive: true });
+    symlinkSync(buildRoot, join(wt, "clients", "apple", ".build"));
+    const build = join(realpathSync.native(wt), "clients", "apple", ".build");
+    const file = (path: string, text: string) => {
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(path, text);
+      return path;
+    };
+    // A UI shard's output names its sim-pool log and summary; the summary names the log.
+    const log = file(join(build, "logs", "pool-2-20261113.log"), "Test Case '-[OppiUITests.A testB]' failed (3.0 seconds).\n");
+    const summary = file(join(build, "logs", "pool-2-20261113.summary.json"), JSON.stringify({ log_path: log }));
+    const shard = file(join(build, "runs", "ui-1", "shards", "shard-1.out"), `Full log: ${log}\nArtifact: ${summary}\n`);
+    const outside = file(join(dir, "..", `${basename(dir)}-elsewhere.log`), "not the checkout's\n");
+    temps.push(outside);
+    const output = `[ui-shards] shard 1/1: FAIL exit=65 tests=3 12s output=${shard}\n[ui-shards] see ${outside}\n`;
+
+    const written = recordRedLane(wt, { lane: "ui-ipad", profile: "ipad", exit: 1, seconds: 60, tests: [], output }, { LAND_QUEUE_BATCH: "b20261113144359-1" });
+    rmSync(wt, { recursive: true, force: true });
+    rmSync(buildRoot, { recursive: true, force: true });
+
+    const kept = join(realpathSync.native(dir), ".git", "oppi", "land-queue", "red-logs", "b20261113144359-1", "ui-ipad");
+    expect(written.logs).toBe(kept);
+    expect(rows(written.path!)[0].logs).toBe(kept);
+    expect(readFileSync(join(kept, "clients/apple/.build/runs/ui-1/shards/shard-1.out"), "utf8")).toContain("Full log:");
+    expect(readFileSync(join(kept, "clients/apple/.build/logs/pool-2-20261113.log"), "utf8")).toContain("testB]' failed");
+    expect(existsSync(join(kept, "clients/apple/.build/logs/pool-2-20261113.summary.json"))).toBe(true);
+    expect(readdirSync(kept)).toEqual(["clients"]);
+    expect(redLaneLine("ui-ipad", written)).toEndWith(`; logs kept in ${kept}`);
   });
 
   test("the pre-push CLI records a failed server lane of a batch from its log", () => {

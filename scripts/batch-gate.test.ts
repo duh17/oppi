@@ -202,18 +202,21 @@ describe("batch gate plan", () => {
     expect(plan.lanes.find((lane) => lane.name === "e2e")?.steps.map((step) => step.requireTests)).toEqual([true, true]);
   });
 
-  test("a sim-pool run that executed zero tests is detected from its log", () => {
+  test("a sim-pool run's executed tests come from its xcresult counts, not its log", () => {
     const dir = mkdtempSync(join(tmpdir(), "batch-gate-"));
     try {
-      const run = (log: string) => {
-        writeFileSync(join(dir, "run.log"), log);
-        writeFileSync(join(dir, "s.json"), JSON.stringify({ log_path: join(dir, "run.log") }));
+      const run = (summary: object) => {
+        // The log says zero tests (XCTest's prelude; the Swift Testing line got lost): only the xcresult counts.
+        writeFileSync(join(dir, "run.log"), "Test Suite 'Selected tests' passed at 2026-10-22 10:00:00.000.\n\t Executed 0 tests, with 0 failures (0 unexpected) in 0.0 (0.0) seconds\n");
+        writeFileSync(join(dir, "s.json"), JSON.stringify({ log_path: join(dir, "run.log"), ...summary }));
         return executedTests(`noise\nArtifact: ${join(dir, "s.json")}\n`);
       };
-      expect(run("✔ Test run with 12 tests in 2 suites passed after 1.0 seconds.\n")).toBe(12);
-      expect(run("Test Suite 'Selected tests' passed at 2026-10-22 10:00:00.000.\n\t Executed 3 tests, with 0 failures (0 unexpected) in 9.0 (9.1) seconds\n")).toBe(3);
-      expect(run("Test Suite 'Selected tests' passed at 2026-10-22 10:00:00.000.\n\t Executed 0 tests, with 0 failures (0 unexpected) in 0.0 (0.0) seconds\n")).toBe(0);
-      expect(executedTests("no artifact line")).toBe(0);
+      const counts = { bundle: "/r/Run.xcresult", result: "Passed", total: 12, passed: 12, failed: 0, skipped: 0, expectedFailures: 0, failures: [] };
+      expect(run({ test_results: counts })).toEqual({ tests: 12 });
+      expect(run({ test_results: { ...counts, result: "Skipped", passed: 0, skipped: 12 } })).toEqual({ tests: 0 });
+      expect(run({ test_results: { bundle: "/r/Run.xcresult", unreadable: "no Info.plist" } })).toEqual({ unreadable: "no Info.plist" });
+      expect(run({})).toEqual({ tests: 0 });
+      expect(executedTests("no artifact line")).toEqual({ tests: 0 });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -233,7 +236,7 @@ function fakeCheckout(real: string): string {
   writeFileSync(join(scripts, "sim-pool.sh"), `#!/bin/sh
 echo "$PWD $OPPI_ROOT $OPPI_SIM_POOL_GATE" > "${real}/seen"
 echo "✔ Test run with 1 test in 1 suite passed after 0.1 seconds." > "${real}/run.log"
-echo '{"log_path":"${real}/run.log"}' > "${real}/summary.json"
+echo '{"log_path":"${real}/run.log","test_results":{"bundle":"${real}/Run.xcresult","result":"Passed","total":1,"passed":1,"failed":0,"skipped":0,"expectedFailures":0,"failures":[]}}' > "${real}/summary.json"
 echo "Artifact: ${real}/summary.json"
 `);
   chmodSync(join(scripts, "sim-pool.sh"), 0o755);
