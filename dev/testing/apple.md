@@ -61,7 +61,7 @@ bun scripts/apple-warnings.ts --latest clients/apple/.build/logs   # newest sim-
 bun scripts/apple-warnings.ts <build log> --update                 # lower the baseline
 ```
 
-- The pre-push Apple lane runs it on its build log. Compiler, SwiftLint and SwiftPM warnings count separately per folder and per file; any count above `scripts/apple-warnings-baseline.json` fails and prints the new warnings. Fix the warning; counts only go down.
+- The pre-push Apple lane runs it on its build log. Compiler, SwiftLint and SwiftPM warnings count separately per folder and per file. A count above `scripts/apple-warnings-baseline.json` in app, extension or package sources fails and prints the new warnings; warnings in test targets are printed as a note and do not fail. Fix the warning; counts only go down.
 - It checks only what the build compiled. `--update` never raises a count and lowers one only from a complete log: build into fresh DerivedData, then commit the baseline with the fix.
 
 ## Swift Testing filters
@@ -111,13 +111,11 @@ Each of these has cost a false red or a false green.
 
 ```bash
 ./clients/apple/scripts/sim-pool.sh self-test
-./clients/apple/scripts/ci-simulator.sh self-test
 ./clients/apple/scripts/check-coverage.sh self-test
 ./scripts/check-coverage.sh                                   # full local gate
-OPPI_SIMULATOR_RUNNER=ci ./scripts/check-coverage.sh          # single-device runner; never concurrently
 ```
 
-Exit codes: `2` only for coverage below an enforced threshold; `7` package resolution failed twice; `8` invalid runner configuration; anything else nonzero is a collection failure, not a shortfall. Boot waits: two 120 s readiness waits (`OPPI_SIM_POOL_BOOT_TIMEOUT`, `OPPI_SIM_POOL_BOOT_RETRIES`).
+Exit codes: `2` only for coverage below an enforced threshold; `7` package resolution failed twice; anything else nonzero is a collection failure, not a shortfall. Boot waits: two 120 s readiness waits (`OPPI_SIM_POOL_BOOT_TIMEOUT`, `OPPI_SIM_POOL_BOOT_RETRIES`).
 
 ## iOS E2E tests
 

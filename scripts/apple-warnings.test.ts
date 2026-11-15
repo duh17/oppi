@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type Baseline, countWarnings, fileCounts, lowered, newWarnings, parseLog, regressions } from "./apple-warnings";
+import { type Baseline, countWarnings, fileCounts, lowered, newWarnings, parseLog, regressions, splitTestWarnings } from "./apple-warnings";
 
 const root = "/work/tree/clients/apple";
 const compiler = (path: string, line: number, message: string) => `${root}/${path}:${line}:5: warning: ${message}`;
@@ -34,6 +34,22 @@ describe("warning parsing", () => {
   test("reads which files compiled and whether the SwiftLint phase ran", () => {
     expect([...parsed.compiled]).toEqual(["Oppi/A.swift"]);
     expect(parsed.swiftlintRan).toBe(true);
+  });
+});
+
+describe("test targets", () => {
+  test("are split from the gated production warnings, SwiftPM included", () => {
+    const { gated, testTargets } = splitTestWarnings(parseLog(log).warnings);
+    expect(countWarnings(gated)).toEqual({ Oppi: { compiler: 1 }, SwiftPM: { dependency: 1 } });
+    expect(countWarnings(testTargets)).toEqual({ OppiTests: { compiler: 2, swiftlint: 1 } });
+  });
+
+  test("never raise a gated count, however many they add", () => {
+    const noisy = parseLog(`${log}\n${compiler("OppiUITests/U.swift", 2, "main actor-isolated property")}`);
+    const baseline: Baseline = { counts: { Oppi: { compiler: 1 }, SwiftPM: { dependency: 1 } }, files: fileCounts(splitTestWarnings(parseLog(log).warnings).gated) };
+    const { gated } = splitTestWarnings(noisy.warnings);
+    expect(regressions(countWarnings(gated), baseline)).toEqual([]);
+    expect(newWarnings(gated, baseline)).toEqual([]);
   });
 });
 

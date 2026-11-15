@@ -6,7 +6,7 @@
       "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 300 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client.md": {
-      "words": 5730,
+      "words": 5740,
       "reason": "Client owners and rules: forked syntax grammars, ServerConnection's state-machine owners, UIKit ownership and the guard-named sections (navigation bar, load states, alerts, settings pages, document editing), shell, Live Voice, SSH/Rex, and the boundary rules the architecture check links to. 4974 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client/blocks.md": {
@@ -30,7 +30,7 @@
       "reason": "Godot pane owners, the engine artifact outside the repository, packs and the sandbox, and its tests. 318 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server.md": {
-      "words": 1700,
+      "words": 1710,
       "reason": "Server map and cross-cutting owners: program status, push, Live Voice and barge-in, the protocol boundary checklist, settings and route registries, and the boundary rules the architecture check links to. 1476 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/blocks-and-boundaries.md": {

@@ -29,6 +29,7 @@ export type HomePathViolation = {
  * path is rewritten, not allowlisted.
  */
 export const NEUTRAL_HOME_NAMES: ReadonlySet<string> = new Set([
+  "alex",
   "alice",
   "example",
   "foo",

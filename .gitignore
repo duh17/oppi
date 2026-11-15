@@ -63,7 +63,6 @@ clients/apple/scripts/*
 !clients/apple/scripts/build-tailscalekit.test.sh
 !clients/apple/scripts/check-coverage.sh
 !clients/apple/scripts/check-privacy-manifests.sh
-!clients/apple/scripts/ci-simulator.sh
 !clients/apple/scripts/e2e.sh
 !clients/apple/scripts/markdown-corpus-update.sh
 !clients/apple/scripts/markdown-github-fixtures.sh
@@ -120,8 +119,6 @@ clients/apple/scripts/*
 !clients/apple/scripts/bundle-mac-server-bun.ts
 !clients/apple/scripts/bundle-mac-server-bun.test.ts
 !clients/apple/scripts/periphery-scan.ts
-!clients/apple/scripts/analyze-visual-recording.ts
-!clients/apple/scripts/analyze-visual-recording.test.ts
 !clients/apple/scripts/qa-verify.ts
 !clients/apple/scripts/qa-verify-lib.ts
 !clients/apple/scripts/qa-verify.test.ts

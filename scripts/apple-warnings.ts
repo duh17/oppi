@@ -16,6 +16,10 @@ import { fileURLToPath } from "node:url";
  *                a compiler regression;
  *  - dependency: SwiftPM and other warnings that name no repository file (group `SwiftPM`).
  *
+ * Only production groups gate: warnings in test targets (`testGroups`) are printed as a note and
+ * never fail, because XCUITest and Swift Testing diagnostics move with every Xcode release and
+ * made most ratchet failures without a regression in shipped code.
+ *
  * A count may not exceed scripts/apple-warnings-baseline.json (absent means 0), per group and per
  * file; decreases pass. A group the log did not build has no warnings in it, so a unit-scheme
  * build still checks what it compiled, and a build that recompiled only some files still catches
@@ -53,6 +57,8 @@ const apple = join(repoRoot, "clients/apple");
 const baselinePath = join(repoRoot, "scripts/apple-warnings-baseline.json");
 const kinds: Kind[] = ["compiler", "swiftlint", "dependency"];
 const externalGroup = "SwiftPM";
+/** Groups built only for tests; their warnings are reported, not gated. */
+const testGroups: ReadonlySet<string> = new Set(["OppiTests", "OppiUITests", "OppiE2ETests", "OppiPerfTests", "QAVerificationSupport"]);
 const maxPrinted = 200;
 
 const headerLine = /^(\/\S.*?):(\d+):(\d+): warning: (.*)$/;
@@ -114,6 +120,13 @@ export function parseLog(text: string): ParsedLog {
     if (/ \(in target '[^']+' from project '(?!Oppi')/.test(line)) externalBuilt = true;
   }
   return { warnings, compiled, swiftlintRan, externalBuilt };
+}
+
+export function splitTestWarnings(warnings: Warning[]): { gated: Warning[]; testTargets: Warning[] } {
+  return {
+    gated: warnings.filter((w) => !testGroups.has(w.group)),
+    testTargets: warnings.filter((w) => testGroups.has(w.group)),
+  };
 }
 
 export function countWarnings(warnings: Warning[]): Counts {
@@ -272,12 +285,17 @@ function main(args: string[]): number {
   }
   const log = parseLog(readFileSync(logPath, "utf8"));
   const baseline = readBaseline();
-  const counts = countWarnings(log.warnings);
+  const { gated, testTargets } = splitTestWarnings(log.warnings);
+  const counts = countWarnings(gated);
   const regressed = regressions(counts, baseline);
-  const added = newWarnings(log.warnings, baseline);
+  const added = newWarnings(gated, baseline);
 
   console.log(`Apple warnings: ${logPath}`);
   for (const row of table(counts, baseline)) console.log(`  ${row}`);
+  if (testTargets.length > 0) {
+    const perGroup = Object.entries(countWarnings(testTargets)).map(([group, byKind]) => `${group} ${Object.values(byKind).reduce((a, b) => a + b, 0)}`);
+    console.log(`  (test targets, not gated: ${perGroup.join(", ")})`);
+  }
 
   if (regressed.length > 0 || added.length > 0) {
     console.log("\nApple warnings: FAIL — more warnings than scripts/apple-warnings-baseline.json:");
@@ -292,7 +310,7 @@ function main(args: string[]): number {
     console.log("\nApple warnings: PASS — no count above the baseline.");
     return 0;
   }
-  const next = render(lowered(baseline, counts, log.warnings, log));
+  const next = render(lowered(baseline, counts, gated, log));
   if (next === render(baseline)) {
     console.log("\nApple warnings: baseline already at or below this log; unchanged.");
     return 0;

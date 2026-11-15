@@ -34,6 +34,10 @@ describe("findHomePathViolations", () => {
     }
   });
 
+  it("allows /Users/alex, the neutral sample path the repo rules prescribe", () => {
+    expect(findHomePathViolations("server/src/config.ts", '"/Users/alex/.pi/agent"')).toEqual([]);
+  });
+
   it("ignores placeholders that are not account names", () => {
     const content = ['if (path.hasPrefix("/Users/")) {', "/// `/Users/.../Foo.swift`"].join("\n");
     expect(findHomePathViolations("server/src/config.ts", content)).toEqual([]);

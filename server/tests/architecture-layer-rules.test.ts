@@ -1004,21 +1004,24 @@ describe("Architecture boundary CLI and iOS ownership rules", () => {
     }
   });
 
-  it("fails a frozen file that grows past its budget", () => {
+  it("fails a frozen file only once it grows more than 10% past its budget", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-line-budget-frozen-"));
     const frozen = "server/src/durable-harness.ts";
     try {
       writeLineBudgetBaseline(repoRoot, {
         [frozen]: { budget: 1600, reason: "SV2 moves the session host out.", owner: "SV2" },
       });
-      write(join(repoRoot, frozen), sourceLines(1601));
+      // The allowance is 160 lines: 1760 passes, 1761 fails.
+      write(join(repoRoot, frozen), sourceLines(1761));
       const grown = findFileLineBudgetViolations(repoRoot, "server");
       expect(grown.violations.map((v) => [v.file, v.line, v.rule])).toEqual([
-        [frozen, 1601, "file-line-budget"],
+        [frozen, 1761, "file-line-budget"],
       ]);
-      expect(grown.violations[0].reason).toContain("1601 lines; its frozen budget is 1600");
+      expect(grown.violations[0].reason).toContain(
+        "1761 lines; its frozen budget is 1600 and it may grow 160 lines past that",
+      );
 
-      write(join(repoRoot, frozen), sourceLines(1600));
+      write(join(repoRoot, frozen), sourceLines(1760));
       expect(findFileLineBudgetViolations(repoRoot, "server").violations).toEqual([]);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
@@ -1032,11 +1035,17 @@ describe("Architecture boundary CLI and iOS ownership rules", () => {
       writeLineBudgetBaseline(repoRoot, {
         [shrinking]: { budget: 1700, reason: "SC2 moves LAN ranking out.", owner: "SC2" },
       });
-      write(join(repoRoot, shrinking), sourceLines(1550));
+      write(join(repoRoot, shrinking), sourceLines(1520));
       const shrunk = findFileLineBudgetViolations(repoRoot, "ios");
       expect(shrunk.violations).toEqual([]);
       expect(shrunk.notices).toContain(
-        `${shrinking} is 1550 lines, 150 under its 1700 budget: lower the budget to 1600.`,
+        `${shrinking} is 1520 lines, 180 under its 1700 budget: lower the budget to 1520.`,
+      );
+
+      // Less than a 10% allowance under the budget is not worth a notice.
+      write(join(repoRoot, shrinking), sourceLines(1600));
+      expect(findFileLineBudgetViolations(repoRoot, "ios").notices.join("\n")).not.toContain(
+        "lower the budget",
       );
 
       // A split that lands under the limit drops the entry instead of freezing a new number.

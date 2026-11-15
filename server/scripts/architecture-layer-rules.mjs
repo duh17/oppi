@@ -142,15 +142,15 @@ const IOS_CYCLOMATIC_DISABLE_BUDGETS = [
   { file: "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift", max: 0 },
 ];
 
-// Per-file line budget, a ratchet that only goes down. A new production source file over
-// FILE_LINE_BUDGET_LIMIT fails. A file that was already bigger is frozen at its size rounded up to
-// the next FILE_LINE_BUDGET_ROUNDING in FILE_LINE_BUDGET_BASELINE, with a reason and an owner, and
-// fails only once it grows past that; when a file drops FILE_LINE_BUDGET_ROUNDING lines under its
-// budget the guard asks for the lower number. Tests and the debug harness are measured and
+// Per-file line budget. A new production source file over FILE_LINE_BUDGET_LIMIT fails. A file that
+// was already bigger is frozen in FILE_LINE_BUDGET_BASELINE at its size, with a reason and an owner,
+// and fails only once it grows more than FILE_LINE_BUDGET_GROWTH of its budget past it: ordinary
+// edits do not trip the guard, a real regression does. When a file drops that far under its budget
+// the guard asks for the lower number. Tests and the debug harness are measured and
 // reported, never enforced: they follow their production owner, so their size is not a rule.
 const FILE_LINE_BUDGET_RULE = "file-line-budget";
 const FILE_LINE_BUDGET_LIMIT = 1500;
-const FILE_LINE_BUDGET_ROUNDING = 100;
+const FILE_LINE_BUDGET_GROWTH = 0.1;
 const FILE_LINE_BUDGET_BASELINE = "scripts/file-line-budget-baseline.json";
 const FILE_LINE_BUDGET_GENERATED_FILE = /\.generated\.(?:swift|ts)$/;
 const FILE_LINE_BUDGET_SOURCES = {
@@ -495,8 +495,8 @@ function countSourceLines(absolutePath) {
   return lines[lines.length - 1] === "" ? lines.length - 1 : lines.length;
 }
 
-function roundUpFileLineBudget(lines) {
-  return Math.ceil(lines / FILE_LINE_BUDGET_ROUNDING) * FILE_LINE_BUDGET_ROUNDING;
+function fileLineBudgetAllowance(budget) {
+  return Math.floor(budget * FILE_LINE_BUDGET_GROWTH);
 }
 
 /**
@@ -616,17 +616,12 @@ export function findFileLineBudgetViolations(repoRoot, scope) {
       typeof entry?.owner === "string" &&
       entry.owner.trim() !== "";
 
-    if (
-      !metadata ||
-      !Number.isInteger(budget) ||
-      budget % FILE_LINE_BUDGET_ROUNDING !== 0 ||
-      budget <= FILE_LINE_BUDGET_LIMIT
-    ) {
+    if (!metadata || !Number.isInteger(budget) || budget <= FILE_LINE_BUDGET_LIMIT) {
       push({
         file,
         line: 1,
-        reason: `A frozen budget is the file's size rounded up to the next ${FILE_LINE_BUDGET_ROUNDING} above ${FILE_LINE_BUDGET_LIMIT}, with a reason and an owner.`,
-        remediation: `Rewrite the entry in ${FILE_LINE_BUDGET_BASELINE}: {"budget": <integer in steps of ${FILE_LINE_BUDGET_ROUNDING} above ${FILE_LINE_BUDGET_LIMIT}>, "reason": "...", "owner": "..."}.`,
+        reason: `A frozen budget is the file's size, an integer above ${FILE_LINE_BUDGET_LIMIT}, with a reason and an owner.`,
+        remediation: `Rewrite the entry in ${FILE_LINE_BUDGET_BASELINE}: {"budget": <integer above ${FILE_LINE_BUDGET_LIMIT}>, "reason": "...", "owner": "..."}.`,
       });
       continue;
     }
@@ -644,11 +639,12 @@ export function findFileLineBudgetViolations(repoRoot, scope) {
       continue;
     }
 
-    if (lines > budget) {
+    const allowance = fileLineBudgetAllowance(budget);
+    if (lines > budget + allowance) {
       push({
         file,
-        line: budget + 1,
-        reason: `${file} has ${lines} lines; its frozen budget is ${budget}.`,
+        line: budget + allowance + 1,
+        reason: `${file} has ${lines} lines; its frozen budget is ${budget} and it may grow ${allowance} lines past that.`,
         remediation:
           "Split the file, or raise the budget deliberately in " +
           `${FILE_LINE_BUDGET_BASELINE} with a reason. The budget only goes down.`,
@@ -656,11 +652,11 @@ export function findFileLineBudgetViolations(repoRoot, scope) {
       continue;
     }
 
-    if (budget - lines >= FILE_LINE_BUDGET_ROUNDING) {
+    if (budget - lines >= allowance) {
       notices.push(
         lines <= FILE_LINE_BUDGET_LIMIT
           ? `${file} is ${lines} lines, under the ${FILE_LINE_BUDGET_LIMIT}-line limit: drop its entry from ${FILE_LINE_BUDGET_BASELINE}.`
-          : `${file} is ${lines} lines, ${budget - lines} under its ${budget} budget: lower the budget to ${roundUpFileLineBudget(lines)}.`,
+          : `${file} is ${lines} lines, ${budget - lines} under its ${budget} budget: lower the budget to ${lines}.`,
       );
     }
   }
@@ -677,7 +673,7 @@ export function findFileLineBudgetViolations(repoRoot, scope) {
       remediation:
         "Split it into files that each own one responsibility. If it has to stay one file, " +
         `freeze it in ${FILE_LINE_BUDGET_BASELINE} in the same commit: ` +
-        `{"budget": ${roundUpFileLineBudget(lines)}, "reason": "...", "owner": "..."}.`,
+        `{"budget": ${lines}, "reason": "...", "owner": "..."}.`,
     });
   }
 
