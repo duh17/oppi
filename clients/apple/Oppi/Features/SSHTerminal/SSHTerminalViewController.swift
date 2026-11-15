@@ -702,7 +702,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         grid.fillPassword = { [weak self] in self?.fillPassword() }
         grid.pasteImage = { [weak self] in self?.pasteImage($0) }
         grid.openTargetForHeldCell = { [weak self] held in self?.heldOpenTarget(held) }
-        grid.open = { [weak self] target in self?.open(target) }
+        grid.open = { [weak self] target, placement in self?.open(target, placement: placement) }
+        grid.requestsKeyboard = { [weak self] in self?.showTerminalKeyboard() }
         grid.paneStepping = paneStepping
         grid.paneTransition.onSwitching = { [weak self] in self?.rexMinimap.setSwitching($0) }
         return grid
@@ -1888,35 +1889,32 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private func heldOpenTarget(_ held: SSHTerminalHeldCell) -> SSHTerminalOpenTarget? {
         let folder = channel.workingDirectory.isEmpty ? nil : channel.workingDirectory
         guard let target = SSHTerminalOpenResolution.target(
-            text: held.text, hyperlink: held.hyperlink, folder: folder
+            text: held.text, hyperlink: held.hyperlink, folder: folder,
+            shellHost: channel.engine.workingDirectoryHost, sshHost: sshHost
         ) else { return nil }
-        guard target.path != nil else { return target }
-        guard pairedServer != nil else { return nil }
-        if let home = pairedHome, let path = absoluteHostPath(target.path ?? ""), !SSHTerminalHostPathPolicy.isInside(home: home, path: path) {
-            return nil
-        }
-        return target
+        return SSHTerminalHostPathPolicy.offers(target, isPairedServer: pairedServer != nil, home: pairedHome) ? target : nil
     }
 
-    private func open(_ target: SSHTerminalOpenTarget) {
+    /// Opens a held or tapped target. With no `placement` it goes where a
+    /// tapped chat link's would (`SSHTerminalOpenRoute`); the hold menu's
+    /// pane items name one (`PaneOpenMenu`).
+    private func open(_ target: SSHTerminalOpenTarget, placement: PaneOpenPlacement?) {
         switch target {
         case .web(let url, _):
-            // The app's one open owner applies the link browser preference.
-            AppRootEnvironment.near(self)?.opener.open(.webLink(url))
-        case .path(let path):
-            openHostPath(path)
+            guard let opener = AppRootEnvironment.near(self)?.opener else { return }
+            guard let placement, placement != .here, let grid = gridView else {
+                // The app's one open owner applies the link browser preference
+                // and puts the page beside the terminal on a wide window.
+                opener.open(.webLink(url))
+                return
+            }
+            PaneOpenMenu.open(placement, from: grid) { await opener.paneContent(for: .webLink(url)) }
+        case .path(let path, let line):
+            openHostPath(path, line: line, placement: placement)
         }
     }
 
-    /// `~/…` needs the server's home; an absolute path is already resolved.
-    private func absoluteHostPath(_ path: String) -> String? {
-        guard path.hasPrefix("~/") else { return path.hasPrefix("/") ? path : nil }
-        guard let home = pairedHome else { return nil }
-        let rest = String(path.dropFirst(2))
-        return SSHTerminalPathResolution.absolute(rest, relativeTo: home)
-    }
-
-    private func openHostPath(_ path: String) {
+    private func openHostPath(_ path: String, line: SourceLineAnchor?, placement: PaneOpenPlacement?) {
         guard let server = pairedServer, let root = AppRootEnvironment.near(self),
               let api = root.coordinator.apiClient(for: server.id) else {
             showOpenNotice("This host is not a paired Oppi server, so its files can only be copied.")
@@ -1929,7 +1927,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                 let home = try await Self.hostHome(api: api)
                 guard !Task.isCancelled else { return }
                 self.pairedHome = home
-                guard let target = self.absoluteHostPath(path) else {
+                guard let target = SSHTerminalHostPathPolicy.absolute(path, home: home) else {
                     self.showOpenNotice("That path cannot be resolved on the host.")
                     return
                 }
@@ -1937,9 +1935,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                 guard !Task.isCancelled else { return }
                 switch SSHTerminalHostPathPolicy.plan(status: status, home: home) {
                 case .file(let file):
-                    self.pushHostFile(serverId: server.id, path: file, root: root)
+                    self.showHostFile(serverId: server.id, path: file, line: line, root: root, placement: placement)
                 case .folder(let folder):
-                    self.pushHostFolder(serverId: server.id, folder: folder, home: home, root: root)
+                    self.showHostFolder(serverId: server.id, folder: folder, home: home, root: root, placement: placement)
                 case .refused(let reason):
                     self.showOpenNotice(reason)
                 }
@@ -1967,7 +1965,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                     self.showOpenNotice("Files open inside the server's home folder.")
                     return
                 }
-                self.pushHostFolder(serverId: server.id, folder: folder, home: home, root: root)
+                self.showHostFolder(serverId: server.id, folder: folder, home: home, root: root, placement: nil)
             } catch is CancellationError {
                 return
             } catch {
@@ -1997,33 +1995,48 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         return status.resolvedPath
     }
 
-    /// The viewer opens a file through its own server, above this terminal.
-    private func pushHostFile(serverId: String, path: String, root: AppRootEnvironment) {
-        guard navigationController?.topViewController === self else { return }
-        let target = WorkspaceLinkedFileNavTarget.hostFile(serverId: serverId, workspaceId: "", path: path)
-        Router.push(
-            WorkspaceLinkedFileViewController(target: target, placement: .pushed, root: root),
-            from: self
-        )
+    /// The viewer opens a file through its own server, at the link's line.
+    private func showHostFile(
+        serverId: String, path: String, line: SourceLineAnchor?, root: AppRootEnvironment, placement: PaneOpenPlacement?
+    ) {
+        let target = WorkspaceLinkedFileNavTarget.hostFile(serverId: serverId, workspaceId: "", path: path, lineAnchor: line)
+        show(PaneOpenContent(file: target), kind: .file, placement: placement) {
+            WorkspaceLinkedFileViewController(target: target, placement: .pushed, root: root)
+        }
     }
 
     /// The Files browser lists host folders home-relative, so the folder is
     /// passed the way its own navigation builds it: no home prefix, a trailing
     /// slash, and empty for the home folder itself.
-    private func pushHostFolder(serverId: String, folder: String, home: String, root: AppRootEnvironment) {
-        guard navigationController?.topViewController === self else { return }
+    private func showHostFolder(
+        serverId: String, folder: String, home: String, root: AppRootEnvironment, placement: PaneOpenPlacement?
+    ) {
         let trimmedHome = home.hasSuffix("/") && home.count > 1 ? String(home.dropLast()) : home
         var relative = folder == trimmedHome ? "" : String(folder.dropFirst(trimmedHome.count + 1))
         if !relative.isEmpty, !relative.hasSuffix("/") { relative += "/" }
-        leaveKeyboardForSheet()
-        Router.push(
-            FileBrowserViewController(
-                root: root,
-                target: .hostHome(serverId: serverId, path: relative),
-                showsSidebarToggle: false
-            ),
-            from: self
-        )
+        let target = FileBrowserNavTarget.hostHome(serverId: serverId, path: relative)
+        show(PaneOpenContent(folder: target), kind: .folder, placement: placement) { [weak self] in
+            self?.leaveKeyboardForSheet()
+            return FileBrowserViewController(root: root, target: target, showsSidebarToggle: false)
+        }
+    }
+
+    /// A resolved file or folder: beside the terminal where `PanePlacement`
+    /// puts it, Open Here over the terminal in its own navigation, or the
+    /// pane the hold menu named.
+    private func show(
+        _ content: PaneOpenContent, kind: PaneContentKind, placement: PaneOpenPlacement?,
+        makeScreen: () -> UIViewController
+    ) {
+        switch placement {
+        case nil:
+            SSHTerminalOpenRoute.open(content, kind: kind, from: self, makeScreen: makeScreen)
+        case .here?:
+            SSHTerminalOpenRoute.push(from: self, makeScreen: makeScreen)
+        case let placement?:
+            guard let grid = gridView else { return }
+            PaneOpenMenu.open(placement, from: grid) { content }
+        }
     }
 
     /// The server's home folder, fetched once per terminal so the hold menu

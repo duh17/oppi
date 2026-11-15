@@ -766,4 +766,71 @@ struct PaneTreeHostTests {
         host.act { _ = host.panes.openBeside(file, kind: .file) }
         #expect(try splitBesideChat(host).axis == .column, "a tap follows the setting")
     }
+
+    private func terminalFile(_ host: PaneTestHost) -> (WorkspaceLinkedFileNavTarget, () -> UIViewController) {
+        let target = WorkspaceLinkedFileNavTarget.hostFile(
+            serverId: "s", workspaceId: "", path: "/Users/alex/oppi/server/src/session-broadcast.ts",
+            lineAnchor: SourceLineAnchor(startLine: 194, endLine: 194)
+        )
+        return (target, { WorkspaceLinkedFileViewController(target: target, placement: .pushed, root: host.root) })
+    }
+
+    /// A file a terminal link names opens where a tapped chat link's does:
+    /// in a new pane beside the terminal's pane, at the link's line, focused,
+    /// and the terminal keeps its pane.
+    @Test func aTerminalFileOpensInAPaneBesideTheTerminalAtItsLine() throws {
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer { host.hide() }
+        // The terminal's pane: a split leaf beside the chat, in its own navigation.
+        host.act { host.panes.split(axis: .row) }
+        let terminalPane = try #require(host.scenePanes.splitLeaves.first?.id)
+        let terminalEntry = host.scenePanes.topEntry(of: terminalPane)
+        let terminal = try #require(
+            (host.panes.children.first { $0.view === leafView(host, terminalPane) } as? UINavigationController)?.topViewController
+        )
+        host.act { host.panes.focus(cell: terminalPane) }
+        let (target, makeScreen) = terminalFile(host)
+
+        host.act { SSHTerminalOpenRoute.open(PaneOpenContent(file: target), kind: .file, from: terminal, makeScreen: makeScreen) }
+
+        #expect(terminal.navigationController?.topViewController === terminal, "nothing pushed over the terminal")
+        #expect(host.scenePanes.topEntry(of: terminalPane) == terminalEntry, "the terminal keeps its pane")
+        let filePane = try #require(host.scenePanes.splitLeaves.map(\.id).first { $0 != terminalPane })
+        #expect(host.scenePanes.cellLayout.focus == filePane)
+        guard case .local(let token) = host.scenePanes.topEntry(of: filePane).route,
+              case .linkedFile(let shown)? = host.scenePanes.standIns[token] else {
+            Issue.record("no file in the new pane: \(host.scenePanes.topEntry(of: filePane))")
+            return
+        }
+        #expect(shown.lineAnchor == target.lineAnchor, "at the link's line")
+        let terminalFrame = try #require(leafView(host, terminalPane)).frame
+        let fileFrame = try #require(leafView(host, filePane)).frame
+        let besideRight = abs(fileFrame.minX - terminalFrame.maxX) <= 1 && fileFrame.minY == terminalFrame.minY
+        let besideBelow = abs(fileFrame.minY - terminalFrame.maxY) <= 1 && fileFrame.minX == terminalFrame.minX
+        #expect(besideRight || besideBelow, "beside the terminal: \(terminalFrame) \(fileFrame)")
+    }
+
+    /// On a compact window, or with Split Panes off, the file is pushed over
+    /// the terminal in the terminal's own navigation, as before panes.
+    @Test(arguments: ["compact", "splitPanesOff"])
+    func aTerminalFileIsPushedOverTheTerminalWithoutPanes(mode: String) throws {
+        let host = PaneTestHost(width: mode == "compact" ? 390 : 1133, height: 844, inNavigation: true)
+        defer { host.hide() }
+        host.act {
+            if mode == "compact" {
+                host.window.traitOverrides.horizontalSizeClass = .compact
+            } else {
+                host.scenePanes.splitsEnabled = false
+            }
+            host.panes.updatePropertiesIfNeeded()
+        }
+        let terminal = host.screen
+        let (target, makeScreen) = terminalFile(host)
+
+        host.act { SSHTerminalOpenRoute.open(PaneOpenContent(file: target), kind: .file, from: terminal, makeScreen: makeScreen) }
+
+        #expect(host.scenePanes.splitLeaves.isEmpty, "no pane")
+        let pushed = terminal.navigationController?.topViewController as? WorkspaceLinkedFileViewController
+        #expect(pushed?.target.lineAnchor == target.lineAnchor, "pushed over the terminal at the link's line")
+    }
 }

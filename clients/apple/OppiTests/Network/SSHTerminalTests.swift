@@ -741,6 +741,74 @@ struct SSHTerminalTests {
         channel.close(reason: "done")
     }
 
+    /// Through the grid's own tap path, in each Tap in Terminal mode: a tap on
+    /// an OSC 8 link or a resolvable path opens it once the double-tap window
+    /// passes, a plain tap raises the keyboard only with Tap Shows Keyboard, a
+    /// double tap copies the word and does neither, and a program that takes
+    /// clicks gets the tap.
+    @Test(arguments: AppPreferenceStore.Terminal.TapMode.allCases)
+    func aTapOpensLinksInBothModesAndRaisesTheKeyboardOnlyWhenAsked(mode: AppPreferenceStore.Terminal.TapMode) async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        grid.tapMode = { mode }
+        var opened: [SSHTerminalOpenTarget] = []
+        var keyboardRequests = 0
+        grid.requestsKeyboard = { keyboardRequests += 1 }
+        grid.openTargetForHeldCell = {
+            SSHTerminalOpenResolution.target(text: $0.text, hyperlink: $0.hyperlink, folder: "/Users/alex/oppi")
+        }
+        grid.open = { target, placement in
+            #expect(placement == nil, "a tap goes where a tapped chat link's would")
+            opened.append(target)
+        }
+        channel.engine.receive(Data(
+            "see \u{1b}]8;;server/src/session-broadcast.ts#L194\u{1b}\\the event ring\u{1b}]8;;\u{1b}\\ /usr/bin/env".utf8
+        ))
+        func point(_ column: Int) -> CGPoint {
+            CGPoint(x: grid.cellSize.width * (CGFloat(column) + 0.5), y: grid.cellSize.height * 0.5)
+        }
+        let settle = Duration.seconds(SSHTerminalTapSequence.doubleTapTimeout + 0.15)
+        let link = SSHTerminalOpenTarget.path(
+            "/Users/alex/oppi/server/src/session-broadcast.ts", line: SourceLineAnchor(startLine: 194, endLine: 194)
+        )
+        let showsKeyboard = mode == .tapShowsKeyboard
+
+        grid.handleTap(at: point(5), now: 10)
+        #expect(opened.isEmpty, "not before a second tap could still come")
+        try await Task.sleep(for: settle)
+        #expect(opened == [link])
+        #expect(keyboardRequests == 0, "a link tap opens and raises nothing")
+
+        grid.handleTap(at: point(22), now: 20)
+        try await Task.sleep(for: settle)
+        #expect(opened == [link, .path("/usr/bin/env")], "a path the terminal resolves opens too")
+
+        grid.handleTap(at: point(1), now: 30)
+        try await Task.sleep(for: settle)
+        #expect(opened.count == 2, "plain text opens nothing")
+        #expect(keyboardRequests == (showsKeyboard ? 1 : 0))
+
+        UIPasteboard.general.string = ""
+        grid.handleTap(at: point(5), now: 40)
+        grid.handleTap(at: point(5), now: 40.1)
+        grid.handleTap(at: point(1), now: 50)
+        grid.handleTap(at: point(1), now: 50.1)
+        try await Task.sleep(for: settle)
+        #expect(opened.count == 2, "a double tap on a link copies instead")
+        #expect(keyboardRequests == (showsKeyboard ? 1 : 0), "a double tap raises nothing")
+        #expect(UIPasteboard.general.string == "see")
+
+        channel.engine.receive(Data("\u{1b}[?1000h\u{1b}[?1006h".utf8))
+        grid.handleTap(at: point(5), now: 60)
+        grid.handleTap(at: point(1), now: 70)
+        try await Task.sleep(for: settle)
+        #expect(opened.count == 2, "the program takes the click")
+        #expect(keyboardRequests == (showsKeyboard ? 1 : 0))
+        channel.close(reason: "done")
+    }
+
     @Test func commandShortcutsCopyTheShownSelectionAndClear() async throws {
         let fixture = TerminalConnectionFixture()
         let channel = try SSHTerminalChannel()
@@ -1030,26 +1098,33 @@ struct SSHTerminalTests {
         #expect(channel.title.isEmpty)
     }
 
-    @Test func aTapClicksForAMouseAppAndOtherwiseOnlySendsInputAway() {
-        // A tap never starts typing; the bar's buttons do.
-        #expect(SSHTerminalTapAction.resolve(
-            keyboardUp: false, otherInputFocused: false, appWantsClicks: false
-        ) == .nothing)
-        // Herdr's switch is a click, and with the keyboard up it stays; its
-        // bar hides it.
-        #expect(SSHTerminalTapAction.resolve(
-            keyboardUp: true, otherInputFocused: false, appWantsClicks: true
-        ) == .mouseClick)
-        #expect(SSHTerminalTapAction.resolve(
-            keyboardUp: false, otherInputFocused: false, appWantsClicks: true
-        ) == .mouseClick)
-        #expect(SSHTerminalTapAction.resolve(
-            keyboardUp: true, otherInputFocused: false, appWantsClicks: false
-        ) == .hideKeyboard)
-        // The chat bar focused (a hardware keyboard) gives way before a click.
-        #expect(SSHTerminalTapAction.resolve(
-            keyboardUp: false, otherInputFocused: true, appWantsClicks: true
-        ) == .dismissOtherInput)
+    /// The tap matrix: setting × what is under the finger × keyboard state.
+    /// A mouse app always gets its click, and a link always opens; only a
+    /// plain tap differs between the two settings.
+    @Test(arguments: AppPreferenceStore.Terminal.TapMode.allCases)
+    func aTapClicksForAMouseAppOpensALinkAndOtherwiseFollowsTheSetting(mode: AppPreferenceStore.Terminal.TapMode) {
+        func tap(keyboardUp: Bool = false, otherInput: Bool = false, clicks: Bool = false, link: Bool = false) -> SSHTerminalTapAction {
+            SSHTerminalTapAction.resolve(
+                keyboardUp: keyboardUp, otherInputFocused: otherInput, appWantsClicks: clicks, onLink: link, mode: mode
+            )
+        }
+        let showsKeyboard = mode == .tapShowsKeyboard
+        // Plain text.
+        #expect(tap() == (showsKeyboard ? .showKeyboard : .nothing))
+        #expect(tap(keyboardUp: true) == (showsKeyboard ? .nothing : .hideKeyboard), "up stays up only with Tap Shows Keyboard")
+        #expect(tap(otherInput: true) == (showsKeyboard ? .showKeyboard : .dismissOtherInput))
+        // A link opens in both modes, with the keyboard up or down.
+        #expect(tap(link: true) == .openLink)
+        #expect(tap(keyboardUp: true, link: true) == .openLink)
+        #expect(tap(otherInput: true, link: true) == .openLink)
+        // Herdr's switch and a tmux pane are a click, the keyboard up or down,
+        // even on a link; the chat bar focused (a hardware keyboard) gives way first.
+        #expect(tap(clicks: true) == .mouseClick)
+        #expect(tap(keyboardUp: true, clicks: true) == .mouseClick)
+        #expect(tap(clicks: true, link: true) == .mouseClick)
+        #expect(tap(otherInput: true, clicks: true) == .dismissOtherInput)
+        // Nothing stored is Keyboard Button Only.
+        #expect(SSHTerminalTapAction.resolve(keyboardUp: false, otherInputFocused: false, appWantsClicks: false) == .nothing)
     }
 
     @Test func touchesBecomeMouseReportsOnlyWhileTheAppAsksForThem() throws {

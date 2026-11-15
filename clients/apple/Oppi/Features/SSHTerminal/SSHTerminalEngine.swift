@@ -232,7 +232,7 @@ final class SSHTerminalEngine {
     /// later report from another machine (a nested ssh, a tmux session on a
     /// different host) leaves the folder unknown instead of resolving this
     /// server's paths against it.
-    private var workingDirectoryHost: String?
+    private(set) var workingDirectoryHost: String?
     /// The latest OSC 7 report named a machine other than the first one (a
     /// nested ssh), so the folder is unknown. Cleared by a usable report.
     private(set) var workingDirectoryFromOtherHost = false

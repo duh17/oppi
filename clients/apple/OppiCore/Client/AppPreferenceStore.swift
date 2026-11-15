@@ -305,6 +305,30 @@ enum AppPreferenceStore {
     enum Terminal {
         static let pageModeKey = "\(AppIdentifiers.subsystem).sshTerminal.pageMode"
         static let pageModeDefault = ""
+
+        /// What a tap on the terminal grid does when it opens nothing and no
+        /// program takes the click (`SSHTerminalTapAction`).
+        enum TapMode: String, CaseIterable, Sendable, Codable {
+            /// Typing starts only from the bar's Type in Terminal button.
+            case keyboardButtonOnly
+            /// A tap raises the terminal's keyboard.
+            case tapShowsKeyboard
+
+            var label: String {
+                switch self {
+                case .keyboardButtonOnly: String(localized: "Keyboard Button Only")
+                case .tapShowsKeyboard: String(localized: "Tap Shows Keyboard")
+                }
+            }
+        }
+
+        static let tapModeKey = "\(AppIdentifiers.subsystem).sshTerminal.tapMode"
+        /// What nothing stored means; `SettingsCatalog.terminalTapMode` uses this same constant.
+        static let tapModeDefault = TapMode.keyboardButtonOnly
+
+        static func tapMode(in defaults: UserDefaults = .standard) -> TapMode {
+            defaults.string(forKey: tapModeKey).flatMap(TapMode.init(rawValue:)) ?? tapModeDefault
+        }
     }
 
     // MARK: - Durable Sessions

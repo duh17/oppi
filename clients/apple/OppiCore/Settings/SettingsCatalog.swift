@@ -247,6 +247,19 @@ enum SettingsCatalog {
         )
     )
 
+    /// What a tap on the terminal does when it opens nothing and no program takes
+    /// the click: raise the keyboard, or leave typing to the bar's button.
+    static let terminalTapMode = SettingDeclaration<AppPreferenceStore.Terminal.TapMode>(
+        id: "settings.sshTerminal.tapMode",
+        key: AppPreferenceStore.Terminal.tapModeKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.Terminal.tapModeDefault,
+        copy: SettingCopy(
+            title: String(localized: "Tap in Terminal"),
+            footer: String(localized: "Keyboard Button Only starts typing only from Type in Terminal on the bottom bar, so a tap to read never raises the keyboard. Tap Shows Keyboard raises it with a tap. Either way, a tap on a link opens it, and a program that takes mouse clicks, such as tmux or Herdr, gets the tap.")
+        )
+    )
+
     // MARK: - Experiments
 
     /// Rex: the Terminal tab's Rex sections, Rex sessions screens, Rex panes, and the
@@ -454,6 +467,7 @@ enum SettingsCatalog {
         openLinks.descriptor,
         piIcon.descriptor,
         terminalPageMode.descriptor,
+        terminalTapMode.descriptor,
         experimentRex.descriptor,
         experimentHerdr.descriptor,
         experimentCalendarEvents.descriptor,

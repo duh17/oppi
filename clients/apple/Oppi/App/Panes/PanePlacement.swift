@@ -3,7 +3,7 @@ import UIKit
 // Where a new pane goes when nothing says: the one owner for every opener
 // that makes a pane without the person picking a side. A tapped file, folder,
 // web, sessions or Rex link (`AppOpener.openBesideFocusedPane`, `openBrowser`,
-// `TerminalLinkPresenter`), a Godot link (`openGodot`) and the chat bar's
+// `SSHTerminalOpenRoute`), a Godot link (`openGodot`) and the chat bar's
 // Terminal all come through the host's `openBeside`. A side the person picks
 // is not decided here: Open in New Pane to the Right or Below (`PaneOpenMenu`),
 // a drop on a pane's edge (`+Drop`), Split Right and Split Down (the grip's

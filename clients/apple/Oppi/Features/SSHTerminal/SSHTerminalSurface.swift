@@ -3,26 +3,43 @@ import QuartzCore
 import UIKit
 import UniformTypeIdentifiers
 
-/// What a tap on the terminal grid does. A tap never starts typing: the bottom
-/// bar's Type in Terminal button does, so reading never raises a
-/// keyboard by accident. A mouse-reporting app keeps the tap as a click
-/// (Herdr's switch, a tmux pane), and with the keyboard up it stays; its bar
-/// hides it. Otherwise a tap sends a keyboard or another input's focus away.
+/// What a tap on the terminal grid does.
+///
+/// - A mouse-reporting app keeps the tap as a click (Herdr's switch, a tmux
+///   pane), and with the keyboard up it stays; its bar hides it.
+/// - A tap on something it can open (an OSC 8 link, or a path that resolves on
+///   the paired server) opens it, as a tapped chat link does, in both modes.
+/// - Otherwise the Tap in Terminal setting decides. Keyboard button only (the
+///   default): a tap never starts typing, so reading never raises a keyboard
+///   by accident; it sends a keyboard or another input's focus away. Tap shows
+///   keyboard: a tap raises the terminal's keyboard, taking it from another
+///   input, and leaves it up (the keyboard's own hide key sends it away).
 enum SSHTerminalTapAction: Equatable {
     case hideKeyboard
+    case showKeyboard
     case dismissOtherInput
     case mouseClick
+    case openLink
     case nothing
 
     static func resolve(
         keyboardUp: Bool,
         otherInputFocused: Bool,
-        appWantsClicks: Bool
+        appWantsClicks: Bool,
+        onLink: Bool = false,
+        mode: AppPreferenceStore.Terminal.TapMode = .keyboardButtonOnly
     ) -> Self {
-        if keyboardUp { return appWantsClicks ? .mouseClick : .hideKeyboard }
-        if otherInputFocused { return .dismissOtherInput }
-        if appWantsClicks { return .mouseClick }
-        return .nothing
+        // Another input's focus goes first, as before, unless the terminal's
+        // own keyboard is up for the program.
+        if appWantsClicks { return keyboardUp || !otherInputFocused ? .mouseClick : .dismissOtherInput }
+        if onLink { return .openLink }
+        switch mode {
+        case .keyboardButtonOnly:
+            if keyboardUp { return .hideKeyboard }
+            return otherInputFocused ? .dismissOtherInput : .nothing
+        case .tapShowsKeyboard:
+            return keyboardUp ? .nothing : .showKeyboard
+        }
     }
 }
 
@@ -177,7 +194,14 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private let panePreview = SSHTerminalPanePreview()
     private var tapIgnore = SSHTerminalTapIgnore()
     private var tapSequence = SSHTerminalTapSequence()
-    private var pendingHide: Task<Void, Never>?
+    /// A single tap's hide, show or open, waiting out the double-tap window
+    /// so a double tap copies the word and does none of them.
+    private var pendingTapAction: Task<Void, Never>?
+    /// Raises the terminal's keyboard for a tap (Tap shows keyboard), the way
+    /// the bar's Type in Terminal does. Unset, the grid takes it itself.
+    var requestsKeyboard: (() -> Void)?
+    /// The Tap in Terminal setting, read at each tap.
+    var tapMode: () -> AppPreferenceStore.Terminal.TapMode = { AppPreferenceStore.Terminal.tapMode() }
     private var dragTarget: SSHTerminalDragTarget?
     private var dragSnapshot: SSHTerminalSelectionSnapshot?
     /// Where a recognized hold started. It becomes a selection or mouse drag
@@ -193,8 +217,10 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// The Open choice for a held cell, if this terminal can open one. The
     /// owner knows the host's folder and whether it is a paired server.
     var openTargetForHeldCell: (SSHTerminalHeldCell) -> SSHTerminalOpenTarget? = { _ in nil }
-    /// Runs the Open choice picked from the hold menu.
-    var open: (SSHTerminalOpenTarget) -> Void = { _ in }
+    /// Runs an Open: a tapped OSC 8 link or the hold menu's Open (no
+    /// placement, so it goes where a tapped chat link's would), or one of
+    /// the hold menu's pane items.
+    var open: (SSHTerminalOpenTarget, PaneOpenPlacement?) -> Void = { _, _ in }
     private var highlightClear: Task<Void, Never>?
     private var highlightGeneration = 0
     private var isSyncingHistoryScroll = false
@@ -716,14 +742,13 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     func showModifiers() {
         keyStrip?.showModifiers()
     }
-    /// Direct typing owns a tap while the keyboard is down, so it can come back
-    /// even when the app asked for mouse reports. While that keyboard is up, the
-    /// same app keeps the tap as a click and the keyboard stays.
+    /// What a single tap does is `SSHTerminalTapAction`'s call.
     ///
-    /// Single tap does not wait for double-tap failure. The ~300 ms delay
-    /// would lag keyboard focus and mouse clicks; tap 1 stays immediate. Tap 2
-    /// only copies the word captured under the finger at tap 1, before any
-    /// first-responder change, and never runs the single-tap action.
+    /// The recognizer does not wait for double-tap failure, so a mouse click
+    /// stays immediate. Hiding or raising the keyboard and opening a link wait
+    /// out the double-tap window instead (`afterDoubleTapWindow`). Tap 2 only
+    /// copies the word captured under the finger at tap 1, before any
+    /// first-responder change, and cancels tap 1's waiting action.
     @objc private func tapped(_ gesture: UITapGestureRecognizer) {
         handleTap(at: gesture.location(in: self), now: CACurrentMediaTime())
     }
@@ -748,49 +773,73 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
 
     private func performSingleTap(at point: CGPoint) {
         let otherFocused = window.map { Self.hasFirstResponder(in: $0) } ?? false
-        switch SSHTerminalTapAction.resolve(
+        let appWantsClicks = channel.connected && channel.engine.mouseTracking
+        // A program that takes clicks gets the tap, as in a desktop terminal
+        // where a plain click on a link goes to the program, so nothing is
+        // resolved for it.
+        let target = appWantsClicks ? nil : openTarget(at: point)
+        let action = SSHTerminalTapAction.resolve(
             keyboardUp: isFirstResponder,
             otherInputFocused: otherFocused,
-            appWantsClicks: channel.connected && channel.engine.mouseTracking
-        ) {
+            appWantsClicks: appWantsClicks,
+            onLink: target != nil,
+            mode: tapMode()
+        )
+        switch action {
         case .hideKeyboard:
-            // Delay hide so a second tap can still land. Mouse clicks stay
-            // immediate.
-            scheduleHideKeyboard()
+            // Same as the hide key: a tap that sends the keyboard away is the
+            // user's choice, not an automatic switch to undo later.
+            afterDoubleTapWindow { grid in
+                grid.keyboardDismissed()
+                _ = grid.resignFirstResponder()
+            }
+        case .showKeyboard:
+            afterDoubleTapWindow { grid in
+                if let requestsKeyboard = grid.requestsKeyboard { requestsKeyboard() } else { _ = grid.becomeFirstResponder() }
+            }
+        case .openLink:
+            guard let target else { return }
+            afterDoubleTapWindow { grid in grid.open(target, nil) }
         case .dismissOtherInput:
-            cancelHideKeyboard()
+            cancelTapAction()
             window?.endEditing(true)
         case .mouseClick:
-            cancelHideKeyboard()
+            cancelTapAction()
             resetTextInput()
             let cell = self.cell(at: point)
             channel.mouse(.click, column: cell.column, row: cell.row)
         case .nothing:
-            cancelHideKeyboard()
+            cancelTapAction()
         }
     }
 
-    private func scheduleHideKeyboard() {
-        pendingHide?.cancel()
-        pendingHide = Task { @MainActor [weak self] in
-            let nanos = UInt64(SSHTerminalTapSequence.doubleTapTimeout * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: nanos)
+    /// What a tap at `point` opens: an OSC 8 link, or a URL or path the
+    /// terminal resolves (on a path, only on the paired server's home).
+    private func openTarget(at point: CGPoint) -> SSHTerminalOpenTarget? {
+        let cell = self.cell(at: point)
+        return channel.engine.heldCell(column: cell.column, row: cell.row).flatMap(openTargetForHeldCell)
+    }
+
+    /// Runs a single tap's hide, show, or open once a second tap can no
+    /// longer land, so a double tap copies the word and does none of them.
+    /// Mouse clicks stay immediate.
+    private func afterDoubleTapWindow(_ action: @escaping @MainActor (SSHTerminalGridView) -> Void) {
+        cancelTapAction()
+        pendingTapAction = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(SSHTerminalTapSequence.doubleTapTimeout))
             guard !Task.isCancelled, let self else { return }
-            // Same as the hide key: a tap that sends the keyboard away is the
-            // user's choice, not an automatic switch to undo later.
-            self.keyboardDismissed()
-            _ = self.resignFirstResponder()
-            self.pendingHide = nil
+            self.pendingTapAction = nil
+            action(self)
         }
     }
 
-    private func cancelHideKeyboard() {
-        pendingHide?.cancel()
-        pendingHide = nil
+    private func cancelTapAction() {
+        pendingTapAction?.cancel()
+        pendingTapAction = nil
     }
 
     private func copyPendingWord() {
-        cancelHideKeyboard()
+        cancelTapAction()
         guard let snapshot = tapSequence.takePendingSnapshot() else { return }
         channel.copyLocalSelection(snapshot.text)
         showHighlight(snapshot, lingering: true)
@@ -854,21 +903,35 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         Self.holdMenu(
             held: heldCell,
             target: heldOpenTarget,
+            paneItems: heldOpenTarget.flatMap(paneItems(for:)),
             canPaste: canPerformAction(#selector(paste(_:)), withSender: nil),
-            open: { [weak self] target in self?.open(target) },
+            open: { [weak self] target in self?.open(target, nil) },
             copy: { [weak self] in self?.copyHeldWord() },
             copyLink: { [weak self] in self?.copyHeldLink() },
             paste: { [weak self] in self?.paste(nil) }
         )
     }
 
+    /// The chat link menu's pane choices (Open Here, a new pane to the right
+    /// or below, Open in Pane ▸), from the pane this terminal sits in. A web
+    /// page offers only the new panes, as a chat's does. Nil on a compact
+    /// window or with Split Panes off.
+    private func paneItems(for target: SSHTerminalOpenTarget) -> UIMenu? {
+        let isWebPage = target.hostLabel != nil
+        return PaneOpenMenu.section(near: self, includesOpenHere: !isWebPage, offersOtherPanes: !isWebPage) { [weak self] placement in
+            self?.open(target, placement)
+        }
+    }
+
     /// The items a hold menu shows, in order: Open when the cell can open
-    /// something, Copy Link for an OSC 8 link's address, Copy for the text the
-    /// cell shows (not repeated when the text is the address), then Paste. A
-    /// cell with nothing to open and nothing to copy keeps the system's menu.
+    /// something, then the pane choices, Copy Link for an OSC 8 link's
+    /// address, Copy for the text the cell shows (not repeated when the text
+    /// is the address), then Paste. A cell with nothing to open and nothing
+    /// to copy keeps the system's menu.
     static func holdMenu(
         held: SSHTerminalHeldCell?,
         target: SSHTerminalOpenTarget?,
+        paneItems: UIMenu? = nil,
         canPaste: Bool,
         open: @escaping (SSHTerminalOpenTarget) -> Void,
         copy: @escaping () -> Void,
@@ -881,6 +944,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
                 title: openTitle(for: target),
                 image: UIImage(systemName: "arrow.up.forward.app")
             ) { _ in open(target) })
+            if let paneItems { items.append(paneItems) }
         }
         if let held, let link = linkText(for: held) {
             items.append(UIAction(title: copyLinkTitle(for: link), image: UIImage(systemName: "link")) { _ in copyLink() })
@@ -900,7 +964,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     static func openTitle(for target: SSHTerminalOpenTarget) -> String {
         switch target {
         case .web(_, let host): return host.isEmpty ? "Open Link" : "Open \(host)"
-        case .path(let path):
+        case .path(let path, _):
             let name = path.split(separator: "/").last.map(String.init) ?? ""
             return name.isEmpty ? "Open" : "Open \(name)"
         }
@@ -1031,7 +1095,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         case .began:
             tapIgnore.arm()
             tapSequence.reset()
-            cancelHideKeyboard()
+            cancelTapAction()
             historyScroll.isScrollEnabled = false
             holdStart = location
             dragSnapshot = nil

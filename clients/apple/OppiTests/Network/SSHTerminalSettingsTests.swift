@@ -64,6 +64,9 @@ private struct IsolatedStores {
         SSHTerminalBarStore(defaults: suites.bar)
     }
 
+    /// The device settings' own defaults (Tap in Terminal, the page mode).
+    var device: UserDefaults { suites.device }
+
     func save(_ profiles: [SSHTerminalProfile]) throws {
         let store = profileStore()
         for profile in profiles { try store.save(profile) }
@@ -132,6 +135,24 @@ struct SSHTerminalSettingsTests {
         let row = try #require(page.element("settings.sshTerminal.host.\(plain.id.uuidString)"))
         #expect(row.accessibilityLabel == "dev@devbox.local")
         #expect(row.accessibilityValue == "Port 2222")
+    }
+
+    /// Tap in Terminal starts at Keyboard Button Only, and its row's menu writes
+    /// the choice the grid reads at each tap.
+    @Test func tapInTerminalIsAChoiceTheTerminalReads() throws {
+        defer { hosts.removeSuites() }
+        let page = try mountSettings()
+        defer { page.window.isHidden = true }
+        let id = SettingsCatalog.terminalTapMode.id
+        let row = try #require(page.element(id))
+        func findButton(in view: UIView) -> UIButton? {
+            view as? UIButton ?? view.subviews.lazy.compactMap(findButton(in:)).first
+        }
+        let button = try #require(findButton(in: row))
+        #expect(AppPreferenceStore.Terminal.tapMode(in: hosts.device) == .keyboardButtonOnly)
+        #expect(KitMenuRow.actions(of: button).map(\.title) == ["Keyboard Button Only", "Tap Shows Keyboard"])
+        try KitMenuRow.choose("Tap Shows Keyboard", in: button)
+        #expect(AppPreferenceStore.Terminal.tapMode(in: hosts.device) == .tapShowsKeyboard)
     }
 
     /// Metadata that cannot be read says so, with no host row to open.
@@ -259,7 +280,8 @@ struct SSHTerminalSettingsTests {
                 rexStore: hosts.rexStore,
                 reach: { .systemOnly },
                 barStore: hosts.barStore,
-                experiments: experiments
+                experiments: experiments,
+                settings: hosts.settings(mode: nil)
             )
         )
     }

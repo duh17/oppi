@@ -1,4 +1,4 @@
-import Foundation
+import UIKit
 
 /// The shell's working directory, from OSC 7. libghostty stores the bytes the
 /// shell emitted without parsing them, so only a local `file:` URL becomes a
@@ -99,8 +99,9 @@ enum SSHTerminalOpenTarget: Equatable {
     /// A web page, opened in the system browser. `hostLabel` names the site in
     /// the menu so the destination is visible before the tap.
     case web(url: URL, hostLabel: String)
-    /// A path on the SSH host. Absolute, or `~/…` which the file route expands.
-    case path(String)
+    /// A path on the SSH host. Absolute, or `~/…` which the file route
+    /// expands. A file opens at `line` when the link named one.
+    case path(String, line: SourceLineAnchor? = nil)
 
     var hostLabel: String? {
         if case .web(_, let hostLabel) = self { return hostLabel }
@@ -108,7 +109,7 @@ enum SSHTerminalOpenTarget: Equatable {
     }
 
     var path: String? {
-        if case .path(let path) = self { return path }
+        if case .path(let path, _) = self { return path }
         return nil
     }
 }
@@ -118,33 +119,89 @@ enum SSHTerminalOpenTarget: Equatable {
 /// `/usr/local/bin/thing` one word, so this only has to decide what it is.
 enum SSHTerminalOpenResolution {
     /// An OSC 8 link wins over the word it covers: that is where the program
-    /// said the text points. A link with another scheme is not opened at all
-    /// (no fallback to the word), which keeps `vscode://…` a Copy.
+    /// said the text points. A link with a scheme other than http, https or
+    /// file is not opened at all (no fallback to the word), which keeps
+    /// `vscode://…` a Copy.
+    ///
+    /// - `shellHost`: the machine the shell's first OSC 7 report named.
+    /// - `sshHost`: the host this terminal connected to. A `file://` link
+    ///   naming either (or no machine, or `localhost`) is a path here; one
+    ///   naming another machine is not.
     static func target(
         text: String?,
         hyperlink: String?,
-        folder: String?
+        folder: String?,
+        shellHost: String? = nil,
+        sshHost: String = ""
     ) -> SSHTerminalOpenTarget? {
         if let hyperlink, !hyperlink.isEmpty {
-            return webTarget(hyperlink)
+            return linkTarget(hyperlink, folder: folder, shellHost: shellHost, sshHost: sshHost)
         }
         guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         // Whole first: `http://localhost:3000` is a URL with a port, not a
         // path with a line number.
         if let web = webTarget(text) { return web }
-        guard let path = pathTarget(strippingLineColumn(text), folder: folder) else { return nil }
-        return .path(path)
+        // A word split by a space is not one path; an OSC 8 address may be.
+        guard !text.contains(where: { $0.isWhitespace }) else { return nil }
+        let (value, line) = splittingLineColumn(text)
+        guard let path = pathTarget(value, folder: folder) else { return nil }
+        return .path(path, line: line)
     }
 
-    /// Drop one `:line` or `:line:column` suffix, which editors print after a
-    /// path. Copy keeps it; Open would otherwise look for a file named `x:42`.
-    /// Only paths reach this: a URL's `:port` must survive.
-    static func strippingLineColumn(_ text: String) -> String {
-        var value = text
-        if let range = value.range(of: ":[0-9]+(:[0-9]+)?$", options: .regularExpression) {
-            value.removeSubrange(range)
+    /// An OSC 8 address: a web page, a `file://` URI on this host, or a
+    /// path (absolute, `~/…`, or relative to the shell's folder) with an
+    /// optional `#L12`, `#L12-L20`, `:12` or `:12:5` line. Pi prints
+    /// `[label](src/x.ts#L194)` as a link to `src/x.ts#L194`.
+    static func linkTarget(
+        _ link: String,
+        folder: String?,
+        shellHost: String?,
+        sshHost: String
+    ) -> SSHTerminalOpenTarget? {
+        let link = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let web = webTarget(link) { return web }
+        let (address, fragment) = splittingFragment(link)
+        let fragmentLine = fragment.flatMap { SourceLineAnchor.parse("#" + $0) }
+        if address.lowercased().hasPrefix("file:") {
+            guard let report = SSHTerminalWorkingDirectory.report(from: address),
+                  report.isLocal || isThisHost(report.host, shellHost: shellHost, sshHost: sshHost) else { return nil }
+            return .path(report.path, line: fragmentLine)
         }
-        return value
+        let decoded = address.removingPercentEncoding ?? address
+        let (value, suffixLine) = splittingLineColumn(decoded)
+        // `README.md:42` parses with a scheme, so the line is stripped first.
+        guard !hasScheme(value) else { return nil }
+        guard let path = pathTarget(value, folder: folder, anyName: true) else { return nil }
+        return .path(path, line: fragmentLine ?? suffixLine)
+    }
+
+    /// Whether a `file://` URI's machine is the one this terminal reaches:
+    /// the shell's own OSC 7 machine, or the SSH host by the same name rules
+    /// as the paired-server match (a tailnet name and its short name).
+    static func isThisHost(_ host: String, shellHost: String?, sshHost: String) -> Bool {
+        let host = SSHTerminalServerMatch.normalize(host)
+        guard !host.isEmpty else { return false }
+        if let shellHost, !shellHost.isEmpty, SSHTerminalServerMatch.normalize(shellHost) == host { return true }
+        return SSHTerminalServerMatch.serverId(forHost: host, paired: [(id: "ssh", host: sshHost)]) != nil
+    }
+
+    /// Split one `:line` or `:line:column` suffix, which editors print after
+    /// a path. Copy keeps it; Open would otherwise look for a file named
+    /// `x:42`, and the file opens at that line. Only paths reach this: a
+    /// URL's `:port` must survive.
+    static func splittingLineColumn(_ text: String) -> (path: String, line: SourceLineAnchor?) {
+        guard let range = text.range(of: ":[0-9]+(:[0-9]+)?$", options: .regularExpression) else { return (text, nil) }
+        let line = text[range].dropFirst().split(separator: ":").first.flatMap { Int($0) }
+        return (String(text[..<range.lowerBound]), line.flatMap { SourceLineAnchor(startLine: $0, endLine: $0) })
+    }
+
+    private static func splittingFragment(_ link: String) -> (String, String?) {
+        guard let hash = link.firstIndex(of: "#") else { return (link, nil) }
+        return (String(link[..<hash]), String(link[link.index(after: hash)...]))
+    }
+
+    private static func hasScheme(_ value: String) -> Bool {
+        value.range(of: "^[A-Za-z][A-Za-z0-9+.-]*:", options: .regularExpression) != nil
     }
 
     static func webTarget(_ text: String) -> SSHTerminalOpenTarget? {
@@ -156,11 +213,11 @@ enum SSHTerminalOpenResolution {
 
     /// Absolute paths, and relative ones against the shell's folder. A
     /// relative path with no known folder is not openable: guessing a base
-    /// would open the wrong file.
-    static func pathTarget(_ text: String, folder: String?) -> String? {
+    /// would open the wrong file. `anyName` takes a bare relative name
+    /// (`Makefile`): an OSC 8 link says it is a path, a word does not.
+    static func pathTarget(_ text: String, folder: String?, anyName: Bool = false) -> String? {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, value.utf8.count <= 4096 else { return nil }
-        guard !value.contains(where: { $0.isWhitespace }) else { return nil }
         if value.hasPrefix("~/") {
             let rest = String(value.dropFirst(2))
             guard !rest.isEmpty,
@@ -170,7 +227,7 @@ enum SSHTerminalOpenResolution {
         if value.hasPrefix("/") {
             return SSHTerminalWorkingDirectory.normalize(value)
         }
-        guard let folder, folder.hasPrefix("/"), value.contains("/") || looksLikeFileName(value) else { return nil }
+        guard let folder, folder.hasPrefix("/"), anyName || value.contains("/") || looksLikeFileName(value) else { return nil }
         guard let resolved = SSHTerminalPathResolution.absolute(value, relativeTo: folder) else { return nil }
         return resolved
     }
@@ -280,6 +337,23 @@ enum SSHTerminalHostPathPlan: Equatable {
 }
 
 enum SSHTerminalHostPathPolicy {
+    /// Whether the hold menu and a tap offer Open for `target`. A web page
+    /// always; a path only on a paired server, and not outside its home once
+    /// the home is known (until then the server's answer decides on Open).
+    static func offers(_ target: SSHTerminalOpenTarget, isPairedServer: Bool, home: String?) -> Bool {
+        guard let path = target.path else { return true }
+        guard isPairedServer else { return false }
+        guard let home, let absolute = absolute(path, home: home) else { return true }
+        return isInside(home: home, path: absolute)
+    }
+
+    /// `~/…` against the server's home; an absolute path is already resolved.
+    static func absolute(_ path: String, home: String?) -> String? {
+        guard path.hasPrefix("~/") else { return path.hasPrefix("/") ? path : nil }
+        guard let home else { return nil }
+        return SSHTerminalPathResolution.absolute(String(path.dropFirst(2)), relativeTo: home)
+    }
+
     static func isInside(home: String, path: String) -> Bool {
         let home = home.hasSuffix("/") && home.count > 1 ? String(home.dropLast()) : home
         guard !home.isEmpty, home.hasPrefix("/") else { return false }
@@ -333,5 +407,31 @@ enum SSHTerminalMenuHeader {
         guard room > 8 else { return name }
         let shown = folder.count <= room ? folder : "…" + String(folder.suffix(room - 1))
         return "\(name) — \(shown)"
+    }
+}
+
+/// Where the terminal shows a file or folder it resolved: the pane owner's
+/// `openBeside`, from the terminal's own pane, as the chat bar's Terminal and
+/// a Rex link do. On a wide window with Split Panes on it opens in a pane
+/// beside the terminal (on the New Panes side for files), and a terminal is
+/// never replaced. Elsewhere (a compact window, Split Panes off, a full window
+/// of panes) it is pushed over the terminal in the terminal's own navigation,
+/// never onto the Workspaces stack a chat link falls back to: the terminal may
+/// sit on the Terminal tab.
+@MainActor
+enum SSHTerminalOpenRoute {
+    static func open(
+        _ content: PaneOpenContent, kind: PaneContentKind, from screen: UIViewController, makeScreen: () -> UIViewController
+    ) {
+        if let host = PaneHostController.containing(screen), let cell = host.cell(holding: screen),
+           host.openBeside(content, kind: kind, from: cell) { return }
+        push(from: screen, makeScreen: makeScreen)
+    }
+
+    /// Over the terminal, unless something already covers it (Back before
+    /// the lookup finished, another screen pushed meanwhile).
+    static func push(from screen: UIViewController, makeScreen: () -> UIViewController) {
+        guard screen.navigationController?.topViewController === screen else { return }
+        Router.push(makeScreen(), from: screen)
     }
 }

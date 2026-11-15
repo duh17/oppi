@@ -68,12 +68,15 @@ struct SSHTerminalWorkingDirectoryTests {
 struct SSHTerminalOpenResolutionTests {
     private let folder = "/Users/alex/workspace/oppi"
 
-    @Test func trailingLineAndColumnAreDroppedOnlyForPaths() {
-        #expect(SSHTerminalOpenResolution.strippingLineColumn("/a/b.swift:42") == "/a/b.swift")
-        #expect(SSHTerminalOpenResolution.strippingLineColumn("/a/b.swift:12:3") == "/a/b.swift")
-        #expect(SSHTerminalOpenResolution.strippingLineColumn("src/x.swift:1") == "src/x.swift")
-        #expect(SSHTerminalOpenResolution.strippingLineColumn("error:") == "error:")
-        #expect(SSHTerminalOpenResolution.strippingLineColumn("a:b") == "a:b")
+    private func line(_ number: Int) -> SourceLineAnchor? { SourceLineAnchor(startLine: number, endLine: number) }
+
+    @Test func trailingLineAndColumnBecomeTheLineOnlyForPaths() {
+        #expect(SSHTerminalOpenResolution.splittingLineColumn("/a/b.swift:42") == ("/a/b.swift", line(42)))
+        #expect(SSHTerminalOpenResolution.splittingLineColumn("/a/b.swift:12:3") == ("/a/b.swift", line(12)))
+        #expect(SSHTerminalOpenResolution.splittingLineColumn("src/x.swift:1") == ("src/x.swift", line(1)))
+        #expect(SSHTerminalOpenResolution.splittingLineColumn("error:") == ("error:", nil))
+        #expect(SSHTerminalOpenResolution.splittingLineColumn("a:b") == ("a:b", nil))
+        #expect(SSHTerminalOpenResolution.splittingLineColumn("/a/b.swift:0") == ("/a/b.swift", nil), "no line 0")
         // A URL is resolved whole, so its port is not read as a line number.
         #expect(
             SSHTerminalOpenResolution.target(text: "http://localhost:5173", hyperlink: nil, folder: nil)
@@ -85,7 +88,7 @@ struct SSHTerminalOpenResolutionTests {
         )
         #expect(
             SSHTerminalOpenResolution.target(text: "/a/b.swift:12:3", hyperlink: nil, folder: nil)
-                == .path("/a/b.swift")
+                == .path("/a/b.swift", line: line(12))
         )
     }
 
@@ -135,13 +138,67 @@ struct SSHTerminalOpenResolutionTests {
         )
         #expect(
             SSHTerminalOpenResolution.target(text: "src/x.swift:42", hyperlink: nil, folder: folder)
-                == .path("/Users/alex/workspace/oppi/src/x.swift")
+                == .path("/Users/alex/workspace/oppi/src/x.swift", line: line(42))
         )
         #expect(
             SSHTerminalOpenResolution.target(text: "~/notes.md", hyperlink: nil, folder: nil)
                 == .path("~/notes.md"),
             "a home-relative path resolves on the server, which knows its home"
         )
+    }
+
+    /// Pi prints `[the event ring](server/src/session-broadcast.ts#L194)` as
+    /// an OSC 8 link to that path: it opens relative to the shell's folder,
+    /// at the line, like a chat's file link.
+    @Test func anOSC8PathLinkOpensAtItsLine() {
+        func link(_ address: String, folder: String? = folder) -> SSHTerminalOpenTarget? {
+            SSHTerminalOpenResolution.target(
+                text: "label", hyperlink: address, folder: folder,
+                shellHost: "mac-studio.local", sshHost: "mac-studio.tail1234.ts.net"
+            )
+        }
+        let file = "/Users/alex/workspace/oppi/server/src/session-broadcast.ts"
+        #expect(link("server/src/session-broadcast.ts#L194") == .path(file, line: line(194)))
+        #expect(link("server/src/session-broadcast.ts:194") == .path(file, line: line(194)))
+        #expect(link("server/src/session-broadcast.ts:194:5") == .path(file, line: line(194)))
+        #expect(link("server/src/session-broadcast.ts#L194-L200") == .path(file, line: SourceLineAnchor(startLine: 194, endLine: 200)))
+        #expect(link("server/src/session-broadcast.ts#intro") == .path(file), "a fragment that is no line opens the file")
+        #expect(link("./server/../server/src/session-broadcast.ts") == .path(file))
+        #expect(link("/Users/alex/notes.md#L3") == .path("/Users/alex/notes.md", line: line(3)))
+        #expect(link("~/notes.md#L3", folder: nil) == .path("~/notes.md", line: line(3)))
+        #expect(link("README.md:42") == .path("/Users/alex/workspace/oppi/README.md", line: line(42)), "a line, not a scheme")
+        #expect(link("Makefile") == .path("/Users/alex/workspace/oppi/Makefile"), "the program said it is a path")
+        #expect(link("docs/a%20b.md") == .path("/Users/alex/workspace/oppi/docs/a b.md"))
+        #expect(link("server/src/session-broadcast.ts#L194", folder: nil) == nil, "relative with no folder")
+        #expect(link("~/../etc/passwd") == nil, "never above home")
+    }
+
+    /// A `file://` link is a path only on this machine: no host, `localhost`,
+    /// the shell's own OSC 7 machine, or the SSH host by the paired-server
+    /// name rules. Another machine's file is not this server's.
+    @Test func aFileURILinkOpensOnlyOnThisMachine() {
+        func link(_ address: String) -> SSHTerminalOpenTarget? {
+            SSHTerminalOpenResolution.target(
+                text: "x", hyperlink: address, folder: folder,
+                shellHost: "mac-studio.local", sshHost: "mac-studio.tail1234.ts.net"
+            )
+        }
+        #expect(link("file:///Users/alex/a.swift#L7") == .path("/Users/alex/a.swift", line: line(7)))
+        #expect(link("file://localhost/Users/alex/a.swift") == .path("/Users/alex/a.swift"))
+        #expect(link("file://Mac-Studio.local/Users/alex/a%20b.swift") == .path("/Users/alex/a b.swift"))
+        #expect(link("file://mac-studio/Users/alex/a.swift") == .path("/Users/alex/a.swift"), "the SSH host's short name")
+        #expect(link("file://other-box/Users/alex/a.swift") == nil)
+        #expect(link("file://mac-studio-2/Users/alex/a.swift") == nil)
+        #expect(link("file://host/a?x=1") == nil)
+    }
+
+    @Test func anOSC8WebLinkStaysAWebPage() {
+        let page = SSHTerminalOpenResolution.target(
+            text: "docs", hyperlink: "https://example.com/docs#L5", folder: folder
+        )
+        #expect(page == .web(url: URL(string: "https://example.com/docs#L5")!, hostLabel: "example.com"))
+        #expect(SSHTerminalOpenResolution.target(text: "x", hyperlink: "mailto:a@b.test", folder: folder) == nil)
+        #expect(SSHTerminalOpenResolution.target(text: "x", hyperlink: "ftp://example.com/a", folder: folder) == nil)
     }
 
     @Test func aRelativePathWithNoFolderIsNotOpened() {
@@ -260,6 +317,19 @@ struct SSHTerminalHostPathPolicyTests {
             SSHTerminalHostPathPolicy.plan(status: status("/Users/alex/x", file: false), home: home)
                 == .refused("That path is not a file or a folder.")
         )
+    }
+
+    /// An OSC 8 path gets the same gate as a word: Open only on a paired
+    /// server and inside its home; a web page needs neither.
+    @Test func openIsOfferedOnlyForAPairedServersHome() {
+        let inside = SSHTerminalOpenTarget.path("/Users/alex/a.swift", line: SourceLineAnchor(startLine: 3, endLine: 3))
+        #expect(SSHTerminalHostPathPolicy.offers(inside, isPairedServer: true, home: home))
+        #expect(SSHTerminalHostPathPolicy.offers(.path("~/a.swift"), isPairedServer: true, home: home))
+        #expect(!SSHTerminalHostPathPolicy.offers(.path("/etc/hosts"), isPairedServer: true, home: home))
+        #expect(!SSHTerminalHostPathPolicy.offers(inside, isPairedServer: false, home: home), "another host")
+        #expect(SSHTerminalHostPathPolicy.offers(.path("/etc/hosts"), isPairedServer: true, home: nil), "the server decides once asked")
+        let page = SSHTerminalOpenTarget.web(url: URL(string: "https://example.com")!, hostLabel: "example.com")
+        #expect(SSHTerminalHostPathPolicy.offers(page, isPairedServer: false, home: nil))
     }
 }
 

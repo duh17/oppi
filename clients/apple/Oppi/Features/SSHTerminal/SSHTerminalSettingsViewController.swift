@@ -3,10 +3,11 @@ import UIKit
 /// Settings › Terminal: the occasional setup of the terminal, kept off the page
 /// that is for getting into something already running.
 ///
-/// Three things, none of which connects: **Hosts** (a saved host's form: its
+/// Four things, none of which connects: **Hosts** (a saved host's form: its
 /// address, sign-in, Run on Connect command, and colors), **Rex on Your Tailnet**
 /// (a Rex reached by its Tailscale name, with no SSH, and what limits that list),
-/// and **Bottom Bar** (the buttons the terminal's bar draws, in order).
+/// **Bottom Bar** (the buttons the terminal's bar draws, in order), and **Tap in
+/// Terminal** (whether a tap raises the keyboard, `SettingsCatalog.terminalTapMode`).
 ///
 /// The Terminal page keeps the hosts' own rows for connecting, its ＋ for a new
 /// host, and a saved host's ⋯ for this same form; what it no longer carries is
@@ -15,7 +16,7 @@ import UIKit
 final class SSHTerminalSettingsViewController: ListScreenController<
     SSHTerminalSettingsViewController.Section, SSHTerminalSettingsViewController.Item
 > {
-    enum Section: Hashable, Sendable { case hosts, rexTailnet, bar }
+    enum Section: Hashable, Sendable { case hosts, rexTailnet, bar, typing }
 
     enum Item: Hashable, Sendable {
         case host(UUID)
@@ -23,6 +24,9 @@ final class SSHTerminalSettingsViewController: ListScreenController<
         case unreadableHosts
         case rexTailnet
         case bottomBar
+        case tapMode
+        /// The failure line under the declared setting with this id.
+        case failure(String)
     }
 
     /// Where the saved hosts live. Tests pass a store over their own defaults.
@@ -45,7 +49,8 @@ final class SSHTerminalSettingsViewController: ListScreenController<
         rexStore: RexDirectStore = RexDirectStore(),
         reach: @escaping @MainActor () -> RexTailnetReach = { .current },
         barStore: SSHTerminalBarStore = SSHTerminalBarStore(),
-        experiments: @escaping @MainActor () -> SSHTerminalExperimentAccess = { .current }
+        experiments: @escaping @MainActor () -> SSHTerminalExperimentAccess = { .current },
+        settings: SettingsStore = .liveDevice()
     ) {
         self.profileStore = profileStore
         self.rexStore = rexStore
@@ -56,6 +61,7 @@ final class SSHTerminalSettingsViewController: ListScreenController<
             title: String(localized: "Terminal"),
             listIdentifier: "settings.sshTerminal.list",
             scope: .device,
+            settings: settings,
             headers: true,
             footers: true
         )
@@ -75,7 +81,7 @@ final class SSHTerminalSettingsViewController: ListScreenController<
     override func sections() -> [ListSection<Section, Item>] {
         // The Rex row is left out of the page while its experiment is off, rather
         // than listed and disabled: there is nothing to open.
-        [hostsSection()] + (experiments().rex ? [rexTailnetSection()] : []) + [barSection()]
+        [hostsSection()] + (experiments().rex ? [rexTailnetSection()] : []) + [barSection(), typingSection()]
     }
 
     override func showsHeader(for section: Section) -> Bool { true }
@@ -113,6 +119,13 @@ final class SSHTerminalSettingsViewController: ListScreenController<
         )
     }
 
+    /// Whether a tap raises the keyboard: a declared device setting, drawn and
+    /// saved by the kit's rows.
+    private func typingSection() -> ListSection<Section, Item> {
+        let tapMode = SettingsCatalog.terminalTapMode
+        return ListSection(.typing, footer: tapMode.copy.footer, items: settingRows(tapMode, .tapMode) { .failure($0) })
+    }
+
     /// The buttons the bar draws now: the layout's shown items, named as the bar
     /// names them, without a button whose experiment is off.
     private var barSummary: String {
@@ -148,6 +161,10 @@ final class SSHTerminalSettingsViewController: ListScreenController<
             return AnyHashable(tailnetSummary)
         case .bottomBar:
             return AnyHashable(barSummary)
+        case .tapMode:
+            return settingInputs(SettingsCatalog.terminalTapMode)
+        case .failure(let id):
+            return settingFailureInputs(id)
         }
     }
 
@@ -179,9 +196,15 @@ final class SSHTerminalSettingsViewController: ListScreenController<
                 value: barSummary,
                 identifier: "settings.sshTerminal.bar"
             ) { [weak self] in self?.select(item) }
-        case .unreadableHosts:
+        case .unreadableHosts, .tapMode, .failure:
             break
         }
+    }
+
+    private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
+        self?.settingChoiceRow(cell, SettingsCatalog.terminalTapMode, choices: AppPreferenceStore.Terminal.TapMode.allCases.map {
+            SettingChoice(value: $0, title: $0.label)
+        })
     }
 
     private lazy var plainRow = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
@@ -189,7 +212,7 @@ final class SSHTerminalSettingsViewController: ListScreenController<
     }
 
     override func prepareRegistrations() {
-        _ = (indexRow, plainRow)
+        _ = (indexRow, plainRow, menuRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
@@ -198,6 +221,10 @@ final class SSHTerminalSettingsViewController: ListScreenController<
             collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
         case .unreadableHosts:
             collectionView.dequeueConfiguredReusableCell(using: plainRow, for: indexPath, item: item)
+        case .tapMode:
+            collectionView.dequeueConfiguredReusableCell(using: menuRow, for: indexPath, item: item)
+        case .failure(let id):
+            dequeueSettingFailure(id, at: indexPath)
         }
     }
 
@@ -215,7 +242,7 @@ final class SSHTerminalSettingsViewController: ListScreenController<
     override func isSelectable(_ item: Item) -> Bool {
         switch item {
         case .host, .rexTailnet, .bottomBar: true
-        case .unreadableHosts: false
+        case .unreadableHosts, .tapMode, .failure: false
         }
     }
 
@@ -227,7 +254,7 @@ final class SSHTerminalSettingsViewController: ListScreenController<
             // The bar's own page, over this page's store, so a change here and there
             // is one layout.
             Router.push(SSHTerminalBarSettingsViewController(store: barStore), from: self)
-        case .unreadableHosts: break
+        case .unreadableHosts, .tapMode, .failure: break
         }
     }
 
