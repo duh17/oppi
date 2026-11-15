@@ -1077,6 +1077,32 @@ struct ToolTimelineRowContentViewTests {
         #expect(!hasCollapsedPreviewHint)
     }
 
+    /// Any tool's image content (a data URI after its caption) paints as an
+    /// image under the caption, with no base64 drawn as text.
+    @MainActor
+    @Test func extensionToolImageContentPaintsImageUnderCaption() {
+        let output = "Capture from p-1 (1280x1061).\ndata:image/png;base64,\(Self.testPNGBase64)"
+        let config = ToolPresentationBuilder.build(
+            itemID: "capture", tool: "custom_capture", argsSummary: "",
+            outputPreview: output, isError: false, isDone: true,
+            context: .init(
+                args: [:], expandedItemIDs: ["capture"], fullOutput: output,
+                isLoadingOutput: false, callSegments: nil, resultSegments: nil,
+                startedAt: nil, elapsedSeconds: nil
+            )
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 370)
+
+        #expect(timelineAllViews(in: view).contains {
+            String(describing: type(of: $0)).contains("NativeExpandedInlineImageView")
+        })
+        let texts = timelineAllTextRenderViews(in: view).map { timelineRenderedText(of: $0) }
+        #expect(texts.contains { $0.contains("Capture from p-1 (1280x1061).") })
+        #expect(!texts.contains { $0.contains("base64") })
+    }
+
     @MainActor
     @Test func expandedReadMediaDoesNotRenderDuplicateImageCards() {
         let output = "Read image file [image/png]\n\ndata:image/png;base64,\(Self.testPNGBase64)"

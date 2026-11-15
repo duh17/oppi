@@ -635,12 +635,9 @@ enum ToolPresentationBuilder {
     ) -> Bool {
         let outputSample = fullOutput.isEmpty ? outputPreview : fullOutput
         guard !outputSample.isEmpty else { return false }
-        return containsInlineMediaDataURI(outputSample)
-    }
-
-    private static func containsInlineMediaDataURI(_ text: String) -> Bool {
-        text.range(of: "data:image/", options: .caseInsensitive) != nil
-            || text.range(of: "data:audio/", options: .caseInsensitive) != nil
+        // Inline images paint as images (`ToolContentDescriptorBuilder`);
+        // inline audio in a tool's text has no player, so the badge says so.
+        return outputSample.range(of: "data:audio/", options: .caseInsensitive) != nil
     }
 
     /// Convert org mode source text to markdown for the `.markdown` render pipeline.

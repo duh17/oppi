@@ -103,6 +103,8 @@ enum ToolContentDescriptorBuilder {
         result.inspection.glyph = glyph(input: context.inputPresentation, output: context.outputPresentation, details: context.details)
         result.inspection.mediaOutput = audioPresentation(from: context.details) != nil
             || imageAttachment(from: context.details) != nil || !mediaAttachments(from: context.details).isEmpty
+            || (!result.inspection.terminalOutput && result.inspection.file == nil
+                && StringFastChecks.textContainsDataImagePrefix(result.inspection.raw))
         result.inspection.availability = context.outputAvailability
         result.inspection.outputPresentation = context.outputPresentation
         return result
@@ -189,7 +191,23 @@ enum ToolContentDescriptorBuilder {
             let hasStructuredVoiceContent = audioDetails != nil
             let hasStructuredMediaContent = !mediaAttachments.isEmpty
                 || imageAttachment(from: context.details) != nil
-            if !hasStructuredVoiceContent && !hasStructuredMediaContent {
+            if !hasStructuredVoiceContent && !hasStructuredMediaContent,
+               StringFastChecks.textContainsDataImagePrefix(output) {
+                // A tool's image content blocks arrive as data URIs in its
+                // text (the server's tool output). Paint them as images beside
+                // the caption instead of a document of base64.
+                let caption = textRemovingImageDataURIs(outputTrimmed)
+                content = .media(
+                    ToolContentDescriptor.Media(
+                        output: outputTrimmed,
+                        filePath: nil,
+                        startLine: 1,
+                        attachments: [],
+                        audio: nil
+                    )
+                )
+                copyOutput = caption.isEmpty ? nil : caption
+            } else if !hasStructuredVoiceContent && !hasStructuredMediaContent {
                 content = ToolCallDocumentBuilder.build(
                     args: context.args, inputPresentation: context.inputPresentation,
                     nestedCalls: context.nestedCalls,
@@ -687,6 +705,14 @@ enum ToolContentDescriptorBuilder {
         }
 
         return false
+    }
+
+    private static func textRemovingImageDataURIs(_ text: String) -> String {
+        var remaining = text
+        for image in ImageExtractor.extract(from: text).reversed() {
+            remaining.removeSubrange(image.range)
+        }
+        return remaining.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func sanitizeGenericExtensionOutput(_ output: String) -> String {

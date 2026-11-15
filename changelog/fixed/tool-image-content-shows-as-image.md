@@ -1,0 +1,1 @@
+- **Client:** An image a tool returns, such as a Godot capture or an MCP screenshot, shows as a picture under the tool's caption instead of a wall of base64 text marked with a media warning. Copying the row copies the caption, not the image data.

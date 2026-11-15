@@ -197,6 +197,8 @@ describe("game tools", { timeout: 20_000 }, () => {
     ]);
     expect(capture?.isError).toBe(false);
     expect(textOf(capture?.content)).toContain("(744x512)");
+    // The pixels travel only as the image block, never as a data URL in the caption.
+    expect(textOf(capture?.content)).not.toContain("data:");
     const image = (
       capture?.content as Array<{ type: string; data?: string; mimeType?: string }>
     ).find((block) => block.type === "image");

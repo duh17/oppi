@@ -11,88 +11,16 @@ struct ToolPresentationConfigTests {
         harness.toolArgsStore.setInputPresentation(input, for: id)
         harness.toolArgsStore.setOutputPresentation(output, for: id)
     }
-    @Test(arguments: ["read", "functions.read", "write", "tools/write", "edit"])
-    func missingFileFactsDoesNotSuppressMediaWarning(tool: String) {
+
+    /// Inline images paint as images, so only inline audio, which a tool row
+    /// cannot play, earns the warning badge.
+    @Test func inlineMediaWarningIsForAudioOnly() {
+        #expect(!ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
+            outputPreview: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==", fullOutput: ""))
         #expect(ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-            outputPreview: "data:image/png;base64,sample", fullOutput: ""))
-    }
-
-    @Test func missingTerminalFactsDoesNotInferFromName() {
-        #expect(
-            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                outputPreview: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
-                fullOutput: ""
-            )
-        )
-
-        #expect(
-            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                outputPreview: "",
-                fullOutput: "before data:audio/wav;base64,UklGRg== after"
-            )
-        )
-
-        #expect(
-            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                outputPreview: "plain output",
-                fullOutput: ""
-            )
-        )
-    }
-
-    @Test func inlineMediaWarningHeuristicDetectsDataURIsForNonBashTools() {
-        #expect(
-            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                outputPreview: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
-                fullOutput: ""
-            )
-        )
-
-        #expect(
-            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                outputPreview: "",
-                fullOutput: "before data:audio/wav;base64,UklGRg== after"
-            )
-        )
-    }
-
-    @Test func inlineMediaWarningHeuristicFlagsUnknownExtensionToolsButNotBuiltins() {
-        let sample = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
-
-        #expect(
-            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                outputPreview: sample,
-                fullOutput: ""
-            )
-        )
-        #expect(
-            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                outputPreview: sample,
-                fullOutput: ""
-            )
-        )
-        #expect(
-            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                outputPreview: sample,
-                fullOutput: ""
-            )
-        )
-    }
-
-    @Test func inlineMediaWarningHeuristicIsCaseInsensitiveForUnknownTools() {
-        #expect(
-            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                outputPreview: "DATA:IMAGE/PNG;BASE64,iVBORw0KGgoAAAANSUhEUg==",
-                fullOutput: ""
-            )
-        )
-
-        #expect(
-            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                outputPreview: "",
-                fullOutput: "before DaTa:AuDiO/WaV;BaSe64,UklGRg== after"
-            )
-        )
+            outputPreview: "", fullOutput: "before DaTa:AuDiO/WaV;BaSe64,UklGRg== after"))
+        #expect(!ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
+            outputPreview: "plain output", fullOutput: ""))
     }
 
     @Test func inlineMediaToolsStayNativeAndSurfaceWarningBadge() throws {
@@ -101,7 +29,7 @@ struct ToolPresentationConfigTests {
             id: "grep-media-1",
             tool: "grep",
             argsSummary: "pattern: data",
-            outputPreview: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
+            outputPreview: "data:audio/wav;base64,UklGRg==",
             outputByteCount: 128,
             isError: false,
             isDone: true

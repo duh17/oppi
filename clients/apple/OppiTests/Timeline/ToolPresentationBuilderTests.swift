@@ -2218,19 +2218,34 @@ struct ToolPresentationBuilderTests {
         #expect(config.isDone)
     }
 
-    // MARK: - Media Warning
+    // MARK: - Inline image content
 
-    @Test("inline media warning for unknown tool with data URI")
-    func mediaWarning() {
+    /// Any tool's image content block reaches the phone as a data URI after
+    /// its text. The row paints it as an image under the caption, copies only
+    /// the caption, and opens no text reader full of base64.
+    @Test("an extension tool's image content paints as media, not text")
+    func extensionToolImageContentPaintsAsMedia() throws {
+        let output = "Capture from p-1 (1280x1061).\ndata:image/png;base64,iVBORw0KGgo="
         let config = ToolPresentationBuilder.build(
-            itemID: "t1", tool: "custom_render",
+            itemID: "t1", tool: "custom_capture",
             argsSummary: "",
-            outputPreview: "here is data:image/png;base64,abc",
+            outputPreview: output,
             isError: false, isDone: true,
-            context: emptyContext()
+            context: emptyContext(expanded: ["t1"], fullOutput: output)
         )
 
-        #expect(config.languageBadge == "⚠︎media")
+        guard case .readMedia(let mediaOutput, let filePath, _, let attachments, _) = config.expandedContent else {
+            Issue.record("Expected readMedia, got \(String(describing: config.expandedContent))")
+            return
+        }
+        #expect(mediaOutput == output)
+        #expect(filePath == nil)
+        #expect(attachments.isEmpty)
+        #expect(config.copyOutputText == "Capture from p-1 (1280x1061).")
+        #expect(config.languageBadge == nil)
+        #expect(ToolTimelineRowFullScreenSupport.staticFullScreenContent(
+            configuration: config, outputCopyText: nil, terminalTrace: nil
+        ) == nil)
     }
 
     @Test("no media warning for bash tool with data URI")
