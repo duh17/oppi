@@ -92,12 +92,9 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("today-night")
 
         // Yesterday's night is done: its four runs fold into one row, and opening it shows
-        // the Night shift with all 26 of its subagents.
-        let calendar = Calendar.current
-        let yesterday = calendar.date(byAdding: .day, value: -1, to: Date()) ?? Date()
-        let parts = calendar.dateComponents([.year, .month, .day], from: yesterday)
-        let key = String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
-        app.descendants(matching: .any)["schedules.calendar.day.\(key)"].tap()
+        // the Night shift with all 26 of its subagents. A swipe reaches yesterday on any
+        // weekday; on the week's first day it is in last week's strip.
+        showDay(offset: -1)
         let cluster = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH 'schedules.calendar.cluster.'")).firstMatch
         XCTAssertTrue(cluster.waitUntilExists(timeout: 10), "Yesterday's clean night folds into one row")
         XCTAssertTrue(cluster.label.contains("4 runs, all done"), "The night's four runs fold: \(cluster.label)")
@@ -162,10 +159,20 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         let today = dayButton(offset: 0)
         let tomorrow = dayButton(offset: 1)
         XCTAssertTrue(waitFor(today.isSelected, timeout: 10), "The Day opens on today")
+        // The test and the app share the simulator's calendar, so they agree on the week.
+        let calendar = Calendar.current
+        let now = Date()
+        let sameWeek = calendar.isDate(
+            calendar.date(byAdding: .day, value: 1, to: now) ?? now, equalTo: now, toGranularity: .weekOfYear
+        )
 
         list.swipeLeft()
         XCTAssertTrue(waitFor(tomorrow.isSelected, timeout: 5), "A swipe left shows tomorrow in the strip")
-        XCTAssertFalse(today.isSelected)
+        if sameWeek {
+            XCTAssertTrue(today.exists && !today.isSelected, "Today stays in the strip, no longer selected")
+        } else {
+            XCTAssertFalse(today.exists, "On the week's last day the strip turns to next week")
+        }
         let upcoming = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH 'schedules.calendar.entry.9Bq6VFNy.'")).firstMatch
         XCTAssertTrue(upcoming.waitUntilExists(timeout: 5), "Tomorrow's runs show")
         capture("day-swiped")
@@ -173,6 +180,11 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         list.swipeRight()
         XCTAssertTrue(waitFor(today.isSelected, timeout: 5), "A swipe right comes back to today")
         XCTAssertTrue(pastRun(named: "Weekday job hunt").waitUntilExists(timeout: 5), "Today's runs are back")
+
+        // Tapping a neighbour in this week's strip selects it.
+        let neighbour = dayButton(offset: sameWeek ? 1 : -1)
+        neighbour.tap()
+        XCTAssertTrue(waitFor(neighbour.isSelected, timeout: 5), "Tapping a day in the strip selects it")
     }
 
     /// Month marks only the exceptions. On iPad it shows the selected day's agenda, whose
@@ -191,16 +203,17 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         }
         let grid = app.descendants(matching: .any)["schedules.calendar.monthGrid"]
         XCTAssertTrue(grid.waitUntilExists(timeout: 10), "Month shows the month")
+        // Another day of this month: yesterday, or tomorrow on the month's first day.
         let calendar = Calendar.current
         let yesterday = calendar.date(byAdding: .day, value: -1, to: Date()) ?? Date()
-        let yesterdayCell = grid.buttons.matching(NSPredicate(format: "label CONTAINS %@", yesterday.formatted(.dateTime.month(.wide).day()))).firstMatch
-        let sameMonth = calendar.isDate(yesterday, equalTo: Date(), toGranularity: .month)
+        let otherOffset = calendar.isDate(yesterday, equalTo: Date(), toGranularity: .month) ? -1 : 1
+        let otherDay = calendar.date(byAdding: .day, value: otherOffset, to: Date()) ?? Date()
+        let otherCell = grid.buttons.matching(NSPredicate(format: "label CONTAINS %@", otherDay.formatted(.dateTime.month(.wide).day()))).firstMatch
         guard isPad else {
             capture("month")
-            guard sameMonth else { return }
-            XCTAssertTrue(yesterdayCell.waitUntilExists(timeout: 5), "Yesterday is in the month")
-            yesterdayCell.tap()
-            XCTAssertTrue(waitFor(self.dayButton(offset: -1).isSelected, timeout: 5), "A date opens its day in the Day")
+            XCTAssertTrue(otherCell.waitUntilExists(timeout: 5), "\(otherDay) is in the month")
+            otherCell.tap()
+            XCTAssertTrue(waitFor(self.dayButton(offset: otherOffset).isSelected, timeout: 5), "A date opens its day in the Day")
             mode.buttons[dayTitle].tap()
             return
         }
@@ -210,11 +223,9 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         capture("month")
 
         // Another day: its agenda follows.
-        if sameMonth {
-            XCTAssertTrue(yesterdayCell.waitUntilExists(timeout: 5), "Yesterday is in the month")
-            yesterdayCell.tap()
-            XCTAssertTrue(waitFor(!summary.label.contains("Today"), timeout: 5), "Selecting a day shows its agenda: \(summary.label)")
-        }
+        XCTAssertTrue(otherCell.waitUntilExists(timeout: 5), "\(otherDay) is in the month")
+        otherCell.tap()
+        XCTAssertTrue(waitFor(!summary.label.contains("Today"), timeout: 5), "Selecting a day shows its agenda: \(summary.label)")
 
         let dayTitleButton = app.buttons["schedules.calendar.dayTitle"]
         XCTAssertTrue(dayTitleButton.waitUntilExists(timeout: 5), "Month's day title is a button")
@@ -351,7 +362,7 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(when.waitUntilGone(timeout: 5))
 
         // Tomorrow's holiday is an all-day row above the day's runs.
-        dayButton(offset: 1).tap()
+        showDay(offset: 1)
         let holiday = app.cells["schedules.calendar.event.holiday"]
         XCTAssertTrue(holiday.waitUntilExists(timeout: 5), "Tomorrow's all-day event shows")
         let firstRun = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH 'schedules.calendar.entry.'")).firstMatch
@@ -410,8 +421,20 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(row.exists && row.isHittable, "\(row) scrolls into view")
     }
 
+    /// The week strip's button for a day. The strip shows the selected day's week, so only
+    /// today's and the selected day's buttons are certain to be there.
     private func dayButton(offset: Int) -> XCUIElement {
         app.descendants(matching: .any)["schedules.calendar.day.\(dayKey(offset: offset))"]
+    }
+
+    /// Pages the Day one day from today, to tomorrow (`1`) or yesterday (`-1`), by swiping as a
+    /// person does, so it works on every weekday: a strip tap reaches only this week's days.
+    private func showDay(offset: Int) {
+        precondition(abs(offset) == 1, "showDay pages one day")
+        let list = app.collectionViews["schedules.calendar.list"]
+        XCTAssertTrue(list.waitUntilExists(timeout: 10), "The Day agenda shows")
+        if offset > 0 { list.swipeLeft() } else { list.swipeRight() }
+        XCTAssertTrue(waitFor(self.dayButton(offset: offset).isSelected, timeout: 5), "The Day pages to \(dayKey(offset: offset))")
     }
 
     /// The whole screen, so a landscape iPad comes out the right way up (an app screenshot
