@@ -177,7 +177,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             if notifications.pushStatus == .working { notificationItems.append(.pushWorking) }
             if notifications.pushFailure != nil { notificationItems.append(.pushError) }
         }
-        if PlatformCapabilities.liveActivities {
+        if showsLiveActivity {
             notificationItems.append(.liveActivitySwitch)
             if notifications.liveActivityStatus == .working { notificationItems.append(.liveActivityWorking) }
             if notifications.liveActivityStatus == .failed, notifications.liveActivityEnabled {
@@ -215,18 +215,20 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
                 items: settingRows(SettingsCatalog.durableSessionsEnabled, .durableSessions) { .settingFailure($0) }
             ),
         ]
-        let deviceSections: [ListSection<Section, Item>] = [
-            ListSection(
-                .notifications,
-                header: String(localized: "Notifications"),
-                footer: ServerNotificationsSection.footer(
-                    relayHost: relayHost,
-                    relayRefusesThisDevice: ServerNotificationsSection.relayRefusesThisDevice,
-                    pushEnabled: notifications.pushEnabled
-                ),
-                scope: .deviceOnServer(name),
-                items: notificationItems
+        // A server without push, with the Live Activity experiment off, has nothing to notify with.
+        let notificationSection: [ListSection<Section, Item>] = notificationItems.isEmpty ? [] : [ListSection(
+            .notifications,
+            header: String(localized: "Notifications"),
+            footer: ServerNotificationsSection.footer(
+                relayHost: relayHost,
+                relayRefusesThisDevice: ServerNotificationsSection.relayRefusesThisDevice,
+                pushEnabled: notifications.pushEnabled,
+                liveActivity: showsLiveActivity
             ),
+            scope: .deviceOnServer(name),
+            items: notificationItems
+        )]
+        let deviceSections: [ListSection<Section, Item>] = notificationSection + [
             ListSection(
                 .lock,
                 footer: ScopedLockToggleRow.footer(for: "this server and its workspaces and sessions"),
@@ -255,8 +257,14 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
         )]
     }
 
-    /// The device store, which holds Start Sessions as Durable.
+    /// The device store, which holds Start Sessions as Durable and the experiments.
     private var deviceSettings: SettingsStore { coordinator.deviceSettings }
+
+    /// The Live Activity switch shows while its experiment is on; read through the store, so
+    /// the page redraws as the experiment flips. Off, each server's choice is kept, unshown.
+    private var showsLiveActivity: Bool {
+        PlatformCapabilities.liveActivities && deviceSettings.read(SettingsCatalog.experimentLiveActivity).current == true
+    }
 
     /// The host the server's push relay is on, known while the server is connected.
     private var relayHost: String? {

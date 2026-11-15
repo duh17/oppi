@@ -5,6 +5,11 @@ import Foundation
 /// Off by default, like push. With push on for the same server, the server also keeps the
 /// card current through the push relay while Oppi is closed; without push the card updates
 /// only while Oppi runs.
+///
+/// The Live Activity experiment (Settings → Experiments) gates every server: while it is
+/// off, `isEnabled` reads false, so no card starts or is adopted, the relay lists none
+/// (`LiveActivityRelaySync`), and push registration tells each server this phone shows none.
+/// The saved per-server choice stays, and reads again once the experiment is on.
 enum LiveActivitySettings {
     private static func enabledKey(serverId: String) -> String {
         "\(AppIdentifiers.subsystem).liveActivity.enabled.\(serverId)"
@@ -13,7 +18,7 @@ enum LiveActivitySettings {
     private static let slotsKey = "\(AppIdentifiers.subsystem).liveActivity.slots"
 
     static func isEnabled(serverId: String, defaults: UserDefaults = .standard) -> Bool {
-        defaults.bool(forKey: enabledKey(serverId: serverId))
+        AppPreferenceStore.Experiments.liveActivityEnabled(in: defaults) && defaults.bool(forKey: enabledKey(serverId: serverId))
     }
 
     static func setEnabled(_ enabled: Bool, serverId: String, defaults: UserDefaults = .standard) {

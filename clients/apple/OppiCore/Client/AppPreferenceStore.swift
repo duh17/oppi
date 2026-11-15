@@ -254,6 +254,7 @@ enum AppPreferenceStore {
         static let calendarEventsKey = "\(AppIdentifiers.subsystem).experiments.calendarEvents"
         static let godotPaneKey = "\(AppIdentifiers.subsystem).experiments.godotPane"
         static let pluginSidebarKey = "\(AppIdentifiers.subsystem).experiments.pluginSidebar"
+        static let liveActivityKey = "\(AppIdentifiers.subsystem).experiments.liveActivity"
         /// The calendars Schedules leaves out, by EventKit identifier: a calendar added
         /// later shows until it is hidden.
         static let calendarEventsHiddenKey = "\(AppIdentifiers.subsystem).experiments.calendarEvents.hidden"
@@ -282,10 +283,16 @@ enum AppPreferenceStore {
         /// Plugin Sidebar: the server's plugin entries in the sidebar, beside the native ones.
         static var pluginSidebarEnabled: Bool { flag(pluginSidebarKey) }
 
+        /// Live Activity: the Lock Screen card and each server's switch for it. While off,
+        /// every server's card reads off and its saved choice is kept (`LiveActivitySettings`).
+        static var liveActivityEnabled: Bool { liveActivityEnabled(in: .standard) }
+
+        static func liveActivityEnabled(in defaults: UserDefaults) -> Bool { flag(liveActivityKey, in: defaults) }
+
         /// Nothing stored means the default; anything stored reads as a bool, so a
         /// launch argument's `-key YES` (a test's switch) counts too.
-        private static func flag(_ key: String, default value: Bool = enabledDefault) -> Bool {
-            UserDefaults.standard.object(forKey: key) == nil ? value : UserDefaults.standard.bool(forKey: key)
+        private static func flag(_ key: String, default value: Bool = enabledDefault, in defaults: UserDefaults = .standard) -> Bool {
+            defaults.object(forKey: key) == nil ? value : defaults.bool(forKey: key)
         }
     }
 

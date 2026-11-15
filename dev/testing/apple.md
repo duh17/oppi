@@ -153,6 +153,6 @@ TEST_RUNNER_OPPI_UI_VALIDATE_DIR=/tmp/oppi-ui-validate/session-timeline \
   -only-testing:OppiUITests/UIValidateTests/testDumpNamedPreview
 ```
 
-  Inputs (`TEST_RUNNER_`-prefixed): `SCREENSHOT_SCREEN` (required), `OPPI_UI_VALIDATE_DIR`, `OPPI_UI_VALIDATE_AUDIT` (automation types only), `OPPI_UI_VALIDATE_READY` (default `screenshot.ready`; the dump waits for nothing else), `OPPI_UI_VALIDATE_ORIENTATION`, `OPPI_UI_VALIDATE_CONTENT_SIZE` (an unknown category silently renders default size), `OPPI_UI_VALIDATE_TAPS` (`doubletap:`, `swipeup:`, `swipedown:`, `scrollto:`, `x:y`, `wait:<seconds>`), and every other `SCREENSHOT_*` or `CHAT_ROUTES_*` variable.
+  Inputs (`TEST_RUNNER_`-prefixed): `SCREENSHOT_SCREEN` (required), `OPPI_UI_VALIDATE_DIR`, `OPPI_UI_VALIDATE_AUDIT` (automation types only), `OPPI_UI_VALIDATE_READY` (default `screenshot.ready`; the dump waits for nothing else), `OPPI_UI_VALIDATE_ORIENTATION`, `OPPI_UI_VALIDATE_CONTENT_SIZE` (an unknown category renders default size), `OPPI_UI_VALIDATE_ARGUMENTS`, `OPPI_UI_VALIDATE_TAPS` (`doubletap:`, `swipeup:`, `swipedown:`, `scrollto:`, `x:y`, `wait:<seconds>`), and every other `SCREENSHOT_*` or `CHAT_ROUTES_*` variable.
 - `scripts/screenshot-screen-guard.ts` sees only literal screen names: grep the tests for sub-page keys (`SCREENSHOT_SWEEP_PAGE`, `SCREENSHOT_WORKSPACE_PAGE`, `SCREENSHOT_MODAL_SITE`) before deleting one. A visual no test needs is deleted.
 - After Apple UI or rendering changes, run `bun scripts/duplication-scan.ts` from the repo root.

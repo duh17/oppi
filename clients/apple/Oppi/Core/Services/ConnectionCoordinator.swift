@@ -177,7 +177,7 @@ final class ConnectionCoordinator {
     /// The one store for device-scoped settings (no server context).
     /// `AppRootEnvironment` publishes it. Tests replace it with a store on a
     /// suite of their own.
-    @ObservationIgnored lazy var deviceSettings: SettingsStore = .liveDevice()
+    @ObservationIgnored lazy var deviceSettings: SettingsStore = .liveDevice(coordinator: self)
     /// Makes a server's settings store. The app's makes one over the paired
     /// server's connection; tests replace it to point at a fake route. It is handed
     /// the coordinator rather than capturing it, so the stored closure holds no cycle.
@@ -1034,6 +1034,27 @@ final class ConnectionCoordinator {
         connections[serverId]?.serverMetricsEnabled = enabled
     }
 
+    // MARK: - Live Activity Experiment
+
+    /// The Live Activity experiment changed, so every server's card setting did
+    /// (`LiveActivitySettings`): cards now off end, cards on again start from each
+    /// connection's sessions, and each connected server with push on is registered again,
+    /// so it learns whether this phone shows its card. A server that is not connected
+    /// learns at its next connection; until then the relay already refuses its card pushes.
+    func liveActivityExperimentChanged() {
+        LiveActivityManager.shared.allSettingsChanged()
+        for connection in connections.values {
+            connection.syncLiveActivityState()
+            guard let api = connection.apiClient, let relay = connection.pushRelay else { continue }
+            PushRegistration.shared.serverAdvertisesPush(
+                api: api,
+                serverId: connection.currentServerId,
+                deviceId: connection.credentials?.deviceCredential?.deviceId,
+                relay: relay
+            )
+        }
+    }
+
     // MARK: - Server Lifecycle
 
     @discardableResult
@@ -1153,10 +1174,11 @@ final class ConnectionCoordinator {
         // End the server's card while this phone still drives it: once push is off below, no
         // server can end it, and it would show its last counts until iOS ends it hours later.
         // After the guard, so a re-pair during shutdown keeps its card setting.
-        if LiveActivitySettings.isEnabled(serverId: id) {
-            LiveActivitySettings.setEnabled(false, serverId: id)
-            LiveActivityManager.shared.settingsChanged(serverId: id)
-        }
+        // The saved choice goes even while the Live Activity experiment hides it, so a
+        // re-paired server starts with its card off.
+        let cardWasOn = LiveActivitySettings.isEnabled(serverId: id)
+        LiveActivitySettings.setEnabled(false, serverId: id)
+        if cardWasOn { LiveActivityManager.shared.settingsChanged(serverId: id) }
         // Push keys and the relay permission for this server. The transport is gone, so the
         // server forgets this device's registration when its relay permission 410s.
         await PushRegistration.shared.disable(serverId: id, api: nil, relay: removedConnection?.pushRelay)

@@ -11,6 +11,8 @@ struct ServerNotificationsControllerTests {
         let name = "ServerNotificationsControllerTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: name))
         defaults.removePersistentDomain(forName: name)
+        // The card switch exists only while its experiment is on (`LiveActivityExperimentTests`).
+        defaults.set(true, forKey: AppPreferenceStore.Experiments.liveActivityKey)
         return defaults
     }
 

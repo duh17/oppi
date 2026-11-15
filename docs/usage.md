@@ -250,7 +250,7 @@ Below it: **Instructions** (its own editor and **Save**), **Skills** and **Exten
 
 ## Server settings
 
-**Server Settings** (host switcher → Server Settings, or Settings → your server) opens with the server's name and connection status, then **Model Providers**, **Workspaces**, **Dictionary**, **Paired Devices**, **About This Server**, and **Badge Icon**. On the same screen: **Mobile Output Guide** ([what it does](extensions.md#mobile-output-guide)), **Server Metrics** (off by default; see [Server Metrics](server-configuration.md#server-metrics)), **Durable Sessions** (off by default; see [Durable Sessions](#durable-sessions)), **Notifications** (push and Live Activities, per server), **Lock Server**, and **Remove Server**. Add another server from Settings.
+**Server Settings** (host switcher → Server Settings, or Settings → your server) opens with the server's name and connection status, then **Model Providers**, **Workspaces**, **Dictionary**, **Paired Devices**, **About This Server**, and **Badge Icon**. On the same screen: **Mobile Output Guide** ([what it does](extensions.md#mobile-output-guide)), **Server Metrics** (off by default; see [Server Metrics](server-configuration.md#server-metrics)), **Durable Sessions** (off by default; see [Durable Sessions](#durable-sessions)), **Notifications** (push and, while the **Live Activity** experiment is on, Live Activities, per server), **Lock Server**, and **Remove Server**. Add another server from Settings.
 
 **About This Server** shows connection, uptime, the Pi SDK and server versions, and the **Voice** backend states. It also shows the Pi TUI version when the host's `pi` command comes from an npm install of Pi. Its row reads **Update Available** when a newer `oppi-server` is on npm.
 

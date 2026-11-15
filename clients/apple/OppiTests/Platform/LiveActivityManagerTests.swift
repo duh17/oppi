@@ -94,7 +94,26 @@ struct LiveActivitySettingsTests {
         let name = "LiveActivitySettingsTests.\(UUID().uuidString)"
         let defaults = testDefaults(suite: name)
         defaults.removePersistentDomain(forName: name)
+        defaults.set(true, forKey: AppPreferenceStore.Experiments.liveActivityKey)
         return defaults
+    }
+
+    @Test func theExperimentOffTurnsEveryCardOffAndKeepsEachServersChoice() {
+        let defaults = defaults()
+        LiveActivitySettings.setEnabled(true, serverId: "sha256:a", defaults: defaults)
+        let slot = LiveActivitySettings.slot(serverId: "sha256:a", defaults: defaults)
+
+        defaults.set(false, forKey: AppPreferenceStore.Experiments.liveActivityKey)
+        #expect(!LiveActivitySettings.isEnabled(serverId: "sha256:a", defaults: defaults))
+        // The relay is told of no card, so it refuses every server's card pushes.
+        #expect(LiveActivitySettings.enabledServers(defaults: defaults).isEmpty)
+        // Nothing stored is off too.
+        defaults.removeObject(forKey: AppPreferenceStore.Experiments.liveActivityKey)
+        #expect(!LiveActivitySettings.isEnabled(serverId: "sha256:a", defaults: defaults))
+
+        defaults.set(true, forKey: AppPreferenceStore.Experiments.liveActivityKey)
+        #expect(LiveActivitySettings.isEnabled(serverId: "sha256:a", defaults: defaults))
+        #expect(LiveActivitySettings.enabledServers(defaults: defaults) == ["sha256:a": slot])
     }
 
     @Test func offByDefaultAndPerServer() {

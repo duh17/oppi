@@ -984,9 +984,13 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(server)
         LiveActivitySettings.setEnabled(true, serverId: server.id)
         defer { LiveActivitySettings.setEnabled(false, serverId: server.id) }
+        // Removed while the experiment hides the card: a re-pair still starts with it off.
+        let experiment = AppPreferenceStore.Experiments.liveActivityKey
+        defer { UserDefaults.standard.removeObject(forKey: experiment) }
 
         await coordinator.removeServer(id: server.id)
 
+        UserDefaults.standard.set(true, forKey: experiment)
         #expect(!LiveActivitySettings.isEnabled(serverId: server.id))
     }
 

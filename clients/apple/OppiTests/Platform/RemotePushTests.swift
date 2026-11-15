@@ -182,6 +182,7 @@ struct PushSendPermissionTests {
         private var _registrations = 0
         private var _sentTokens: [String] = []
         private var _sentEvents: [[String]] = []
+        private var _sentLiveActivity: [Bool] = []
         private var _deletedPermissions: [String] = []
         private var _deletedRegistrations: [String] = []
         private var _goneRegistrations: Set<String> = []
@@ -197,6 +198,8 @@ struct PushSendPermissionTests {
         var registrations: Int { lock.withLock { _registrations } }
         var sentTokens: [String] { lock.withLock { _sentTokens } }
         var sentEvents: [[String]] { lock.withLock { _sentEvents } }
+        /// Each registration's `liveActivity`: whether the server should drive this phone's card.
+        var sentLiveActivity: [Bool] { lock.withLock { _sentLiveActivity } }
         var deletedPermissions: [String] { lock.withLock { _deletedPermissions } }
         var deletedRegistrations: [String] { lock.withLock { _deletedRegistrations } }
 
@@ -260,6 +263,7 @@ struct PushSendPermissionTests {
                 let refused = lock.withLock {
                     _sentTokens.append(token)
                     _sentEvents.append(events)
+                    _sentLiveActivity.append(json?["liveActivity"] as? Bool ?? false)
                     return _everySendTokenGone || _goneSendTokens.contains(token)
                 }
                 let serverKey = request.url?.host == "other-server" ? otherServerPublicKey : serverPublicKey
@@ -454,6 +458,26 @@ struct PushSendPermissionTests {
             try await connect()
 
             #expect(backend.sentEvents == [["blocked", "error", "notify", "pairing_approval", "device_enrolled"]])
+        }
+    }
+
+    /// With the Live Activity experiment off, a server whose card was turned on hears that
+    /// this phone shows none, so it sends no card pushes; on again, it hears the saved choice.
+    @Test func theLiveActivityExperimentDecidesWhatTheServerHearsOfTheCard() async throws {
+        let experiment = AppPreferenceStore.Experiments.liveActivityKey
+        LiveActivitySettings.setEnabled(true, serverId: serverId)
+        defer {
+            LiveActivitySettings.setEnabled(false, serverId: serverId)
+            UserDefaults.standard.removeObject(forKey: experiment)
+        }
+        try await withBackend {
+            try storeRelayRegistration("r_A")
+            UserDefaults.standard.set(false, forKey: experiment)
+            try await connect()
+            UserDefaults.standard.set(true, forKey: experiment)
+            try await connect()
+
+            #expect(backend.sentLiveActivity == [false, true])
         }
     }
 

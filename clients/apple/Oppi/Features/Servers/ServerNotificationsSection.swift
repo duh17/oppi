@@ -6,7 +6,8 @@ import Observation
 ///
 /// Push is opt-in and shown only when the server pushes through a relay; turning it on first
 /// says what the relay can and cannot see (protocol/push/spec.md §6). The Live Activity is
-/// opt-in too and shows counts only. With push on, the server also keeps the card current
+/// opt-in too, shown only while its experiment is on (`LiveActivitySettings`), and shows
+/// counts only. With push on, the server also keeps the card current
 /// while Oppi is closed; without push the card updates only while Oppi is open.
 ///
 /// Anything that makes data leave the device asks first (docs/privacy.md, "The push relay"
@@ -78,9 +79,9 @@ enum ServerNotificationsSection {
         }
     }
 
-    /// Push (when the server offers it), then the Live Activity, which depends on push to stay
-    /// current while Oppi is closed.
-    static func footer(relayHost: String?, relayRefusesThisDevice: Bool, pushEnabled: Bool) -> String {
+    /// Push (when the server offers it), then the Live Activity (when its experiment is on),
+    /// which depends on push to stay current while Oppi is closed.
+    static func footer(relayHost: String?, relayRefusesThisDevice: Bool, pushEnabled: Bool, liveActivity: Bool) -> String {
         var parts: [String] = []
         if let relayHost {
             parts.append(String(localized: "Push alerts are end-to-end encrypted through \(relayHost). Off by default."))
@@ -88,6 +89,7 @@ enum ServerNotificationsSection {
                 parts.append(String(localized: "Push is not available on this device: it can't prove to the relay that it runs Oppi."))
             }
         }
+        guard liveActivity else { return parts.joined(separator: " ") }
         parts.append(String(localized: "The Live Activity shows only how many agents are running and how many need you."))
         parts.append(
             pushEnabled

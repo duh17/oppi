@@ -330,6 +330,21 @@ enum SettingsCatalog {
         )
     )
 
+    /// Live Activity: the Lock Screen card. While off, no server's card shows, Server
+    /// Settings hides each server's switch, and every server is told this phone shows
+    /// none; turning it on brings each server's saved choice back. Effects live in
+    /// `SettingsStore.liveAfterWrite`.
+    static let experimentLiveActivity = SettingDeclaration<Bool>(
+        id: "settings.experiments.liveActivity",
+        key: AppPreferenceStore.Experiments.liveActivityKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.Experiments.enabledDefault,
+        copy: SettingCopy(
+            title: String(localized: "Live Activity"),
+            footer: String(localized: "A Lock Screen card with how many agents are running and how many need you, turned on per server in Server Settings › Notifications. While off, no card shows and servers send none; each server's choice comes back when you turn it on.")
+        )
+    )
+
     /// The calendars whose events Schedules leaves out. Stored as the hidden ones, so a
     /// calendar added later shows until it is hidden.
     static let calendarEventsHiddenCalendars = SettingDeclaration<[String]>(
@@ -428,6 +443,7 @@ enum SettingsCatalog {
         experimentCalendarEvents.descriptor,
         experimentSplitPanes.descriptor,
         experimentPluginSidebar.descriptor,
+        experimentLiveActivity.descriptor,
         calendarEventsHiddenCalendars.descriptor,
         serverMetricsEnabled.descriptor,
         mobileOutputGuideEnabled.descriptor,

@@ -47,6 +47,10 @@ final class UIValidateTests: XCTestCase {
         default:
             break
         }
+        // Extra launch arguments, space-separated, such as an experiment's `-<key> YES`.
+        if let arguments = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_ARGUMENTS"] {
+            app.launchArguments += arguments.split(separator: " ").map(String.init)
+        }
         // A Dynamic Type size, such as UICTContentSizeCategoryAccessibilityXXL.
         if let size = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_CONTENT_SIZE"], !size.isEmpty {
             app.launchArguments += ["-UIPreferredContentSizeCategoryName", size]

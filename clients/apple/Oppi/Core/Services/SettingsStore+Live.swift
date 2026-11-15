@@ -2,9 +2,14 @@ import Foundation
 
 extension SettingsStore {
     /// The device store: device-scoped settings, with the side effect a stored
-    /// write has (the idle timer follows Keep Awake After Activity).
-    static func liveDevice() -> SettingsStore {
-        SettingsStore(serverId: nil, server: ServerAdapter { _ in nil }, afterWrite: liveAfterWrite(screenAwake: .shared))
+    /// write has (the idle timer follows Keep Awake After Activity). The coordinator's
+    /// own store passes itself, for the effects that reach its connections.
+    static func liveDevice(coordinator: ConnectionCoordinator? = nil) -> SettingsStore {
+        SettingsStore(
+            serverId: nil,
+            server: ServerAdapter { _ in nil },
+            afterWrite: liveAfterWrite(screenAwake: .shared, coordinator: coordinator)
+        )
     }
 
     /// One paired server's store: its settings go through that server's connection.
@@ -50,10 +55,14 @@ extension SettingsStore {
     /// What a stored write triggers: the screen's idle timer follows Keep Awake
     /// After Activity the moment it changes, an open editor hears Auto-Save, an
     /// experiment switch is announced to the screens that re-read it (a Rex
-    /// terminal has nothing left to show once its experiment is off), and no other
+    /// terminal has nothing left to show once its experiment is off), the Live Activity
+    /// experiment reaches every connection's card and push registration, and no other
     /// setting has an effect.
-    static func liveAfterWrite(screenAwake: ScreenAwakeController) -> @MainActor (String) -> Void {
-        { id in
+    static func liveAfterWrite(
+        screenAwake: ScreenAwakeController,
+        coordinator: ConnectionCoordinator? = nil
+    ) -> @MainActor (String) -> Void {
+        { [weak coordinator] id in
             switch id {
             case SettingsCatalog.keepAwakeAfterActivity.id:
                 screenAwake.refreshFromPreferences()
@@ -77,6 +86,9 @@ extension SettingsStore {
                     SSHTerminalRegistry.shared.closeRexTerminals(reason: String(localized: "The Rex experiment was turned off."))
                 }
                 NotificationCenter.default.post(name: AppPreferences.Experiments.didChangeNotification, object: nil)
+            case SettingsCatalog.experimentLiveActivity.id:
+                // Server Settings redraws from the store; the cards and servers follow here.
+                coordinator?.liveActivityExperimentChanged()
             case SettingsCatalog.experimentSplitPanes.id:
                 // Every window's panes (`ScenePanes`) follow at once.
                 NotificationCenter.default.post(name: AppPreferences.Experiments.didChangeNotification, object: nil)

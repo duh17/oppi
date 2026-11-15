@@ -184,6 +184,18 @@ final class LiveActivityManager {
         relaySync.publish()
     }
 
+    /// Every server's card setting may have changed at once (the Live Activity experiment):
+    /// each card whose server's card is now off ends, and the relay learns the new state.
+    /// A card that is on again starts from the server's next sync.
+    func allSettingsChanged() {
+        let held = activities.keys.compactMap { LiveActivitySettings.serverId(forSlot: $0, defaults: defaults) }
+        for serverId in Set(countsByServer.keys).union(held) where !isEnabled(serverId) {
+            countsByServer.removeValue(forKey: serverId)
+            endCard(serverId: serverId)
+        }
+        relaySync.publish()
+    }
+
     /// Watch for cards the relay starts and for the push-to-start token. Call once at launch,
     /// including a background launch: iOS wakes Oppi so it can report a pushed card's token.
     func startObservingSystem() {
@@ -374,6 +386,7 @@ final class LiveActivityManager {
     func sync(connectionId serverId: String, sessions: [Session]) {}
     func removeConnection(_ serverId: String) {}
     func settingsChanged(serverId: String) {}
+    func allSettingsChanged() {}
     func startObservingSystem() {}
     func recoverIfNeeded() {}
 }
