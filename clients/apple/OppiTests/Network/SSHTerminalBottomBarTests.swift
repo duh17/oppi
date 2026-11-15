@@ -15,12 +15,13 @@ private func offer(
     canAttach: Bool = true,
     program: String = "shell",
     customKeys: [SSHTerminalCustomKey] = [],
-    shortcuts: [SSHTerminalKeyAction] = []
+    shortcuts: [SSHTerminalKeyAction] = [],
+    agentKeys: SSHTerminalAgentKeys = .none
 ) -> SSHTerminalBarOffer {
     SSHTerminalBarOffer(
         context: context, overviews: overviews, openTerminals: openTerminals, canBrowseFiles: canBrowseFiles,
         canDictate: canDictate, canAttach: canAttach,
-        program: program, customKeys: customKeys, shortcuts: shortcuts
+        program: program, customKeys: customKeys, shortcuts: shortcuts, agentKeys: agentKeys
     )
 }
 
@@ -838,5 +839,107 @@ struct SSHTerminalKeyboardBarTests {
         let secure = offer(canDictate: SSHTerminalBarOffer.canDictate(available: true, secureInput: true, dictating: false))
         let placement = secure.placement(layout: .defaultValue, capacity: 8, surface: .keyboardBar)
         #expect(!actions(of: placement.bar + placement.menu).contains(.dictate))
+    }
+}
+
+@Suite("SSH terminal bar: agent keys")
+@MainActor
+struct SSHTerminalAgentKeyTests {
+    private let enterKey = SSHTerminalCustomKey(name: "Enter", key: "enter", showFor: .all)
+    private let altEnter = SSHTerminalCustomKey(name: "Queue", option: true, key: "enter", showFor: .all)
+
+    /// Return, Esc, ^C, and two custom keys on, with room for all of them.
+    private var layout: SSHTerminalBarLayout {
+        [.action(.enter), .action(.escape), .action(.interrupt), .customKey(enterKey.id), .customKey(altEnter.id)]
+            .reduce(SSHTerminalBarLayout.defaultValue) { $0.adding($1, shown: true).setting($1, shown: true) }
+    }
+
+    /// The root record a program's OSC 7501 report leaves.
+    private func record(_ state: GhosttyProgramStatusState, app: String) -> SSHTerminalProgramStatusStore.Record? {
+        let store = SSHTerminalProgramStatusStore()
+        store.apply(.init(state: state, app: app))
+        return store.root
+    }
+
+    private func interrupt(_ program: String, userFile: String? = nil) throws -> [SSHTerminalKeyStroke] {
+        SSHTerminalKeymap.interrupt(for: try #require(SSHTerminalKeymap.profile(for: program)), userFile: userFile)
+    }
+
+    /// Each key's role by its identifier, and the keys it sends.
+    private func keys(_ agentKeys: SSHTerminalAgentKeys, program: String = "pi") -> [String: (role: SSHTerminalAgentKeyRole?, strokes: [SSHTerminalKeyStroke])] {
+        let bar = offer(program: program, customKeys: [enterKey, altEnter], agentKeys: agentKeys)
+            .placement(layout: layout, capacity: 20).bar
+        return Dictionary(uniqueKeysWithValues: bar.filter(\.sendsKeys).map { slot in
+            (SSHTerminalBarSlot(content: slot.content).accessibilityIdentifier, (slot.agentRole, slot.strokes))
+        })
+    }
+
+    private var enter: String { "sshTerminal.bar.enter" }
+    private var escape: String { "sshTerminal.bar.escape" }
+    private var controlC: String { "sshTerminal.bar.interrupt" }
+    private var custom: String { "sshTerminal.bar.custom.\(enterKey.id.uuidString)" }
+    private var queue: String { "sshTerminal.bar.custom.\(altEnter.id.uuidString)" }
+
+    @Test func anAgentMakesReturnSendAndItsWorkTurnsTheInterruptKeyIntoStop() throws {
+        let piInterrupt = try interrupt("pi")
+        let shell = keys(.none, program: "shell")
+        let idle = keys(.init(root: record(GHOSTTY_PROGRAM_STATUS_STATE_IDLE, app: "pi"), app: "", interrupt: piInterrupt))
+        let working = keys(.init(root: record(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, app: "pi"), app: "", interrupt: piInterrupt))
+
+        // The shell: every key is itself.
+        #expect(shell.values.allSatisfy { $0.role == nil })
+        // An agent: plain Return, the built-in or the person's own, reads Send;
+        // Alt-Return is not Return, and Esc stays Esc while the agent rests.
+        #expect(idle[enter]?.role == .send && idle[custom]?.role == .send)
+        #expect(idle[queue]?.role == nil && idle[escape]?.role == nil && idle[controlC]?.role == nil)
+        // Working: pi interrupts on Esc, so Esc is Stop and ^C is not.
+        #expect(working[escape]?.role == .stop)
+        #expect(working[controlC]?.role == nil && working[enter]?.role == .send)
+        // Only the look changed: every key sends what it sent in the shell.
+        for state in [idle, working] {
+            #expect(state.keys.sorted() == shell.keys.sorted())
+            for (id, key) in state { #expect(key.strokes == shell[id]?.strokes, "\(id)") }
+        }
+    }
+
+    @Test func stopFollowsTheAgentsOwnInterruptBinding() throws {
+        // A pi keybinding file that moves interrupt to ctrl+c: ^C becomes Stop, Esc does not.
+        let rebound = try interrupt("pi", userFile: #"{"app.interrupt":"ctrl+c"}"#)
+        let working = keys(.init(root: record(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, app: "pi"), app: "", interrupt: rebound))
+        #expect(working[controlC]?.role == .stop && working[escape]?.role == nil)
+        // Unbound: no key is Stop. An agent with no keymap has no interrupt to show.
+        let unbound = try interrupt("pi", userFile: #"{"app.interrupt":[]}"#)
+        #expect(unbound.isEmpty)
+        let none = keys(.init(root: record(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, app: "amp"), app: "", interrupt: []), program: "amp")
+        #expect(!none.values.contains { $0.role == .stop })
+        #expect(none[enter]?.role == .send)
+        // Claude Code and Codex name their own interrupt actions, on Esc by default.
+        #expect(try interrupt("claude") == SSHTerminalKeymap.parse("escape", syntax: .plus))
+        #expect(try interrupt("codex") == SSHTerminalKeymap.parse("esc", syntax: .dash))
+    }
+
+    @Test func aShellOrANonAgentReportKeepsPlainKeys() {
+        for root in [record(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, app: "zsh"), record(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, app: "terraform")] {
+            let agentKeys = SSHTerminalAgentKeys(root: root, app: "", interrupt: SSHTerminalBarAction.escape.strokes)
+            #expect(!agentKeys.isAgent && !agentKeys.working)
+            #expect(keys(agentKeys, program: "shell").values.allSatisfy { $0.role == nil })
+        }
+        #expect(SSHTerminalAgentKeys(root: nil, app: "", interrupt: []) == .none)
+    }
+
+    @Test func sendAndStopSpeakAndIdentifyLikeTheComposers() throws {
+        let working = SSHTerminalAgentKeys(isAgent: true, working: true, interrupt: SSHTerminalBarAction.escape.strokes)
+        let bar = offer(program: "pi", customKeys: [enterKey], agentKeys: working).placement(layout: layout, capacity: 20).bar
+        let send = try #require(bar.first { $0.content == .action(.enter) })
+        let stop = try #require(bar.first { $0.content == .action(.escape) })
+        #expect(send.accessibilityIdentifier == "sshTerminal.bar.enter.send")
+        #expect(stop.accessibilityIdentifier == "sshTerminal.bar.escape.stop")
+        #expect((send.accessibilityLabel, send.accessibilityValue) == ("Send", "Return"))
+        #expect((stop.accessibilityLabel, stop.accessibilityValue) == ("Stop response", "Esc"))
+        #expect(send.keyCap == nil && stop.keyCap == nil)
+        // The slot keeps its id, so the bar restyles the same button.
+        #expect(send.id == SSHTerminalBarSlot(content: .action(.enter)).id)
+        let customSend = try #require(bar.first { $0.content == .customKey(enterKey) })
+        #expect(customSend.accessibilityIdentifier == "\(custom).send")
     }
 }

@@ -64,3 +64,53 @@ enum SSHTerminalAgentDetection {
         return shells.contains(normalizedApp(app))
     }
 }
+
+/// What a key the person placed on the bar reads as while a coding agent is
+/// in front: the chat composer's Send for plain Return, and its Stop for the
+/// key the agent's keymap binds to interrupt, while the agent works. Only the
+/// look changes; the key sends the same bytes.
+enum SSHTerminalAgentKeyRole: Equatable, Sendable {
+    case send
+    case stop
+}
+
+/// The agent state the bar's keys follow: whether the OSC 7501 root names a
+/// coding agent (`SSHTerminalAgentDetection.agentApp`), whether it reports
+/// `working`, and the agent's interrupt binding
+/// (`SSHTerminalKeymap.interrupt(for:userFile:)`). Nothing here names an agent.
+struct SSHTerminalAgentKeys: Equatable {
+    /// No agent in front: every key draws as itself.
+    static let none = Self(isAgent: false, working: false, interrupt: [])
+
+    let isAgent: Bool
+    let working: Bool
+    let interrupt: [SSHTerminalKeyStroke]
+
+    init(isAgent: Bool, working: Bool, interrupt: [SSHTerminalKeyStroke]) {
+        self.isAgent = isAgent
+        self.working = isAgent && working
+        self.interrupt = interrupt
+    }
+
+    init(root: SSHTerminalProgramStatusStore.Record?, app: String, interrupt: [SSHTerminalKeyStroke]) {
+        self.init(
+            isAgent: SSHTerminalAgentDetection.agentApp(root: root, app: app) != nil,
+            working: root?.state == GHOSTTY_PROGRAM_STATUS_STATE_WORKING,
+            interrupt: interrupt
+        )
+    }
+
+    /// The role of a key that sends `strokes`. Stop wins over Send for an
+    /// agent that interrupts on Return.
+    func role(for strokes: [SSHTerminalKeyStroke]) -> SSHTerminalAgentKeyRole? {
+        guard isAgent, !strokes.isEmpty else { return nil }
+        if working, Self.sameKeys(strokes, interrupt) { return .stop }
+        if strokes.count == 1, strokes[0].key == GHOSTTY_KEY_ENTER, strokes[0].modifiers == 0 { return .send }
+        return nil
+    }
+
+    /// The same keys pressed, whatever each side calls them.
+    private static func sameKeys(_ one: [SSHTerminalKeyStroke], _ two: [SSHTerminalKeyStroke]) -> Bool {
+        one.count == two.count && zip(one, two).allSatisfy { $0.key == $1.key && $0.modifiers == $1.modifiers }
+    }
+}

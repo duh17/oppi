@@ -161,6 +161,10 @@ struct SSHTerminalBarSlot: BarSlot, Equatable, Identifiable {
     }
 
     let content: Content
+    /// Send or Stop while a coding agent is in front (`SSHTerminalAgentKeys`):
+    /// the look, label, and identifier change, the keys sent do not. The
+    /// slot keeps its `id`, so the bar restyles its button in place.
+    var agentRole: SSHTerminalAgentKeyRole? = nil
 
     var id: String {
         switch content {
@@ -207,15 +211,26 @@ struct SSHTerminalBarSlot: BarSlot, Equatable, Identifiable {
 
     /// What VoiceOver says for the bar button, and the menu item's title.
     var title: String {
-        switch content {
+        switch agentRole {
+        case .send: return String(localized: "Send")
+        case .stop: return String(localized: "Stop")
+        case nil: break
+        }
+        return switch content {
         case .action(let action): action.menuTitle
         case .customKey(let key): key.displayName
         case .shortcut(let shortcut): shortcut.title
         }
     }
 
+    /// Send and Stop speak as the chat composer's do.
     var accessibilityLabel: String {
-        switch content {
+        switch agentRole {
+        case .send: return String(localized: "Send")
+        case .stop: return String(localized: "Stop response")
+        case nil: break
+        }
+        return switch content {
         case .action(let action): action.accessibilityLabel
         case .customKey(let key): key.displayName
         case .shortcut(let shortcut): shortcut.title
@@ -225,17 +240,24 @@ struct SSHTerminalBarSlot: BarSlot, Equatable, Identifiable {
     /// The key's own name, spoken after the label where the label is the job.
     var accessibilityValue: String? {
         switch content {
-        case .action: nil
+        case .action(let action): agentRole == nil ? nil : action.keyCap ?? action.label
         case .customKey(let key): key.chord
         case .shortcut(let shortcut): shortcut.keyLabel
         }
     }
 
+    /// The key's own identifier; as Send or Stop it ends in `.send` or
+    /// `.stop`, the way the chat composer's are `chat.send` and `chat.stop`.
     var accessibilityIdentifier: String {
-        switch content {
+        let key = switch content {
         case .action(let action): action.accessibilityIdentifier
         case .customKey(let key): "sshTerminal.bar.custom.\(key.id.uuidString)"
         case .shortcut(let shortcut): "sshTerminal.bar.shortcut.\(shortcut.id.replacingOccurrences(of: ":", with: "."))"
+        }
+        return switch agentRole {
+        case .send: key + ".send"
+        case .stop: key + ".stop"
+        case nil: key
         }
     }
 
@@ -247,9 +269,11 @@ struct SSHTerminalBarSlot: BarSlot, Equatable, Identifiable {
         }
     }
 
-    /// The text the bar draws as a key cap instead of a symbol.
+    /// The text the bar draws as a key cap instead of a symbol. Send and Stop
+    /// draw the composer's symbol instead.
     var keyCap: String? {
-        switch content {
+        guard agentRole == nil else { return nil }
+        return switch content {
         case .action(let action): action.keyCap
         case .customKey(let key): key.cap
         case .shortcut(let shortcut): shortcut.keyLabel
@@ -295,12 +319,14 @@ struct SSHTerminalBarOffer: Equatable {
     private(set) var actions: Set<SSHTerminalBarAction>
     private(set) var customKeys: [UUID: SSHTerminalCustomKey]
     private(set) var shortcuts: [SSHTerminalKeyAction]
+    private(set) var agentKeys: SSHTerminalAgentKeys
 
     /// `overviews` are the multiplexers whose overview can open here. `program`
     /// is `SSHTerminalAgentDetection.keymapProgram`: the OSC 7501 root agent,
     /// else `shell`. `shortcuts` is what `SSHTerminalKeymap.actions(for:userFile:)`
     /// reports for it. `canDictate` is a paired server and a free microphone
     /// (no Live Voice call); `canAttach` is a host that takes uploads.
+    /// `agentKeys` turns the keys placed on the bar into Send and Stop.
     init(
         context: SSHTerminalBarContext,
         overviews: Set<SSHTerminalBarAction>,
@@ -310,7 +336,8 @@ struct SSHTerminalBarOffer: Equatable {
         canAttach: Bool,
         program: String,
         customKeys: [SSHTerminalCustomKey],
-        shortcuts: [SSHTerminalKeyAction]
+        shortcuts: [SSHTerminalKeyAction],
+        agentKeys: SSHTerminalAgentKeys = .none
     ) {
         var actions = Set(SSHTerminalBarAction.allCases).subtracting(context.hidden)
         for action in SSHTerminalBarAction.overviews where !overviews.contains(action) {
@@ -326,6 +353,7 @@ struct SSHTerminalBarOffer: Equatable {
             uniquingKeysWith: { first, _ in first }
         )
         self.shortcuts = shortcuts
+        self.agentKeys = agentKeys
     }
 
     /// Whether Dictate is offered: a paired server and a free microphone
@@ -345,10 +373,15 @@ struct SSHTerminalBarOffer: Equatable {
     }
 
     func slots(for item: SSHTerminalBarItem) -> [SSHTerminalBarSlot] {
-        switch item {
-        case .action(let action): actions.contains(action) ? [.init(content: .action(action))] : []
-        case .programShortcuts: shortcuts.map { .init(content: .shortcut($0)) }
-        case .customKey(let id): customKeys[id].map { [.init(content: .customKey($0))] } ?? []
+        let contents: [SSHTerminalBarSlot.Content] = switch item {
+        case .action(let action): actions.contains(action) ? [.action(action)] : []
+        case .programShortcuts: shortcuts.map { .shortcut($0) }
+        case .customKey(let id): customKeys[id].map { [.customKey($0)] } ?? []
+        }
+        return contents.map { content in
+            var slot = SSHTerminalBarSlot(content: content)
+            if slot.sendsKeys { slot.agentRole = agentKeys.role(for: slot.strokes) }
+            return slot
         }
     }
 

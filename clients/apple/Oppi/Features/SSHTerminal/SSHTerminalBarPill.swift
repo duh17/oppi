@@ -37,6 +37,8 @@ final class SSHTerminalBarButtons {
 
     private var made: [String: (slot: SSHTerminalBarSlot, view: UIView)] = [:]
     private var tint: UIColor = .label
+    /// The chat composer's colors, for keys drawn as Send or Stop.
+    private var composerColors = ComposerThemeColors(palette: ThemeRuntimeState.currentPalette())
     private var pasteBackground: UIColor = .black
     private var keysEnabled = true
 
@@ -78,13 +80,21 @@ final class SSHTerminalBarButtons {
 
     /// The view a bar slot draws, made once and kept while the slot stays
     /// the same. A slot whose content changed (a custom key renamed, a
-    /// shortcut rebound) is a new button, so its semantics start fresh.
+    /// shortcut rebound) is a new button, so its semantics start fresh. A key
+    /// that only became Send or Stop, or went back, keeps its button and is
+    /// restyled in place, so the pill does not swap it out.
     func view(for slot: SSHTerminalBarSlot) -> UIView {
         if case .action(let action) = slot.content {
             if action == .dictate { return dictate }
             if let persistent = button(for: action) { return persistent }
         }
-        if let existing = made[slot.id], existing.slot == slot { return existing.view }
+        if let existing = made[slot.id], existing.slot.content == slot.content {
+            if existing.slot.agentRole != slot.agentRole, let button = existing.view as? SSHTerminalPillButton {
+                made[slot.id] = (slot, button)
+                style(button, for: slot)
+            }
+            return existing.view
+        }
         let view = makeView(for: slot)
         made[slot.id] = (slot, view)
         return view
@@ -98,25 +108,50 @@ final class SSHTerminalBarButtons {
 
     private func makeView(for slot: SSHTerminalBarSlot) -> UIView {
         if case .action(.paste) = slot.content { return makePasteControl() }
-        let image: UIImage? = if case .action(let action) = slot.content {
-            action.image(configuration: SSHTerminalPillButton.symbolConfiguration)
-        } else {
-            nil
-        }
         let button = SSHTerminalPillButton(
-            image: image,
+            image: nil,
             label: slot.accessibilityLabel,
             identifier: slot.accessibilityIdentifier
         )
-        if let cap = slot.keyCap { button.showKeyCap(cap) }
+        style(button, for: slot)
+        // Read when tapped: the key's bytes never change, its role may have.
+        let id = slot.id
+        button.addAction(UIAction { [weak self] _ in
+            guard let self, let current = self.made[id]?.slot else { return }
+            self.perform(current)
+        }, for: .touchUpInside)
+        return button
+    }
+
+    /// What the button shows and says for `slot`: Send or Stop in the chat
+    /// composer's look, else the key cap or the action's symbol in the tint.
+    private func style(_ button: SSHTerminalPillButton, for slot: SSHTerminalBarSlot) {
+        button.accessibilityLabel = slot.accessibilityLabel
         button.accessibilityValue = slot.accessibilityValue
+        button.accessibilityIdentifier = slot.accessibilityIdentifier
+        button.largeContentTitle = slot.accessibilityLabel
+        if let look = look(for: slot) {
+            button.showAgentKey(look)
+            return
+        }
+        if let cap = slot.keyCap {
+            button.showKeyCap(cap)
+        } else if case .action(let action) = slot.content {
+            button.showSymbol(action.image(configuration: SSHTerminalPillButton.symbolConfiguration))
+        }
         if case .shortcut(let shortcut) = slot.content {
             // The cap is the key; Large Content Viewer names the job too.
             button.largeContentTitle = "\(shortcut.title) \(shortcut.keyLabel)"
         }
-        button.addAction(UIAction { [weak self] _ in self?.perform(slot) }, for: .touchUpInside)
         button.apply(tint: tint)
-        return button
+    }
+
+    private func look(for slot: SSHTerminalBarSlot) -> ComposerPrimaryActionLook? {
+        switch slot.agentRole {
+        case .send: .send(busy: false, colors: composerColors)
+        case .stop: .stop(stopping: false, colors: composerColors)
+        case nil: nil
+        }
     }
 
     /// `waiting` holds each available multiplexer's count of panes that need
@@ -143,6 +178,7 @@ final class SSHTerminalBarButtons {
             made["action.paste"] = nil
         }
         self.tint = tint
+        composerColors = ComposerThemeColors(palette: themeID.palette)
         pasteBackground = background
         self.keysEnabled = keysEnabled
         switcher.accessibilityValue = "\(openTerminals) open"
@@ -166,7 +202,7 @@ final class SSHTerminalBarButtons {
     func refresh() {
         for (_, entry) in made {
             guard let button = entry.view as? SSHTerminalPillButton else { continue }
-            button.apply(tint: tint)
+            if let look = look(for: entry.slot) { button.showAgentKey(look) } else { button.apply(tint: tint) }
             if entry.slot.sendsKeys { button.isEnabled = keysEnabled }
         }
     }

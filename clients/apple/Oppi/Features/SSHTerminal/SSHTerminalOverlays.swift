@@ -136,9 +136,43 @@ class SSHTerminalPillButton: UIButton {
     /// size to stay inside the 44 pt button.
     func showKeyCap(_ cap: String) {
         configuration?.image = nil
+        configuration?.background = UIButton.Configuration.plain().background
         var title = AttributedString(cap)
         title.font = UIFont.monospacedSystemFont(ofSize: cap.count > 4 ? 11 : 14, weight: .semibold)
         configuration?.attributedTitle = title
+    }
+
+    /// Draws `image` at the pill's symbol size, with no key cap or fill.
+    func showSymbol(_ image: UIImage?) {
+        configuration?.attributedTitle = nil
+        configuration?.background = UIButton.Configuration.plain().background
+        configuration?.image = image
+        configuration?.preferredSymbolConfigurationForImage = Self.symbolConfiguration
+        largeContentImage = image
+    }
+
+    /// The chat composer's Send or Stop (`ComposerPrimaryActionLook`): its
+    /// symbol on its filled circle, as wide as the pill is tall less a small
+    /// margin, centred in the button. The tint does not apply.
+    func showAgentKey(_ look: ComposerPrimaryActionLook) {
+        guard var config = configuration else { return }
+        let image = UIImage(systemName: look.systemImage)
+        config.attributedTitle = nil
+        config.image = image
+        config.preferredSymbolConfigurationForImage = look.symbol
+        config.baseForegroundColor = look.foreground
+        let margin: CGFloat = 3
+        let diameter = SSHTerminalGlassPill.height - 2 * margin
+        let side = (SSHTerminalGlassPill.itemWidth - diameter) / 2
+        var background = UIBackgroundConfiguration.clear()
+        background.backgroundColor = look.fill
+        background.strokeColor = look.stroke
+        background.strokeWidth = 1
+        background.cornerRadius = diameter / 2
+        background.backgroundInsets = NSDirectionalEdgeInsets(top: margin, leading: side, bottom: margin, trailing: side)
+        config.background = background
+        configuration = config
+        largeContentImage = image
     }
 }
 

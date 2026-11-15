@@ -3244,6 +3244,86 @@ struct SSHTerminalTests {
         #expect(await waitForMainActorCondition { grid.isFirstResponder }, "Type in Terminal types into the terminal")
     }
 
+    /// The Return and Esc the person put on the bar follow the agent's OSC 7501
+    /// reports live: Send while pi reports, Stop on its interrupt key while it
+    /// works, plain again for the shell. The same button is restyled, and a
+    /// tap sends the same byte in every state.
+    @Test func returnAndEscFollowTheAgentLiveAndSendTheSameBytes() async throws {
+        let suite = "SSHTerminalTests.agentKeys.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SSHTerminalBarStore(defaults: defaults)
+        store.setLayout(store.layout.setting(.action(.enter), shown: true).setting(.action(.escape), shown: true))
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {}, barStore: store)
+        )
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let terminal = mounted.controller
+        func button(_ id: String) async -> UIButton? {
+            _ = await waitForMainActorCondition {
+                terminal.updatePropertiesIfNeeded()
+                mounted.host.view.layoutIfNeeded()
+                return mounted.find { $0.accessibilityIdentifier == id && !$0.isHidden } != nil
+            }
+            return mounted.find { $0.accessibilityIdentifier == id && !$0.isHidden } as? UIButton
+        }
+        func sent(after tapping: UIButton) async -> Data {
+            let before = await fixture.sentBytes.count
+            tapping.sendActions(for: .touchUpInside)
+            for _ in 0..<50 {
+                let bytes = await fixture.sentBytes
+                if bytes.count > before { return Data(bytes.dropFirst(before)) }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            return Data()
+        }
+        func report(_ body: String) { channel.event(.data(Data("\u{1b}]7501;\(body)\u{1b}\\".utf8))) }
+
+        // The shell: plain Return and Esc.
+        let enter = try #require(await button("sshTerminal.bar.enter"))
+        let escape = try #require(await button("sshTerminal.bar.escape"))
+        #expect(enter.configuration?.image != nil && enter.accessibilityLabel == "Send Return")
+        #expect(escape.configuration?.attributedTitle.map { String($0.characters) } == "Esc")
+        let plainFill = escape.configuration?.background.backgroundColor
+        let plainStroke = escape.configuration.map { ($0.background.strokeColor, $0.background.strokeWidth) }
+        #expect(await sent(after: enter) == Data("\r".utf8))
+        #expect(await sent(after: escape) == Data("\u{1b}".utf8))
+
+        // pi reports idle: Return is Send, Esc stays Esc.
+        report("state=idle:app=pi")
+        let send = try #require(await button("sshTerminal.bar.enter.send"))
+        #expect(send === enter, "restyled in place, not swapped")
+        #expect(send.accessibilityLabel == "Send")
+        #expect(send.configuration?.background.backgroundColor != nil)
+        #expect(await button("sshTerminal.bar.escape") === escape)
+        #expect(await sent(after: send) == Data("\r".utf8))
+
+        // Working: Esc, pi's interrupt key, is Stop.
+        report("state=working:app=pi")
+        let stop = try #require(await button("sshTerminal.bar.escape.stop"))
+        #expect(stop === escape)
+        #expect(stop.accessibilityLabel == "Stop response" && stop.accessibilityValue == "Esc")
+        #expect(stop.configuration?.attributedTitle == nil)
+        #expect(stop.configuration?.background.backgroundColor != plainFill, "Stop draws the composer's fill")
+        #expect(await sent(after: stop) == Data("\u{1b}".utf8))
+
+        // The turn ends: Esc again.
+        report("state=idle:app=pi")
+        #expect(await button("sshTerminal.bar.escape") === escape)
+        #expect(escape.configuration?.attributedTitle.map { String($0.characters) } == "Esc")
+        #expect(escape.configuration?.background.backgroundColor == plainFill, "Stop's fill is gone")
+        let stroke = escape.configuration.map { ($0.background.strokeColor, $0.background.strokeWidth) }
+        #expect(stroke?.0 == plainStroke?.0 && stroke?.1 == plainStroke?.1, "Stop's ring is gone: \(String(describing: stroke)) vs \(String(describing: plainStroke))")
+
+        // pi exits: the shell's plain Return.
+        report("state=clear")
+        #expect(await button("sshTerminal.bar.enter") === enter)
+        #expect(enter.accessibilityLabel == "Send Return")
+    }
+
     /// The screen updates its properties on the next runloop pass, and asks for
     /// first responder from a block it dispatches to the main queue. Await those
     /// passes instead of sleeping: a block queued now runs after the screen's,

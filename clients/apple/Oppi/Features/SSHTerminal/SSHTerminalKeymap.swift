@@ -60,6 +60,9 @@ enum SSHTerminalKeymap {
         /// Sent on stdin to `sh -s`; prints the user's keybinding file, or fails.
         let readScript: String?
         let actions: [ActionSpec]
+        /// The `actions` id that interrupts the running turn: the key the
+        /// bottom bar draws as Stop while the agent works.
+        var interrupt: String? = nil
     }
 
     /// `shell`, an `SSHTerminalAgentDetection.agentApps` entry, or the agent
@@ -79,7 +82,8 @@ enum SSHTerminalKeymap {
                         .init(id: "app.thinking.cycle", title: "Thinking", defaults: ["shift+tab"]),
                         .init(id: "app.model.select", title: "Model", defaults: ["ctrl+l"]),
                         .init(id: "app.tools.expand", title: "Tools", defaults: ["ctrl+o"]),
-                    ])
+                    ],
+                    interrupt: "app.interrupt")
         case "claude":
             Profile(syntax: .plus, config: .claudeJSON(contexts: ["Global", "Chat", "Task"]),
                     readScript: #"cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/keybindings.json""#,
@@ -90,7 +94,8 @@ enum SSHTerminalKeymap {
                         .init(id: "app:toggleTranscript", title: "Transcript", defaults: ["ctrl+o"]),
                         .init(id: "app:toggleTodos", title: "Todos", defaults: ["ctrl+t"]),
                         .init(id: "task:background", title: "Background", defaults: ["ctrl+b", "ctrl+x ctrl+b"]),
-                    ])
+                    ],
+                    interrupt: "chat:cancel")
         case "codex":
             // Only the `tui` tables leave the host; the rest of config.toml can hold secrets.
             Profile(syntax: .dash, config: .codexTOML,
@@ -100,7 +105,8 @@ enum SSHTerminalKeymap {
                         .init(id: "global.open_transcript", title: "Transcript", defaults: ["ctrl-t"]),
                         .init(id: "chat.decrease_reasoning_effort", title: "Effort \u{2212}", defaults: ["alt-,", "shift-down"]),
                         .init(id: "chat.increase_reasoning_effort", title: "Effort +", defaults: ["alt-.", "shift-up"]),
-                    ])
+                    ],
+                    interrupt: "chat.interrupt_turn")
         default: nil
         }
     }
@@ -128,12 +134,24 @@ enum SSHTerminalKeymap {
     /// Resolves a profile against the user's file. Unreadable or invalid
     /// files mean defaults, as the programs themselves fall back.
     static func actions(for profile: Profile, userFile: String?) -> [SSHTerminalKeyAction] {
-        let overrides = userFile.flatMap { file in profile.config.flatMap { overrides(config: $0, file: file) } } ?? .none
+        let overrides = overrides(for: profile, userFile: userFile)
         return profile.actions.compactMap { spec in
             guard let strokes = resolvedStrokes(spec, profile: profile, overrides: overrides) else { return nil }
             if strokes.count == 1, fixed.contains(where: { $0.stroke?.key == strokes[0].key && $0.stroke?.modifiers == strokes[0].modifiers }) { return nil }
             return SSHTerminalKeyAction(id: spec.id, title: spec.title, strokes: strokes)
         }
+    }
+
+    /// The keys the program's interrupt action is bound to now, Esc included
+    /// (which `actions(for:userFile:)` leaves to the fixed key). Empty when
+    /// the program names no interrupt or the user's file unbinds it.
+    static func interrupt(for profile: Profile, userFile: String?) -> [SSHTerminalKeyStroke] {
+        guard let spec = profile.actions.first(where: { $0.id == profile.interrupt }) else { return [] }
+        return resolvedStrokes(spec, profile: profile, overrides: overrides(for: profile, userFile: userFile)) ?? []
+    }
+
+    private static func overrides(for profile: Profile, userFile: String?) -> Overrides {
+        userFile.flatMap { file in profile.config.flatMap { overrides(config: $0, file: file) } } ?? .none
     }
 
     /// The binding the program would send, including one that matches a fixed
@@ -349,12 +367,15 @@ enum SSHTerminalKeymap {
 @MainActor @Observable
 final class SSHTerminalKeymapLoader {
     private(set) var actions: [SSHTerminalKeyAction] = []
+    /// The program's interrupt binding (`SSHTerminalKeymap.interrupt(for:userFile:)`).
+    private(set) var interrupt: [SSHTerminalKeyStroke] = []
     private(set) var profile: SSHTerminalKeymap.Profile?
     private(set) var userFile: String?
 
     func load(program: String?, on channel: SSHTerminalChannel) async {
         guard let program, let found = SSHTerminalKeymap.profile(for: program) else {
             actions = []
+            interrupt = []
             profile = nil
             userFile = nil
             return
@@ -362,10 +383,12 @@ final class SSHTerminalKeymapLoader {
         profile = found
         userFile = nil
         actions = SSHTerminalKeymap.actions(for: found, userFile: nil)
+        interrupt = SSHTerminalKeymap.interrupt(for: found, userFile: nil)
         guard let script = found.readScript,
               let result = try? await channel.run("sh -s", input: Data(script.utf8)),
               !Task.isCancelled, result.exitStatus == 0 else { return }
         userFile = String(decoding: result.output, as: UTF8.self)
         actions = SSHTerminalKeymap.actions(for: found, userFile: userFile)
+        interrupt = SSHTerminalKeymap.interrupt(for: found, userFile: userFile)
     }
 }

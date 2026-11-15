@@ -124,6 +124,41 @@ final class ComposerThemedPanelView: UIView {
 }
 
 /// Circle send / stop / ignore control with a 44pt hit target and press fade.
+/// The composer's Send and Stop: the symbol and colors its primary button
+/// draws for each. The SSH terminal bar draws a coding agent's Return and
+/// interrupt keys with the same looks (`SSHTerminalPillButton.showAgentKey`).
+struct ComposerPrimaryActionLook {
+    let systemImage: String
+    let fill: UIColor
+    let stroke: UIColor
+    let foreground: UIColor
+    let symbol: UIImage.SymbolConfiguration
+
+    static let sendSymbol = "arrow.up"
+    static let stopSymbol = "stop.fill"
+
+    /// Send while it can send: blue, purple while the agent is busy (the
+    /// message steers the running turn).
+    static func send(busy: Bool, colors: ComposerThemeColors) -> Self {
+        filled(sendSymbol, fill: busy ? colors.purple : colors.blue, colors: colors, pointSize: 15)
+    }
+
+    /// Stop while a turn runs: red, orange once stopping.
+    static func stop(stopping: Bool, colors: ComposerThemeColors) -> Self {
+        filled(stopSymbol, fill: stopping ? colors.orange : colors.red, colors: colors, pointSize: 14)
+    }
+
+    private static func filled(_ systemImage: String, fill: UIColor, colors: ComposerThemeColors, pointSize: CGFloat) -> Self {
+        Self(
+            systemImage: systemImage,
+            fill: fill,
+            stroke: fill.withAlphaComponent(0.9),
+            foreground: ComposerColorContrast.foreground(for: fill, fg: colors.fg, bg: colors.bg),
+            symbol: UIImage.SymbolConfiguration(pointSize: pointSize, weight: .bold)
+        )
+    }
+}
+
 final class ComposerCircleActionButton: UIButton {
     var visualDiameter: CGFloat = ComposerInputMetrics.controlDiameter {
         didSet { invalidateIntrinsicContentSize() }
@@ -171,6 +206,17 @@ final class ComposerCircleActionButton: UIButton {
         }
         configuration = config
         invalidateIntrinsicContentSize()
+    }
+
+    func apply(
+        _ look: ComposerPrimaryActionLook,
+        showsProgress: Bool,
+        diameter: CGFloat = ComposerInputMetrics.controlDiameter
+    ) {
+        apply(
+            systemImage: look.systemImage, fill: look.fill, stroke: look.stroke, foreground: look.foreground,
+            showsProgress: showsProgress, diameter: diameter, symbol: look.symbol
+        )
     }
 }
 

@@ -900,9 +900,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     }
 
     private func menuElement(for slot: SSHTerminalBarSlot) -> UIMenuElement {
-        let image: UIImage? = switch slot.content {
-        case .action(let action): action.image()
-        case .customKey, .shortcut: UIImage(systemName: "keyboard")
+        let image: UIImage? = switch (slot.agentRole, slot.content) {
+        case (.send, _): UIImage(systemName: ComposerPrimaryActionLook.sendSymbol)
+        case (.stop, _): UIImage(systemName: ComposerPrimaryActionLook.stopSymbol)
+        case (nil, .action(let action)): action.image()
+        case (nil, .customKey), (nil, .shortcut): UIImage(systemName: "keyboard")
         }
         if case .action(.switcher) = slot.content {
             let menu = UIMenu(title: slot.title, image: image, children: [switcherElements()])
@@ -951,7 +953,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             canAttach: channel.sideCommandsUnavailable == nil,
             program: keymapProgram,
             customKeys: barCustomKeys,
-            shortcuts: keymap.actions
+            shortcuts: keymap.actions,
+            agentKeys: SSHTerminalAgentKeys(
+                root: channel.programStatus.liveRoot, app: channel.programStatus.app(of: ""), interrupt: keymap.interrupt
+            )
         )
     }
 

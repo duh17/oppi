@@ -14,26 +14,19 @@ extension ComposerBarController {
         let submitted = isCurrentAskSubmitted
         switch kind {
         case .send:
-            let fill: UIColor
-            if inFlight {
-                fill = content.isBusy ? colors.purple : colors.blue
-            } else {
-                fill = canSend ? (content.isBusy ? colors.purple : colors.blue) : colors.bgHighlight
-            }
-            let stroke = (canSend || inFlight) ? fill.withAlphaComponent(0.9) : colors.comment.withAlphaComponent(0.35)
-            let foreground: UIColor
+            let look = ComposerPrimaryActionLook.send(busy: content.isBusy, colors: colors)
             if canSend || inFlight {
-                foreground = ComposerColorContrast.foreground(for: fill, fg: colors.fg, bg: colors.bg)
+                primaryButton.apply(look, showsProgress: inFlight)
             } else {
-                foreground = colors.comment
+                primaryButton.apply(
+                    systemImage: look.systemImage,
+                    fill: colors.bgHighlight,
+                    stroke: colors.comment.withAlphaComponent(0.35),
+                    foreground: colors.comment,
+                    showsProgress: false,
+                    symbol: look.symbol
+                )
             }
-            primaryButton.apply(
-                systemImage: "arrow.up",
-                fill: fill,
-                stroke: stroke,
-                foreground: foreground,
-                showsProgress: inFlight
-            )
             primaryButton.isEnabled = canSend && !inFlight && !submitted
             primaryButton.accessibilityIdentifier = content.sendAccessibilityIdentifier
             primaryButton.accessibilityLabel = inFlight ? "Sending" : "Send"
@@ -51,16 +44,10 @@ extension ComposerBarController {
             primaryButton.accessibilityLabel = "Ignore request"
             primaryButton.accessibilityHint = "Responds to the current extension request as ignored"
         case .stop:
-            let fill = content.isStopping ? colors.orange : colors.red
-            let foreground = ComposerColorContrast.foreground(for: fill, fg: colors.fg, bg: colors.bg)
             primaryButton.apply(
-                systemImage: "stop.fill",
-                fill: fill,
-                stroke: fill.withAlphaComponent(0.9),
-                foreground: foreground,
+                .stop(stopping: content.isStopping, colors: colors),
                 showsProgress: content.isStopping,
-                diameter: ComposerInputMetrics.controlDiameter + 2,
-                symbol: UIImage.SymbolConfiguration(pointSize: 14, weight: .bold)
+                diameter: ComposerInputMetrics.controlDiameter + 2
             )
             primaryButton.isEnabled = !content.isStopping
             primaryButton.accessibilityIdentifier = "chat.stop"
