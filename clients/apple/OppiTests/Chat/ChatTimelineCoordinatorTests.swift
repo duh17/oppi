@@ -1496,7 +1496,10 @@ struct ChatTimelineCoordinatorTests {
             name: AudioPlayerService.stateDidChangeNotification,
             object: harness.audioPlayer,
             userInfo: [
+                AudioPlayerService.previousPlayingItemIDUserInfoKey: "",
                 AudioPlayerService.playingItemIDUserInfoKey: "audio-stream-tool-voice-1",
+                AudioPlayerService.previousLoadingItemIDUserInfoKey: "",
+                AudioPlayerService.loadingItemIDUserInfoKey: "",
             ]
         )
 
@@ -1506,6 +1509,55 @@ struct ChatTimelineCoordinatorTests {
             }
         })
 
+        #expect(harness.coordinator._audioStateRefreshedItemIDsForTesting == ["tool-voice-1"])
+    }
+
+    /// Elapsed time, pause and seek reach a playing voice row through UIKit
+    /// observation; only a change of which item plays or loads reconfigures it.
+    @MainActor
+    @Test func progressTicksDontReconfigureToolVoiceRows() async {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        let config = makeTimelineConfiguration(
+            items: [
+                .toolCall(
+                    id: "tool-voice-1",
+                    tool: "example_tts_speak",
+                    argsSummary: "text: hi",
+                    outputPreview: "Voice message",
+                    outputByteCount: 13,
+                    isError: false,
+                    isDone: true
+                ),
+            ],
+            sessionId: "session-a",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+        let player = harness.audioPlayer
+
+        player._setPlaybackStateForTesting(playing: "tool-voice-1", loading: nil)
+        #expect(await waitForTimelineCondition(timeoutMs: 300) {
+            await MainActor.run { harness.coordinator._audioStateRefreshCountForTesting == 1 }
+        })
+        #expect(harness.coordinator._audioStateRefreshedItemIDsForTesting == ["tool-voice-1"])
+
+        // Each of these publishes a progress tick for the playing row.
+        player._setProgressForTesting(currentTime: 0, duration: 120)
+        player.seek(to: 30)
+        player.seek(to: 60)
+        player.pause()
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(harness.coordinator._audioStateRefreshCountForTesting == 1)
+
+        player._setPlaybackStateForTesting(playing: nil, loading: nil)
+        #expect(await waitForTimelineCondition(timeoutMs: 300) {
+            await MainActor.run { harness.coordinator._audioStateRefreshCountForTesting == 2 }
+        })
         #expect(harness.coordinator._audioStateRefreshedItemIDsForTesting == ["tool-voice-1"])
     }
 
@@ -1567,41 +1619,6 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
-    @Test func audioStateChangeWithoutIDsRefreshesAllVisibleAudioRows() async {
-        let harness = makeTimelineHarness(sessionId: "session-a")
-
-        let rows: [ChatItem] = [
-            .audioClip(id: "audio-1", title: "Clip 1", fileURL: URL(fileURLWithPath: "/tmp/audio-1.wav"), timestamp: Date()),
-            .audioClip(id: "audio-2", title: "Clip 2", fileURL: URL(fileURLWithPath: "/tmp/audio-2.wav"), timestamp: Date()),
-        ]
-        let config = makeTimelineConfiguration(
-            items: rows,
-            sessionId: "session-a",
-            reducer: harness.reducer,
-            toolOutputStore: harness.toolOutputStore,
-            toolArgsStore: harness.toolArgsStore,
-            connection: harness.connection,
-            scrollController: harness.scrollController,
-            audioPlayer: harness.audioPlayer
-        )
-        harness.coordinator.apply(configuration: config, to: harness.collectionView)
-
-        NotificationCenter.default.post(
-            name: AudioPlayerService.stateDidChangeNotification,
-            object: harness.audioPlayer,
-            userInfo: nil
-        )
-
-        #expect(await waitForTimelineCondition(timeoutMs: 300) {
-            await MainActor.run {
-                harness.coordinator._audioStateRefreshCountForTesting == 1
-            }
-        })
-
-        #expect(harness.coordinator._audioStateRefreshedItemIDsForTesting == ["audio-1", "audio-2"])
-    }
-
-    @MainActor
     @Test func audioStateChangeFromDifferentPlayerIsIgnored() async {
         let harness = makeTimelineHarness(sessionId: "session-a")
 
@@ -1625,7 +1642,10 @@ struct ChatTimelineCoordinatorTests {
             name: AudioPlayerService.stateDidChangeNotification,
             object: otherPlayer,
             userInfo: [
+                AudioPlayerService.previousPlayingItemIDUserInfoKey: "",
                 AudioPlayerService.playingItemIDUserInfoKey: "audio-1",
+                AudioPlayerService.previousLoadingItemIDUserInfoKey: "",
+                AudioPlayerService.loadingItemIDUserInfoKey: "",
             ]
         )
 

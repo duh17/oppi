@@ -934,33 +934,28 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     private func handleAudioStateChangeNotification(_ notification: Notification) {
         guard let collectionView else { return }
 
-        // Progress ticks omit previous* keys. Identity changes must republish
-        // unobstructed strip IDs because idle scrolling skipped the walk.
-        if notification.userInfo?[AudioPlayerService.previousPlayingItemIDUserInfoKey] != nil {
-            publishVisibleAudioStripItemIDs(in: collectionView)
-        }
+        // Progress ticks (elapsed time, pause, seek, chapters) omit previous*
+        // keys and arrive four times a second. Rows follow them through UIKit
+        // observation; what a row configures depends only on which item plays
+        // or loads, so only identity changes (start, stop, load) reconfigure.
+        guard notification.userInfo?[AudioPlayerService.previousPlayingItemIDUserInfoKey] != nil else { return }
+
+        // Identity changes must republish unobstructed strip IDs because idle
+        // scrolling skipped the walk.
+        publishVisibleAudioStripItemIDs(in: collectionView)
 
         let changedIDs = Set(Self.audioStateItemIDs(from: notification.userInfo))
-        let targetIDs: [String]
-        if changedIDs.isEmpty {
-            targetIDs = currentAudioItemIDs()
-        } else {
-            let correlatedIDs = Set(changedIDs.flatMap { id -> [String] in
-                if let toolID = Self.toolItemID(fromAudioPlaybackItemID: id) {
-                    return [id, toolID]
-                }
-                return [id]
-            })
-            // Read-aloud state belongs to an assistant message, which is not
-            // otherwise audio-reactive. Only identity changes (start, stop,
-            // load) carry previous* keys; progress ticks must not relayout it.
-            let isIdentityChange = notification.userInfo?[AudioPlayerService.previousPlayingItemIDUserInfoKey] != nil
-            let readAloudIDs = isIdentityChange
-                ? Set(changedIDs.compactMap(AudioPlayerService.messageID(fromSpeechPlaybackItemID:)))
-                : []
-            targetIDs = currentIDs.filter {
-                (correlatedIDs.contains($0) && isAudioStateReactiveItem(id: $0)) || readAloudIDs.contains($0)
+        let correlatedIDs = Set(changedIDs.flatMap { id -> [String] in
+            if let toolID = Self.toolItemID(fromAudioPlaybackItemID: id) {
+                return [id, toolID]
             }
+            return [id]
+        })
+        // Read-aloud state belongs to an assistant message, which is not
+        // otherwise audio-reactive.
+        let readAloudIDs = Set(changedIDs.compactMap(AudioPlayerService.messageID(fromSpeechPlaybackItemID:)))
+        let targetIDs = currentIDs.filter {
+            (correlatedIDs.contains($0) && isAudioStateReactiveItem(id: $0)) || readAloudIDs.contains($0)
         }
 
         guard !targetIDs.isEmpty else { return }
@@ -970,10 +965,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             _audioStateRefreshedItemIDsForTesting = targetIDs
         #endif
         reconfigureItems(targetIDs, in: collectionView)
-    }
-
-    private func currentAudioItemIDs() -> [String] {
-        currentIDs.filter { isAudioStateReactiveItem(id: $0) }
     }
 
     private func isAudioStateReactiveItem(id: String) -> Bool {

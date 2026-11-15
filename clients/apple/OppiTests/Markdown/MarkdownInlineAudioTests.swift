@@ -644,6 +644,46 @@ struct MarkdownInlineAudioTests {
         #expect(!pausedProgress.isHidden)
     }
 
+    /// The timeline does not reconfigure a playing row on progress ticks, so a
+    /// shown strip must follow seek, pause and loading through observation alone.
+    @MainActor
+    @Test("a shown strip follows seek, pause and loading without being applied again")
+    func shownStripFollowsPlaybackWithoutReapply() throws {
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: "audio-1", loading: nil)
+        player._setProgressForTesting(currentTime: 0, duration: 120)
+        let strip = NativeAudioPlayerStripView(frame: CGRect(x: 0, y: 0, width: 320, height: 44))
+        strip.apply(
+            itemID: "audio-1", title: "audio-1.wav", durationSeconds: 120,
+            audioPlayer: player, showsTitle: true, isUnavailable: false,
+            onPlay: {}, onExpand: {}
+        )
+        strip.updatePropertiesIfNeeded()
+        let time = try #require(timelineAllLabels(in: strip).first {
+            $0.accessibilityIdentifier == "chat.timeline.row.audio-1.audio.time"
+        })
+        let play = try #require(timelineAllViews(in: strip).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "chat.timeline.row.audio-1.audio.play"
+        })
+        let progress = try #require(timelineFirstView(ofType: UIProgressView.self, in: strip))
+        #expect(time.text == "0:00 / 2:00")
+        #expect(play.accessibilityLabel == "Pause audio")
+
+        player.seek(to: 60)
+        strip.updatePropertiesIfNeeded()
+        #expect(time.text == "1:00 / 2:00")
+        #expect(progress.progress == 0.5)
+
+        player.pause()
+        strip.updatePropertiesIfNeeded()
+        #expect(play.accessibilityLabel == "Play audio")
+        #expect(time.text == "1:00 / 2:00")
+
+        player._setPlaybackStateForTesting(playing: nil, loading: "audio-1")
+        strip.updatePropertiesIfNeeded()
+        #expect(play.accessibilityLabel == "Cancel Loading")
+    }
+
     @Test("clock labels an out-of-range length instead of trapping")
     func clockRejectsLengthsBeyondInt() {
         #expect(AudioPlaybackTimeFormatting.clock(9.3e18) == "--:--")
