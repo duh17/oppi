@@ -24,13 +24,13 @@ enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
     case paste
     case browseFiles
     case herdr
-    case rex
     case switcher
 
     var id: String { rawValue }
 
-    /// The multiplexers whose overview sheet a button opens.
-    static let overviews: [Self] = [.herdr, .rex]
+    /// The multiplexers whose overview sheet a button opens. Rex has none: a
+    /// Rex pane's switcher opens its panel, and the Terminal page lists Rex.
+    static let overviews: [Self] = [.herdr]
 
     /// Sends keys to the program instead of opening something. A key turned off
     /// is not offered in the … menu (the keyboard bars have every key), but a
@@ -57,7 +57,6 @@ enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
         case .paste: String(localized: "Paste")
         case .browseFiles: String(localized: "Browse Files Here")
         case .herdr: String(localized: "Herdr Agents")
-        case .rex: String(localized: "Rex Sessions")
         case .switcher: String(localized: "Switch Terminal")
         }
     }
@@ -80,7 +79,6 @@ enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
         switch self {
         case .keyboard: String(localized: "Type in terminal")
         case .herdr: String(localized: "Herdr agents")
-        case .rex: String(localized: "Rex sessions")
         case .switcher: String(localized: "Switch terminal")
         default: menuTitle
         }
@@ -103,7 +101,6 @@ enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
     var logo: String? {
         switch self {
         case .herdr: "herdr-logo"
-        case .rex: "rex-logo"
         default: nil
         }
     }
@@ -141,7 +138,6 @@ enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
         case .paste: "doc.on.clipboard"
         case .browseFiles: "folder"
         case .herdr: "square.grid.2x2"
-        case .rex: "rectangle.split.2x1"
         case .switcher: "rectangle.stack"
         }
     }
@@ -151,7 +147,6 @@ enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
     var accessibilityIdentifier: String {
         switch self {
         case .herdr: "sshTerminal.herdr"
-        case .rex: "sshTerminal.rex"
         case .switcher: "sshTerminal.switcher"
         default: "sshTerminal.bar.\(rawValue)"
         }

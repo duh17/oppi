@@ -30,7 +30,7 @@ enum SSHTerminalScreenshotStatus: String {
 /// blocked agent so the toolbar overview and its badge render, beside two saved
 /// machines: `mac-mini` with a working agent and `build box`, which cannot be
 /// reached. The host runs Rex too, with a pane waiting on a permission, so the
-/// Rex Sessions button and its sheet render beside Herdr's. `status: .blocked`
+/// Back pill's attention dot counts it. `status: .blocked`
 /// also feeds real OSC 7501 bytes through libghostty.
 final class SSHTerminalPreviewController: PreviewRootController {
     private let status: SSHTerminalScreenshotStatus

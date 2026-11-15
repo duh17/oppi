@@ -27,11 +27,11 @@ enum SSHTerminalBarItem: BarLayoutAction, Identifiable {
         return items
     }
 
-    /// Type in Terminal, Dictate, and Attach, then Herdr, Rex, and the
-    /// switcher (each only where the screen can offer it). Keys, Paste, Browse
-    /// Files Here, and Program Shortcuts start off.
+    /// Type in Terminal, Dictate, and Attach, then Herdr and the switcher
+    /// (each only where the screen can offer it). Keys, Paste, Browse Files
+    /// Here, and Program Shortcuts start off.
     static let defaultShown: Set<SSHTerminalBarItem> = [
-        .action(.keyboard), .action(.dictate), .action(.attach), .action(.herdr), .action(.rex), .action(.switcher),
+        .action(.keyboard), .action(.dictate), .action(.attach), .action(.herdr), .action(.switcher),
     ]
 
     var id: String { rawValue }
@@ -71,14 +71,12 @@ typealias SSHTerminalBarLayout = BarLayout<SSHTerminalBarItem>
 
 extension BarLayout where Action == SSHTerminalBarItem {
     /// The layout this bar had when it was a middle pill and a trailing pill.
-    /// Its one stored order held both, with Herdr, Rex, and the switcher
-    /// kept to their own side; the new bar draws one pill, and the buttons
-    /// that were beside … come after the middle's, which is where they were
-    /// on screen. The shown set is kept as it was.
+    /// Its one stored order held both, with Herdr and the switcher kept to
+    /// their own side; the new bar draws one pill, and the buttons that were
+    /// beside … come after the middle's, which is where they were on screen.
+    /// The shown set is kept as it was.
     static func migrating(legacyOrder: [String], legacyShown: [String]) -> Self {
-        let trailing: Set<String> = [
-            SSHTerminalBarAction.herdr.rawValue, SSHTerminalBarAction.rex.rawValue, SSHTerminalBarAction.switcher.rawValue,
-        ]
+        let trailing: Set<String> = [SSHTerminalBarAction.herdr.rawValue, SSHTerminalBarAction.switcher.rawValue]
         return Self(
             storedOrder: legacyOrder.filter { !trailing.contains($0) } + legacyOrder.filter(trailing.contains),
             storedShown: legacyShown
@@ -86,10 +84,9 @@ extension BarLayout where Action == SSHTerminalBarItem {
     }
 }
 
-/// Which multiplexer a terminal belongs to, and so which of the two overview
-/// buttons it can offer: a terminal in Rex is only Rex's, one in Herdr only
-/// Herdr's, and a plain shell, where each is a launcher, keeps both. The one
-/// owner of that rule: the bar, the … menu, and Customize Bar opened from the
+/// Which multiplexer a terminal belongs to, and so whether it offers Herdr's
+/// overview button: a terminal in Rex does not, a plain shell and a Herdr
+/// terminal do. The one owner of that rule: the bar, the … menu, and Customize Bar opened from the
 /// terminal all hide `hidden` and nothing else, so the saved layout is never
 /// edited to say it and a plain shell shows the user's choice again.
 enum SSHTerminalBarContext: Equatable, Sendable {
@@ -113,12 +110,11 @@ enum SSHTerminalBarContext: Equatable, Sendable {
     }
 
     /// The multiplexer overviews this terminal's own multiplexer rules out:
-    /// Herdr in a Rex pane, Rex in a Herdr terminal.
+    /// Herdr in a Rex pane.
     var overviewsRuledOut: Set<SSHTerminalBarAction> {
         switch self {
-        case .plain: []
+        case .plain, .herdr: []
         case .rex: [.herdr]
-        case .herdr: [.rex]
         }
     }
 
@@ -128,19 +124,16 @@ enum SSHTerminalBarContext: Equatable, Sendable {
     /// The multiplexer it rules out, and any whose experiment is off; the saved
     /// layout keeps their place.
     func hidden(_ access: SSHTerminalExperimentAccess = .current) -> Set<SSHTerminalBarAction> {
-        var hidden = self == .rex ? overviewsRuledOut.union([.rex]) : overviewsRuledOut
-        if !access.rex { hidden.insert(.rex) }
+        var hidden = overviewsRuledOut
         if !access.herdr { hidden.insert(.herdr) }
         return hidden
     }
 
     /// Whether the terminal reads this multiplexer's overview in the background.
-    /// Hiding a button is presentation only: Rex's read is how Oppi learns Rex is on
-    /// the host, so a terminal still reads Rex without showing the button. An
-    /// experiment that is off is read by nothing.
+    /// An experiment that is off is read by nothing. Rex is not a bar overview:
+    /// the terminal reads it on its own (`SSHTerminalViewController.updatePolling`).
     func polls(_ action: SSHTerminalBarAction, _ access: SSHTerminalExperimentAccess = .current) -> Bool {
-        guard access.allows(action) else { return false }
-        return !hidden(access).contains(action) || action == .rex
+        access.allows(action) && !hidden(access).contains(action)
     }
 
     /// Whether the program-status symbol has a place in the bar's pill. A Rex
@@ -153,7 +146,6 @@ extension SSHTerminalExperimentAccess {
     func allows(_ action: SSHTerminalBarAction) -> Bool {
         switch action {
         case .herdr: herdr
-        case .rex: rex
         default: true
         }
     }

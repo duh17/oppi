@@ -2,10 +2,8 @@ import Foundation
 
 /// What the Terminal page lists: every saved host's Rex panes, or the saved hosts
 /// themselves. The mode is the page's, not a host's: a saved host is a plain SSH
-/// login, and what a tap opens comes from this.
-///
-/// Herdr joins the set when its screen lands; until then a device with only
-/// Herdr's experiment on has Shell, because Rex's switch is what fills this page.
+/// login, and what a tap opens comes from this. A device with only Herdr's
+/// experiment on has Shell: Herdr runs inside a host's shell.
 enum SSHTerminalPageMode: String, Sendable {
     /// Every saved host's Rex sessions and their panes, plus the Rexes reached over
     /// Tailscale by name. A tap opens that pane's terminal.

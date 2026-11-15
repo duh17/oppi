@@ -607,7 +607,7 @@ enum RexAbsence: Equatable, Sendable {
 /// that drops, is retried with backoff, since Rex may start or the network
 /// return.
 @MainActor @Observable
-final class RexMonitor: SSHTerminalOverviewSource {
+final class RexMonitor: SSHTerminalOverviewContent {
     /// Why a subscription ended, for the delay before the next one.
     enum Retry: Equatable {
         /// Rex is not running (bridge exit 4); it may be started, so ask
@@ -1097,10 +1097,6 @@ final class RexMonitor: SSHTerminalOverviewSource {
     /// Destroys a session and closes every pane in it.
     func destroy(session id: String) async throws {
         _ = try await openControl().call("session.destroy", ["session_id": id])
-    }
-
-    func activate(_ focus: SSHTerminalOverviewFocus, on channel: SSHTerminalChannel) async -> Bool {
-        open(focus)
     }
 
     /// A pane row opens that pane on this device (`openPane`). Session rows

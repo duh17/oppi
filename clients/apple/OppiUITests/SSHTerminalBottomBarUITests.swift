@@ -300,7 +300,6 @@ final class SSHTerminalBottomBarUITests: XCTestCase, PreviewUITestCase {
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
         XCTAssertTrue(switcher.waitUntilExists(timeout: 15), "The pane switcher did not appear")
         XCTAssertFalse(app.buttons["sshTerminal.programStatus"].exists, "A Rex pane has no separate status symbol")
-        XCTAssertFalse(app.buttons["sshTerminal.rex"].exists, "A Rex pane has no separate Rex Sessions button")
         let pane = "\u{03C0} - oppi, 1 of 3"
         XCTAssertTrue(
             waitFor((switcher.value as? String).map { $0.hasPrefix(pane + ", ") } == true),

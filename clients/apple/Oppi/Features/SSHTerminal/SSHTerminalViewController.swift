@@ -142,6 +142,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private var shownNoticeKey: SSHTerminalNotice.Key?
     /// Each multiplexer's poll, keyed by the bar action that opens its overview.
     private var overviewTasks: [SSHTerminalBarAction: Task<Void, Never>] = [:]
+    /// Rex's poll: what the Rex panel shows, the Back dot's Rex count, and how
+    /// the Terminal page learns Rex is on this host (`makeRexMonitor`).
+    private var rexPoll: Task<Void, Never>?
     private var keymapTask: Task<Void, Never>?
     private var keymapToken: String?
     /// The host's Ghostty colors, or the app theme where it has none.
@@ -392,6 +395,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             _ = overview(action)?.available
             _ = overview(action)?.needsAttention
         }
+        _ = rexWaiting
         _ = keymap.actions
         _ = keymap.profile
         _ = keymap.userFile
@@ -984,7 +988,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                 channel.keys(slot.strokes)
             case .paste: break // The system paste control delivers through barPill.deliverPaste.
             case .browseFiles: browseFilesHere()
-            case .herdr, .rex: showOverview(action)
+            case .herdr: showOverview(action)
             case .switcher: break // A menu, not an action.
             }
         case .customKey, .shortcut:
@@ -1313,7 +1317,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     private func attentionPending() -> Bool {
         SSHTerminalFloatingControls.attentionPending(
-            multiplexersWaiting: overviewsWaiting.values.reduce(0, +),
+            multiplexersWaiting: overviewsWaiting.values.reduce(0, +) + rexWaiting,
             blockedProgram: SSHTerminalProgramStatusPresentation.blockedNotice(
                 store: channel.programStatus,
                 isStopped: programIsStopped
@@ -1723,15 +1727,20 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     /// The multiplexer a trailing bar action opens the overview of.
     private func overview(_ action: SSHTerminalBarAction) -> (any SSHTerminalOverviewSource)? {
-        // Rex and Herdr are experiments (Settings → Experiments): off, there is
+        // Herdr is an experiment (Settings → Experiments): off, there is
         // nothing to read, so no button and no poll.
         guard SSHTerminalExperimentAccess.current.allows(action) else { return nil }
         return switch action {
         // Herdr is read with side commands, which a terminal without SSH has none of.
         case .herdr: channel.sideCommandsUnavailable == nil ? herdr : nil
-        case .rex: rex
         default: nil
         }
+    }
+
+    /// Rex panes that need you, for the Back dot. A Herdr terminal leaves Rex out.
+    private var rexWaiting: Int {
+        guard SSHTerminalExperimentAccess.current.rex, barContext != .herdr, rex.available else { return 0 }
+        return rex.needsAttention
     }
 
     /// Panes that need you, per multiplexer that has answered.
@@ -1748,8 +1757,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         presentingOverview = true
         leaveKeyboardForSheet()
         source.watching = true
-        // A Rex pane opens here, in a terminal of its own over the same host.
-        rex.openPane = { [weak self] pane in self?.openRexPane(pane) }
         let channel = channel
         Router.present(
             SSHTerminalOverviewViewController(
@@ -1771,7 +1778,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// The Rex panel: this pane's status, the session's panes, and the other
     /// sessions, in one sheet (`SSHTerminalRexPanelContent`). Switching a pane
     /// and a new pane go through the owners a swipe uses; another session's pane
-    /// opens through the one that Rex Sessions used.
+    /// opens on this device (`openRexPane`).
     private func showRexPanel() {
         guard !presentingOverview, let model = channel.rex else { return }
         presentingOverview = true
@@ -2192,12 +2199,15 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         return "\(reason) \(target.folderName) did not open in \(multiplexer.name)."
     }
 
-    /// The Experiments switch changed: the bar's Rex and Herdr buttons, the
-    /// overview polls, and Customize Bar follow it now. A Rex terminal is a pane
+    /// The Experiments switch changed: the bar's Herdr button, the Rex and
+    /// Herdr polls, and Customize Bar follow it now. A Rex terminal is a pane
     /// of a session Oppi may no longer read, and the registry ends it where it
     /// was the one that turned off.
     private func experimentChanged() {
-        if !AppPreferenceStore.Experiments.rexEnabled { stopOverview(.rex) }
+        if !AppPreferenceStore.Experiments.rexEnabled {
+            rexPoll?.cancel()
+            rexPoll = nil
+        }
         if !AppPreferenceStore.Experiments.herdrEnabled { stopOverview(.herdr) }
         setNeedsUpdateProperties()
     }
@@ -2225,6 +2235,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private func stopOverviewPolls() {
         overviewTasks.values.forEach { $0.cancel() }
         overviewTasks = [:]
+        rexPoll?.cancel()
+        rexPoll = nil
     }
 
     private func updatePolling() {
@@ -2245,6 +2257,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                 guard barContext.polls(action), let source = overview(action) else { continue }
                 let channel = channel
                 overviewTasks[action] = Task { await source.run(on: channel) }
+            }
+            if rexPoll == nil, SSHTerminalExperimentAccess.current.rex {
+                let channel = channel
+                let rex = rex
+                rexPoll = Task { await rex.run(on: channel) }
             }
         } else {
             stopOverviewPolls()

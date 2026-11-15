@@ -1510,24 +1510,13 @@ private final class RexBridgeConnection: SSHTerminalConnection {
 }
 
 /// The terminal's Rex monitor tells the Terminal tab what it found on the
-/// host, and it must keep doing that where the bar hides Rex (a terminal whose
-/// Run on Connect command is `herdr`): hiding is presentation only.
+/// host, and it must keep doing that in a terminal whose Run on Connect
+/// command is `herdr`.
 @Suite("Rex findings from a Herdr terminal", .serialized, .timeLimit(.minutes(1)))
 @MainActor
 struct SSHTerminalRexFindingBarContextTests {
     private let hosts = IsolatedHosts()
     private let mini = SSHTerminalProfile(host: "mac-mini", username: "alex", authentication: .deviceKey, startupCommand: "herdr")
-
-    @Test func aTerminalReadsTheMultiplexersItsBarHidesOnlyWhenTheReadIsUsed() {
-        let herdr = SSHTerminalBarContext(isRexPane: false, command: "herdr")
-        let rexPane = SSHTerminalBarContext(isRexPane: true, command: nil)
-        #expect(herdr == .herdr && rexPane == .rex)
-        #expect(herdr.hidden == [.rex], "the Herdr terminal's bar shows no Rex")
-        #expect(herdr.polls(.rex) && herdr.polls(.herdr), "but it still reads Rex, whose findings the tab uses")
-        #expect(rexPane.polls(.rex) && !rexPane.polls(.herdr), "a Rex pane does not poll the host's Herdr")
-        let plain = SSHTerminalBarContext.plain
-        #expect(plain.polls(.rex) && plain.polls(.herdr))
-    }
 
     private func mountHerdrTerminal(
         serve: @escaping @Sendable (@escaping SSHPTYByteSink) -> SSHExecStream
@@ -1565,7 +1554,7 @@ struct SSHTerminalRexFindingBarContextTests {
         defer { tearDown(mounted) }
         #expect(!hosts.store().rexHosts.hasSeenRex(on: mini))
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { self.hosts.store().rexHosts.hasSeenRex(on: self.mini) })
-        #expect(!world.requests("session.attach_all").isEmpty, "the terminal read Rex though its bar shows no Rex")
+        #expect(!world.requests("session.attach_all").isEmpty, "the Herdr terminal read Rex")
     }
 
     /// No `rex` on the host of a `herdr` terminal: the memory is dropped.

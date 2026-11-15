@@ -66,15 +66,16 @@ struct SSHTerminalExperimentTests {
         #expect(SSHTerminalMultiplexerChoice.tmux.available(in: off) == .tmux)
     }
 
-    @Test("A terminal's bar leaves Rex and Herdr out, and reads neither, while they are off")
+    @Test("A terminal's bar leaves Herdr out, and does not read it, while it is off")
     func barHidesAndStopsPollingWhileOff() {
         let plain = SSHTerminalBarContext.plain
-        #expect(plain.hidden(off) == [.rex, .herdr])
-        #expect(!plain.polls(.rex, off) && !plain.polls(.herdr, off))
-        #expect(plain.hidden(herdrOnly) == [.rex])
-        #expect(plain.polls(.rex, .all) && plain.polls(.herdr, .all))
-        // A Rex pane still rules Herdr out, and its one control holds Rex Sessions.
-        #expect(SSHTerminalBarContext.rex.hidden(.all) == [.herdr, .rex])
+        #expect(plain.hidden(off) == [.herdr])
+        #expect(!plain.polls(.herdr, off))
+        #expect(plain.hidden(herdrOnly).isEmpty)
+        #expect(plain.polls(.herdr, .all))
+        // A Rex pane still rules Herdr out.
+        #expect(SSHTerminalBarContext.rex.hidden(.all) == [.herdr])
+        #expect(!SSHTerminalBarContext.rex.polls(.herdr, .all))
     }
 
     @Test("A Rex pane's reconnect, a Rex screen, and a Rex on your tailnet say Rex is off instead of dialing it")

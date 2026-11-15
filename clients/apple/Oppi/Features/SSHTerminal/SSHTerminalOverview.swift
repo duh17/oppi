@@ -88,9 +88,9 @@ struct SSHTerminalOverviewFocus: Hashable, Sendable {
     let isGroup: Bool
 }
 
-/// One row of a multiplexer overview: the sheet the terminal's bar opens for
-/// Herdr or Rex. The source decides the rows; the sheet only draws them, so
-/// both multiplexers look and behave the same.
+/// One row of a multiplexer overview: Herdr's sheet from the terminal's bar,
+/// the Rex panel, or a Rex host's sessions screen. The content decides the
+/// rows; the list only draws them, so they look and behave the same.
 struct SSHTerminalOverviewRow: Hashable, Sendable {
     enum Kind: Hashable, Sendable {
         /// A machine heading, with why it cannot be read or what waits there.
@@ -149,8 +149,8 @@ protocol SSHTerminalOverviewContent: AnyObject {
 }
 
 /// A multiplexer the terminal can read over its SSH side channel and show in
-/// an overview sheet. Herdr and Rex each conform with their own poll; the bar
-/// button, badge, attention dot, and sheet treat them alike.
+/// an overview sheet from its bar (Herdr); the bar button, badge, attention
+/// dot, and sheet read it through this.
 @MainActor
 protocol SSHTerminalOverviewSource: SSHTerminalOverviewContent {
     /// The host has answered at least once, so the bar offers the sheet.
@@ -161,7 +161,7 @@ protocol SSHTerminalOverviewSource: SSHTerminalOverviewContent {
     /// turns out not to have the multiplexer.
     func run(on channel: SSHTerminalChannel) async
     func refresh(on channel: SSHTerminalChannel) async
-    /// Acts on a tapped row: Herdr focuses it on the host, Rex opens the pane
-    /// on this device. True closes the sheet; false sets `focusFailure`.
+    /// Acts on a tapped row: Herdr focuses it on the host. True closes the
+    /// sheet; false sets `focusFailure`.
     func activate(_ focus: SSHTerminalOverviewFocus, on channel: SSHTerminalChannel) async -> Bool
 }

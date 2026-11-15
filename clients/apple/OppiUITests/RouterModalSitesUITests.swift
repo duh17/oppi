@@ -356,9 +356,8 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         hold()
         XCTAssertTrue(cells[2].waitUntilGone(timeout: 5), "The minimap is not left on screen after a menu choice")
 
-        // Customize Bar opened from this Rex pane lists the switcher but neither
-        // Herdr nor Rex Sessions: a terminal in Rex offers only Rex, and its one
-        // Rex control (the pane switcher) holds Rex Sessions.
+        // Customize Bar opened from this Rex pane lists the switcher but not
+        // Herdr: a terminal in Rex rules Herdr out.
         app.buttons["sshTerminal.more"].tap()
         let customize = app.buttons["sshTerminal.menu.customize"]
         XCTAssertTrue(customize.waitUntilExists(timeout: 5), "The … menu did not open")
@@ -373,7 +372,6 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         // row's identifier is on its cell, the cell's content, and its reorder
         // handle, so the queries name cells.
         let switcherRow = list.cells["settings.sshTerminal.bar.row.switcher"]
-        let rexRow = list.cells["settings.sshTerminal.bar.row.rex"]
         let herdrRow = list.cells["settings.sshTerminal.bar.row.herdr"]
         let panelChoice = app.descendants(matching: .any)["settings.sshTerminal.bar.rexPanel.thisPane"]
         var sawSwitcher = false
@@ -384,7 +382,6 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
                 shotSwitcher = true
                 attachScreenshot("rex-customize-bar")
             }
-            XCTAssertFalse(rexRow.exists, "A Rex pane's Customize Bar must not list Rex Sessions")
             XCTAssertFalse(herdrRow.exists, "A Rex pane's Customize Bar must not list Herdr")
         }
         XCTAssertTrue(sawSwitcher, "A Rex pane's Customize Bar must list the switcher")

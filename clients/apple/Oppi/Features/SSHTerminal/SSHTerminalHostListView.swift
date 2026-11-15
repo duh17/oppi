@@ -937,7 +937,13 @@ final class SSHTerminalHostListViewController:
         case .header(let name, let needsYou):
             content.text = name
             content.textProperties.font = .preferredFont(forTextStyle: .headline)
-            content.image = SSHTerminalBarAction.rex.image()
+            // Rex's mark, sized like a body symbol at the small scale.
+            content.image = SymbolSizedLogo.image(
+                named: "rex-logo",
+                reference: "circle.fill",
+                configuration: UIImage.SymbolConfiguration(textStyle: .body, scale: .small),
+                fallbackSide: 17
+            )
             content.imageProperties.tintColor = palette.ui.comment
             content.secondaryText = needsYou > 0 ? "Rex \u{00B7} " + SSHTerminalRexListRow.needsYouText(needsYou) : "Rex"
             content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)

@@ -1620,12 +1620,12 @@ struct SSHTerminalTests {
         monitor.openPane = { opened.append($0) }
         let reads = host.requests.count
 
-        #expect(await monitor.activate(.init(scope: Self.rexSession, id: Self.rexBlocked, isGroup: false), on: rig.channel))
+        #expect(monitor.open(.init(scope: Self.rexSession, id: Self.rexBlocked, isGroup: false)))
         #expect(opened == [RexPaneTarget(sessionID: Self.rexSession, blockID: Self.rexBlocked, label: "claude")])
         #expect(host.requests.count == reads, "opening a pane asks Rex nothing")
 
-        #expect(!(await monitor.activate(.init(scope: Self.rexSession, id: "block:gone", isGroup: false), on: rig.channel)))
-        #expect(!(await monitor.activate(.init(scope: nil, id: Self.rexSession, isGroup: true), on: rig.channel)))
+        #expect(!monitor.open(.init(scope: Self.rexSession, id: "block:gone", isGroup: false)))
+        #expect(!monitor.open(.init(scope: nil, id: Self.rexSession, isGroup: true)))
         #expect(monitor.focusFailure == "This pane is no longer in Rex.")
         #expect(opened.count == 1)
         await rig.stop()

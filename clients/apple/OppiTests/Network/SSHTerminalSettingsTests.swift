@@ -168,14 +168,12 @@ struct SSHTerminalSettingsTests {
         defer { page.window.isHidden = true }
         let keyboard = SSHTerminalBarItem.action(.keyboard).title(customKeys: [])
         let herdr = SSHTerminalBarItem.action(.herdr).title(customKeys: [])
-        let rex = SSHTerminalBarItem.action(.rex).title(customKeys: [])
-        // Both switches are on here, so the summary names both: a summary that always
+        // Herdr's switch is on here, so the summary names it: a summary that always
         // left the experiments out would otherwise pass this test and the off one.
         let barRow = try #require(page.element("settings.sshTerminal.bar"))
         let first = try #require(barRow.accessibilityValue)
         #expect(first.contains(keyboard), "the summary is \(first)")
         #expect(first.contains(herdr), "the summary is \(first)")
-        #expect(first.contains(rex), "the summary is \(first)")
 
         hosts.barStore.setLayout(hosts.barStore.layout.setting(.action(.herdr), shown: false))
         page.reload()
@@ -188,8 +186,7 @@ struct SSHTerminalSettingsTests {
     // MARK: - Experiments
 
     /// Rex off: the page has no Rex on Your Tailnet row at all (its section is
-    /// dropped), and the Bottom Bar summary names neither Rex nor Herdr while their
-    /// switches are off.
+    /// dropped), and the Bottom Bar summary leaves Herdr out while its switch is off.
     @Test func withTheExperimentsOffThereIsNoRexRowAndTheBarSummaryLeavesThemOut() throws {
         defer { hosts.removeSuites() }
         try hosts.save([plain])
@@ -199,10 +196,8 @@ struct SSHTerminalSettingsTests {
 
         #expect(!page.identifiers.contains("settings.sshTerminal.rexTailnet"))
         let summary = try #require(page.element("settings.sshTerminal.bar")?.accessibilityValue)
-        let rex = SSHTerminalBarItem.action(.rex).title(customKeys: [])
         let herdr = SSHTerminalBarItem.action(.herdr).title(customKeys: [])
         let keyboard = SSHTerminalBarItem.action(.keyboard).title(customKeys: [])
-        #expect(!summary.contains(rex), "the summary names Rex off: \(summary)")
         #expect(!summary.contains(herdr), "the summary names Herdr off: \(summary)")
         #expect(summary.contains(keyboard), "the summary keeps the buttons that are not experiments: \(summary)")
     }

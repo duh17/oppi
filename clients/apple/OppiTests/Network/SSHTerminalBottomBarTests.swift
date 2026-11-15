@@ -39,7 +39,7 @@ private func isolatedDefaults() -> UserDefaults {
 struct SSHTerminalBarPlacementTests {
     @Test func theDefaultBarPutsDictateAndAttachNextToTypeInTerminal() {
         let placement = offer().placement(layout: .defaultValue, capacity: 8)
-        #expect(actions(of: placement.bar) == [.keyboard, .dictate, .attach, .herdr, .rex, .switcher])
+        #expect(actions(of: placement.bar) == [.keyboard, .dictate, .attach, .herdr, .switcher])
         // Turned-off keys and Paste stay out of the menu; Browse Files Here,
         // which the menu always had, stays in it. Program Shortcuts is off and
         // not offered there either.
@@ -57,32 +57,29 @@ struct SSHTerminalBarPlacementTests {
         )
         let placement = offer().placement(layout: layout, capacity: 2)
         #expect(actions(of: placement.bar) == [.escape, .paste])
-        #expect(actions(of: placement.menu) == [.keyboard, .interrupt, .dictate, .attach, .browseFiles, .herdr, .rex, .switcher])
+        #expect(actions(of: placement.menu) == [.keyboard, .interrupt, .dictate, .attach, .browseFiles, .herdr, .switcher])
 
         let none = offer().placement(layout: layout, capacity: 0)
         #expect(none.bar.isEmpty)
         #expect(!actions(of: none.menu).contains(.paste))
     }
 
-    @Test func aRexPaneOffersOnlyRexAndAHerdrTerminalOnlyHerdr() {
+    @Test func aRexPaneLeavesHerdrOutAndHerdrTerminalsAndPlainShellsKeepIt() {
         func placement(
             _ layout: SSHTerminalBarLayout = .defaultValue, in context: SSHTerminalBarContext
         ) -> SSHTerminalBarPlacement {
             offer(context: context).placement(layout: layout, capacity: 8)
         }
-        // Rex Sessions is not in a Rex pane's bar at all: the pane switcher's panel holds it.
         #expect(actions(of: placement(in: .rex).bar) == [.keyboard, .dictate, .attach, .switcher])
         #expect(actions(of: placement(in: .herdr).bar) == [.keyboard, .dictate, .attach, .herdr, .switcher])
-        // A plain shell on a host with both keeps both.
-        #expect(actions(of: placement(in: .plain).bar) == [.keyboard, .dictate, .attach, .herdr, .rex, .switcher])
+        #expect(actions(of: placement(in: .plain).bar) == [.keyboard, .dictate, .attach, .herdr, .switcher])
 
-        // The … menu follows: a multiplexer turned off in the layout is offered
-        // there only where its terminal can use it (a Rex pane offers no Rex Sessions).
-        let hiddenBoth = SSHTerminalBarLayout.defaultValue
-            .setting(.action(.herdr), shown: false).setting(.action(.rex), shown: false)
-        #expect(actions(of: placement(hiddenBoth, in: .rex).menu) == [.browseFiles])
-        #expect(actions(of: placement(hiddenBoth, in: .herdr).menu) == [.browseFiles, .herdr])
-        #expect(actions(of: placement(hiddenBoth, in: .plain).menu) == [.browseFiles, .herdr, .rex])
+        // The … menu follows: Herdr turned off in the layout is offered there
+        // only where its terminal can use it.
+        let herdrOff = SSHTerminalBarLayout.defaultValue.setting(.action(.herdr), shown: false)
+        #expect(actions(of: placement(herdrOff, in: .rex).menu) == [.browseFiles])
+        #expect(actions(of: placement(herdrOff, in: .herdr).menu) == [.browseFiles, .herdr])
+        #expect(actions(of: placement(herdrOff, in: .plain).menu) == [.browseFiles, .herdr])
     }
 
     @Test func theContextComesFromTheTerminalsOwnProgram() {
@@ -98,14 +95,14 @@ struct SSHTerminalBarPlacementTests {
 
     @Test func reorderingTheShownRowsKeepsTheHiddenOnesPlaceAndChoice() {
         let saved = SSHTerminalBarLayout(
-            order: [.action(.keyboard), .action(.herdr), .action(.switcher), .action(.rex), .action(.dictate)],
+            order: [.action(.keyboard), .action(.herdr), .action(.switcher), .action(.browseFiles), .action(.dictate)],
             shown: [.action(.keyboard), .action(.herdr), .action(.switcher)]
         )
-        // A Rex terminal's page lists Rex and the switcher; the person drags Rex first.
-        let moved = saved.reordering([.action(.rex), .action(.switcher)])
-        #expect(Array(moved.order.prefix(5)) == [.action(.keyboard), .action(.herdr), .action(.rex), .action(.switcher), .action(.dictate)])
+        // A page lists Browse Files Here and the switcher; the person drags Browse first.
+        let moved = saved.reordering([.action(.browseFiles), .action(.switcher)])
+        #expect(Array(moved.order.prefix(5)) == [.action(.keyboard), .action(.herdr), .action(.browseFiles), .action(.switcher), .action(.dictate)])
         #expect(moved.shown == saved.shown)
-        #expect(moved.reordering([.action(.switcher), .action(.rex)]) == saved)
+        #expect(moved.reordering([.action(.switcher), .action(.browseFiles)]) == saved)
     }
 }
 
@@ -202,11 +199,13 @@ struct SSHTerminalBarMigrationTests {
         let legacyOrder = ["herdr", "keyboard", "switcher", "interrupt", "rex", "tab", "escape", "up", "down", "enter", "paste", "browseFiles"]
         let legacyShown = ["keyboard", "interrupt", "herdr", "switcher"]
         let migrated = SSHTerminalBarLayout.migrating(legacyOrder: legacyOrder, legacyShown: legacyShown)
-        // The middle's buttons in their order, then the ones that sat beside … in theirs.
-        #expect(Array(migrated.storedOrder.prefix(12)) == [
+        // The middle's buttons in their order, then the ones that sat beside … in
+        // theirs. Rex Sessions is no longer a button, so its entry is dropped.
+        #expect(Array(migrated.storedOrder.prefix(11)) == [
             "keyboard", "interrupt", "tab", "escape", "up", "down", "enter", "paste", "browseFiles",
-            "herdr", "switcher", "rex",
+            "herdr", "switcher",
         ])
+        #expect(!migrated.storedOrder.contains("rex"))
         #expect(migrated.shown == Set(legacyShown.compactMap(SSHTerminalBarItem.init(rawValue:))))
         // Program Shortcuts arrived after the layout was saved: in the order, not shown.
         #expect(migrated.order.contains(.programShortcuts))
@@ -216,16 +215,16 @@ struct SSHTerminalBarMigrationTests {
     @Test func theStoreReadsALegacyLayoutAndWritesTheNewOneInItsPlace() {
         let defaults = isolatedDefaults()
         let prefix = AppIdentifiers.subsystem
-        defaults.set(["rex", "keyboard", "escape"], forKey: "\(prefix).sshTerminal.barOrder")
-        defaults.set(["keyboard", "rex"], forKey: "\(prefix).sshTerminal.barShown")
+        defaults.set(["herdr", "keyboard", "escape"], forKey: "\(prefix).sshTerminal.barOrder")
+        defaults.set(["keyboard", "herdr"], forKey: "\(prefix).sshTerminal.barShown")
         let store = SSHTerminalBarStore(defaults: defaults)
-        #expect(Array(store.layout.order.prefix(3)) == [.action(.keyboard), .action(.escape), .action(.rex)])
-        #expect(store.layout.shown == [.action(.keyboard), .action(.rex)])
+        #expect(Array(store.layout.order.prefix(3)) == [.action(.keyboard), .action(.escape), .action(.herdr)])
+        #expect(store.layout.shown == [.action(.keyboard), .action(.herdr)])
 
         // A change writes the new keys and retires the old ones.
         store.setLayout(store.layout.setting(.action(.escape), shown: true))
         #expect(defaults.stringArray(forKey: "\(prefix).sshTerminal.barOrder") == nil)
-        #expect(SSHTerminalBarStore(defaults: defaults).layout.shown == [.action(.keyboard), .action(.rex), .action(.escape)])
+        #expect(SSHTerminalBarStore(defaults: defaults).layout.shown == [.action(.keyboard), .action(.herdr), .action(.escape)])
     }
 
     /// The terminal had a Chat Bar button; Dictate and Attach took over its
@@ -561,24 +560,21 @@ struct SSHTerminalBarOfferTests {
 @Suite("SSH terminal Rex control")
 @MainActor
 struct SSHTerminalRexControlTests {
-    @Test func aRexPaneLeavesOutRexSessionsAndTheProgramStatusSymbolButHerdrAndPlainShellsKeepTheirs() {
+    @Test func aRexPaneLeavesOutHerdrAndTheProgramStatusSymbolButHerdrAndPlainShellsKeepTheirs() {
         // The pane switcher's pill is the one Rex control: its panel holds
-        // Rex Sessions and the status, so neither is in the bar.
-        #expect(SSHTerminalBarContext.rex.hidden == [.herdr, .rex])
+        // the status, so it is not in the bar.
+        #expect(SSHTerminalBarContext.rex.hidden == [.herdr])
         #expect(!SSHTerminalBarContext.rex.showsProgramStatus)
         #expect(SSHTerminalBarContext.plain.hidden.isEmpty && SSHTerminalBarContext.plain.showsProgramStatus)
-        #expect(SSHTerminalBarContext.herdr.hidden == [.rex] && SSHTerminalBarContext.herdr.showsProgramStatus)
-        // What the terminal's polls and attention still count is only what its multiplexer rules out:
-        // Back's dot keeps hearing about Rex panes that need you.
-        #expect(SSHTerminalBarContext.rex.overviewsRuledOut == [.herdr])
+        #expect(SSHTerminalBarContext.herdr.hidden.isEmpty && SSHTerminalBarContext.herdr.showsProgramStatus)
 
         let layout = SSHTerminalBarLayout.defaultValue
         let inRex = offer(context: .rex).placement(layout: layout, capacity: 8)
         #expect(actions(of: inRex.bar) == [.keyboard, .dictate, .attach, .switcher])
-        #expect(!(inRex.bar + inRex.menu).contains { $0.item == .action(.rex) || $0.item == .action(.herdr) })
-        // The saved layout is untouched: a plain shell shows Rex again as it was left.
-        #expect(layout.isShown(.action(.rex)))
-        #expect(actions(of: offer(context: .plain).placement(layout: layout, capacity: 8).bar).contains(.rex))
+        #expect(!(inRex.bar + inRex.menu).contains { $0.item == .action(.herdr) })
+        // The saved layout is untouched: a plain shell shows Herdr again as it was left.
+        #expect(layout.isShown(.action(.herdr)))
+        #expect(actions(of: offer(context: .plain).placement(layout: layout, capacity: 8).bar).contains(.herdr))
     }
 
     @MainActor
@@ -764,7 +760,7 @@ struct SSHTerminalKeyboardBarTests {
         let pi = try #require(SSHTerminalKeymap.profile(for: "pi"))
         let terminal = offer(program: "pi", shortcuts: SSHTerminalKeymap.actions(for: pi, userFile: nil))
         let placement = terminal.placement(layout: everythingOn, capacity: 20, surface: .keyboardBar)
-        #expect(actions(of: placement.bar) == [.dictate, .attach, .interrupt, .browseFiles, .herdr, .rex, .switcher])
+        #expect(actions(of: placement.bar) == [.dictate, .attach, .interrupt, .browseFiles, .herdr, .switcher])
         let left = placement.bar + placement.menu
         for item in SSHTerminalBarSurface.repeatedOnKeyboard {
             #expect(!left.contains { $0.item == item }, "\(item.rawValue) is on the keyboard already")
@@ -784,7 +780,7 @@ struct SSHTerminalKeyboardBarTests {
             .setting(.action(.browseFiles), shown: true)
         let crowded = offer(customKeys: [eof]).placement(layout: layout, capacity: 2, surface: .keyboardBar)
         #expect(actions(of: crowded.bar) == [.dictate, .attach])
-        #expect(crowded.menu.map(\.item) == [.action(.browseFiles), .action(.herdr), .action(.rex), .action(.switcher), .customKey(eof.id)])
+        #expect(crowded.menu.map(\.item) == [.action(.browseFiles), .action(.herdr), .action(.switcher), .customKey(eof.id)])
 
         let keyOff = offer(customKeys: [eof])
             .placement(layout: layout.setting(.customKey(eof.id), shown: false), capacity: 20, surface: .keyboardBar)
