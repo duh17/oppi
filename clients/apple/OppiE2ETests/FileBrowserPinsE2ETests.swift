@@ -19,9 +19,11 @@ final class FileBrowserPinsE2ETests: E2ETestCase {
     func testPinAHomeFolderAndOpenItFromPinned() {
         tap(app.buttons["workspace.files.open"], named: "Files", timeout: 10)
 
-        // The first folder of the home folder that is not hidden: every server's home has one.
+        // The home folder's first row, whatever its name: folders sort first and
+        // hidden files show by default, so a home with many dot-folders still
+        // builds this row on screen while a later, unhidden one stays off it.
         let folders = app.descendants(matching: .any).matching(NSPredicate(
-            format: "identifier BEGINSWITH 'fileBrowser.row.' AND identifier ENDSWITH '/' AND NOT identifier BEGINSWITH 'fileBrowser.row..'"
+            format: "identifier BEGINSWITH 'fileBrowser.row.' AND identifier ENDSWITH '/'"
         ))
         let folder = folders.firstMatch
         XCTAssertTrue(folder.waitForExistence(timeout: 15), "the home folder lists a folder")
