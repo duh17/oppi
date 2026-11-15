@@ -1048,6 +1048,20 @@ final class SceneNavigation {
         workspaceStackRouteElements.append(.fileBrowser(target))
     }
 
+    /// A file browser's breadcrumb went above the folder its pages start at
+    /// (a link opened it deeper): the first of the browser's pages on top of
+    /// the stack shows `target`, and the folder pages above it close.
+    func showFileBrowserAncestor(_ target: FileBrowserNavTarget) {
+        var first = workspaceStackRouteElements.endIndex
+        while first > workspaceStackRouteElements.startIndex,
+              case .fileBrowser(let page) = workspaceStackRouteElements[first - 1],
+              page.serverId == target.serverId, page.scope == target.scope {
+            first -= 1
+        }
+        guard first < workspaceStackRouteElements.endIndex else { return }
+        workspaceStackRouteElements.replaceSubrange(first..., with: [.fileBrowser(target)])
+    }
+
     /// The person's own Back while the media overlay is active proves it is
     /// over even when AVKit never calls its end. End it here and let the pop
     /// stand; the route snapshot otherwise pushes the chat back under every

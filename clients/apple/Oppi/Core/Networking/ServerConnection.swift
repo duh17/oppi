@@ -2112,6 +2112,9 @@ final class ServerConnection {
     var sessionListRefreshTask: Task<Void, Never>?
     var workspaceCatalogRefreshTask: Task<Void, Never>?
     var listRefreshGeneration: UInt64 = 0
+    /// Workspaces a route or pin named that the catalog did not hold, each
+    /// read for once (`refreshCatalog(forUnknownWorkspace:)`).
+    @ObservationIgnored var catalogRereadWorkspaceIds: Set<String> = []
 
     var workspaceGitSummaryRefreshTasks: [String: Task<Void, Never>] = [:]
 

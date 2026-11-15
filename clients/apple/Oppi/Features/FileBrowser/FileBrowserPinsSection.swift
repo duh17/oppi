@@ -124,8 +124,13 @@ final class FileBrowserPinsSection {
     }
 
     private func row(for pin: Pin, connection: ServerConnection) -> Row {
-        let workspaceName = pin.target.workspaceId.flatMap { id in
-            connection.workspaceStore.workspaces.first { $0.id == id }?.name
+        let workspaceName = pin.target.workspaceId.flatMap { id -> String? in
+            guard let name = connection.workspaceStore.workspaces.first(where: { $0.id == id })?.name else {
+                // A workspace newer than the catalog: the name shows once it is read again.
+                connection.refreshCatalog(forUnknownWorkspace: id)
+                return nil
+            }
+            return name
         }
         let locked = pin.target.workspaceId.map {
             ScopedLockService.shared.isLocked(.workspace(serverId: serverId, workspaceId: $0))

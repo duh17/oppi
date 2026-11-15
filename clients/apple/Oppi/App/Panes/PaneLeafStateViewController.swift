@@ -24,6 +24,8 @@ final class PaneLeafStateViewController: UIViewController {
     /// The server took the lookup and did not answer; with its streams up it
     /// would otherwise show "Connecting…" with nothing to press.
     private var lookupUnanswered = false
+    /// The catalog read again for a workspace it did not hold, while it runs.
+    private var catalogReread: Task<Void, Never>?
     private var lastStatus: PaneConnectionStatus?
     private var resolved = false
     private(set) var shownState: PaneLeafState?
@@ -43,7 +45,10 @@ final class PaneLeafStateViewController: UIViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    deinit { lookup?.cancel() }
+    deinit {
+        lookup?.cancel()
+        catalogReread?.cancel()
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -66,6 +71,9 @@ final class PaneLeafStateViewController: UIViewController {
         if state == .content, let element = PaneEntries.element(for: entry, coordinator: coordinator) {
             open(element)
             return
+        }
+        if state == .missing(.workspace), rereadsCatalog() {
+            state = .connecting
         }
         if state == .content, case .panel = entry.route {
             // A panel shows only beside its own chat until panels can be
@@ -164,6 +172,28 @@ final class PaneLeafStateViewController: UIViewController {
             }
             self.setNeedsUpdateProperties()
         }
+    }
+
+    /// A workspace the catalog does not hold may be newer than the catalog:
+    /// its server's catalog is read again (once per workspace), and the entry
+    /// is missing only if it is still not there. True while that read runs.
+    private func rereadsCatalog() -> Bool {
+        if catalogReread != nil { return true }
+        let workspaceId: String
+        switch entry.route {
+        case .sessions(let id?), .files(let id, _), .file(.workspace(let id, _), _, _): workspaceId = id
+        default: return false
+        }
+        guard let read = PaneEntries.refreshCatalog(
+            forUnknownWorkspace: workspaceId, serverId: entry.serverId, coordinator: coordinator
+        ) else { return false }
+        catalogReread = Task { [weak self] in
+            await read.value
+            guard let self, !Task.isCancelled else { return }
+            self.catalogReread = nil
+            self.setNeedsUpdateProperties()
+        }
+        return true
     }
 
     // MARK: Actions

@@ -879,9 +879,25 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         pushDirectory(path: path)
     }
 
-    /// The folder as its own file-browser route above this one.
+    /// The folder as its own page above this one, on the stack that holds
+    /// this browser: a shell route when a route made it, else a page of its
+    /// own stack (a split pane's, or the one a screen pushed it onto).
     private func pushDirectory(path: String) {
-        navigation.pushWorkspaceFileBrowser(navTarget(path: path))
+        let target = navTarget(path: path)
+        guard !isShellRouted, navigationController != nil else {
+            navigation.pushWorkspaceFileBrowser(target)
+            return
+        }
+        let page = FileBrowserViewController(root: root, target: target, showsSidebarToggle: false)
+        page.navigationItem.backButtonDisplayMode = .minimal
+        Router.push(page, from: self)
+    }
+
+    /// Whether the window's routes made this browser: its stack is then the
+    /// shell's, and `SceneNavigation` owns its pages.
+    private var isShellRouted: Bool {
+        guard let stack = navigationController as? RoutedScreenStack else { return false }
+        return stack.isRouted(self)
     }
 
     /// Lists `path` in place. The open file stays open: it is a pane of its own.
@@ -903,16 +919,39 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         }
     }
 
+    /// An ancestor in the breadcrumb: the stack holding this browser goes
+    /// back to that folder's page when one is below, as Back does (the shell
+    /// hears it as the person's pop). A browser opened at a deeper folder has
+    /// no such page, so its place shows the folder instead: the shell's
+    /// route, or the split pane's entry.
     private func popToBreadcrumbDepth(_ targetDepth: Int) {
-        let popCount = currentDepth - targetDepth
-        guard popCount > 0 else { return }
+        guard currentDepth > targetDepth else { return }
+        let path = breadcrumbPath(for: targetDepth)
         guard !usesInPlaceDirectoryNavigation else {
-            showDirectoryInPlace(breadcrumbPath(for: targetDepth))
+            showDirectoryInPlace(path)
             return
         }
-        let depth = navigation.shownStackDepth
-        guard depth >= popCount else { return }
-        navigation.popShownStack(toDepth: depth - popCount)
+        if let stack = navigationController, let page = folderPage(showing: path, in: stack) {
+            stack.popToViewController(page, animated: true)
+            return
+        }
+        let target = navTarget(path: path)
+        if isShellRouted {
+            navigation.showFileBrowserAncestor(target)
+        } else if let host = PaneHostController.containing(self), host.showInSplitPane(holding: self, .fileBrowser(target)) {
+            return
+        } else {
+            showDirectoryInPlace(path)
+        }
+    }
+
+    /// The nearest page below this one in `stack` that lists `path` of this
+    /// browser's server and scope.
+    private func folderPage(showing path: String, in stack: UINavigationController) -> FileBrowserViewController? {
+        guard let index = stack.viewControllers.firstIndex(of: self) else { return nil }
+        return stack.viewControllers[..<index].reversed().lazy
+            .compactMap { $0 as? FileBrowserViewController }
+            .first { $0.serverId == serverId && $0.scope == scope && $0.currentDirectoryPath == path }
     }
 
     private func breadcrumbPath(for depth: Int) -> String {

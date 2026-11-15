@@ -364,6 +364,21 @@ extension ServerConnection {
         await task.value
     }
 
+    /// Reads the catalog again for workspace `id`, which a route or a pin
+    /// names and the catalog does not hold: no app event announces a new
+    /// workspace, so one created since the last read is unknown until the
+    /// next. Once per workspace while the connection lives, so one that is
+    /// really gone is not read for again. Nil when no read starts: the
+    /// catalog never loaded (its first load is coming), holds `id`, or was
+    /// read for it already.
+    @discardableResult
+    func refreshCatalog(forUnknownWorkspace id: String) -> Task<Void, Never>? {
+        guard workspaceStore.lastSuccessfulSyncAt != nil,
+              !workspaceStore.workspaces.contains(where: { $0.id == id }),
+              catalogRereadWorkspaceIds.insert(id).inserted else { return nil }
+        return Task { await refreshWorkspaceCatalog(force: true) }
+    }
+
     /// Refresh both global lists. Each branch has its own single-flight task,
     /// so overlapping callers don't trigger duplicate network fan-out.
     /// `forceCatalog` overrides `force` for the workspace catalog alone.

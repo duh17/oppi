@@ -761,6 +761,16 @@ extension PaneHostController {
         return nil
     }
 
+    /// The split pane holding `screen` shows `element` in place of all it
+    /// shows, as a launcher choice does, so a relaunch brings that back.
+    /// False when `screen` is not in a split pane or `element` has no link.
+    func showInSplitPane(holding screen: UIViewController, _ element: WorkspaceStackRouteElement) -> Bool {
+        guard let id = cell(holding: screen), splitLeaves[id] != nil,
+              let entry = PaneEntries.entry(for: element) else { return false }
+        panes.show(entry, in: id)
+        return true
+    }
+
     /// Undo, Restore Panes, Split Right and Split Down for the pane holding
     /// `screen`, for that screen's own … menu: with one pane there is no
     /// grip, so this is the first split's touch path and Undo's after the

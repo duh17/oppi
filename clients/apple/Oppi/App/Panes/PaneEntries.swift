@@ -93,6 +93,16 @@ enum PaneEntries {
         return (connection.pins, api)
     }
 
+    /// Reads `serverId`'s workspace catalog again for workspace `id`, which it
+    /// did not hold (`ServerConnection.refreshCatalog(forUnknownWorkspace:)`);
+    /// nil when no read starts.
+    @discardableResult
+    static func refreshCatalog(
+        forUnknownWorkspace id: String, serverId: String, coordinator: ConnectionCoordinator
+    ) -> Task<Void, Never>? {
+        connection(serverId, coordinator)?.refreshCatalog(forUnknownWorkspace: id)
+    }
+
     /// Workspace `id` on `serverId`, and the host that server is reached at
     /// (a terminal leaf's SSH host).
     static func workspace(

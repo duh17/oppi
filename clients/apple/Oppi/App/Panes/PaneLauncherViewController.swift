@@ -134,7 +134,12 @@ final class PaneLauncherViewController: UIViewController {
 
     private func workspaceName(_ id: String?) -> String? {
         guard let id, let root else { return nil }
-        return PaneEntries.workspace(id, serverId: serverId, coordinator: root.coordinator)?.workspace.name
+        if let name = PaneEntries.workspace(id, serverId: serverId, coordinator: root.coordinator)?.workspace.name {
+            return name
+        }
+        // A workspace newer than the catalog: the name shows once it is read again.
+        PaneEntries.refreshCatalog(forUnknownWorkspace: id, serverId: serverId, coordinator: root.coordinator)
+        return nil
     }
 
     // MARK: Pinned

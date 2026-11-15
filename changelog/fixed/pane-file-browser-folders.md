@@ -1,0 +1,2 @@
+- **Client:** On iPad, a File Browser in a split pane opens folders in that pane, and its breadcrumb goes back up there, also from a pane that opened at a subfolder. Folders no longer open in the main pane.
+- **Client:** A pane or pin that names a workspace created on another device since the app last loaded its workspaces now loads them again and opens it, instead of showing "Workspace Not Found".
