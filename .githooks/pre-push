@@ -823,7 +823,7 @@ apple_scheme() {
   if [[ "$APPLE_MODE" == "all" || "${OPPI_PRE_PUSH_UI_LANES:-0}" == "1" ]]; then echo Oppi; else echo OppiUnitTests; fi
 }
 
-# Every OppiTests test, in OPPI_UNIT_SHARDS (3) pool slots (~3.5 min). The shards build the scheme
+# Every OppiTests test, in OPPI_UNIT_SHARDS (4) pool slots (~3.5 min). The shards build the scheme
 # the Apple lane just built, so sim-pool skips the build ("nothing changed") and the shards need no
 # xcode-build slot: they never wait behind the Release compile. A build of the other
 # scheme would also rewrite .build/dd's products and make every later Oppi build (the batch UI

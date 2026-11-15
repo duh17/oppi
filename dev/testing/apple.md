@@ -46,12 +46,12 @@ Without the pool, use a unique `-derivedDataPath` and `-destination 'platform=iO
   xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests
 ./scripts/sim-pool.sh run --root /path/to/worktree -- \
   xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests
-bun clients/apple/scripts/unit-shards.ts     # whole suite, OPPI_UNIT_SHARDS (3) slots, what pre-push runs
+bun clients/apple/scripts/unit-shards.ts     # whole suite, OPPI_UNIT_SHARDS (4) slots, what pre-push runs
 ```
 
 - Use `OppiUnitTests` for `OppiTests` (an OppiTests-only `-scheme Oppi` run is rewritten to it). `run` executes in the resolved checkout (`--root`, `OPPI_ROOT`, or this git root) wherever it was launched. Run baselines in a separate worktree, never a checkout Xcode.app has open.
 - Markdown golden corpus (`OppiTests/Fixtures/markdown-corpus`): only `scripts/markdown-corpus-update.sh` rewrites it; review the diff.
-- `unit-shards.ts`: the last shard runs `-skip-testing` of the others' type lists, so a type the scan misses still runs; a zero-test shard fails the run. `--strict` (release gates) ignores quarantine and reruns. Refresh timings with `--record <pool log>`.
+- `unit-shards.ts`: the last shard runs `-skip-testing` of the others' type lists, so a type the scan misses still runs; a zero-test shard fails the run. `--strict` (release gates) ignores quarantine and reruns. `--record` refreshes timings from the last full run.
 - UI shards: `bun clients/apple/scripts/ui-shards.ts --profile iphone -- OppiUITests/<Suite> ...` (`--plan` prints the shards; `OPPI_UI_SHARDS` caps and `--shards N` forces the count; `--record <pool log>...` refreshes timings). A heavy class splits into methods plus a catch-all shard, so a method the scan missed still runs once; a shard fails when a planned test is missing from its xcresult. Counts come from the xcresult; one sim-pool could not read (it stops an xcodebuild that lingers after the summary) fails the shard as `result unreadable`. Gate formats: [Gate reports](README.md#gate-reports).
 
 ## Warnings ratchet

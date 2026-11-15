@@ -2,7 +2,7 @@
 // Run the whole OppiUnitTests suite as N parallel shards from one build.
 //
 //   bun clients/apple/scripts/unit-shards.ts [--shards N] [--strict] [--scheme OppiUnitTests|Oppi]
-//   bun clients/apple/scripts/unit-shards.ts --record <sim-pool log of a full run>
+//   bun clients/apple/scripts/unit-shards.ts --record   # refresh unit-shard-seconds.json from the last full run
 //
 // 1. Build once without a simulator slot (`sim-pool.sh run -- ... build-for-testing`). --scheme
 //    (default OppiUnitTests) names the scheme to build: both build OppiTests with the same settings,
@@ -10,13 +10,13 @@
 //    built, so sim-pool skips this build and takes no xcode-build slot.
 // 2. sim-pool clones the products (OPPI_SIM_POOL_PRODUCTS_DIR) under the build's checkout
 //    lock, so a rebuild cannot change them.
-// 3. Split the top-level test types of OppiTests into N shards by recorded suite seconds
+// 3. Split the top-level test types of OppiTests into N shards by recorded type seconds
 //    (unit-shard-seconds.json; unknown types count TEST_SECONDS per @Test). Shards 1..N-1
 //    run `-only-testing` lists; the last shard runs `-skip-testing` of everything the
 //    others run, so a test type the scan misses still runs.
 // 4. Run every shard in its own pool slot with `test-without-building -xctestrun` at once.
 // Fails when any shard fails or runs zero tests; a shard that ran none is reported as an
-// infrastructure failure, apart from test failures. Default N: OPPI_UNIT_SHARDS or 3.
+// infrastructure failure, apart from test failures. Default N: OPPI_UNIT_SHARDS or 4.
 // A failed shard reruns its failed tests once; every rerun outcome goes to the rerun ledger, a red
 // run in a land-queue batch to the red-lane ledger, and the summary prints the hidden flakes and the
 // longest shard against its budget (scripts/gate-report.ts).
@@ -89,16 +89,22 @@ export function shardFlags(parts: TestType[][], index: number): string[] {
   return [`-only-testing:${BUNDLE}`, ...parts.slice(0, -1).flat().map((type) => `-skip-testing:${BUNDLE}/${type.name}`)];
 }
 
-/** Seconds per top-level type from a full run's `Suite "<display>" passed|failed after N seconds` lines. */
-export function recordWeights(logText: string, types: TestType[]): Record<string, number> {
-  const byDisplay = new Map<string, TestType[]>();
-  for (const type of types) byDisplay.set(type.display, [...(byDisplay.get(type.display) ?? []), type]);
-  const weights: Record<string, number> = {};
-  for (const match of logText.matchAll(/^[✔✘] Suite "?([^"]+?)"? (?:passed|failed) after ([0-9.]+) seconds/gm)) {
-    const owners = byDisplay.get(match[1]);
-    if (owners?.length === 1) weights[owners[0].name] = Number(Number(match[2]).toFixed(2));
-  }
-  return weights;
+/**
+ * Seconds per top-level type: the sum of its test cases' durations in the `xcresulttool get test-results
+ * tests` JSON of a full run's shards. Tests of a type run one after another on the main actor, so
+ * their durations add up to the time a shard spends on it. A suite's own `passed after N seconds` is
+ * not that: it spans the suite's wall clock, waits for other suites included. Types the scan did not find are dropped.
+ */
+export function recordWeights(testsJsons: string[], types: TestType[]): Record<string, number> {
+  const known = new Set(types.map((type) => type.name));
+  const seconds: Record<string, number> = {};
+  const walk = (node: { nodeType?: string; nodeIdentifier?: string; durationInSeconds?: number; children?: unknown[] }) => {
+    const type = node.nodeType === "Test Case" ? node.nodeIdentifier?.split("/")[0] : undefined;
+    if (type && known.has(type)) seconds[type] = (seconds[type] ?? 0) + (node.durationInSeconds ?? 0);
+    for (const child of node.children ?? []) walk(child as typeof node);
+  };
+  for (const json of testsJsons) for (const node of JSON.parse(json).testNodes ?? []) walk(node);
+  return Object.fromEntries(Object.entries(seconds).map(([name, value]) => [name, Number(value.toFixed(3))]));
 }
 
 function swiftFiles(dir: string): string[] {
@@ -446,13 +452,22 @@ export function shardTests(summary: string | undefined): { tests: number; unread
 async function main(argv: string[]): Promise<number> {
   const record = argv.indexOf("--record");
   if (record >= 0) {
-    const weights = recordWeights(readFileSync(argv[record + 1], "utf8"), loadTypes());
+    const last = join(appleDir, ".build", UNIT_RUN_RECORD);
+    if (!existsSync(last)) throw new Error(`no full run to record: ${last} is missing; run unit-shards first`);
+    const testsJsons = (JSON.parse(readFileSync(last, "utf8")).summaries as string[]).map((summary) => {
+      const xcresult = xcresultOf(summary);
+      if ("reason" in xcresult) throw new Error(`cannot record ${summary}: ${xcresult.reason}`);
+      const read = runXcresulttool("xcrun", ["xcresulttool", "get", "test-results", "tests", "--path", xcresult.path], (json) => json);
+      if ("reason" in read) throw new Error(`cannot record ${summary}: ${read.reason}`);
+      return read.value;
+    });
+    const weights = recordWeights(testsJsons, loadTypes());
     writeFileSync(weightsPath, `${JSON.stringify(Object.fromEntries(Object.entries(weights).sort()), null, 1)}\n`);
-    console.log(`[unit-shards] recorded ${Object.keys(weights).length} suite timings in ${weightsPath}`);
+    console.log(`[unit-shards] recorded ${Object.keys(weights).length} type timings from ${testsJsons.length} shards in ${weightsPath}`);
     return 0;
   }
   const shardsArg = argv.indexOf("--shards");
-  const shards = Number(shardsArg >= 0 ? argv[shardsArg + 1] : process.env.OPPI_UNIT_SHARDS ?? "3");
+  const shards = Number(shardsArg >= 0 ? argv[shardsArg + 1] : process.env.OPPI_UNIT_SHARDS ?? "4");
   if (!Number.isInteger(shards) || shards < 1) throw new Error(`invalid shard count ${shards}`);
   const schemeArg = argv.indexOf("--scheme");
   const scheme = schemeArg >= 0 ? argv[schemeArg + 1] : "OppiUnitTests";

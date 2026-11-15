@@ -109,18 +109,21 @@ describe("unit shards", () => {
     expect(garbled).toHaveProperty("reason");
   });
 
-  test("recorded seconds map suite display names to types and skip ambiguous names", () => {
+  test("recorded seconds add up a type's test durations across shards and drop types the scan did not find", () => {
     const types: TestType[] = [
-      { name: "MicTests", display: "Mic button orb layout", tests: 3 },
-      { name: "CurveA", display: "Curve", tests: 1 },
-      { name: "CurveB", display: "Curve", tests: 1 },
+      { name: "MicTests", display: "Mic", tests: 3 },
+      { name: "CacheTests", display: "Cache", tests: 1 },
     ];
-    const log = [
-      `✔ Suite "Mic button orb layout" passed after 0.089 seconds.`,
-      `✘ Suite "Curve" failed after 3.000 seconds with 1 issue.`,
-      `✔ Suite "Inner nested" passed after 9.000 seconds.`,
-    ].join("\n");
-    expect(recordWeights(log, types)).toEqual({ MicTests: 0.09 });
+    const testCase = (id: string, seconds: number) => ({ nodeType: "Test Case", nodeIdentifier: id, durationInSeconds: seconds });
+    const shard = (...children: object[]) => JSON.stringify({ testNodes: [{ nodeType: "Test Suite", children }] });
+    const weights = recordWeights(
+      [
+        shard(testCase("MicTests/idle()", 0.25), { nodeType: "Test Suite", children: [testCase("MicTests/sizes(_:)", 1.5), testCase("GoneTests/old()", 9)] }),
+        shard(testCase("MicTests/more()", 0.5), testCase("CacheTests/evicts()", 0.0004)),
+      ],
+      types,
+    );
+    expect(weights).toEqual({ MicTests: 2.25, CacheTests: 0 });
   });
 
   test("a shard that ran no tests is an infrastructure failure naming sim-pool's own error, not a test failure", () => {
