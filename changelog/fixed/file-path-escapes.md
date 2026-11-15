@@ -1,0 +1,1 @@
+- **Server:** A file or folder path that leaves its workspace, the home folder, a Skill, or Pi's folder, by `..`, an encoded `..`, an absolute path, or a sandbox symlink, is refused with a 403 that says so instead of a 404. An unused credential-name filter for the path index is gone.

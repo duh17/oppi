@@ -1742,9 +1742,12 @@ struct WorkspaceNavigationPresentationResolveTests {
 
 @Suite("Workspace wiki-link file lookup policy")
 struct WorkspaceWikiLinkFileLookupPolicyTests {
-    @Test func deterministicAbsenceRecognizesOnly404DirectoryListings() {
+    @Test func deterministicAbsenceRecognizesOnlyMissingOrOutsideDirectoryListings() {
         #expect(WorkspaceWikiLinkFileLookupPolicy.isDeterministicAbsence(
             APIError.server(status: 404, message: "Directory not found")
+        ))
+        #expect(WorkspaceWikiLinkFileLookupPolicy.isDeterministicAbsence(
+            APIError.server(status: 403, message: "Path is outside the workspace")
         ))
         #expect(WorkspaceWikiLinkFileLookupPolicy.isDeterministicAbsence(
             APIError.codedServer(status: 404, message: "Directory not found", code: "not_found")

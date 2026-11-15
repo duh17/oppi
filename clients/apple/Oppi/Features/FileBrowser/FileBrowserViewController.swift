@@ -741,22 +741,34 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             return
         }
         do {
-            let response: DirectoryListingResponse
-            switch FileBrowserDirectoryRequest.make(scope: scope, path: path) {
-            case .workspace(let workspaceId, let listingPath, let worktreeId):
-                response = try await api.listWorkspaceDirectory(
-                    workspaceId: workspaceId,
-                    path: listingPath,
-                    worktreeId: worktreeId
-                )
-            case .hostHome(let listingPath):
-                response = try await api.listHostDirectory(path: listingPath)
-            }
-            guard !Task.isCancelled, path == currentDirectoryPath else { return }
-            var next = state
-            next.listing = response
-            next.error = nil
-            state = next
+            // The server lists a folder a page at a time. The first page shows
+            // at once; each later one joins it as it arrives, until the folder
+            // is whole, so sorting and previous/next see every entry.
+            let request = FileBrowserDirectoryRequest.make(scope: scope, path: path)
+            var listing: DirectoryListingResponse?
+            var after: String?
+            repeat {
+                let page: DirectoryListingResponse
+                switch request {
+                case .workspace(let workspaceId, let listingPath, let worktreeId):
+                    page = try await api.listWorkspaceDirectory(
+                        workspaceId: workspaceId,
+                        path: listingPath,
+                        worktreeId: worktreeId,
+                        after: after
+                    )
+                case .hostHome(let listingPath):
+                    page = try await api.listHostDirectory(path: listingPath, after: after)
+                }
+                guard !Task.isCancelled, path == currentDirectoryPath else { return }
+                let whole = listing?.appending(page) ?? page
+                listing = whole
+                var next = state
+                next.listing = whole
+                next.error = nil
+                state = next
+                after = page.next
+            } while after != nil
         } catch {
             guard !Task.isCancelled, path == currentDirectoryPath else { return }
             state.error = error.localizedDescription
@@ -1335,7 +1347,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                     append(items, to: .body)
                 }
                 if listing.truncated {
-                    nextRows[.truncated] = .truncated(listing.entries.count)
+                    nextRows[.truncated] = .truncated(listing.entries.count, loadingMore: listing.next != nil)
                     append([.truncated], to: .footer)
                 }
             }
@@ -1453,9 +1465,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
             cell.contentConfiguration = content
             applyPlainBackground(to: cell)
-        case .truncated(let count):
+        case .truncated(let count, let loadingMore):
             var content = UIListContentConfiguration.cell()
-            content.text = "Showing first \(count) entries"
+            content.text = loadingMore
+                ? String(localized: "Loading more… \(count) entries so far")
+                : String(localized: "Showing first \(count) entries")
             content.textProperties.font = UIFont.preferredFont(forTextStyle: .caption1)
             content.textProperties.color = comment
             if appliedLayout?.isColumn == true {
@@ -2223,7 +2237,8 @@ private extension FileBrowserViewController {
         case file(FileRow)
         case result(ResultRow)
         case emptyDirectory
-        case truncated(Int)
+        /// The entries so far, and whether more pages are on their way.
+        case truncated(Int, loadingMore: Bool)
         case marksIncomplete(Int)
         case pinsHeader(FileBrowserPinsSection.Header)
         case pin(FileBrowserPinsSection.Row)

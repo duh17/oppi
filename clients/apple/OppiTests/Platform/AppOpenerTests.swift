@@ -1998,6 +1998,37 @@ struct AppOpenerTests {
         #expect(harness.recorder.browserURLs == [page])
     }
 
+    /// A file past the first page of a large folder's listing still opens:
+    /// the lookup reads the pages after it until the name turns up.
+    @Test func aLinkFindsAFileOnALaterPageOfItsFolder() async throws {
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
+        harness.connection("server-a").workspaceStore.workspaces = [makeTestWorkspace(id: "w1")]
+        harness.listings.withLock {
+            $0 = [
+                "/workspaces/w1/contents": #"""
+                {"path":"","truncated":true,"next":"a.md","entries":[
+                {"name":"a.md","type":"file","size":1,"modifiedAt":0}]}
+                """#,
+                "/workspaces/w1/contents?after=a.md": #"""
+                {"path":"","truncated":false,"next":null,"entries":[
+                {"name":"zed.md","type":"file","size":1,"modifiedAt":0}]}
+                """#,
+            ]
+        }
+
+        harness.opener.open(.resourceReference(ResourceReference(
+            target: "zed.md", sourceServerID: "server-a", workspaceID: "w1", sourceSessionID: nil, fileCandidatePath: "zed.md"
+        )))
+        await harness.settle()
+
+        guard case .linkedFile(let file)? = harness.navigation.workspaceStackRouteElements.last,
+              case .workspaceFile(let path, _) = file.kind else {
+            Issue.record("no file opened: \(harness.navigation.workspaceStackRouteElements)")
+            return
+        }
+        #expect(path == "zed.md")
+    }
+
     @Test func webLinkAndSystemLinkNeverWaitForLaunch() async throws {
         let harness = await OpenerHarness(servers: [], launch: false)
         let web = try #require(URL(string: "https://example.com/docs"))
@@ -2070,6 +2101,16 @@ private final class StubAuthenticator {
 
 @MainActor
 private final class OpenerHarness {
+    /// `?after=<cursor>` of a listing request, or empty; the network routes
+    /// call it off the main actor.
+    nonisolated static func listingCursorKey(_ url: URL?) -> String {
+        guard let url, let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { return "" }
+        for item in items where item.name == "after" {
+            if let value = item.value { return "?after=\(value)" }
+        }
+        return ""
+    }
+
     let serverStore: ServerStore
     let coordinator: ConnectionCoordinator
     let navigation = SceneNavigation()
@@ -2155,7 +2196,10 @@ private final class OpenerHarness {
         let traceRequests = traceRequests
         let listings = listings
         networkRoutes = TestURLProtocol.routeScope { request in
-            if let path = request.url?.path, let json = listings.withLock({ $0[path.hasSuffix("/") ? String(path.dropLast()) : path] }) {
+            // A later page of a listing is keyed `<path>?after=<cursor>`.
+            let after = OpenerHarness.listingCursorKey(request.url)
+            if let path = request.url?.path,
+               let json = listings.withLock({ $0[(path.hasSuffix("/") ? String(path.dropLast()) : path) + after] }) {
                 return try mockJSONResponse(json: json, for: request)
             }
             if request.url?.path.hasSuffix("/trace-page") == true {

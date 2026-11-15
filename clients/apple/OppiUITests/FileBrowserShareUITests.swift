@@ -132,22 +132,36 @@ final class FileBrowserShareUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(viewerShare.waitUntilExists(timeout: 20), "Open opened the image")
     }
 
-    /// A download that takes a while shows how far it is, and Cancel stops it
+    /// A large download shows how far it is; when its connection drops it
+    /// says it is reconnecting and resumes where it stopped; Cancel stops it
     /// before any share sheet.
-    func testASlowDownloadShowsProgressAndCancels() {
+    func testASlowDownloadShowsProgressReconnectsAndCancels() {
         launchMediaFolder()
         openRowMenu("media/long-take.mov")
         shareAction.tap()
         XCTAssertTrue(progress.waitUntilExists(timeout: 10), "a slow download shows its progress")
         XCTAssertTrue(
-            waitFor(self.progressStatus.label.contains("MB of"), timeout: 10),
+            waitFor(self.progressStatus.label.contains("MB of 1.2 GB"), timeout: 10),
             "the progress says how much of the file has arrived (\(progressStatus.label))"
         )
         save("share-progress-\(device)")
+        // The fixture's first connection drops a quarter of the way in.
+        XCTAssertTrue(
+            waitFor(self.progressStatus.label.contains("Reconnecting"), timeout: 15),
+            "a dropped connection says it is reconnecting (\(progressStatus.label))"
+        )
+        save("share-reconnecting-\(device)")
+        XCTAssertTrue(
+            waitFor(!self.progressStatus.label.contains("Reconnecting") && self.progressStatus.label.contains("of 1.2 GB"), timeout: 15),
+            "the download resumes (\(progressStatus.label))"
+        )
+        hold(for: 3)
+        save("share-resumed-\(device)")
 
         app.buttons["fileBrowser.share.cancel"].firstMatch.tap()
         XCTAssertTrue(progress.waitUntilGone(timeout: 5))
         XCTAssertFalse(shareSheet.waitForExistence(timeout: 3), "a cancelled download shares nothing")
+        save("share-cancelled-\(device)")
     }
 
     /// A file over the server's size limit says so, with the server's reason.

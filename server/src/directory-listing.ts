@@ -4,30 +4,35 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import { compareDirEntryNames } from "./dir-order.js";
 import { isPathWithinRoot } from "./path-utils.js";
-import type { FileEntry } from "./types.js";
+import type { DirectoryListingResponse, FileEntry } from "./types.js";
 
-const MAX_DIR_ENTRIES = 1000;
+/** Entries in one page of a listing; `next` names where the following page starts. */
+export const DIRECTORY_PAGE_SIZE = 1000;
+/** Entries statted at once: enough to keep the disk busy, few enough to bound open handles. */
+const STAT_BATCH = 64;
 
 export interface ContainedPathOptions {
   /** Sandbox mounts: the realpath must also stay inside the root's realpath. */
   confineSymlinks?: boolean;
 }
 
+/** Where a requested path landed: a real path, outside the root, or nowhere. */
+export type ContainedPathResult =
+  { kind: "ok"; path: string } | { kind: "outside-root" } | { kind: "not-found" };
+
 /**
  * Resolve a path whose requested form stays inside `root`.
  *
- * Lexical `..` and absolute escapes are rejected. In-tree symlink names are
- * followed to their real path even when the target is outside `root`, unless
- * `confineSymlinks` is set.
- *
- * Returns the canonical absolute path if it is valid and accessible, or
- * `null` if the path does not exist or leaves `root`.
+ * Lexical `..` and absolute escapes are `outside-root`. In-tree symlink names
+ * are followed to their real path even when the target is outside `root`,
+ * unless `confineSymlinks` is set, which makes such a target `outside-root`
+ * too. A path that does not exist is `not-found`.
  */
-export async function resolveContainedPath(
+export async function resolveContainedPathResult(
   root: string,
   requestedPath: string,
   options: ContainedPathOptions = {},
-): Promise<string | null> {
+): Promise<ContainedPathResult> {
   // Absolute paths must not be joined onto the root. Node path.join may either
   // discard the root or append the absolute segment; both break sandbox guest
   // paths mapped onto the host mount.
@@ -38,21 +43,67 @@ export async function resolveContainedPath(
         ? requestedPath
         : join(root, requestedPath);
 
-  if (!isPathWithinRoot(resolve(joined), resolve(root))) {
-    return null;
+  if (requestedPath.includes("\0") || !isPathWithinRoot(resolve(joined), resolve(root))) {
+    return { kind: "outside-root" };
   }
 
+  let real: string;
   try {
-    const real = await realpath(joined);
-    if (options.confineSymlinks && !isPathWithinRoot(real, await realpath(root))) return null;
-    return real;
+    real = await realpath(joined);
   } catch {
-    return null;
+    return { kind: "not-found" };
   }
+  if (options.confineSymlinks) {
+    let realRoot: string;
+    try {
+      realRoot = await realpath(root);
+    } catch {
+      return { kind: "not-found" };
+    }
+    if (!isPathWithinRoot(real, realRoot)) return { kind: "outside-root" };
+  }
+  return { kind: "ok", path: real };
 }
 
+/** `resolveContainedPathResult`'s real path, or null when there is none. */
+export async function resolveContainedPath(
+  root: string,
+  requestedPath: string,
+  options: ContainedPathOptions = {},
+): Promise<string | null> {
+  const result = await resolveContainedPathResult(root, requestedPath, options);
+  return result.kind === "ok" ? result.path : null;
+}
+
+/** The page a listing request asks for: `?after=<name>`, or the first. */
+export function listingCursor(url: URL): string | undefined {
+  return url.searchParams.get("after") || undefined;
+}
+
+/** The wire shape of one listed page. */
+export function directoryListingResponse(
+  path: string,
+  page: { entries: FileEntry[]; next: string | null },
+): DirectoryListingResponse {
+  return { path, entries: page.entries, truncated: page.next !== null, next: page.next };
+}
+
+export type DirectoryListingResult =
+  | { kind: "ok"; entries: FileEntry[]; next: string | null }
+  | { kind: "outside-root" }
+  | { kind: "not-found" };
+
 /**
- * List entries in a contained directory. Returns null if path is invalid or not a directory.
+ * List one page of a contained directory: `outside-root` for a path that
+ * leaves `root` (`resolveContainedPathResult`), `not-found` for one that is
+ * missing, unreadable, or not a directory.
+ *
+ * Pages follow the names in byte order (`compareDirEntryNames`, Node's
+ * order on every runtime). A page holds at most `limit` entries after the
+ * name `after` (exclusive), and `next` is the last name it looked at while
+ * more follow, else null. Paging by name, not by position, means an entry
+ * added or removed between pages never shifts another into a page twice or
+ * out of every page. Clients arrange entries for display themselves.
  *
  * Known residual risk: the directory is checked by realpath and then read by
  * path. Node has no readdir-by-fd, so a guest that swaps a parent directory
@@ -63,28 +114,41 @@ export async function resolveContainedPath(
 export async function listDirectoryEntries(
   root: string,
   dirRelPath: string,
-  options: ContainedPathOptions = {},
-): Promise<{ entries: FileEntry[]; truncated: boolean } | null> {
-  const resolvedDir = await resolveContainedPath(root, dirRelPath || ".", options);
-  if (!resolvedDir) return null;
+  options: ContainedPathOptions & { after?: string; limit?: number } = {},
+): Promise<DirectoryListingResult> {
+  const limit = options.limit ?? DIRECTORY_PAGE_SIZE;
+  const notFound = { kind: "not-found" } as const;
+  const contained = await resolveContainedPathResult(root, dirRelPath || ".", options);
+  if (contained.kind !== "ok") return contained;
+  const resolvedDir = contained.path;
 
   let dirStat: Stats;
   try {
     dirStat = await stat(resolvedDir);
   } catch {
-    return null;
+    return notFound;
   }
-  if (!dirStat.isDirectory()) return null;
+  if (!dirStat.isDirectory()) return notFound;
 
   let dirents: Dirent[];
   try {
-    // Sorted before the entry cap, so which entries a truncated listing keeps does not depend on
-    // the runtime's readdir order.
+    // Sorted before paging, so a page does not depend on the runtime's readdir order.
     dirents = (await readdir(resolvedDir, { withFileTypes: true })).sort((a, b) =>
       compareDirEntryNames(a.name, b.name),
     );
   } catch {
-    return null;
+    return notFound;
+  }
+  const after = options.after;
+  let start = 0;
+  if (after !== undefined) {
+    // First name past `after`.
+    let high = dirents.length;
+    while (start < high) {
+      const mid = (start + high) >>> 1;
+      if (compareDirEntryNames(dirents[mid].name, after) <= 0) start = mid + 1;
+      else high = mid;
+    }
   }
 
   let confinedRoot: string | undefined;
@@ -92,19 +156,11 @@ export async function listDirectoryEntries(
     try {
       confinedRoot = await realpath(root);
     } catch {
-      return null;
+      return notFound;
     }
   }
 
-  const entries: FileEntry[] = [];
-  let truncated = false;
-
-  for (const dirent of dirents) {
-    if (entries.length >= MAX_DIR_ENTRIES) {
-      truncated = true;
-      break;
-    }
-
+  const entryFor = async (dirent: Dirent): Promise<FileEntry | null> => {
     const entryPath = join(resolvedDir, dirent.name);
     try {
       // Sandbox listings do not report size/mtime/type of a target outside the mount.
@@ -113,26 +169,33 @@ export async function listDirectoryEntries(
         dirent.isSymbolicLink() &&
         !isPathWithinRoot(await realpath(entryPath), confinedRoot)
       ) {
-        continue;
+        return null;
       }
       const entryStat = await stat(entryPath);
-      const isDir = entryStat.isDirectory();
-
-      entries.push({
+      return {
         name: dirent.name,
-        type: isDir ? "directory" : "file",
+        type: entryStat.isDirectory() ? "directory" : "file",
         size: entryStat.size,
         modifiedAt: Math.floor(entryStat.mtimeMs),
-      });
+      };
     } catch {
-      continue;
+      // Gone since readdir, or a dangling symlink.
+      return null;
+    }
+  };
+
+  const entries: FileEntry[] = [];
+  let index = start;
+  // Skipped entries (escaping or vanished) do not count, so a page fills
+  // from further on; one batch at a time keeps the page in name order.
+  while (entries.length < limit && index < dirents.length) {
+    const batch = dirents.slice(index, index + Math.min(STAT_BATCH, limit - entries.length));
+    index += batch.length;
+    for (const entry of await Promise.all(batch.map(entryFor))) {
+      if (entry) entries.push(entry);
     }
   }
 
-  entries.sort((a, b) => {
-    if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
-
-  return { entries, truncated };
+  const next = index < dirents.length && index > 0 ? dirents[index - 1].name : null;
+  return { kind: "ok", entries, next };
 }

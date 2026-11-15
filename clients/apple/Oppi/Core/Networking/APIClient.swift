@@ -2008,29 +2008,38 @@ actor APIClient: ClientLogUploading {
     ///
     /// Pass an empty string or "/" for the workspace root. Subdirectory paths
     /// should include a trailing slash (e.g. "src/").
+    ///
+    /// One page of up to 1000 entries: pass the previous page's `next` as
+    /// `after` for the one after it (`DirectoryListingResponse.next`).
     func listWorkspaceDirectory(
         workspaceId: String,
         path: String = "",
-        worktreeId: String? = nil
+        worktreeId: String? = nil,
+        after: String? = nil
     ) async throws -> DirectoryListingResponse {
         let data = try await get(
             url: makeWorkspaceContentsURL(
                 workspaceId: workspaceId,
                 path: path,
-                queryItems: workspaceWorktreeQueryItems(worktreeId),
+                queryItems: workspaceWorktreeQueryItems(worktreeId) + Self.listingCursorQueryItems(after),
                 directory: true
             )
         )
         return try JSONDecoder().decode(DirectoryListingResponse.self, from: data)
     }
 
-    /// List entries in the connected server's home directory.
+    /// List entries in the connected server's home directory, one page at a
+    /// time like `listWorkspaceDirectory`.
     ///
     /// Pass an empty string or "/" for `~`. Subdirectory paths are
     /// home-relative and should include a trailing slash (e.g. "Documents/").
-    func listHostDirectory(path: String = "") async throws -> DirectoryListingResponse {
-        let data = try await get(url: makeHostContentsURL(path: path, directory: true))
+    func listHostDirectory(path: String = "", after: String? = nil) async throws -> DirectoryListingResponse {
+        let data = try await get(url: makeHostContentsURL(path: path, queryItems: Self.listingCursorQueryItems(after), directory: true))
         return try JSONDecoder().decode(DirectoryListingResponse.self, from: data)
+    }
+
+    private static func listingCursorQueryItems(_ after: String?) -> [URLQueryItem] {
+        after.map { [URLQueryItem(name: "after", value: $0)] } ?? []
     }
 
     /// Fetch the complete file index for client-side fuzzy search.
@@ -2926,12 +2935,13 @@ actor APIClient: ClientLogUploading {
         )
     }
 
-    private func makeHostContentsURL(path: String, directory: Bool = false) throws -> URL {
+    private func makeHostContentsURL(path: String, queryItems: [URLQueryItem] = [], directory: Bool = false) throws -> URL {
         let normalizedPath = path == "/" ? "" : path
         let trailingSlash = directory || normalizedPath.hasSuffix("/")
         return try makeURL(
             pathSegments: ["host", "contents"],
             appendedPath: normalizedPath,
+            queryItems: queryItems,
             trailingSlash: trailingSlash
         )
     }

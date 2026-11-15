@@ -377,7 +377,8 @@ export type CurrentFilePathResult =
   | { kind: "ok"; file: ResolvedCurrentFile }
   | { kind: "not-found" }
   | { kind: "root-not-found" }
-  | { kind: "outside-sandbox" };
+  /** The path leaves the origin's root: a sandbox mount (after symlinks), a Skill, or Pi's directory. */
+  | { kind: "outside-root" };
 
 export async function resolveCurrentFilePath(
   origin: CurrentFileOrigin,
@@ -402,9 +403,8 @@ export async function resolveCurrentFilePath(
   if (origin.kind === "skill" || origin.kind === "pi") {
     const root = resolve(origin.kind === "skill" ? origin.root : origin.agentDir);
     const lexicalPath = isAbsolute(requestedPath) ? null : resolve(root, requestedPath);
-    if (!lexicalPath || lexicalPath === root || !isPathWithinRoot(lexicalPath, root)) {
-      return { kind: "not-found" };
-    }
+    if (!lexicalPath || !isPathWithinRoot(lexicalPath, root)) return { kind: "outside-root" };
+    if (lexicalPath === root) return { kind: "not-found" };
     try {
       return { kind: "ok", file: { realPath: await realpath(lexicalPath), lexicalPath } };
     } catch {
@@ -418,7 +418,7 @@ export async function resolveCurrentFilePath(
       requestedPath,
       root: origin.root,
     }) ?? (sandboxed ? null : resolveHostWorkspacePath(requestedPath, realRoot));
-  if (!lexicalPath) return sandboxed ? { kind: "outside-sandbox" } : { kind: "not-found" };
+  if (!lexicalPath) return sandboxed ? { kind: "outside-root" } : { kind: "not-found" };
 
   let realPath: string;
   try {
@@ -426,7 +426,7 @@ export async function resolveCurrentFilePath(
   } catch {
     return { kind: "not-found" };
   }
-  if (sandboxed && !isPathWithinRoot(realPath, realRoot)) return { kind: "outside-sandbox" };
+  if (sandboxed && !isPathWithinRoot(realPath, realRoot)) return { kind: "outside-root" };
   return {
     kind: "ok",
     file: { realPath, lexicalPath, ...(sandboxed ? { confinedRoot: realRoot } : {}) },

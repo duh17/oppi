@@ -197,7 +197,8 @@ describe("/files/current?origin=skill", () => {
       });
       expect(res.statusCode).toBe(404);
       // Nor read anything outside the Skill through it.
-      if (path !== "link.md") expect((await call(fixture, "GET", id, path)).statusCode).toBe(404);
+      if (path === "new.md") expect((await call(fixture, "GET", id, path)).statusCode).toBe(404);
+      if (path.includes("/")) expect((await call(fixture, "GET", id, path)).statusCode).toBe(403);
     }
     expect(readFileSync(outside, "utf8")).toBe("outside\n");
     expect(readFileSync(join(skillsDir, "neighbor", "SKILL.md"), "utf8")).toContain("# neighbor");

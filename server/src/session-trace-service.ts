@@ -422,7 +422,7 @@ export class SessionTraceService {
         reqPath,
       );
       if (file.kind === "root-not-found") return { kind: "workspace-root-not-found" };
-      if (file.kind === "outside-sandbox") return { kind: "current-file-outside-workspace" };
+      if (file.kind === "outside-root") return { kind: "current-file-outside-workspace" };
       if (file.kind === "not-found") return { kind: "current-file-not-found" };
       resolved = file.file.realPath;
     } else {

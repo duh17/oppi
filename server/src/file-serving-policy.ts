@@ -229,49 +229,12 @@ export const SEARCH_IGNORE_DIRS = new Set([
 /** Private Oppi state is ignored only at the workspace root. */
 export const SEARCH_ROOT_IGNORE_DIRS = new Set([".pi"]);
 
-export const SENSITIVE_FILE_PATTERNS: RegExp[] = [
-  /^\.env($|\.)/, // .env, .env.local, .env.production
-  /\.pem$/i, // Private keys / certificates
-  /\.key$/i, // Private keys
-  /^id_rsa/, // SSH private keys
-  /^id_ed25519/, // SSH private keys
-  /^id_ecdsa/, // SSH private keys
-  /^id_dsa/, // SSH private keys
-  /^\.netrc$/, // Network credentials
-  /^\.npmrc$/, // npm tokens
-  /^\.pypirc$/, // PyPI credentials
-  /^\.htpasswd$/, // HTTP authentication
-];
-
-const SENSITIVE_PATH_SEGMENTS = new Set([".git"]);
-
 export function decodeWorkspaceRoutePath(encodedPath: string): string | null {
   try {
     return decodeURIComponent(encodedPath);
   } catch {
     return null;
   }
-}
-
-/**
- * Check whether a workspace-relative path points to a sensitive file.
- *
- * Used to omit credential-like names from the fuzzy `/paths` index.
- * Directory listings may still show those names. Workspace `raw` serves
- * owner-requested files that stay inside the workspace.
- */
-export function isSensitivePath(requestedPath: string): boolean {
-  const normalizedPath = requestedPath.replaceAll("\\", "/");
-  const segments = normalizedPath.split("/");
-
-  // Check directory segments for sensitive path components
-  for (let i = 0; i < segments.length - 1; i++) {
-    if (SENSITIVE_PATH_SEGMENTS.has(segments[i])) return true;
-  }
-
-  // Check the filename against sensitive patterns
-  const filename = segments[segments.length - 1];
-  return SENSITIVE_FILE_PATTERNS.some((p) => p.test(filename));
 }
 
 function normalizeContentType(contentType: string): string {

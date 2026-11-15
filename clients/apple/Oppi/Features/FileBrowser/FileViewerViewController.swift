@@ -1107,6 +1107,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     ) -> FileRenderInput {
         FileRenderInput(
             api: api,
+            currentAPI: services.apiClient,
             access: fileAccess,
             path: path,
             fileName: currentFileName,

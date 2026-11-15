@@ -10,11 +10,17 @@ export interface FileEntry {
   path?: string;
 }
 
-/** Directory listing response shape (GET /workspaces/:id/contents/<dir> and GET /host/contents/<dir>). */
+/**
+ * One page of a directory listing (GET /workspaces/:id/contents/<dir> and
+ * GET /host/contents/<dir>), entries in byte order of their names. Pass
+ * `next` back as `?after=` for the following page; null on the last one.
+ */
 export interface DirectoryListingResponse {
   path: string;
   entries: FileEntry[];
+  /** More entries follow this page (`next` is set). */
   truncated: boolean;
+  next: string | null;
 }
 
 /**

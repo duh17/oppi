@@ -127,9 +127,10 @@ enum FileSharePresenter {
 
     /// Downloads `file` to `destination` on disk, never into memory, and says
     /// whether it is there. A download that takes a moment shows its progress
-    /// with Cancel over `screen`'s window. A file this device should not hold
-    /// (`FileDownloadBudget`), or one over the server's size limit, says so
-    /// in an alert, as does any other failure; a cancel says nothing. On
+    /// with Cancel over `screen`'s window, and "Reconnecting" while a dropped
+    /// connection waits to resume. A file this device has no room for
+    /// (`FileDownloadBudget`) says so in an alert, as does any other failure,
+    /// in its own words (`FileDownloadFailure`); a cancel says nothing. On
     /// failure `destination`'s folder is removed.
     static func download(_ file: RemoteFileShare, to destination: URL, from screen: UIViewController) async -> Bool {
         guard !isPreparingRemoteFile, screen.viewIfLoaded?.window != nil else { return false }
@@ -142,7 +143,8 @@ enum FileSharePresenter {
             return false
         }
         isPreparingRemoteFile = true
-        let transfer = RemoteFileTransfer()
+        // A size the listing gave was checked above.
+        let transfer = RemoteFileTransfer(checkedSize: file.expectedBytes != nil)
         transfer.beginBackgroundTime()
         defer {
             isPreparingRemoteFile = false
@@ -161,7 +163,8 @@ enum FileSharePresenter {
                 Task { @MainActor [weak overlay] in
                     let progress = FileDownloadProgress(
                         received: progress.received,
-                        expected: progress.expected ?? expectedBytes
+                        expected: progress.expected ?? expectedBytes,
+                        reconnecting: progress.reconnecting
                     )
                     overlay?.update(progress)
                     transfer.check(progress)
@@ -187,34 +190,26 @@ enum FileSharePresenter {
             try? FileManager.default.removeItem(at: destination.deletingLastPathComponent())
             if let refusedMidway = transfer.refusal {
                 presenter.errorAlerts.show(title: refusedMidway.title, message: refusedMidway.message(fileName: file.fileName))
-            } else if error is CancellationError {
-                return false
-            } else if case .digestMismatch? = error as? FileDownloadError {
-                presenter.errorAlerts.show(
-                    title: String(localized: "Download Failed"),
-                    message: String(localized: "“\(file.fileName)” did not match the server's copy: it changed or was damaged on the way. Nothing was saved.")
-                )
-            } else if case .rejected(status: 413, let message)? = error as? FileDownloadError {
-                let reason = message ?? String(localized: "it is over the size limit for this kind of file")
-                presenter.errorAlerts.show(
-                    title: String(localized: "File Too Large"),
-                    message: String(localized: "The server won't send “\(file.fileName)”: \(reason).")
-                )
-            } else {
-                presenter.errorAlerts.showShareFailure()
+            } else if let failure = FileDownloadFailure(error) {
+                presenter.errorAlerts.show(title: failure.title, message: failure.message(fileName: file.fileName))
             }
             return false
         }
     }
 
     /// One download in flight: a size the listing did not know is checked
-    /// against `FileDownloadBudget`'s cap as the response states it, or as
-    /// bytes arrive, and the download stops there.
+    /// against the free space (`FileDownloadBudget`) once the response
+    /// states it, and the download stops there.
     @MainActor
     private final class RemoteFileTransfer {
         var task: Task<Void, Error>?
         private(set) var refusal: FileDownloadBudget.Refusal?
         private var backgroundTask = UIBackgroundTaskIdentifier.invalid
+        private var checkedSize: Bool
+
+        init(checkedSize: Bool) {
+            self.checkedSize = checkedSize
+        }
 
         /// Leaving the app keeps the download going for the time iOS grants;
         /// after that the download resumes from where it stopped when the app
@@ -232,10 +227,14 @@ enum FileSharePresenter {
         }
 
         func check(_ progress: FileDownloadProgress) {
-            guard refusal == nil, let refusal = FileDownloadBudget.refusal(
-                byteCount: max(progress.received, progress.expected ?? 0),
-                availableBytes: nil
-            ) else { return }
+            guard !checkedSize, let expected = progress.expected else { return }
+            checkedSize = true
+            // What arrived so far already took its space from the free space.
+            guard let available = FileDownloadBudget.availableBytes(),
+                  let refusal = FileDownloadBudget.refusal(
+                      byteCount: expected,
+                      availableBytes: available + progress.received
+                  ) else { return }
             self.refusal = refusal
             task?.cancel()
         }
@@ -381,5 +380,102 @@ enum FileSharePresenter {
         // Nil for a bar item the bar is not drawing.
         guard let frame = item.frame(in: view) else { return false }
         return !frame.isNull && !frame.isEmpty
+    }
+}
+
+// MARK: - Download failures
+
+/// Why a file download from the server failed, in words the person can act
+/// on: the file is gone, the server refuses it, the device is offline, or the
+/// server cannot be reached. Nil for a cancel, which needs no words.
+struct FileDownloadFailure: Equatable {
+    enum Kind: Equatable {
+        case notFound
+        /// The path leaves what the server shares, or the server refuses it.
+        case refused(reason: String?)
+        case tooLarge(reason: String?)
+        case notSignedIn
+        case offline
+        case serverUnreachable
+        case outOfSpace
+        case changedInTransfer
+        case serverError(status: Int, reason: String?)
+        case other
+    }
+
+    let kind: Kind
+
+    init?(_ error: Error) {
+        if error is CancellationError { return nil }
+        switch error {
+        case FileDownloadError.digestMismatch:
+            kind = .changedInTransfer
+        case FileDownloadError.rejected(let status, let message):
+            switch status {
+            case 401: kind = .notSignedIn
+            case 403: kind = .refused(reason: message)
+            case 404, 410: kind = .notFound
+            case 413: kind = .tooLarge(reason: message)
+            default: kind = .serverError(status: status, reason: message)
+            }
+        case let error as URLError:
+            switch error.code {
+            case .cancelled: return nil
+            case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff, .callIsActive:
+                kind = .offline
+            case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .timedOut,
+                 .networkConnectionLost, .resourceUnavailable, .backgroundSessionWasDisconnected:
+                kind = .serverUnreachable
+            case .userAuthenticationRequired:
+                kind = .notSignedIn
+            default:
+                kind = .other
+            }
+        case let error as CocoaError where error.code == .fileWriteOutOfSpace:
+            kind = .outOfSpace
+        default:
+            kind = .other
+        }
+    }
+
+    var title: String {
+        switch kind {
+        case .notFound: String(localized: "File Not Found")
+        case .refused: String(localized: "Can't Download This File")
+        case .tooLarge: String(localized: "File Too Large")
+        case .notSignedIn: String(localized: "Not Signed In")
+        case .offline: String(localized: "You're Offline")
+        case .serverUnreachable: String(localized: "Server Unreachable")
+        case .outOfSpace: String(localized: "Not Enough Storage")
+        case .changedInTransfer, .serverError, .other: String(localized: "Download Failed")
+        }
+    }
+
+    func message(fileName: String) -> String {
+        switch kind {
+        case .notFound:
+            return String(localized: "“\(fileName)” is no longer on the server. It may have been moved or deleted.")
+        case .refused(let reason):
+            let reason = reason ?? String(localized: "it is outside the folders it shares")
+            return String(localized: "The server won't send “\(fileName)”: \(reason).")
+        case .tooLarge(let reason):
+            let reason = reason ?? String(localized: "it is over the size limit for this kind of file")
+            return String(localized: "The server won't send “\(fileName)”: \(reason).")
+        case .notSignedIn:
+            return String(localized: "The server did not accept this device's sign-in. Reconnect to the server, then try again.")
+        case .offline:
+            return String(localized: "“\(fileName)” stopped downloading because this device is offline. Try again once it's back online.")
+        case .serverUnreachable:
+            return String(localized: "Oppi lost the server while downloading “\(fileName)” and could not reach it again. Check that the server is running and reachable, then try again.")
+        case .outOfSpace:
+            return String(localized: "This device ran out of space while downloading “\(fileName)”. Nothing was saved.")
+        case .changedInTransfer:
+            return String(localized: "“\(fileName)” did not match the server's copy: it changed or was damaged on the way. Nothing was saved.")
+        case .serverError(let status, let reason):
+            let reason = reason ?? HTTPURLResponse.localizedString(forStatusCode: status)
+            return String(localized: "The server could not send “\(fileName)”: \(reason).")
+        case .other:
+            return String(localized: "“\(fileName)” could not be downloaded. Please try again.")
+        }
     }
 }

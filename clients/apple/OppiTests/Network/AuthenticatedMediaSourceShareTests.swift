@@ -140,7 +140,7 @@ struct AuthenticatedMediaSourceShareTests {
         let access = FileViewerViewController.Configuration(
             workspaceId: "w1", filePath: "media/clip.mp4", fileName: "clip.mp4"
         ).fileAccess
-        let share = access.remoteFileShare(api: api, path: "media/clip.mp4", fileName: "clip.mp4", size: expected.count)
+        let share = access.remoteFileShare(api: { api }, path: "media/clip.mp4", fileName: "clip.mp4", size: expected.count)
         #expect(share.fileName == "clip.mp4")
         #expect(share.expectedBytes == Int64(expected.count))
 
@@ -275,6 +275,92 @@ struct AuthenticatedMediaSourceShareTests {
         #expect(sent.allSatisfy { $0.value(forHTTPHeaderField: "X-Oppi-Want-File-Digest") == "sha-256" })
         #expect(reported.last == FileDownloadProgress(received: Int64(file.count), expected: Int64(file.count)))
         #expect(!FileManager.default.fileExists(atPath: destination.appendingPathExtension("part").path))
+    }
+
+    @Test("a download that dropped on one route resumes on the route the connection has now, showing it reconnects")
+    func resumesOnTheNewRoute() async throws {
+        defer { ScriptedDownloadURLProtocol.script = nil }
+        let file = Data((0..<300_000).map { UInt8($0 % 241) })
+        let half = 120_000
+        let requests = RequestLog()
+        ScriptedDownloadURLProtocol.script = { request, index in
+            requests.record(request)
+            let url = try #require(request.url)
+            let start = index == 0 ? 0 : half
+            let response = try #require(HTTPURLResponse(url: url, statusCode: 206, httpVersion: "HTTP/1.1", headerFields: [
+                "Content-Range": "bytes \(start)-\(file.count - 1)/\(file.count)",
+                "Content-Length": String(file.count - start),
+                "ETag": "\"v1\"",
+            ]))
+            return index == 0
+                ? (response, file.prefix(half), URLError(.networkConnectionLost))
+                : (response, file.suffix(from: half), nil)
+        }
+        // The LAN address first; after the drop the connection reaches the
+        // server over the tailnet, at another address.
+        let routes = RouteLog(hosts: ["192.168.1.20", "studio.tail1234.ts.net"])
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ScriptedDownloadURLProtocol.self]
+        var download = ResumableFileDownload {
+            ResumableFileDownload.Endpoint(
+                url: testUnwrap(URL(string: "https://\(routes.next())/files/current?path=clip.mov")),
+                authorizationProvider: { "Bearer token" },
+                pinnedLeafFingerprint: nil,
+                expectedServerName: nil,
+                configuration: configuration
+            )
+        }
+        download.retryDelays = [.zero]
+        download.waitUntilActive = {}
+        let destination = shareDestination()
+        defer { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()) }
+        let reported = ProgressCapture()
+
+        try await download.run(to: destination) { reported.record($0) }
+
+        #expect(try Data(contentsOf: destination) == file)
+        #expect(requests.all.map { $0.url?.host() } == ["192.168.1.20", "studio.tail1234.ts.net"])
+        #expect(requests.all.last?.value(forHTTPHeaderField: "Range") == "bytes=\(half)-")
+        #expect(requests.all.last?.value(forHTTPHeaderField: "If-Range") == "\"v1\"")
+        #expect(reported.all.contains(FileDownloadProgress(received: Int64(half), expected: Int64(file.count), reconnecting: true)))
+        #expect(reported.last == FileDownloadProgress(received: Int64(file.count), expected: Int64(file.count)))
+    }
+
+    @Test("each drop that moved bytes starts the retry budget over; drops that move nothing use it up")
+    func retriesWhileTheDownloadMoves() async throws {
+        defer { ScriptedDownloadURLProtocol.script = nil }
+        let file = Data(repeating: 7, count: 100_000)
+        let piece = 25_000
+        ScriptedDownloadURLProtocol.script = { request, index in
+            let url = try #require(request.url)
+            let start = index * piece
+            let response = try #require(HTTPURLResponse(url: url, statusCode: 206, httpVersion: "HTTP/1.1", headerFields: [
+                "Content-Range": "bytes \(start)-\(file.count - 1)/\(file.count)",
+                "Content-Length": String(file.count - start),
+                "ETag": "\"v1\"",
+            ]))
+            // Four pieces, each on its own connection that drops after it.
+            let last = start + piece >= file.count
+            return (response, file.subdata(in: start..<(start + piece)), last ? nil : URLError(.networkConnectionLost))
+        }
+        let destination = shareDestination()
+        defer { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()) }
+        var download = scriptedDownload("https://server.example.com/files/current?path=flaky.bin")
+        download.retryDelays = [.zero]
+
+        try await download.run(to: destination) { _ in }
+        #expect(try Data(contentsOf: destination) == file)
+
+        // A server that never answers: one retry, then the drop is the error.
+        ScriptedDownloadURLProtocol.script = { _, _ in throw URLError(.cannotConnectToHost) }
+        let unreachable = shareDestination()
+        defer { try? FileManager.default.removeItem(at: unreachable.deletingLastPathComponent()) }
+        let error = await #expect(throws: URLError.self) {
+            try await download.run(to: unreachable) { _ in }
+        }
+        #expect(error?.code == .cannotConnectToHost)
+        #expect(ScriptedDownloadURLProtocol.requestCount == 2, "the first attempt and one retry")
+        #expect(!FileManager.default.fileExists(atPath: unreachable.appendingPathExtension("part").path))
     }
 
     @Test("a file that changed while the download was down starts over with the new file")
@@ -480,6 +566,7 @@ private final class ScriptedDownloadURLProtocol: URLProtocol, @unchecked Sendabl
         didSet { count = 0 }
     }
     nonisolated(unsafe) private static var count = 0
+    static var requestCount: Int { count }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -487,10 +574,16 @@ private final class ScriptedDownloadURLProtocol: URLProtocol, @unchecked Sendabl
     override func startLoading() {
         let index = Self.count
         Self.count += 1
-        guard let script = Self.script, let (response, body, failure) = try? script(request, index) else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+        let answer: (HTTPURLResponse, Data, URLError?)
+        do {
+            guard let script = Self.script else { throw URLError(.badServerResponse) }
+            answer = try script(request, index)
+        } catch {
+            // A script that throws a URLError fails the connection with it.
+            client?.urlProtocol(self, didFailWithError: error as? URLError ?? URLError(.badServerResponse))
             return
         }
+        let (response, body, failure) = answer
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: body)
         guard let failure else {
@@ -510,12 +603,25 @@ private final class ScriptedDownloadURLProtocol: URLProtocol, @unchecked Sendabl
 
 private final class ProgressCapture: @unchecked Sendable {
     private let lock = NSLock()
-    private var latest: FileDownloadProgress?
+    private var reports: [FileDownloadProgress] = []
 
-    var last: FileDownloadProgress? { lock.withLock { latest } }
+    var last: FileDownloadProgress? { lock.withLock { reports.last } }
+    var all: [FileDownloadProgress] { lock.withLock { reports } }
 
     func record(_ progress: FileDownloadProgress) {
-        lock.withLock { latest = progress }
+        lock.withLock { reports.append(progress) }
+    }
+}
+
+/// The server's host for each attempt in turn; the last one stays.
+private final class RouteLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var hosts: [String]
+
+    init(hosts: [String]) { self.hosts = hosts }
+
+    func next() -> String {
+        lock.withLock { hosts.count > 1 ? hosts.removeFirst() : hosts[0] }
     }
 }
 

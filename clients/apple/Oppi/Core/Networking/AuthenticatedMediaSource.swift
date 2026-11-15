@@ -90,7 +90,13 @@ struct AuthenticatedMediaSource: Sendable {
 
     /// This file's download, through the same bearer and pinned certificate as playback.
     func resumableDownload(configuration: URLSessionConfiguration) -> ResumableFileDownload {
-        ResumableFileDownload(
+        let endpoint = downloadEndpoint(configuration: configuration)
+        return ResumableFileDownload { endpoint }
+    }
+
+    /// Where a download of this file goes, for one attempt.
+    func downloadEndpoint(configuration: URLSessionConfiguration) -> ResumableFileDownload.Endpoint {
+        ResumableFileDownload.Endpoint(
             url: url,
             authorizationProvider: authorizationProvider,
             pinnedLeafFingerprint: tlsCertFingerprint,
@@ -221,10 +227,12 @@ class AuthenticatedMediaFileDownloadDelegate: NSObject, @unchecked Sendable,
 }
 
 /// Bytes of a file download so far. `expected` is nil when the response
-/// states no length.
+/// states no length. `reconnecting` while the connection dropped and the
+/// download waits to resume from `received`.
 struct FileDownloadProgress: Sendable, Equatable {
     let received: Int64
     let expected: Int64?
+    var reconnecting = false
 }
 
 /// A file's size and modification time, from the headers of a HEAD.

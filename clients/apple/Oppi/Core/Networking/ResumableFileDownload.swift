@@ -28,16 +28,54 @@ import UIKit
 /// that replays the first request's bearer, which the device session may have
 /// refreshed by then. The app asks for background time instead
 /// (`FileSharePresenter.download`) and resumes from the `.part` on return.
+///
+/// Each attempt asks `endpoint` where the server is now: after the phone
+/// leaves Wi-Fi for the tailnet, or the embedded Tailscale node's proxy
+/// moves, the connection installs a new API client with the new address and
+/// route, and the next attempt goes there with the same `.part` and `ETag`.
+/// While an interrupted download waits to resume it reports `reconnecting`
+/// progress; an attempt that moved bytes starts the retry budget over, so a
+/// long download on a flaky link fails only after `retryDelays` attempts in a
+/// row brought nothing.
 struct ResumableFileDownload: Sendable {
-    let url: URL
-    let authorizationProvider: @Sendable () async throws -> String
-    let pinnedLeafFingerprint: String?
-    let expectedServerName: String?
-    let configuration: URLSessionConfiguration
+    /// Where one attempt goes and how it authenticates.
+    struct Endpoint: Sendable {
+        let url: URL
+        let authorizationProvider: @Sendable () async throws -> String
+        let pinnedLeafFingerprint: String?
+        let expectedServerName: String?
+        let configuration: URLSessionConfiguration
+    }
+
+    /// Read before every attempt. Throw an interruption (`isInterruption`)
+    /// while there is no route to the server; the download waits and asks again.
+    let endpoint: @Sendable () async throws -> Endpoint
     /// Waits between attempts after an interruption; one attempt per entry.
     var retryDelays: [Duration] = [.seconds(1), .seconds(2), .seconds(4), .seconds(8), .seconds(15), .seconds(30)]
     /// Returns once the app is in the foreground.
     var waitUntilActive: @Sendable () async -> Void = { await Self.waitForForeground() }
+
+    init(endpoint: @escaping @Sendable () async throws -> Endpoint) {
+        self.endpoint = endpoint
+    }
+
+    /// A download from one fixed address.
+    init(
+        url: URL,
+        authorizationProvider: @escaping @Sendable () async throws -> String,
+        pinnedLeafFingerprint: String?,
+        expectedServerName: String?,
+        configuration: URLSessionConfiguration
+    ) {
+        let fixed = Endpoint(
+            url: url,
+            authorizationProvider: authorizationProvider,
+            pinnedLeafFingerprint: pinnedLeafFingerprint,
+            expectedServerName: expectedServerName,
+            configuration: configuration
+        )
+        endpoint = { fixed }
+    }
 
     /// The request header that asks for the whole file's digest, and the answer's.
     static let digestRequestHeader = "X-Oppi-Want-File-Digest"
@@ -55,10 +93,15 @@ struct ResumableFileDownload: Sendable {
         do {
             while true {
                 try Task.checkCancellation()
+                let before = Self.size(of: partial)
                 do {
                     try await attempt(partial: partial, version: &version, onProgress: onProgress)
                     break
-                } catch let error where Self.isInterruption(error) && interruptions < retryDelays.count {
+                } catch let error where Self.isInterruption(error) {
+                    let have = Self.size(of: partial)
+                    if have > before { interruptions = 0 }
+                    guard interruptions < retryDelays.count else { throw error }
+                    onProgress(FileDownloadProgress(received: have, expected: version.total, reconnecting: true))
                     await waitUntilActive()
                     try await Task.sleep(for: retryDelays[interruptions])
                     interruptions += 1
@@ -94,10 +137,11 @@ struct ResumableFileDownload: Sendable {
         version: inout Version,
         onProgress: @escaping @Sendable (FileDownloadProgress) -> Void
     ) async throws {
-        let have = Int64((try? FileManager.default.attributesOfItem(atPath: partial.path)[.size] as? NSNumber)?.int64Value ?? 0)
-        let authorization = try await authorizationProvider()
+        let have = Self.size(of: partial)
+        let endpoint = try await endpoint()
+        let authorization = try await endpoint.authorizationProvider()
         guard !authorization.isEmpty else { throw URLError(.userAuthenticationRequired) }
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+        var request = URLRequest(url: endpoint.url, cachePolicy: .reloadIgnoringLocalCacheData)
         request.httpMethod = "GET"
         request.setValue(authorization, forHTTPHeaderField: "Authorization")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
@@ -113,11 +157,11 @@ struct ResumableFileDownload: Sendable {
             partial: partial,
             have: have,
             version: version,
-            pinnedLeafFingerprint: pinnedLeafFingerprint,
-            expectedServerName: expectedServerName,
+            pinnedLeafFingerprint: endpoint.pinnedLeafFingerprint,
+            expectedServerName: endpoint.expectedServerName,
             onProgress: onProgress
         )
-        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        let session = URLSession(configuration: endpoint.configuration, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
         let task = session.dataTask(with: request)
         defer { version = delegate.currentVersion }
@@ -140,6 +184,10 @@ struct ResumableFileDownload: Sendable {
             .cannotFindHost, .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff,
             .callIsActive, .backgroundSessionWasDisconnected, .resourceUnavailable,
         ].contains(urlError.code)
+    }
+
+    private static func size(of file: URL) -> Int64 {
+        (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
     }
 
     /// Base64 SHA-256 of a file, read in 1 MiB pieces off the main thread.

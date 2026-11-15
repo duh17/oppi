@@ -91,19 +91,34 @@ struct FileViewerFileAccess {
     /// The file at `path` as Share downloads it: the raw-file or blob read
     /// the players range over, written whole to a temporary file. `size` is
     /// the folder listing's, when there is one.
-    func remoteFileShare(api: APIClient, path: String, fileName: String, size: Int?) -> RemoteFileShare {
+    ///
+    /// `api` is read again before every attempt, so a download that dropped
+    /// when the server's route changed (Wi-Fi to the tailnet, a new Tailscale
+    /// proxy) resumes through the client the connection installed for the
+    /// new route. While there is none the attempt counts as an interruption.
+    func remoteFileShare(
+        api: @escaping @MainActor () -> APIClient?,
+        path: String,
+        fileName: String,
+        size: Int?
+    ) -> RemoteFileShare {
         let access = self
         return RemoteFileShare(fileName: fileName, expectedBytes: size.map(Int64.init)) { destination, onProgress in
-            let source = try await access.mediaSource(
-                api: api,
-                path: path,
-                contentTypeHint: nil,
-                sourceFileExtension: (path as NSString).pathExtension
-            )
-            // The API session gives a resource 30 seconds; a large file needs longer.
-            let configuration = api.sessionConfiguration
-            configuration.timeoutIntervalForResource = 3_600
-            try await source.downloadFile(to: destination, configuration: configuration, onProgress: onProgress)
+            let download = ResumableFileDownload { @MainActor in
+                guard let api = api() else { throw URLError(.cannotConnectToHost) }
+                let source = try await access.mediaSource(
+                    api: api,
+                    path: path,
+                    contentTypeHint: nil,
+                    sourceFileExtension: (path as NSString).pathExtension
+                )
+                // The API session gives a resource 30 seconds; a large file needs
+                // longer. A slower transfer times out into a resume, not a failure.
+                let configuration = api.sessionConfiguration
+                configuration.timeoutIntervalForResource = 3_600
+                return source.downloadEndpoint(configuration: configuration)
+            }
+            try await download.run(to: destination, onProgress: onProgress)
         }
     }
 

@@ -18,9 +18,7 @@ import { makeResponse } from "./harness/route-test-helpers.js";
 import {
   SEARCH_IGNORE_DIRS,
   SEARCH_ROOT_IGNORE_DIRS,
-  SENSITIVE_FILE_PATTERNS,
   resolveWorkspaceFilePath,
-  isSensitivePath,
   getContentType,
   isBrowseMediaContentType,
   isStreamingMediaContentType,
@@ -151,92 +149,6 @@ describe("file-browser visibility filters", () => {
   test("keeps root-only private state separate from generic directory exclusions", () => {
     expect(SEARCH_IGNORE_DIRS.has(".pi")).toBe(false);
     expect(SEARCH_ROOT_IGNORE_DIRS.has(".pi")).toBe(true);
-  });
-});
-
-// MARK: - SENSITIVE_FILE_PATTERNS
-
-describe("SENSITIVE_FILE_PATTERNS", () => {
-  function matchesAny(filename: string): boolean {
-    return SENSITIVE_FILE_PATTERNS.some((p) => p.test(filename));
-  }
-
-  test("matches .env files", () => {
-    expect(matchesAny(".env")).toBe(true);
-    expect(matchesAny(".env.local")).toBe(true);
-    expect(matchesAny(".env.production")).toBe(true);
-    expect(matchesAny(".env.development.local")).toBe(true);
-  });
-
-  test("matches private key files", () => {
-    expect(matchesAny("server.pem")).toBe(true);
-    expect(matchesAny("private.key")).toBe(true);
-    expect(matchesAny("cert.PEM")).toBe(true);
-    expect(matchesAny("tls.KEY")).toBe(true);
-  });
-
-  test("matches SSH private keys", () => {
-    expect(matchesAny("id_rsa")).toBe(true);
-    expect(matchesAny("id_ed25519")).toBe(true);
-    expect(matchesAny("id_ecdsa")).toBe(true);
-    expect(matchesAny("id_dsa")).toBe(true);
-  });
-
-  test("matches credential files", () => {
-    expect(matchesAny(".netrc")).toBe(true);
-    expect(matchesAny(".npmrc")).toBe(true);
-    expect(matchesAny(".pypirc")).toBe(true);
-    expect(matchesAny(".htpasswd")).toBe(true);
-  });
-
-  test("does not match normal files", () => {
-    expect(matchesAny("index.ts")).toBe(false);
-    expect(matchesAny("README.md")).toBe(false);
-    expect(matchesAny("package.json")).toBe(false);
-    expect(matchesAny("image.png")).toBe(false);
-    expect(matchesAny("environment.ts")).toBe(false);
-  });
-});
-
-// MARK: - isSensitivePath
-
-describe("isSensitivePath", () => {
-  test("blocks .env files at any level", () => {
-    expect(isSensitivePath(".env")).toBe(true);
-    expect(isSensitivePath(".env.local")).toBe(true);
-    expect(isSensitivePath("config/.env.production")).toBe(true);
-  });
-
-  test("blocks private key files", () => {
-    expect(isSensitivePath("certs/server.pem")).toBe(true);
-    expect(isSensitivePath("ssl/private.key")).toBe(true);
-  });
-
-  test("blocks SSH private keys", () => {
-    expect(isSensitivePath("id_rsa")).toBe(true);
-    expect(isSensitivePath("keys/id_ed25519")).toBe(true);
-  });
-
-  test("blocks .git directory contents", () => {
-    expect(isSensitivePath(".git/objects/abc123")).toBe(true);
-    expect(isSensitivePath(".git/config")).toBe(true);
-    expect(isSensitivePath(".git/HEAD")).toBe(true);
-    expect(isSensitivePath("submodule/.git/config")).toBe(true);
-  });
-
-  test("allows normal files", () => {
-    expect(isSensitivePath("src/index.ts")).toBe(false);
-    expect(isSensitivePath("README.md")).toBe(false);
-    expect(isSensitivePath("package.json")).toBe(false);
-    expect(isSensitivePath("charts/mockup.png")).toBe(false);
-    expect(isSensitivePath(".gitignore")).toBe(false);
-    expect(isSensitivePath(".github/workflows/ci.yml")).toBe(false);
-  });
-
-  test("does not false-positive on env-like names", () => {
-    expect(isSensitivePath("environment.ts")).toBe(false);
-    expect(isSensitivePath("config.env.ts")).toBe(false);
-    expect(isSensitivePath("src/env-utils.ts")).toBe(false);
   });
 });
 
@@ -437,28 +349,45 @@ describe("listDirectoryEntries", () => {
     expect(names).toContain("utils.ts");
   });
 
-  test("sorts directories before files, alphabetically within each", async () => {
-    mkdirSync(join(tmpRoot, "zzz-dir"), { recursive: true });
-    writeFileSync(join(tmpRoot, "aaa-file.txt"), "");
+  test("pages by name: every entry once, even when entries come and go between pages", async () => {
+    const dir = join(tmpRoot, "paged");
+    mkdirSync(dir);
+    for (const name of ["b", "d", "f", "h", "j", "l"]) writeFileSync(join(dir, name), "");
+    mkdirSync(join(dir, "c-dir"));
 
-    const result = await listDirectoryEntries(tmpRoot, "");
-    expect(result).not.toBeNull();
+    const first = await listDirectoryEntries(tmpRoot, "paged", { limit: 3 });
+    expect(first).toMatchObject({ kind: "ok", next: "d" });
+    if (first.kind !== "ok") return;
+    expect(first.entries.map((e) => [e.name, e.type])).toEqual([
+      ["b", "file"],
+      ["c-dir", "directory"],
+      ["d", "file"],
+    ]);
 
-    const dirs = result!.entries.filter((e) => e.type === "directory");
-    const files = result!.entries.filter((e) => e.type === "file");
+    // Between pages one listed entry goes and two new ones arrive, one
+    // before the cursor and one after it.
+    rmSync(join(dir, "b"));
+    writeFileSync(join(dir, "a"), "");
+    writeFileSync(join(dir, "g"), "");
 
-    // Directories come before files
-    const lastDirIdx = result!.entries.lastIndexOf(dirs[dirs.length - 1]);
-    const firstFileIdx = result!.entries.indexOf(files[0]);
-    expect(lastDirIdx).toBeLessThan(firstFileIdx);
+    const names: string[] = first.entries.map((e) => e.name);
+    let after: string | null = first.next;
+    while (after !== null) {
+      const page = await listDirectoryEntries(tmpRoot, "paged", { limit: 3, after });
+      if (page.kind !== "ok") throw new Error(page.kind);
+      names.push(...page.entries.map((e) => e.name));
+      after = page.next;
+    }
+    // Nothing twice, nothing that existed throughout missed, in byte order.
+    expect(names).toEqual(["b", "c-dir", "d", "f", "g", "h", "j", "l"]);
+  });
 
-    // Directories are alphabetically sorted (localeCompare)
-    const dirNames = dirs.map((e) => e.name);
-    expect(dirNames).toEqual([...dirNames].sort((a, b) => a.localeCompare(b)));
-
-    // Files are alphabetically sorted (localeCompare)
-    const fileNames = files.map((e) => e.name);
-    expect(fileNames).toEqual([...fileNames].sort((a, b) => a.localeCompare(b)));
+  test("a page past the last name is empty and final", async () => {
+    expect(await listDirectoryEntries(tmpRoot, "src", { after: "\u{10FFFF}" })).toEqual({
+      kind: "ok",
+      entries: [],
+      next: null,
+    });
   });
 
   test("entries include correct type, size, and modifiedAt", async () => {
@@ -476,19 +405,13 @@ describe("listDirectoryEntries", () => {
     expect(srcDir!.type).toBe("directory");
   });
 
-  test("returns null for non-existent directory", async () => {
-    const result = await listDirectoryEntries(tmpRoot, "nonexistent");
-    expect(result).toBeNull();
+  test("is not-found for a missing directory or a file", async () => {
+    expect(await listDirectoryEntries(tmpRoot, "nonexistent")).toEqual({ kind: "not-found" });
+    expect(await listDirectoryEntries(tmpRoot, "README.md")).toEqual({ kind: "not-found" });
   });
 
-  test("returns null when path points to a file", async () => {
-    const result = await listDirectoryEntries(tmpRoot, "README.md");
-    expect(result).toBeNull();
-  });
-
-  test("rejects path traversal", async () => {
-    const result = await listDirectoryEntries(tmpRoot, "..");
-    expect(result).toBeNull();
+  test("is outside-root for path traversal", async () => {
+    expect(await listDirectoryEntries(tmpRoot, "..")).toEqual({ kind: "outside-root" });
   });
 
   test("handles empty directory", async () => {
@@ -496,7 +419,7 @@ describe("listDirectoryEntries", () => {
     const result = await listDirectoryEntries(tmpRoot, "empty");
     expect(result).not.toBeNull();
     expect(result!.entries).toHaveLength(0);
-    expect(result!.truncated).toBe(false);
+    expect(result).toEqual({ kind: "ok", entries: [], next: null });
   });
 
   test("shows dotfiles in directory listings", async () => {
@@ -911,45 +834,6 @@ describe("resolveWorkspaceFilePath — security edge cases", () => {
     } finally {
       rmSync(symlinkRoot, { force: true });
     }
-  });
-});
-
-// MARK: - isSensitivePath (security verification)
-
-describe("isSensitivePath — security edge cases", () => {
-  test("blocks id_rsa.pub (matches id_rsa prefix)", () => {
-    // Note: this IS the current behavior — id_rsa pattern matches the prefix
-    // of id_rsa.pub. This is arguably over-protective but safe.
-    expect(isSensitivePath("id_rsa.pub")).toBe(true);
-  });
-
-  test("blocks deeply nested .env", () => {
-    expect(isSensitivePath("a/b/c/d/.env")).toBe(true);
-    expect(isSensitivePath("deploy/config/.env.staging")).toBe(true);
-  });
-
-  test("blocks .git at any directory depth", () => {
-    expect(isSensitivePath(".git/refs/heads/main")).toBe(true);
-    expect(isSensitivePath("vendor/.git/config")).toBe(true);
-  });
-
-  test("does not block .gitignore or .github", () => {
-    // .git is a path segment check, not a prefix match on filenames
-    expect(isSensitivePath(".gitignore")).toBe(false);
-    expect(isSensitivePath(".github/workflows/ci.yml")).toBe(false);
-    expect(isSensitivePath(".gitattributes")).toBe(false);
-  });
-
-  test("does not block .env-like filenames that are actually code", () => {
-    expect(isSensitivePath("src/env.ts")).toBe(false);
-    expect(isSensitivePath("config/environment.yaml")).toBe(false);
-    expect(isSensitivePath("lib/dotenv-parser.js")).toBe(false);
-  });
-
-  test("blocks files with mixed case extensions", () => {
-    expect(isSensitivePath("cert.PEM")).toBe(true);
-    expect(isSensitivePath("private.KEY")).toBe(true);
-    expect(isSensitivePath("cert.Pem")).toBe(true);
   });
 });
 

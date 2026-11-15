@@ -39,8 +39,14 @@ enum FileBrowserColumnFixture {
         ],
     ]
 
-    /// `media/long-take.mov` arrives a piece at a time, so its Share shows progress.
-    static let slowFileBytes = 48 * 1_024 * 1_024
+    /// `media/long-take.mov` arrives a piece at a time, so its Share shows
+    /// progress; its first connection drops partway, and the download
+    /// reconnects and resumes from there (`FileBrowserColumnURLProtocol`).
+    static let slowFileBytes = 1_200_000_000
+    /// The fixture's first answer for the slow file drops after this many bytes.
+    static let slowFileDropAt = slowFileBytes / 4
+    /// Whether the slow file's first connection already dropped, once per launch.
+    static let slowFileDropped = OSAllocatedUnfairLock(initialState: false)
     static let video = FixtureVideoClip.encode(portrait: false)
 
     static let plantingNotes = """
@@ -202,7 +208,7 @@ final class FileBrowserColumnURLProtocol: URLProtocol {
                 }
                 return
             case "media/long-take.mov":
-                streamSlowFile(url: url)
+                streamSlowFile(url: url, request: request)
                 return
             case "media/sensor-trace.log":
                 respond(url: url, status: 413, contentType: "application/json", body: Data(#"{"error":"File too large (max 10MB)"}"#.utf8))
@@ -243,23 +249,46 @@ final class FileBrowserColumnURLProtocol: URLProtocol {
         client?.urlProtocolDidFinishLoading(self)
     }
 
-    /// The whole file over about ten seconds, until the request is cancelled.
-    private func streamSlowFile(url: URL) {
+    /// The file from where `Range` starts, as the server answers a download:
+    /// 206 with its `Content-Range` and `ETag`, about 60 MB a second until the
+    /// request is cancelled. The first connection of a launch drops a quarter
+    /// of the way in, as a Wi-Fi to Tailscale switch does.
+    private func streamSlowFile(url: URL, request: URLRequest) {
         let total = FileBrowserColumnFixture.slowFileBytes
+        let start = request.value(forHTTPHeaderField: "Range")
+            .flatMap { $0.split(separator: "=").last?.split(separator: "-").first }
+            .flatMap { Int($0) } ?? 0
         guard let response = HTTPURLResponse(
             url: url,
-            statusCode: 200,
+            statusCode: 206,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "video/quicktime", "Content-Length": String(total)]
+            headerFields: [
+                "Content-Type": "video/quicktime",
+                "Content-Length": String(total - start),
+                "Content-Range": "bytes \(start)-\(total - 1)/\(total)",
+                "ETag": "\"long-take-v1\"",
+            ]
         ) else { return }
+        let dropAt = FileBrowserColumnFixture.slowFileDropped.withLock { dropped in
+            defer { dropped = true }
+            return dropped ? nil : FileBrowserColumnFixture.slowFileDropAt
+        }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        let piece = Data(count: total / 96)
+        let pieceSize = 6_000_000
+        let piece = Data(count: pieceSize)
         nonisolated(unsafe) let fixture = self
         Task {
-            for _ in 0..<96 {
+            var sent = start
+            while sent < total {
                 try? await Task.sleep(for: .milliseconds(100))
                 guard !fixture.stopped.withLock({ $0 }) else { return }
-                fixture.client?.urlProtocol(fixture, didLoad: piece)
+                if let dropAt, sent >= dropAt {
+                    fixture.client?.urlProtocol(fixture, didFailWithError: URLError(.networkConnectionLost))
+                    return
+                }
+                let count = min(pieceSize, total - sent)
+                fixture.client?.urlProtocol(fixture, didLoad: count == pieceSize ? piece : piece.prefix(count))
+                sent += count
             }
             fixture.client?.urlProtocolDidFinishLoading(fixture)
         }

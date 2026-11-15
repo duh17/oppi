@@ -16,7 +16,11 @@ import {
   type CurrentFileOrigin,
   type ResolvedCurrentFile,
 } from "../current-file.js";
-import { listDirectoryEntries } from "../directory-listing.js";
+import {
+  directoryListingResponse,
+  listDirectoryEntries,
+  listingCursor,
+} from "../directory-listing.js";
 import {
   FILE_EDIT_ORIGIN_HEADER,
   FILE_EDIT_REFUSAL_HEADER,
@@ -38,7 +42,6 @@ import { readAudioMediaInfo } from "../media-info.js";
 import { piAgentEditablePath } from "../pi-agent-files.js";
 import { isDeviceAccessPrincipal, type RequestPrincipal } from "../request-principal.js";
 import { sessionWorkRoot, type SessionWorkRoot } from "../session-work-root.js";
-import type { DirectoryListingResponse } from "../types.js";
 import {
   ServerResourceNotFoundError,
   ServerResourceReadOnlyError,
@@ -399,8 +402,14 @@ export function createHostFileRoutes(
     switch (resolved.kind) {
       case "ok":
         return { file: resolved.file };
-      case "outside-sandbox":
-        helpers.error(res, 403, "Path outside sandbox workspace");
+      case "outside-root":
+        helpers.error(
+          res,
+          403,
+          request.origin.kind === "workspace"
+            ? "Path outside sandbox workspace"
+            : "Path is outside the allowed folder",
+        );
         return { status: 403 };
       case "root-not-found":
         helpers.error(res, 404, "Workspace root not found");
@@ -666,7 +675,7 @@ export function createHostFileRoutes(
     if (normalizedMethod !== "GET") return false;
 
     if (path === "/host/contents" || path === "/host/contents/") {
-      await handleListHostDirectory("", res, helpers, homeDir);
+      await handleListHostDirectory("", url, res, helpers, homeDir);
       return true;
     }
 
@@ -679,13 +688,14 @@ export function createHostFileRoutes(
       return true;
     }
 
-    await handleListHostDirectory(requestedPath, res, helpers, homeDir);
+    await handleListHostDirectory(requestedPath, url, res, helpers, homeDir);
     return true;
   };
 }
 
 async function handleListHostDirectory(
   requestedPath: string,
+  url: URL,
   res: ServerResponse,
   helpers: RouteHelpers,
   homeDir: string | undefined,
@@ -703,16 +713,15 @@ async function handleListHostDirectory(
   }
 
   const dirPath = requestedPath.endsWith("/") ? requestedPath.slice(0, -1) : requestedPath;
-  const result = await listDirectoryEntries(home, dirPath || ".");
-  if (!result) {
+  const result = await listDirectoryEntries(home, dirPath || ".", { after: listingCursor(url) });
+  if (result.kind === "outside-root") {
+    helpers.error(res, 403, "Path is outside the home folder");
+    return;
+  }
+  if (result.kind === "not-found") {
     helpers.error(res, 404, "Directory not found");
     return;
   }
 
-  const response: DirectoryListingResponse = {
-    path: requestedPath || "/",
-    entries: result.entries,
-    truncated: result.truncated,
-  };
-  helpers.json(res, response);
+  helpers.json(res, directoryListingResponse(requestedPath || "/", result));
 }

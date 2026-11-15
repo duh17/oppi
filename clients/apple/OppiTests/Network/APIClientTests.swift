@@ -1646,6 +1646,28 @@ struct APIClientTests {
         #expect(step == 2)
     }
 
+    @Test func listingPagesSendTheCursorAndReadTheNext() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        var cursors: [String?] = []
+        var lastQuery: String?
+        MockURLProtocol.handler = { request in
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            cursors.append(components?.queryItems?.first(where: { $0.name == "after" })?.value)
+            lastQuery = components?.percentEncodedQuery
+            return self.mockResponse(json: #"{"path":"src/","entries":[],"truncated":true,"next":"b&c=d #e"}"#)
+        }
+
+        let first = try await client.listWorkspaceDirectory(workspaceId: "w1", path: "src/")
+        #expect(first.next == "b&c=d #e")
+        _ = try await client.listWorkspaceDirectory(workspaceId: "w1", path: "src/", after: first.next)
+        _ = try await client.listHostDirectory(path: "Documents/", after: "x+y")
+        // A name holding query syntax travels as one value.
+        #expect(cursors == [nil, "b&c=d #e", "x+y"])
+        // `+` is encoded, so the server's form decoding cannot read it as a space.
+        #expect(lastQuery == "after=x%2By")
+    }
+
     @Test func workspaceFileEndpointsAppendWorktreeQueryWhenProvided() async throws {
         let client = makeClient()
         defer { cleanup() }

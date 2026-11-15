@@ -325,7 +325,7 @@ describe("sandbox user browse of host-mount artifacts", () => {
         expect(listing.handled).toBe(true);
         expect({ path: requestedPath, status: listing.res.statusCode }).toEqual({
           path: requestedPath,
-          status: 404,
+          status: 403,
         });
         expect(listing.res.body).not.toContain("secret.txt");
       }

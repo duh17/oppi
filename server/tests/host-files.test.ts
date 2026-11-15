@@ -600,7 +600,7 @@ describe("GET/HEAD /files/current host and control-session origins", () => {
 });
 
 describe("workspace listing confinement", () => {
-  it("keeps workspace contents 404 for absolute paths and parent escapes", async () => {
+  it("refuses workspace contents for absolute paths and parent escapes without naming them", async () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), "oppi-ws-confine-"));
     const outside = mkdtempSync(join(tmpdir(), "oppi-ws-outside-"));
     try {
@@ -644,8 +644,10 @@ describe("workspace listing confinement", () => {
         if (!res.writableEnded) {
           await finished;
         }
-        expect(res.statusCode, path).toBe(404);
-        expect(res.body.toString("utf8")).not.toContain("outside");
+        expect(res.statusCode, path).toBe(403);
+        expect(JSON.parse(res.body.toString("utf8"))).toEqual({
+          error: "Path is outside the workspace",
+        });
       }
 
       const hostRes = await dispatchHost(
@@ -734,12 +736,12 @@ describe("GET /host/contents", () => {
     expect(body.entries.map((entry) => entry.name).sort()).toEqual(["notes", "todo.md"]);
   });
 
-  it("returns 404 for parent traversal", async () => {
+  it("refuses parent traversal", async () => {
     const home = tempHome("oppi-host-contents-dotdot-");
     writeFileSync(join(home, "inside.txt"), "in\n", "utf8");
 
     const res = await dispatchHost("GET", "/host/contents/..%2F", { homeDir: home });
-    expect(res.statusCode).toBe(404);
+    expect(res.statusCode).toBe(403);
     expect(res.body.toString("utf8")).not.toContain("inside.txt");
   });
 
@@ -757,15 +759,15 @@ describe("GET /host/contents", () => {
     expect(body.entries.map((entry) => entry.name)).toContain("secret.txt");
   });
 
-  it("returns 404 for a missing directory and does not list filesystem root", async () => {
+  it("returns 404 for a missing directory and refuses an absolute path outside home", async () => {
     const home = tempHome("oppi-host-contents-missing-");
     const missing = await dispatchHost("GET", "/host/contents/nope", { homeDir: home });
     expect(missing.statusCode).toBe(404);
 
     const absolute = await dispatchHost("GET", "/host/contents/%2Fetc", { homeDir: home });
-    expect(absolute.statusCode).toBe(404);
+    expect(absolute.statusCode).toBe(403);
     const body = JSON.parse(absolute.body.toString("utf8")) as { error?: string };
-    expect(body.error).toBe("Directory not found");
+    expect(body.error).toBe("Path is outside the home folder");
   });
 
   it("lists injected home for encoded slash and does not list filesystem root", async () => {

@@ -48,7 +48,16 @@ enum FileEntryType: String, Codable, Sendable, Equatable, Hashable {
 struct DirectoryListingResponse: Codable, Sendable, Equatable {
     let path: String
     let entries: [FileEntry]
+    /// More entries follow this page.
     let truncated: Bool
+    /// The cursor for the next page (`after`); nil on the last page, and from
+    /// a server that does not page.
+    let next: String?
+
+    /// This page with `page`, the one after it, appended.
+    func appending(_ page: DirectoryListingResponse) -> DirectoryListingResponse {
+        DirectoryListingResponse(path: path, entries: entries + page.entries, truncated: page.truncated, next: page.next)
+    }
 }
 
 /// Flat file index for client-side fuzzy search.

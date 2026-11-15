@@ -142,17 +142,18 @@ describe("listings do not depend on the runtime's readdir order", () => {
     ]);
   });
 
-  it("keeps the first 1000 names, not an arbitrary 1000, when a directory listing is truncated", async () => {
+  it("pages a directory listing in name order, not an arbitrary 1000 first", async () => {
     const root = join(dir, "big");
     mkdirSync(root);
-    for (let i = 0; i < 1005; i++) writeFileSync(join(root, `f${String(i).padStart(4, "0")}`), "");
+    const names = Array.from({ length: 1005 }, (_, i) => `f${String(i).padStart(4, "0")}`);
+    for (const name of names.toReversed()) writeFileSync(join(root, name), "");
 
-    const listing = await listDirectoryEntries(root, ".");
-
-    expect(listing?.truncated).toBe(true);
-    expect(listing?.entries.map((e) => e.name)).toEqual(
-      Array.from({ length: 1000 }, (_, i) => `f${String(i).padStart(4, "0")}`),
-    );
+    const first = await listDirectoryEntries(root, ".");
+    expect(first.kind === "ok" && first.entries.map((e) => e.name)).toEqual(names.slice(0, 1000));
+    expect(first.kind === "ok" && first.next).toBe("f0999");
+    const rest = await listDirectoryEntries(root, ".", { after: "f0999" });
+    expect(rest).toMatchObject({ kind: "ok", next: null });
+    expect(rest.kind === "ok" && rest.entries.map((e) => e.name)).toEqual(names.slice(1000));
   });
 
   describe("local sessions", () => {

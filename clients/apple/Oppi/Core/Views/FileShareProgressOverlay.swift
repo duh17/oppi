@@ -40,6 +40,7 @@ final class FileShareProgressOverlay: UIView {
 
         status.font = UIFont.scaled(.footnote, monospacedDigits: true)
         status.textColor = palette.ui.comment
+        status.numberOfLines = 0
         status.accessibilityIdentifier = "fileBrowser.share.status"
         status.accessibilityTraits = .updatesFrequently
 
@@ -82,18 +83,29 @@ final class FileShareProgressOverlay: UIView {
     required init?(coder: NSCoder) { nil }
 
     /// "3.1 MB of 48 MB" under a bar at that fraction, or the bytes so far
-    /// when the size is not known.
+    /// when the size is not known; "Reconnecting…" before it while a dropped
+    /// connection waits to resume.
     func update(_ progress: FileDownloadProgress) {
-        let received = ByteCountFormatter.string(fromByteCount: progress.received, countStyle: .file)
+        status.text = Self.statusText(progress)
         guard let expected = progress.expected, expected > 0 else {
             bar.isHidden = true
-            status.text = received
             return
         }
         bar.isHidden = false
         bar.setProgress(Float(min(1, Double(progress.received) / Double(expected))), animated: true)
-        let total = ByteCountFormatter.string(fromByteCount: expected, countStyle: .file)
-        status.text = String(localized: "\(received) of \(total)")
+    }
+
+    static func statusText(_ progress: FileDownloadProgress) -> String {
+        let received = ByteCountFormatter.string(fromByteCount: progress.received, countStyle: .file)
+        let amount: String
+        if let expected = progress.expected, expected > 0 {
+            let total = ByteCountFormatter.string(fromByteCount: expected, countStyle: .file)
+            amount = String(localized: "\(received) of \(total)")
+        } else {
+            amount = received
+        }
+        guard progress.reconnecting else { return amount }
+        return String(localized: "Connection lost. Reconnecting… \(amount)")
     }
 
     /// Covers `host`, fading in.

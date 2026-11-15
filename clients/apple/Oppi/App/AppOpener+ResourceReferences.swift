@@ -408,35 +408,42 @@ extension AppOpener {
         let parent = (filePath as NSString).deletingLastPathComponent
         let directoryPath = parent.isEmpty || parent == "." ? "" : parent + "/"
 
-        let listing: DirectoryListingResponse
-        do {
-            listing = try await apiClient.listWorkspaceDirectory(
-                workspaceId: workspaceID,
-                path: directoryPath,
-                worktreeId: worktreeID
-            )
-        } catch {
-            // A superseded tap must stay silent: propagate cancellation instead
-            // of turning it into a transient "right now" failure.
-            try Task.checkCancellation()
-            return WorkspaceWikiLinkFileLookupPolicy.isDeterministicAbsence(error)
-                ? .absent
-                : .unavailable
-        }
+        // Page through the folder until the name turns up or the pages end.
+        var after: String?
+        repeat {
+            let listing: DirectoryListingResponse
+            do {
+                listing = try await apiClient.listWorkspaceDirectory(
+                    workspaceId: workspaceID,
+                    path: directoryPath,
+                    worktreeId: worktreeID,
+                    after: after
+                )
+            } catch {
+                // A superseded tap must stay silent: propagate cancellation instead
+                // of turning it into a transient "right now" failure.
+                try Task.checkCancellation()
+                return WorkspaceWikiLinkFileLookupPolicy.isDeterministicAbsence(error)
+                    ? .absent
+                    : .unavailable
+            }
 
-        try Task.checkCancellation()
-        switch ResourceFileCandidatePolicy.directoryResult(
-            fileName: fileName,
-            entries: listing.entries,
-            truncated: listing.truncated
-        ) {
-        case .some(true):
-            return .present
-        case .some(false):
-            return .absent
-        case .none:
-            return .truncated
-        }
+            try Task.checkCancellation()
+            switch ResourceFileCandidatePolicy.directoryResult(
+                fileName: fileName,
+                entries: listing.entries,
+                truncated: listing.truncated
+            ) {
+            case .some(true):
+                return .present
+            case .some(false):
+                return .absent
+            case .none:
+                // More pages follow; a server that does not page cannot say.
+                guard let next = listing.next else { return .truncated }
+                after = next
+            }
+        } while true
     }
 
     func openResourceReferenceMatch(

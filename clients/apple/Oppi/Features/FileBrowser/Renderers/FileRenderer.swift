@@ -79,6 +79,9 @@ enum FileRendererRegistry {
 @MainActor
 struct FileRenderInput {
     let api: APIClient
+    /// The server's API client now, which a route change replaces: what a
+    /// download reads before each attempt (`remoteFileShare`).
+    let currentAPI: @MainActor () -> APIClient?
     let access: FileViewerFileAccess
     let path: String
     let fileName: String
@@ -113,7 +116,7 @@ struct FileRenderInput {
 
     /// This file as Share downloads it, for a renderer that streams it.
     var remoteShare: RemoteFileShare {
-        access.remoteFileShare(api: api, path: path, fileName: fileName, size: nil)
+        access.remoteFileShare(api: currentAPI, path: path, fileName: fileName, size: nil)
     }
 
     /// The file's size and modification time from a HEAD, which no size cap

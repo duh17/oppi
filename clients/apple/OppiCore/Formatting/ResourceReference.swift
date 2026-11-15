@@ -509,12 +509,14 @@ enum ExactFileListingOutcome: Equatable, Sendable {
 
 enum WorkspaceWikiLinkFileLookupPolicy {
     /// A 404 from the directory-listing endpoint is a deterministic "this
-    /// checkout has no such parent directory", not a transient failure. The
-    /// client treats it as absence instead of surfacing "right now".
+    /// checkout has no such parent directory", and a 403 "that path leaves
+    /// the checkout", not a transient failure. The client treats either as
+    /// absence instead of surfacing "right now".
     static func isDeterministicAbsence(_ error: Error) -> Bool {
         guard let apiError = error as? APIError else { return false }
         switch apiError {
-        case .server(status: 404, message: _), .codedServer(status: 404, message: _, code: _):
+        case .server(status: 404, message: _), .codedServer(status: 404, message: _, code: _),
+             .server(status: 403, message: _), .codedServer(status: 403, message: _, code: _):
             return true
         default:
             return false

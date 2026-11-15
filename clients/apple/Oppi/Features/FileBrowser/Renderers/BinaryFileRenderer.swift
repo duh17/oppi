@@ -126,7 +126,7 @@ final class BinaryFileRenderer: FileRenderer {
 
     private var remoteFile: RemoteFileShare {
         file.access.remoteFileShare(
-            api: file.api,
+            api: file.currentAPI,
             path: file.path,
             fileName: file.fileName,
             size: facts.byteCount.map { Int(clamping: $0) }

@@ -3,25 +3,27 @@ import type { Dirent, Stats } from "node:fs";
 import { lstat, opendir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { resolveWorkspaceFileRoot } from "../current-file.js";
-import { listDirectoryEntries } from "../directory-listing.js";
+import {
+  directoryListingResponse,
+  listDirectoryEntries,
+  listingCursor,
+} from "../directory-listing.js";
 import {
   decodeWorkspaceRoutePath,
   SEARCH_IGNORE_DIRS,
   SEARCH_ROOT_IGNORE_DIRS,
 } from "../file-serving-policy.js";
 import { execGit, gitTrustForWorkspace, HOST_GIT_TRUST, type GitTrust } from "../git-safe.js";
-import type { DirectoryListingResponse, FileIndexResponse, Workspace } from "../types.js";
+import type { FileIndexResponse, Workspace } from "../types.js";
 import { resolveWorkspaceUserPath } from "../workspace-user-path.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 export {
   getContentType,
   isBrowseMediaContentType,
-  isSensitivePath,
   isStreamingMediaContentType,
   SEARCH_IGNORE_DIRS,
   SEARCH_ROOT_IGNORE_DIRS,
-  SENSITIVE_FILE_PATTERNS,
 } from "../file-serving-policy.js";
 export {
   listDirectoryEntries,
@@ -328,24 +330,24 @@ export function createWorkspaceFileRoutes(
       root: workspaceRoot,
     });
     if (!mappedPath) {
-      helpers.error(res, 404, "Directory not found");
+      helpers.error(res, 403, "Path is outside the workspace");
       return;
     }
     const result = await listDirectoryEntries(workspaceRoot, mappedPath, {
       confineSymlinks: workspace.runtime === "sandbox",
+      after: listingCursor(url),
     });
 
-    if (!result) {
+    if (result.kind === "outside-root") {
+      helpers.error(res, 403, "Path is outside the workspace");
+      return;
+    }
+    if (result.kind === "not-found") {
       helpers.error(res, 404, "Directory not found");
       return;
     }
 
-    const response: DirectoryListingResponse = {
-      path: requestedPath || "/",
-      entries: result.entries,
-      truncated: result.truncated,
-    };
-    helpers.json(res, response);
+    helpers.json(res, directoryListingResponse(requestedPath || "/", result));
   }
 
   async function handleFileIndex(wsId: string, url: URL, res: ServerResponse): Promise<void> {
