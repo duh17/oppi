@@ -1,0 +1,1 @@
+- **Client:** **Schedules → Month** fills the card's width with larger dates and easier-to-read daily costs, and drops its own month arrows: the arrows next to **Today** on iPad, or a swipe across the month, change months.

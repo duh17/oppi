@@ -1,10 +1,10 @@
 #if DEBUG
 import UIKit
 
-/// Schedules in the real workspace shell over a fixture server with a real week of
+/// Schedules in the real workspace shell over a fixture server with five weeks of
 /// runs (`SCREENSHOT_SCREEN=schedules-calendar`). The twelve schedules, their times,
-/// workspaces, models, costs, and outcomes are a real server's, shaped into the week
-/// around the simulator's today; the calendar's clock is posed at 8:42 AM so the night,
+/// workspaces, models, costs, and outcomes are a real server's, shaped into the weeks
+/// before the simulator's today; the calendar's clock is posed at 8:42 AM so the night,
 /// the morning's problems, a running run, the now line, and the next runs all show.
 ///
 /// `SCREENSHOT_SCHEDULES_OPEN=1` opens Schedules at launch; without it a test opens it
@@ -91,7 +91,7 @@ final class ScheduleCalendarPreviewController: PreviewRootController {
     }
 }
 
-/// The fixture server's state: schedules, the week's runs and their sessions.
+/// The fixture server's state: schedules, five weeks of runs and their sessions.
 struct ScheduleCalendarPreviewWorld {
     struct Schedule {
         let id: String
@@ -211,16 +211,19 @@ struct ScheduleCalendarPreviewWorld {
             kypu.id: 0.5, journal.id: 0.5, dream.id: 5, night.id: 300, mirror.id: 2, testFlight.id: 0.7,
             digest.id: 6, review.id: 8, jobs.id: 4, nanny.id: 0.6, deps.id: 9,
         ]
-        for daysAgo in 1...9 {
+        // Five weeks back, so Month shows a whole month of daily spend.
+        for daysAgo in 1...35 {
             let day = calendar.date(byAdding: .day, value: -daysAgo, to: today) ?? today
             let weekday = calendar.component(.weekday, from: day)
             for schedule in schedules {
                 for (index, time) in schedule.times(weekday).enumerated() {
                     let costs = pastCosts[schedule.id] ?? [0.1]
                     let cost = costs[(daysAgo * 2 + index) % costs.count]
-                    let failed = schedule.id == digest.id && daysAgo == 2
+                    let failed = schedule.id == digest.id && (daysAgo == 2 || daysAgo == 17)
                     // A Night shift launches its crew; the night's dream sends a scout or two.
+                    // Past the first week the crew is smaller in sessions, not in spend.
                     let crew: [Subagent] = switch schedule.id {
+                    case night.id where daysAgo > 9: Self.crew(workers: 2, night: 1, scouts: 1, total: 30.4 + Double(daysAgo % 5) * 6.3)
                     case night.id: Self.crew(workers: 12, night: 10, scouts: 4, total: 37.57 + Double(daysAgo % 3) * 4.2)
                     case dream.id: Self.crew(workers: 0, night: 0, scouts: 1 + daysAgo % 2, total: 0.86)
                     default: []

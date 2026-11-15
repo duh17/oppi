@@ -1,10 +1,10 @@
 import XCTest
 
-/// Schedules in the real workspace shell over a fixture server's week of runs
+/// Schedules in the real workspace shell over a fixture server's five weeks of runs
 /// (`SCREENSHOT_SCREEN=schedules-calendar`, clock posed at 8:42 AM): it opens on the
 /// Day, the List is one tap away and says each schedule's timing, next and last run, a
 /// past run opens its session, an upcoming run's menu offers only what the server can do,
-/// a swipe pages days, Month marks the week's exceptions, and the iPad's Week grid shows
+/// a swipe pages days, Month marks the month's exceptions and pages by swipe, and the iPad's Week grid shows
 /// the week's runs.
 ///
 /// The chosen view outlives a test in a reused launch, so each test picks the view it
@@ -208,7 +208,18 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         let yesterday = calendar.date(byAdding: .day, value: -1, to: Date()) ?? Date()
         let otherOffset = calendar.isDate(yesterday, equalTo: Date(), toGranularity: .month) ? -1 : 1
         let otherDay = calendar.date(byAdding: .day, value: otherOffset, to: Date()) ?? Date()
-        let otherCell = grid.buttons.matching(NSPredicate(format: "label CONTAINS %@", otherDay.formatted(.dateTime.month(.wide).day()))).firstMatch
+        let otherCell = app.buttons["schedules.calendar.monthDay.\(dayKey(offset: otherOffset))"]
+        // The grid spans the screen's width, with no month arrows of its own.
+        XCTAssertGreaterThan(grid.frame.width, app.frame.width * 0.75, "The month fills the width: \(grid.frame) in \(app.frame)")
+        let days = grid.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'schedules.calendar.monthDay.'"))
+        XCTAssertEqual(grid.buttons.count, days.count, "Every control in the grid is a date: only the bar pages months")
+        // A swipe pages the month, and Today comes back.
+        let today = app.buttons["schedules.calendar.monthDay.\(dayKey(offset: 0))"]
+        XCTAssertTrue(today.waitUntilExists(timeout: 5), "Today is in the month")
+        grid.swipeLeft()
+        XCTAssertTrue(today.waitUntilGone(timeout: 5), "A swipe left shows next month")
+        app.buttons["schedules.calendar.today"].tap()
+        XCTAssertTrue(today.waitUntilExists(timeout: 5), "Today returns to this month")
         guard isPad else {
             capture("month")
             XCTAssertTrue(otherCell.waitUntilExists(timeout: 5), "\(otherDay) is in the month")
