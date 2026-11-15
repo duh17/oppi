@@ -17,7 +17,8 @@ enum PaneLinkError: Error, Hashable, Sendable {
     case unexpectedPath
     /// A fragment where none is allowed, user-info, or a port.
     case unexpectedComponent(String)
-    /// A file link naming more than one of `workspace`, `host` and `session`.
+    /// A file link naming more than one of `workspace`, `host` and `session`,
+    /// or a files link naming both `workspace` and `host`.
     case conflictingOrigin
 }
 
@@ -96,6 +97,10 @@ enum PaneLinkCodec {
             path = "files"
             query.append(("workspace", workspace))
             if let filePath { query.append(("path", filePath)) }
+        case .hostFiles(let filePath):
+            path = "files"
+            query.append(("host", "1"))
+            if let filePath { query.append(("path", filePath)) }
         case .git(let workspace, let worktree):
             path = "git"
             query.append(("workspace", workspace))
@@ -147,7 +152,7 @@ enum PaneLinkCodec {
         let allowed: Set<String> = switch name {
         case "sessions": ["workspace"]
         case "file": ["workspace", "worktree", "host", "session", "path"]
-        case "files": ["workspace", "path"]
+        case "files": ["workspace", "host", "path"]
         case "git": path.isEmpty ? ["workspace", "worktree"] : ["workspace"]
         case "browser": ["url"]
         case "godot": ["project"]
@@ -178,7 +183,7 @@ enum PaneLinkCodec {
             route = decodeFile(values: values, fragment: fragment)
         case "files":
             guard path.isEmpty else { return .failure(.unexpectedPath) }
-            route = required("workspace").map { .files(workspace: $0, path: values["path"]) }
+            route = decodeFiles(values: values)
         case "git":
             switch path.count {
             case 0:
@@ -207,6 +212,23 @@ enum PaneLinkCodec {
             }
         }
         return route.map { PaneLink(server: values["server"], route: $0) }
+    }
+
+    /// A folder in a workspace, or with `host=1` in the server's home folder
+    /// (`~` or `~/…`, as a host file link names its file).
+    private static func decodeFiles(values: [String: String]) -> Result<PaneRoute, PaneLinkError> {
+        guard values["host"] != nil else {
+            return required("workspace", in: values).map { .files(workspace: $0, path: values["path"]) }
+        }
+        guard values["workspace"] == nil else { return .failure(.conflictingOrigin) }
+        guard values["host"] == "1" else { return .failure(.invalidValue("host")) }
+        guard let path = values["path"] else { return .success(.hostFiles(path: nil)) }
+        guard path == "~" || path.hasPrefix("~/") else { return .failure(.invalidValue("path")) }
+        return .success(.hostFiles(path: path == "~" ? nil : path))
+    }
+
+    private static func required(_ key: String, in values: [String: String]) -> Result<String, PaneLinkError> {
+        values[key].map(Result.success) ?? .failure(.missing(key))
     }
 
     private static func decodeFile(values: [String: String], fragment: String?) -> Result<PaneRoute, PaneLinkError> {

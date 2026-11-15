@@ -153,7 +153,7 @@ enum PaneMinimumSize {
     static func standard(for route: PaneRoute) -> CGSize? {
         switch route {
         case .session, .thread: chat
-        case .sessions, .files, .git, .panel, .unsupported: list
+        case .sessions, .files, .hostFiles, .git, .panel, .unsupported: list
         case .file, .commit: document
         case .browser: browser
         case .godot: godot

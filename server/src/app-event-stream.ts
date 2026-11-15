@@ -49,6 +49,7 @@ export const APP_EVENT_ALLOWED_TYPES = [
   "extension_ui_notification",
   "workspace_git_changed",
   "workspace_layouts_changed",
+  "pins_changed",
   "pairing_approval_requested",
   "pairing_approval_settled",
 ] as const satisfies readonly AppEventMessage["type"][];
@@ -118,6 +119,8 @@ export interface AppEventEmitter {
   emitSessionSummary(session: Session): void;
   emitSessionSummaryById(sessionId: string): void;
   emitStopConfirmed(session: Session, source?: string, reason?: string): void;
+  /** The server's pins changed (`routes/pins.ts`); clients read `GET /pins` again. */
+  emitPinsChanged(revision: number): void;
   handleSessionBroadcastEvent(payload: SessionBroadcastEvent): void;
 }
 
@@ -311,6 +314,10 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
   /** A layouts folder of this workspace changed; clients read the list again. */
   emitWorkspaceLayoutsChanged(workspaceId: string): void {
     this.emit({ type: "workspace_layouts_changed", emittedAt: this.now(), workspaceId });
+  }
+
+  emitPinsChanged(revision: number): void {
+    this.emit({ type: "pins_changed", emittedAt: this.now(), revision });
   }
 
   emitPairingApprovalRequested(approval: PendingPairingApproval): void {

@@ -76,17 +76,26 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         let apiClient: @MainActor () -> APIClient?
         let audioPlayer: AudioPlayerService?
         let sessionStore: SessionStore?
+        /// The server's pins, where it keeps them, for the … menu's Pin.
+        let pins: @MainActor () -> PinStore?
 
         init(connection: ServerConnection) {
             apiClient = { connection.apiClient }
             audioPlayer = connection.audioPlayer
             sessionStore = connection.sessionStore
+            pins = { connection.pinsAvailable ? connection.pins : nil }
         }
 
-        init(apiClient: APIClient?, audioPlayer: AudioPlayerService? = nil, sessionStore: SessionStore? = nil) {
+        init(
+            apiClient: APIClient?,
+            audioPlayer: AudioPlayerService? = nil,
+            sessionStore: SessionStore? = nil,
+            pins: PinStore? = nil
+        ) {
             self.apiClient = { apiClient }
             self.audioPlayer = audioPlayer
             self.sessionStore = sessionStore
+            self.pins = { pins }
         }
     }
 
@@ -785,9 +794,42 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     }
 
     /// The … menu's document actions: the editor's, then Open in New Pane
-    /// and Open in Pane ▸ for this file on a window wide enough for panes.
+    /// and Open in Pane ▸ for this file on a window wide enough for panes,
+    /// then Pin or Unpin.
     private var documentMenu: [UIMenuElement] {
-        paneFile == nil ? editOwner.menuActions : editOwner.menuActions + [paneMenu]
+        let pin: [UIMenuElement] = pinTarget != nil && services.pins() != nil ? [pinMenu] : []
+        return (paneFile == nil ? editOwner.menuActions : editOwner.menuActions + [paneMenu]) + pin
+    }
+
+    /// Read when the menu opens: Pin or Unpin for the file shown then.
+    private lazy var pinMenu = makePinMenu()
+
+    private func makePinMenu() -> UIDeferredMenuElement {
+        UIDeferredMenuElement.uncached { [weak self] completion in
+            MainActor.assumeIsolated { completion(self?.pinMenuElements() ?? []) }
+        }
+    }
+
+    private func pinMenuElements() -> [UIMenuElement] {
+        guard let target = pinTarget, let pins = services.pins(), let api = services.apiClient(), let view = viewIfLoaded else {
+            return []
+        }
+        return [PinMenu.toggle(target: target, isFolder: false, current: false, pins: pins, api: api, view: view).action]
+    }
+
+    /// The file as a pin names it: a main-checkout workspace file, or a home
+    /// file written `~/…`. Nil for anything a pin cannot name.
+    private var pinTarget: PinTarget? {
+        guard configuration.revision == nil else { return nil }
+        let path = currentFilePath
+        switch configuration.source {
+        case .workspaceFile where configuration.worktreeId == nil && !path.hasPrefix("/"):
+            return .workspace(id: configuration.workspaceId, path: path)
+        case .hostFile where path.hasPrefix("~/"):
+            return .host(path: path)
+        default:
+            return nil
+        }
     }
 
     /// Built when the menu opens, from the panes the window has then. One
@@ -1263,7 +1305,8 @@ enum FileBrowserViewerFactory {
             services: .init(
                 apiClient: services.apiClient,
                 audioPlayer: services.connection.audioPlayer,
-                sessionStore: services.connection.sessionStore
+                sessionStore: services.connection.sessionStore,
+                pins: services.connection.pinsAvailable ? services.connection.pins : nil
             )
         )
         viewer.markdownViewportRestore = request.viewportRestore

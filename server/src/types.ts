@@ -26,3 +26,4 @@ export type * from "./types/mcp.js";
 export type * from "./types/layout.js";
 export type * from "./types/godot.js";
 export type * from "./types/screens.js";
+export type * from "./types/pins.js";

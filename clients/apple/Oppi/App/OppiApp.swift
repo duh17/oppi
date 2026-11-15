@@ -459,6 +459,11 @@ final class OppiApp {
         let e2eInvite = e2eOverride == "skip" ? nil :
             (e2eOverride ?? ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"])
         if let e2eInvite, let e2eURL = URL(string: e2eInvite) {
+            // This launch stands in for reconnectOnLaunch, which wires the
+            // window's panes to its navigation and servers; unwired, a split
+            // leaf knows no server or workspace. Each E2E launch starts from
+            // a fresh tree.
+            navigation.panes.restore(navigation: navigation, coordinator: coordinator, applying: false)
             if AppOpener.e2eLaunchInviteAlreadyProcessed {
                 os_log(.error, "[E2E] Invite already processed this process; skipping duplicate bootstrap")
                 navigation.app.launchPhase = .ready

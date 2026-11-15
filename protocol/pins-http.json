@@ -1,0 +1,246 @@
+{
+  "_meta": {
+    "description": "Pins: saved File Browser locations, one list per server. GET /pins answers every pin with what is at its target now (ok, missing, unreadable, workspaceMissing, or unknown when the check took longer than 500 ms). POST /pins adds a target (a duplicate answers the saved pin's id); PUT /pins sets the order and labels and removes left-out pins, and a stale baseRevision answers 409 revision_conflict with the current list. Each change sends the pins_changed app event. Built by server/tests/pins-fixtures.ts; server/tests/pins-fixtures.test.ts fails when the committed bytes differ, and Apple PinsContractTests decodes these bodies.",
+    "source": "server/src/types/pins.ts"
+  },
+  "list": {
+    "revision": 7,
+    "pins": [
+      {
+        "id": "pin_Notebook0001",
+        "target": {
+          "origin": "host",
+          "path": "~/notebook"
+        },
+        "kind": "directory",
+        "createdAt": 1794384000000,
+        "status": "ok"
+      },
+      {
+        "id": "pin_Reports00002",
+        "target": {
+          "origin": "workspace",
+          "workspaceId": "ws-1",
+          "path": "reports"
+        },
+        "kind": "directory",
+        "label": "Reports",
+        "createdAt": 1794384060000,
+        "status": "ok"
+      },
+      {
+        "id": "pin_Book00000003",
+        "target": {
+          "origin": "host",
+          "path": "~/Books/The Left Hand of Darkness.epub"
+        },
+        "kind": "file",
+        "createdAt": 1794384120000,
+        "status": "missing"
+      },
+      {
+        "id": "pin_Documents004",
+        "target": {
+          "origin": "host",
+          "path": "~/Documents"
+        },
+        "kind": "directory",
+        "createdAt": 1794384180000,
+        "status": "unreadable"
+      },
+      {
+        "id": "pin_OldRepo00005",
+        "target": {
+          "origin": "workspace",
+          "workspaceId": "ws-gone",
+          "path": ""
+        },
+        "kind": "directory",
+        "label": "Old repo",
+        "createdAt": 1794384240000,
+        "status": "workspaceMissing"
+      },
+      {
+        "id": "pin_Archive00006",
+        "target": {
+          "origin": "host",
+          "path": "~/Volumes/Archive"
+        },
+        "kind": "directory",
+        "createdAt": 1794384300000,
+        "status": "unknown"
+      }
+    ]
+  },
+  "addRequests": [
+    {
+      "target": {
+        "origin": "host",
+        "path": "~/notebook"
+      }
+    },
+    {
+      "target": {
+        "origin": "workspace",
+        "workspaceId": "ws-1",
+        "path": "reports"
+      },
+      "label": "Reports"
+    }
+  ],
+  "add": {
+    "revision": 7,
+    "pins": [
+      {
+        "id": "pin_Notebook0001",
+        "target": {
+          "origin": "host",
+          "path": "~/notebook"
+        },
+        "kind": "directory",
+        "createdAt": 1794384000000,
+        "status": "ok"
+      },
+      {
+        "id": "pin_Reports00002",
+        "target": {
+          "origin": "workspace",
+          "workspaceId": "ws-1",
+          "path": "reports"
+        },
+        "kind": "directory",
+        "label": "Reports",
+        "createdAt": 1794384060000,
+        "status": "ok"
+      },
+      {
+        "id": "pin_Book00000003",
+        "target": {
+          "origin": "host",
+          "path": "~/Books/The Left Hand of Darkness.epub"
+        },
+        "kind": "file",
+        "createdAt": 1794384120000,
+        "status": "missing"
+      },
+      {
+        "id": "pin_Documents004",
+        "target": {
+          "origin": "host",
+          "path": "~/Documents"
+        },
+        "kind": "directory",
+        "createdAt": 1794384180000,
+        "status": "unreadable"
+      },
+      {
+        "id": "pin_OldRepo00005",
+        "target": {
+          "origin": "workspace",
+          "workspaceId": "ws-gone",
+          "path": ""
+        },
+        "kind": "directory",
+        "label": "Old repo",
+        "createdAt": 1794384240000,
+        "status": "workspaceMissing"
+      },
+      {
+        "id": "pin_Archive00006",
+        "target": {
+          "origin": "host",
+          "path": "~/Volumes/Archive"
+        },
+        "kind": "directory",
+        "createdAt": 1794384300000,
+        "status": "unknown"
+      }
+    ],
+    "pinId": "pin_Reports00002"
+  },
+  "reorderRequest": {
+    "baseRevision": 7,
+    "pins": [
+      {
+        "id": "pin_Reports00002",
+        "label": "Reports"
+      },
+      {
+        "id": "pin_Notebook0001"
+      }
+    ]
+  },
+  "conflict": {
+    "error": "Pins changed",
+    "code": "revision_conflict",
+    "current": {
+      "revision": 7,
+      "pins": [
+        {
+          "id": "pin_Notebook0001",
+          "target": {
+            "origin": "host",
+            "path": "~/notebook"
+          },
+          "kind": "directory",
+          "createdAt": 1794384000000,
+          "status": "ok"
+        },
+        {
+          "id": "pin_Reports00002",
+          "target": {
+            "origin": "workspace",
+            "workspaceId": "ws-1",
+            "path": "reports"
+          },
+          "kind": "directory",
+          "label": "Reports",
+          "createdAt": 1794384060000,
+          "status": "ok"
+        },
+        {
+          "id": "pin_Book00000003",
+          "target": {
+            "origin": "host",
+            "path": "~/Books/The Left Hand of Darkness.epub"
+          },
+          "kind": "file",
+          "createdAt": 1794384120000,
+          "status": "missing"
+        },
+        {
+          "id": "pin_Documents004",
+          "target": {
+            "origin": "host",
+            "path": "~/Documents"
+          },
+          "kind": "directory",
+          "createdAt": 1794384180000,
+          "status": "unreadable"
+        },
+        {
+          "id": "pin_OldRepo00005",
+          "target": {
+            "origin": "workspace",
+            "workspaceId": "ws-gone",
+            "path": ""
+          },
+          "kind": "directory",
+          "label": "Old repo",
+          "createdAt": 1794384240000,
+          "status": "workspaceMissing"
+        },
+        {
+          "id": "pin_Archive00006",
+          "target": {
+            "origin": "host",
+            "path": "~/Volumes/Archive"
+          },
+          "kind": "directory",
+          "createdAt": 1794384300000,
+          "status": "unknown"
+        }
+      ]
+    }
+  }
+}

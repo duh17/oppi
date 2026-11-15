@@ -39,6 +39,14 @@ enum FileBrowserHostHomePath {
         if trimmed.hasPrefix("~/") { return trimmed }
         return "~/\(trimmed)"
     }
+
+    /// The browser's folder path for a `~/…` folder: `notebook/` for
+    /// `~/notebook`, empty for `~`.
+    static func directoryPath(rawPath: String) -> String {
+        let trimmed = rawPath.hasPrefix("~/") ? String(rawPath.dropFirst(2)) : ""
+        let folder = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return folder.isEmpty ? "" : folder + "/"
+    }
 }
 
 /// Value-based navigation target for the file browser.

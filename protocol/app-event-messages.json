@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical AppEventMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 25
+    "messageCount": 26
   },
   "messages": {
     "app_events_connected": {
@@ -506,6 +506,11 @@
       "type": "workspace_layouts_changed",
       "workspaceId": "ws-1",
       "emittedAt": 1791650100000
+    },
+    "pins_changed": {
+      "type": "pins_changed",
+      "emittedAt": 1791650100000,
+      "revision": 4
     },
     "pairing_approval_requested": {
       "type": "pairing_approval_requested",

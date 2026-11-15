@@ -48,6 +48,9 @@ enum PaneRoute: Hashable, Sendable {
     case thread(String)
     case file(PaneFileOrigin, path: String, line: Int?)
     case files(workspace: String, path: String?)
+    /// The server's home folder in the File Browser, at a folder written
+    /// `~/…`; nil is the home folder itself.
+    case hostFiles(path: String?)
     case git(workspace: String, worktree: String?)
     case commit(workspace: String, sha: String)
     case panel(session: String, id: String)

@@ -25,6 +25,7 @@ import {
 } from "../tests/schedule-calendar-fixtures.js";
 import { GODOT_SNAPSHOT_FILE, serializeGodotFixture } from "../tests/godot-fixtures.js";
 import { SCREENS_SNAPSHOT_FILE, serializeScreensFixture } from "../tests/screens-fixtures.js";
+import { PINS_HTTP_SNAPSHOT_FILE, serializePinsHttpFixture } from "../tests/pins-fixtures.js";
 import {
   buildSurfaceFixtures,
   serializeSurfaceFixture,
@@ -75,6 +76,8 @@ const fixtures = [
   { path: GODOT_SNAPSHOT_FILE, content: serializeGodotFixture() },
   // The plugin screen vocabulary and its stream, from the MCP Servers plugin's real pages.
   { path: SCREENS_SNAPSHOT_FILE, content: serializeScreensFixture() },
+  // Every /pins body.
+  { path: PINS_HTTP_SNAPSHOT_FILE, content: serializePinsHttpFixture() },
   // One surface per composite, plus the action, patch, and unknown-composite messages, decoded
   // by the server's tests and the Apple Codable tests from these same bytes.
   ...Object.entries(buildSurfaceFixtures()).map(([name, value]) => ({

@@ -12,6 +12,8 @@ extension ServerConnection {
         switch event {
         case .connected:
             Task { await refreshPairingApprovals() }
+            // A pin changed while the stream was down sends no event; read the list again.
+            if pinsAvailable, pins.list != nil, let apiClient { Task { await pins.refresh(api: apiClient) } }
 
         case .sessionCreated(_, let workspaceId, _, let summary),
              .sessionImported(_, let workspaceId, _, let summary),
@@ -75,6 +77,9 @@ extension ServerConnection {
         case .workspaceLayoutsChanged:
             // No screen lists layouts yet; the Layouts list that reads the route owns this event.
             break
+
+        case .pinsChanged(let revision, _):
+            pins.noteChanged(revision: revision, api: apiClient)
 
         case .pairingApprovalRequested(_, let approval):
             pairingApprovals.upsert(approval)

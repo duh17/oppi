@@ -89,6 +89,7 @@ struct PaneLinkCodecTests {
             default: throw VectorError.unknown("file origin \(value.origin ?? "nil")")
             }
             return .file(origin, path: try field("path", value.path), line: value.line)
+        case "files" where value.origin == "host": return .hostFiles(path: value.path)
         case "files": return .files(workspace: try field("workspace", value.workspace), path: value.path)
         case "git": return .git(workspace: try field("workspace", value.workspace), worktree: value.worktree)
         case "commit": return .commit(workspace: try field("workspace", value.workspace), sha: try field("sha", value.sha))

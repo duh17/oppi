@@ -10,6 +10,7 @@ import { hostMountValidationError } from "../host.js";
 import { DEFAULT_ICON_CHOICE, validateIconChoice } from "../icon-choice.js";
 import { parsePushEvents } from "../push/events.js";
 import { validateDictionaryPhrases } from "../storage/dictation-dictionary-store.js";
+import { validatePinOrder, type PinOrderEntry } from "../storage/pins-store.js";
 import type { IconChoice, PushEvent, WorkspaceSandboxConfig } from "../types.js";
 import { isRecord } from "../json-shape.js";
 
@@ -274,6 +275,14 @@ const SETTINGS = {
     default: [] as string[],
     revisioned: true,
     validate: (value: unknown) => asSettingError(() => validateDictionaryPhrases(value)),
+  },
+  // The saved locations (`routes/pins.ts`); a write is the `PUT /pins` order and labels.
+  pins: {
+    scope: "server",
+    storage: "settings-file",
+    default: [] as PinOrderEntry[],
+    revisioned: true,
+    validate: (value: unknown) => asSettingError(() => validatePinOrder(value)),
   },
   piDefaultTools: {
     scope: "server",

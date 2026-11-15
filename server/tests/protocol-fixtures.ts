@@ -1190,6 +1190,11 @@ const APP_EVENT_CANONICAL_EXAMPLES = {
     workspaceId: "ws-1",
     emittedAt: appEventEmittedAt,
   },
+  pins_changed: {
+    type: "pins_changed",
+    emittedAt: appEventEmittedAt,
+    revision: 4,
+  },
   pairing_approval_requested: {
     type: "pairing_approval_requested",
     emittedAt: appEventEmittedAt,
@@ -1281,6 +1286,7 @@ const APP_EVENT_MESSAGE_ORDER = [
   "extension_ui_notification",
   "workspace_git_changed",
   "workspace_layouts_changed",
+  "pins_changed",
   "pairing_approval_requested",
   "pairing_approval_settled",
 ] as const satisfies readonly (

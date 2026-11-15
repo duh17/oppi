@@ -175,8 +175,9 @@ export function layoutLeafKind(leaf: LayoutLeaf): ContentField | undefined {
 /**
  * A title or pane name as it is shown: control and bidirectional formatting characters removed,
  * line breaks and tabs as spaces, trimmed. Both are one line of plain text, never Markdown.
+ * Pin labels follow the same rule.
  */
-function cleanLabel(text: string): string {
+export function cleanLabel(text: string): string {
   return (
     text
       // Line and paragraph breaks and tabs keep the words apart.

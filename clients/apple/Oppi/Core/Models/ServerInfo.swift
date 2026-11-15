@@ -155,6 +155,9 @@ struct ServerInfo: Codable, Sendable, Equatable {
         /// The server's `sidebar` entries this app draws, set from the info that carried these
         /// capabilities (`capabilitiesWithPluginSidebar`); never on the wire.
         var pluginSidebar: [PluginScreenSidebarEntry]? = nil
+        /// `GET|POST|PUT /pins` and the `pins_changed` app event. Missing means
+        /// the app offers no Pin items and shows no Pinned section.
+        var pins: CapabilityVersion? = nil
 
         /// The relay origin, when the server pushes and names an https relay (http only on
         /// loopback, for local testing).

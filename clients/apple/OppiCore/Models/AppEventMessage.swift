@@ -27,6 +27,8 @@ enum AppEventMessage: Sendable, Equatable {
     case workspaceGitChanged(workspaceId: String, worktreeId: String?, emittedAt: Int64, sessionId: String?, reason: String?)
     /// A layouts folder of the workspace changed (`GET /workspaces/{id}/layouts` is stale).
     case workspaceLayoutsChanged(workspaceId: String, emittedAt: Int64)
+    /// The server's pins changed (`GET /pins` is stale unless it holds `revision`).
+    case pinsChanged(revision: Int, emittedAt: Int64)
 
     case pairingApprovalRequested(emittedAt: Int64, approval: PendingPairingApproval)
     case pairingApprovalSettled(emittedAt: Int64, approvalId: String, outcome: PairingApprovalSettlement)
@@ -42,6 +44,7 @@ extension AppEventMessage: Decodable {
         case reason, source, message, code, fatal, id
         case seq, currentSeq
         case approval, approvalId, outcome
+        case revision
     }
 
     private static let focusedStreamOnlyTypes: Set<String> = [
@@ -174,6 +177,12 @@ extension AppEventMessage: Decodable {
         case "workspace_layouts_changed":
             self = .workspaceLayoutsChanged(
                 workspaceId: try c.decode(String.self, forKey: .workspaceId),
+                emittedAt: try c.decode(Int64.self, forKey: .emittedAt)
+            )
+
+        case "pins_changed":
+            self = .pinsChanged(
+                revision: try c.decode(Int.self, forKey: .revision),
                 emittedAt: try c.decode(Int64.self, forKey: .emittedAt)
             )
 

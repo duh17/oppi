@@ -294,7 +294,7 @@ final class PaneLeafStateViewController: UIViewController {
         case .session, .thread: String(localized: "Session")
         case .panel: String(localized: "Panel")
         case .file: String(localized: "File")
-        case .files: String(localized: "Files")
+        case .files, .hostFiles: String(localized: "Files")
         case .sessions: String(localized: "Sessions")
         case .git, .commit: String(localized: "Git")
         case .browser: String(localized: "Web Page")

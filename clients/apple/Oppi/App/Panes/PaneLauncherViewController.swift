@@ -10,6 +10,9 @@ import UIKit
 /// The choices scroll, so a short pane (a Split Down dragged to its minimum)
 /// never squeezes them over each other. A pane too short for one column but
 /// wide enough for two lays them out two by two.
+///
+/// Under them, a Pinned group lists the server's pins (`PinStore`); one
+/// opens its folder's File Browser or its file in this pane.
 final class PaneLauncherViewController: UIViewController {
     enum Choice: CaseIterable {
         case sessions, files, terminal, web, godot
@@ -32,8 +35,12 @@ final class PaneLauncherViewController: UIViewController {
     private let root: AppRootEnvironment?
     private let choose: (PaneStackEntry) -> Void
     private let scrollView = UIScrollView()
+    /// The choices' grid, then the Pinned group.
+    private let content = UIStackView()
     private let grid = UIStackView()
+    private let pinned = UIStackView()
     private var buttons: [UIButton] = []
+    private var shownPins: [PinnedChoice] = []
     private var preferredWidth: NSLayoutConstraint?
     private(set) var columns = 1
 
@@ -59,32 +66,39 @@ final class PaneLauncherViewController: UIViewController {
         view.addSubview(scrollView)
         grid.axis = .vertical
         grid.spacing = Self.spacing
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.addSubview(grid)
+        pinned.axis = .vertical
+        pinned.spacing = 8
+        pinned.accessibilityIdentifier = "pane.launcher.pinned"
+        content.axis = .vertical
+        content.spacing = Self.spacing * 2
+        content.translatesAutoresizingMaskIntoConstraints = false
+        content.addArrangedSubview(grid)
+        content.addArrangedSubview(pinned)
+        scrollView.addSubview(content)
 
         let guide = view.safeAreaLayoutGuide
-        let content = scrollView.contentLayoutGuide
+        let scrolled = scrollView.contentLayoutGuide
         let frame = scrollView.frameLayoutGuide
-        let preferredWidth = grid.widthAnchor.constraint(equalToConstant: Self.preferredColumnWidth)
+        let preferredWidth = content.widthAnchor.constraint(equalToConstant: Self.preferredColumnWidth)
         preferredWidth.priority = .defaultHigh
         self.preferredWidth = preferredWidth
         // The content is the frame's height when the choices fit, and theirs
         // (scrolling) when they do not; the choices sit in its middle.
-        let fitsFrame = content.heightAnchor.constraint(equalTo: frame.heightAnchor)
+        let fitsFrame = scrolled.heightAnchor.constraint(equalTo: frame.heightAnchor)
         fitsFrame.priority = .defaultLow
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: guide.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: guide.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: guide.trailingAnchor),
-            content.widthAnchor.constraint(equalTo: frame.widthAnchor),
-            content.heightAnchor.constraint(greaterThanOrEqualTo: frame.heightAnchor),
+            scrolled.widthAnchor.constraint(equalTo: frame.widthAnchor),
+            scrolled.heightAnchor.constraint(greaterThanOrEqualTo: frame.heightAnchor),
             fitsFrame,
-            grid.centerXAnchor.constraint(equalTo: content.centerXAnchor),
-            grid.centerYAnchor.constraint(equalTo: content.centerYAnchor),
-            grid.topAnchor.constraint(greaterThanOrEqualTo: content.topAnchor, constant: Self.spacing),
-            grid.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -Self.spacing),
-            grid.widthAnchor.constraint(lessThanOrEqualTo: frame.widthAnchor, constant: -2 * Self.margin),
+            content.centerXAnchor.constraint(equalTo: scrolled.centerXAnchor),
+            content.centerYAnchor.constraint(equalTo: scrolled.centerYAnchor),
+            content.topAnchor.constraint(greaterThanOrEqualTo: scrolled.topAnchor, constant: Self.spacing),
+            content.bottomAnchor.constraint(lessThanOrEqualTo: scrolled.bottomAnchor, constant: -Self.spacing),
+            content.widthAnchor.constraint(lessThanOrEqualTo: frame.widthAnchor, constant: -2 * Self.margin),
             preferredWidth,
         ])
         buttons = Choice.offered.map(button(for:))
@@ -98,10 +112,80 @@ final class PaneLauncherViewController: UIViewController {
         arrange(columns: wanted)
     }
 
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+        if let pins {
+            Task { await pins.store.refresh(api: pins.api) }
+        }
+    }
+
     override func updateProperties() {
         super.updateProperties()
-        // Observation tracking re-runs this when the theme store changes.
+        // Observation tracking re-runs this when the theme store or the pins change.
         view.backgroundColor = root?.themeStore.backgroundColor ?? .systemBackground
+        let choices = (pins?.store.pins ?? []).map { PinnedChoice(pin: $0, workspaceName: workspaceName($0.target.workspaceId)) }
+        if choices != shownPins { showPinned(choices) }
+    }
+
+    /// This leaf's server's pins, never the window's active server's.
+    private var pins: (store: PinStore, api: APIClient)? {
+        root.flatMap { PaneEntries.pins(serverId, coordinator: $0.coordinator) }
+    }
+
+    private func workspaceName(_ id: String?) -> String? {
+        guard let id, let root else { return nil }
+        return PaneEntries.workspace(id, serverId: serverId, coordinator: root.coordinator)?.workspace.name
+    }
+
+    // MARK: Pinned
+
+    /// What one pin's button shows; the group rebuilds when these change.
+    private struct PinnedChoice: Equatable {
+        let pin: Pin
+        let workspaceName: String?
+    }
+
+    private func showPinned(_ choices: [PinnedChoice]) {
+        shownPins = choices
+        for view in pinned.arrangedSubviews {
+            pinned.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        pinned.isHidden = choices.isEmpty
+        guard !choices.isEmpty else { return }
+        let title = UILabel()
+        title.text = String(localized: "Pinned")
+        title.font = UIFont.preferredFont(forTextStyle: .headline)
+        title.adjustsFontForContentSizeCategory = true
+        title.textColor = .secondaryLabel
+        title.accessibilityTraits = .header
+        pinned.addArrangedSubview(title)
+        for choice in choices {
+            pinned.addArrangedSubview(pinButton(choice))
+        }
+    }
+
+    private func pinButton(_ choice: PinnedChoice) -> UIButton {
+        let pin = choice.pin
+        let gone = pin.status == .missing || pin.status == .workspaceMissing
+        var configuration = UIButton.Configuration.gray()
+        configuration.title = pin.displayName(workspaceName: choice.workspaceName)
+        configuration.subtitle = pin.subtitle(workspaceName: choice.workspaceName)
+        configuration.image = UIImage(systemName: pin.kind == .directory ? "folder.fill" : FileIcon.forPath(pin.target.path).symbolName)
+        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .body)
+        configuration.imagePadding = 12
+        configuration.titleAlignment = .leading
+        configuration.titleLineBreakMode = .byTruncatingMiddle
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16)
+        configuration.cornerStyle = .large
+        let entry = pin.paneEntry(serverId: serverId)
+        let button = UIButton(configuration: configuration, primaryAction: UIAction { [weak self] _ in
+            self?.choose(entry)
+        })
+        button.contentHorizontalAlignment = .leading
+        button.isEnabled = !gone
+        button.accessibilityIdentifier = "pane.launcher.pin.\(pin.target.accessibilityKey)"
+        return button
     }
 
     /// Two columns only when one column would scroll and two fit side by

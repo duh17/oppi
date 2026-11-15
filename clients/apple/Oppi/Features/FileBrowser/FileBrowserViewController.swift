@@ -147,7 +147,18 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private var lastThemeID: ThemeID?
     private var appliedBars: BarState?
     private var sidebarToggle: UIBarButtonItem?
-    private lazy var viewOptionsItem = Self.makeViewOptionsItem()
+    private lazy var viewOptionsItem = Self.makeViewOptionsItem { [weak self] in self?.pinsSection?.viewOptionsElements() ?? [] }
+    /// The Pinned section of a shell route's root (`FileBrowserPinsSection`).
+    private(set) lazy var pinsSection: FileBrowserPinsSection? = isShellRoute ? serverId.map { serverId in
+        FileBrowserPinsSection(serverId: serverId, scope: scope, presenter: self, hooks: .init(
+            connection: { [weak self] in self?.services?.connection },
+            navigation: { [weak self] in self?.navigation },
+            currentFolder: { [weak self] in self?.currentDirectoryPath ?? "" },
+            openFolderHere: { [weak self] path in self?.activate(.directory(path)) },
+            setEditing: { [weak self] editing in self?.collectionView.isEditing = editing },
+            changed: { [weak self] in self?.setNeedsUpdateProperties() }
+        ))
+    } : nil
     private var lastChrome: FileBrowserEmbeddedChrome?
     /// The listing's order and the checkout's Git changes, read each pass.
     private var arrangement = FileBrowserViewOptions()
@@ -290,6 +301,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         if let lockTarget, !ScopedLockService.shared.isLocked(lockTarget) {
             startConnectTask()
         }
+        // Pins show only at a root; a subfolder's appearance reads nothing.
+        if isRoot { pinsSection?.refresh() }
         setNeedsUpdateProperties()
         updatePropertiesIfNeeded()
         if isShellRoute {
@@ -1039,7 +1052,18 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             let column = appliedLayout?.isColumn ?? false
             var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
             configuration.backgroundColor = .clear
-            configuration.showsSeparators = !column && section == .body
+            configuration.showsSeparators = !column && (section == .body || section == .pins)
+            if section == .pins {
+                configuration.trailingSwipeActionsConfigurationProvider = { [weak self] indexPath in
+                    self?.pinId(at: indexPath).flatMap { self?.pinsSection?.trailingSwipe(pinId: $0) }
+                }
+                // The Pinned heading has no rule under it; the pins do, like the listing's rows.
+                configuration.itemSeparatorHandler = { indexPath, separator in
+                    var separator = separator
+                    if indexPath.item == 0 { separator.bottomSeparatorVisibility = .hidden }
+                    return separator
+                }
+            }
             if !column, section == .body, compactSearchHeader != nil {
                 configuration.headerMode = .supplementary
             }
@@ -1047,7 +1071,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             if column {
                 layoutSection.interGroupSpacing = 4
                 layoutSection.contentInsets = switch section {
-                case .header: NSDirectionalEdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
+                case .header, .pins: NSDirectionalEdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
                 case .body: NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 4, trailing: 0)
                 case .footer: NSDirectionalEdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
                 }
@@ -1081,10 +1105,29 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 self?.popToBreadcrumbDepth(depth)
             }
         }
+        let pinCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
+            guard let self, case .pin(let row)? = rows[item] else { return }
+            configurePin(cell, row: row)
+            pinsSection?.decorate(cell, row: row, palette: palette)
+        }
+        let listingHeaderCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, _ in
+            guard let self else { return }
+            FileBrowserPinsSection.configureListingHeader(cell, palette: palette)
+        }
+        let pinsHeaderCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
+            guard let self, case .pinsHeader(let header)? = rows[item] else { return }
+            pinsSection?.configureHeader(cell, header: header, palette: palette)
+        }
         let dataSource = UICollectionViewDiffableDataSource<Section, Item>(
             collectionView: collectionView
         ) { collectionView, indexPath, item in
             switch item {
+            case .pin:
+                return collectionView.dequeueConfiguredReusableCell(using: pinCell, for: indexPath, item: item)
+            case .pinsHeader:
+                return collectionView.dequeueConfiguredReusableCell(using: pinsHeaderCell, for: indexPath, item: item)
+            case .listingHeader:
+                return collectionView.dequeueConfiguredReusableCell(using: listingHeaderCell, for: indexPath, item: item)
             case .breadcrumb:
                 return collectionView.dequeueConfiguredReusableCell(using: breadcrumbCell, for: indexPath, item: item)
             case .directory:
@@ -1104,6 +1147,14 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         }
         dataSource.supplementaryViewProvider = { collectionView, _, indexPath in
             collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
+        }
+        // Edit mode moves pins only (`FileBrowserPinsSection`).
+        dataSource.reorderingHandlers.canReorderItem = { [weak self] item in
+            if case .pin = item { self?.pinsSection?.isEditing == true } else { false }
+        }
+        dataSource.reorderingHandlers.didReorder = { [weak self] transaction in
+            let ids = transaction.finalSnapshot.itemIdentifiers(inSection: .pins).compactMap(\.pinId)
+            self?.pinsSection?.didReorder(ids)
         }
         self.dataSource = dataSource
     }
@@ -1152,6 +1203,12 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             snapshot.appendItems(items, toSection: section)
         }
 
+        let pinned = isSearching ? nil : pinsSection?.content(atRoot: isRoot)
+        if let pinned {
+            nextRows[.pinsHeader] = .pinsHeader(pinned.header)
+            for row in pinned.rows { nextRows[.pin(row.id)] = .pin(row) }
+            append([.pinsHeader] + pinned.rows.map { .pin($0.id) }, to: .pins)
+        }
         if isSearching {
             if indexIsLoading {
                 nextOverlay = .indexLoading
@@ -1195,6 +1252,10 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                     }
                     nextRows[.breadcrumb] = .breadcrumb(segments: segments, depth: currentDepth, column: column)
                     append([.breadcrumb], to: .header)
+                }
+                if pinned != nil {
+                    nextRows[.listingHeader] = .listingHeader
+                    append([.listingHeader], to: .header)
                 }
                 if entries.isEmpty {
                     nextRows[.emptyDirectory] = .emptyDirectory
@@ -1329,7 +1390,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         var element: (label: String, isSelected: Bool)?
         defer { exposeRow(cell, as: element, path: path) }
         switch row {
-        case .breadcrumb:
+        case .breadcrumb, .pinsHeader, .pin, .listingHeader:
             return
         case .searchCount(let text):
             var content = UIListContentConfiguration.cell()
@@ -1494,11 +1555,14 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             content.accessibilityTraits = .none
             content.accessibilityLabel = nil
             content.accessibilityIdentifier = nil
-            content.accessibilityCustomActions = nil
+            content.accessibilityCustomActionsBlock = nil
             cell.accessibilityElements = nil
             return
         }
-        content.accessibilityCustomActions = rowAccessibilityActions(path: path)
+        // Read when VoiceOver asks, so Pin and Unpin match the pins then.
+        content.accessibilityCustomActionsBlock = { [weak self] in
+            MainActor.assumeIsolated { self?.rowAccessibilityActions(path: path) ?? [] }
+        }
         content.isAccessibilityElement = true
         content.accessibilityTraits = element.isSelected ? [.button, .selected] : .button
         content.accessibilityLabel = element.label
@@ -1575,6 +1639,47 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             }
             cell.backgroundConfiguration = background
         }
+    }
+
+    /// A pin drawn as the listing draws its folders and files: the tree's
+    /// row in the column, the list's row with its chevron otherwise.
+    private func configurePin(_ cell: UICollectionViewListCell, row: FileBrowserPinsSection.Row) {
+        let palette = palette
+        let tint = row.isGone || !row.isDirectory ? palette.ui.comment : palette.ui.blue
+        let color = row.isGone ? palette.ui.comment : palette.ui.fg
+        let opens = !row.isGone && !row.isEditing
+        if appliedLayout?.isColumn == true {
+            configureTreeRow(
+                cell,
+                image: Self.treeSymbol(row.icon?.symbolName ?? "folder.fill"),
+                tint: tint,
+                title: NSAttributedString(string: row.title, attributes: [.font: Self.font(.callout, .regular), .foregroundColor: color]),
+                subtitle: row.detail.map { NSAttributedString(string: $0) },
+                trailingText: nil,
+                trailingColor: palette.ui.comment,
+                showsChevron: opens,
+                isSelected: false
+            )
+            return
+        }
+        var content = UIListContentConfiguration.subtitleCell()
+        if let icon = row.icon, !row.isGone {
+            setListIcon(icon, on: &content)
+        } else {
+            content.image = UIImage(systemName: row.icon?.symbolName ?? "folder.fill")
+            content.imageProperties.tintColor = tint
+            content.imageProperties.reservedLayoutSize = CGSize(width: 24, height: 24)
+        }
+        content.text = row.title
+        content.textProperties.font = UIFont.preferredFont(forTextStyle: .body)
+        content.textProperties.color = color
+        content.secondaryText = row.detail
+        content.secondaryTextProperties.font = UIFont.preferredFont(forTextStyle: .caption2)
+        content.secondaryTextProperties.color = palette.ui.comment
+        content.textToSecondaryTextVerticalPadding = 2
+        cell.contentConfiguration = content
+        cell.accessories = opens ? [.disclosureIndicator()] : []
+        applyListBackground(to: cell)
     }
 
     /// The list's theme page; a touched row shows the system highlight.
@@ -1695,23 +1800,39 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         guard let item = dataSource?.itemIdentifier(for: indexPath) else { return false }
+        if case .pin = item { return true }
+        if case .pinsHeader = item { return true }
         return taps[item] != nil
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
-        guard let item = dataSource?.itemIdentifier(for: indexPath), let tap = taps[item] else { return }
-        activate(tap)
+        switch dataSource?.itemIdentifier(for: indexPath) {
+        case .pin(let id)?: pinsSection?.select(id)
+        case .pinsHeader?: pinsSection?.toggleCollapsed()
+        case let item?: taps[item].map(activate)
+        case nil: break
+        }
     }
 
     func rowPath(at indexPath: IndexPath) -> String? { dataSource?.itemIdentifier(for: indexPath)?.path }
+    func pinId(at indexPath: IndexPath) -> String? { dataSource?.itemIdentifier(for: indexPath)?.pinId }
 
-    /// A workspace row as a pane entry, for a drag (`+Drag`); nil on the host.
+    /// A row as a pane entry, for a drag (`+Drag`) and the pane menu items.
+    /// Home rows name their folder or file as `~/…`.
     func paneEntry(forRowPath path: String) -> PaneStackEntry? {
-        guard case .workspace(let workspaceId, let worktreeId) = scope, let serverId else { return nil }
-        let route: PaneRoute = path.hasSuffix("/")
-            ? .files(workspace: workspaceId, path: String(path.dropLast()))
-            : .file(.workspace(id: workspaceId, worktree: worktreeId), path: path, line: nil)
+        guard let serverId else { return nil }
+        let route: PaneRoute
+        switch scope {
+        case .workspace(let workspaceId, let worktreeId):
+            route = path.hasSuffix("/")
+                ? .files(workspace: workspaceId, path: String(path.dropLast()))
+                : .file(.workspace(id: workspaceId, worktree: worktreeId), path: path, line: nil)
+        case .hostHome:
+            route = path.hasSuffix("/")
+                ? .hostFiles(path: FileBrowserHostHomePath.rawPath(relativePath: path))
+                : .file(.host, path: path, line: nil)
+        }
         return PaneStackEntry(serverId: serverId, route: route)
     }
 
@@ -1976,6 +2097,8 @@ private extension FileBrowserViewController {
     }
 
     enum Section: Hashable {
+        /// The Pinned section at the root (`FileBrowserPinsSection`).
+        case pins
         /// The breadcrumb, or the tree's search result count.
         case header
         case body
@@ -1994,13 +2117,23 @@ private extension FileBrowserViewController {
         case truncated
         /// Git's status lists only some of its changes.
         case marksIncomplete
+        case pinsHeader
+        /// A pin, by its id.
+        case pin(String)
+        /// "Files" over the listing, under the Pinned section.
+        case listingHeader
 
-        /// The entry's path; nil for a state row.
+        /// The entry's path; nil for a state row or a pin.
         var path: String? {
             switch self {
             case .directory(let path), .file(let path), .result(let path): path
-            case .breadcrumb, .searchCount, .emptyDirectory, .truncated, .marksIncomplete: nil
+            case .breadcrumb, .searchCount, .emptyDirectory, .truncated, .marksIncomplete, .pinsHeader, .pin, .listingHeader: nil
             }
+        }
+
+        var pinId: String? {
+            if case .pin(let id) = self { return id }
+            return nil
         }
     }
 
@@ -2053,6 +2186,9 @@ private extension FileBrowserViewController {
         case emptyDirectory
         case truncated(Int)
         case marksIncomplete(Int)
+        case pinsHeader(FileBrowserPinsSection.Header)
+        case pin(FileBrowserPinsSection.Row)
+        case listingHeader
     }
 
     enum Tap {

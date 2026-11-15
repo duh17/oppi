@@ -216,6 +216,42 @@
       "error": { "code": "missing", "detail": "workspace" }
     },
     {
+      "name": "file browser in a folder of the home folder",
+      "input": "oppi://files?path=~/notebook/reports&host=1&server=sha256:9f86d081884c7d65",
+      "server": "sha256:9f86d081884c7d65",
+      "route": { "kind": "files", "origin": "host", "path": "~/notebook/reports" },
+      "canonical": "oppi://files?host=1&path=~/notebook/reports&server=sha256:9f86d081884c7d65"
+    },
+    {
+      "name": "file browser at the home folder",
+      "input": "oppi://files?host=1",
+      "server": null,
+      "route": { "kind": "files", "origin": "host", "path": null },
+      "canonical": "oppi://files?host=1"
+    },
+    {
+      "name": "file browser at ~ is the home folder",
+      "input": "oppi://files?host=1&path=~",
+      "server": null,
+      "route": { "kind": "files", "origin": "host", "path": null },
+      "canonical": "oppi://files?host=1"
+    },
+    {
+      "name": "home folder path must start with ~/",
+      "input": "oppi://files?host=1&path=/etc",
+      "error": { "code": "invalidValue", "detail": "path" }
+    },
+    {
+      "name": "file browser naming a workspace and the home folder",
+      "input": "oppi://files?workspace=ws-1&host=1&path=src",
+      "error": { "code": "conflictingOrigin" }
+    },
+    {
+      "name": "file browser host must be 1",
+      "input": "oppi://files?host=yes",
+      "error": { "code": "invalidValue", "detail": "host" }
+    },
+    {
       "name": "git status",
       "input": "oppi://git?workspace=ws-1",
       "server": null,

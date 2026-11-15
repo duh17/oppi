@@ -950,10 +950,8 @@ export type AppEventMessage =
       type: "workspace_layouts_changed";
       workspaceId: string;
     })
-  | (AppEventBase & {
-      type: "pairing_approval_requested";
-      approval: PendingPairingApproval;
-    })
+  | (AppEventBase & { type: "pins_changed"; revision: number }) // re-read `GET /pins`
+  | (AppEventBase & { type: "pairing_approval_requested"; approval: PendingPairingApproval })
   | (AppEventBase & {
       type: "pairing_approval_settled";
       approvalId: string;

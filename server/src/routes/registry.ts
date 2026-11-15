@@ -808,6 +808,23 @@ const rawApiRouteSpecs = [
     auth: "owner",
   },
   {
+    method: "GET",
+    path: "/pins",
+    operationId: "listPins",
+    surface: "core",
+    auth: "owner",
+    description: "Saved File Browser locations, each with what is at its target now.",
+  },
+  { method: "POST", path: "/pins", operationId: "addPin", surface: "core", auth: "owner" },
+  {
+    method: "PUT",
+    path: "/pins",
+    operationId: "reorderPins",
+    surface: "core",
+    auth: "owner",
+    description: "Order, label, and remove pins; a stale baseRevision is a 409.",
+  },
+  {
     method: "POST",
     path: "/speech",
     operationId: "synthesizeSpeech",

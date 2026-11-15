@@ -627,6 +627,7 @@ extension PaneHostController {
         switch entry.route {
         case .sessions: String(localized: "Sessions")
         case .files: String(localized: "Files")
+        case .hostFiles(let path): path.map { ($0 as NSString).lastPathComponent } ?? String(localized: "Home")
         case .git, .commit: String(localized: "Git")
         case .file(_, let path, _): (path as NSString).lastPathComponent
         case .local(let token):

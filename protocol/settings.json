@@ -53,6 +53,15 @@
       "revisioned": true
     },
     {
+      "key": "pins",
+      "scope": "server",
+      "storage": "settings-file",
+      "type": "{ id: string, label?: string }[]",
+      "default": [],
+      "validation": "PUT /pins takes baseRevision and the pins in their new order: at most 50, each id once and already saved (an unknown id is a 400), with an optional label cleaned like a layout title and at most 40 characters. Pins left out are removed. A stale baseRevision answers 409 { error, code: \"revision_conflict\", current }. POST /pins adds one target (see protocol/pins-http.json).",
+      "revisioned": true
+    },
+    {
       "key": "piDefaultTools",
       "scope": "server",
       "storage": "pi",

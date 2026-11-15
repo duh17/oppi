@@ -32,6 +32,8 @@ final class ServerConnection {
     private(set) var connectedServerVersion: String?
     /// Pending pairing approvals for this server (`GET /auth/pairing-approvals` + app events).
     let pairingApprovals = PairingApprovalList()
+    /// This server's pins (`GET /pins` + `pins_changed`).
+    let pins = PinStore()
     /// `serverMetrics.enabled` from `GET /server/metrics/settings`, read once per
     /// connection and updated by the toggle. Nil until known: the host pill hides
     /// Server Metrics for nil and false alike. Filled by `ConnectionCoordinator`.
@@ -188,6 +190,8 @@ final class ServerConnection {
     /// The server answers the schedule calendar (`capabilities.scheduleCalendar`); without it
     /// Schedules shows only its list.
     var scheduleCalendarAvailable: Bool { serverCapabilities?.scheduleCalendar?.version ?? 0 >= 1 }
+    /// The server keeps pins (`capabilities.pins`); without it no Pin item or Pinned section shows.
+    var pinsAvailable: Bool { serverCapabilities?.pins?.version ?? 0 >= 1 }
     /// Relay the server pushes through (`capabilities.pushNotifications`); nil when it does not.
     var pushRelay: URL? { serverCapabilities?.pushRelay }
 
@@ -2158,7 +2162,8 @@ final class ServerConnection {
         speech: Bool = false,
         liveVoice: Bool = false,
         pushRelay: URL? = nil,
-        extensionNativeUICapabilities: [String]? = nil
+        extensionNativeUICapabilities: [String]? = nil,
+        pins: Bool = false
     ) {
         func version(_ enabled: Bool) -> ServerInfo.CapabilityVersion? {
             enabled ? ServerInfo.CapabilityVersion(version: 1) : nil
@@ -2179,6 +2184,7 @@ final class ServerConnection {
             }
         )
         serverCapabilities = capabilities
+        serverCapabilities?.pins = version(pins)
         dictationStreamUnsupportedByEndpoint = false
         missingRequiredSplitStreamCapabilities = capabilities.missingRequiredSplitStreamCapabilities
         streamCapabilitiesLoaded = true

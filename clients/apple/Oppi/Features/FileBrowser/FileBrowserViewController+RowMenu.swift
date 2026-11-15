@@ -1,7 +1,8 @@
 import UIKit
 
 /// A row's menu: Share…, Open, and Copy Path for a file; Open and Copy Path
-/// for a folder, because the server has no folder download to share. On a
+/// for a folder, because the server has no folder download to share; then
+/// Pin or Unpin where the server keeps pins (`FileBrowserPinsSection`). On a
 /// window wide enough for panes, Open is Open Here, with Open in New Pane and
 /// Open in Pane ▸ beside it (`PaneOpenMenu`).
 ///
@@ -51,10 +52,14 @@ extension FileBrowserViewController {
         contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
         point: CGPoint
     ) -> UIContextMenuConfiguration? {
+        if indexPaths.count == 1, let pinId = pinId(at: indexPaths[0]) {
+            return pinsSection?.contextMenu(pinId: pinId)
+        }
         guard indexPaths.count == 1, let path = rowPath(at: indexPaths[0]), rowMenuEntry(path: path) != nil else {
             return nil
         }
         let panes = paneItems(path: path)
+        let pin = pinsSection?.rowMenuElement(rowPath: path)
         let configuration = UIContextMenuConfiguration(identifier: path as NSString, previewProvider: nil) { [weak self] _ in
             let rowItems: [UIMenuElement] = Self.rowActions(path: path).flatMap { action -> [UIMenuElement] in
                 // Open Here stands in for Open.
@@ -65,7 +70,8 @@ extension FileBrowserViewController {
                 item.accessibilityIdentifier = action.identifier
                 return [item]
             }
-            return UIMenu(children: rowItems)
+            // Pin or Unpin follows Copy Path.
+            return UIMenu(children: rowItems + (pin.map { [$0] } ?? []))
         }
         // Share stays on top when the menu opens above a row low on the screen.
         configuration.preferredMenuElementOrder = .fixed
@@ -73,11 +79,12 @@ extension FileBrowserViewController {
     }
 
     func rowAccessibilityActions(path: String) -> [UIAccessibilityCustomAction] {
-        let rowActions = Self.rowActions(path: path).filter { $0 != .open }.map { action in
+        var rowActions = Self.rowActions(path: path).filter { $0 != .open }.map { action in
             UIAccessibilityCustomAction(name: action.title) { [weak self] _ in
                 self?.performRowAction(action, path: path) ?? false
             }
         }
+        if let pin = pinsSection?.rowAccessibilityAction(rowPath: path) { rowActions.append(pin) }
         guard paneContent(path: path) != nil else { return rowActions }
         return rowActions + PaneOpenMenu.accessibilityActions(near: view, includesOpenHere: false) { [weak self] placement in
             self?.openRow(path: path, placement: placement)
@@ -93,8 +100,8 @@ extension FileBrowserViewController {
         }
     }
 
-    /// The row at `path` as a pane's content: a workspace file or folder by
-    /// its link, as a drag carries it. The home folder's rows have none.
+    /// The row at `path` as a pane's content: a workspace or home file or
+    /// folder by its link, as a drag carries it.
     private func paneContent(path: String) -> PaneOpenContent? {
         paneEntry(forRowPath: path).map { PaneOpenContent(entry: $0) }
     }

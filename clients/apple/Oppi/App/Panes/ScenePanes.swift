@@ -371,7 +371,7 @@ final class ScenePanes {
     private func splitEntry(copying id: PaneID) -> PaneStackEntry {
         let top = topEntry(of: id)
         switch top.route {
-        case .files, .file, .git, .commit:
+        case .files, .hostFiles, .file, .git, .commit:
             return top
         case .local(let token):
             if case .terminal? = PaneLocalScreen(token) { return top }
@@ -441,7 +441,7 @@ final class ScenePanes {
             return coordinator?.connection(for: entry.serverId)?.sessionStore.session(id: id)?.workspaceId
         case .local(let token):
             return PaneLocalScreen(token)?.workspaceId
-        case .thread, .file(.host, _, _), .browser, .godot, .unsupported:
+        case .thread, .file(.host, _, _), .hostFiles, .browser, .godot, .unsupported:
             return nil
         }
     }

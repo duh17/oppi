@@ -23,8 +23,8 @@ enum PaneEntries {
     }
 
     /// The entry a screen shows; nil for a screen with no link (settings,
-    /// readers, a worktree's or the host's file browser, which links do not
-    /// name yet), and for a file whose lock or path comes from where it was
+    /// readers, a worktree's file browser, which links do not name yet), and
+    /// for a file whose lock or path comes from where it was
     /// opened: a host file, or a file opened from a chat other than its own
     /// session's copy. A link cannot carry that origin yet, and restoring
     /// without it would show the file under a weaker lock.
@@ -35,11 +35,18 @@ enum PaneEntries {
         case .session(let target):
             return PaneStackEntry(serverId: target.serverId, route: .session(target.sessionId))
         case .fileBrowser(let target):
-            guard case .workspace(let workspaceId, nil) = target.scope else { return nil }
-            return PaneStackEntry(
-                serverId: target.serverId,
-                route: .files(workspace: workspaceId, path: target.path.isEmpty ? nil : target.path)
-            )
+            switch target.scope {
+            case .workspace(let workspaceId, nil):
+                return PaneStackEntry(
+                    serverId: target.serverId,
+                    route: .files(workspace: workspaceId, path: target.path.isEmpty ? nil : target.path)
+                )
+            case .hostHome:
+                let path = FileBrowserHostHomePath.rawPath(relativePath: target.path)
+                return PaneStackEntry(serverId: target.serverId, route: .hostFiles(path: path == "~" ? nil : path))
+            case .workspace:
+                return nil
+            }
         case .linkedFile(let target):
             guard target.controlSessionId == nil else { return nil }
             let line = target.lineAnchor?.range.lowerBound
@@ -76,6 +83,14 @@ enum PaneEntries {
     static func godotLink(_ serverId: String, coordinator: ConnectionCoordinator) -> GodotLinkClient? {
         guard let connection = connection(serverId, coordinator), let api = connection.apiClient else { return nil }
         return GodotLinkClient(api: api) { [weak connection] project in connection?.makeGodotPlayerLink(project: project) }
+    }
+
+    /// The pins of `serverId` and the client that changes them; nil until that
+    /// server is connected, or when it keeps no pins (the launcher's Pinned group).
+    static func pins(_ serverId: String, coordinator: ConnectionCoordinator) -> (store: PinStore, api: APIClient)? {
+        guard let connection = connection(serverId, coordinator), connection.pinsAvailable,
+              let api = connection.apiClient else { return nil }
+        return (connection.pins, api)
     }
 
     /// Workspace `id` on `serverId`, and the host that server is reached at
@@ -121,10 +136,17 @@ enum PaneEntries {
             return .linkedFile(.hostFile(serverId: serverId, workspaceId: "", path: path, lineAnchor: anchor(line)))
         case .files(let workspaceId, let path):
             guard workspace(workspaceId) != nil else { return nil }
+            // The browser names a folder `a/b/` (it joins child names onto it); a link may omit the slash.
+            let folder = path.map { $0.isEmpty || $0.hasSuffix("/") ? $0 : $0 + "/" } ?? ""
             return .fileBrowser(FileBrowserNavTarget(
                 serverId: serverId,
                 scope: .workspace(workspaceId: workspaceId, worktreeId: nil),
-                path: path ?? ""
+                path: folder
+            ))
+        case .hostFiles(let path):
+            return .fileBrowser(FileBrowserNavTarget(
+                serverId: serverId, scope: .hostHome,
+                path: FileBrowserHostHomePath.directoryPath(rawPath: path ?? "~")
             ))
         case .sessions(nil), .thread, .git, .commit, .panel, .browser, .godot, .local, .unsupported:
             return nil

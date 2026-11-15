@@ -124,13 +124,23 @@ final class FileBrowserViewOptionsStore {
     static let shared = FileBrowserViewOptionsStore()
 
     private(set) var options: FileBrowserViewOptions
+    /// The Pinned section of the Home and workspace roots is collapsed.
+    private(set) var pinsCollapsed: Bool
 
     @ObservationIgnored private let defaults: UserDefaults
     private static let key = "\(AppIdentifiers.subsystem).fileBrowser.viewOptions"
+    private static let pinsCollapsedKey = "\(AppIdentifiers.subsystem).fileBrowser.pinsCollapsed"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         options = Self.load(from: defaults)
+        pinsCollapsed = defaults.bool(forKey: Self.pinsCollapsedKey)
+    }
+
+    func setPinsCollapsed(_ collapsed: Bool) {
+        guard collapsed != pinsCollapsed else { return }
+        pinsCollapsed = collapsed
+        defaults.set(collapsed, forKey: Self.pinsCollapsedKey)
     }
 
     private static func load(from defaults: UserDefaults) -> FileBrowserViewOptions {
@@ -144,6 +154,7 @@ final class FileBrowserViewOptionsStore {
     /// in-process reset clears defaults, and this copy was read from them once.
     func resetForTesting() {
         options = Self.load(from: defaults)
+        pinsCollapsed = defaults.bool(forKey: Self.pinsCollapsedKey)
     }
 #endif
 
@@ -193,9 +204,10 @@ extension FileBrowserViewController {
     /// (the chosen key again flips its direction), Folders First, and Show
     /// Hidden Files. The menu is read when it opens, so it always shows the
     /// device's current choice, whichever browser made it.
-    static func makeViewOptionsItem() -> UIBarButtonItem {
+    /// `extra` adds the screen's own items after the options (Pin This Folder).
+    static func makeViewOptionsItem(extra: @escaping @MainActor () -> [UIMenuElement] = { [] }) -> UIBarButtonItem {
         let menu = UIMenu(children: [UIDeferredMenuElement.uncached { completion in
-            completion(viewOptionsMenuElements(store: .shared))
+            completion(viewOptionsMenuElements(store: .shared) + extra())
         }])
         let item = UIBarButtonItem(
             title: String(localized: "View Options"),

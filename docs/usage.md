@@ -96,6 +96,8 @@ In a chat whose workspace is a Git repository, **Git** in the top bar's menu (or
 
 Touch and hold a file for **Share…**, **Open**, and **Copy Path**; a folder offers **Open** and **Copy Path**. Every file viewer, including video, audio, 3D models, and books, has a **Share** button too. Share sends the file itself under its own name and type, so **Save to Files**, AirDrop, Photos, and Books can take it; a large file shows its download progress with **Cancel**, and a file over the server's read limit says so instead of sharing.
 
+**Pins** keep places you open often. Touch and hold a folder or file and choose **Pin** (or **Pin This Folder** in **View Options**, or **Pin** in a file's **…** menu). Pins show in a **Pinned** section at the top of the Files screen for the server's home folder (every pin) and of a workspace's Files screen (that workspace's pins), and in the **Pinned** group of an iPad's **New Pane**. Touch and hold a pin for **Rename…** and **Unpin**; **Edit** in the section reorders and removes them. Pins are kept on the server, so every device paired with it shows the same ones. A pin opens through the same screens and locks as browsing there does; one whose folder or file was moved or deleted reads **Not found**, and tapping it offers **Remove Pin**.
+
 A workspace's session list has the same **Git** button in its top bar, listing every change in the selected worktree.
 
 ### The iPad side column
