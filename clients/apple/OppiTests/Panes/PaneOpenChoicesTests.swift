@@ -93,16 +93,17 @@ struct PaneOpenChoicesTests: PaneFixtureBuilding {
         #expect(choices(cells, from: "chat", width: 1133)?.targets.map(\.id) == ids("b", "c"))
     }
 
-    /// A web page or a terminal is not somewhere a file goes; Files, a
+    /// A web page, a terminal or Rex is not somewhere a file goes; Files, a
     /// file and the launcher are.
     @Test func openInPaneLeavesOutBrowserAndTerminalPanes() throws {
         let page = PaneRoute.browser(try #require(URL(string: "https://example.com")))
         let terminal = PaneRoute.local(PaneLocalScreen.terminal(workspaceId: "w").token)
+        let rex = PaneRoute.local(PaneLocalScreen.rex.token)
         let launcher = PaneRoute.local(PaneLocalScreen.launcher(workspaceId: "w").token)
         let file = PaneRoute.file(.workspace(id: "w", worktree: nil), path: "a.md", line: nil)
         let cells = row([
-            (leaf("chat"), 0.2), (leaf("web", page), 0.2), (leaf("term", terminal), 0.2),
-            (leaf("new", launcher), 0.2), (leaf("doc", file), 0.2),
+            (leaf("chat"), 0.2), (leaf("web", page), 0.2), (leaf("term", terminal), 0.15),
+            (leaf("rex", rex), 0.15), (leaf("new", launcher), 0.15), (leaf("doc", file), 0.15),
         ])
         #expect(choices(cells, from: "doc", width: 2400)?.targets.map(\.id) == ids("chat", "new"))
         #expect(choices(cells, from: "web", width: 2400)?.targets.map(\.id) == ids("chat", "new", "doc"))

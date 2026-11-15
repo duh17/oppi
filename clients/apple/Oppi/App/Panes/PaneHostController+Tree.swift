@@ -633,6 +633,7 @@ extension PaneHostController {
         case .local(let token):
             switch PaneLocalScreen(token) {
             case .terminal?: String(localized: "Terminal")
+            case .rex?: String(localized: "Rex")
             case .browser?: String(localized: "Web Page")
             case .godot?: String(localized: "Godot")
             case .launcher?, nil: String(localized: "New Pane")

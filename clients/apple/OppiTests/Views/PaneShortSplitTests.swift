@@ -89,7 +89,12 @@ struct PaneShortSplitTests {
         launcher.view.layoutIfNeeded()
         let buttons = descendants(of: launcher.view, as: UIButton.self)
             .filter { $0.accessibilityIdentifier?.hasPrefix("pane.launcher.") == true }
-        #expect(buttons.count == 4)
+        // Every choice the launcher offers here (a host with no server offers every
+        // feature; experiments are on in unit tests), and at least five of them, so
+        // the short pane really has more choices than fit in one column.
+        let offered = PaneLauncherViewController.Choice.offered { _ in true }
+        #expect(Set(buttons.compactMap(\.accessibilityIdentifier)) == Set(offered.map { "pane.launcher.\($0)" }))
+        #expect(buttons.count >= 5, "offered: \(offered)")
         let frames = buttons.map { $0.convert($0.bounds, to: launcher.view) }
         for (index, frame) in frames.enumerated() {
             for other in frames[(index + 1)...] {

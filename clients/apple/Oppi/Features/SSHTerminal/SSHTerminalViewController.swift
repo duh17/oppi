@@ -156,6 +156,16 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// The registry closed this terminal while this screen was showing.
     private var sawClosedForBackground = false
     private var isOnScreen = false
+    /// False while the pane this screen sits in is covered or parked
+    /// (`PaneVisibility`): its view stays in the window, but nobody sees it.
+    private var paneShown = true
+    /// A divider beside this screen's pane is moving: the shell gets one
+    /// resize when it comes to rest (`PaneLiveResizing`).
+    private var paneResizing = false
+    /// On screen and, in a pane, in a pane that shows: only then does the
+    /// terminal take remote clipboard writes, keep its Rex neighbours live and
+    /// take its pane back from another client, and poll its host.
+    private var isSeen: Bool { isOnScreen && paneShown }
     /// Leaving was asked for since the session last showed a terminal.
     private var requestedFinish = false
     private var presentingOverview = false
@@ -271,10 +281,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         backSwipe?.uninstall()
         backSwipe = SSHTerminalBackSwipe(navigation: navigationController)
         // Remote clipboard writes apply only while this screen is in front.
-        channel.isViewed = AppScenePhase.shared.phase == .active
+        channel.isViewed = paneShown && AppScenePhase.shared.phase == .active
         // The panes beside the shown one stream while the screen shows them, so
         // a swipe slides in a pane that is already live.
-        channel.rex?.isWarming = true
+        channel.rex?.isWarming = paneShown
         attentionFeedback.prepare()
         if presentsStatusDetailOnAppear, !presentingStatusDetail, programRollup != nil {
             presentsStatusDetailOnAppear = false
@@ -421,7 +431,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             if lastCopies > 0 { showCopyNotice() }
         }
         // A remote clipboard write is applied only while this screen is in front.
-        channel.isViewed = isOnScreen && phase == .active
+        channel.isViewed = isSeen && phase == .active
         if channel.closedForBackground, isOnScreen, !sawClosedForBackground {
             reconnectOnReturn = true
         }
@@ -739,7 +749,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         sawClosedForBackground = false
         reconnectOnReturn = false
         channel = next
-        channel.isViewed = isOnScreen && AppScenePhase.shared.phase == .active
+        channel.isViewed = isSeen && AppScenePhase.shared.phase == .active
         // Not this terminal's copies: a swap shows no notice for the last one's.
         lastCopies = next.copies
         // The glyph's hold, ring, and last root belong to the terminal left.
@@ -1191,7 +1201,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         let swipes = channel.rex != nil
         // A session that arrives (or reconnects) while this screen is up warms
         // its neighbours too; idempotent, so every pass may ask.
-        channel.rex?.isWarming = isOnScreen && AppScenePhase.shared.phase == .active
+        channel.rex?.isWarming = isSeen && AppScenePhase.shared.phase == .active
         // One owner of "the pane on screen is the pane typing reaches": a switch
         // with no slide of its own (a pane closed in Rex, a refusal recovered, a
         // new pane) lands here. A slide owns the pixels until it ends.
@@ -1360,7 +1370,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             guard let self, let gridView, transition == self.keyboardTransition, !self.isLeaving else { return }
             self.settleKeyboardTransition(end: end, grid: gridView, duration: duration, curve: curve)
             do { try await Task.sleep(for: .seconds(max(duration, 0.25) + 0.15)) } catch { return }
-            guard transition == self.keyboardTransition, !self.isLeaving else { return }
+            // A divider still moving keeps the hold; its end sends the size.
+            guard transition == self.keyboardTransition, !self.isLeaving, !self.paneResizing else { return }
             gridView.releaseResize()
         }
     }
@@ -2240,8 +2251,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     }
 
     private func updatePolling() {
-        // Herdr, Rex, and keymaps load again when you return; they do not run off screen.
-        guard isOnScreen else {
+        // Herdr, Rex, and keymaps load again when you return; they do not run off
+        // screen, or in a pane that is covered or parked.
+        guard isSeen else {
             stopOverviewPolls()
             keymapTask?.cancel()
             keymapTask = nil
@@ -2307,6 +2319,35 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private func reduceMotionChanged() {
         reduceMotion = UIAccessibility.isReduceMotionEnabled
         setNeedsUpdateProperties()
+    }
+}
+
+/// A terminal in a pane (a Rex pane, a folder terminal, the chat's Terminal)
+/// goes quiet while the pane is covered or parked, as it does off screen: no
+/// Rex neighbours stream, a pane another client took (the Mac app) stays
+/// theirs, and nothing polls. A divider beside it sends one resize, at rest.
+extension SSHTerminalViewController: PaneVisibilityObserving, PaneLiveResizing {
+    func paneVisibilityDidChange(_ visibility: PaneVisibility) {
+        paneShown = if case .visible = visibility { true } else { false }
+        // A covered pane's screen may not run its pass until it shows again.
+        let active = isSeen && AppScenePhase.shared.phase == .active
+        channel.isViewed = active
+        channel.rex?.isWarming = active
+        updatePolling()
+        setNeedsUpdateProperties()
+    }
+
+    func paneWillBeginLiveResize() {
+        paneResizing = true
+        gridView?.holdResize()
+    }
+
+    func paneSettleLiveResize(to size: CGSize, final: Bool) {
+        guard final else { return }
+        paneResizing = false
+        // Leaving holds until the screen returns, which sends the real size.
+        guard !isLeaving else { return }
+        gridView?.releaseResize()
     }
 }
 

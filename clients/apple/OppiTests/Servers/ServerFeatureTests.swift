@@ -46,12 +46,17 @@ struct ServerFeatureTests {
         #expect(terminalOnly.map(\.target) == [.sshTerminal])
     }
 
-    @Test("A new pane offers Terminal, Web Page and Godot only where the server does")
+    @Test("A new pane offers Terminal, Rex, Web Page and Godot only where the server does")
     func paneLauncherFollowsTheSwitches() {
         typealias Choice = PaneLauncherViewController.Choice
         #expect(Choice.offered { _ in false } == [.sessions, .files])
         #expect(Choice.offered { $0 == .terminal } == [.sessions, .files, .terminal])
         #expect(Choice.offered { $0 == .browserPane } == [.sessions, .files, .web])
+        // Rex also needs this device's Rex experiment.
+        let rexServer: (ServerFeature) -> Bool = { $0 == .terminal || $0 == .rex }
+        #expect(Choice.offered(by: rexServer, rexExperiment: true) == [.sessions, .files, .terminal, .rex])
+        #expect(Choice.offered(by: rexServer, rexExperiment: false) == [.sessions, .files, .terminal])
+        #expect(Choice.offered(by: { $0 == .terminal }, rexExperiment: true) == [.sessions, .files, .terminal])
     }
 
     @Test("Open Terminal Here on a Herdr host opens a plain shell in the folder while the server turns Herdr off")

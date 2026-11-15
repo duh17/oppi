@@ -227,8 +227,14 @@ final class SSHTerminalConnectChrome {
         let session = session
         let editHost = editHost
         let hostLabel = profile().terminalLabel(folder: session.folder, rexPane: session.rexPane)
-        DispatchQueue.main.async {
-            guard session.showsTerminal, let channel = session.channel else { return }
+        DispatchQueue.main.async { [weak host] in
+            guard let host, session.showsTerminal, let channel = session.channel else { return }
+            // Another pane draws this terminal already: that pane takes focus,
+            // and this screen stays as it was (one screen per shell, one size).
+            if PaneHostController.containing(host)?.focusPane(showing: channel, besides: host) == true {
+                session.showsTerminal = false
+                return
+            }
             Router.push(SSHTerminalViewController(
                 channel: channel,
                 reconnect: { session.reconnect() },

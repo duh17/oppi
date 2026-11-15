@@ -18,6 +18,9 @@ import UIKit
 /// compact window (the iPhone) shows it one pane at a time with the chip.
 /// `PANE_RESTORE_SEED=godot` saves the sessions with Tide Runner's Godot pane
 /// beside them, which a relaunch restores waiting for Play.
+/// `PANE_RESTORE_REX=1` saves one SSH host whose Rex is a fake one in process
+/// (`SSHTerminalRexListPreviewController.makeList`), so the launcher's Rex pane
+/// lists its sessions and opens one in the pane.
 final class PaneRestorePreviewController: PreviewRootController {
     static let serverId = "sha256:pane-restore"
     static let offlineServerId = "sha256:pane-restore-mini"
@@ -35,6 +38,17 @@ final class PaneRestorePreviewController: PreviewRootController {
         ])
         if ProcessInfo.processInfo.environment["CHAT_ROUTES_GODOT"] != nil {
             ServerConnection._godotPlayerLinkForTesting = ChatRoutesGodot.playerLink
+        }
+        if ProcessInfo.processInfo.environment["PANE_RESTORE_REX"] == "1" {
+            PaneSplitScreens._rexListForTesting = {
+                SSHTerminalRexListPreviewController.makeList(
+                    hosts: [SSHTerminalProfile(
+                        id: SSHTerminalRexListPreviewController.rexHostID,
+                        host: "mac-studio.invalid", username: "alex", opensRexSessions: true
+                    )],
+                    fixedMode: .rex
+                )
+            }
         }
         let root = AppRootEnvironment.preview(coordinator: Self.makeCoordinator())
         root.navigation.app.revealPairedServerShell()

@@ -33,13 +33,12 @@ final class RexPreviewStreamHost: RexStreamHost {
 final class SSHTerminalRexListPreviewController: PreviewRootController {
     static let rexHostID = UUID(uuid: (0x5E, 0x5E, 0x5E, 0x5E, 0, 0, 0x40, 0, 0x80, 0, 0, 0, 0, 0, 0, 1))
 
-    /// The tasks feeding the fake terminals this preview opened.
+    /// The tasks feeding the fake terminals a list opened. The list's follower
+    /// factory holds it, so the tasks live as long as the list.
     private final class Consumers {
         var tasks: [Task<Void, Never>] = []
         deinit { tasks.forEach { $0.cancel() } }
     }
-
-    private let consumers: Consumers
 
     init() {
         if ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" {
@@ -47,27 +46,40 @@ final class SSHTerminalRexListPreviewController: PreviewRootController {
         } else {
             ScreenshotVolatileDefaults.applyDarkTheme(true)
         }
-        // Argument-domain values only: no persistent defaults and no Keychain are written.
-        let catalog = SSHTerminalCatalog(profiles: [
-            SSHTerminalProfile(
-                id: Self.rexHostID, host: "mac-studio.invalid", username: "alex", opensRexSessions: true
-            ),
-            SSHTerminalProfile(host: "devbox.invalid", port: 2222, username: "dev", authentication: .deviceKey),
-        ])
-        var values: [String: Any] = [:]
-        values[SSHTerminalProfileStore.catalogKey] = try? JSONEncoder().encode(catalog)
-        ScreenshotVolatileDefaults.apply(values)
-
         let themeStore = ThemeStore()
         let root = AppRootEnvironment.preview(
             coordinator: ConnectionCoordinator(serverStore: ServerStore()),
             themeStore: themeStore
         )
+        let list = Self.makeList(hosts: [
+            SSHTerminalProfile(
+                id: Self.rexHostID, host: "mac-studio.invalid", username: "alex", opensRexSessions: true
+            ),
+            SSHTerminalProfile(host: "devbox.invalid", port: 2222, username: "dev", authentication: .deviceKey),
+        ])
+        super.init(
+            root: root,
+            themeStore: themeStore,
+            content: PreviewHost.screenStack(root: root) { list }
+        )
+    }
+
+    /// The Terminal page over `hosts` (saved in the argument domain only: no
+    /// persistent defaults and no Keychain are written), each host's Rex the
+    /// fake one, off the tailnet. A tapped session opens a fake Rex session
+    /// terminal pushed over the list, as the real page opens the host's own.
+    /// `fixedMode` is the page's (the Rex pane passes `.rex`).
+    static func makeList(
+        hosts: [SSHTerminalProfile], fixedMode: SSHTerminalPageMode? = nil
+    ) -> SSHTerminalHostListViewController {
+        var values: [String: Any] = [:]
+        values[SSHTerminalProfileStore.catalogKey] = try? JSONEncoder().encode(SSHTerminalCatalog(profiles: hosts))
+        ScreenshotVolatileDefaults.apply(values)
         // The list is made with the factory that opens its sessions, so the
         // factory reaches the list through a reference set once it exists.
         weak var listRef: SSHTerminalHostListViewController?
         let consumers = Consumers()
-        let list = SSHTerminalHostListViewController(makeFollower: { profile in
+        let list = SSHTerminalHostListViewController(fixedMode: fixedMode, makeFollower: { profile in
             let follower = SSHTerminalRexFollower(
                 profile: profile, promptsAutomatically: false, standIn: RexPreviewStreamHost()
             )
@@ -87,12 +99,7 @@ final class SSHTerminalRexListPreviewController: PreviewRootController {
             store: RexDirectStore(defaults: UserDefaults(suiteName: "rex-list-preview-tailnet") ?? .standard), reach: { .none }
         ), startsTailnet: {})
         listRef = list
-        self.consumers = consumers
-        super.init(
-            root: root,
-            themeStore: themeStore,
-            content: PreviewHost.screenStack(root: root) { list }
-        )
+        return list
     }
 
     @available(*, unavailable)

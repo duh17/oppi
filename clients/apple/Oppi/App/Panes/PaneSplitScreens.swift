@@ -2,8 +2,8 @@ import UIKit
 
 /// The screens a split leaf shows that have no link (`PaneRoute.local`), so a
 /// relaunch does not bring them back: the launcher a fresh split opens, a
-/// folder terminal, a web page still waiting for its address (it becomes
-/// a `.browser` entry once it loads one), and the server's game projects
+/// folder terminal, the Rex list, a web page still waiting for its address (it
+/// becomes a `.browser` entry once it loads one), and the server's game projects
 /// (a pick becomes a `.godot` entry). The token carries the workspace each
 /// one works in.
 enum PaneLocalScreen: Equatable {
@@ -11,6 +11,9 @@ enum PaneLocalScreen: Equatable {
     case launcher(workspaceId: String?)
     /// The folder terminal for a workspace's root.
     case terminal(workspaceId: String)
+    /// The Terminal page's Rex sessions on their own: a tapped session's
+    /// terminal opens inside the pane.
+    case rex
     /// A browser with its address field up and no page yet.
     case browser
     /// The Godot projects the server discovered, to pick one to play.
@@ -22,6 +25,7 @@ enum PaneLocalScreen: Equatable {
         case ("launcher", 1): self = .launcher(workspaceId: nil)
         case ("launcher", 2): self = .launcher(workspaceId: parts[1])
         case ("terminal", 2): self = .terminal(workspaceId: parts[1])
+        case ("rex", 1): self = .rex
         case ("browser", 1): self = .browser
         case ("godot", 1): self = .godot
         default: return nil
@@ -33,6 +37,7 @@ enum PaneLocalScreen: Equatable {
         case .launcher(let workspaceId?): PaneLocalToken(raw: "launcher/\(workspaceId)")
         case .launcher(nil): PaneLocalToken(raw: "launcher")
         case .terminal(let workspaceId): PaneLocalToken(raw: "terminal/\(workspaceId)")
+        case .rex: PaneLocalToken(raw: "rex")
         case .browser: PaneLocalToken(raw: "browser")
         case .godot: PaneLocalToken(raw: "godot")
         }
@@ -42,7 +47,7 @@ enum PaneLocalScreen: Equatable {
         switch self {
         case .launcher(let workspaceId): workspaceId
         case .terminal(let workspaceId): workspaceId
-        case .browser, .godot: nil
+        case .rex, .browser, .godot: nil
         }
     }
 }
@@ -79,6 +84,8 @@ enum PaneSplitScreens {
                 return PaneLauncherViewController(serverId: entry.serverId, workspaceId: workspaceId, root: root, choose: actions.show)
             case .terminal(let workspaceId):
                 return terminal(serverId: entry.serverId, workspaceId: workspaceId, root: root)
+            case .rex:
+                return rex(root: root)
             case .browser:
                 return browser(nil, serverId: entry.serverId, paused: false, root: root, actions: actions)
             case .godot:
@@ -130,4 +137,21 @@ enum PaneSplitScreens {
         if let root { list.traitOverrides.appRootEnvironment = root }
         return list
     }
+
+    /// The Terminal page held in Rex mode, with no mode button: Rex reached
+    /// over Tailscale with no SSH, and the saved hosts' Rex over SSH.
+    private static func rex(root: AppRootEnvironment?) -> UIViewController {
+        #if DEBUG
+        let list = _rexListForTesting?() ?? SSHTerminalHostListViewController(fixedMode: .rex)
+        #else
+        let list = SSHTerminalHostListViewController(fixedMode: .rex)
+        #endif
+        if let root { list.traitOverrides.appRootEnvironment = root }
+        return list
+    }
+
+    #if DEBUG
+    /// The debug harness's Rex list, over a stand-in Rex the simulator can reach.
+    static var _rexListForTesting: (() -> SSHTerminalHostListViewController)?
+    #endif
 }

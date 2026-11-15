@@ -1,9 +1,10 @@
 import UIKit
 
 /// What a fresh split shows: the workspace's Sessions, Files, a Terminal,
-/// a Web Page or Godot (with the Godot Pane experiment on), as large
-/// choices. Terminal, Web Page and Godot show only while the leaf's server
-/// offers them (`ServerFeature`). Picking one replaces the launcher in its leaf; Web Page opens
+/// Rex (with the Rex experiment on), a Web Page or Godot (with the Godot Pane
+/// experiment on), as large choices. Terminal, Rex, Web Page and Godot show only
+/// while the leaf's server offers them (`ServerFeature`). Picking one replaces the
+/// launcher in its leaf; Rex opens the Terminal page's Rex list, Web Page
 /// the browser with its address field up, Godot the server's Godot projects. New Session
 /// waits for two live chats per server, so a new chat never takes the place
 /// of the one already open. Files and Terminal need a workspace.
@@ -16,23 +17,32 @@ import UIKit
 /// opens its folder's File Browser or its file in this pane.
 final class PaneLauncherViewController: UIViewController {
     enum Choice: CaseIterable {
-        case sessions, files, terminal, web, godot
+        case sessions, files, terminal, rex, web, godot
 
         /// The server switch a choice needs; Sessions and Files are plain Pi.
         var feature: ServerFeature? {
             switch self {
             case .sessions, .files: nil
             case .terminal: .terminal
+            case .rex: .rex
             case .web: .browserPane
             case .godot: .godotPane
             }
         }
 
-        /// The choices for a leaf on a server that `offers` these features: Godot also needs
-        /// its experiment on this device.
-        static func offered(by offers: (ServerFeature) -> Bool) -> [Self] {
+        /// The choices for a leaf on a server that `offers` these features: Rex and Godot
+        /// also need their experiments on this device.
+        static func offered(
+            by offers: (ServerFeature) -> Bool,
+            rexExperiment: Bool = SSHTerminalExperimentAccess.current.rex
+        ) -> [Self] {
             allCases.filter { choice in
-                (choice.feature.map(offers) ?? true) && (choice != .godot || GodotPaneAvailability.isOn)
+                guard choice.feature.map(offers) ?? true else { return false }
+                switch choice {
+                case .rex: return rexExperiment
+                case .godot: return GodotPaneAvailability.isOn
+                default: return true
+                }
             }
         }
     }
@@ -295,6 +305,8 @@ final class PaneLauncherViewController: UIViewController {
             return workspaceId.map { PaneStackEntry(serverId: serverId, route: .files(workspace: $0, path: nil)) }
         case .terminal:
             return workspaceId.map { PaneStackEntry(serverId: serverId, route: .local(PaneLocalScreen.terminal(workspaceId: $0).token)) }
+        case .rex:
+            return PaneStackEntry(serverId: serverId, route: .local(PaneLocalScreen.rex.token))
         case .godot:
             return PaneStackEntry(serverId: serverId, route: .local(PaneLocalScreen.godot.token))
         }
@@ -307,6 +319,7 @@ private extension PaneLauncherViewController.Choice {
         case .sessions: String(localized: "Sessions")
         case .files: String(localized: "Files")
         case .terminal: String(localized: "Terminal")
+        case .rex: String(localized: "Rex")
         case .web: String(localized: "Web Page")
         case .godot: String(localized: "Godot")
         }
@@ -317,6 +330,7 @@ private extension PaneLauncherViewController.Choice {
         case .sessions: String(localized: "This workspace's sessions")
         case .files: String(localized: "Browse this workspace's files")
         case .terminal: String(localized: "A shell in this workspace's folder")
+        case .rex: String(localized: "Sessions on your Rex hosts")
         case .web: String(localized: "A website, such as a dev server")
         case .godot: String(localized: "A Godot game from this server")
         }
@@ -327,6 +341,7 @@ private extension PaneLauncherViewController.Choice {
         case .sessions: "list.bullet.rectangle"
         case .files: "folder"
         case .terminal: "apple.terminal"
+        case .rex: "rectangle.split.3x1"
         case .web: "safari"
         case .godot: "gamecontroller"
         }

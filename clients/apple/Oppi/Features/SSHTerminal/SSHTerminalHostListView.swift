@@ -49,9 +49,14 @@ final class SSHTerminalHostListViewController:
     /// pane's mark keeps animating.
     private var rexRows: [Item: SSHTerminalRexListRow] = [:]
     private var isOnScreen = false
-    /// What the page lists now: the mode button's choice, or the first mode its
-    /// experiments allow. Read once per pass, before the snapshot.
-    private var mode: SSHTerminalPageMode = .shell
+    /// False while the pane this page sits in is covered or parked
+    /// (`PaneVisibility`): its view stays in the window, but nobody sees it.
+    private var paneShown = true
+    /// The one mode a page with no mode button shows (the Rex pane), else nil.
+    private let fixedMode: SSHTerminalPageMode?
+    /// What the page lists now: `fixedMode`, else the mode button's choice, or the
+    /// first mode its experiments allow. Read once per pass, before the snapshot.
+    private var mode: SSHTerminalPageMode
     private var connectingProfile = SSHTerminalProfile()
     private var metadataIsCorrupt = false
     private var editAfterTerminal: UUID?
@@ -72,11 +77,15 @@ final class SSHTerminalHostListViewController:
         case reset
     }
 
-    /// - Parameter settings: where the mode is kept: read for what the page shows
-    ///   and written by its button, so one store is both answers. The base holds it
-    ///   (the page has no declared rows), and a test or a preview passes its own.
+    /// - Parameters:
+    ///   - fixedMode: the one mode the page shows, with no mode button (the Rex
+    ///     pane); nil for the Terminal page, whose button picks it.
+    ///   - settings: where the mode is kept: read for what the page shows
+    ///     and written by its button, so one store is both answers. The base holds it
+    ///     (the page has no declared rows), and a test or a preview passes its own.
     init(
         showsSidebarToggle: Bool = false,
+        fixedMode: SSHTerminalPageMode? = nil,
         profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() },
         makeFollower: @escaping @MainActor (SSHTerminalProfile) -> SSHTerminalRexFollower = {
             SSHTerminalRexFollower(profile: $0, promptsAutomatically: false)
@@ -86,11 +95,13 @@ final class SSHTerminalHostListViewController:
         settings: SettingsStore = .liveDevice()
     ) {
         self.showsSidebarToggle = showsSidebarToggle
+        self.fixedMode = fixedMode
+        mode = fixedMode ?? .shell
         self.profileStore = profileStore
         self.makeFollower = makeFollower
         self.tailnetRex = tailnetRex
         self.startsTailnet = startsTailnet
-        super.init(title: "Terminal", listIdentifier: "sshTerminal.hostList", settings: settings)
+        super.init(title: fixedMode == .rex ? "Rex" : "Terminal", listIdentifier: "sshTerminal.hostList", settings: settings)
     }
 
     @available(*, unavailable)
@@ -179,10 +190,16 @@ final class SSHTerminalHostListViewController:
         // terminal, a form) leaves its connection up, read again on return;
         // leaving the tab for another closes them, and they sign in again on return.
         let covered = navigationController?.viewControllers.contains(self) == true && !isBeingDismissed
+        stopFollowing(closing: !covered)
+    }
+
+    /// The Rex sections stop reading while nobody sees them; `closing` also ends
+    /// the saved hosts' connections, which sign in again when the page returns.
+    private func stopFollowing(closing: Bool) {
         for host in rexHosts.values {
             host.follower.stopReading()
             host.chrome.hostDidDisappear()
-            if !covered { host.follower.close() }
+            if closing { host.follower.close() }
         }
         for follower in tailnetRex.listedFollowers {
             follower.stopReading()
@@ -214,7 +231,7 @@ final class SSHTerminalHostListViewController:
         // The mode before the rows it decides, and before any follower dials: a page
         // that just switched to Shell must not open a Rex connection for a section
         // nobody sees.
-        let mode = SSHTerminalPageMode.resolved(storedMode, in: access)
+        let mode = fixedMode ?? SSHTerminalPageMode.resolved(storedMode, in: access)
         let modeChanged = mode != self.mode
         self.mode = mode
         if modeChanged {
@@ -634,7 +651,7 @@ final class SSHTerminalHostListViewController:
     /// (with Rex's experiment off the page is Shell).
     private func installModeButton() {
         guard navigationController?.topViewController === self else { return }
-        guard SSHTerminalPageMode.available(in: access).count > 1 else {
+        guard fixedMode == nil, SSHTerminalPageMode.available(in: access).count > 1 else {
             setToolbarItems(nil, animated: false)
             navigationController?.setToolbarHidden(true, animated: true)
             return
@@ -1299,6 +1316,23 @@ final class SSHTerminalHostListViewController:
     /// cover it.
     private var isActive: Bool {
         let covered = terminalShown || editAfterTerminal != nil || presentedViewController != nil
-        return isOnScreen && !AppScenePhase.shared.isBackground && !covered
+        return isOnScreen && paneShown && !AppScenePhase.shared.isBackground && !covered
+    }
+}
+
+/// A page in a pane stops following Rex while its pane is covered or parked, as
+/// it does when a screen covers it, and follows again once the pane shows.
+extension SSHTerminalHostListViewController: PaneVisibilityObserving {
+    func paneVisibilityDidChange(_ visibility: PaneVisibility) {
+        let shown = if case .visible = visibility { true } else { false }
+        guard shown != paneShown else { return }
+        paneShown = shown
+        if shown {
+            for host in rexHosts.values { host.follower.appeared() }
+            for follower in tailnetRex.listedFollowers { follower.appeared() }
+        } else {
+            stopFollowing(closing: false)
+        }
+        setNeedsUpdateProperties()
     }
 }
