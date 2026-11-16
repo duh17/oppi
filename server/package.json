@@ -126,14 +126,14 @@
     "@earendil-works/pi-tui": "1.5.2",
     "@noble/ciphers": "2.4.0",
     "jiti": "2.7.0",
-    "ws": "8.22.2"
+    "ws": "8.23.0"
   },
   "overrides": {
     "protobufjs": "7.6.5",
     "brace-expansion": "5.0.12",
     "minimatch": "11.0.5",
     "source-map-js": "1.2.2",
-    "smol-toml": "1.9.0",
+    "smol-toml": "1.9.1",
     "@earendil-works/gondolin": {
       "undici": "6.29.1"
     },
@@ -147,10 +147,10 @@
     "@types/ws": "8.18.2",
     "@typescript/native": "npm:typescript@^7.0.2",
     "@vitest/coverage-v8": "5.1.0",
-    "eslint": "10.14.0",
+    "eslint": "10.15.0",
     "eslint-config-prettier": "^10.1.8",
-    "knip": "6.44.2",
-    "prettier": "3.9.10",
+    "knip": "6.45.1",
+    "prettier": "3.10.1",
     "tsx": "4.23.15",
     "typescript": "^6.0.3",
     "typescript-eslint": "8.72.2",
