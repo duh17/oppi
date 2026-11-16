@@ -11,8 +11,9 @@ import Synchronization
 /// dial-stdio`, after `rex __internal autostart-status`, which starts the
 /// account's Rex server first when none runs (unless the host turns
 /// autostart off with `REX_AUTOSTART=0`). `rex` is looked for where the
-/// official client looks over SSH: in `~/.local/bin` and on the `PATH` that
-/// non-interactive SSH commands see, never inside an app bundle. A `rex` too old to have
+/// official client looks over SSH, in `~/.local/bin` and on the `PATH` that
+/// non-interactive SSH commands see, then in the Rex Mac app's managed server
+/// (`candidates`). A `rex` too old to have
 /// `dial-stdio` (it does not list it in `rex __internal --help`) is skipped,
 /// and the bridge falls back to `nc -U` to Rex's socket: in the app's
 /// Application Support folder on macOS, in `$XDG_RUNTIME_DIR/rex` or
@@ -42,7 +43,7 @@ enum RexBridge {
     private static func command(autostart: Bool) -> String {
         let flag = autostart ? "" : " --autostart=false"
         return SSHTerminalRemoteShell.word(
-            "f=; for r in \"$HOME/.local/bin/rex\" \"$(command -v rex)\"; do "
+            "f=; for r in \(candidates); do "
                 + "[ -x \"$r\" ] || continue; f=1; "
                 + "\"$r\" __internal --help 2>&1 | grep -q dial-stdio || continue; "
                 + "\"$r\" __internal autostart-status\(flag) >/dev/null 2>&1 || exit 4; "
@@ -53,6 +54,24 @@ enum RexBridge {
                 + "[ -n \"$f\" ] || exit 5; exit 4"
         )
     }
+
+    /// Where `rex` is looked for, in order, as `sh` words. The last is the Rex
+    /// Mac app's managed server: of the folders in `RexServer/Versions` named
+    /// only by digits, the numerically highest whose `rex` is executable (the
+    /// app stages a new build there beside an older `Current`), else
+    /// `Current`. No other folder name is ever run. The `case` pattern opens
+    /// with `(`: inside `$(…)`, bash's `sh` reads a bare `)` as the end of the
+    /// substitution.
+    static let candidates: String = {
+        let versions = "$HOME/Library/Application Support/com.superlogical.rex/RexServer/Versions"
+        let rex = "Rex Server.app/Contents/MacOS/rex"
+        let newest = "d=\"\(versions)\"; n=; for v in \"$d\"/*; do v=${v##*/}; "
+            + "case $v in (\"\"|*[!0-9]*) continue ;; esac; "
+            + "[ -x \"$d/$v/\(rex)\" ] || continue; "
+            + "if [ -z \"$n\" ] || [ \"$v\" -gt \"$n\" ]; then n=$v; fi; done; "
+            + "echo \"$d/${n:-Current}/\(rex)\""
+        return "\"$HOME/.local/bin/rex\" \"$(command -v rex)\" \"$(\(newest))\""
+    }()
 
     static func failure(exitStatus: Int?) -> RexClientError {
         switch exitStatus {

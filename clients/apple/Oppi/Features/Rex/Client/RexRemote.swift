@@ -577,7 +577,7 @@ enum RexAbsence: Equatable, Sendable {
         case .noNc:
             "This host's rex is too old to bridge to Rex (rex __internal dial-stdio), and the host has no nc that supports Unix sockets (nc -U). Update Rex, then pull down to try again."
         case .notInstalled:
-            "Oppi found no rex in ~/.local/bin or on the PATH that SSH commands see on this host. Install Rex there (on a Mac, put the Rex app's rex on that PATH), then pull down to try again."
+            "Oppi found no rex on this host: not in ~/.local/bin, on the PATH that SSH commands see, or in the Rex Mac app's server. Install Rex (on a Mac, the Rex app), then pull down to try again."
         case .notRunning:
             "Rex is not running on this host, and Oppi did not start it. Start it (rex server start) and this list fills in."
         case .refused(let message):

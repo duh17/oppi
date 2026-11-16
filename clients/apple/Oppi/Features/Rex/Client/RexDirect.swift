@@ -230,7 +230,7 @@ final class RexRoutePlan: Sendable {
 extension RexBridge {
     /// `rex api call server.status` with the first CLI the bridge would look at.
     static let statusCommand = SSHTerminalRemoteShell.word(
-        "for r in \"$HOME/.local/bin/rex\" \"$(command -v rex)\"; do "
+        "for r in \(candidates); do "
             + "[ -x \"$r\" ] && exec \"$r\" api call server.status --autostart=false; done; exit 5"
     )
 }

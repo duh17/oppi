@@ -570,11 +570,17 @@ struct RexBridgeCommandTests {
     /// wins, else `REX_AUTOSTART` (unset starts the server, `0` does not).
     private func home(rexAt relativePath: String = ".local/bin/rex") throws -> URL {
         let home = FileManager.default.temporaryDirectory.appending(path: "rex-bridge-\(UUID().uuidString)")
+        try place(rexAt: relativePath, in: home)
+        return home
+    }
+
+    /// Another stand-in `rex` in `home`, whose log lines start with `tag`.
+    private func place(rexAt relativePath: String, in home: URL, tag: String = "") throws {
         let rex = home.appending(path: relativePath)
         try FileManager.default.createDirectory(at: rex.deletingLastPathComponent(), withIntermediateDirectories: true)
         let script = """
         #!/bin/sh
-        echo "$*" >> "$HOME/calls.txt"
+        echo "\(tag)$*" >> "$HOME/calls.txt"
         case "$2" in
         --help) echo "  dial-stdio  Connect standard input and output to the Rex server" ;;
         autostart-status)
@@ -588,7 +594,6 @@ struct RexBridgeCommandTests {
         """
         try Data(script.utf8).write(to: rex)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rex.path)
-        return home
     }
 
     private func calls(_ home: URL) -> String {
@@ -622,17 +627,60 @@ struct RexBridgeCommandTests {
         #expect(!calls(home).contains("dial-stdio"))
     }
 
-    /// `rex` is looked for only where the official client looks over SSH,
-    /// `~/.local/bin` and the `PATH`: a copy inside an app bundle in the home
-    /// folder is never run, and the host reads as having no Rex.
-    @Test func aRexOnlyInsideAnAppBundleIsNotRun() throws {
-        let home = try home(rexAt: "Library/Application Support/com.superlogical.rex/RexServer/Versions/1/Rex Server.app/Contents/MacOS/rex")
+    /// On a Mac with only the Rex app and only its `Current` server, that
+    /// server is found: the bridge starts and dials through it, and the status
+    /// read runs it.
+    @Test func theRexAppsCurrentServerIsRun() throws {
+        let home = try home(rexAt: Self.appServer(version: "Current"))
         defer { try? FileManager.default.removeItem(at: home) }
+        let bridged = try run(RexBridge.command, home: home)
+        #expect(bridged.status == 0 && bridged.output == "bridged\n")
+        #expect(calls(home) == "__internal --help\n__internal autostart-status\n__internal dial-stdio\n")
+
+        try FileManager.default.removeItem(at: home.appending(path: "calls.txt"))
+        let status = try run(RexBridge.statusCommand, home: home)
+        #expect(status.status == 0)
+        #expect(calls(home) == "api call server.status --autostart=false\n")
+    }
+
+    /// The app stages a new build in a numbered folder beside an older
+    /// `Current`: the numerically highest numbered build runs, so `1973` beats
+    /// `1758` and `999` (which sorts after it alphabetically), and `Current`.
+    @Test func theNewestNumberedAppServerIsRun() throws {
+        let home = try home(rexAt: Self.appServer(version: "Current"))
+        defer { try? FileManager.default.removeItem(at: home) }
+        for version in ["1758", "1973", "999"] {
+            try place(rexAt: Self.appServer(version: version), in: home, tag: "\(version): ")
+        }
+        let bridged = try run(RexBridge.command, home: home)
+        #expect(bridged.status == 0 && bridged.output == "bridged\n")
+        #expect(calls(home) == "1973: __internal --help\n1973: __internal autostart-status\n1973: __internal dial-stdio\n")
+
+        try FileManager.default.removeItem(at: home.appending(path: "calls.txt"))
+        #expect(try run(RexBridge.statusCommand, home: home).status == 0)
+        #expect(calls(home) == "1973: api call server.status --autostart=false\n")
+    }
+
+    /// Only folders named by digits, or `Current`, are ever run: `evil` and
+    /// `1973x` are not, so with nothing else the host reads as having no Rex,
+    /// and beside `Current` it is `Current` that runs.
+    @Test func aRexInAnAppServerFolderNotNamedByDigitsIsNotRun() throws {
+        let home = try home(rexAt: Self.appServer(version: "evil"))
+        defer { try? FileManager.default.removeItem(at: home) }
+        try place(rexAt: Self.appServer(version: "1973x"), in: home, tag: "1973x: ")
         for command in [RexBridge.command, RexBridge.statusCommand] {
             let result = try run(command, home: home)
             #expect(result.status == 5, "\(command)")
         }
-        #expect(calls(home).isEmpty, "nothing in the app bundle ran")
+        #expect(calls(home).isEmpty, "nothing in evil or 1973x ran")
+
+        try place(rexAt: Self.appServer(version: "Current"), in: home, tag: "Current: ")
+        #expect(try run(RexBridge.statusCommand, home: home).status == 0)
+        #expect(calls(home) == "Current: api call server.status --autostart=false\n")
+    }
+
+    private static func appServer(version: String) -> String {
+        "Library/Application Support/com.superlogical.rex/RexServer/Versions/\(version)/Rex Server.app/Contents/MacOS/rex"
     }
 }
 
