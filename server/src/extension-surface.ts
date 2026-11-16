@@ -35,7 +35,8 @@ import { isRecord } from "./json-shape.js";
  * A surface is JSON the host draws with views it already ships. The extension supplies data, the
  * action ids it offers, and the words for loading, empty, and failure; it cannot restyle or
  * reorder anything. Everything here is a pure function over untrusted JSON: a surface that breaks
- * a rule is dropped whole (`undefined`), never repaired into something the author did not write.
+ * a rule is refused whole (`{ problem }` from a read, `undefined` from a patch), never repaired
+ * into something the author did not write.
  */
 
 export const EXTENSION_UI_SURFACE_VERSION = 2;
@@ -1298,9 +1299,11 @@ export function extensionUISurfaceProjectionClearRequest(
 }
 
 /**
- * The v1 surface an older client can draw: a `dataTable` section in its content state stays the
- * grid (the v1 table block and its clamps), every other section is its `fallback.text`. Slice 1
- * ships this one projection so a client without the composites capability still sees results.
+ * The v1 surface an older client can draw, so a client without the composites capability still
+ * sees results. In its content state a `dataTable` section stays the grid (the v1 table block and
+ * its clamps) and a `blocks` section projects node by node, naming the verbs v1 cannot draw; every
+ * other section, and any section not showing its content, is its `fallback.text`. If v1 refuses
+ * the result, the panel keeps its title and shows only the surface's own `fallback.text`.
  */
 export function projectExtensionUISurfaceToV1(
   surface: ExtensionUISurface,
