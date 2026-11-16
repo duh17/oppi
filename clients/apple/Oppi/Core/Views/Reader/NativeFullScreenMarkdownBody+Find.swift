@@ -17,9 +17,11 @@ struct ReaderFindState {
     var wantsFocus = false
     /// Extra room under the page while the keyboard and find bar cover its end.
     var keyboardInset: CGFloat = 0
-    /// Where the keyboard (with the find bar on it) will stand, in the reader's
-    /// own coordinates; nil while it is away. Read from the notification: the
-    /// layout guide is still moving when the match is placed.
+    /// Where the keyboard (with the find bar on it) stands, in the reader's
+    /// own coordinates. Nil while the keyboard is hidden or floating; both
+    /// keep the find bar's reach clear at each end of the page
+    /// (`findUncoveredBand`). Read from the notification: the layout guide is
+    /// still moving when the match is placed.
     var keyboardTop: CGFloat?
     /// The match last shown, shown again when the keyboard moves under it.
     var current: ReaderFindMatch?
@@ -33,17 +35,29 @@ extension NativeFullScreenMarkdownBody: UIFindInteractionDelegate {
         let interaction = UIFindInteraction(sessionDelegate: self)
         addInteraction(interaction)
         findState.interaction = interaction
-        for name in [UIResponder.keyboardWillChangeFrameNotification, UIResponder.keyboardWillHideNotification] {
+        // The did-notifications too: with a hardware keyboard on iPad the find
+        // bar alone stands in for the keyboard, and only those are posted for it.
+        for name in [
+            UIResponder.keyboardWillChangeFrameNotification, UIResponder.keyboardWillHideNotification,
+            UIResponder.keyboardDidChangeFrameNotification, UIResponder.keyboardDidHideNotification,
+        ] {
             NotificationCenter.default.addObserver(self, selector: #selector(findKeyboardChanged), name: name, object: nil)
         }
     }
 
     @objc private func findKeyboardChanged(_ note: Notification) {
-        if note.name == UIResponder.keyboardWillHideNotification {
-            findState.keyboardTop = nil
+        let top: CGFloat?
+        if note.name == UIResponder.keyboardWillHideNotification || note.name == UIResponder.keyboardDidHideNotification {
+            top = nil
         } else if let end = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
-            findState.keyboardTop = convert(end, from: nil).minY
+            // A floating keyboard is assumed to cover no edge of the page: no frame to keep clear of.
+            top = end.isEmpty ? nil : convert(end, from: nil).minY
+        } else {
+            return
         }
+        // The did-notification repeats the will-notification's frame.
+        guard top != findState.keyboardTop else { return }
+        findState.keyboardTop = top
         updateFindKeyboardInset()
         if let current = findState.current, findState.interaction?.isFindNavigatorVisible == true {
             revealFindMatch(current)
@@ -55,7 +69,7 @@ extension NativeFullScreenMarkdownBody: UIFindInteractionDelegate {
     /// can scroll up clear of them.
     func updateFindKeyboardInset() {
         let open = findState.interaction?.isFindNavigatorVisible == true
-        let overlap = open ? max(0, bounds.height - (findState.keyboardTop ?? bounds.height)) : 0
+        let overlap = open ? max(0, bounds.height - findUncoveredBand.bottom) : 0
         guard overlap != findState.keyboardInset else { return }
         collectionView.contentInset.bottom += overlap - findState.keyboardInset
         collectionView.verticalScrollIndicatorInsets.bottom += overlap - findState.keyboardInset
@@ -234,26 +248,48 @@ extension NativeFullScreenMarkdownBody: UIFindInteractionDelegate {
         settleMatchInView(match.range, in: textView)
     }
 
-    /// Brings the match itself into the upper third of what shows above the
-    /// keyboard, again if the page moved under the scroll: the heights above it
-    /// are estimates until their cells are drawn.
+    /// Leaves a match that already shows fully clear of the find bar and the
+    /// keyboard where it is; otherwise brings it into the upper third of what
+    /// they leave uncovered, again if the page moved under the scroll: the
+    /// heights above it are estimates until their cells are drawn.
     private func settleMatchInView(_ range: NSRange, in textView: UITextView) {
+        let band = findUncoveredBand
+        // Where the page runs under the top bar, its inset is covered too.
+        let bandTop = collectionView.adjustedContentInset.top + band.top
         for _ in 0..<4 {
             guard let rect = Self.rect(of: range, in: textView) else { return }
             let match = collectionView.convert(rect, from: textView)
-            let top = collectionView.contentOffset.y + collectionView.adjustedContentInset.top
-            let bottom = collectionView.contentOffset.y + visibleReaderHeight
-            if match.minY >= top, match.maxY <= bottom { return }
-            viewportOwner.explicitFocus(at: match.minY - visibleReaderHeight / 3)
+            let offset = collectionView.contentOffset.y
+            if match.minY >= offset + bandTop, match.maxY <= offset + band.bottom { return }
+            viewportOwner.explicitFocus(at: match.minY - bandTop - (band.bottom - bandTop) / 3)
             collectionView.layoutIfNeeded()
         }
     }
 
-    /// The height of the reader that shows above the software keyboard and the
-    /// find bar riding on it, which cover the lower part of the page.
-    private var visibleReaderHeight: CGFloat {
-        guard let top = findState.keyboardTop, top > 0, top < bounds.height else { return collectionView.bounds.height }
-        return top
+    /// How far the find bar reaches into the page when no docked keyboard says
+    /// where it stands, kept clear at both ends of the page. A floating keyboard
+    /// is assumed to report no frame and to move the bar to the top; there the
+    /// bar's field sits just under the top bar (≈87–124 pt down the window on
+    /// iPad mini). Docked, the bar is 53 pt tall at the default text size and
+    /// 79 pt at the largest.
+    private static let findBarReach: CGFloat = 80
+
+    /// Room kept between the match and the bar: the bar's field draws a little
+    /// above the keyboard frame it rides on (2 pt on iPad mini).
+    private static let findBarClearance: CGFloat = 12
+
+    /// The part of the reader, in its own coordinates, that the find bar and
+    /// the keyboard leave uncovered while Find is open. The top is measured
+    /// below the reader's top inset (the top bar).
+    private var findUncoveredBand: (top: CGFloat, bottom: CGFloat) {
+        let height = bounds.height
+        guard let keyboardTop = findState.keyboardTop, keyboardTop > 0 else {
+            // A reader shorter than both reaches keeps an empty band, never a backwards one.
+            return (Self.findBarReach, max(Self.findBarReach, height - Self.findBarReach))
+        }
+        // A keyboard below the reader (a pane short of the screen's bottom) covers none of it.
+        guard keyboardTop < height else { return (0, height) }
+        return (0, max(0, keyboardTop - Self.findBarClearance))
     }
 
     // MARK: Highlight

@@ -94,7 +94,7 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
         search("Paragraph 2 of section 4")
         XCTAssertTrue(waitForFold(2, "Expanded"), "the match opened the section above it")
         XCTAssertTrue(waitUntilScrolledTo(fold(5)), "and scrolled to the section holding it")
-        XCTAssertTrue(waitForMatchAboveFindBar("Paragraph 2 of section 4"), "the match itself is marked and clear of the find bar")
+        XCTAssertTrue(waitForMatchClearOfFindBar("Paragraph 2 of section 4"), "the match itself is marked and clear of the find bar")
         saveScreenshot(name: "find-match-in-fold")
     }
 
@@ -102,7 +102,7 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
         launch(file: "handbook.org", colorScheme: "dark")
         search("Paragraph 3 of section 9")
         XCTAssertTrue(waitUntilScrolledTo(fold(10)), "the match near the end of the file is on screen")
-        XCTAssertTrue(waitForMatchAboveFindBar("Paragraph 3 of section 9"), "the match itself is marked and clear of the find bar")
+        XCTAssertTrue(waitForMatchClearOfFindBar("Paragraph 3 of section 9"), "the match itself is marked and clear of the find bar")
         saveScreenshot(name: "find-long-file")
     }
 
@@ -120,7 +120,7 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
         launch(file: "handbook.org", colorScheme: "dark", arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
         search("Paragraph 1 of section 6")
         XCTAssertTrue(waitUntilScrolledTo(fold(7)), "the match's section is shown")
-        XCTAssertTrue(waitForMatchAboveFindBar("Paragraph 1 of section 6"), "the match itself is marked and clear of the find bar")
+        XCTAssertTrue(waitForMatchClearOfFindBar("Paragraph 1 of section 6"), "the match itself is marked and clear of the find bar")
         saveScreenshot(name: "find-xxxl")
     }
 
@@ -166,19 +166,35 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
         return search.exists ? search : app.textFields.matching(NSPredicate(format: "placeholderValue CONTAINS[c] 'find' OR label CONTAINS[c] 'find'")).firstMatch
     }
 
-    /// The current find match is on screen, between the top bar and the find
-    /// bar riding on the keyboard, and only a marked (highlighted) match exists.
-    private func waitForMatchAboveFindBar(_ words: String, timeout: TimeInterval = 15) -> Bool {
+    /// The current find match is on screen below the top bar, outside the
+    /// find bar's row and the keyboard, and only a marked (highlighted) match exists.
+    /// A docked software keyboard carries the find bar above it, and with a
+    /// hardware keyboard the bar stands alone at the bottom. A floating keyboard
+    /// is assumed to move the bar to the top; the check holds wherever it is.
+    private func waitForMatchClearOfFindBar(_ words: String, timeout: TimeInterval = 15) -> Bool {
         // The element is the highlight itself, a view behind the match's words.
         let match = app.descendants(matching: .any)["fileViewer.find.currentMatch"]
+        let keyboard = app.keyboards.firstMatch
+        let topBar = app.navigationBars.firstMatch
+        // The whole bar: its field and the system's close and arrow buttons
+        // beside it, whose identifiers start with `find.`.
+        let barButtons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'find.'"))
         let deadline = Date().addingTimeInterval(timeout)
+        var lastSeen = "no match marked"
         while Date() < deadline {
-            if match.exists, match.label.contains(words), findField.exists {
+            if match.exists, match.label.contains(words), findField.exists, topBar.exists {
                 let frame = match.frame
-                if frame.height > 0, frame.minY > 60, frame.maxY <= findField.frame.minY { return true }
+                let bar = barButtons.allElementsBoundByIndex.reduce(findField.frame) { $0.union($1.frame) }
+                let keyboardFrame = keyboard.exists ? keyboard.frame : nil
+                let clearOfBar = frame.maxY <= bar.minY || frame.minY >= bar.maxY
+                let clearOfKeyboard = keyboardFrame.map { !frame.intersects($0) } ?? true
+                let onScreen = frame.minY >= topBar.frame.maxY && frame.maxY <= app.windows.firstMatch.frame.maxY
+                if frame.height > 0, onScreen, clearOfBar, clearOfKeyboard { return true }
+                lastSeen = "match \(frame), find bar \(bar), keyboard \(keyboardFrame.map { "\($0)" } ?? "none"), top bar \(topBar.frame)"
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
+        print("The find match never settled clear of the find bar: \(lastSeen)")
         return false
     }
 
