@@ -1749,9 +1749,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     /// The multiplexer a trailing bar action opens the overview of.
     private func overview(_ action: SSHTerminalBarAction) -> (any SSHTerminalOverviewSource)? {
-        // Herdr is an experiment (Settings → Experiments): off, there is
-        // nothing to read, so no button and no poll.
-        guard SSHTerminalExperimentAccess.current.allows(action) else { return nil }
+        // An overview the bar hides (Herdr in a Rex pane, or with its
+        // experiment off) has nothing to read: no button, no poll, no dot.
+        guard !barContext.hidden.contains(action) else { return nil }
         return switch action {
         // Herdr is read with side commands, which a terminal without SSH has none of.
         case .herdr: channel.sideCommandsUnavailable == nil && !channel.sideCommandsSignInPending ? herdr : nil
@@ -1768,7 +1768,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// Panes that need you, per multiplexer that has answered.
     private var overviewsWaiting: [SSHTerminalBarAction: Int] {
         var waiting: [SSHTerminalBarAction: Int] = [:]
-        for action in SSHTerminalBarAction.overviews where !barContext.overviewsRuledOut.contains(action) {
+        for action in SSHTerminalBarAction.overviews {
             if let source = overview(action), source.available { waiting[action] = source.needsAttention }
         }
         return waiting
@@ -2288,7 +2288,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         if channel.connected {
             openMultiplexerFolderIfNeeded()
             for action in SSHTerminalBarAction.overviews where overviewTasks[action] == nil {
-                guard barContext.polls(action), let source = overview(action) else { continue }
+                guard let source = overview(action) else { continue }
                 let channel = channel
                 overviewTasks[action] = Task { await source.run(on: channel) }
             }

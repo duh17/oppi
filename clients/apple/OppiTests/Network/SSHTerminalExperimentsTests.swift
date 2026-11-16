@@ -66,16 +66,18 @@ struct SSHTerminalExperimentTests {
         #expect(SSHTerminalMultiplexerChoice.tmux.available(in: off) == .tmux)
     }
 
+    /// `hidden` is the one owner: the bar, the … menu, Customize Bar, the
+    /// Settings summary (as `.plain`), and the terminal's Herdr read all follow it.
     @Test("A terminal's bar leaves Herdr out, and does not read it, while it is off")
     func barHidesAndStopsPollingWhileOff() {
-        let plain = SSHTerminalBarContext.plain
-        #expect(plain.hidden(off) == [.herdr])
-        #expect(!plain.polls(.herdr, off))
-        #expect(plain.hidden(herdrOnly).isEmpty)
-        #expect(plain.polls(.herdr, .all))
-        // A Rex pane still rules Herdr out.
+        for context in [SSHTerminalBarContext.plain, .herdr] {
+            #expect(context.hidden(off) == [.herdr])
+            #expect(context.hidden(herdrOnly).isEmpty)
+            #expect(context.hidden(.all).isEmpty)
+        }
+        // A Rex pane rules Herdr out whatever the switch says.
         #expect(SSHTerminalBarContext.rex.hidden(.all) == [.herdr])
-        #expect(!SSHTerminalBarContext.rex.polls(.herdr, .all))
+        #expect(SSHTerminalBarContext.rex.hidden(off) == [.herdr])
     }
 
     @Test("A Rex pane's reconnect, a Rex screen, and a Rex on your tailnet say Rex is off instead of dialing it")

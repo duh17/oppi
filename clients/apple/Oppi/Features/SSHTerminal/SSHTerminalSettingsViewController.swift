@@ -127,15 +127,16 @@ final class SSHTerminalSettingsViewController: ListScreenController<
     }
 
     /// The buttons the bar draws now: the layout's shown items, named as the bar
-    /// names them, without a button whose experiment is off.
+    /// names them, without one a plain shell's bar hides (Herdr while its
+    /// experiment is off).
     private var barSummary: String {
         let layout = barStore.layout
         let keys = barStore.customKeys
-        let access = experiments()
+        let hidden = SSHTerminalBarContext.plain.hidden(experiments())
         let shown = layout.order.filter { item in
             guard layout.isShown(item) else { return false }
             guard case .action(let action) = item else { return true }
-            return access.allows(action)
+            return !hidden.contains(action)
         }
         return shown.map { $0.title(customKeys: keys) }.joined(separator: ", ")
     }

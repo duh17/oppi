@@ -19,11 +19,11 @@ import UIKit
 /// terminal that Run on Connect started in Herdr, which has no Rex.
 ///
 /// The terminal opens this screen as a sheet from its … menu (Customize Bar…).
-/// Opened from a terminal, it leaves out the rows that terminal's multiplexer
-/// rules out (`SSHTerminalBarContext`: a Rex pane has no Herdr row), for
-/// presentation only: the saved layout keeps those actions' places and
-/// switches, and reordering moves only the rows shown. Opened from Settings it
-/// has every row.
+/// It leaves out the rows the terminal's bar hides (`SSHTerminalBarContext`:
+/// a Rex pane has no Herdr row, and neither has any terminal while Herdr's
+/// experiment is off), for presentation only: the saved layout keeps those
+/// actions' places and switches, and reordering moves only the rows shown.
+/// Opened from Settings it is a plain shell's list.
 final class SSHTerminalBarSettingsViewController: BarCustomizeViewController<
     SSHTerminalBarItem, SSHTerminalBarSettingsViewController.Extra
 > {
@@ -128,8 +128,7 @@ final class SSHTerminalBarSettingsViewController: BarCustomizeViewController<
     /// The multiplexers this screen can offer (Herdr's button, Rex's panel
     /// choices): the terminal has not ruled one out, and its experiment is on.
     private static func offeredMultiplexers(context: SSHTerminalBarContext) -> (herdr: Bool, rex: Bool) {
-        let access = SSHTerminalExperimentAccess.current
-        return (access.herdr && context != .rex, access.rex && context != .herdr)
+        (!context.hidden.contains(.herdr), SSHTerminalExperimentAccess.current.rex && context != .herdr)
     }
 
     /// The list's footer, naming only the multiplexers the bar can draw.

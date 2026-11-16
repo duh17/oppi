@@ -86,9 +86,11 @@ extension BarLayout where Action == SSHTerminalBarItem {
 
 /// Which multiplexer a terminal belongs to, and so whether it offers Herdr's
 /// overview button: a terminal in Rex does not, a plain shell and a Herdr
-/// terminal do. The one owner of that rule: the bar, the … menu, and Customize Bar opened from the
-/// terminal all hide `hidden` and nothing else, so the saved layout is never
-/// edited to say it and a plain shell shows the user's choice again.
+/// terminal do, while Herdr's experiment is on. The one owner of that rule:
+/// the bar, the … menu, the terminal's Herdr read, Customize Bar, and the
+/// Settings summary (as `.plain`) all hide `hidden` and nothing else, so the
+/// saved layout is never edited to say it and a plain shell shows the user's
+/// choice again.
 enum SSHTerminalBarContext: Equatable, Sendable {
     case plain
     /// A pane of a Rex session (`SSHTerminalChannel.rex`).
@@ -109,46 +111,20 @@ enum SSHTerminalBarContext: Equatable, Sendable {
         }
     }
 
-    /// The multiplexer overviews this terminal's own multiplexer rules out:
-    /// Herdr in a Rex pane.
-    var overviewsRuledOut: Set<SSHTerminalBarAction> {
-        switch self {
-        case .plain, .herdr: []
-        case .rex: [.herdr]
-        }
-    }
-
     /// The actions this terminal leaves out everywhere.
     var hidden: Set<SSHTerminalBarAction> { hidden() }
 
-    /// The multiplexer it rules out, and any whose experiment is off; the saved
-    /// layout keeps their place.
+    /// Herdr in a Rex pane, and Herdr anywhere while its experiment is off; the
+    /// saved layout keeps its place. A hidden overview is not read either
+    /// (`SSHTerminalViewController.overview`). Rex is not a bar overview: the
+    /// terminal reads it on its own (`SSHTerminalViewController.updatePolling`).
     func hidden(_ access: SSHTerminalExperimentAccess = .current) -> Set<SSHTerminalBarAction> {
-        var hidden = overviewsRuledOut
-        if !access.herdr { hidden.insert(.herdr) }
-        return hidden
-    }
-
-    /// Whether the terminal reads this multiplexer's overview in the background.
-    /// An experiment that is off is read by nothing. Rex is not a bar overview:
-    /// the terminal reads it on its own (`SSHTerminalViewController.updatePolling`).
-    func polls(_ action: SSHTerminalBarAction, _ access: SSHTerminalExperimentAccess = .current) -> Bool {
-        access.allows(action) && !hidden(access).contains(action)
+        self == .rex || !access.herdr ? [.herdr] : []
     }
 
     /// Whether the program-status symbol has a place in the bar's pill. A Rex
     /// pane draws the status on the pane switcher's icon instead.
     var showsProgramStatus: Bool { self != .rex }
-}
-
-extension SSHTerminalExperimentAccess {
-    /// Whether a bar button's experiment is on.
-    func allows(_ action: SSHTerminalBarAction) -> Bool {
-        switch action {
-        case .herdr: herdr
-        default: true
-        }
-    }
 }
 
 /// One button the bar can draw or the … menu can offer: a list item, or one
