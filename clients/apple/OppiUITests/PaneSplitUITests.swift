@@ -368,6 +368,53 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
                        "The grip sits under the chat's bar: grip \(grip.frame), bar \(bar.frame)")
     }
 
+    /// A file tapped in a split Files pane opens in a pane beside it; the
+    /// chat keeps the main pane.
+    func testAFileTappedInASplitFilesPaneOpensBesideIt() throws {
+        try openChat(in: .landscapeLeft, colorScheme: "dark")
+        app.typeKey("d", modifierFlags: .command)
+        let files = app.buttons["pane.launcher.files"]
+        XCTAssertTrue(files.waitUntilExists(timeout: 5), "⌘D opened the launcher")
+        files.tap()
+        let row = app.descendants(matching: .any)["fileBrowser.row.Route.md"]
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "Files listed the workspace")
+        hold()
+        attachScreenCapture("file-pane-before-tap")
+
+        row.tap()
+        let grips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.'"))
+        XCTAssertTrue(waitFor(grips.count == 3), "The file opened in a third pane, saw \(grips.count) grips")
+        XCTAssertTrue(row.exists, "The Files pane still lists the folder")
+        XCTAssertTrue(app.descendants(matching: .any)["chat.input"].isHittable, "The chat keeps the main pane")
+        hold()
+        attachScreenCapture("file-pane-after-tap")
+    }
+
+    /// iPad mini portrait: the sidebar is a drawer that covers the panes, so
+    /// ⌘D with it open closes it and splits the focused pane in sight.
+    func testSplitWithTheDrawerOpenClosesItAndSplitsInSight() throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("The drawer covers splittable panes on the iPad mini in portrait")
+        }
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(screen: "pane-restore", environment: [:], colorScheme: "dark", ready: nil)
+        let open = app.buttons["workspace.sidebar.open"]
+        XCTAssertTrue(open.waitUntilExists(timeout: 10), "Portrait shows the drawer's button")
+        open.tap()
+        let sidebar = app.descendants(matching: .any)["workspace.sidebar.scroll"]
+        XCTAssertTrue(waitFor(sidebar.exists && sidebar.isHittable), "The drawer opened")
+        hold()
+        attachScreenCapture("drawer-open-before-split")
+
+        app.typeKey("d", modifierFlags: .command)
+        let launcher = app.descendants(matching: .any)["pane.launcher"]
+        XCTAssertTrue(launcher.waitUntilExists(timeout: 5), "⌘D split the pane")
+        XCTAssertTrue(waitFor(launcher.isHittable), "The new pane is in sight, not behind the drawer")
+        XCTAssertTrue(waitFor(!sidebar.exists || !sidebar.isHittable), "⌘D closed the drawer")
+        hold()
+        attachScreenCapture("drawer-closed-after-split")
+    }
+
     /// Landscape on the iPad mini with the sidebar shown: the sidebar floats
     /// over the split view's detail column, so the panes sit beside it. The
     /// leading pane's grip and search are never under the sidebar, and the

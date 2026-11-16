@@ -1015,17 +1015,25 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     /// A compact file row: a workspace file on the shell opens its linked
     /// file route; host files and the chat panel's files push the reader.
+    /// A browser in a split pane opens the file where the pane owner puts it
+    /// (`openBeside`, from this pane), else on the pane's own stack, as the
+    /// terminal does: never on the window's main stack.
     private func openCompactFile(_ selection: FileBrowserSelection, context: FileBrowserNavigationContext?) {
         if routesThroughShell, let serverId, case .workspace(let workspaceId, let worktreeId) = scope {
-            navigation.openWorkspaceLinkedFile(.workspaceFile(
+            let target = WorkspaceLinkedFileNavTarget.workspaceFile(
                 serverId: serverId,
                 workspaceId: workspaceId,
                 worktreeId: worktreeId,
                 path: selection.path,
                 fileName: selection.name,
                 navigationContext: context
-            ))
-            return
+            )
+            guard let host = PaneHostController.containing(self), let cell = host.cell(holding: self),
+                  host.splitLeaves[cell] != nil else {
+                navigation.openWorkspaceLinkedFile(target)
+                return
+            }
+            if host.openBeside(PaneOpenContent(file: target), kind: .file, from: cell) { return }
         }
         guard let services else { return }
         FileBrowserViewerFactory.pushReader(readerRequest(selection, context: context, services: services), from: self)

@@ -190,6 +190,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     try {
       const workspace = ctx.storage.createWorkspace(body);
+      ctx.appEvents?.emitWorkspacesChanged();
       helpers.json(res, { workspace }, 201);
     } catch (error) {
       helpers.error(res, 400, safeErrorMessage(error));
@@ -233,6 +234,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         return;
       }
 
+      ctx.appEvents?.emitWorkspacesChanged();
       helpers.json(res, { workspace: updated });
     } catch (error) {
       helpers.error(res, 400, safeErrorMessage(error));
@@ -263,10 +265,11 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       }
     }
 
-    await deleteWorkspaceAndStopVm(wsId, {
+    const deleted = await deleteWorkspaceAndStopVm(wsId, {
       deleteWorkspace: (workspaceId) => ctx.storage.deleteWorkspace(workspaceId),
       stopWorkspaceVm: ctx.stopWorkspaceVm,
     });
+    if (deleted) ctx.appEvents?.emitWorkspacesChanged();
     helpers.json(res, { ok: true });
   }
 

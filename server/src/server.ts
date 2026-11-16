@@ -821,6 +821,10 @@ export class Server {
       this.appEventStreamMux.emitSessionCreated(this.models.ensureSessionContextWindow(session)),
     );
     this.mirrorRuntime.on("session_event", handleSessionEvent);
+    // A terminal Pi that mirrors from an unregistered folder creates its workspace.
+    this.mirrorRuntime.on("workspaces_changed", () =>
+      this.appEventStreamMux.emitWorkspacesChanged(),
+    );
 
     // Initialize search index (SQLite FTS5)
     try {

@@ -399,6 +399,8 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
   it("creates a mirror workspace when the terminal requests creation", async () => {
     const root = makeTempDir("oppi-mirror-create-workspace-");
     const { runtime, workspaces } = makeRuntime({ includeDefaultWorkspace: false });
+    const workspacesChanged = vi.fn();
+    runtime.on("workspaces_changed", workspacesChanged);
 
     const { sessionId } = await connectBridge(runtime, {
       cwd: root,
@@ -416,6 +418,8 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       runtime: "host",
     });
     expect(runtime.getActiveSession(sessionId)?.workspaceId).toBe(created?.id);
+    // Apps hear of it (`workspaces_changed`), so the session's workspace is known.
+    expect(workspacesChanged).toHaveBeenCalledTimes(1);
   });
 
   describe("a terminal in the home folder or above it", () => {

@@ -27,6 +27,8 @@ enum AppEventMessage: Sendable, Equatable {
     case workspaceGitChanged(workspaceId: String, worktreeId: String?, emittedAt: Int64, sessionId: String?, reason: String?)
     /// A layouts folder of the workspace changed (`GET /workspaces/{id}/layouts` is stale).
     case workspaceLayoutsChanged(workspaceId: String, emittedAt: Int64)
+    /// A workspace was created, changed or deleted (`GET /workspaces` is stale).
+    case workspacesChanged(emittedAt: Int64)
     /// The server's pins changed (`GET /pins` is stale unless it holds `revision`).
     case pinsChanged(revision: Int, emittedAt: Int64)
     /// A feature switch changed on the server (`features` in `/server/info` is stale).
@@ -181,6 +183,9 @@ extension AppEventMessage: Decodable {
                 workspaceId: try c.decode(String.self, forKey: .workspaceId),
                 emittedAt: try c.decode(Int64.self, forKey: .emittedAt)
             )
+
+        case "workspaces_changed":
+            self = .workspacesChanged(emittedAt: try c.decode(Int64.self, forKey: .emittedAt))
 
         case "pins_changed":
             self = .pinsChanged(

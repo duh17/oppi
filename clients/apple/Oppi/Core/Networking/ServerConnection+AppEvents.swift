@@ -78,6 +78,11 @@ extension ServerConnection {
             // No screen lists layouts yet; the Layouts list that reads the route owns this event.
             break
 
+        case .workspacesChanged:
+            // A workspace made or changed elsewhere (another device, the CLI, a
+            // mirrored terminal) is named in panes, pins and session rows at once.
+            Task { await refreshWorkspaceCatalog(force: true) }
+
         case .pinsChanged(let revision, _):
             pins.noteChanged(revision: revision, api: apiClient)
 

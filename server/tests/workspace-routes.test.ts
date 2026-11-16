@@ -464,6 +464,61 @@ describe("workspaces module", () => {
     expect(stopWorkspaceVm).toHaveBeenCalledWith("ws-1");
   });
 
+  it("tells apps when a workspace is created, changed or deleted, and not when nothing changed", async () => {
+    const hostMount = mkdtempSync(join(tmpdir(), "oppi-workspace-events-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-workspace-events-data-"));
+    try {
+      const workspace = { id: "ws-new", name: "garden", hostMount, runtime: "host" } as Workspace;
+      let exists = false;
+      const emitWorkspacesChanged = vi.fn();
+      const ctx = {
+        storage: {
+          getDataDir: () => dataDir,
+          getWorkspace: vi.fn((id: string) => (exists && id === workspace.id ? workspace : undefined)),
+          createWorkspace: vi.fn(() => {
+            exists = true;
+            return workspace;
+          }),
+          updateWorkspace: vi.fn(() => workspace),
+          deleteWorkspace: vi.fn(() => {
+            const deleted = exists;
+            exists = false;
+            return deleted;
+          }),
+        },
+        appEvents: { emitWorkspacesChanged },
+      } as unknown as RouteContext;
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const send = async (method: string, path: string, body?: unknown) => {
+        const res = makeResponse();
+        await dispatch({
+          method,
+          path,
+          url: new URL(`http://localhost${path}`),
+          req: (body === undefined ? {} : makeRequest(body)) as never,
+          res: res as never,
+        });
+        return res.statusCode;
+      };
+
+      expect(await send("POST", "/workspaces", { name: "garden", hostMount })).toBe(201);
+      expect(emitWorkspacesChanged).toHaveBeenCalledTimes(1);
+      expect(await send("PUT", "/workspaces/ws-new", { name: "garden-site" })).toBe(200);
+      expect(emitWorkspacesChanged).toHaveBeenCalledTimes(2);
+      expect(await send("DELETE", "/workspaces/ws-new")).toBe(200);
+      expect(emitWorkspacesChanged).toHaveBeenCalledTimes(3);
+
+      // Gone already, or never there: nothing changed, so nobody hears of it.
+      expect(await send("DELETE", "/workspaces/ws-new")).toBe(200);
+      expect(await send("PUT", "/workspaces/ws-new", { name: "x" })).toBe(404);
+      expect(await send("POST", "/workspaces", {})).toBe(400);
+      expect(emitWorkspacesChanged).toHaveBeenCalledTimes(3);
+    } finally {
+      rmSync(hostMount, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("blocks workspace deletion while Oppi-managed worktrees exist", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-worktree-"));
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-worktree-data-"));

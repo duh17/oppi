@@ -365,9 +365,9 @@ extension ServerConnection {
     }
 
     /// Reads the catalog again for workspace `id`, which a route or a pin
-    /// names and the catalog does not hold: no app event announces a new
-    /// workspace, so one created since the last read is unknown until the
-    /// next. Once per workspace while the connection lives, so one that is
+    /// names and the catalog does not hold: one created while the app-event
+    /// stream was down missed its `workspaces_changed`, and a reconnect reads
+    /// the catalog only past its freshness window. Once per workspace while the connection lives, so one that is
     /// really gone is not read for again. Nil when no read starts: the
     /// catalog never loaded (its first load is coming), holds `id`, or was
     /// read for it already.
@@ -403,9 +403,11 @@ extension ServerConnection {
 
     /// The stream drops events while it is down, and session rows ride on them, so the
     /// session list is read again after every handshake. The catalog (workspaces, skills,
-    /// git summaries) costs the server a git summary per workspace and no catalog change
-    /// travels as an app event: it follows its freshness window (a longer absence reloads
-    /// it), and still reloads at once when it never loaded or last failed.
+    /// git summaries) costs the server a git summary per workspace, and a change while the
+    /// stream is up arrives as `workspaces_changed`: it follows its freshness window (a
+    /// longer absence reloads it), and still reloads at once when it never loaded or last
+    /// failed. A workspace a route names that it lacks is read for at once
+    /// (`refreshCatalog(forUnknownWorkspace:)`).
     private func refreshAfterAppEventConnection() async {
         await refreshWorkspaceAndSessionLists(
             force: true,

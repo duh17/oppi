@@ -1696,6 +1696,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       runtime: "host",
     });
 
+    this.emit("workspaces_changed");
     log.info("mirror_bridge.workspace_created", {
       runtime: MIRROR_RUNTIME_LOG_TAG,
       workspaceId: workspace.id,

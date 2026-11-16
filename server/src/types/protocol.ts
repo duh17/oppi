@@ -950,6 +950,7 @@ export type AppEventMessage =
       type: "workspace_layouts_changed";
       workspaceId: string;
     })
+  | (AppEventBase & { type: "workspaces_changed" }) // a workspace was created, changed or deleted: re-read `GET /workspaces`
   | (AppEventBase & { type: "pins_changed"; revision: number }) // re-read `GET /pins`
   | (AppEventBase & { type: "features_changed" }) // re-read `/server/info` (its `features`)
   | (AppEventBase & { type: "pairing_approval_requested"; approval: PendingPairingApproval })

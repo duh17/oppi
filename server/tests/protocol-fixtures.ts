@@ -1196,6 +1196,10 @@ const APP_EVENT_CANONICAL_EXAMPLES = {
     workspaceId: "ws-1",
     emittedAt: appEventEmittedAt,
   },
+  workspaces_changed: {
+    type: "workspaces_changed",
+    emittedAt: appEventEmittedAt,
+  },
   pins_changed: {
     type: "pins_changed",
     emittedAt: appEventEmittedAt,
@@ -1296,6 +1300,7 @@ const APP_EVENT_MESSAGE_ORDER = [
   "extension_ui_notification",
   "workspace_git_changed",
   "workspace_layouts_changed",
+  "workspaces_changed",
   "pins_changed",
   "features_changed",
   "pairing_approval_requested",

@@ -123,6 +123,7 @@ describe("AppEventMessage protocol", () => {
       "extension_ui_notification",
       "workspace_git_changed",
       "workspace_layouts_changed",
+      "workspaces_changed",
       "pins_changed",
       "features_changed",
       "pairing_approval_requested",

@@ -45,6 +45,25 @@ struct FileBrowserPaneBreadcrumbTests {
         _ = await pane.scope.settle()
     }
 
+    /// A file tapped in the compact pane opens where the pane owner puts it,
+    /// beside that pane, and never on the window's main stack.
+    @Test func aFileOpensBesideTheSplitPaneNotInTheMainPane() async throws {
+        let pane = try await Self.makePane(opening: "src/a/")
+        defer { pane.end() }
+        let browser = try #require(pane.leafStack?.viewControllers.first as? FileBrowserViewController)
+
+        try await Self.openFolder("notes.md", in: browser)
+        let opened = await waitForMainActorCondition(timeout: .seconds(3)) {
+            pane.scenePanes.cellLayout.leaves.contains { leaf in
+                leaf.id != pane.leafID && leaf.stack.last?.route == .file(.workspace(id: "ws-1", worktree: nil), path: "src/a/notes.md", line: nil)
+            }
+        }
+        #expect(opened, "the file opens in a pane of its own, saw \(pane.scenePanes.cellLayout.leaves.map { $0.stack.last?.route })")
+        #expect(pane.root.navigation.workspaceStackRouteElements.isEmpty, "the window's routes stay")
+        #expect(pane.scenePanes.topEntry(of: pane.leafID).route == .files(workspace: "ws-1", path: "src/a/"), "the browser's pane keeps its folder")
+        _ = await pane.scope.settle()
+    }
+
     // MARK: Fixture
 
     @MainActor

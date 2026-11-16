@@ -249,7 +249,9 @@ final class LiveKeyboardCommandSurface {
     /// A pane command for the focused pane, while nothing is presented over
     /// the window. Split needs a wide window (`canSplit`). The code editor's
     /// own Cmd-D and Shift-Cmd-Return (Duplicate Line, Insert Line Above) win
-    /// while it has focus; the grip's menu still splits and zooms.
+    /// while it has focus; the grip's menu still splits and zooms. The compact
+    /// drawer covers the panes and makes them inert while it is open, so a
+    /// pane command closes it first and acts on the panes it then shows.
     private func paneAction(
         yieldsToEditor: Bool,
         available: (PaneHostController) -> Bool = { $0.canSplit },
@@ -257,7 +259,11 @@ final class LiveKeyboardCommandSurface {
     ) -> (@MainActor () -> Void)? {
         guard isInteractive, topPresented == nil, let host = paneHost, available(host) else { return nil }
         if yieldsToEditor, firstResponder(in: window) is CodeEditorTextView { return nil }
-        return { [weak host] in host.map(body) }
+        let drawer = descendant(of: rootController, as: WorkspaceDrawerController.self)
+        return { [weak host, weak drawer] in
+            drawer?.closeSidebar()
+            host.map(body)
+        }
     }
 
     /// Whether the sidebar shows now, with the action that toggles it.
