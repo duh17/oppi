@@ -267,7 +267,14 @@ struct WorkspaceCreateTests {
         field.sendActions(for: .editingChanged)
         #expect(screen.model.hostMount == "~/wo")
 
-        let suggestion = try #require(await findButton("workspace.create.suggestion.~/workspace", in: screen.view, timeout: Self.patience))
+        // The server's completion lands as a row in the form. A keyboard left up by an
+        // earlier test can end the list above that row, and UIKit builds no cell for a
+        // row off screen, so the test scrolls to it as a person would before tapping.
+        let row = WorkspaceCreateViewController.Item.suggestion("~/workspace")
+        #expect(await waitForMainActorCondition(timeout: Self.patience) { screen.indexPath(for: row) != nil })
+        let rowPath = try #require(screen.indexPath(for: row))
+        screen.collectionView.scrollToItem(at: rowPath, at: .centeredVertically, animated: false)
+        let suggestion = try #require(await findButton("workspace.create.suggestion.~/workspace", in: screen.view))
         suggestion.sendActions(for: .touchUpInside)
 
         #expect(screen.model.hostMount == "~/workspace")
